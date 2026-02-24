@@ -154,9 +154,9 @@ async def _main_async() -> None:
 
     # logging via shared helper
     configure_sandbox_logging(
-        args.log_in_terminal,
-        None,
-        args.log_tcp_port,
+        log_in_terminal=args.log_in_terminal,
+        log_file=None,
+        tcp_port=args.log_tcp_port,
         http_tcp_port=args.http_log_tcp_port,
         unify_requests_log_file=".logs_unify_requests.txt",
     )

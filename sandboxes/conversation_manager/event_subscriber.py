@@ -143,12 +143,34 @@ def _format_outbound_event(event: Event, *, sandbox_state: object) -> Optional[s
         return f"[{sender} → Assistant • Phone] (interrupt)"
 
     if isinstance(event, SMSSent):
-        to_name = _contact_label(getattr(event, "contact", {}), fallback="recipient")
-        return f"[SMS → {to_name}] {event.content}"
+        to_name = _contact_label(getattr(event, "contact", {}), fallback="User")
+        return f"[Assistant → {to_name} • SMS] {event.content}"
+    if isinstance(event, UnifyMessageSent):
+        to_name = _contact_label(getattr(event, "contact", {}), fallback="User")
+        content = str(getattr(event, "content", "") or "").strip()
+        attachments = getattr(event, "attachments", []) or []
+        if attachments:
+            return (
+                f"[Assistant → {to_name} • Unify] {content} [+{len(attachments)} files]"
+            )
+        return f"[Assistant → {to_name} • Unify] {content}"
     if isinstance(event, EmailSent):
-        return f"[Email → User] Subject: {event.subject}\n{event.body}"
+        to_addrs = getattr(event, "to", []) or []
+        to_label = (
+            ", ".join(to_addrs[:2]) + ("..." if len(to_addrs) > 2 else "")
+            if to_addrs
+            else "User"
+        )
+        subject = str(getattr(event, "subject", "") or "").strip()
+        body = str(getattr(event, "body", "") or "").strip()
+        header = f"[Assistant → {to_label} • Email] Subject: {subject}"
+        if body:
+            return f"{header}\n{body}"
+        return header
     if isinstance(event, OutboundPhoneUtterance):
-        return f"[Phone → User] {event.content}"
+        return f"[Assistant → User • Phone] {event.content}"
+    if isinstance(event, OutboundUnifyMeetUtterance):
+        return f"[Assistant → User • Unify Meet] {event.content}"
     if isinstance(event, UnifyMeetStarted):
         return "🎙️ Live voice ready — you can start speaking."
     if isinstance(event, UnifyMeetEnded):
@@ -161,7 +183,7 @@ def _format_outbound_event(event: Event, *, sandbox_state: object) -> Optional[s
             in_call = bool(getattr(sandbox_state, "in_call", False))
             live_voice = bool(getattr(sandbox_state, "live_voice_active", False))
             if in_call and not live_voice:
-                return f"[Phone → User] {event.content}"
+                return f"[Assistant → User • Phone] {event.content}"
         except Exception:
             pass
         return f"[Call Guidance] {event.content}"
@@ -301,29 +323,6 @@ async def subscribe_to_responses(
                                             "[Actor] still working... (tip: `/ask <q>` for status, `/stop` to abort)",
                                         )
                                         last_progress_hint_at = now
-                        except Exception:
-                            pass
-                        # Best-effort timeout-based completion.
-                        #
-                        # IMPORTANT: never auto-clear while an Actor handle is in-flight.
-                        # Actor runs can legitimately be "quiet" for a while (long tool calls),
-                        # and steering must remain available in REPL during that time.
-                        try:
-                            if getattr(
-                                sandbox_state,
-                                "brain_run_in_flight",
-                                False,
-                            ) and (not actor_in_flight_ids):
-                                last = float(
-                                    getattr(
-                                        sandbox_state,
-                                        "last_event_published_at",
-                                        0.0,
-                                    )
-                                    or 0.0,
-                                )
-                                if last and (time.monotonic() - last) > idle_grace_s:
-                                    sandbox_state.brain_run_in_flight = False
                         except Exception:
                             pass
                         continue
@@ -657,37 +656,12 @@ async def subscribe_to_responses(
                     except Exception:
                         pass
 
-                    # Update REPL steering availability.
-                    #
-                    # In REPL mode, steering commands (/ask, /i, /pause, ...) rely on
-                    # `sandbox_state.brain_run_in_flight` when CM does not expose a
-                    # stable `active_ask_handle` for the current Actor run.
-                    #
-                    # Key requirement: keep steering enabled for the *entire* duration
-                    # of an in-flight Actor handle, even if other events (e.g. CallGuidance)
-                    # are emitted in between.
-                    try:
-                        if actor_in_flight_ids:
-                            sandbox_state.brain_run_in_flight = True
-                        elif isinstance(event, ActorResult):
-                            sandbox_state.brain_run_in_flight = False
-                    except Exception:
-                        pass
-
                     rendered = _format_outbound_event(
                         event,
                         sandbox_state=sandbox_state,
                     )
                     if rendered is None:
                         continue
-
-                    # Mark brain run complete on user-facing outbound (unless an Actor
-                    # handle is still in-flight).
-                    try:
-                        if not actor_in_flight_ids:
-                            sandbox_state.brain_run_in_flight = False
-                    except Exception:
-                        pass
 
                     # Optional TTS for phone-call assistant utterances.
                     if voice_enabled and (
@@ -722,7 +696,10 @@ async def subscribe_to_responses(
                         ack = "✅ Email sent."
                         if to_email:
                             ack = f"✅ Email sent to {to_email}."
-                        await _maybe_call(display_callback, f"[Phone → User] {ack}")
+                        await _maybe_call(
+                            display_callback,
+                            f"[Assistant → User • Phone] {ack}",
+                        )
 
                     # UX: when an outbound SMS is emitted while we're in a call,
                     # acknowledge it in the call channel. Do not "speak" the SMS body
@@ -742,7 +719,10 @@ async def subscribe_to_responses(
                         ack = "✅ SMS sent."
                         if to_name:
                             ack = f"✅ SMS sent to {to_name}."
-                        await _maybe_call(display_callback, f"[Phone → User] {ack}")
+                        await _maybe_call(
+                            display_callback,
+                            f"[Assistant → User • Phone] {ack}",
+                        )
                         if voice_enabled:
                             try:
                                 from sandboxes.utils import speak

@@ -31,6 +31,7 @@ from unity.common.prompt_helpers import now as prompt_now
 
 from unity.common.llm_client import new_llm_client
 from unity.common.single_shot import single_shot_tool_decision
+from unity.events.manager_event_logging import _EVENT_SOURCE
 from unity.conversation_manager.domains.notifications import NotificationBar
 from unity.conversation_manager.domains.utils import Debouncer, log_task_exc
 
@@ -206,7 +207,7 @@ class ConversationManager(metaclass=SingletonABCMeta):
 
         # Hierarchical session logger for consistent nested logging
         self._session_logger = SessionLogger("ConversationManager")
-        self._session_logger.info(
+        self._session_logger.debug(
             "session_start",
             "ConversationManager session initialized",
         )
@@ -256,36 +257,81 @@ class ConversationManager(metaclass=SingletonABCMeta):
         the slow brain can align visual context with spoken instructions.
         """
         import aiohttp
+        import time as _time
         from datetime import datetime, timezone
 
-        desktop_url = SESSION_DETAILS.assistant.desktop_url
-        if desktop_url:
-            base_url = desktop_url.rstrip("/") + "/api"
-        else:
-            base_url = "http://localhost:3000"
+        from unity.conversation_manager.medium_scripts.common import (
+            _resolve_agent_service_url,
+            _ensure_jpeg,
+        )
+
+        base_url = _resolve_agent_service_url()
+        url = f"{base_url}/screenshot"
+        t_start = _time.monotonic()
+        phases: dict[str, float] = {}
+
+        trace_cfg = aiohttp.TraceConfig()
+
+        async def on_dns_start(session, ctx, params):
+            phases["dns_start"] = _time.monotonic()
+
+        async def on_dns_end(session, ctx, params):
+            phases["dns_ms"] = (
+                _time.monotonic() - phases.get("dns_start", t_start)
+            ) * 1000
+
+        async def on_conn_start(session, ctx, params):
+            phases["conn_start"] = _time.monotonic()
+
+        async def on_conn_end(session, ctx, params):
+            phases["conn_ms"] = (
+                _time.monotonic() - phases.get("conn_start", t_start)
+            ) * 1000
+
+        async def on_req_start(session, ctx, params):
+            phases["req_start"] = _time.monotonic()
+
+        async def on_req_end(session, ctx, params):
+            phases["first_byte_ms"] = (
+                _time.monotonic() - phases.get("req_start", t_start)
+            ) * 1000
+
+        trace_cfg.on_dns_resolvehost_start.append(on_dns_start)
+        trace_cfg.on_dns_resolvehost_end.append(on_dns_end)
+        trace_cfg.on_connection_create_start.append(on_conn_start)
+        trace_cfg.on_connection_create_end.append(on_conn_end)
+        trace_cfg.on_request_start.append(on_req_start)
+        trace_cfg.on_request_end.append(on_req_end)
+
         try:
             auth_key = SESSION_DETAILS.unify_key
             headers = {"authorization": f"Bearer {auth_key}"}
-            async with aiohttp.ClientSession() as session:
+            async with aiohttp.ClientSession(trace_configs=[trace_cfg]) as session:
                 async with session.post(
-                    f"{base_url}/screenshot",
+                    url,
                     json={},
                     headers=headers,
                     timeout=aiohttp.ClientTimeout(total=10),
                 ) as resp:
                     if resp.status >= 400:
+                        body = await resp.text()
+                        total_ms = (_time.monotonic() - t_start) * 1000
                         self._session_logger.warning(
                             "screenshot_capture",
-                            f"Screenshot capture failed: HTTP {resp.status}",
+                            f"Screenshot capture failed: HTTP {resp.status} "
+                            f"url={url} total={total_ms:.0f}ms "
+                            f"dns={phases.get('dns_ms', 0):.0f}ms "
+                            f"conn={phases.get('conn_ms', 0):.0f}ms "
+                            f"first_byte={phases.get('first_byte_ms', 0):.0f}ms "
+                            f"body={body[:200]}",
                         )
                         return
+                    t_before_read = _time.monotonic()
                     data = await resp.json()
+                    read_ms = (_time.monotonic() - t_before_read) * 1000
+                    total_ms = (_time.monotonic() - t_start) * 1000
                     b64 = data.get("screenshot")
                     if b64:
-                        from unity.conversation_manager.medium_scripts.common import (
-                            _ensure_jpeg,
-                        )
-
                         b64 = _ensure_jpeg(b64)
                         self._screenshot_buffer.append(
                             ScreenshotEntry(
@@ -299,12 +345,22 @@ class ConversationManager(metaclass=SingletonABCMeta):
                         self._session_logger.debug(
                             "screenshot_capture",
                             f"Buffered screenshot #{len(self._screenshot_buffer)} "
+                            f"url={url} total={total_ms:.0f}ms "
+                            f"dns={phases.get('dns_ms', 0):.0f}ms "
+                            f"conn={phases.get('conn_ms', 0):.0f}ms "
+                            f"first_byte={phases.get('first_byte_ms', 0):.0f}ms "
+                            f"body_read={read_ms:.0f}ms "
                             f"for utterance: {user_utterance[:60]}...",
                         )
         except Exception as e:
+            total_ms = (_time.monotonic() - t_start) * 1000
             self._session_logger.warning(
                 "screenshot_capture",
-                f"Screenshot capture error: {e}",
+                f"Screenshot capture error: {type(e).__name__}: {e} "
+                f"url={url} total={total_ms:.0f}ms "
+                f"dns={phases.get('dns_ms', 0):.0f}ms "
+                f"conn={phases.get('conn_ms', 0):.0f}ms "
+                f"first_byte={phases.get('first_byte_ms', 0):.0f}ms",
             )
 
     def peek_screenshot_buffer(self) -> list[ScreenshotEntry]:
@@ -623,7 +679,7 @@ class ConversationManager(metaclass=SingletonABCMeta):
         selected_meta["run_id"] = run_id
         selected_meta["dropped_requests"] = str(dropped_requests)
 
-        self._session_logger.info(
+        self._session_logger.debug(
             "llm_thinking",
             (
                 f"Dispatching slow-brain run_id={run_id} "
@@ -650,7 +706,7 @@ class ConversationManager(metaclass=SingletonABCMeta):
         request_id = trace_meta.get("request_id", "")
         origin_event_id = trace_meta.get("origin_event_id", "")
         origin_event_name = trace_meta.get("origin_event_name", "")
-        self._session_logger.info(
+        self._session_logger.debug(
             "llm_thinking",
             (
                 f"Slow-brain run started run_id={run_id} "
@@ -763,7 +819,7 @@ class ConversationManager(metaclass=SingletonABCMeta):
             screenshot_paths=screenshot_paths,
         )
         if screenshots:
-            self._session_logger.info(
+            self._session_logger.debug(
                 "screen_share",
                 f"Attaching {len(screenshots)} screenshot(s) to slow brain turn",
             )
@@ -789,7 +845,7 @@ class ConversationManager(metaclass=SingletonABCMeta):
         )
 
         # Log LLM thinking start
-        self._session_logger.log_llm_thinking(f"mode={self.mode}")
+        self._session_logger.log_llm_thinking()
 
         # Build response model dynamically with current in-flight actions
         response_model = brain_spec.response_model
@@ -820,13 +876,17 @@ class ConversationManager(metaclass=SingletonABCMeta):
         client.set_system_message(system_prompt.to_list())
         client.set_prompt_caching(["system"])
         messages = self._preprocess_messages(self.chat_history + [input_message])
-        result = await single_shot_tool_decision(
-            client,
-            messages,
-            tools,
-            tool_choice="required" if tools else "auto",
-            response_format=response_model,
-        )
+        _source_token = _EVENT_SOURCE.set("ConversationManager")
+        try:
+            result = await single_shot_tool_decision(
+                client,
+                messages,
+                tools,
+                tool_choice="required" if tools else "auto",
+                response_format=response_model,
+            )
+        finally:
+            _EVENT_SOURCE.reset(_source_token)
 
         # Extract structured output (thoughts)
         structured = result.structured_output
@@ -877,8 +937,8 @@ class ConversationManager(metaclass=SingletonABCMeta):
                     event_json,
                 )
 
-        # Log LLM response
-        self._session_logger.log_llm_response(
+        self._session_logger.debug(
+            "llm_response",
             (
                 f"run_id={run_id} thoughts: {thoughts[:100]}..."
                 if len(thoughts) > 100
@@ -911,10 +971,11 @@ class ConversationManager(metaclass=SingletonABCMeta):
         # If the LLM called wait(delay=N), schedule a delayed follow-up turn.
         if result.tool_name == "wait":
             delay = (result.tool_args or {}).get("delay")
+            self._session_logger.info("wait", "Waiting...")
             if delay is not None:
                 await self.request_llm_run(delay=delay)
 
-        self._session_logger.info(
+        self._session_logger.debug(
             "llm_response",
             (
                 f"Slow-brain run completed run_id={run_id} "
@@ -982,8 +1043,8 @@ class ConversationManager(metaclass=SingletonABCMeta):
             current_time = self.loop.time()
             if current_time - self.last_activity_time > self.inactivity_timeout:
                 log_str = f"Inactivity timeout reached ({self.inactivity_timeout}s), requesting shutdown"
-                LOGGER.info(f"{DEFAULT_ICON} {log_str}")
-                self._session_logger.info("session_end", log_str)
+                LOGGER.debug(f"{DEFAULT_ICON} {log_str}")
+                self._session_logger.debug("session_end", log_str)
                 self.stop.set()
                 await self.event_broker.aclose()
                 break  # Exit the loop after triggering shutdown
@@ -1080,7 +1141,7 @@ class ConversationManager(metaclass=SingletonABCMeta):
         await self._stop_file_sync()
 
         if self.job_name and self.assistant_id != DEFAULT_ASSISTANT_ID:
-            self._session_logger.info(
+            self._session_logger.debug(
                 "session_end",
                 f"Marking job {self.job_name} done",
             )
@@ -1164,6 +1225,22 @@ class ConversationManager(metaclass=SingletonABCMeta):
 
             # Gather context for the decision.
             conversation_turns, _ = self.get_recent_voice_transcript()
+
+            active_visuals = []
+            if self.user_screen_share_active:
+                active_visuals.append("the user is sharing their screen")
+            if self.user_webcam_active:
+                active_visuals.append("the user's webcam is on")
+            if self.assistant_screen_share_active:
+                active_visuals.append("the assistant's desktop is being shared")
+            if active_visuals:
+                conversation_turns.append(
+                    {
+                        "role": "system",
+                        "content": f"[context] {', '.join(active_visuals).capitalize()}.",
+                    },
+                )
+
             brain_spec = build_brain_spec(self)
 
             decision = await self.proactive_speech.decide(

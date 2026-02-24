@@ -80,46 +80,46 @@ class FastBrainLogger:
     def label(self) -> str:
         return self._label
 
-    def _emit(self, icon: str, msg: str) -> None:
-        LOGGER.info(f"{icon} [{self._label}] {msg}")
+    def _emit(self, event_type: str, msg: str) -> None:
+        LOGGER.info(f"{ICONS[event_type]} [{self._label}] {msg}")
 
-    def _emit_debug(self, icon: str, msg: str) -> None:
-        LOGGER.debug(f"{icon} [{self._label}] {msg}")
+    def _emit_debug(self, event_type: str, msg: str) -> None:
+        LOGGER.debug(f"{ICONS[event_type]} [{self._label}] {msg}")
 
     # ── typed helpers ────────────────────────────────────────────────────
 
     def llm_thinking(self, reason: str, **kv: object) -> None:
         extra = _kv_suffix(kv)
-        self._emit(ICONS["llm_thinking"], f"LLM thinking… reason={reason}{extra}")
+        self._emit("llm_thinking", f"LLM thinking… reason={reason}{extra}")
 
     def llm_completed(self, generation_id: str = "", **kv: object) -> None:
         extra = _kv_suffix(kv)
         self._emit(
-            ICONS["llm_completed"],
+            "llm_completed",
             f"Generation completed{_id(generation_id)}{extra}",
         )
 
     def llm_cancelled(self, generation_id: str = "", **kv: object) -> None:
         extra = _kv_suffix(kv)
         self._emit(
-            ICONS["llm_cancelled"],
+            "llm_cancelled",
             f"Generation cancelled{_id(generation_id)}{extra}",
         )
 
     def llm_error(self, error: str, **kv: object) -> None:
         extra = _kv_suffix(kv)
-        self._emit(ICONS["llm_error"], f"Generation error: {error}{extra}")
+        self._emit("llm_error", f"Generation error: {error}{extra}")
 
     def user_speech(self, text: str) -> None:
-        self._emit(ICONS["user_speech"], _trunc(text))
+        self._emit("user_speech", _trunc(text))
 
     def user_state(self, new_state: str, **kv: object) -> None:
         extra = _kv_suffix(kv)
-        self._emit(ICONS["user_state"], f"User state: {new_state}{extra}")
+        self._emit("user_state", f"User state: {new_state}{extra}")
 
     def assistant_speech(self, text: str, **kv: object) -> None:
         extra = _kv_suffix(kv)
-        self._emit(ICONS["assistant_speech"], f"{_trunc(text)}{extra}")
+        self._emit("assistant_speech", f"{_trunc(text)}{extra}")
 
     def guidance_received(
         self,
@@ -130,7 +130,7 @@ class FastBrainLogger:
     ) -> None:
         extra = _kv_suffix(kv)
         self._emit(
-            ICONS["guidance_received"],
+            "guidance_received",
             f"Guidance from {source}: speak={should_speak} {_trunc(content)}{extra}",
         )
 
@@ -142,20 +142,20 @@ class FastBrainLogger:
     ) -> None:
         extra = _kv_suffix(kv)
         self._emit(
-            ICONS["guidance_applied"],
+            "guidance_applied",
             f"Applied guidance {guidance_id} source={source}{extra}",
         )
 
     def guidance_buffered(self, guidance_id: str, count: int) -> None:
         self._emit(
-            ICONS["guidance_buffered"],
+            "guidance_buffered",
             f"Buffered guidance {guidance_id} (total={count})",
         )
 
     def guidance_say(self, guidance_id: str, text: str, **kv: object) -> None:
         extra = _kv_suffix(kv)
         self._emit(
-            ICONS["guidance_say"],
+            "guidance_say",
             f"Speaking guidance {guidance_id}: {_trunc(text)}{extra}",
         )
 
@@ -163,94 +163,94 @@ class FastBrainLogger:
 
     def proactive_debounce(self, seconds: float) -> None:
         self._emit(
-            ICONS["proactive_debounce"],
+            "proactive_debounce",
             f"Proactive speech debounce {seconds}s",
         )
 
     def proactive_decision(self, should_speak: bool, delay: float) -> None:
         self._emit(
-            ICONS["proactive_decision"],
+            "proactive_decision",
             f"Proactive decision: should_speak={should_speak}, delay={delay}s",
         )
 
     def proactive_deferred(self, reason: str) -> None:
-        self._emit(ICONS["proactive_deferred"], f"Proactive deferred: {reason}")
+        self._emit("proactive_deferred", f"Proactive deferred: {reason}")
 
     def proactive_dormant(self) -> None:
         self._emit(
-            ICONS["proactive_dormant"],
+            "proactive_dormant",
             "Proactive dormant until next utterance",
         )
 
     def proactive_speaking(self, delay: float, content: str) -> None:
         self._emit(
-            ICONS["proactive_speaking"],
+            "proactive_speaking",
             f"Proactive speaking in {delay}s: {_trunc(content)}",
         )
 
     def proactive_published(self, guidance_id: str, content: str) -> None:
         self._emit(
-            ICONS["proactive_published"],
+            "proactive_published",
             f"Proactive spoke guidance_id={guidance_id}: {_trunc(content)}",
         )
 
     def proactive_cancelled(self) -> None:
-        self._emit_debug(ICONS["proactive_cancelled"], "Proactive speech cancelled")
+        self._emit_debug("proactive_cancelled", "Proactive speech cancelled")
 
     def proactive_error(self, error: str) -> None:
         LOGGER.error(
             f"{ICONS['proactive_error']} [{self._label}] Proactive error: {error}",
         )
 
-    def call_status(self, event_type: str) -> None:
-        self._emit(ICONS["call_status"], event_type)
+    def call_status(self, event_name: str) -> None:
+        self._emit_debug("call_status", event_name)
 
     def session_start(self, msg: str = "Session starting") -> None:
-        self._emit(ICONS["session_start"], msg)
+        self._emit_debug("session_start", msg)
 
     def session_end(self, msg: str = "Session ended") -> None:
-        self._emit(ICONS["session_end"], msg)
+        self._emit_debug("session_end", msg)
 
     def session_ready(self, msg: str = "Session ready") -> None:
-        self._emit(ICONS["session_ready"], msg)
+        self._emit_debug("session_ready", msg)
 
     def participant_comms(self, text: str) -> None:
-        self._emit(ICONS["participant_comms"], _trunc(text))
+        self._emit("participant_comms", _trunc(text))
 
     def boss_event(self, text: str) -> None:
-        self._emit(ICONS["boss_event"], _trunc(text))
+        self._emit("boss_event", _trunc(text))
 
     def ipc_inbound(self, channel: str, **kv: object) -> None:
         extra = _kv_suffix(kv)
-        self._emit_debug(ICONS["ipc_inbound"], f"IPC recv {channel}{extra}")
+        self._emit_debug("ipc_inbound", f"IPC recv {channel}{extra}")
 
     def ipc_outbound(self, channel: str, **kv: object) -> None:
         extra = _kv_suffix(kv)
-        self._emit_debug(ICONS["ipc_outbound"], f"IPC send {channel}{extra}")
+        self._emit_debug("ipc_outbound", f"IPC send {channel}{extra}")
 
     def ipc_error(self, msg: str) -> None:
-        self._emit_debug(ICONS["ipc_error"], msg)
+        self._emit_debug("ipc_error", msg)
 
     def screenshot(self, msg: str) -> None:
-        self._emit(ICONS["screenshot"], msg)
+        self._emit("screenshot", msg)
 
     def config(self, msg: str) -> None:
-        self._emit_debug(ICONS["config"], msg)
+        self._emit_debug("config", msg)
 
     def dispatch(self, msg: str) -> None:
-        self._emit_debug(ICONS["dispatch"], msg)
+        self._emit_debug("dispatch", msg)
 
     def info(self, msg: str) -> None:
-        self._emit(ICONS["info"], msg)
+        self._emit("info", msg)
 
     def warning(self, msg: str) -> None:
-        self._emit(ICONS["warning"], msg)
+        self._emit("warning", msg)
 
     def error(self, msg: str) -> None:
-        self._emit(ICONS["error"], msg)
+        self._emit("error", msg)
 
     def shutdown(self, msg: str) -> None:
-        self._emit(ICONS["shutdown"], msg)
+        self._emit("shutdown", msg)
 
 
 def _kv_suffix(kv: dict[str, object]) -> str:
@@ -445,7 +445,7 @@ def create_end_call(
     """
 
     async def end_call() -> None:
-        LOGGER.info(f"{ICONS['lifecycle']} Initiating graceful shutdown...")
+        LOGGER.debug(f"{ICONS['lifecycle']} Initiating graceful shutdown...")
 
         # Run pre-shutdown callback (e.g., usage logging) before cleanup
         if pre_shutdown_callback is not None:
@@ -483,7 +483,7 @@ def create_end_call(
             except Exception as e:  # noqa: BLE001
                 LOGGER.error(f"{DEFAULT_ICON} Error during task cancellation: {e}")
 
-        LOGGER.info(f"{ICONS['lifecycle']} Graceful shutdown completed")
+        LOGGER.debug(f"{ICONS['lifecycle']} Graceful shutdown completed")
 
     return end_call
 
@@ -922,7 +922,10 @@ def _resolve_agent_service_url() -> str:
 
     desktop_url = SESSION_DETAILS.assistant.desktop_url
     if desktop_url:
-        return desktop_url.rstrip("/") + "/api"
+        from urllib.parse import urlparse
+
+        parsed = urlparse(desktop_url)
+        return f"{parsed.scheme}://{parsed.netloc}/api"
     return "http://localhost:3000"
 
 
@@ -952,6 +955,7 @@ def _ensure_jpeg(b64: str) -> str:
 async def capture_assistant_screenshot(
     utterance: str,
     fb_logger: FastBrainLogger | None = None,
+    agent_service_url: str | None = None,
 ) -> "ScreenshotEntry | None":
     """Capture the assistant's desktop via HTTP POST.
 
@@ -959,32 +963,95 @@ async def capture_assistant_screenshot(
     desktop URL is configured.
     """
     import aiohttp
+    import time as _time
 
     from datetime import datetime, timezone
     from unity.session_details import SESSION_DETAILS
     from unity.conversation_manager.types.screenshot import ScreenshotEntry
 
-    base_url = _resolve_agent_service_url()
+    base_url = agent_service_url or _resolve_agent_service_url()
     auth_key = SESSION_DETAILS.unify_key
+    url = f"{base_url}/screenshot"
+
+    def _log(msg: str) -> None:
+        if fb_logger:
+            fb_logger.screenshot(msg)
+        else:
+            LOGGER.warning(msg)
+
+    t_start = _time.monotonic()
+
+    # Phase-level tracing via aiohttp TraceConfig
+    phases: dict[str, float] = {}
+
+    trace_cfg = aiohttp.TraceConfig()
+
+    async def on_dns_start(session, ctx, params):
+        phases["dns_start"] = _time.monotonic()
+
+    async def on_dns_end(session, ctx, params):
+        phases["dns_ms"] = (_time.monotonic() - phases.get("dns_start", t_start)) * 1000
+
+    async def on_conn_start(session, ctx, params):
+        phases["conn_start"] = _time.monotonic()
+
+    async def on_conn_end(session, ctx, params):
+        phases["conn_ms"] = (
+            _time.monotonic() - phases.get("conn_start", t_start)
+        ) * 1000
+
+    async def on_req_start(session, ctx, params):
+        phases["req_start"] = _time.monotonic()
+
+    async def on_req_end(session, ctx, params):
+        phases["first_byte_ms"] = (
+            _time.monotonic() - phases.get("req_start", t_start)
+        ) * 1000
+
+    trace_cfg.on_dns_resolvehost_start.append(on_dns_start)
+    trace_cfg.on_dns_resolvehost_end.append(on_dns_end)
+    trace_cfg.on_connection_create_start.append(on_conn_start)
+    trace_cfg.on_connection_create_end.append(on_conn_end)
+    trace_cfg.on_request_start.append(on_req_start)
+    trace_cfg.on_request_end.append(on_req_end)
+
     try:
         headers = {"authorization": f"Bearer {auth_key}"}
-        async with aiohttp.ClientSession() as session:
+        async with aiohttp.ClientSession(trace_configs=[trace_cfg]) as session:
             async with session.post(
-                f"{base_url}/screenshot",
+                url,
                 json={},
                 headers=headers,
                 timeout=aiohttp.ClientTimeout(total=10),
             ) as resp:
                 if resp.status >= 400:
-                    if fb_logger:
-                        fb_logger.screenshot(
-                            f"Assistant screenshot failed: HTTP {resp.status}",
-                        )
+                    body = await resp.text()
+                    total_ms = (_time.monotonic() - t_start) * 1000
+                    _log(
+                        f"Assistant screenshot failed: HTTP {resp.status} "
+                        f"url={url} total={total_ms:.0f}ms "
+                        f"dns={phases.get('dns_ms', 0):.0f}ms "
+                        f"conn={phases.get('conn_ms', 0):.0f}ms "
+                        f"first_byte={phases.get('first_byte_ms', 0):.0f}ms "
+                        f"body={body[:200]}",
+                    )
                     return None
+                t_before_read = _time.monotonic()
                 data = await resp.json()
+                read_ms = (_time.monotonic() - t_before_read) * 1000
+                total_ms = (_time.monotonic() - t_start) * 1000
                 b64 = data.get("screenshot")
                 if b64:
                     b64 = _ensure_jpeg(b64)
+                    _log(
+                        f"Assistant screenshot OK: url={url} "
+                        f"total={total_ms:.0f}ms "
+                        f"dns={phases.get('dns_ms', 0):.0f}ms "
+                        f"conn={phases.get('conn_ms', 0):.0f}ms "
+                        f"first_byte={phases.get('first_byte_ms', 0):.0f}ms "
+                        f"body_read={read_ms:.0f}ms "
+                        f"b64_len={len(b64)}",
+                    )
                     return ScreenshotEntry(
                         b64=b64,
                         utterance=utterance,
@@ -992,8 +1059,14 @@ async def capture_assistant_screenshot(
                         source="assistant",
                     )
     except Exception as e:
-        if fb_logger:
-            fb_logger.screenshot(f"Assistant screenshot error: {e}")
+        total_ms = (_time.monotonic() - t_start) * 1000
+        _log(
+            f"Assistant screenshot error: {type(e).__name__}: {e} "
+            f"url={url} total={total_ms:.0f}ms "
+            f"dns={phases.get('dns_ms', 0):.0f}ms "
+            f"conn={phases.get('conn_ms', 0):.0f}ms "
+            f"first_byte={phases.get('first_byte_ms', 0):.0f}ms",
+        )
     return None
 
 

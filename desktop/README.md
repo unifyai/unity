@@ -3,7 +3,7 @@
 This directory provides a Node-based runtime that launches:
 - A lightweight Linux desktop (Xvfb + Fluxbox + x11vnc + noVNC)
 - Virtual audio devices (PipeWire/WirePlumber + PulseAudio modules)
-- The Magnitude BrowserAgent (`agent-service`)
+- The Magnitude BrowserAgent (`agent-service` and `magnitude`)
 
 ## CLI Tools
 
@@ -19,9 +19,10 @@ Watch these videos for [setup](https://www.loom.com/share/ad1a9b9c4e6e4de1a9b501
 
 - Build: `docker build -t unity-desktop -f desktop/Dockerfile .`
 - Run: `docker run --rm -p 6080:6080 -p 5900:5900 -p 3000:3000 --env-file .env unity-desktop`
-- Open `http://localhost:6080/custom.html` to view the desktop (clean UI, no sidebar/logo)
-- Control: You can now run the Actor/Controller locally with `agent_mode="desktop"` (e.g., `CodeActActor(agent_mode="desktop")` or `Browser(mode="magnitude", agent_mode="desktop")`)
+- Open `http://localhost:6080/custom.html?password=<UNIFY_KEY>` to view the desktop (clean UI, no sidebar/logo)
+- Control: Use `primitives.computer.desktop.*` for full desktop control (mouse/keyboard). Use `primitives.computer.web.new_session(visible=True/False)` to create browser sessions (visible on VM or headless).
 
 ### Troubleshooting
-- Make sure `ANTHROPIC_API_KEY`, `ORCHESTRA_URL` and `UNIFY_KEY` are in your `.env` file when starting the Docker container.
-- When running with Actor, make sure `UNIFY_KEY` and at least `ASSISTANT_EMAIL=unity.agent@unity.ai` are present in your unity `.env` for the magnitude server auth to work.
+- Make sure `UNITY_COMMS_URL`, `ORCHESTRA_URL` and `UNIFY_KEY` are in your `.env` file when starting the Docker container.
+- Also make sure `UNITY_COMMS_URL`, `ORCHESTRA_URL` and `UNIFY_KEY` are in your `agent-service/.env` file on starting the server.
+- When running with Actor, make sure `UNIFY_KEY` is present in your unity `.env` for the agent-service server auth to work.

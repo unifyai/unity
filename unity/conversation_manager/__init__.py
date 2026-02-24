@@ -78,7 +78,7 @@ async def start_async(
     if _conversation_manager is not None:
         from unity.common.hierarchical_logger import ICONS
 
-        LOGGER.info(f"{ICONS['lifecycle']} ConversationManager is already running")
+        LOGGER.debug(f"{ICONS['lifecycle']} ConversationManager is already running")
         return _conversation_manager
 
     # Import here to avoid circular imports
@@ -107,7 +107,7 @@ async def stop_async(reason: str = "manual_stop") -> None:
 
     from unity.common.hierarchical_logger import ICONS
 
-    LOGGER.info(
+    LOGGER.debug(
         f"{ICONS['lifecycle']} Stopping ConversationManager (reason: {reason})...",
     )
 
@@ -118,7 +118,7 @@ async def stop_async(reason: str = "manual_stop") -> None:
         # Clean up
         await _conversation_manager.cleanup()
 
-        LOGGER.info(f"{ICONS['lifecycle']} ConversationManager stopped")
+        LOGGER.debug(f"{ICONS['lifecycle']} ConversationManager stopped")
         _shutdown_reason = reason
     except Exception as e:
         LOGGER.error(f"{ICONS['lifecycle']} Error stopping ConversationManager: {e}")

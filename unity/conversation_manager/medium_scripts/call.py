@@ -361,6 +361,7 @@ async def entrypoint(ctx: agents.JobContext):
     # -- Screenshot state --
     screenshot_history = ScreenshotHistory()
     assistant_screen_share_active = False
+    _agent_service_url: str | None = None
     _visual_ctx_msg_id: str | None = None
 
     def _clear_visual_context(source: str | None = None) -> None:
@@ -532,7 +533,11 @@ async def entrypoint(ctx: agents.JobContext):
                     )
                     captured_any = True
             if assistant_screen_share_active and is_user_turn:
-                entry = await capture_assistant_screenshot(utterance)
+                entry = await capture_assistant_screenshot(
+                    utterance,
+                    fb_logger=_log,
+                    agent_service_url=_agent_service_url,
+                )
                 if entry:
                     _handle_screenshot(entry)
                     captured_any = True
@@ -605,10 +610,11 @@ async def entrypoint(ctx: agents.JobContext):
                 role="system",
                 content=[guidance_message],
             )
-            trigger_generate_reply(
-                reason="notification",
-                source_id=guidance_id or "guidance_notify",
-            )
+            if guidance_source != "meet_interaction":
+                trigger_generate_reply(
+                    reason="notification",
+                    source_id=guidance_id or "guidance_notify",
+                )
 
     def maybe_speak_queued() -> None:
         """Speak the next queued response when user is silent and assistant is idle.
@@ -648,7 +654,7 @@ async def entrypoint(ctx: agents.JobContext):
 
     def on_guidance(data: dict) -> None:
         """Handle guidance from conversation manager."""
-        nonlocal assistant_screen_share_active
+        nonlocal assistant_screen_share_active, _agent_service_url
         payload = data.get("payload") or data
         content = payload.get("content", "")
         # Track screen share state from meet interaction guidance.
@@ -656,6 +662,8 @@ async def entrypoint(ctx: agents.JobContext):
             low = content.lower()
             if "screen sharing is now on" in low:
                 assistant_screen_share_active = True
+                if payload.get("agent_service_url"):
+                    _agent_service_url = payload["agent_service_url"]
             elif "screen sharing is now off" in low:
                 assistant_screen_share_active = False
                 _clear_visual_context(source="assistant")

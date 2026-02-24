@@ -20,9 +20,14 @@ from unity.conversation_manager.events import (
     EmailReceived,
     Event,
     InboundPhoneUtterance,
+    InboundUnifyMeetUtterance,
     PhoneCallEnded,
     PhoneCallStarted,
     SMSReceived,
+    UnifyMeetEnded,
+    UnifyMeetReceived,
+    UnifyMeetStarted,
+    UnifyMessageReceived,
 )
 
 if TYPE_CHECKING:
@@ -58,9 +63,14 @@ class EventPublisher:
             self.cm.contact_index.set_fallback_contacts([contact])
         except Exception:
             pass
-        self.state.brain_run_in_flight = True
         self.state.last_event_published_at = time.monotonic()
         await self.cm.event_broker.publish(topic, event.to_json())
+
+    async def publish_unify_message(self, message: str) -> None:
+        contact = get_simulated_user_contact()
+        await self.publish_event(
+            UnifyMessageReceived(contact=contact, content=message),
+        )
 
     async def publish_sms(self, message: str) -> None:
         contact = get_simulated_user_contact()
@@ -88,6 +98,25 @@ class EventPublisher:
         contact = get_simulated_user_contact()
         await self.publish_event(PhoneCallEnded(contact=contact))
 
+    async def publish_meet_start(self) -> None:
+        self.state.in_meet = True
+        contact = get_simulated_user_contact()
+        await self.publish_event(
+            UnifyMeetReceived(contact=contact, room_name="sandbox-meet"),
+        )
+        await self.publish_event(UnifyMeetStarted(contact=contact))
+
+    async def publish_meet_utterance(self, text: str) -> None:
+        contact = get_simulated_user_contact()
+        await self.publish_event(
+            InboundUnifyMeetUtterance(contact=contact, content=text),
+        )
+
+    async def publish_meet_end(self) -> None:
+        self.state.in_meet = False
+        contact = get_simulated_user_contact()
+        await self.publish_event(UnifyMeetEnded(contact=contact))
+
     async def publish_meet_interaction_event(
         self,
         event_cls: type[Event],
@@ -97,13 +126,12 @@ class EventPublisher:
 
     # ── Live voice ────────────────────────────────────────────────────────
 
-    async def start_live_call(self) -> "list[str]":
-        """
-        Start a live voice call using the production voice agent over LiveKit.
+    async def _start_live_session(self, *, is_meet: bool) -> "list[str]":
+        """Spawn a LiveKit voice agent and return status lines.
 
-        Returns a list of status lines to display to the user.
-        A locally self-hosted LiveKit Agents Playground auto-connects in the
-        browser with the URL and token embedded as query params.
+        The underlying LiveKit infrastructure always uses the Unify Meet
+        event flow (UnifyMeetReceived → UnifyMeetStarted). The ``is_meet``
+        flag controls which sandbox state field is set.
         """
         from sandboxes.conversation_manager.live_voice import start_session
 
@@ -120,8 +148,10 @@ class EventPublisher:
             boss=boss,
         )
         self.state.live_voice_session = session
-        self.state.in_call = True
-        self.state.brain_run_in_flight = True
+        if is_meet:
+            self.state.in_meet = True
+        else:
+            self.state.in_call = True
         self.state.last_event_published_at = time.monotonic()
 
         browser_line = (
@@ -151,10 +181,12 @@ class EventPublisher:
             )
 
         playground_url = getattr(session, "playground_url", "") or ""
+        label = "Unify Meet" if is_meet else "Live voice call"
+        end_cmd = "end_meet" if is_meet else "end_call"
 
         return [
             "",
-            "🎙️  Live voice call started!",
+            f"🎙️  {label} started!",
             "",
             readiness_line,
             "",
@@ -164,12 +196,18 @@ class EventPublisher:
             f"  Room:      {session.room_name}",
             f"  Agent log: {session.log_file}",
             "",
-            "Speak through your browser mic; type `end_call` here when done.",
+            f"Speak through your browser mic; type `{end_cmd}` here when done.",
             "",
         ]
 
-    async def end_live_call(self) -> "list[str]":
-        """Stop the live voice call and clean up LiveKit + subprocess resources."""
+    async def start_live_call(self) -> "list[str]":
+        return await self._start_live_session(is_meet=False)
+
+    async def start_live_meet(self) -> "list[str]":
+        return await self._start_live_session(is_meet=True)
+
+    async def end_live_session(self) -> "list[str]":
+        """Stop the live voice session and clean up LiveKit + subprocess resources."""
         from sandboxes.conversation_manager.live_voice import stop_session
 
         session: LiveVoiceSession | None = getattr(
@@ -179,12 +217,13 @@ class EventPublisher:
         )
         if session is None:
             self.state.in_call = False
+            self.state.in_meet = False
             return ["⚠️ No live voice session to end."]
 
         await stop_session(cm=self.cm, session=session)
         self.state.live_voice_session = None
         self.state.in_call = False
-        self.state.brain_run_in_flight = True
+        self.state.in_meet = False
         self.state.last_event_published_at = time.monotonic()
 
-        return ["📞 Live voice call ended. Room and subprocess cleaned up."]
+        return ["🎙️ Live voice session ended. Room and subprocess cleaned up."]

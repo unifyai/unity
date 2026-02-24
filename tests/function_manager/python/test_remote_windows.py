@@ -482,39 +482,6 @@ class TestExecutePythonFunctionOnRemoteWindows:
         exec_json = exec_requests[-1].get("json", {})
         assert exec_json.get("shell_mode") == "powershell"
 
-    @_handle_project
-    @pytest.mark.asyncio
-    async def test_uses_user_session(
-        self,
-        function_manager_factory,
-        mock_session_details_windows,
-        mock_aiohttp_session,
-        skip_vm_wait,
-    ):
-        """Execution uses user_session=True for COM automation."""
-        fm = function_manager_factory()
-
-        func_data = {
-            "name": "test_func",
-            "windows_os_required": True,
-        }
-
-        await fm._execute_python_function_on_remote_windows(
-            func_data=func_data,
-            implementation=SIMPLE_WINDOWS_FUNC,
-            call_kwargs={"input_path": "/test/path"},
-        )
-
-        # Find exec request and check user_session
-        exec_requests = [
-            r for r in mock_aiohttp_session.requests if "/api/exec" in r["url"]
-        ]
-        assert len(exec_requests) >= 1
-
-        # Check that user_session is True
-        exec_json = exec_requests[-1].get("json", {})
-        assert exec_json.get("user_session") is True
-
 
 # ────────────────────────────────────────────────────────────────────────────
 # 5. Integration Tests (execute_function routing)

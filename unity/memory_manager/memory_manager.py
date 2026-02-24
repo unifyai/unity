@@ -488,7 +488,7 @@ class MemoryManager(BaseMemoryManager):
             await EVENT_BUS.register_callback(
                 event_type="ManagerMethod",
                 callback=_cb,
-                filter='evt.payload.get("source") == "ConversationManager"',
+                filter='evt.payload.get("source") == "ConversationManager" and evt.payload.get("manager") != "MemoryManager"',
                 every_n=1,
             )
         except Exception:  # pragma: no cover

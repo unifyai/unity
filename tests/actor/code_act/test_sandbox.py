@@ -1,6 +1,5 @@
 import pytest
 from pydantic import TypeAdapter
-from unittest.mock import AsyncMock, MagicMock
 
 from unity.actor.code_act_actor import CodeActActor
 from unity.actor.environments.computer import ComputerEnvironment
@@ -171,7 +170,7 @@ print(r.model_dump_json())
 async def test_sandbox_computer_tool_execution(mock_computer_primitives):
     """
     Tests that the sandbox can execute code that calls computer tools via
-    the injected primitives.computer namespace.
+    the injected primitives.computer.desktop namespace.
     """
     import types
 
@@ -180,15 +179,17 @@ async def test_sandbox_computer_tool_execution(mock_computer_primitives):
         computer=mock_computer_primitives,
     )
 
-    nav_code = "await primitives.computer.navigate('https://example.com')"
+    nav_code = "await primitives.computer.desktop.navigate('https://example.com')"
     nav_result = await sandbox.execute(nav_code)
     assert nav_result["error"] is None
-    mock_computer_primitives.navigate.assert_awaited_once_with("https://example.com")
+    mock_computer_primitives.desktop.navigate.assert_awaited_once_with(
+        "https://example.com",
+    )
 
-    act_code = "await primitives.computer.act('Click login button')"
+    act_code = "await primitives.computer.desktop.act('Click login button')"
     act_result = await sandbox.execute(act_code)
     assert act_result["error"] is None
-    mock_computer_primitives.act.assert_awaited_once_with("Click login button")
+    mock_computer_primitives.desktop.act.assert_awaited_once_with("Click login button")
 
     observe_code = """
 from pydantic import BaseModel
@@ -196,14 +197,14 @@ from pydantic import BaseModel
 class MyData(BaseModel):
     data: str
 
-result = await primitives.computer.observe('get data', response_format=MyData)
+result = await primitives.computer.desktop.observe('get data', response_format=MyData)
 print(result['data'])
 """
     observe_result = await sandbox.execute(observe_code)
     assert observe_result["error"] is None
     assert parts_to_text(observe_result["stdout"]).strip() == "observed_data"
-    mock_computer_primitives.observe.assert_awaited_once()
-    assert mock_computer_primitives.observe.call_args[0][0] == "get data"
+    mock_computer_primitives.desktop.observe.assert_awaited_once()
+    assert mock_computer_primitives.desktop.observe.call_args[0][0] == "get data"
 
 
 @pytest.mark.asyncio
@@ -427,11 +428,12 @@ async def test_get_screenshot_display_produces_image_in_stdout():
     ExecutionResult should contain an image block in stdout — the standard
     rich-output pipeline — rather than relying on post-hoc injection.
     """
-    from PIL import Image
+    from unity.function_manager.primitives.runtime import ComputerPrimitives
+    from unity.manager_registry import ManagerRegistry
 
-    mock_cp = MagicMock()
-    mock_cp.get_screenshot = AsyncMock(return_value=Image.new("RGB", (2, 2), "red"))
-    computer_env = ComputerEnvironment(mock_cp)
+    ManagerRegistry.clear()
+    cp = ComputerPrimitives(computer_mode="mock")
+    computer_env = ComputerEnvironment(cp)
     actor = CodeActActor(environments=[computer_env], timeout=30)
     try:
         tools = actor._build_tools()
@@ -442,7 +444,7 @@ async def test_get_screenshot_display_produces_image_in_stdout():
             language="python",
             state_mode="stateful",
             code=(
-                "screenshot = await primitives.computer.get_screenshot()\n"
+                "screenshot = await primitives.computer.desktop.get_screenshot()\n"
                 "display(screenshot)"
             ),
         )
@@ -474,6 +476,7 @@ async def test_get_screenshot_display_produces_image_in_stdout():
             await actor.close()
         except Exception:
             pass
+        ManagerRegistry.clear()
 
 
 @pytest.mark.asyncio

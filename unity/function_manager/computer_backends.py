@@ -1,6 +1,5 @@
 import inspect
 import subprocess
-import time
 from abc import ABC, abstractmethod
 from collections import defaultdict
 from typing import Any
@@ -10,7 +9,6 @@ import aiohttp
 from unify.utils import http
 from pydantic import BaseModel, PydanticUserError
 import asyncio
-import functools
 import websockets
 from unity.session_details import SESSION_DETAILS
 from unity.image_manager.utils import make_solid_png_base64
@@ -29,8 +27,10 @@ class ComputerBackend(ABC):
     """
     Abstract Base Class defining the interface for any computer use backend.
 
-    Supports both desktop/computer control (agent_mode="desktop") and
-    web-only automation (agent_mode="web") via vision-based agents.
+    Supports two interfaces:
+    - desktop: singleton full desktop control (mouse/keyboard via noVNC)
+    - web sessions: independent browser sessions created via factory,
+      either visible on the VM (mode=web-vm) or headless (mode=web)
     """
 
     @abstractmethod
@@ -572,21 +572,321 @@ class MockComputerBackend(ComputerBackend):
         In the mock, there are no queued commands.
         """
 
+    async def get_session(self, mode: str) -> "ComputerSession":
+        """Return a mock session for the given mode."""
+        return _MockSession(mode, self)
+
+    async def create_session(self, mode: str) -> "ComputerSession":
+        """Return a new mock session for the given mode."""
+        if mode == "desktop":
+            raise RuntimeError("Desktop mode is singleton")
+        return _MockSession(mode, self)
+
+
+class _MockSession:
+    """Lightweight mock that satisfies the ``ComputerSession`` interface."""
+
+    def __init__(self, mode: str, backend: MockComputerBackend):
+        self._mode = mode
+        self._backend = backend
+
+    async def act(self, instruction: str) -> str:
+        return self._backend._act_response
+
+    async def observe(self, query: str, response_format: Any = str) -> Any:
+        if inspect.isclass(response_format) and issubclass(response_format, BaseModel):
+            try:
+                return response_format()
+            except Exception:
+                pass
+        return self._backend._observe_response
+
+    async def query(self, query: str, response_format: Any = str) -> Any:
+        if inspect.isclass(response_format) and issubclass(response_format, BaseModel):
+            try:
+                return response_format()
+            except Exception:
+                pass
+        return self._backend._query_response
+
+    async def navigate(self, url: str) -> str:
+        self._backend._url = url
+        return "success"
+
+    async def get_screenshot(self) -> str:
+        return self._backend._screenshot
+
+    async def get_current_url(self) -> str:
+        return self._backend._url
+
+    async def get_content(self, format: str = "markdown") -> dict:
+        return {
+            "url": self._backend._url,
+            "title": "Mock",
+            "content": "Mock content",
+            "format": format,
+        }
+
+    async def get_links(
+        self,
+        same_domain: bool = True,
+        selector: str = None,
+        **kwargs,
+    ) -> dict:
+        return {
+            "base_url": self._backend._url,
+            "current_url": self._backend._url,
+            "links": [],
+            "total": 0,
+        }
+
+    async def stop(self) -> None:
+        pass
+
+    def sync_stop(self) -> None:
+        pass
+
+
+class ComputerSession:
+    """Handle for a single agent-service session (any mode).
+
+    Each instance wraps its own ``sessionId`` and ``agent_base_url``, making
+    it possible to have sessions that talk to different agent-service instances
+    (e.g., container for desktop/web-vm, local process for web).
+
+    All control is via HTTP to the agent-service; the session never touches
+    the VM's mouse or keyboard directly (except desktop mode, which drives
+    the VM display through noVNC inside the agent-service).
+    """
+
+    def __init__(self, session_id: str, mode: str, agent_base_url: str):
+        self._session_id = session_id
+        self._mode = mode
+        self._agent_base_url = agent_base_url
+
+    async def _request(
+        self,
+        method: str,
+        endpoint: str,
+        payload: dict | None = None,
+    ) -> Any:
+        url = f"{self._agent_base_url}{endpoint}"
+        if payload is None:
+            payload = {}
+        payload["sessionId"] = self._session_id
+
+        auth_key = SESSION_DETAILS.unify_key
+        headers = {"authorization": f"Bearer {auth_key}"}
+        retries = 3
+        for attempt in range(retries):
+            try:
+                async with aiohttp.ClientSession() as session:
+                    async with session.request(
+                        method,
+                        url,
+                        json=payload,
+                        headers=headers,
+                        timeout=1000,
+                    ) as resp:
+                        if resp.status >= 400:
+                            try:
+                                error_data = await resp.json()
+                                raise ComputerAgentError(
+                                    error_data.get("error", "unknown_http_error"),
+                                    error_data.get("message", "No error message."),
+                                )
+                            except ComputerAgentError:
+                                raise
+                            except Exception:
+                                raise ComputerAgentError(
+                                    "http_error",
+                                    f"HTTP {resp.status}: {await resp.text()}",
+                                )
+                        return await resp.json()
+            except aiohttp.ClientConnectorError:
+                if attempt < retries - 1:
+                    await asyncio.sleep(1.5 * (attempt + 1))
+                    continue
+                raise
+
+    def _sync_request(
+        self,
+        method: str,
+        endpoint: str,
+        payload: dict | None = None,
+    ) -> Any:
+        url = f"{self._agent_base_url}{endpoint}"
+        auth_key = SESSION_DETAILS.unify_key
+        headers = {"authorization": f"Bearer {auth_key}"}
+        if payload is None:
+            payload = {}
+        payload["sessionId"] = self._session_id
+        result = http.request(
+            method,
+            url,
+            json=payload,
+            headers=headers,
+            timeout=300,
+            raise_for_status=False,
+        )
+        if result.status_code >= 400:
+            raise RuntimeError(
+                f"Failed to reach agent-service {endpoint}: {result.status_code} {result.text[:200]}",
+            )
+        if endpoint == "/start":
+            try:
+                return result.json()
+            except Exception:
+                return {}
+        return result
+
+    async def act(self, instruction: str) -> str:
+        """Perform an autonomous action on the current page or screen."""
+        response = await self._request("POST", "/act", {"task": instruction})
+        return response.get("status", "success")
+
+    async def observe(self, query: str, response_format: Any = str) -> Any:
+        """Observe and extract information from the current page/screen."""
+        payload = {"instructions": query}
+        if inspect.isclass(response_format) and issubclass(response_format, BaseModel):
+            try:
+                schema = response_format.model_json_schema()
+            except PydanticUserError:
+                response_format.model_rebuild()
+                schema = response_format.model_json_schema()
+            payload["schema"] = schema
+        response = await self._request("POST", "/extract", payload)
+        data = response.get("data")
+        if inspect.isclass(response_format) and issubclass(response_format, BaseModel):
+            return response_format.model_validate(data)
+        return data
+
+    async def query(self, query: str, response_format: Any = str) -> Any:
+        """Query the agent's memory and action history."""
+        payload = {"query": query}
+        if inspect.isclass(response_format) and issubclass(response_format, BaseModel):
+            try:
+                schema = response_format.model_json_schema()
+            except PydanticUserError:
+                response_format.model_rebuild()
+                schema = response_format.model_json_schema()
+            payload["schema"] = schema
+        response = await self._request("POST", "/query", payload)
+        data = response.get("data")
+        if inspect.isclass(response_format) and issubclass(response_format, BaseModel):
+            return response_format.model_validate(data)
+        return data
+
+    async def navigate(self, url: str) -> str:
+        """Navigate to a specific URL."""
+        if self._mode == "desktop":
+            response = await self._request(
+                "POST",
+                "/act",
+                {"task": f"Go to the page: {url}"},
+            )
+            return response.get("status", "success")
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                response = await self._request("POST", "/nav", {"url": url})
+                return response.get("status", "success")
+            except ComputerAgentError as e:
+                if "Target page" in str(e) and attempt < max_retries - 1:
+                    await asyncio.sleep(2)
+                    continue
+                raise
+
+    async def get_screenshot(self) -> str:
+        """Capture a screenshot (base64-encoded PNG)."""
+        response = await self._request("POST", "/screenshot", {})
+        return response.get("screenshot", "")
+
+    async def get_current_url(self) -> str:
+        """Get the current URL or active window information."""
+        try:
+            response = await self._request("POST", "/state", {})
+            return response.get("url", "")
+        except Exception:
+            return ""
+
+    async def get_content(self, format: str = "markdown") -> dict:
+        """Get raw page content without LLM processing."""
+        return await self._request("POST", "/content", {"format": format})
+
+    async def get_links(
+        self,
+        same_domain: bool = True,
+        selector: str = None,
+        **kwargs,
+    ) -> dict:
+        """Extract all links from the current page."""
+        payload: dict[str, Any] = {"sameDomain": same_domain}
+        if selector:
+            payload["selector"] = selector
+        return await self._request("POST", "/links", payload)
+
+    async def stop(self) -> None:
+        """Stop this session on the agent-service."""
+        try:
+            await self._request("POST", "/stop", {})
+        except Exception:
+            pass
+
+    def sync_stop(self) -> None:
+        """Synchronous stop for use in cleanup/shutdown paths."""
+        try:
+            self._sync_request("POST", "/stop", {})
+        except Exception:
+            pass
+
 
 class MagnitudeBackend(ComputerBackend):
-    _agent_base_url = "http://localhost:3000"
-    _process = None  # Keep for process management if needed
+    """Multi-mode session factory backed by one or two agent-service instances.
+
+    ``container_url`` serves desktop and web-vm sessions (inside the Docker
+    container with Xvfb).  ``local_url`` serves headless web sessions (local
+    process on the host).  Either may be ``None`` if that tier is unavailable.
+
+    Sessions are created lazily on first access via ``get_session(mode)``.
+    """
+
+    _process = None
+
+    # Start parameters sent to /start for each mode
+    _MODE_START_PARAMS: dict[str, dict] = {
+        "desktop": {"headless": True, "mode": "desktop"},
+        "web-vm": {"headless": False, "mode": "web-vm"},
+        "web": {"headless": True, "mode": "web"},
+    }
 
     def __init__(
         self,
-        agent_server_url: str = "http://localhost:3000",
+        container_url: str | None = None,
+        local_url: str | None = None,
+        *,
+        # Legacy compat: if callers pass the old signature, translate it.
+        agent_server_url: str | None = None,
+        agent_mode: str | None = None,
         headless: bool = False,
-        agent_mode: str = "desktop",
         **kwargs,
     ):
-        self.agent_mode = agent_mode
+        # Legacy translation: old callers pass (agent_server_url, agent_mode).
+        if agent_server_url is not None and container_url is None and local_url is None:
+            if agent_mode == "web":
+                local_url = agent_server_url
+            else:
+                container_url = agent_server_url
 
-        # Network-based logging infrastructure
+        self._container_url = container_url
+        self._local_url = local_url
+
+        # Primary sessions: one per mode, created lazily
+        self._sessions: dict[str, ComputerSession] = {}
+        # Extra parallel sessions spawned via create_session()
+        self._extra_sessions: list[ComputerSession] = []
+
+        # Network-based logging infrastructure (ties to container agent-service)
         self._network_log_queue: Optional[asyncio.Queue] = None
         self._log_stream_task: Optional[asyncio.Task] = None
         self._current_capture_queue: Optional[asyncio.Queue] = None
@@ -596,77 +896,81 @@ class MagnitudeBackend(ComputerBackend):
         # Command queue infrastructure
         self._command_queue = asyncio.Queue()
         self._command_processor_task = None
-        self._active_commands = {}  # id -> (instruction, context)
+        self._active_commands = {}
         self._seq: int = 0
         self._processed_seq: int = -1
-        self._barrier_events: dict[int, asyncio.Event] = (
-            {}
-        )  # For barrier synchronization
+        self._barrier_events: dict[int, asyncio.Event] = {}
         self._log_buffer: Dict[int, List[str]] = defaultdict(list)
         self._current_processing_seq: Optional[int] = None
 
-        # Keep the simpler initialization from HEAD but add logging support
-        MagnitudeBackend._agent_base_url = agent_server_url
-        self.agent_base_url = agent_server_url
-
-        # Session ID for this backend instance
-        self._session_id: Optional[str] = None
+        # The primary base URL for websocket log streaming
+        self.agent_base_url = container_url or local_url or "http://localhost:3000"
 
         logger.info(
-            f"🔗 Connecting to Magnitude service at {self.agent_base_url} (Mode: {self.agent_mode})",
+            f"🔗 MagnitudeBackend initialized (container={self._container_url}, local={self._local_url})",
         )
 
-        try:
-            response = self._sync_request(
-                "POST",
-                "/start",
-                {"headless": headless, "mode": self.agent_mode},
-            )
-            # Extract sessionId from response
-            if isinstance(response, dict):
-                self._session_id = response.get("sessionId")
-            else:
-                # Fallback: try to parse as JSON if it's a response object
-                try:
-                    json_data = response.json() if hasattr(response, "json") else {}
-                    self._session_id = json_data.get("sessionId")
-                except Exception:
-                    pass
+    def _url_for_mode(self, mode: str) -> str:
+        if mode in ("desktop", "web-vm"):
+            if self._container_url is None:
+                raise RuntimeError(
+                    f"No container agent-service URL configured (needed for {mode!r} mode)",
+                )
+            return self._container_url
+        if mode == "web":
+            if self._local_url is None:
+                raise RuntimeError(
+                    "No local agent-service URL configured (needed for web mode)",
+                )
+            return self._local_url
+        raise ValueError(f"Unknown mode: {mode!r}")
 
-            if not self._session_id:
-                raise RuntimeError("Failed to get sessionId from /start endpoint")
-
-            logger.info(f"✅ Session created: {self._session_id}")
-            self._check_service_ready()
-
-            # Initialize the network log queue - defer creation until event loop is available
-            self._network_log_queue = None
-
-            # Mark that async initialization is needed
-            self._async_initialized = False
-
-        except Exception as e:
-            logger.info(f"❌ Failed to initialize MagnitudeBackend: {e}")
-            self.stop()
-            raise
-
-    def _check_service_ready(self):
-        deadline = time.time() + 30
-        while time.time() < deadline:
-            try:
-                r = self._sync_request("POST", "/screenshot")
-                if hasattr(r, "status_code") and r.status_code < 500:
-                    logger.info(
-                        f"✅ Magnitude service is ready on {self.agent_base_url}",
+    async def _create_session_async(self, mode: str) -> ComputerSession:
+        """Create a session asynchronously."""
+        url = self._url_for_mode(mode)
+        params = dict(self._MODE_START_PARAMS[mode])
+        auth_key = SESSION_DETAILS.unify_key
+        headers = {"authorization": f"Bearer {auth_key}"}
+        async with aiohttp.ClientSession() as s:
+            async with s.post(
+                f"{url}/start",
+                json=params,
+                headers=headers,
+                timeout=300,
+            ) as resp:
+                if resp.status >= 400:
+                    raise RuntimeError(
+                        f"Failed to create {mode} session: {resp.status}",
                     )
-                    break
-            except Exception:
-                time.sleep(0.5)
-        else:
-            self.stop()
+                data = await resp.json()
+        session_id = data.get("sessionId")
+        if not session_id:
+            raise RuntimeError(f"Failed to get sessionId for {mode} session")
+        session = ComputerSession(session_id, mode, url)
+        logger.info(f"✅ Created {mode} session {session_id}")
+        return session
+
+    async def get_session(self, mode: str) -> ComputerSession:
+        """Get or lazily create the primary session for the given mode."""
+        if mode in self._sessions:
+            return self._sessions[mode]
+        session = await self._create_session_async(mode)
+        self._sessions[mode] = session
+        return session
+
+    async def create_session(self, mode: str) -> ComputerSession:
+        """Spawn an additional parallel session (web/web-vm only).
+
+        Desktop mode is singleton (one mouse, one keyboard) and cannot be
+        duplicated.  Use ``get_session("desktop")`` for the single desktop session.
+        """
+        if mode == "desktop":
             raise RuntimeError(
-                f"Magnitude agent failed to become ready within 30 seconds on {self.agent_base_url}",
+                "Desktop mode is singleton -- cannot create additional sessions",
             )
+        session = await self._create_session_async(mode)
+        self._extra_sessions.append(session)
+        return session
 
     async def _ensure_async_initialized(self):
         """
@@ -863,20 +1167,15 @@ class MagnitudeBackend(ComputerBackend):
         endpoint: str,
         payload: dict | None = None,
     ) -> Any:
-        url = f"{MagnitudeBackend._agent_base_url}{endpoint}"
-
+        """Backend-level async HTTP helper (no session ID injection)."""
+        url = f"{self.agent_base_url}{endpoint}"
         if payload is None:
             payload = {}
-        if self._session_id and endpoint != "/start":  # /start doesn't need sessionId
-            payload["sessionId"] = self._session_id
-
         retries = 3
         for attempt in range(retries):
             try:
                 auth_key = SESSION_DETAILS.unify_key
-                headers = {
-                    "authorization": f"Bearer {auth_key}",
-                }
+                headers = {"authorization": f"Bearer {auth_key}"}
                 async with aiohttp.ClientSession() as session:
                     async with session.request(
                         method,
@@ -888,286 +1187,91 @@ class MagnitudeBackend(ComputerBackend):
                         if resp.status >= 400:
                             try:
                                 error_data = await resp.json()
-                                error_type = error_data.get(
-                                    "error",
-                                    "unknown_http_error",
+                                raise ComputerAgentError(
+                                    error_data.get("error", "unknown_http_error"),
+                                    error_data.get("message", "No error message."),
                                 )
-                                message = error_data.get("message", "No error message.")
-                                raise ComputerAgentError(error_type, message)
-                            except Exception as e:
+                            except ComputerAgentError:
+                                raise
+                            except Exception:
                                 raise ComputerAgentError(
                                     "service_error",
                                     f"Server error: {resp.status} - {await resp.text()}",
-                                ) from e
+                                )
                         return await resp.json()
-            except aiohttp.ClientConnectorError as e:
+            except aiohttp.ClientConnectorError:
                 if attempt < retries - 1:
                     await asyncio.sleep(1.5 * (attempt + 1))
                     continue
                 raise
 
-    def _sync_request(
-        self,
-        method: str,
-        endpoint: str,
-        payload: dict | None = None,
-    ) -> Any:
-        try:
-            url = f"{MagnitudeBackend._agent_base_url}{endpoint}"
-            auth_key = SESSION_DETAILS.unify_key
-            headers = {
-                "authorization": f"Bearer {auth_key}",
-            }
+    # ── ABC-required methods (delegate to first available session) ──────
 
-            if payload is None:
-                payload = {}
-            if (
-                hasattr(self, "_session_id")
-                and self._session_id
-                and endpoint != "/start"
-            ):
-                payload["sessionId"] = self._session_id
-
-            result = http.request(
-                method,
-                url,
-                json=payload,
-                headers=headers,
-                timeout=300,
-                raise_for_status=False,
-            )
-            if result.status_code >= 400:
-                raise RuntimeError(
-                    f"Failed to reach agent-service {endpoint}: {result.status_code} {result.text[:200]}",
-                )
-            # Return JSON for /start to extract sessionId, otherwise return result object
-            if endpoint == "/start":
-                try:
-                    return result.json()
-                except Exception:
-                    return {}
-            return result
-        except Exception as e:
-            raise RuntimeError(f"Could not reach agent-service {endpoint}: {e}")
-
-    async def act(
-        self,
-        instruction: str,
-        wait: bool = True,
-        context: dict = None,
-        override_cache: bool = False,
-    ) -> Any:
-        """
-        Executes a high-level computer task using the Magnitude agent.
-
-        This tool is **autonomous and can perform multiple steps** (e.g., typing, clicking, scrolling) to achieve the goal described in the instruction. It operates based on a visual understanding of the current web view.
-
-        Args:
-            instruction (str): A high-level, natural-language command describing the desired outcome.
-            wait (bool): If True (default), the function will block and wait for the action to
-                        complete before returning. If False,
-                        the command is added to a queue for background execution, and
-                        the function returns immediately.
-            context (dict): Internal metadata for command tracking.
-            override_cache (bool): If True, deletes any matching cache entries before execution,
-                                  allowing the action to populate a fresh cache entry. Useful
-                                  when cache entries are corrupted or inefficient.
-
-        ### Non-Blocking Example (`wait=False`)
-        This is ideal for sequences of actions where the plan doesn't need immediate feedback.
-        ```python
-        # The plan queues up all actions and continues its own execution
-        # without waiting for the agent to finish each one.
-        await primitives.computer.act("Type 'testuser' into the username field", wait=False)
-        await primitives.computer.act("Type 'password123' into the password field", wait=False)
-        await primitives.computer.act("Click the 'Login' button", wait=False)
-        ```
-
-        ### Blocking Example (`wait=True`, Default)
-        Use this when the outcome of an action is required for a subsequent decision in the plan.
-        ```python
-        # The plan pauses until the button click is complete and the new page has loaded.
-        await primitives.computer.act("Click the 'Proceed to Checkout' button", wait=True)
-        # Now that we've waited, we can safely observe the new page state.
-        cart_total = await primitives.computer.observe("What is the final total?")
-        ```
-
-        Examples:
-            # ✅ Good Example (Multi-Step Task)
-            - instruction: "Log into the account using username 'testuser' and password 'password123'."
-            # The agent will find the fields, type, and click the login button.
-
-            # ✅ Good Example (Vague Goal, Agent figures it out)
-            - instruction: "Find the cheapest blue t-shirt on the page and add it to the cart."
-            # The agent will visually scan, find the item, and click the corresponding 'Add to Cart' button.
-
-            # ✅ Good Example (Clear Action)
-            - instruction: "Click the 'Promotions' link in the navigation bar."
-
-            # ❌ Bad Example (Too low-level)
-            # Avoid breaking down simple actions. Let the agent handle it.
-            - instruction: "Move the mouse to coordinate 250, 400, then click."
-        """
-        await self._ensure_async_initialized()
-        context = context or {}
-        self._seq += 1
-        seq = self._seq
-        command_id = f"{context.get('function_name', 'unknown')}_{seq}"
-
-        bound_func = functools.partial(
-            self._request,
-            "POST",
-            "/act",
-            {"task": instruction, "override_cache": override_cache},
+    async def _default_session(self) -> ComputerSession:
+        """Return the first available primary session (for ABC backward compat)."""
+        for mode in ("web-vm", "desktop", "web"):
+            if mode in self._sessions:
+                return self._sessions[mode]
+        raise RuntimeError(
+            "No sessions created yet. Use get_session(mode) to create one.",
         )
 
-        future = asyncio.get_event_loop().create_future() if wait else None
-        self._active_commands[command_id] = (instruction, context)
-        logger.info(
-            f"🧾 Queueing command seq={seq}, id={command_id}, wait={wait}, task='{instruction[:120]}'",
-        )
-        await self._command_queue.put((seq, command_id, bound_func, [], {}, future))
+    async def act(self, instruction: str, **kwargs) -> str:
+        s = await self._default_session()
+        return await s.act(instruction)
 
-        if wait:
-            response = await future
-            return response.get("status", "success")
-        else:
-            return "Command queued."
+    async def observe(self, query: str, response_format: Any = str, **kwargs) -> Any:
+        s = await self._default_session()
+        return await s.observe(query, response_format)
+
+    async def query(self, query: str, response_format: Any = str, **kwargs) -> Any:
+        s = await self._default_session()
+        return await s.query(query, response_format)
+
+    async def get_screenshot(self) -> str:
+        s = await self._default_session()
+        return await s.get_screenshot()
+
+    async def get_current_url(self) -> str:
+        s = await self._default_session()
+        return await s.get_current_url()
+
+    async def navigate(self, url: str, **kwargs) -> str:
+        s = await self._default_session()
+        return await s.navigate(url)
+
+    async def get_links(
+        self,
+        same_domain: bool = True,
+        selector: str = None,
+        **kwargs,
+    ) -> dict:
+        s = await self._default_session()
+        return await s.get_links(same_domain, selector)
+
+    async def get_content(self, format: str = "markdown", **kwargs) -> dict:
+        s = await self._default_session()
+        return await s.get_content(format)
 
     async def interrupt_current_action(self):
-        """Sends a non-destructive request to interrupt the agent's current action loop."""
         try:
             await self._request("POST", "/interrupt_action")
         except Exception as e:
-            logger.info(
-                f"⚠️ Warning: Failed to send interrupt request. The action may continue in the background. Error: {e}",
-            )
+            logger.info(f"Warning: Failed to send interrupt request: {e}")
 
     async def pause(self) -> None:
-        """Pauses the agent's action loop at the next safe checkpoint."""
         try:
             await self._request("POST", "/pause")
         except Exception as e:
-            logger.info(
-                f"⚠️ Warning: Failed to send pause request. Error: {e}",
-            )
+            logger.info(f"Warning: Failed to send pause request: {e}")
 
     async def resume(self) -> None:
-        """Resumes a paused agent's action loop."""
         try:
             await self._request("POST", "/resume")
         except Exception as e:
-            logger.info(
-                f"⚠️ Warning: Failed to send resume request. Error: {e}",
-            )
-
-    async def observe(
-        self,
-        query: str,
-        response_format: Any = str,
-        wait: bool = True,
-        context: dict = None,
-        bypass_dom_processing: bool = False,
-    ) -> Any:
-        """
-        Extracts structured information from the current page/screen using the Magnitude agent.
-
-        This is your primary tool for perception. The agent uses a vision-language model to
-        analyze the page, so its success depends entirely on the quality and clarity of your `query`.
-
-        This is a perception tool for what is *currently visible* in the web view or
-        on-screen desktop. It is NOT a general-purpose data access tool.
-
-        **Key Principles for an Effective Query:**
-
-        1.  **Be Specific and Descriptive**: Don't just ask "what's on the page." Guide the agent.
-            Instead of "get the product details," prefer "Extract the product name from the top, the price
-            listed in bold, and the author's name below the title."
-
-        2.  **Provide a Strategy for Non-Textual Elements**: For visual elements like star
-            ratings, progress bars, or icons, you MUST provide a method for interpretation.
-            - **Good (Star Rating):** "For the 'star_rating', visually count the number of filled yellow
-              stars and provide it as a number (e.g., 4.0). If you see a half-filled star, add 0.5."
-            - **Good (Active Icon):** "Determine which navigation link is active by identifying the one
-              that is underlined or has a different text color."
-            - **Bad:** "Get the star rating." (This will fail if the rating is not plain text).
-
-        3.  **Request Specific Data Types**: Guide the model to return the correct data type to
-            ensure successful validation against your Pydantic schema.
-            - **Good:** "Extract the number of reviews as an integer."
-            - **Good:** "Get the price as a floating-point number, without the currency symbol."
-
-        4.  **Leverage Pydantic for Structure**: For any non-trivial extraction (more than a single
-            string), always use a Pydantic model. This forces the agent to return clean,
-            structured, and validated data.
-
-        5.  **Embrace Optional Fields for Robustness**: Web pages are unpredictable; an element
-            might be missing. Define fields that might not always be present as `Optional` in
-            your Pydantic model (e.g., `rating: Optional[float]`) to prevent failures.
-
-        6.  **Resolve Visual Ambiguity**: If the page presents conflicting information,
-            your query MUST instruct the model on how to resolve the conflict. Prioritize the
-            element that reflects the true state of the page.
-            - **Scenario:** A recipe page has a "2X" serving size button selected, but nearby static
-              text says "Original recipe (1X) yields 6 servings".
-            - **Bad Query:** "Get the number of servings." (The model may incorrectly read the static text).
-            - **Good Query:** "Determine the active serving size multiplier. CRITICAL: Identify which
-              multiplier button ('1/2X', '1X', '2X') is visually selected (e.g., has a checkmark or
-              filled background). IGNORE any nearby static text like 'Original recipe yields...'."
-
-        **✅ Good Queries (Following the Principles):**
-        - **(Principles 1, 4, 5):** "List all user comments. For each comment, extract the author's
-          name and the comment text. Also, extract the date it was posted, but note that the date
-          may be missing for some older comments."
-        - **(Principles 1, 2, 3, 4, 6):** "For every product on the page, extract the product name,
-          the price as a float, and the star rating. For the rating, visually count the filled stars
-          and return it as a number (e.g., 4.5). For the active sorting option, identify which one
-          is visually highlighted in blue."
-
-        **❌ Bad Queries (HTML/DOM Specific):**
-        - "Get the href attribute of the 'About Us' link."
-        # Instead, ask: "What is the destination URL of the 'About Us' link?"
-
-        Args:
-            query: The natural-language instruction for what to extract and, if necessary, a
-                   strategy for visual interpretation.
-            response_format: Optional. A Pydantic model to structure the output.
-                             **Highly recommended for reliable extraction.**
-            bypass_dom_processing: Optional. If True, skips DOM manipulation and uses
-                                   screenshot-only extraction. This preserves the original
-                                   page state but may be less accurate for text-heavy content.
-        """
-        await self._ensure_async_initialized()
-
-        await self.barrier()
-
-        def _safe_model_json_schema(model: type[BaseModel]):
-            try:
-                return model.model_json_schema()
-            except PydanticUserError:
-                model.model_rebuild()
-                return model.model_json_schema()
-
-        payload = {"instructions": query}
-        if inspect.isclass(response_format) and issubclass(response_format, BaseModel):
-            payload["schema"] = _safe_model_json_schema(response_format)
-        if bypass_dom_processing:
-            payload["bypassDomProcessing"] = True
-
-        response = await self._request("POST", "/extract", payload)
-        data = response.get("data")
-
-        if inspect.isclass(response_format) and issubclass(response_format, BaseModel):
-            return response_format.model_validate(data)
-        return data
+            logger.info(f"Warning: Failed to send resume request: {e}")
 
     async def clear_pending_commands(self, run_id: int):
-        """
-        Removes all queued and active commands that were issued by a specific run_id.
-        This is used to prevent stale commands from an old execution run from executing
-        after the run has been cancelled and a new one has started.
-        """
-        # Drain existing queue items and requeue only those not from the cancelled run.
         kept_items = []
         removed_count = 0
         original_size = self._command_queue.qsize()
@@ -1179,160 +1283,18 @@ class MagnitudeBackend(ComputerBackend):
             if context.get("run_id") != run_id:
                 kept_items.append((seq, command_id, func, args, kwargs, future))
             else:
-                logger.info(
-                    f"Cancelling queued command from cancelled run_id={run_id}: {self._active_commands.get(command_id, ['unknown'])[0]}",
-                )
                 if future:
                     future.cancel()
                 self._active_commands.pop(command_id, None)
                 removed_count += 1
-
-        # Requeue the kept items back onto the same queue to avoid swapping the queue object
         for item in kept_items:
             self._command_queue.put_nowait(item)
-
         logger.info(
-            f"🧹 Cleared {removed_count}/{original_size} queued commands for run_id={run_id}.",
+            f"Cleared {removed_count}/{original_size} queued commands for run_id={run_id}.",
         )
 
-    async def query(self, query: str, response_format: Any = str) -> Any:
-        """
-        Asks questions about the agent's action history and memory context.
-
-        This method allows you to query the agent's understanding of what it has done and observed.
-        It does not interact with the live webpage but rather introspects the agent's memory.
-
-        **Key characteristics**:
-        - **Memory-focused**: Uses the agent's accumulated memory and context from past actions.
-        - **Historical analysis**: Analyzes what happened during previous `act()` calls.
-        - **Context-aware**: Includes full agent memory context in the query.
-        - **No fresh content**: Doesn't capture new page content, works with existing observations.
-
-        Args:
-            query: The natural-language question to ask about the agent's history.
-            response_format: Optional. A Pydantic model to structure the output.
-
-        **✅ Good Queries (What the agent has done):**
-        - "Did the login attempt succeed?"
-        - "What were the steps you took to add the item to the cart?"
-        - "Summarize the actions you have performed so far."
-
-        **❌ Bad Queries (Requires live page content):**
-        - "What is the current price of the item on the page?" (Use `observe` for this)
-        - "Click the 'Submit' button." (Use `act` for this)
-        """
-        await self._ensure_async_initialized()
-
-        def _safe_model_json_schema(model: type[BaseModel]):
-            try:
-                return model.model_json_schema()
-            except PydanticUserError:
-                model.model_rebuild()
-                return model.model_json_schema()
-
-        payload = {"query": query}
-        if inspect.isclass(response_format) and issubclass(
-            response_format,
-            BaseModel,
-        ):
-            payload["schema"] = _safe_model_json_schema(response_format)
-
-        response = await self._request("POST", "/query", payload)
-        data = response.get("data")
-
-        if inspect.isclass(response_format) and issubclass(
-            response_format,
-            BaseModel,
-        ):
-            return response_format.model_validate(data)
-        return data
-
-    async def get_screenshot(self) -> str:
-        await self._ensure_async_initialized()
-        response = await self._request("POST", "/screenshot")
-        return response.get("screenshot")
-
-    async def get_current_url(self) -> str:
-        try:
-            response = await self._request("POST", "/state")
-            return response.get("url", "")
-        except Exception as e:
-            return ""
-
-    async def get_links(
-        self,
-        same_domain: bool = True,
-        selector: str = None,
-        **kwargs,
-    ) -> dict:
-        """
-        Extract all links from the current page.
-
-        Args:
-            same_domain: If True, only return links from the same domain.
-            selector: Optional CSS selector (default: 'a[href]').
-
-        Returns:
-            dict with keys:
-            - base_url: Origin of current page
-            - current_url: Full URL of current page
-            - links: List of {href, text} objects
-            - total: Number of links found
-        """
-        await self._ensure_async_initialized()
-        payload = {"sameDomain": same_domain}
-        if selector:
-            payload["selector"] = selector
-        return await self._request("POST", "/links", payload)
-
-    async def get_content(self, format: str = "markdown", **kwargs) -> dict:
-        """
-        Get raw page content without LLM processing.
-
-        Args:
-            format: 'markdown' (default), 'text', or 'html'
-
-        Returns:
-            dict with keys:
-            - url: Current page URL
-            - title: Page title
-            - content: Extracted content in requested format
-            - format: The format used
-        """
-        await self._ensure_async_initialized()
-        return await self._request("POST", "/content", {"format": format})
-
-    async def navigate(self, url: str, wait: bool = True, context: dict = None) -> str:
-        """Navigates to a given URL."""
-        await self._ensure_async_initialized()
-        logger.info(f"🐍 PYTHON: Navigating to URL: {url}")
-
-        if self.agent_mode == "desktop":
-            # Controlling virtual desktop
-            response = await self._request(
-                "POST",
-                "/act",
-                {"task": f"Go to the page: {url}"},
-            )
-            return response.get("status", "success")
-
-        max_retries = 3
-        for attempt in range(max_retries):
-            try:
-                response = await self._request("POST", "/nav", {"url": url})
-                return response.get("status", "success")
-            except ComputerAgentError as e:
-                if "Target page" in str(e) and attempt < max_retries - 1:
-                    logger.info(
-                        f"⚠️ Navigation failed due to closed page, retrying (attempt {attempt + 1}/{max_retries})...",
-                    )
-                    await asyncio.sleep(2)
-                    continue
-                raise
-
     def stop(self):
-        """Stops the Node.js service subprocess and cancels background tasks."""
-        # Cancel the new asyncio tasks
+        """Stops all sessions and cancels background tasks."""
         if self._log_stream_task and not self._log_stream_task.done():
             self._log_stream_task.cancel()
         if self._log_consumer_task and not self._log_consumer_task.done():
@@ -1340,18 +1302,14 @@ class MagnitudeBackend(ComputerBackend):
         if self._command_processor_task and not self._command_processor_task.done():
             self._command_processor_task.cancel()
 
-        try:
-            if self._session_id:
-                self._sync_request("POST", "/stop", {"sessionId": self._session_id})
-                logger.info(f"✅ Stopped session {self._session_id}")
-        except Exception as e:
-            # Don't fail stop() if the request fails
-            logger.info(f"Warning: Failed to send stop request: {e}")
+        for session in list(self._sessions.values()) + self._extra_sessions:
+            session.sync_stop()
+        self._sessions.clear()
+        self._extra_sessions.clear()
 
-        # If the backend started the process, terminate it
         if MagnitudeBackend._process:
             logger.info(
-                f"🛑 Stopping Magnitude agent service (PID: {MagnitudeBackend._process.pid})...",
+                f"Stopping Magnitude agent service (PID: {MagnitudeBackend._process.pid})...",
             )
             MagnitudeBackend._process.terminate()
             try:
@@ -1361,15 +1319,6 @@ class MagnitudeBackend(ComputerBackend):
             MagnitudeBackend._process = None
 
     async def await_sequence_logs(self, seq: int) -> list[str]:
-        """
-        Waits until the command with the given sequence number has been processed,
-        and returns the logs generated during its execution.
-        """
-        # Wait until the command is processed
         while self._processed_seq < seq:
-            # If the command is not even in the queue or active map, and we are past it, it might be lost/skipped
-            # But here we just wait for processed_seq to advance.
-            # We can add a timeout or check if the command exists if needed.
             await asyncio.sleep(0.1)
-
         return self._log_buffer.get(seq, [])

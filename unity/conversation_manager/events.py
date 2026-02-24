@@ -299,6 +299,7 @@ class CallGuidance(Event):
     response_text: str = ""
     should_speak: bool = False
     source: str = ""
+    agent_service_url: str = ""
 
 
 @dataclass
@@ -331,6 +332,7 @@ class EmailReceived(Event):
 @dataclass
 class SMSSent(Event):
     topic: ClassVar[str | None] = "app:comms:sms_sent"
+    content_logged: ClassVar[bool] = True
 
     contact: dict
     content: str
@@ -345,6 +347,7 @@ class UnifyMessageSent(Event):
     """
 
     topic: ClassVar[str | None] = "app:comms:unify_message_sent"
+    content_logged: ClassVar[bool] = True
 
     contact: dict
     content: str
@@ -361,6 +364,7 @@ class EmailSent(Event):
     """
 
     topic: ClassVar[str | None] = "app:comms:email_sent"
+    content_logged: ClassVar[bool] = True
 
     contact: dict
     subject: str

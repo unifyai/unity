@@ -395,7 +395,7 @@ class SingleFunctionActor(BaseActor):
         function_manager: Optional["FunctionManager"] = None,
         headless: bool = True,
         computer_mode: str = "magnitude",
-        agent_mode: str = "desktop",
+        agent_mode: str = "web-vm",
         agent_server_url: str | None = None,
         *,
         environments: Optional[list] = None,
@@ -411,9 +411,9 @@ class SingleFunctionActor(BaseActor):
                             uses the singleton.
             headless: Whether to run in headless mode.
             computer_mode: Computer backend mode ("magnitude" or "mock").
-            agent_mode: Agent mode for ComputerPrimitives ("web" or "desktop").
-            agent_server_url: URL for the agent server. For desktop mode, pass the
-                external VM's URL.
+            agent_mode: Deprecated. All three modes (desktop, web-vm, web) are
+                now active simultaneously via sub-namespaces.
+            agent_server_url: URL for the container agent-service.
             environments: Optional list of execution environments (accepted for
                 compatibility with CodeActActor / BaseActor but only used to
                 extract computer primitives if *computer_primitives* is None).
@@ -431,9 +431,7 @@ class SingleFunctionActor(BaseActor):
             self._computer_primitives = computer_primitives
         elif self._computer_primitives is None:
             self._computer_primitives = ComputerPrimitives(
-                headless=headless,
                 computer_mode=computer_mode,
-                agent_mode=agent_mode,
                 agent_server_url=agent_server_url,
             )
 

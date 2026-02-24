@@ -13,22 +13,15 @@ from unity.function_manager.primitives import ComputerPrimitives, get_registry
 
 
 class ComputerEnvironment(BaseEnvironment):
-    """Computer (web/desktop) control environment backed by `ComputerPrimitives`.
+    """Computer control environment backed by ``ComputerPrimitives``.
 
-    Exposes web control methods like `primitives.computer.act(instruction)` for use inside
-    generated plan code.  Lives under the unified ``primitives`` namespace alongside
-    state managers and actor delegation.
+    Exposes two interfaces for generated plan code:
 
-    Parameters
-    ----------
-    computer_primitives : ComputerPrimitives
-        The backend instance to wrap.
-    allowed_methods : set[str] | None
-        Optional set of fully-qualified method names to expose (e.g.,
-        ``{"primitives.computer.act", "primitives.computer.observe"}``).
-        When set, only these methods appear in ``get_tools()`` and
-        ``get_prompt_context()``.  When ``None`` (default), all methods
-        are exposed.
+    - ``primitives.computer.desktop.*``  -- singleton desktop control (mouse/keyboard)
+    - ``primitives.computer.web.new_session(visible=...)``  -- factory for browser sessions
+
+    Lives under the unified ``primitives`` namespace alongside state managers
+    and actor delegation.
     """
 
     NAMESPACE = "primitives"
@@ -51,8 +44,6 @@ class ComputerEnvironment(BaseEnvironment):
                 scoped_managers=frozenset({self.MANAGER_ALIAS}),
             ),
         )
-        # Pre-seed so primitives.computer returns the caller-provided instance
-        # (important when the instance is a mock or pre-configured singleton).
         primitives._managers[self.MANAGER_ALIAS] = computer_primitives
         super().__init__(
             instance=primitives,
@@ -69,13 +60,7 @@ class ComputerEnvironment(BaseEnvironment):
         return self._instance
 
     def get_tools(self) -> Dict[str, ToolMetadata]:
-        # Explicit categorization avoids brittle substring heuristics.
-        # (This list should track the actual public methods exposed on ComputerPrimitives.)
-        impure = {"navigate", "act"}
-        steerable = (
-            set()
-        )  # computer primitives sometimes return handles, but actor proxies detect dynamically
-
+        impure = {"navigate", "act", "new_session"}
         tool_names = [
             "navigate",
             "act",
@@ -88,61 +73,124 @@ class ComputerEnvironment(BaseEnvironment):
 
         registry = get_registry()
         tools: Dict[str, ToolMetadata] = {}
+
+        # Desktop namespace -- singleton, full method set
+        desktop_ns = self._computer_primitives.desktop
         for name in tool_names:
-            fq_name = f"{self.NAMESPACE}.{self.MANAGER_ALIAS}.{name}"
+            fq_name = f"{self.NAMESPACE}.{self.MANAGER_ALIAS}.desktop.{name}"
             if (
                 self._allowed_methods is not None
                 and fq_name not in self._allowed_methods
             ):
                 continue
-            if not hasattr(self._computer_primitives, name):
+            fn = getattr(desktop_ns, name, None)
+            if fn is None or not callable(fn):
                 continue
-            fn = getattr(self._computer_primitives, name)
-            if not callable(fn):
-                continue
-
             try:
                 signature = str(inspect.signature(fn))
             except Exception:
                 signature = None
-
             tools[fq_name] = ToolMetadata(
                 name=fq_name,
                 is_impure=name in impure,
-                is_steerable=name in steerable,
+                is_steerable=False,
                 docstring=getattr(fn, "__doc__", None),
                 signature=signature,
                 function_id=registry.get_function_id(self.MANAGER_ALIAS, name),
                 function_context="primitive",
             )
 
+        # Web factory -- new_session() only
+        web_factory = self._computer_primitives.web
+        fq_name = f"{self.NAMESPACE}.{self.MANAGER_ALIAS}.web.new_session"
+        if self._allowed_methods is None or fq_name in self._allowed_methods:
+            fn = web_factory.new_session
+            try:
+                signature = str(inspect.signature(fn))
+            except Exception:
+                signature = None
+            tools[fq_name] = ToolMetadata(
+                name=fq_name,
+                is_impure=True,
+                is_steerable=False,
+                docstring=getattr(fn, "__doc__", None),
+                signature=signature,
+                function_id=registry.get_function_id(self.MANAGER_ALIAS, "new_session"),
+                function_context="primitive",
+            )
+
         return tools
 
     def get_prompt_context(self) -> str:
-        """Generate self-contained prompt context: rules, method docs, and examples."""
+        """Generate prompt context with desktop + web factory guidance."""
         parts: list[str] = []
 
         parts.append(
-            "### Viewing Computer State\n\n"
-            "To see the current screen state after a computer action, call "
-            "`get_screenshot()` and `display()` the result:\n\n"
+            "### Computer Control\n\n"
+            "Two interfaces for controlling browsers and the desktop:\n\n"
+            "#### `primitives.computer.desktop` -- Desktop Control (singleton)\n\n"
+            "Controls the full VM desktop via mouse and keyboard.  There is "
+            "exactly one desktop session -- it persists for the lifetime of the "
+            "assistant.  Suitable for native desktop apps, terminal operations, "
+            "and also straightforward single-site web browsing.\n\n"
             "```python\n"
-            "screenshot = await primitives.computer.get_screenshot()\n"
-            "display(screenshot)\n"
+            "await primitives.computer.desktop.act('Open the Terminal app')\n"
+            "await primitives.computer.desktop.navigate('https://example.com')\n"
+            "display(await primitives.computer.desktop.get_screenshot())\n"
             "```\n\n"
-            "`get_screenshot()` returns a PIL Image. `display()` renders it as "
+            "#### `primitives.computer.web.new_session()` -- Web Sessions (factory)\n\n"
+            "Creates independent browser sessions.  Each session is an isolated "
+            "Chromium process with its own cookies, storage, and browsing context.  "
+            "Multiple sessions can run in parallel.  Always call `stop()` when done.\n\n"
+            "```python\n"
+            "session = await primitives.computer.web.new_session()  # visible=True by default\n"
+            "await session.navigate('https://example.com')\n"
+            "data = await session.observe('Extract the main heading')\n"
+            "display(await session.get_screenshot())\n"
+            "await session.stop()\n"
+            "```\n\n"
+            "The `visible` parameter controls where the browser runs:\n"
+            "- `visible=True` (default): browser window appears on the VM desktop "
+            "(user can see it via screen sharing / noVNC).  Controlled via CDP -- "
+            "no mouse or keyboard involved.\n"
+            "- `visible=False`: headless browser on the host.  Faster, but "
+            "invisible to the user.\n\n"
+            "Session handles have the same methods as the desktop namespace: "
+            "`act`, `observe`, `query`, `navigate`, `get_links`, `get_content`, "
+            "`get_screenshot`, plus `stop()`.\n\n"
+            "#### When to Consider Each\n\n"
+            "- **Simple single-site browsing** -- `primitives.computer.desktop` "
+            "works fine and is the simplest option.\n"
+            "- **Multiple sites in parallel, or isolated browser state** -- use "
+            "`web.new_session()`.  Each session has fresh cookies/storage and "
+            "runs independently.\n"
+            "- **Quick background lookup where the user doesn't need to see** -- "
+            "`web.new_session(visible=False)` for speed.\n"
+            "- **Interactive session where the user is watching and you need "
+            "multiple concurrent browser tasks** -- "
+            "`web.new_session(visible=True)` so the user can observe each "
+            "browser window.\n"
+            "- **Native desktop apps, terminal, file operations** -- "
+            "`primitives.computer.desktop`.",
+        )
+
+        parts.append(
+            "### Viewing Computer State\n\n"
+            "`get_screenshot()` returns a PIL Image.  `display()` renders it as "
             "visual output you can inspect on the next turn.\n\n"
-            "Use **stateful sessions** for multi-step computer workflows "
-            "(e.g., navigate then observe).",
+            "```python\n"
+            "# Desktop\n"
+            "display(await primitives.computer.desktop.get_screenshot())\n\n"
+            "# Web session\n"
+            "display(await session.get_screenshot())\n"
+            "```",
         )
 
         parts.append(
             "### Progress Notifications for Computer Actions\n\n"
-            "- Treat `primitives.computer.*` calls as potentially long-running by default.\n"
-            "- Emit `notify({...})` before each major computer step (for example: navigate, act, observe).\n"
-            "- If you await a computer step and continue with more work, emit a completion update with concrete progress.\n"
-            "- Keep notification messages user-facing and high-level (what was accomplished and what happens next).\n"
-            "- Avoid low-level diagnostics in notifications (internal IDs, schema/debug details, stack traces).",
+            "- Treat computer calls as potentially long-running by default.\n"
+            "- Emit `notify({...})` before each major computer step.\n"
+            "- Keep notification messages user-facing and high-level.",
         )
 
         if self._allowed_methods is not None:
@@ -166,10 +214,11 @@ class ComputerEnvironment(BaseEnvironment):
         return "\n\n".join(p for p in parts if p and p.strip())
 
     async def capture_state(self) -> Dict[str, Any]:
-        """Captures visual computer state (screenshot + URL)."""
+        """Captures visual computer state from the desktop session."""
         try:
-            screenshot = await self._computer_primitives.backend.get_screenshot()
-            url = await self._computer_primitives.backend.get_current_url()
+            session = await self._computer_primitives.backend.get_session("desktop")
+            screenshot = await session.get_screenshot()
+            url = await session.get_current_url()
             return {
                 "type": "visual",
                 "screenshot": screenshot,

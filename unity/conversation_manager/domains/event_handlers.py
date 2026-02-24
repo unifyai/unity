@@ -211,11 +211,16 @@ async def _(
     # The fast brain starts with all flags as False and relies on guidance delivery,
     # so any state that was already active needs to be pushed now.
     if cm.assistant_screen_share_active and cm.call_manager._socket_server:
+        from unity.conversation_manager.medium_scripts.common import (
+            _resolve_agent_service_url,
+        )
+
         guidance_text = _MEET_FAST_BRAIN_GUIDANCE[AssistantScreenShareStarted]
         guidance_event = CallGuidance(
             contact=contact,
             content=guidance_text,
             source="meet_interaction",
+            agent_service_url=_resolve_agent_service_url(),
         )
         await cm.call_manager._socket_server.queue_for_clients(
             "app:call:call_guidance",
@@ -650,6 +655,12 @@ async def _(event, cm: "ConversationManager", *args, **kwargs):
             message_content = event.content
             notif_content = f"SMS sent to {sender_name}"
             role = "assistant"
+            event_trace = getattr(cm, "_current_event_trace", None) or {}
+            cm._session_logger.info(
+                "sms_sent",
+                f"({event_trace.get('event_id', '-')}) "
+                f"SMS to {sender_name}: {event.content}",
+            )
         case SMSReceived():
             medium = Medium.SMS_MESSAGE
             message_content = event.content
@@ -662,6 +673,17 @@ async def _(event, cm: "ConversationManager", *args, **kwargs):
                 f"SMS from {sender_name}: {event.content}",
             )
         case EmailSent():
+            event_trace = getattr(cm, "_current_event_trace", None) or {}
+            recipients = ", ".join((event.to or [])[:2])
+            if len(event.to or []) > 2:
+                recipients += "..."
+            cm._session_logger.info(
+                "email_sent",
+                f"({event_trace.get('event_id', '-')}) "
+                f"Email to {recipients}\n"
+                f"Subject: {event.subject}\n\n"
+                f"{event.body}",
+            )
             # Email handling is special: push to ALL contacts involved
             email_to = event.to or []
             email_cc = event.cc or []
@@ -725,6 +747,12 @@ async def _(event, cm: "ConversationManager", *args, **kwargs):
             attachments = event.attachments
             notif_content = f"Unify message sent to {sender_name}"
             role = "assistant"
+            event_trace = getattr(cm, "_current_event_trace", None) or {}
+            cm._session_logger.info(
+                "unify_message_sent",
+                f"({event_trace.get('event_id', '-')}) "
+                f"Message to {sender_name}: {event.content}",
+            )
         case UnifyMessageReceived():
             medium = Medium.UNIFY_MESSAGE
             message_content = event.content
@@ -861,7 +889,7 @@ async def _startup_sequence(cm: "ConversationManager"):
 @EventHandler.register((StartupEvent))
 async def _(event: StartupEvent, cm: "ConversationManager", *args, **kwargs):
     try:
-        cm._session_logger.info("startup", "Received startup event")
+        cm._session_logger.debug("startup", "Received startup event")
 
         # Set demo mode from startup event before initializing managers
         # Demo mode is derived from the presence of a demo_id
@@ -870,7 +898,7 @@ async def _(event: StartupEvent, cm: "ConversationManager", *args, **kwargs):
 
             SETTINGS.DEMO_MODE = True
             SETTINGS.DEMO_ID = event.demo_id
-            cm._session_logger.info(
+            cm._session_logger.debug(
                 "startup",
                 f"Demo mode enabled (demo_id={event.demo_id})",
             )
@@ -1211,34 +1239,48 @@ async def _(
                     f"reason={event_name}"
                 ),
             )
+            from unity.conversation_manager.medium_scripts.common import (
+                _resolve_agent_service_url,
+            )
+
             guidance_event = CallGuidance(
                 contact=contact,
                 content=fast_brain_text,
                 source="meet_interaction",
+                agent_service_url=_resolve_agent_service_url(),
             )
             await cm.event_broker.publish(
                 "app:call:call_guidance",
                 guidance_event.to_json(),
             )
 
-    # Eagerly initialize the MagnitudeBackend when screen sharing starts so
-    # the agent-service has an active session for fast brain screenshot capture.
-    # Runs in a thread because MagnitudeBackend.__init__ is synchronous
-    # (~1-4s for Chromium cold start).
+    await cm.schedule_proactive_speech()
+
+    # Eagerly create the desktop session when screen sharing starts so
+    # the agent-service has an active session for fast brain screenshot
+    # capture. Sessions are lazy, so get_session() is needed to trigger
+    # the /start call that populates activeSessions.
     if isinstance(event, AssistantScreenShareStarted):
 
-        def _ensure_backend():
+        async def _ensure_desktop_session():
             try:
                 from unity.function_manager.primitives.runtime import ComputerPrimitives
                 from unity.manager_registry import ManagerRegistry
 
                 cp = ManagerRegistry.get_instance(ComputerPrimitives)
                 if cp is not None:
-                    _ = cp.backend
-            except Exception:
-                pass
+                    session = await cp.backend.get_session("desktop")
+                    cm._session_logger.info(
+                        "screenshot_capture",
+                        f"Desktop session ready: {session._session_id}",
+                    )
+            except Exception as e:
+                cm._session_logger.warning(
+                    "screenshot_capture",
+                    f"Failed to create desktop session: {type(e).__name__}: {e}",
+                )
 
-        asyncio.get_event_loop().run_in_executor(None, _ensure_backend)
+        asyncio.ensure_future(_ensure_desktop_session())
 
     # Broadcast remote-control state change to all active CodeActActor loops
     # via the ComputerPrimitives singleton interject queue registry.
