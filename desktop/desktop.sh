@@ -1,27 +1,36 @@
-# Set up for live viewing the desktop
-Xvfb :99 -screen 0 1920x1080x16 &
-sleep 2
+#!/bin/bash
+# Virtual desktop: TigerVNC (display + VNC server), Fluxbox WM, noVNC proxy
+
+# Set VNC password (UNIFY_KEY shared with agent-service and developers)
+mkdir -p /root/.vnc
+echo "${UNIFY_KEY:-changeme}" | vncpasswd -f > /root/.vnc/passwd
+chmod 600 /root/.vnc/passwd
 
 # Provide minimal Fluxbox init to suppress missing-key warnings
-mkdir -p ~/.fluxbox
-printf "# Minimal Fluxbox init\n" > ~/.fluxbox/init
+mkdir -p /root/.fluxbox
+printf "# Minimal Fluxbox init\n" > /root/.fluxbox/init
 
-# Start window manager, VNC server and noVNC proxy
+# Start TigerVNC (combined X display server + VNC server in one process)
+Xtigervnc :99 -geometry 1920x1080 -depth 24 \
+    -rfbport 5900 -rfbauth /root/.vnc/passwd \
+    -AlwaysShared -desktop "Unity Desktop" &
+sleep 2
+
+# Window manager
 fluxbox 2>/dev/null &
-# Set VNC password to UNIFY_KEY so the agent-service and developers can
-# authenticate with the same credential via ?password= in the noVNC URL.
-mkdir -p /root/.vnc
-x11vnc -storepasswd "${UNIFY_KEY:-changeme}" /root/.vnc/passwd
-chmod 600 /root/.vnc/passwd || true
 
-# Start x11vnc with rfbauth
-x11vnc -display :99 -rfbauth /root/.vnc/passwd -forever -shared -bg -rfbport 5900 \
-       -rfbportv6 0 -noxdamage -nowf -nodpms
+# Disable screen blanking and DPMS (prevents black screen over VNC)
+xset s off
+xset -dpms
+xset s noblank
 
+# Desktop portals
 /usr/libexec/xdg-desktop-portal &
 /usr/libexec/xdg-desktop-portal-gtk &
 
+# Terminal
 mkdir -p /tmp/unify/assistant/install
-apt-get update
-DISPLAY=:99 xterm -fa 'Monospace' -fs 10 &
-websockify --web=/opt/novnc 6080 localhost:5900
+xterm -fa 'Monospace' -fs 10 &
+
+# noVNC proxy (foreground — keeps this process alive for supervisord)
+exec websockify --web=/opt/novnc 6080 localhost:5900
