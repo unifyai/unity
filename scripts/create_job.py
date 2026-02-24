@@ -273,8 +273,16 @@ def create_unity_job(
                                     {"name": "MKL_NUM_THREADS", "value": "2"},
                                 ],
                                 "resources": {
-                                    "requests": {"cpu": "2", "memory": "8Gi"},
-                                    "limits": {"cpu": "4", "memory": "16Gi"},
+                                    "requests": {
+                                        "cpu": "2",
+                                        "memory": "8Gi",
+                                        "ephemeral-storage": "10Gi",
+                                    },
+                                    "limits": {
+                                        "cpu": "4",
+                                        "memory": "16Gi",
+                                        "ephemeral-storage": "10Gi",
+                                    },
                                 },
                                 "volumeMounts": [
                                     {

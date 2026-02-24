@@ -41,6 +41,28 @@ trap cleanup SIGTERM SIGINT
 # Create log directories for file-based traces
 mkdir -p /var/log/unity /var/log/unify /var/log/unillm
 
+# Snapshot the image-layer reference file for comparing writable-layer growth.
+touch /tmp/.entrypoint_start_marker
+
+# Background disk-usage monitor: logs writable-layer growth every 30s.
+(
+    while true; do
+        sleep 30
+        TOTAL=$(du -sx / 2>/dev/null | awk '{print $1}')
+        TOTAL_MB=$((TOTAL / 1024))
+        WRITABLE=$(find / -newer /tmp/.entrypoint_start_marker \
+            -not -path '/proc/*' -not -path '/sys/*' -not -path '/dev/*' -not -path '/run/*' \
+            -type f -print0 2>/dev/null | xargs -0 du -sc 2>/dev/null | tail -1 | awk '{print $1}')
+        WRITABLE_MB=$((WRITABLE / 1024))
+        echo "📊 [DISK] total=${TOTAL_MB}MB writable=${WRITABLE_MB}MB  top-writable:"
+        find / -newer /tmp/.entrypoint_start_marker \
+            -not -path '/proc/*' -not -path '/sys/*' -not -path '/dev/*' -not -path '/run/*' \
+            -type f -print0 2>/dev/null | xargs -0 du -s 2>/dev/null | sort -rn | head -5 | \
+            awk '{mb=$1/1024; printf "  %6.1fMB  %s\n", mb, $2}'
+    done
+) &
+DISK_MONITOR_PID=$!
+
 # Start agent-service on port 3000 (for web automation via Magnitude)
 echo "⬥ Starting agent-service..."
 cd /app/agent-service && npx ts-node src/index.ts &
@@ -56,3 +78,6 @@ echo "⬥ Main application started with PID: $MAIN_PID"
 
 # Wait for main process
 wait $MAIN_PID
+
+# Clean up the disk monitor when main process exits
+kill $DISK_MONITOR_PID 2>/dev/null || true
