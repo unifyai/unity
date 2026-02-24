@@ -1,25 +1,31 @@
 #!/usr/bin/env python3
-"""Copy context data from a source user's assistant to all target user's assistants.
+"""Copy context data between assistants across users.
 
-Reads logs from the source user's (single) assistant and writes them into
-the matching contexts of every assistant owned by the target user.  Existing
-entries are preserved — only new entries are appended (deduplication is based
-on non-auto-counting unique keys, or full data comparison when no natural
-keys exist).
+Reads logs from the source assistant and writes them into the matching
+contexts of every target assistant.  Existing entries are preserved — only
+new entries are appended (deduplication is based on non-auto-counting unique
+keys, or full data comparison when no natural keys exist).
+
+When --source-assistant / --target-assistants are omitted the script assumes
+each user owns exactly one assistant.  If that assumption is wrong, the error
+message lists every discovered assistant ID so you can re-run with the
+explicit flags.
 
 Usage examples
 --------------
-# By email, copy Secrets + Guidance:
+# Users with one assistant each — IDs are inferred:
 python scripts/copy_contexts.py \\
     --source yasser@unify.ai \\
     --target dan@unify.ai \\
     --contexts Secrets Guidance
 
-# By user ID, with Environments/Packages:
+# Explicit assistant IDs (required when a user has multiple assistants):
 python scripts/copy_contexts.py \\
-    --source 40144b2a-722f-4f41-8d9e-384c316ee19f \\
-    --target cli3t38uc0000s60k5zmgj8ez \\
-    --contexts Secrets Guidance "Functions/Compositional" "Environments/Packages"
+    --source yasser@unify.ai \\
+    --target dan@unify.ai \\
+    --source-assistant abc123 \\
+    --target-assistants def456 ghi789 \\
+    --contexts Secrets Guidance "Functions/Compositional"
 """
 
 import argparse
@@ -240,6 +246,90 @@ def copy_context(
     return len(new_entries)
 
 
+def _resolve_single_assistant(
+    prefixes: List[Tuple[str, str]],
+    explicit_id: Optional[str],
+    *,
+    label: str,
+    flag: str,
+) -> Tuple[str, str]:
+    """Pick exactly one (prefix, assistant_id) for the source side.
+
+    If *explicit_id* is given, select the matching entry.  Otherwise require
+    that exactly one assistant exists.  On ambiguity, print all discovered IDs
+    and the flag the caller should use, then exit.
+    """
+    if explicit_id is not None:
+        for prefix, aid in prefixes:
+            if aid == explicit_id:
+                return prefix, aid
+        ids = [p[1] for p in prefixes]
+        print(
+            f"ERROR: {label} assistant '{explicit_id}' not found.\n"
+            f"  Discovered {label} assistant IDs: {ids}\n"
+            f"  Pass one of them via {flag}.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    if len(prefixes) == 1:
+        return prefixes[0]
+
+    ids = [p[1] for p in prefixes]
+    print(
+        f"ERROR: {label} user has {len(prefixes)} assistants — cannot "
+        f"auto-select.\n"
+        f"  Discovered {label} assistant IDs: {ids}\n"
+        f"  Re-run with {flag} <ID> to specify which one to use.",
+        file=sys.stderr,
+    )
+    sys.exit(1)
+
+
+def _resolve_target_assistants(
+    prefixes: List[Tuple[str, str]],
+    explicit_ids: Optional[List[str]],
+) -> List[Tuple[str, str]]:
+    """Pick one or more (prefix, assistant_id) pairs for the target side.
+
+    If *explicit_ids* is given, select the matching entries (preserving
+    order).  Otherwise require exactly one assistant.
+    """
+    if explicit_ids is not None:
+        by_id = {aid: (prefix, aid) for prefix, aid in prefixes}
+        selected: List[Tuple[str, str]] = []
+        missing: List[str] = []
+        for eid in explicit_ids:
+            if eid in by_id:
+                selected.append(by_id[eid])
+            else:
+                missing.append(eid)
+        if missing:
+            ids = [p[1] for p in prefixes]
+            print(
+                f"ERROR: target assistant(s) not found: {missing}\n"
+                f"  Discovered target assistant IDs: {ids}\n"
+                f"  Pass valid IDs via --target-assistants.",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        return selected
+
+    if len(prefixes) == 1:
+        return prefixes
+
+    ids = [p[1] for p in prefixes]
+    print(
+        f"ERROR: target user has {len(prefixes)} assistants — cannot "
+        f"auto-select.\n"
+        f"  Discovered target assistant IDs: {ids}\n"
+        f"  Re-run with --target-assistants <ID> [<ID> ...] to specify "
+        f"which one(s) to copy into.",
+        file=sys.stderr,
+    )
+    sys.exit(1)
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Copy context data between users' assistants.",
@@ -253,6 +343,23 @@ def main():
         "--target",
         required=True,
         help="Target user (email or user ID).",
+    )
+    parser.add_argument(
+        "--source-assistant",
+        default=None,
+        help=(
+            "Assistant ID for the source user.  "
+            "Omit to auto-detect (requires exactly one assistant)."
+        ),
+    )
+    parser.add_argument(
+        "--target-assistants",
+        nargs="+",
+        default=None,
+        help=(
+            "Assistant ID(s) for the target user.  "
+            "Omit to auto-detect (requires exactly one assistant)."
+        ),
     )
     parser.add_argument(
         "--contexts",
@@ -292,15 +399,13 @@ def main():
     if not source_prefixes:
         print("ERROR: No assistants found for source user.", file=sys.stderr)
         sys.exit(1)
-    if len(source_prefixes) > 1:
-        ids = [p[1] for p in source_prefixes]
-        print(
-            f"ERROR: Source user has multiple assistants ({ids}). "
-            f"This script only supports a single source assistant.",
-            file=sys.stderr,
-        )
-        sys.exit(1)
-    source_prefix, source_aid = source_prefixes[0]
+
+    source_prefix, source_aid = _resolve_single_assistant(
+        source_prefixes,
+        args.source_assistant,
+        label="source",
+        flag="--source-assistant",
+    )
     print(f"  → assistant prefix: {source_prefix}")
 
     print("Discovering target assistants...")
@@ -309,7 +414,12 @@ def main():
     if not target_prefixes:
         print("ERROR: No assistants found for target user.", file=sys.stderr)
         sys.exit(1)
-    for prefix, aid in target_prefixes:
+
+    target_selected = _resolve_target_assistants(
+        target_prefixes,
+        args.target_assistants,
+    )
+    for prefix, aid in target_selected:
         print(f"  → assistant prefix: {prefix}")
 
     # Copy each requested context suffix into every target assistant
@@ -319,7 +429,7 @@ def main():
         print(f"\n{'[DRY RUN] ' if args.dry_run else ''}Context: {suffix}")
         print(f"  source: {source_full}")
 
-        for target_prefix, target_aid in target_prefixes:
+        for target_prefix, target_aid in target_selected:
             target_full = f"{target_prefix}/{suffix}"
             print(f"  target: {target_full} ... ", end="", flush=True)
 
