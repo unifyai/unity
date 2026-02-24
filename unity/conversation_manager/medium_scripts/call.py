@@ -605,10 +605,11 @@ async def entrypoint(ctx: agents.JobContext):
                 role="system",
                 content=[guidance_message],
             )
-            trigger_generate_reply(
-                reason="notification",
-                source_id=guidance_id or "guidance_notify",
-            )
+            if guidance_source != "meet_interaction":
+                trigger_generate_reply(
+                    reason="notification",
+                    source_id=guidance_id or "guidance_notify",
+                )
 
     def maybe_speak_queued() -> None:
         """Speak the next queued response when user is silent and assistant is idle.

@@ -1173,6 +1173,22 @@ class ConversationManager(metaclass=SingletonABCMeta):
 
             # Gather context for the decision.
             conversation_turns, _ = self.get_recent_voice_transcript()
+
+            active_visuals = []
+            if self.user_screen_share_active:
+                active_visuals.append("the user is sharing their screen")
+            if self.user_webcam_active:
+                active_visuals.append("the user's webcam is on")
+            if self.assistant_screen_share_active:
+                active_visuals.append("the assistant's desktop is being shared")
+            if active_visuals:
+                conversation_turns.append(
+                    {
+                        "role": "system",
+                        "content": f"[context] {', '.join(active_visuals).capitalize()}.",
+                    },
+                )
+
             brain_spec = build_brain_spec(self)
 
             decision = await self.proactive_speech.decide(

@@ -1244,6 +1244,8 @@ async def _(
                 guidance_event.to_json(),
             )
 
+    await cm.schedule_proactive_speech()
+
     # Eagerly initialize the MagnitudeBackend when screen sharing starts so
     # the agent-service has an active session for fast brain screenshot capture.
     # Runs in a thread because MagnitudeBackend.__init__ is synchronous
