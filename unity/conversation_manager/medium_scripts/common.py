@@ -922,7 +922,10 @@ def _resolve_agent_service_url() -> str:
 
     desktop_url = SESSION_DETAILS.assistant.desktop_url
     if desktop_url:
-        return desktop_url.rstrip("/") + "/api"
+        from urllib.parse import urlparse
+
+        parsed = urlparse(desktop_url)
+        return f"{parsed.scheme}://{parsed.netloc}/api"
     return "http://localhost:3000"
 
 
@@ -976,9 +979,11 @@ async def capture_assistant_screenshot(
                 timeout=aiohttp.ClientTimeout(total=10),
             ) as resp:
                 if resp.status >= 400:
+                    body = await resp.text()
                     if fb_logger:
                         fb_logger.screenshot(
-                            f"Assistant screenshot failed: HTTP {resp.status}",
+                            f"Assistant screenshot failed: HTTP {resp.status} "
+                            f"url={base_url}/screenshot body={body[:200]}",
                         )
                     return None
                 data = await resp.json()
@@ -993,7 +998,10 @@ async def capture_assistant_screenshot(
                     )
     except Exception as e:
         if fb_logger:
-            fb_logger.screenshot(f"Assistant screenshot error: {e}")
+            fb_logger.screenshot(
+                f"Assistant screenshot error: {type(e).__name__}: {e} "
+                f"url={base_url}/screenshot",
+            )
     return None
 
 
