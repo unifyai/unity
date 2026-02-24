@@ -137,6 +137,59 @@ class TestUploadUnifyAttachment:
             assert result.get("success") is False
             assert "error" in result
 
+    @pytest.mark.asyncio
+    async def test_upload_posts_to_adapters_not_comms_app(self):
+        """The /unify/attachment endpoint is on the adapters service.
+
+        COMMS_URL points to the comms-app (phone, gmail, infra routes).
+        The attachment upload endpoint lives on the separate adapters service.
+        Using COMMS_URL results in a 404 because the comms-app has no /unify/* routes.
+        """
+        mock_response = MagicMock()
+        mock_response.raise_for_status = MagicMock()
+        mock_response.json = AsyncMock(
+            return_value={
+                "id": "uuid",
+                "filename": "file.txt",
+                "url": "https://url",
+            },
+        )
+
+        mock_session = MagicMock()
+        mock_session.post = MagicMock(
+            return_value=AsyncMock(__aenter__=AsyncMock(return_value=mock_response)),
+        )
+        mock_session.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_session.__aexit__ = AsyncMock(return_value=None)
+
+        comms_app_url = (
+            "https://unity-comms-app-staging-262420637606.us-central1.run.app"
+        )
+
+        with (
+            patch("aiohttp.ClientSession", return_value=mock_session),
+            patch(
+                "unity.conversation_manager.domains.comms_utils.SESSION_DETAILS",
+            ) as mock_session_details,
+            patch(
+                "unity.conversation_manager.domains.comms_utils.SETTINGS",
+            ) as mock_settings,
+        ):
+            mock_session_details.assistant.id = "test-assistant"
+            mock_settings.conversation.COMMS_URL = comms_app_url
+
+            await comms_utils.upload_unify_attachment(
+                file_content=b"content",
+                filename="file.txt",
+            )
+
+            posted_url = mock_session.post.call_args[0][0]
+            assert not posted_url.startswith(comms_app_url), (
+                f"upload_unify_attachment incorrectly posts to COMMS_URL "
+                f"({comms_app_url}). The /unify/attachment endpoint lives on "
+                f"the adapters service, not the comms-app. Got: {posted_url}"
+            )
+
 
 class TestSendUnifyMessage:
     """Tests for send_unify_message function with attachments."""
