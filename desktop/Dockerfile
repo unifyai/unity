@@ -1,13 +1,20 @@
-FROM node:22-bookworm-slim
+FROM ubuntu:22.04
 
 ENV DEBIAN_FRONTEND=noninteractive
 ENV DISPLAY=:99
 
 WORKDIR /app
 
+# Node.js 22 via NodeSource (matches prod VM)
+RUN apt-get update && apt-get install -y curl gnupg2 ca-certificates && \
+    curl -fsSL https://deb.nodesource.com/setup_22.x | bash - && \
+    apt-get install -y nodejs && \
+    npm install -g npm@latest && \
+    rm -rf /var/lib/apt/lists/*
+
 # System dependencies for virtual desktop/devices, web runtime, and native modules
 RUN apt-get update && apt-get install -y \
-    curl wget git gnupg2 \
+    curl wget git \
     tigervnc-standalone-server tigervnc-common \
     xfce4 xfce4-goodies xfce4-terminal \
     xdotool wmctrl xterm dbus dbus-x11 \
@@ -16,12 +23,12 @@ RUN apt-get update && apt-get install -y \
     libnss3 libatk-bridge2.0-0 libgtk-3-0 libxss1 \
     libasound2 libxshmfence1 libxcomposite1 libxdamage1 \
     libxrandr2 libgbm1 libx11-xcb1 fonts-liberation xdg-utils \
-    ffmpeg ca-certificates \
+    ffmpeg \
     pipewire pipewire-pulse wireplumber pulseaudio-utils alsa-utils \
     fuse3 libfuse2 squashfs-tools \
-    build-essential python3 python3-pip pkg-config libvips \
+    build-essential python3 python3-pip pkg-config libvips-dev \
     supervisor \
-    && pip3 install --no-cache-dir --break-system-packages websockify \
+    && pip3 install --no-cache-dir websockify \
     && rm -rf /var/lib/apt/lists/*
 
 # noVNC static files
