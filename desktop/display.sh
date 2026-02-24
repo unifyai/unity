@@ -13,13 +13,8 @@ Xtigervnc :99 -geometry 1920x1080 -depth 24 \
     -desktop "Unity Display" &
 sleep 2
 
-# Provide minimal Fluxbox init to suppress missing-key warnings
-mkdir -p /root/.fluxbox
-printf "# Minimal Fluxbox init\n" > /root/.fluxbox/init
-
-# Start window manager on the virtual display
-DISPLAY=:99 fluxbox 2>/dev/null &
-DISPLAY=:99 xsetroot -cursor_name left_ptr
+# XFCE desktop session
+DISPLAY=:99 startxfce4 &
 
 # Disable screen blanking
 xset s off
@@ -31,4 +26,6 @@ xset s noblank
 
 mkdir -p /tmp/unify/assistant/install
 apt-get update
-DISPLAY=:99 xterm -fa 'Monospace' -fs 10
+
+# Keep alive (foreground)
+DISPLAY=:99 xfce4-terminal
