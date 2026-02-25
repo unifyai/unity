@@ -20,6 +20,7 @@ Environment:
 """
 
 import os
+import re
 import sys
 
 # The unify SDK reads ORCHESTRA_URL at import time, and .env sets it to
@@ -48,6 +49,8 @@ load_dotenv()
 import argparse
 import shutil
 import subprocess
+from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
 
 import unify
 
@@ -240,51 +243,177 @@ def query_job_status(job_name: str) -> tuple[bool | None, dict | None]:
     return None, None
 
 
+# ─── Pod resolution ───────────────────────────────────────────────────────────
+
+
+def resolve_pod_name(job_name: str, namespace: str) -> str | None:
+    """Resolve the pod name for a job. Returns None if no pod is found."""
+    result = subprocess.run(
+        [
+            KUBECTL,
+            "get",
+            "pods",
+            "-n",
+            namespace,
+            "-l",
+            f"job-name={job_name}",
+            "-o",
+            "jsonpath={.items[0].metadata.name}",
+        ],
+        capture_output=True,
+        text=True,
+    )
+    pod = result.stdout.strip()
+    return pod if result.returncode == 0 and pod else None
+
+
+# ─── Log mirroring ────────────────────────────────────────────────────────────
+
+_CONTAINER_LOG_PATH_RE = re.compile(r"/var/log/(unillm|unify|unity)/\S+")
+
+WORKSPACE_ROOT = Path(__file__).resolve().parents[3]
+MIRROR_BASE = WORKSPACE_ROOT / "logs" / "prod_logs"
+
+
+def _mirror_dir(job_name: str, base: Path = MIRROR_BASE) -> Path:
+    d = base / job_name
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+def _fetch_file(
+    pod_name: str,
+    namespace: str,
+    container_path: str,
+    local_path: Path,
+) -> None:
+    """Download a single file from the pod via kubectl exec -- cat."""
+    local_path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        result = subprocess.run(
+            [KUBECTL, "exec", pod_name, "-n", namespace, "--", "cat", container_path],
+            capture_output=True,
+        )
+        if result.returncode == 0:
+            local_path.write_bytes(result.stdout)
+    except Exception:
+        pass
+
+
+def _hyperlink(uri: str, text: str) -> str:
+    """Wrap *text* in an OSC 8 terminal hyperlink pointing to *uri*.
+
+    Supported by iTerm2, VS Code terminal, Kitty, GNOME Terminal, Windows
+    Terminal, and most modern VTE-based emulators. Terminals that don't
+    understand OSC 8 silently ignore the escape sequences and show plain text.
+    """
+    return f"\033]8;;{uri}\007{text}\033]8;;\007"
+
+
+def _rewrite_line(
+    line: str,
+    mirror_root: Path,
+    pod_name: str,
+    namespace: str,
+    executor: ThreadPoolExecutor,
+) -> str:
+    """If the line contains a /var/log/... path, rewrite it to a clickable
+    local hyperlink and schedule a background download."""
+    match = _CONTAINER_LOG_PATH_RE.search(line)
+    if not match:
+        return line
+
+    container_path = match.group(0)
+    # /var/log/unillm/file.txt → unillm/file.txt
+    relative = container_path[len("/var/log/") :]
+    local_path = mirror_root / relative
+
+    executor.submit(_fetch_file, pod_name, namespace, container_path, local_path)
+
+    local_str = str(local_path)
+    link = _hyperlink(local_path.as_uri(), local_str)
+    return line[: match.start()] + link + line[match.end() :]
+
+
 # ─── Log output ──────────────────────────────────────────────────────────────
 
 
-def stream_logs(job_name: str, namespace: str):
+def stream_logs(
+    job_name: str,
+    namespace: str,
+    *,
+    mirror: bool = True,
+    mirror_base: Path = MIRROR_BASE,
+):
     """Print all existing logs and stream new ones via kubectl -f.
 
-    kubectl logs job/<name> -f --tail=-1 prints the full log history
-    and then continues streaming as new lines arrive.
+    When *mirror* is True, container log-file paths (``/var/log/...``) are
+    rewritten to local paths and the files are downloaded in the background.
     """
+    pod_name: str | None = None
+    mirror_root: Path | None = None
+
+    if mirror:
+        pod_name = resolve_pod_name(job_name, namespace)
+        if pod_name:
+            mirror_root = _mirror_dir(job_name, mirror_base)
+            info(f"Mirroring container logs → {mirror_root}")
+        else:
+            warn("Could not resolve pod name — log mirroring disabled.")
+            mirror = False
+
     info(f"Streaming logs (existing + live) for '{job_name}'...")
     print(f"  {DIM}(Press Ctrl+C to stop){NC}")
     print()
 
+    kubectl_cmd = [
+        KUBECTL,
+        "logs",
+        f"job/{job_name}",
+        "-n",
+        namespace,
+        "-f",
+        "--tail=-1",
+    ]
+
+    def _run_stream(cmd: list[str]) -> None:
+        with ThreadPoolExecutor(max_workers=4) as executor:
+            proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            try:
+                for raw_line in proc.stdout:
+                    line = raw_line.decode("utf-8", errors="replace")
+                    if mirror and mirror_root and pod_name:
+                        line = _rewrite_line(
+                            line,
+                            mirror_root,
+                            pod_name,
+                            namespace,
+                            executor,
+                        )
+                    sys.stdout.write(line)
+                    sys.stdout.flush()
+                proc.wait()
+                if proc.returncode != 0:
+                    stderr = proc.stderr.read().decode("utf-8", errors="replace")
+                    if stderr.strip():
+                        warn(stderr.strip())
+            except KeyboardInterrupt:
+                proc.terminate()
+                proc.wait()
+                print()
+                info("Stopped streaming.")
+                return
+            finally:
+                executor.shutdown(wait=True)
+
     try:
-        subprocess.run(
-            [
-                KUBECTL,
-                "logs",
-                f"job/{job_name}",
-                "-n",
-                namespace,
-                "-f",
-                "--tail=-1",
-            ],
-            check=True,
-        )
-    except subprocess.CalledProcessError:
+        _run_stream(kubectl_cmd)
+    except Exception:
         warn("kubectl could not attach. Retrying in 5s...")
         import time
 
         time.sleep(5)
-        subprocess.run(
-            [
-                KUBECTL,
-                "logs",
-                f"job/{job_name}",
-                "-n",
-                namespace,
-                "-f",
-                "--tail=-1",
-            ],
-        )
-    except KeyboardInterrupt:
-        print()
-        info("Stopped streaming.")
+        _run_stream(kubectl_cmd)
 
 
 def _gcloud_logging_read(log_filter: str):
@@ -349,9 +478,22 @@ def main():
         default="staging",
         help="Kubernetes namespace (default: staging)",
     )
+    parser.add_argument(
+        "--no-mirror",
+        action="store_true",
+        default=False,
+        help="Disable automatic log file mirroring (pass-through mode).",
+    )
+    parser.add_argument(
+        "--mirror-dir",
+        default=None,
+        help=f"Local directory for mirrored log files (default: {MIRROR_BASE}).",
+    )
     args = parser.parse_args()
 
     namespace = args.namespace
+    mirror = not args.no_mirror
+    mirror_base = Path(args.mirror_dir).resolve() if args.mirror_dir else MIRROR_BASE
     job_name = args.job or resolve_latest_job(namespace)
 
     check_prerequisites()
@@ -370,7 +512,7 @@ def main():
     print()
     if running is True:
         # AssistantJobs says running → pod exists, stream live.
-        stream_logs(job_name, namespace)
+        stream_logs(job_name, namespace, mirror=mirror, mirror_base=mirror_base)
     elif running is False:
         # AssistantJobs says not running → pod is gone, use gcloud.
         fetch_historical_logs(job_name, namespace)
@@ -379,7 +521,7 @@ def main():
         # back to gcloud historical logs.
         warn("Unknown job status. Trying kubectl stream first...")
         print()
-        stream_logs(job_name, namespace)
+        stream_logs(job_name, namespace, mirror=mirror, mirror_base=mirror_base)
 
 
 if __name__ == "__main__":
