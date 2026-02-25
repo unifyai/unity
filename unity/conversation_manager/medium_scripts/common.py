@@ -950,15 +950,43 @@ def _ensure_jpeg(b64: str) -> str:
     return b64mod.b64encode(buf.getvalue()).decode("ascii")
 
 
+async def _screenshot_post(
+    session,
+    url: str,
+    headers: dict,
+    timeout,
+) -> "tuple[int, str | None, dict | None]":
+    """POST to the screenshot endpoint and return (status, body_text, json).
+
+    Returns the status code, raw body text (on error), and parsed JSON (on
+    success) so callers can handle retries without duplicating HTTP plumbing.
+    """
+    async with session.post(
+        url,
+        json={},
+        headers=headers,
+        timeout=timeout,
+    ) as resp:
+        if resp.status >= 400:
+            return resp.status, await resp.text(), None
+        return resp.status, None, await resp.json()
+
+
 async def capture_assistant_screenshot(
     utterance: str,
     fb_logger: FastBrainLogger | None = None,
     agent_service_url: str | None = None,
+    http_session=None,
 ) -> "ScreenshotEntry | None":
     """Capture the assistant's desktop via HTTP POST.
 
     Returns a ``ScreenshotEntry`` on success, ``None`` on failure or if no
     desktop URL is configured.
+
+    When *http_session* is provided (a persistent ``aiohttp.ClientSession``),
+    it is reused across calls — eliminating per-request DNS + TLS overhead
+    (~300 ms).  When ``None``, a throwaway session with phase-level trace
+    diagnostics is created (useful for one-off / CM-process captures).
     """
     import aiohttp
     import time as _time
@@ -970,6 +998,8 @@ async def capture_assistant_screenshot(
     base_url = agent_service_url or _resolve_agent_service_url()
     auth_key = SESSION_DETAILS.unify_key
     url = f"{base_url}/screenshot"
+    headers = {"authorization": f"Bearer {auth_key}"}
+    timeout = aiohttp.ClientTimeout(total=10)
 
     def _log(msg: str) -> None:
         if fb_logger:
@@ -979,9 +1009,70 @@ async def capture_assistant_screenshot(
 
     t_start = _time.monotonic()
 
-    # Phase-level tracing via aiohttp TraceConfig
-    phases: dict[str, float] = {}
+    def _make_entry(b64: str) -> ScreenshotEntry:
+        return ScreenshotEntry(
+            b64=_ensure_jpeg(b64),
+            utterance=utterance,
+            timestamp=datetime.now(timezone.utc),
+            source="assistant",
+        )
 
+    # -- Fast path: reuse a persistent session (no per-request DNS/TLS) ------
+    if http_session is not None:
+        try:
+            status, err_body, data = await _screenshot_post(
+                http_session,
+                url,
+                headers,
+                timeout,
+            )
+            total_ms = (_time.monotonic() - t_start) * 1000
+            if status >= 400:
+                if err_body and "no_desktop_session" in err_body:
+                    _log(
+                        f"Assistant screenshot: no desktop session yet, "
+                        f"retrying in 2s (url={url} total={total_ms:.0f}ms)",
+                    )
+                    await asyncio.sleep(2)
+                    status, err_body, data = await _screenshot_post(
+                        http_session,
+                        url,
+                        headers,
+                        timeout,
+                    )
+                    total_ms = (_time.monotonic() - t_start) * 1000
+                    if status >= 400:
+                        _log(
+                            f"Assistant screenshot failed after retry: "
+                            f"HTTP {status} url={url} total={total_ms:.0f}ms "
+                            f"body={(err_body or '')[:200]}",
+                        )
+                        return None
+                else:
+                    _log(
+                        f"Assistant screenshot failed: HTTP {status} "
+                        f"url={url} total={total_ms:.0f}ms "
+                        f"body={(err_body or '')[:200]}",
+                    )
+                    return None
+            if data:
+                b64 = data.get("screenshot")
+                if b64:
+                    _log(
+                        f"Assistant screenshot OK: url={url} "
+                        f"total={total_ms:.0f}ms b64_len={len(b64)}",
+                    )
+                    return _make_entry(b64)
+        except Exception as e:
+            total_ms = (_time.monotonic() - t_start) * 1000
+            _log(
+                f"Assistant screenshot error: {type(e).__name__}: {e} "
+                f"url={url} total={total_ms:.0f}ms",
+            )
+        return None
+
+    # -- Diagnostic path: throwaway session with phase-level HTTP tracing ----
+    phases: dict[str, float] = {}
     trace_cfg = aiohttp.TraceConfig()
 
     async def on_dns_start(session, ctx, params):
@@ -1013,95 +1104,64 @@ async def capture_assistant_screenshot(
     trace_cfg.on_request_start.append(on_req_start)
     trace_cfg.on_request_end.append(on_req_end)
 
+    def _phase_str() -> str:
+        return (
+            f"dns={phases.get('dns_ms', 0):.0f}ms "
+            f"conn={phases.get('conn_ms', 0):.0f}ms "
+            f"first_byte={phases.get('first_byte_ms', 0):.0f}ms"
+        )
+
     try:
-        headers = {"authorization": f"Bearer {auth_key}"}
         async with aiohttp.ClientSession(trace_configs=[trace_cfg]) as session:
-            async with session.post(
+            status, err_body, data = await _screenshot_post(
+                session,
                 url,
-                json={},
-                headers=headers,
-                timeout=aiohttp.ClientTimeout(total=10),
-            ) as resp:
-                if resp.status >= 400:
-                    body = await resp.text()
-                    total_ms = (_time.monotonic() - t_start) * 1000
-                    if "no_desktop_session" in body:
-                        _log(
-                            f"Assistant screenshot: no desktop session yet, "
-                            f"retrying in 2s (url={url} total={total_ms:.0f}ms)",
-                        )
-                        await asyncio.sleep(2)
-                        async with session.post(
-                            url,
-                            json={},
-                            headers=headers,
-                            timeout=aiohttp.ClientTimeout(total=10),
-                        ) as retry_resp:
-                            if retry_resp.status >= 400:
-                                retry_body = await retry_resp.text()
-                                retry_ms = (_time.monotonic() - t_start) * 1000
-                                _log(
-                                    f"Assistant screenshot failed after retry: "
-                                    f"HTTP {retry_resp.status} url={url} "
-                                    f"total={retry_ms:.0f}ms body={retry_body[:200]}",
-                                )
-                                return None
-                            data = await retry_resp.json()
-                            b64 = data.get("screenshot")
-                            if b64:
-                                b64 = _ensure_jpeg(b64)
-                                retry_ms = (_time.monotonic() - t_start) * 1000
-                                _log(
-                                    f"Assistant screenshot OK (after retry): "
-                                    f"url={url} total={retry_ms:.0f}ms "
-                                    f"b64_len={len(b64)}",
-                                )
-                                return ScreenshotEntry(
-                                    b64=b64,
-                                    utterance=utterance,
-                                    timestamp=datetime.now(timezone.utc),
-                                    source="assistant",
-                                )
-                        return None
+                headers,
+                timeout,
+            )
+            total_ms = (_time.monotonic() - t_start) * 1000
+            if status >= 400:
+                if err_body and "no_desktop_session" in err_body:
                     _log(
-                        f"Assistant screenshot failed: HTTP {resp.status} "
-                        f"url={url} total={total_ms:.0f}ms "
-                        f"dns={phases.get('dns_ms', 0):.0f}ms "
-                        f"conn={phases.get('conn_ms', 0):.0f}ms "
-                        f"first_byte={phases.get('first_byte_ms', 0):.0f}ms "
-                        f"body={body[:200]}",
+                        f"Assistant screenshot: no desktop session yet, "
+                        f"retrying in 2s (url={url} total={total_ms:.0f}ms)",
+                    )
+                    await asyncio.sleep(2)
+                    status, err_body, data = await _screenshot_post(
+                        session,
+                        url,
+                        headers,
+                        timeout,
+                    )
+                    total_ms = (_time.monotonic() - t_start) * 1000
+                    if status >= 400:
+                        _log(
+                            f"Assistant screenshot failed after retry: "
+                            f"HTTP {status} url={url} total={total_ms:.0f}ms "
+                            f"body={(err_body or '')[:200]}",
+                        )
+                        return None
+                else:
+                    _log(
+                        f"Assistant screenshot failed: HTTP {status} "
+                        f"url={url} total={total_ms:.0f}ms {_phase_str()} "
+                        f"body={(err_body or '')[:200]}",
                     )
                     return None
-                t_before_read = _time.monotonic()
-                data = await resp.json()
-                read_ms = (_time.monotonic() - t_before_read) * 1000
-                total_ms = (_time.monotonic() - t_start) * 1000
+            if data:
                 b64 = data.get("screenshot")
                 if b64:
-                    b64 = _ensure_jpeg(b64)
                     _log(
                         f"Assistant screenshot OK: url={url} "
-                        f"total={total_ms:.0f}ms "
-                        f"dns={phases.get('dns_ms', 0):.0f}ms "
-                        f"conn={phases.get('conn_ms', 0):.0f}ms "
-                        f"first_byte={phases.get('first_byte_ms', 0):.0f}ms "
-                        f"body_read={read_ms:.0f}ms "
+                        f"total={total_ms:.0f}ms {_phase_str()} "
                         f"b64_len={len(b64)}",
                     )
-                    return ScreenshotEntry(
-                        b64=b64,
-                        utterance=utterance,
-                        timestamp=datetime.now(timezone.utc),
-                        source="assistant",
-                    )
+                    return _make_entry(b64)
     except Exception as e:
         total_ms = (_time.monotonic() - t_start) * 1000
         _log(
             f"Assistant screenshot error: {type(e).__name__}: {e} "
-            f"url={url} total={total_ms:.0f}ms "
-            f"dns={phases.get('dns_ms', 0):.0f}ms "
-            f"conn={phases.get('conn_ms', 0):.0f}ms "
-            f"first_byte={phases.get('first_byte_ms', 0):.0f}ms",
+            f"url={url} total={total_ms:.0f}ms {_phase_str()}",
         )
     return None
 
