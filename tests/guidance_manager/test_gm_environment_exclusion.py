@@ -134,6 +134,7 @@ def test_resolve_prompt_guidance_by_title():
     assert text is not None
     assert "Deploy Guide" in text
     assert "Step-by-step deployment procedure" in text
+    assert f"guidance_id: {ids['Deploy Guide']}" in text
     assert resolved_ids == frozenset({ids["Deploy Guide"]})
 
 
@@ -147,6 +148,7 @@ def test_resolve_prompt_guidance_by_id():
     text, resolved_ids = _resolve_prompt_guidance([ids["Review Checklist"]])
     assert text is not None
     assert "Review Checklist" in text
+    assert f"guidance_id: {ids['Review Checklist']}" in text
     assert resolved_ids == frozenset({ids["Review Checklist"]})
 
 
@@ -164,6 +166,25 @@ def test_resolve_prompt_guidance_mixed():
     assert "Deploy Guide" in text
     assert "Review Checklist" in text
     assert resolved_ids == frozenset({ids["Deploy Guide"], ids["Review Checklist"]})
+
+
+@_handle_project
+def test_resolve_prompt_guidance_renders_function_ids():
+    """function_ids cross-references appear in the rendered guidance text."""
+    from unity.actor.environments.actor import _resolve_prompt_guidance
+
+    gm = GuidanceManager()
+    gm.add_guidance(
+        title="Linked Guide",
+        content="Guide with linked functions",
+        function_ids=[10, 20],
+    )
+
+    text, _ = _resolve_prompt_guidance(["Linked Guide"])
+    assert text is not None
+    assert "Related functions:" in text
+    assert "10" in text
+    assert "20" in text
 
 
 @_handle_project
