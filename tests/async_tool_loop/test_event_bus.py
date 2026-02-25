@@ -18,6 +18,7 @@ from unity.common.async_tool_loop import (
     start_async_tool_loop,
 )
 from unity.common._async_tool.loop import async_tool_loop_inner
+from tests.async_helpers import _wait_for_next_assistant_response_event
 from tests.helpers import _handle_project, capture_events
 from unity.common.llm_client import new_llm_client
 from unity.events.event_bus import EVENT_BUS
@@ -358,7 +359,7 @@ async def test_ask_multiple_distinguishable(llm_config) -> None:
         max_consecutive_failures=1,
     )
 
-    await asyncio.sleep(1)
+    await _wait_for_next_assistant_response_event(client)
 
     async with capture_events("ManagerMethod") as mm_events:
         ask1 = await handle.ask("Question one?")
