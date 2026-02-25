@@ -82,7 +82,7 @@ class TestAtomicUpsert:
                 mock_session.user_context = "user123"
                 mock_session.assistant_context = "456"
                 mock_session.user.id = "user123"
-                mock_session.assistant_record = {"agent_id": "456"}
+                mock_session.assistant.id = "456"
 
                 with patch("unity.common.log_utils.SETTINGS") as mock_settings:
                     mock_settings.ORCHESTRA_URL = "https://api.test.com/v0"
@@ -142,7 +142,7 @@ class TestAtomicUpsert:
                 mock_session.user_context = "user_abc123"
                 mock_session.assistant_context = "asst_789"
                 mock_session.user.id = "user_abc123"
-                mock_session.assistant_record = {"agent_id": "asst_789"}
+                mock_session.assistant.id = "asst_789"
 
                 with patch("unity.common.log_utils.SETTINGS") as mock_settings:
                     mock_settings.ORCHESTRA_URL = "https://api.test.com/v0"
@@ -198,7 +198,7 @@ class TestAtomicUpsert:
                 mock_session.user_context = "user123"
                 mock_session.assistant_context = "456"
                 mock_session.user.id = "user123"
-                mock_session.assistant_record = {"agent_id": "456"}
+                mock_session.assistant.id = "456"
                 mock_session.org_id = 789  # Set org context
                 mock_session.org_name = "TestOrg"  # Set org name
 
@@ -247,7 +247,7 @@ class TestAtomicUpsert:
                 mock_session.user_context = "user123"
                 mock_session.assistant_context = "456"
                 mock_session.user.id = "user123"
-                mock_session.assistant_record = {"agent_id": "456"}
+                mock_session.assistant.id = "456"
 
                 with patch("unity.common.log_utils.SETTINGS") as mock_settings:
                     mock_settings.ORCHESTRA_URL = "https://api.test.com/v0"
@@ -289,7 +289,7 @@ class TestUpdateCumulativeSpend:
                 mock_session.assistant.timezone = "UTC"
                 mock_session.user_context = "user123"
                 mock_session.assistant_context = "456"
-                mock_session.assistant_record = {"agent_id": "456"}
+                mock_session.assistant.id = "456"
 
                 await _update_cumulative_spend(5.50)
 
@@ -336,7 +336,7 @@ class TestUpdateCumulativeSpend:
                 mock_session.assistant.timezone = "UTC"
                 mock_session.user_context = "user123"
                 mock_session.assistant_context = "456"
-                mock_session.assistant_record = {"agent_id": "456"}
+                mock_session.assistant.id = "456"
 
                 # Should not raise
                 await _update_cumulative_spend(5.50)
@@ -364,7 +364,7 @@ class TestUpdateCumulativeSpend:
                 mock_session.assistant.timezone = "America/New_York"
                 mock_session.user_context = "user123"
                 mock_session.assistant_context = "456"
-                mock_session.assistant_record = {"agent_id": "456"}
+                mock_session.assistant.id = "456"
 
                 await _update_cumulative_spend(5.50)
 
@@ -386,7 +386,7 @@ class TestUpdateCumulativeSpend:
                 mock_session.assistant.timezone = "UTC"
                 mock_session.user_context = None  # Missing
                 mock_session.assistant_context = "456"
-                mock_session.assistant_record = {"agent_id": "456"}
+                mock_session.assistant.id = "456"
 
                 await _update_cumulative_spend(5.50)
 
@@ -403,7 +403,7 @@ class TestUpdateCumulativeSpend:
                 mock_session.assistant.timezone = "UTC"
                 mock_session.user_context = "user123"
                 mock_session.assistant_context = None  # Missing
-                mock_session.assistant_record = {"agent_id": "456"}
+                mock_session.assistant.id = "456"
 
                 await _update_cumulative_spend(5.50)
 
@@ -420,7 +420,7 @@ class TestUpdateCumulativeSpend:
                 mock_session.assistant.timezone = "UTC"
                 mock_session.user_context = "user123"
                 mock_session.assistant_context = "456"
-                mock_session.assistant_record = None  # Missing
+                mock_session.assistant.id = ""  # Missing
 
                 await _update_cumulative_spend(5.50)
 
@@ -449,7 +449,7 @@ class TestUpdateCumulativeSpend:
                 mock_session.assistant.timezone = "Invalid/Timezone"
                 mock_session.user_context = "user123"
                 mock_session.assistant_context = "456"
-                mock_session.assistant_record = {"agent_id": "456"}
+                mock_session.assistant.id = "456"
 
                 await _update_cumulative_spend(5.50)
 
@@ -480,7 +480,7 @@ class TestUpdateCumulativeSpend:
                 mock_session.assistant.timezone = "UTC"
                 mock_session.user_context = "user123"
                 mock_session.assistant_context = "456"
-                mock_session.assistant_record = {"agent_id": "456"}
+                mock_session.assistant.id = "456"
 
                 await _update_cumulative_spend(0.0001)
 
@@ -525,7 +525,7 @@ class TestConcurrentSpendUpdates:
                 mock_session.user_context = "user123"
                 mock_session.assistant_context = "456"
                 mock_session.user.id = "user123"
-                mock_session.assistant_record = {"agent_id": "456"}
+                mock_session.assistant.id = "456"
 
                 with patch("unity.common.log_utils.SETTINGS") as mock_settings:
                     mock_settings.ORCHESTRA_URL = "https://api.test.com/v0"
@@ -635,7 +635,7 @@ class TestCheckSpendingLimitsCallback:
 
         with patch("unity.spending_limits._get_api_key", return_value="test-key"):
             with patch("unity.session_details.SESSION_DETAILS") as mock_session:
-                mock_session.assistant_record = None  # No assistant
+                mock_session.assistant.id = ""  # No assistant
                 mock_session.user_id = "user123"
 
                 request = LimitCheckRequest(model="gpt-4", endpoint="test")
@@ -661,7 +661,7 @@ class TestCheckSpendingLimitsCallback:
                 return_value="http://test/v0",
             ):
                 with patch("unity.session_details.SESSION_DETAILS") as mock_session:
-                    mock_session.assistant_record = {"agent_id": "agent_123"}
+                    mock_session.assistant.id = "agent_123"
                     mock_session.user_id = "user_456"
                     mock_session.org_id = None  # Personal context
                     mock_session.assistant.timezone = "UTC"
@@ -696,7 +696,7 @@ class TestCheckSpendingLimitsCallback:
                 return_value="http://test/v0",
             ):
                 with patch("unity.session_details.SESSION_DETAILS") as mock_session:
-                    mock_session.assistant_record = {"agent_id": "agent_123"}
+                    mock_session.assistant.id = "agent_123"
                     mock_session.user_id = "user_456"
                     mock_session.org_id = None
                     mock_session.assistant.timezone = "UTC"
@@ -742,7 +742,7 @@ class TestPersonalContextLimitChecks:
                 return_value="http://test/v0",
             ):
                 with patch("unity.session_details.SESSION_DETAILS") as mock_session:
-                    mock_session.assistant_record = {"agent_id": "agent_123"}
+                    mock_session.assistant.id = "agent_123"
                     mock_session.user_id = "user_456"
                     mock_session.org_id = None  # Personal context
                     mock_session.assistant.timezone = "UTC"
@@ -789,7 +789,7 @@ class TestOrgContextLimitChecks:
                 return_value="http://test/v0",
             ):
                 with patch("unity.session_details.SESSION_DETAILS") as mock_session:
-                    mock_session.assistant_record = {"agent_id": "agent_123"}
+                    mock_session.assistant.id = "agent_123"
                     mock_session.user_id = "user_456"
                     mock_session.org_id = 789  # Org context
                     mock_session.assistant.timezone = "UTC"
@@ -837,7 +837,7 @@ class TestOrgContextLimitChecks:
                 return_value="http://test/v0",
             ):
                 with patch("unity.session_details.SESSION_DETAILS") as mock_session:
-                    mock_session.assistant_record = {"agent_id": "agent_123"}
+                    mock_session.assistant.id = "agent_123"
                     mock_session.user_id = "user_456"
                     mock_session.org_id = 789
                     mock_session.assistant.timezone = "UTC"
@@ -873,7 +873,7 @@ class TestLimitCheckErrorHandling:
                 return_value="http://test/v0",
             ):
                 with patch("unity.session_details.SESSION_DETAILS") as mock_session:
-                    mock_session.assistant_record = {"agent_id": "agent_123"}
+                    mock_session.assistant.id = "agent_123"
                     mock_session.user_id = "user_456"
                     mock_session.org_id = None
                     mock_session.assistant.timezone = "UTC"
@@ -912,7 +912,7 @@ class TestLimitCheckErrorHandling:
                 return_value="http://test/v0",
             ):
                 with patch("unity.session_details.SESSION_DETAILS") as mock_session:
-                    mock_session.assistant_record = {"agent_id": "agent_123"}
+                    mock_session.assistant.id = "agent_123"
                     mock_session.user_id = "user_456"
                     mock_session.org_id = None
                     mock_session.assistant.timezone = "UTC"
@@ -951,7 +951,7 @@ class TestLimitCheckErrorHandling:
                 return_value="http://test/v0",
             ):
                 with patch("unity.session_details.SESSION_DETAILS") as mock_session:
-                    mock_session.assistant_record = {"agent_id": "agent_123"}
+                    mock_session.assistant.id = "agent_123"
                     mock_session.user_id = "user_456"
                     mock_session.org_id = None
                     mock_session.assistant.timezone = "UTC"
@@ -996,7 +996,7 @@ class TestParallelLimitChecks:
                 return_value="http://test/v0",
             ):
                 with patch("unity.session_details.SESSION_DETAILS") as mock_session:
-                    mock_session.assistant_record = {"agent_id": "agent_123"}
+                    mock_session.assistant.id = "agent_123"
                     mock_session.user_id = "user_456"
                     mock_session.org_id = 789  # Org context (3 checks)
                     mock_session.assistant.timezone = "UTC"
@@ -1045,7 +1045,7 @@ class TestNoLimitSet:
                 return_value="http://test/v0",
             ):
                 with patch("unity.session_details.SESSION_DETAILS") as mock_session:
-                    mock_session.assistant_record = {"agent_id": "agent_123"}
+                    mock_session.assistant.id = "agent_123"
                     mock_session.user_id = "user_456"
                     mock_session.org_id = None
                     mock_session.assistant.timezone = "UTC"
@@ -1117,7 +1117,7 @@ class TestLimitBoundary:
                 return_value="http://test/v0",
             ):
                 with patch("unity.session_details.SESSION_DETAILS") as mock_session:
-                    mock_session.assistant_record = {"agent_id": "agent_123"}
+                    mock_session.assistant.id = "agent_123"
                     mock_session.user_id = "user_456"
                     mock_session.org_id = None
                     mock_session.assistant.timezone = "UTC"
@@ -1152,7 +1152,7 @@ class TestLimitBoundary:
                 return_value="http://test/v0",
             ):
                 with patch("unity.session_details.SESSION_DETAILS") as mock_session:
-                    mock_session.assistant_record = {"agent_id": "agent_123"}
+                    mock_session.assistant.id = "agent_123"
                     mock_session.user_id = "user_456"
                     mock_session.org_id = None
                     mock_session.assistant.timezone = "UTC"
@@ -1284,13 +1284,10 @@ async def e2e_config():
     SESSION_DETAILS.populate(
         user_id=config.test_user_id,
         assistant_id=str(config.test_agent_id),
-        user_name="Test User",
+        user_first_name="Test",
+        user_surname="User",
     )
-    SESSION_DETAILS.assistant_record = {
-        "agent_id": config.test_agent_id,
-        "first_name": config.test_assistant_first_name,
-        "surname": config.test_assistant_surname,
-    }
+    SESSION_DETAILS.assistant.id = config.test_agent_id
 
     yield config
 
@@ -1960,7 +1957,8 @@ class TestE2ESpendingLimits:
             SESSION_DETAILS.populate(
                 user_id=e2e_config.test_user_id,
                 assistant_id=str(e2e_config.test_agent_id),
-                user_name="Test User",
+                user_first_name="Test",
+                user_surname="User",
                 org_id=org_id,
                 org_name="SpendingTestOrg",
             )
@@ -1988,7 +1986,8 @@ class TestE2ESpendingLimits:
             SESSION_DETAILS.populate(
                 user_id=e2e_config.test_user_id,
                 assistant_id=str(e2e_config.test_agent_id),
-                user_name="Test User",
+                user_first_name="Test",
+                user_surname="User",
             )
 
 
@@ -2241,7 +2240,7 @@ class TestNotificationStress:
                 return_value="http://test/v0",
             ):
                 with patch("unity.session_details.SESSION_DETAILS") as mock_session:
-                    mock_session.assistant_record = {"agent_id": "agent_123"}
+                    mock_session.assistant.id = "agent_123"
                     mock_session.user_id = "user_456"
                     mock_session.org_id = None
                     mock_session.assistant.timezone = "UTC"
@@ -2301,7 +2300,7 @@ class TestNotificationStress:
                 return_value="http://test/v0",
             ):
                 with patch("unity.session_details.SESSION_DETAILS") as mock_session:
-                    mock_session.assistant_record = {"agent_id": "agent_123"}
+                    mock_session.assistant.id = "agent_123"
                     mock_session.user_id = "user_456"
                     mock_session.org_id = None
                     mock_session.assistant.timezone = "UTC"

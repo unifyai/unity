@@ -82,9 +82,8 @@ def pytest_configure(config):
 
     from unity.session_details import SESSION_DETAILS
 
-    SESSION_DETAILS.user.name = (
-        f"{DEMO_OPERATOR['first_name']} {DEMO_OPERATOR['surname']}"
-    )
+    SESSION_DETAILS.user.first_name = DEMO_OPERATOR["first_name"]
+    SESSION_DETAILS.user.surname = DEMO_OPERATOR["surname"]
     SESSION_DETAILS.user.number = DEMO_OPERATOR["phone_number"]
     SESSION_DETAILS.user.email = DEMO_OPERATOR["email_address"]
 
@@ -98,7 +97,8 @@ def pytest_unconfigure(config):
 
     from unity.session_details import SESSION_DETAILS
 
-    SESSION_DETAILS.user.name = ""
+    SESSION_DETAILS.user.first_name = ""
+    SESSION_DETAILS.user.surname = ""
     SESSION_DETAILS.user.number = ""
     SESSION_DETAILS.user.email = ""
 

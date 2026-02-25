@@ -2,6 +2,7 @@ import asyncio
 import traceback
 from typing import TYPE_CHECKING, Union
 
+import unity
 from unity.contact_manager.types.contact import UNASSIGNED
 from unity.logger import LOGGER
 from unity.common.hierarchical_logger import DEFAULT_ICON
@@ -907,11 +908,11 @@ async def _(event: StartupEvent, cm: "ConversationManager", *args, **kwargs):
         cm.set_details(payload)
         cm.call_manager.set_config(cm.get_call_config())
 
-        # Initialize unity with the correct assistant record BEFORE spawning
-        # concurrent tasks. This closes the race where _startup_sequence
-        # triggers ensure_initialised() before _init_managers can call
-        # unity.init() with the authoritative assistant record.
-        await asyncio.to_thread(managers_utils.init_unity_runtime)
+        # Initialize unity BEFORE spawning concurrent tasks. SESSION_DETAILS
+        # is already populated by set_details() above, so unity.init() just
+        # reads assistant.id for the context path. This prevents races where
+        # _startup_sequence triggers ensure_initialised() first.
+        await asyncio.to_thread(unity.init)
 
         # Job logging + file sync run in sequence (file sync needs VM details from job startup)
         asyncio.create_task(_startup_sequence(cm))
@@ -935,10 +936,12 @@ async def _(event: AssistantUpdateEvent, cm: "ConversationManager", *args, **kwa
     await managers_utils.queue_operation(
         managers_utils.update_session_contacts,
         cm,
-        event.assistant_name,
+        event.assistant_first_name,
+        event.assistant_surname,
         event.assistant_number,
         event.assistant_email,
-        event.user_name,
+        event.user_first_name,
+        event.user_surname,
         event.user_number,
         event.user_email,
     )

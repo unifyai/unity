@@ -1,5 +1,4 @@
 import pytest
-import unity
 
 from unity.contact_manager.contact_manager import ContactManager
 from unity.session_details import SESSION_DETAILS
@@ -14,29 +13,16 @@ from tests.helpers import _handle_project
 def _clear_cached_assistant(monkeypatch):
     """Force *unity* to behave as if no real assistant were configured.
 
-    We clear SESSION_DETAILS.assistant_record so that every time a
-    ``ContactManager`` instance synchronises the assistant (id 0) it sees
-    *None* and therefore falls back to the dummy placeholder record.
+    We reset assistant details so that every time a ``ContactManager``
+    instance synchronises the assistant (id 0) it sees no populated name
+    and therefore falls back to the dummy placeholder record.
 
     The fixture is *autouse* and therefore applies to every test in this
     module without having to be listed explicitly.
     """
+    from unity.session_details import AssistantDetails
 
-    # 1. Clear any previously cached assistant record (from earlier tests)
-    SESSION_DETAILS.assistant_record = None
-
-    # 2. Ensure future `unity.init()` calls cannot discover a real assistant
-    #    by monkey-patching the internal helper it relies on.
-    monkeypatch.setattr(
-        unity,
-        "_list_all_assistants",
-        lambda: [],
-        raising=False,
-    )
-
-    # Note: With SESSION_DETAILS.is_initialized=False (the default in tests),
-    # _resolve_user_details automatically returns defaults without API calls.
-    # No additional patching needed.
+    monkeypatch.setattr(SESSION_DETAILS, "assistant", AssistantDetails())
 
 
 @_handle_project
@@ -47,13 +33,6 @@ def test_dummy_assistant(monkeypatch):
         DEFAULT_ASSISTANT_FIRST_NAME,
         DEFAULT_ASSISTANT_PHONE,
         DEFAULT_ASSISTANT_SURNAME,
-    )
-
-    # Force assistant discovery helper to return an empty list
-    monkeypatch.setattr(
-        "unity.contact_manager.system_contacts._list_assistants",
-        lambda self: [],
-        raising=True,
     )
 
     cm = ContactManager()
@@ -80,22 +59,23 @@ def test_real_assistant(monkeypatch):
     """If a real assistant is configured, its details should populate contact ID 0."""
     from unity.session_details import SESSION_DETAILS
 
-    sample_record = {
-        "agent_id": "123",
-        "first_name": "Alice",
-        "surname": "Smith",
-        "phone": "+15551234567",
-        "email": "alice.smith@example.com",
-        "about": "Helpful assistant",
-        "region": "North America",
-        "timezone": "America/New_York",
-    }
+    from unity.session_details import AssistantDetails
 
-    # Simulate a real session with an assistant record.
-    # This is how production works: unity.init() sets assistant_record,
-    # which _resolve_assistant_details() then uses to populate the contact.
+    # Simulate a real session with populated assistant details.
     monkeypatch.setattr(SESSION_DETAILS, "_initialized", True)
-    monkeypatch.setattr(SESSION_DETAILS, "assistant_record", sample_record)
+    monkeypatch.setattr(
+        SESSION_DETAILS,
+        "assistant",
+        AssistantDetails(
+            id="123",
+            first_name="Alice",
+            surname="Smith",
+            number="+15551234567",
+            email="alice.smith@example.com",
+            about="Helpful assistant",
+            timezone="America/New_York",
+        ),
+    )
 
     cm = ContactManager()
 
@@ -118,13 +98,6 @@ def test_real_assistant(monkeypatch):
 @_handle_project
 def test_system_contacts_have_is_system_flag(monkeypatch):
     """Assistant and user contacts should have is_system=True."""
-    # Force assistant discovery helper to return an empty list
-    monkeypatch.setattr(
-        "unity.contact_manager.system_contacts._list_assistants",
-        lambda self: [],
-        raising=True,
-    )
-
     cm = ContactManager()
 
     # Assistant (id=0) should have is_system=True

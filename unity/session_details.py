@@ -15,10 +15,10 @@ Usage:
 
     # Check if initialized
     if SESSION_DETAILS.is_initialized:
-        print(SESSION_DETAILS.assistant.name)
+        print(SESSION_DETAILS.assistant.first_name)
 
     # All fields have sensible defaults, so no `or "fallback"` is needed
-    name = SESSION_DETAILS.assistant.name  # empty string until populated
+    name = SESSION_DETAILS.assistant.name  # computed from first_name + surname
 """
 
 import os
@@ -63,7 +63,8 @@ class AssistantDetails:
     """Details about the assistant."""
 
     id: str = DEFAULT_ASSISTANT_ID
-    name: str = ""  # Populated from StartupEvent; empty = use defaults
+    first_name: str = ""
+    surname: str = ""
     age: str = ""
     nationality: str = ""
     timezone: str = ""  # IANA timezone identifier (e.g., "America/New_York")
@@ -81,16 +82,25 @@ class AssistantDetails:
         None  # URL for user's own desktop (not the managed VM)
     )
 
+    @property
+    def name(self) -> str:
+        return f"{self.first_name} {self.surname}".strip()
+
 
 @dataclass
 class UserDetails:
     """Details about the user (boss)."""
 
     id: str = DEFAULT_USER_ID
-    name: str = ""
+    first_name: str = ""
+    surname: str = ""
     number: str = ""
     email: str = ""
     contact_id: int = 1  # Contact ID in Contacts table
+
+    @property
+    def name(self) -> str:
+        return f"{self.first_name} {self.surname}".strip()
 
 
 @dataclass
@@ -147,9 +157,6 @@ class SessionDetails:
     _unify_key: str = field(default="", repr=False)
     _shared_unify_key: str = field(default="", repr=False)
 
-    # Raw assistant record from Unify API (for contexts that need the full dict)
-    assistant_record: dict | None = field(default=None, repr=False)
-
     # Organization context (None id for personal/non-org context)
     org: OrgDetails = field(default_factory=OrgDetails)
 
@@ -161,10 +168,6 @@ class SessionDetails:
 
         Used for Unify context paths like '{user_id}/{assistant_id}/...'.
         """
-        if self.assistant_record:
-            agent_id = self.assistant_record.get("agent_id")
-            if agent_id is not None:
-                return str(agent_id)
         return self.assistant.id or DEFAULT_ASSISTANT_CONTEXT
 
     @property
@@ -236,7 +239,8 @@ class SessionDetails:
         self,
         *,
         assistant_id: str = "",
-        assistant_name: str = "",
+        assistant_first_name: str = "",
+        assistant_surname: str = "",
         assistant_age: str = "",
         assistant_nationality: str = "",
         assistant_timezone: str = "",
@@ -245,7 +249,8 @@ class SessionDetails:
         assistant_email: str = "",
         assistant_contact_id: int = 0,
         user_id: str = "",
-        user_name: str = "",
+        user_first_name: str = "",
+        user_surname: str = "",
         user_number: str = "",
         user_email: str = "",
         org_id: int | None = None,
@@ -264,7 +269,8 @@ class SessionDetails:
         Called by ConversationManager when a StartupEvent is received.
         """
         self.assistant.id = assistant_id
-        self.assistant.name = assistant_name
+        self.assistant.first_name = assistant_first_name
+        self.assistant.surname = assistant_surname
         self.assistant.age = assistant_age
         self.assistant.nationality = assistant_nationality
         self.assistant.timezone = assistant_timezone
@@ -278,7 +284,8 @@ class SessionDetails:
         self.assistant.user_desktop_filesys_sync = user_desktop_filesys_sync
         self.assistant.user_desktop_url = user_desktop_url
         self.user.id = user_id
-        self.user.name = user_name
+        self.user.first_name = user_first_name
+        self.user.surname = user_surname
         self.user.number = user_number
         self.user.email = user_email
         self.org.id = org_id
@@ -297,7 +304,6 @@ class SessionDetails:
         self.voice_call = VoiceCallConfig()
         self._unify_key = ""
         self._shared_unify_key = ""
-        self.assistant_record = None
         self._initialized = False
 
     def export_to_env(self) -> None:
@@ -306,6 +312,8 @@ class SessionDetails:
         Called after populate() to ensure subprocesses can inherit values.
         """
         os.environ["ASSISTANT_ID"] = self.assistant.id
+        os.environ["ASSISTANT_FIRST_NAME"] = self.assistant.first_name
+        os.environ["ASSISTANT_SURNAME"] = self.assistant.surname
         os.environ["ASSISTANT_NAME"] = self.assistant.name
         os.environ["ASSISTANT_AGE"] = self.assistant.age
         os.environ["ASSISTANT_NATIONALITY"] = self.assistant.nationality
@@ -323,6 +331,8 @@ class SessionDetails:
         )
         os.environ["ASSISTANT_USER_DESKTOP_URL"] = self.assistant.user_desktop_url or ""
         os.environ["USER_ID"] = self.user.id
+        os.environ["USER_FIRST_NAME"] = self.user.first_name
+        os.environ["USER_SURNAME"] = self.user.surname
         os.environ["USER_NAME"] = self.user.name
         os.environ["USER_NUMBER"] = self.user.number
         os.environ["USER_EMAIL"] = self.user.email
@@ -346,8 +356,10 @@ class SessionDetails:
         """
         if val := os.environ.get("ASSISTANT_ID"):
             self.assistant.id = val
-        if val := os.environ.get("ASSISTANT_NAME"):
-            self.assistant.name = val
+        if val := os.environ.get("ASSISTANT_FIRST_NAME"):
+            self.assistant.first_name = val
+        if val := os.environ.get("ASSISTANT_SURNAME"):
+            self.assistant.surname = val
         if val := os.environ.get("ASSISTANT_AGE"):
             self.assistant.age = val
         if val := os.environ.get("ASSISTANT_NATIONALITY"):
@@ -377,8 +389,10 @@ class SessionDetails:
             self.assistant.user_desktop_url = val if val else None
         if val := os.environ.get("USER_ID"):
             self.user.id = val
-        if val := os.environ.get("USER_NAME"):
-            self.user.name = val
+        if val := os.environ.get("USER_FIRST_NAME"):
+            self.user.first_name = val
+        if val := os.environ.get("USER_SURNAME"):
+            self.user.surname = val
         if val := os.environ.get("USER_NUMBER"):
             self.user.number = val
         if val := os.environ.get("USER_EMAIL"):
