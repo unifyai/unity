@@ -1,7 +1,7 @@
 ConversationManager Sandbox
 ==========================
 
-This folder contains an **interactive playground** for the `ConversationManager` component (`unity/conversation_manager/`). The sandbox is designed to let you test the CM “brain” locally, in isolation, with simulated comms by default — plus an optional **real-comms mode** with explicit safety confirmations.
+Interactive playground for the `ConversationManager` component (`unity/conversation_manager/`). Test the CM "brain" locally with simulated comms by default, or switch to **real-comms mode** with explicit safety confirmations.
 
 ## Quick start
 
@@ -9,13 +9,13 @@ This folder contains an **interactive playground** for the `ConversationManager`
 # REPL (default) — prompts for actor config; no external infrastructure needed for mode 1/2
 python -m sandboxes.conversation_manager.sandbox --project_name Sandbox --overwrite
 
-# REPL + voice (optional) — enables `sayv` (voice phone utterances) and TTS for phone responses
+# REPL + voice — enables `sayv` (voice phone/meet utterances) and TTS for phone responses
 python -m sandboxes.conversation_manager.sandbox --voice --project_name Sandbox --overwrite
 
-# GUI (optional) — Textual, same process/event loop as CM
+# GUI — Textual, same process/event loop as CM
 python -m sandboxes.conversation_manager.sandbox --gui --project_name Sandbox --overwrite
 
-# Real-comms (optional, requires infra) — REPL only
+# Real-comms (requires infra) — REPL only
 python -m sandboxes.conversation_manager.sandbox --real-comms --project_name Sandbox --overwrite
 ```
 
@@ -44,18 +44,21 @@ Configuration persistence:
 
 ## Computer integration (Mode 3)
 
-- The Magnitude agent runs in a **separate Chromium instance** (agent-service).
-- The GUI “Computer” tab shows:
-  - last known URL (best-effort)
-  - recent computer actions (navigate/act/observe/query)
+Mode 3 uses the **multi-mode** ComputerPrimitives architecture. The agent has access to two interfaces simultaneously:
+
+- **`primitives.computer.desktop.*`** — singleton namespace for full OS-level desktop control (mouse/keyboard via noVNC)
+- **`primitives.computer.web.new_session(visible=True/False)`** — factory for independent browser sessions with isolated state
+
+The sandbox auto-bootstraps a Docker container (desktop + web-vm) and optionally a local agent-service (web mode). The GUI "Computer" tab shows the last known URL and recent computer actions.
 
 Relevant flags:
 - `--agent-server-url http://localhost:3000`
-- `--agent-mode web` (or `desktop`)
-- `--headless` (launch Chromium headless)
+- `--headless` (launch Chromium headless for web sessions)
 - `--agent-service-bootstrap guide|auto` (help with setup; `auto` can install/build/start best-effort)
 
 ## Command reference (REPL + GUI command bar)
+
+Notation: `<arg>` = required, `[arg]` = optional.
 
 ### Meta
 - `help` / `h` / `?`: show help
@@ -66,18 +69,22 @@ Relevant flags:
 - `config`: switch actor configuration (restarts sandbox; state is reset)
 
 ### Event simulation (inbound → CM)
-- `sms <message>`
-- `email <subject> | <body>`
-- `call`
-- `say <text>` (during a call)
-- `sayv` (during a call, requires `--voice`)
-- `end_call`
+- `msg <content>`: simulate incoming Unify message
+- `sms <content>`: simulate incoming SMS
+- `email <subject> | <body>`: simulate incoming email
+- `call`: start simulated phone call (or live call with `--live-voice`)
+- `meet`: start simulated Unify Meet session (or live meet with `--live-voice`)
+- `say <content>`: voice utterance (during a call or meet)
+- `sayv`: record voice, transcribe, and send as utterance (requires `--voice`)
+- `sayv <content>`: send text as utterance without recording (convenience form)
+- `end_call`: end active phone call
+- `end_meet`: end active Unify Meet session
 
-During a call, any non-command text is treated as an utterance.
+During a call or meet, any non-command text is treated as an utterance.
 
-#### Meet interaction events (Unify Meet session simulation)
+### Meet interaction events (requires active meet)
 
-These simulate frontend events from a Unify Meet session. All are freely triggerable at any time (no active call required). An optional `[reason]` string is passed through to logs for debugging.
+These simulate frontend events from a Unify Meet session. An optional `[reason]` string is passed through to logs for debugging.
 
 - `assistant_screen_share_start [reason]` — User enables viewing the assistant's desktop
 - `assistant_screen_share_stop [reason]` — User disables viewing the assistant's desktop
@@ -88,48 +95,35 @@ These simulate frontend events from a Unify Meet session. All are freely trigger
 - `user_remote_control_start [reason]` — User takes remote control of the assistant's desktop
 - `user_remote_control_stop [reason]` — User releases remote control
 
-### Steering (only while active)
-Steering is available whenever **either**:
-- an Actor handle exists (full steering), **or**
-- a brain run is in-flight (best-effort steering)
+### Display / debugging
+- `trace [N]`: show last N CodeAct execution turns (default 3)
+- `tree`: show the current manager call event tree
+- `show_logs <cm|actor|manager|all>` / `collapse_logs <...>`: expand/collapse log categories
+- `agent_logs [N]`: show last N lines of sandbox-started agent-service logs (default 80)
 
-Commands:
-- `/pause`
-- `/resume`
-- `/i <msg>`
-- `/ask <q>`
-- `/stop [reason]`
-
-**Actor handle mode**: forwards to `SteerableToolHandle` methods.
-
-**Brain-run mode (best-effort)**:
-- `/pause` queues events until `/resume`
-- `/resume` flushes queued events
-- `/i <msg>` publishes an inbound event to trigger a fresh brain run
-- `/ask <q>` prints a state snapshot
-- `/stop` returns to idle immediately (does not cancel mid-generation)
+CLI flag: `--show-trace` auto-prints the trace after each CodeAct code turn (REPL only).
 
 ### Scenario seeding (idle-only)
 - `us <description>`: generate a synthetic transcript and publish inbound events into CM
 - `usv`: voice scenario seeding (requires `--voice`)
 
-Scenario seeding is disabled while active; use `/stop` or wait.
+Scenario seeding is disabled while active; wait for the active action to complete.
 
 ## Voice mode (`--voice`)
 
 When enabled:
-- `sayv` records microphone audio, transcribes via Deepgram (STT), and sends the transcript as a phone utterance.
-- Assistant phone-call responses (`[Phone → User] ...`) are also spoken via TTS (Cartesia) on a best-effort basis.
+- `sayv` records microphone audio, transcribes via Deepgram (STT), and sends the transcript as a phone/meet utterance.
+- Assistant phone-call responses (`[Phone → User] ...`) are spoken via TTS (Cartesia) on a best-effort basis.
 
 ## Live voice mode (`--live-voice`)
 
-Enables **real voice calls** through the sandbox. When `--live-voice` is active, the `call` command:
+Enables **real voice calls and meets** through the sandbox. When `--live-voice` is active, the `call` and `meet` commands:
 
-1. Creates a LiveKit room
-2. Spawns the **production voice agent subprocess** (the same `call.py` used in production)
-3. Bootstraps a local copy of the LiveKit Agents Playground (one-time; requires Node.js)
-4. Opens the playground in your browser with URL + token embedded as query params (auto-connects)
-5. Waits for a readiness signal (`UnifyMeetStarted`) before reporting the call as ready (with timeout fallback)
+1. Create a LiveKit room
+2. Spawn the **production voice agent subprocess** (the same `call.py` used in production)
+3. Bootstrap a local copy of the LiveKit Agents Playground (one-time; requires Node.js)
+4. Open the playground in your browser with URL + token embedded as query params (auto-connects)
+5. Wait for a readiness signal (`UnifyMeetStarted`) before reporting as ready (with timeout fallback)
 
 The full fast-brain (voice agent) + slow-brain (ConversationManager) loop runs exactly as it does in production. You talk through your browser, and the sandbox displays all events (utterances, call guidance, actor actions) in real-time.
 
@@ -147,7 +141,7 @@ cm> end_call
 
 ### Requirements
 
-Requires voice-related env vars (`LIVEKIT_*`, `DEEPGRAM_API_KEY`, `CARTESIA_API_KEY` or `ELEVEN_API_KEY`). See the **Voice / Live-Voice** section under Environment Variables for the full list.
+Requires voice-related env vars (`LIVEKIT_*`, `DEEPGRAM_API_KEY`, `CARTESIA_API_KEY` or `ELEVEN_API_KEY`). See the **Voice / Live-Voice** section under Environment Variables.
 
 ## Real-comms safety confirmations
 
@@ -163,24 +157,9 @@ You can bypass prompts with `--auto-confirm` (dangerous; use only for controlled
 
 See `sandboxes/conversation_manager/examples.md`.
 
-## Trace / tree / logs (CodeAct UX helpers)
+## Structured state snapshots (`save_state`)
 
-These are intended for debugging and “execution visibility” in Mode 2/3:
-
-- `trace [N]`: show last N CodeAct execution turns (default 3)
-- `tree`: show the current manager call hierarchy (EventBus `ManagerMethod` events)
-- `show_logs <cm|actor|manager|all>` / `collapse_logs <...>`: expand/collapse log categories
-- `save_state [path]`: save structured state snapshot to file (see below)
-
-CLI:
-- `--show-trace`: auto-print trace after each CodeAct code turn (REPL only)
-
-### Structured State Snapshots (`save_state`)
-
-The `save_state` command captures the current sandbox display state and saves it to a file. This is useful for:
-- Debugging concurrent Actor calls
-- Sharing session state with teammates
-- Post-mortem analysis of complex runs
+The `save_state` command captures the current sandbox display state and saves it to a file. Useful for debugging concurrent Actor calls, sharing session state, and post-mortem analysis.
 
 ```bash
 # Auto-generate filename with timestamp
@@ -190,7 +169,7 @@ save_state
 save_state my_debug_session.json
 ```
 
-This creates two files:
+This creates two files (plus an optional call transcript if a voice log is present):
 - **JSON file**: Machine-readable structured data (logs grouped by handle, event trees, traces)
 - **Text file**: Human-readable formatted output similar to the GUI layout
 
@@ -234,7 +213,7 @@ These populate `SESSION_DETAILS` and the boss contact record. Without them the s
 | `ASSISTANT_ID` | (auto) | Assistant ID |
 | `ASSISTANT_AGE` | `""` | Assistant's age (used in prompts) |
 
-### Real-Comms mode (`--real-comms`)
+### Real-comms mode (`--real-comms`)
 
 | Variable | Required | Description |
 |---|---|---|
@@ -329,52 +308,29 @@ DEBUG_LLM_TURN=true
 ## Troubleshooting
 
 ### Event Tree is empty / Manager Logs show "(no logs)"
-Set `EVENTBUS_PUBLISHING_ENABLED=true` (see Debugging / Observability in the Environment Variables section above).
+Set `EVENTBUS_PUBLISHING_ENABLED=true` (see Debugging / Observability above).
 
 ### SMS replies fail with "Failed to send sms to +15550001234"
 The placeholder number means `USER_NUMBER` is not set in `.env`. Set it to the boss's real phone number (see Identity section above).
 
-### “(no active conversation) Steering commands…”
-Steering commands only work while CM is processing (active handle or brain run in-flight). Send an event (`sms ...`, `call`, etc.) first.
-
-### “Scenario seeding is disabled while active”
-Scenario seeding is idle-only. Use `/stop` or wait for the active action to complete.
+### Scenario seeding is disabled while active
+Scenario seeding is idle-only. Wait for the active action to complete.
 
 ### Real-comms mode fails to start
 Real-comms requires backend infrastructure and correct env/session configuration. Check your `.env` / `SESSION_DETAILS` settings and comms deployment.
 
-### Mode 3 fails validation (“agent-service is not running or unreachable”)
+### Mode 3 fails validation ("agent-service is not running or unreachable")
 Mode 3 requires:
 - `agent-service` running and reachable at `--agent-server-url`
 - `UNIFY_KEY` set (agent-service uses it for auth)
 
-If you’re on a fresh install and don’t have Magnitude set up yet:
-- See `sandboxes/actor/README.md` → “Magnitude Agent Service Setup” (step-by-step)
-- The sandbox can also print setup instructions (default) and can *attempt* auto-bootstrap with:
-  - `--agent-service-bootstrap auto`
+If you're on a fresh install and don't have Magnitude set up yet:
+- See `sandboxes/actor/README.md` → "Magnitude Agent Service Setup" (step-by-step)
+- The sandbox prints setup instructions by default and can attempt auto-bootstrap with `--agent-service-bootstrap auto`
 
-## Other entrypoints
+## Example: CodeAct + real managers + computer (GUI)
 
-**Alternate (GUI-only module)**:
-```bash
-python -m sandboxes.conversation_manager.gui
-```
-
-**Recommended (GUI mode)**:
-```bash
-python -m sandboxes.conversation_manager.sandbox --gui
-```
-
-This sandbox provides:
-- A unified entrypoint (`sandbox.py`)
-- REPL-first UX + optional in-process GUI
-- Dual-mode steering (Actor handle + brain-run best-effort)
-- Scenario seeding (`us`, `usv`)
-- Real-comms mode with safety prompts (`--real-comms`)
-
-## Example: CodeAct + real managers + browser (GUI)
-
-Start the sandbox in GUI mode with agent-service wired up:
+Start the sandbox in GUI mode with computer integration:
 
 ```bash
 python -m sandboxes.conversation_manager.sandbox \
@@ -382,14 +338,13 @@ python -m sandboxes.conversation_manager.sandbox \
   --voice \
   --project_name Sandbox \
   --overwrite \
-  --agent-server-url http://localhost:3000 \
-  --agent-mode web
+  --agent-server-url http://localhost:3000
 ```
 
 Then, in the command bar, try an end-to-end request (Mode 3):
 
 ```text
-sms Can you find OpenAI's careers page, check if there’s a “Backend Engineer” role open, and if so create a task for me called “Apply to OpenAI” with the role URL in the description?
+sms Can you find OpenAI's careers page, check if there's a "Backend Engineer" role open, and if so create a task for me called "Apply to OpenAI" with the role URL in the description?
 ```
 
-Tip: add `--headless` if you don’t want a visible Chromium window.
+Tip: add `--headless` if you don't want visible browser windows for web sessions.
