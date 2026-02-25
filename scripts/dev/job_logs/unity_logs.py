@@ -300,6 +300,32 @@ def _fetch_file(
         pass
 
 
+_CONTAINER_LOG_DIRS = ("/var/log/unillm", "/var/log/unify", "/var/log/unity")
+
+
+def _sync_all_logs(pod_name: str, namespace: str, mirror_root: Path) -> None:
+    """Bulk-copy all container log directories to the local mirror."""
+    info("Syncing all container logs...")
+    for container_dir in _CONTAINER_LOG_DIRS:
+        subdir = container_dir.split("/")[-1]  # unillm, unify, unity
+        local_dir = mirror_root / subdir
+        local_dir.mkdir(parents=True, exist_ok=True)
+        result = subprocess.run(
+            [
+                KUBECTL,
+                "cp",
+                f"{namespace}/{pod_name}:{container_dir}/.",
+                str(local_dir),
+            ],
+            capture_output=True,
+            text=True,
+        )
+        if result.returncode == 0:
+            success(f"  {container_dir} → {local_dir}")
+        else:
+            warn(f"  {container_dir}: {result.stderr.strip() or 'copy failed'}")
+
+
 def _hyperlink(uri: str, text: str) -> str:
     """Wrap *text* in an OSC 8 terminal hyperlink pointing to *uri*.
 
@@ -344,23 +370,30 @@ def stream_logs(
     *,
     mirror: bool = True,
     mirror_base: Path = MIRROR_BASE,
+    sync_all: bool = False,
 ):
     """Print all existing logs and stream new ones via kubectl -f.
 
     When *mirror* is True, container log-file paths (``/var/log/...``) are
     rewritten to local paths and the files are downloaded in the background.
+
+    When *sync_all* is True, a bulk copy of all container log directories
+    is performed when the stream ends (Ctrl+C or pod exit).
     """
     pod_name: str | None = None
     mirror_root: Path | None = None
 
-    if mirror:
+    if mirror or sync_all:
         pod_name = resolve_pod_name(job_name, namespace)
         if pod_name:
             mirror_root = _mirror_dir(job_name, mirror_base)
             info(f"Mirroring container logs → {mirror_root}")
+            if sync_all:
+                info("Full log sync will run when streaming ends.")
         else:
             warn("Could not resolve pod name — log mirroring disabled.")
             mirror = False
+            sync_all = False
 
     info(f"Streaming logs (existing + live) for '{job_name}'...")
     print(f"  {DIM}(Press Ctrl+C to stop){NC}")
@@ -402,9 +435,10 @@ def stream_logs(
                 proc.wait()
                 print()
                 info("Stopped streaming.")
-                return
             finally:
                 executor.shutdown(wait=True)
+                if sync_all and pod_name and mirror_root:
+                    _sync_all_logs(pod_name, namespace, mirror_root)
 
     try:
         _run_stream(kubectl_cmd)
@@ -489,10 +523,17 @@ def main():
         default=None,
         help=f"Local directory for mirrored log files (default: {MIRROR_BASE}).",
     )
+    parser.add_argument(
+        "--sync-all-logs",
+        action="store_true",
+        default=False,
+        help="Bulk-copy all container log directories on stream exit (Ctrl+C).",
+    )
     args = parser.parse_args()
 
     namespace = args.namespace
     mirror = not args.no_mirror
+    sync_all = args.sync_all_logs
     mirror_base = Path(args.mirror_dir).resolve() if args.mirror_dir else MIRROR_BASE
     job_name = args.job or resolve_latest_job(namespace)
 
@@ -512,7 +553,13 @@ def main():
     print()
     if running is True:
         # AssistantJobs says running → pod exists, stream live.
-        stream_logs(job_name, namespace, mirror=mirror, mirror_base=mirror_base)
+        stream_logs(
+            job_name,
+            namespace,
+            mirror=mirror,
+            mirror_base=mirror_base,
+            sync_all=sync_all,
+        )
     elif running is False:
         # AssistantJobs says not running → pod is gone, use gcloud.
         fetch_historical_logs(job_name, namespace)
@@ -521,7 +568,13 @@ def main():
         # back to gcloud historical logs.
         warn("Unknown job status. Trying kubectl stream first...")
         print()
-        stream_logs(job_name, namespace, mirror=mirror, mirror_base=mirror_base)
+        stream_logs(
+            job_name,
+            namespace,
+            mirror=mirror,
+            mirror_base=mirror_base,
+            sync_all=sync_all,
+        )
 
 
 if __name__ == "__main__":
