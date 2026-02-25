@@ -423,7 +423,6 @@ class _SessionConfigBase(Event):
     user_email: str
     voice_id: str
     voice_provider: str = "cartesia"
-    voice_mode: str = "tts"
     assistant_timezone: str = (
         ""  # IANA timezone identifier; default empty for backward compat
     )
