@@ -59,22 +59,6 @@ class GuidanceManager(BaseGuidanceManager):
         exclude_ids: Optional[FrozenSet[int]] = None,
     ) -> None:
         super().__init__()
-        ctxs = unify.get_active_context()
-        read_ctx, write_ctx = ctxs.get("read"), ctxs.get("write")
-        if not read_ctx:
-            try:
-                from .. import ensure_initialised as _ensure_initialised  # local
-
-                _ensure_initialised()
-                ctxs = unify.get_active_context()
-                read_ctx, write_ctx = ctxs.get("read"), ctxs.get("write")
-            except Exception:
-                pass
-
-        assert (
-            read_ctx == write_ctx
-        ), "read and write contexts must be the same when instantiating a GuidanceManager."
-
         self.include_in_multi_assistant_table = True
         self._ctx = ContextRegistry.get_context(self, "Guidance")
 
