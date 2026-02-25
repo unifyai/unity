@@ -1,6 +1,7 @@
 """Real TranscriptManager routing tests for CodeActActor.
 
-These mirror `test_transcripts.py` but use CodeActActor (code-first tool loop).
+Validates that CodeActActor uses ``execute_function`` for simple single-primitive
+transcript operations, both with and without FunctionManager discovery tools.
 """
 
 from datetime import datetime, timezone
@@ -9,12 +10,10 @@ import pytest
 
 from tests.helpers import _handle_project
 from tests.actor.state_managers.utils import (
-    assert_code_act_function_manager_used,
-    extract_code_act_execute_code_snippets,
+    assert_used_execute_function,
     make_code_act_actor,
 )
 from unity.contact_manager.types.contact import Contact
-from unity.function_manager.function_manager import FunctionManager
 from unity.manager_registry import ManagerRegistry
 
 
@@ -23,7 +22,7 @@ from unity.manager_registry import ManagerRegistry
 @pytest.mark.eval
 @_handle_project
 async def test_ask_calls_manager():
-    """CodeAct routes transcript question → primitives.transcripts.ask."""
+    """CodeAct routes transcript question via execute_function."""
     async with make_code_act_actor(impl="real") as (actor, _primitives, calls):
         tm = ManagerRegistry.get_transcript_manager()
 
@@ -55,6 +54,7 @@ async def test_ask_calls_manager():
         result = await handle.result()
 
         assert result and len(str(result)) > 0
+        assert_used_execute_function(handle)
         assert "primitives.transcripts.ask" in calls
         assert all(c.startswith("primitives.transcripts.") for c in calls)
 
@@ -63,21 +63,11 @@ async def test_ask_calls_manager():
 @pytest.mark.timeout(600)
 @pytest.mark.eval
 @_handle_project
-async def test_ask_calls_manager_memoized():
-    """CodeAct uses FunctionManager (when available) for transcript queries."""
-    fm = FunctionManager()
-    implementation = """
-async def ask_transcripts_question(question: str, response_format=None) -> str:
-    \"\"\"Query transcripts/messages via the transcripts manager (read-only).\"\"\"
-    handle = await primitives.transcripts.ask(question, response_format=response_format)
-    return await handle.result()
-"""
-    fm.add_functions(implementations=implementation, overwrite=True)
-
+async def test_ask_calls_manager_with_fm_tools():
+    """CodeAct routes transcript query via execute_function even with FM discovery tools present."""
     async with make_code_act_actor(
         impl="real",
         include_function_manager_tools=True,
-        function_manager=fm,
     ) as (actor, _primitives, calls):
         tm = ManagerRegistry.get_transcript_manager()
 
@@ -109,9 +99,6 @@ async def ask_transcripts_question(question: str, response_format=None) -> str:
         result = await handle.result()
 
         assert result and len(str(result)) > 0
-        assert_code_act_function_manager_used(handle)
-        snippets = "\n\n".join(extract_code_act_execute_code_snippets(handle))
-        assert "ask_transcripts_question" in snippets
-
+        assert_used_execute_function(handle)
         assert "primitives.transcripts.ask" in calls
         assert all(c.startswith("primitives.transcripts.") for c in calls)

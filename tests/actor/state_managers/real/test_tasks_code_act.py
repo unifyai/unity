@@ -1,14 +1,14 @@
 """Real TaskScheduler routing tests for CodeActActor.
 
-These mirror `test_tasks.py` but use CodeActActor (code-first tool loop).
+Validates that CodeActActor uses ``execute_function`` for simple single-primitive
+task operations, both with and without FunctionManager discovery tools.
 """
 
 import pytest
 
 from tests.helpers import _handle_project
 from tests.actor.state_managers.utils import (
-    assert_code_act_function_manager_used,
-    extract_code_act_execute_code_snippets,
+    assert_used_execute_function,
     make_code_act_actor,
 )
 from unity.function_manager.function_manager import FunctionManager
@@ -20,7 +20,7 @@ from unity.manager_registry import ManagerRegistry
 @pytest.mark.eval
 @_handle_project
 async def test_ask_calls_scheduler():
-    """CodeAct routes read-only task question → primitives.tasks.ask."""
+    """CodeAct routes read-only task question via execute_function."""
     async with make_code_act_actor(impl="real") as (actor, _primitives, calls):
         ts = ManagerRegistry.get_task_scheduler()
         ts.actor = actor
@@ -37,6 +37,7 @@ async def test_ask_calls_scheduler():
         result = await handle.result()
 
         assert "quarterly report" in str(result).lower()
+        assert_used_execute_function(handle)
         assert "primitives.tasks.ask" in calls
         assert all(c.startswith("primitives.tasks.") for c in calls)
 
@@ -45,21 +46,11 @@ async def test_ask_calls_scheduler():
 @pytest.mark.timeout(600)
 @pytest.mark.eval
 @_handle_project
-async def test_ask_calls_scheduler_memoized():
-    """CodeAct uses FunctionManager (when available) for task queries."""
-    fm = FunctionManager()
-    implementation = """
-async def ask_tasks(question: str, response_format=None) -> str:
-    \"\"\"Query tasks via the task scheduler (read-only).\"\"\"
-    handle = await primitives.tasks.ask(question, response_format=response_format)
-    return await handle.result()
-"""
-    fm.add_functions(implementations=implementation, overwrite=True)
-
+async def test_ask_calls_scheduler_with_fm_tools():
+    """CodeAct routes task query via execute_function even with FM discovery tools present."""
     async with make_code_act_actor(
         impl="real",
         include_function_manager_tools=True,
-        function_manager=fm,
     ) as (actor, _primitives, calls):
         ts = ManagerRegistry.get_task_scheduler()
         ts.actor = actor
@@ -76,10 +67,7 @@ async def ask_tasks(question: str, response_format=None) -> str:
         result = await handle.result()
 
         assert "quarterly report" in str(result).lower()
-        assert_code_act_function_manager_used(handle)
-        snippets = "\n\n".join(extract_code_act_execute_code_snippets(handle))
-        assert "ask_tasks" in snippets
-
+        assert_used_execute_function(handle)
         assert "primitives.tasks.ask" in calls
         assert all(c.startswith("primitives.tasks.") for c in calls)
 
@@ -89,7 +77,7 @@ async def ask_tasks(question: str, response_format=None) -> str:
 @pytest.mark.eval
 @_handle_project
 async def test_update_calls_scheduler():
-    """CodeAct routes task mutation → primitives.tasks.update."""
+    """CodeAct routes task mutation via execute_function."""
     async with make_code_act_actor(impl="real") as (actor, _primitives, calls):
         ts = ManagerRegistry.get_task_scheduler()
         ts.actor = actor
@@ -101,6 +89,7 @@ async def test_update_calls_scheduler():
         )
         await handle.result()
 
+        assert_used_execute_function(handle)
         assert "primitives.tasks.update" in calls
         assert "primitives.tasks.execute" not in calls
 
@@ -116,23 +105,11 @@ async def test_update_calls_scheduler():
 @pytest.mark.timeout(600)
 @pytest.mark.eval
 @_handle_project
-async def test_update_calls_scheduler_memoized():
-    """CodeAct uses FunctionManager (when available) for task mutations."""
-    fm = FunctionManager()
-    implementation = """
-async def create_or_update_or_delete_tasks(name: str, description: str) -> str:
-    \"\"\"Create/update/delete tasks via the task scheduler.\"\"\"
-    handle = await primitives.tasks.update(
-        f"Create a new task called '{name}' with the description '{description}'."
-    )
-    return await handle.result()
-"""
-    fm.add_functions(implementations=implementation, overwrite=True)
-
+async def test_update_calls_scheduler_with_fm_tools():
+    """CodeAct routes task mutation via execute_function even with FM discovery tools present."""
     async with make_code_act_actor(
         impl="real",
         include_function_manager_tools=True,
-        function_manager=fm,
     ) as (actor, _primitives, calls):
         ts = ManagerRegistry.get_task_scheduler()
         ts.actor = actor
@@ -144,10 +121,7 @@ async def create_or_update_or_delete_tasks(name: str, description: str) -> str:
         )
         await handle.result()
 
-        assert_code_act_function_manager_used(handle)
-        snippets = "\n\n".join(extract_code_act_execute_code_snippets(handle))
-        assert "create_or_update_or_delete_tasks" in snippets
-
+        assert_used_execute_function(handle)
         assert "primitives.tasks.update" in calls
         assert "primitives.tasks.execute" not in calls
 
@@ -164,7 +138,7 @@ async def create_or_update_or_delete_tasks(name: str, description: str) -> str:
 @pytest.mark.eval
 @_handle_project
 async def test_execute_calls_scheduler():
-    """CodeAct routes task execution request → primitives.tasks.execute."""
+    """CodeAct routes task execution request via execute_function."""
     fm = FunctionManager()
     entrypoint_impl = """
 async def run_quick_task_entrypoint() -> str:
@@ -180,7 +154,6 @@ async def run_quick_task_entrypoint() -> str:
 
     async with make_code_act_actor(
         impl="real",
-        include_function_manager_tools=False,
         function_manager=fm,
     ) as (actor, _primitives, calls):
         ts = ManagerRegistry.get_task_scheduler()
@@ -198,6 +171,7 @@ async def run_quick_task_entrypoint() -> str:
         )
         await handle.result()
 
+        assert_used_execute_function(handle)
         assert "primitives.tasks.execute" in calls
         assert "primitives.tasks.update" not in calls
 
@@ -222,27 +196,16 @@ async def run_quick_task_entrypoint() -> str:
 @pytest.mark.timeout(600)
 @pytest.mark.eval
 @_handle_project
-async def test_execute_calls_scheduler_memoized():
-    """CodeAct uses FunctionManager (when available) for task execution."""
+async def test_execute_calls_scheduler_with_fm_tools():
+    """CodeAct routes task execution via execute_function even with FM discovery tools present."""
     fm = FunctionManager()
     entrypoint_impl = """
 async def run_quick_task_entrypoint() -> str:
     return "ok"
 """
-    execute_impl = """
-async def execute_task_by_name(task_name: str) -> str:
-    tasks = primitives.tasks._filter_tasks()
-    target = (task_name or "").strip().lower()
-    for t in tasks:
-        if (getattr(t, "name", "") or "").strip().lower() != target:
-            continue
-        exec_handle = await primitives.tasks.execute(task_id=int(t.task_id))
-        return await exec_handle.result()
-    raise ValueError(f"No runnable task found with name: {task_name!r}")
-"""
     fm.add_functions(
-        implementations=[entrypoint_impl, execute_impl],
-        verify={"run_quick_task_entrypoint": False, "execute_task_by_name": False},
+        implementations=entrypoint_impl,
+        verify={"run_quick_task_entrypoint": False},
         overwrite=True,
     )
     entrypoint_id = fm.list_functions()["run_quick_task_entrypoint"]["function_id"]
@@ -268,10 +231,7 @@ async def execute_task_by_name(task_name: str) -> str:
         )
         await handle.result()
 
-        assert_code_act_function_manager_used(handle)
-        snippets = "\n\n".join(extract_code_act_execute_code_snippets(handle))
-        assert "execute_task_by_name" in snippets
-
+        assert_used_execute_function(handle)
         assert "primitives.tasks.execute" in calls
         assert "primitives.tasks.update" not in calls
 

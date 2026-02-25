@@ -1655,10 +1655,14 @@ class CodeActActor(BaseCodeActActor):
             _parent_chat_context: list[dict] | None = None,
         ) -> Any:
             """
-            Execute code in a specified language and state mode, optionally within a session.
+            Execute arbitrary code in a specified language and state mode.
 
-            Use this tool for BOTH Python and shell execution. This is the unified
-            "brain execution" tool for CodeActActor.
+            **IMPORTANT — single-call rule**: If the task requires only a
+            single function or primitive call with no surrounding logic,
+            use ``execute_function`` instead. ``execute_code`` is for
+            **multi-step composition** — conditional logic, loops, or
+            combining multiple primitives/functions where intermediate
+            results are needed within the same code block.
 
             Key concepts
             -----------
@@ -1687,52 +1691,6 @@ class CodeActActor(BaseCodeActActor):
             - Use **read_only** to "peek" without mutating state (what-if exploration).
             - Use `list_sessions()` and `inspect_state()` to decide which session to use.
 
-            Steerable handles
-            -----------------
-            State manager primitives (e.g. ``primitives.contacts.ask(...)``)
-            return **steerable handles** — live in-flight operations that can
-            be paused, resumed, interjected, or stopped from the outer loop.
-
-            You control whether to steer an operation or let it complete
-            internally, depending on what the task requires:
-
-            - **Return the handle as the last expression** to hand control
-              back to the outer loop. The handle is automatically adopted:
-              progress is shown as intermediate output, dynamic steering
-              helpers (``stop_*``, etc.) become available, and the final
-              result replaces the placeholder when the inner operation
-              completes. Use this when you may need to steer, monitor, or
-              cancel the operation mid-flight.
-
-              .. code-block:: python
-
-                  # Last expression is the handle → adopted for steering
-                  await primitives.contacts.ask(text="Who is Alice?")
-
-            - **Await the result inside the code** to let the operation
-              complete before returning. The outer loop receives only the
-              finished result with no steering opportunity. Use this when
-              you need the answer immediately for further processing within
-              the same code block.
-
-              .. code-block:: python
-
-                  # Blocks until done; result available for further logic
-                  handle = await primitives.contacts.ask(text="Who is Alice?")
-                  answer = await handle.result()
-                  print(f"Found: {answer}")
-
-            Decision guidance
-            -----------------
-            Prefer returning the handle when the operation is likely to be
-            long-running, externally dependent, or may require user steering
-            (status checks, corrections, pause/resume, or cancellation).
-            Prefer awaiting the result when you need that value immediately
-            for additional logic inside the same code block.
-            When the intent is neutral or ambiguous, default to returning
-            the handle so the outer loop preserves steering and progress
-            visibility.
-
             Output
             ------
             Returns either a dict or an ExecutionResult object with the following fields:
@@ -1743,7 +1701,7 @@ class CodeActActor(BaseCodeActActor):
             - **stderr**: Same format as stdout (list for in-process Python, string otherwise).
             - **result**: The evaluated result of the last expression (Any), or None.
               If the last expression is a steerable handle, it is automatically
-              adopted by the outer loop for mid-flight steering (see above).
+              adopted by the outer loop for mid-flight steering.
             - **error**: Error message string if execution failed, otherwise None.
             - **language**: The language used for execution.
             - **state_mode**: The state mode used ("stateless", "stateful", or "read_only").
@@ -2140,23 +2098,41 @@ class CodeActActor(BaseCodeActActor):
                 _parent_chat_context: list[dict] | None = None,
             ) -> Any:
                 """
-                Execute a known function by name and return its result.
+                Execute a single function or primitive by name.
 
-                This is the preferred way to run a known function without
-                writing any code.  The function is resolved from:
+                **This is the preferred tool for any task that maps to a single
+                function or primitive call.** Use it instead of ``execute_code``
+                whenever the task can be accomplished by invoking one callable
+                with keyword arguments — no surrounding Python logic needed.
 
+                Why prefer this tool
+                --------------------
+                ``execute_function`` **structurally guarantees** that the
+                returned handle is exposed to the outer loop for steering
+                (ask, stop, pause, resume, interject). When you write the
+                same call inside ``execute_code``, the handle is only
+                adopted if it happens to be the last expression — a pattern
+                that is easy to break by adding prints, notifications, or
+                error handling around the call.
+
+                When to use ``execute_function`` vs ``execute_code``
+                ----------------------------------------------------
+                - **Single primitive call** (e.g. ``primitives.contacts.ask``,
+                  ``primitives.web.ask``, ``primitives.knowledge.update``)
+                  → always ``execute_function``.
+                - **Single stored function call** (discovered via
+                  FunctionManager) → always ``execute_function``.
+                - **Multi-step composition**, conditional logic, loops,
+                  or any code that genuinely needs to combine multiple
+                  calls or process intermediate results
+                  → use ``execute_code``.
+
+                Resolution order
+                ----------------
                 1. The current sandbox namespace (environment-injected callables,
                    previously discovered FunctionManager functions, etc.).
                 2. The FunctionManager store (by exact name lookup).
                 3. If neither matches, a ``NameError`` is raised naturally.
-
-                Workflow
-                -------
-                1. Discover functions via ``FunctionManager_search_functions``,
-                   ``FunctionManager_filter_functions``, or
-                   ``FunctionManager_list_functions``.
-                2. Pick the best match by name.
-                3. Call ``execute_function(function_name=..., call_kwargs=...)``.
 
                 Key concepts
                 ------------
@@ -2172,7 +2148,9 @@ class CodeActActor(BaseCodeActActor):
                 Parameters
                 ----------
                 function_name : str
-                    Exact name of the function to execute.
+                    Exact name of the function or primitive to execute.
+                    For primitives, use the dotted path as it appears in the
+                    sandbox (e.g. ``"primitives.contacts.ask"``).
                 call_kwargs : dict, optional
                     Keyword arguments to pass to the function.
 
