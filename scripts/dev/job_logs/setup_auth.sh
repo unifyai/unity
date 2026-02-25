@@ -2,7 +2,7 @@
 # setup_auth.sh — One-time setup for Unity GKE debug tools.
 #
 # Walks you through installing prerequisites and authenticating with GCP
-# so that unity_logs.py can access live and historical job logs.
+# so that stream_logs.py can access live and historical job logs.
 #
 # Safe to re-run — it skips steps that are already complete.
 
@@ -160,7 +160,7 @@ check_unify_key() {
         echo "    # unity/.env"
         echo "    SHARED_UNIFY_KEY='your_key_here'"
         echo ""
-        echo "  Both unity_logs.py and this script load from .env automatically."
+        echo "  Both stream_logs.py and this script load from .env automatically."
         ISSUES+=("Set SHARED_UNIFY_KEY in the project .env file")
     fi
 }
@@ -187,10 +187,10 @@ print_summary() {
 
     echo ""
     if [[ ${#ISSUES[@]} -eq 0 ]]; then
-        echo -e "  ${GREEN}${BOLD}All checks passed!${NC} You're ready to use unity_logs.py."
+        echo -e "  ${GREEN}${BOLD}All checks passed!${NC} You're ready to use stream_logs.py."
         echo ""
         echo "  Example:"
-        echo "    uv run scripts/job_logs/unity_logs.py --job unity-2026-02-10-17-30-53-staging --namespace staging"
+        echo "    uv run scripts/dev/job_logs/stream_logs.py --job unity-2026-02-10-17-30-53-staging --namespace staging"
     else
         echo -e "  ${YELLOW}${BOLD}Remaining items (${#ISSUES[@]}):${NC}"
         for issue in "${ISSUES[@]}"; do
