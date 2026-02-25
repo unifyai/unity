@@ -363,6 +363,9 @@ async def entrypoint(ctx: agents.JobContext):
     assistant_screen_share_active = False
     _agent_service_url: str | None = None
     _visual_ctx_msg_id: str | None = None
+    import aiohttp as _aiohttp
+
+    _screenshot_http_session = _aiohttp.ClientSession()
 
     def _clear_visual_context(source: str | None = None) -> None:
         """Remove visual context from chat contexts and clear screenshot history."""
@@ -537,6 +540,7 @@ async def entrypoint(ctx: agents.JobContext):
                     utterance,
                     fb_logger=_log,
                     agent_service_url=_agent_service_url,
+                    http_session=_screenshot_http_session,
                 )
                 if entry:
                     if not assistant_screen_share_active:
