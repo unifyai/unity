@@ -26,7 +26,7 @@ from unity.common.llm_helpers import _dumps
 from unity.common.llm_client import new_llm_client
 from tests.helpers import _handle_project
 from tests.assertion_helpers import assertion_failed, find_tool_calls_and_results
-from unity.session_details import DEFAULT_USER_CONTEXT, DEFAULT_ASSISTANT_CONTEXT
+from unity.session_details import UNASSIGNED_USER_CONTEXT, UNASSIGNED_ASSISTANT_CONTEXT
 
 # =============================================================================
 # LLM-AS-JUDGE HELPER FOR VISUALIZATION TESTS
@@ -241,12 +241,12 @@ class TestBuildProjectConfigDict:
         """Build project config with minimal required fields."""
         d = _build_project_config_dict(
             project_name="TestProject",
-            context=f"{DEFAULT_USER_CONTEXT}/{DEFAULT_ASSISTANT_CONTEXT}/Files/Local/test",
+            context=f"{UNASSIGNED_USER_CONTEXT}/{UNASSIGNED_ASSISTANT_CONTEXT}/Files/Local/test",
         )
         assert d["project_name"] == "TestProject"
         assert (
             d["context"]
-            == f"{DEFAULT_USER_CONTEXT}/{DEFAULT_ASSISTANT_CONTEXT}/Files/Local/test"
+            == f"{UNASSIGNED_USER_CONTEXT}/{UNASSIGNED_ASSISTANT_CONTEXT}/Files/Local/test"
         )
         assert d["randomize"] is False
         assert "filter_expr" not in d
@@ -257,7 +257,7 @@ class TestBuildProjectConfigDict:
         """Build project config with filter expression."""
         d = _build_project_config_dict(
             project_name="TestProject",
-            context=f"{DEFAULT_USER_CONTEXT}/{DEFAULT_ASSISTANT_CONTEXT}/Files/Local/test",
+            context=f"{UNASSIGNED_USER_CONTEXT}/{UNASSIGNED_ASSISTANT_CONTEXT}/Files/Local/test",
             filter_expr="status == 'active'",
         )
         assert d["filter_expr"] == "status == 'active'"
@@ -266,7 +266,7 @@ class TestBuildProjectConfigDict:
         """Build project config with randomize enabled."""
         d = _build_project_config_dict(
             project_name="TestProject",
-            context=f"{DEFAULT_USER_CONTEXT}/{DEFAULT_ASSISTANT_CONTEXT}/Files/Local/test",
+            context=f"{UNASSIGNED_USER_CONTEXT}/{UNASSIGNED_ASSISTANT_CONTEXT}/Files/Local/test",
             randomize=True,
         )
         assert d["randomize"] is True
@@ -275,7 +275,7 @@ class TestBuildProjectConfigDict:
         """Build project config with excluded fields."""
         d = _build_project_config_dict(
             project_name="TestProject",
-            context=f"{DEFAULT_USER_CONTEXT}/{DEFAULT_ASSISTANT_CONTEXT}/Files/Local/test",
+            context=f"{UNASSIGNED_USER_CONTEXT}/{UNASSIGNED_ASSISTANT_CONTEXT}/Files/Local/test",
             exclude_fields=["password", "secret"],
         )
         assert d["exclude_fields"] == ["password", "secret"]
@@ -284,7 +284,7 @@ class TestBuildProjectConfigDict:
         """Build project config with group_by column."""
         d = _build_project_config_dict(
             project_name="TestProject",
-            context=f"{DEFAULT_USER_CONTEXT}/{DEFAULT_ASSISTANT_CONTEXT}/Files/Local/test",
+            context=f"{UNASSIGNED_USER_CONTEXT}/{UNASSIGNED_ASSISTANT_CONTEXT}/Files/Local/test",
             group_by="category",
         )
         assert d["group_by"] == "category"
@@ -293,7 +293,7 @@ class TestBuildProjectConfigDict:
         """Build project config with all fields."""
         d = _build_project_config_dict(
             project_name="TestProject",
-            context=f"{DEFAULT_USER_CONTEXT}/{DEFAULT_ASSISTANT_CONTEXT}/Files/Local/test",
+            context=f"{UNASSIGNED_USER_CONTEXT}/{UNASSIGNED_ASSISTANT_CONTEXT}/Files/Local/test",
             filter_expr="status == 'active'",
             randomize=True,
             exclude_fields=["password"],
@@ -302,7 +302,7 @@ class TestBuildProjectConfigDict:
         assert d["project_name"] == "TestProject"
         assert (
             d["context"]
-            == f"{DEFAULT_USER_CONTEXT}/{DEFAULT_ASSISTANT_CONTEXT}/Files/Local/test"
+            == f"{UNASSIGNED_USER_CONTEXT}/{UNASSIGNED_ASSISTANT_CONTEXT}/Files/Local/test"
         )
         assert d["filter_expr"] == "status == 'active'"
         assert d["randomize"] is True

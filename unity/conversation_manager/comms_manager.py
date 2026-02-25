@@ -41,7 +41,7 @@ from unity.conversation_manager.domains.comms_utils import (
     add_unify_message_attachments,
 )
 from unity.conversation_manager.events import *
-from unity.session_details import DEFAULT_ASSISTANT_ID, SESSION_DETAILS
+from unity.session_details import UNASSIGNED_ASSISTANT_ID, SESSION_DETAILS
 from unity.contact_manager.types.contact import UNASSIGNED
 from unity.conversation_manager.types import Medium
 
@@ -69,7 +69,7 @@ def _get_subscription_id() -> str:
     assistant_id = SESSION_DETAILS.assistant.id
     staging_suffix = (
         "-staging"
-        if SETTINGS.STAGING and DEFAULT_ASSISTANT_ID not in assistant_id
+        if SETTINGS.STAGING and UNASSIGNED_ASSISTANT_ID not in assistant_id
         else ""
     )
     return f"unity-{assistant_id}{staging_suffix}-sub"
@@ -773,7 +773,7 @@ class CommsManager:
 
     async def start(self):
         """Start all subscriptions and maintain connection to event manager."""
-        if SESSION_DETAILS.assistant.id == DEFAULT_ASSISTANT_ID:
+        if SESSION_DETAILS.assistant.id == UNASSIGNED_ASSISTANT_ID:
             # Start the startup subscription
             self.subscribe_to_topic(startup_subscription_id)
             # Start ping mechanism for idle containers
@@ -809,7 +809,7 @@ class CommsManager:
                 await asyncio.sleep(30)
 
                 # Check if we've received a startup message (indicated by assistant_id changed)
-                if SESSION_DETAILS.assistant.id != DEFAULT_ASSISTANT_ID:
+                if SESSION_DETAILS.assistant.id != UNASSIGNED_ASSISTANT_ID:
                     LOGGER.debug(
                         f"{ICONS['subscription']} Startup received, stopping ping mechanism",
                     )

@@ -151,14 +151,14 @@ def _derive_all_contexts(context: str) -> List[str]:
         return []
 
     # Handle test contexts: tests/.../{default_user_id}/{default_assistant_id}/Suffix
-    # Find the user position by looking for the DEFAULT_USER_CONTEXT marker
+    # Find the user position by looking for the UNASSIGNED_USER_CONTEXT marker
     if parts[0] == "tests":
-        from unity.session_details import DEFAULT_USER_CONTEXT
+        from unity.session_details import UNASSIGNED_USER_CONTEXT
 
         try:
-            user_idx = parts.index(DEFAULT_USER_CONTEXT)
+            user_idx = parts.index(UNASSIGNED_USER_CONTEXT)
         except ValueError:
-            # Can't determine structure without the DEFAULT_USER_CONTEXT marker
+            # Can't determine structure without the UNASSIGNED_USER_CONTEXT marker
             return []
 
         # Need at least User/Assistant/Suffix after the test root

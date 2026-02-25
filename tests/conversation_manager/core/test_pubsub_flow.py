@@ -129,11 +129,11 @@ class TestSubscriptionSwitching:
         This is the core flow for going from idle → live container.
         """
         from unity.conversation_manager.comms_manager import CommsManager
-        from unity.session_details import SESSION_DETAILS, DEFAULT_ASSISTANT_ID
+        from unity.session_details import SESSION_DETAILS, UNASSIGNED_ASSISTANT_ID
 
         # Start with default assistant (idle container state)
         original_id = SESSION_DETAILS.assistant.id
-        SESSION_DETAILS.assistant.id = DEFAULT_ASSISTANT_ID
+        SESSION_DETAILS.assistant.id = UNASSIGNED_ASSISTANT_ID
 
         try:
             cm = CommsManager(event_broker)
@@ -204,10 +204,10 @@ class TestSubscriptionSwitching:
         This prevents attempts to cancel it again if another startup arrives.
         """
         from unity.conversation_manager.comms_manager import CommsManager
-        from unity.session_details import SESSION_DETAILS, DEFAULT_ASSISTANT_ID
+        from unity.session_details import SESSION_DETAILS, UNASSIGNED_ASSISTANT_ID
 
         original_id = SESSION_DETAILS.assistant.id
-        SESSION_DETAILS.assistant.id = DEFAULT_ASSISTANT_ID
+        SESSION_DETAILS.assistant.id = UNASSIGNED_ASSISTANT_ID
 
         try:
             cm = CommsManager(event_broker)
@@ -511,10 +511,10 @@ class TestStartupInboundRace:
         """
         from unity.conversation_manager.comms_manager import CommsManager
         from unity.conversation_manager.events import StartupEvent, Event
-        from unity.session_details import SESSION_DETAILS, DEFAULT_ASSISTANT_ID
+        from unity.session_details import SESSION_DETAILS, UNASSIGNED_ASSISTANT_ID
 
         original_id = SESSION_DETAILS.assistant.id
-        SESSION_DETAILS.assistant.id = DEFAULT_ASSISTANT_ID
+        SESSION_DETAILS.assistant.id = UNASSIGNED_ASSISTANT_ID
 
         try:
             cm = CommsManager(event_broker)
@@ -852,10 +852,10 @@ class TestPingMechanismForIdleContainers:
         """Test that pings are published to app:comms:ping channel."""
         from unity.conversation_manager.comms_manager import CommsManager
         from unity.conversation_manager.events import Ping, Event
-        from unity.session_details import SESSION_DETAILS, DEFAULT_ASSISTANT_ID
+        from unity.session_details import SESSION_DETAILS, UNASSIGNED_ASSISTANT_ID
 
         original_id = SESSION_DETAILS.assistant.id
-        SESSION_DETAILS.assistant.id = DEFAULT_ASSISTANT_ID
+        SESSION_DETAILS.assistant.id = UNASSIGNED_ASSISTANT_ID
 
         try:
             cm = CommsManager(event_broker)
@@ -930,10 +930,10 @@ class TestDemoIdPropagation:
         """
         from unity.conversation_manager.comms_manager import CommsManager
         from unity.conversation_manager.events import StartupEvent, Event
-        from unity.session_details import SESSION_DETAILS, DEFAULT_ASSISTANT_ID
+        from unity.session_details import SESSION_DETAILS, UNASSIGNED_ASSISTANT_ID
 
         original_id = SESSION_DETAILS.assistant.id
-        SESSION_DETAILS.assistant.id = DEFAULT_ASSISTANT_ID
+        SESSION_DETAILS.assistant.id = UNASSIGNED_ASSISTANT_ID
 
         try:
             cm = CommsManager(event_broker)
@@ -999,10 +999,10 @@ class TestDemoIdPropagation:
         """
         from unity.conversation_manager.comms_manager import CommsManager
         from unity.conversation_manager.events import StartupEvent, Event
-        from unity.session_details import SESSION_DETAILS, DEFAULT_ASSISTANT_ID
+        from unity.session_details import SESSION_DETAILS, UNASSIGNED_ASSISTANT_ID
 
         original_id = SESSION_DETAILS.assistant.id
-        SESSION_DETAILS.assistant.id = DEFAULT_ASSISTANT_ID
+        SESSION_DETAILS.assistant.id = UNASSIGNED_ASSISTANT_ID
 
         try:
             cm = CommsManager(event_broker)

@@ -1432,12 +1432,12 @@ class TestPingMechanism:
     ):
         """Test that send_pings publishes keepalive ping events."""
         from unity.conversation_manager.comms_manager import CommsManager
-        from unity.conversation_manager.comms_manager import DEFAULT_ASSISTANT_ID
+        from unity.conversation_manager.comms_manager import UNASSIGNED_ASSISTANT_ID
 
         cm = CommsManager(broker)
 
         # Set assistant to default (triggers ping loop)
-        mock_session_details.assistant.id = DEFAULT_ASSISTANT_ID
+        mock_session_details.assistant.id = UNASSIGNED_ASSISTANT_ID
 
         async with broker.pubsub() as pubsub:
             await pubsub.subscribe("app:comms:ping")

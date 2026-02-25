@@ -25,31 +25,31 @@ import os
 from dataclasses import dataclass, field
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Default Assistant Identity
-# Used when no real assistant is configured (offline mode, tests)
+# Unassigned Identity Sentinels
+# Used by idle containers that haven't been assigned a real assistant/user yet.
 # ─────────────────────────────────────────────────────────────────────────────
-DEFAULT_ASSISTANT_ID = "default-assistant"
-DEFAULT_ASSISTANT_FIRST_NAME = "Default"
-DEFAULT_ASSISTANT_SURNAME = "Assistant"
-DEFAULT_ASSISTANT_EMAIL = "assistant@unify.ai"
-DEFAULT_ASSISTANT_PHONE = "+10000000000"
-DEFAULT_ASSISTANT_BIO = "Your helpful AI assistant."
+UNASSIGNED_ASSISTANT_ID = "default-assistant"
+UNASSIGNED_USER_ID = "default"
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Default User Identity
-# Used when no real user is configured (offline mode, tests)
+# Placeholder Contact Details
+# Used in tests/offline mode when no real profile exists.
 # ─────────────────────────────────────────────────────────────────────────────
-DEFAULT_USER_ID = "default"
-DEFAULT_USER_FIRST_NAME = "Default"
-DEFAULT_USER_SURNAME = "User"
-DEFAULT_USER_EMAIL = "user@example.com"
+PLACEHOLDER_ASSISTANT_FIRST_NAME = "Default"
+PLACEHOLDER_ASSISTANT_SURNAME = "Assistant"
+PLACEHOLDER_ASSISTANT_EMAIL = "assistant@unify.ai"
+PLACEHOLDER_ASSISTANT_PHONE = "+10000000000"
+PLACEHOLDER_ASSISTANT_BIO = "Your helpful AI assistant."
+PLACEHOLDER_USER_FIRST_NAME = "Default"
+PLACEHOLDER_USER_SURNAME = "User"
+PLACEHOLDER_USER_EMAIL = "user@example.com"
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Context Path Defaults (for Unify context hierarchy)
 # Format: {user_id}/{assistant_id}/... e.g., "default/default-assistant/Contacts"
 # ─────────────────────────────────────────────────────────────────────────────
-DEFAULT_USER_CONTEXT = DEFAULT_USER_ID
-DEFAULT_ASSISTANT_CONTEXT = DEFAULT_ASSISTANT_ID
+UNASSIGNED_USER_CONTEXT = UNASSIGNED_USER_ID
+UNASSIGNED_ASSISTANT_CONTEXT = UNASSIGNED_ASSISTANT_ID
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Voice Defaults
@@ -62,7 +62,7 @@ DEFAULT_VOICE_MODE = "tts"
 class AssistantDetails:
     """Details about the assistant."""
 
-    id: str = DEFAULT_ASSISTANT_ID
+    id: str = UNASSIGNED_ASSISTANT_ID
     first_name: str = ""
     surname: str = ""
     age: str = ""
@@ -91,7 +91,7 @@ class AssistantDetails:
 class UserDetails:
     """Details about the user (boss)."""
 
-    id: str = DEFAULT_USER_ID
+    id: str = UNASSIGNED_USER_ID
     first_name: str = ""
     surname: str = ""
     number: str = ""
@@ -168,7 +168,7 @@ class SessionDetails:
 
         Used for Unify context paths like '{user_id}/{assistant_id}/...'.
         """
-        return self.assistant.id or DEFAULT_ASSISTANT_CONTEXT
+        return self.assistant.id or UNASSIGNED_ASSISTANT_CONTEXT
 
     @property
     def user_context(self) -> str:
@@ -176,7 +176,7 @@ class SessionDetails:
 
         Used for Unify context paths like '{user_id}/{assistant_id}/...'.
         """
-        return self.user.id or DEFAULT_USER_CONTEXT
+        return self.user.id or UNASSIGNED_USER_CONTEXT
 
     @property
     def is_initialized(self) -> bool:

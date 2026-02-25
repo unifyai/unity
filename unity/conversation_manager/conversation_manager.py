@@ -4,7 +4,7 @@ import contextlib
 
 from unity.logger import LOGGER
 from unity.common.hierarchical_logger import DEFAULT_ICON
-from unity.session_details import DEFAULT_ASSISTANT_ID, SESSION_DETAILS
+from unity.session_details import UNASSIGNED_ASSISTANT_ID, SESSION_DETAILS
 from unity.settings import SETTINGS
 from unity.manager_registry import SingletonABCMeta
 from unity.common.async_tool_loop import SteerableToolHandle
@@ -1150,7 +1150,7 @@ class ConversationManager(metaclass=SingletonABCMeta):
         # Stop file sync to ensure final sync to VM
         await self._stop_file_sync()
 
-        if self.job_name and self.assistant_id != DEFAULT_ASSISTANT_ID:
+        if self.job_name and self.assistant_id != UNASSIGNED_ASSISTANT_ID:
             self._session_logger.debug(
                 "session_end",
                 f"Marking job {self.job_name} done",

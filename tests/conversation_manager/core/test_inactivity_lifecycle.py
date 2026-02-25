@@ -25,7 +25,7 @@ Production Context (from INFRA.md):
 -----------------------------------
 - Inactivity timeout: 6 minutes (360 seconds)
 - Ping interval: 30 seconds (half the timeout)
-- Idle containers use DEFAULT_ASSISTANT_ID ("0")
+- Idle containers use UNASSIGNED_ASSISTANT_ID ("0")
 - Live containers have a real assistant_id
 - On shutdown: cleanup() → mark_job_done() → stop.set()
 """
@@ -41,7 +41,7 @@ import pytest_asyncio
 from unity.conversation_manager.events import (
     Ping,
 )
-from unity.session_details import DEFAULT_ASSISTANT_ID
+from unity.session_details import UNASSIGNED_ASSISTANT_ID
 
 # =============================================================================
 # Fixtures
@@ -276,7 +276,7 @@ class TestPingKeepAlive:
             event_broker=event_broker,
             job_name="test-job",
             user_id="user_1",
-            assistant_id=DEFAULT_ASSISTANT_ID,  # Idle container
+            assistant_id=UNASSIGNED_ASSISTANT_ID,  # Idle container
             user_first_name="Test",
             user_surname="User",
             assistant_first_name="Test",
@@ -355,7 +355,7 @@ class TestCleanupSequence:
         """
         Verify that cleanup() skips mark_job_done() for idle containers.
 
-        Idle containers (with DEFAULT_ASSISTANT_ID) were never "live" in the
+        Idle containers (with UNASSIGNED_ASSISTANT_ID) were never "live" in the
         AssistantJobs sense, so we don't need to mark them as done.
         """
         from unity.conversation_manager.conversation_manager import ConversationManager
@@ -365,7 +365,7 @@ class TestCleanupSequence:
             event_broker=event_broker,
             job_name="test-job-idle",
             user_id="user_1",
-            assistant_id=DEFAULT_ASSISTANT_ID,  # Idle container
+            assistant_id=UNASSIGNED_ASSISTANT_ID,  # Idle container
             user_first_name="Test",
             user_surname="User",
             assistant_first_name="Test",
@@ -563,7 +563,7 @@ class TestFullLifecycleIntegration:
             event_broker=event_broker,
             job_name="test-lifecycle-job",
             user_id="user_1",
-            assistant_id=DEFAULT_ASSISTANT_ID,  # Start as idle
+            assistant_id=UNASSIGNED_ASSISTANT_ID,  # Start as idle
             user_first_name="Test",
             user_surname="User",
             assistant_first_name="Test",
@@ -579,7 +579,7 @@ class TestFullLifecycleIntegration:
         )
 
         # Verify idle state
-        assert cm.assistant_id == DEFAULT_ASSISTANT_ID
+        assert cm.assistant_id == UNASSIGNED_ASSISTANT_ID
 
         # Simulate startup (transition to live)
         startup_payload = {

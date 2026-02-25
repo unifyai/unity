@@ -6,7 +6,7 @@ import subprocess
 import textwrap
 
 from unity.web_searcher.web_searcher import WebSearcher
-from unity.session_details import DEFAULT_USER_CONTEXT, DEFAULT_ASSISTANT_CONTEXT
+from unity.session_details import UNASSIGNED_USER_CONTEXT, UNASSIGNED_ASSISTANT_CONTEXT
 from tests.assertion_helpers import first_diff_block
 from tests.helpers import _handle_project
 
@@ -83,7 +83,7 @@ def _build_tools_schema_in_subprocess(method: str, test_context: str) -> str:
 @_handle_project
 def test_ask_tool_schemas_are_stable_across_python_sessions():
     # Build a test-specific context path matching _handle_project pattern
-    test_ctx = f"tests/web_searcher/test_tool_docstrings/test_ask_tool_schemas_are_stable_across_python_sessions/{DEFAULT_USER_CONTEXT}/{DEFAULT_ASSISTANT_CONTEXT}"
+    test_ctx = f"tests/web_searcher/test_tool_docstrings/test_ask_tool_schemas_are_stable_across_python_sessions/{UNASSIGNED_USER_CONTEXT}/{UNASSIGNED_ASSISTANT_CONTEXT}"
     p1 = _build_tools_schema_in_subprocess("ask", test_ctx)
     p2 = _build_tools_schema_in_subprocess("ask", test_ctx)
     if p1 != p2:

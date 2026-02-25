@@ -162,12 +162,12 @@ All Pub/Sub messages follow this structure:
 ### 1. Idle State
 This is the default state of any newly created container on GKE:
 
-- **No assistant identity**: Uses a placeholder `DEFAULT_ASSISTANT_ID` (value: `"0"`) to indicate it's not yet assigned
+- **No assistant identity**: Uses a placeholder `UNASSIGNED_ASSISTANT_ID` (value: `"0"`) to indicate it's not yet assigned
 - **Subscribes to startup topics**: Listens to `unity-startup` or `unity-startup-staging`
 - **Keep-alive pings**: Sends pings to itself every 30 seconds to avoid the inactivity timeout (6 minutes) of the conversation manager
 - **Ready for engagement**: Waiting for a startup message to become live
 
-The container detects it's in idle state by checking `SESSION_DETAILS.assistant.id == DEFAULT_ASSISTANT_ID`.
+The container detects it's in idle state by checking `SESSION_DETAILS.assistant.id == UNASSIGNED_ASSISTANT_ID`.
 
 ### 2. Live State
 When an inbound event occurs, the flow is:
