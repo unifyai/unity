@@ -164,6 +164,10 @@ def _print_env(assistant: dict, user: dict, api_key: str, staging: bool):
         "PROJECT_ID=",
     ]
     print("\n".join(lines))
+    print(
+        "The env variables left empty are secrets that you can configure "
+        "through the GCP secret manager..."
+    )
 
 
 def main():
