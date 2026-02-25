@@ -1025,6 +1025,44 @@ async def capture_assistant_screenshot(
                 if resp.status >= 400:
                     body = await resp.text()
                     total_ms = (_time.monotonic() - t_start) * 1000
+                    if "no_desktop_session" in body:
+                        _log(
+                            f"Assistant screenshot: no desktop session yet, "
+                            f"retrying in 2s (url={url} total={total_ms:.0f}ms)",
+                        )
+                        await asyncio.sleep(2)
+                        async with session.post(
+                            url,
+                            json={},
+                            headers=headers,
+                            timeout=aiohttp.ClientTimeout(total=10),
+                        ) as retry_resp:
+                            if retry_resp.status >= 400:
+                                retry_body = await retry_resp.text()
+                                retry_ms = (_time.monotonic() - t_start) * 1000
+                                _log(
+                                    f"Assistant screenshot failed after retry: "
+                                    f"HTTP {retry_resp.status} url={url} "
+                                    f"total={retry_ms:.0f}ms body={retry_body[:200]}",
+                                )
+                                return None
+                            data = await retry_resp.json()
+                            b64 = data.get("screenshot")
+                            if b64:
+                                b64 = _ensure_jpeg(b64)
+                                retry_ms = (_time.monotonic() - t_start) * 1000
+                                _log(
+                                    f"Assistant screenshot OK (after retry): "
+                                    f"url={url} total={retry_ms:.0f}ms "
+                                    f"b64_len={len(b64)}",
+                                )
+                                return ScreenshotEntry(
+                                    b64=b64,
+                                    utterance=utterance,
+                                    timestamp=datetime.now(timezone.utc),
+                                    source="assistant",
+                                )
+                        return None
                     _log(
                         f"Assistant screenshot failed: HTTP {resp.status} "
                         f"url={url} total={total_ms:.0f}ms "
