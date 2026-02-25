@@ -312,7 +312,7 @@ class ConversationManager(metaclass=SingletonABCMeta):
                 return None
 
         data = await asyncio.to_thread(_sync_capture)
-        if data:
+        if data and self.assistant_screen_share_active:
             b64 = data.get("screenshot")
             if b64:
                 b64 = _ensure_jpeg(b64)
