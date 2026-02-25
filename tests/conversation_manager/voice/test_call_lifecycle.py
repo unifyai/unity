@@ -72,7 +72,6 @@ class TestCallManagerConfiguration:
             assistant_number="+15551234567",
             voice_provider="cartesia",
             voice_id="test_voice_id",
-            voice_mode="tts",
         )
 
         assert config.assistant_id == "test_assistant"
@@ -80,7 +79,6 @@ class TestCallManagerConfiguration:
         assert config.assistant_number == "+15551234567"
         assert config.voice_provider == "cartesia"
         assert config.voice_id == "test_voice_id"
-        assert config.voice_mode == "tts"
 
     def test_call_manager_initial_state(self):
         """LivekitCallManager initializes with correct default state."""
@@ -97,7 +95,6 @@ class TestCallManagerConfiguration:
             assistant_number="+15551234567",
             voice_provider="cartesia",
             voice_id="test_voice",
-            voice_mode="tts",
         )
 
         manager = LivekitCallManager(config)
@@ -110,46 +107,6 @@ class TestCallManagerConfiguration:
         assert manager.call_contact is None
         assert manager._call_proc is None
         assert manager.conference_name == ""
-
-    def test_call_manager_tts_mode_detection(self):
-        """LivekitCallManager correctly identifies TTS mode."""
-        from unity.conversation_manager.domains.call_manager import (
-            CallConfig,
-            LivekitCallManager,
-        )
-
-        tts_config = CallConfig(
-            assistant_id="test",
-            user_id="test_user",
-            assistant_bio="Test",
-            assistant_number="+15551234567",
-            voice_provider="cartesia",
-            voice_id="test",
-            voice_mode="tts",
-        )
-
-        manager = LivekitCallManager(tts_config)
-        assert manager.uses_realtime_api is False
-
-    def test_call_manager_sts_mode_detection(self):
-        """LivekitCallManager correctly identifies STS (speech-to-speech) mode."""
-        from unity.conversation_manager.domains.call_manager import (
-            CallConfig,
-            LivekitCallManager,
-        )
-
-        sts_config = CallConfig(
-            assistant_id="test",
-            user_id="test_user",
-            assistant_bio="Test",
-            assistant_number="+15551234567",
-            voice_provider="openai",
-            voice_id="test",
-            voice_mode="sts",
-        )
-
-        manager = LivekitCallManager(sts_config)
-        assert manager.uses_realtime_api is True
 
     def test_call_manager_set_config(self):
         """LivekitCallManager.set_config() updates configuration."""
@@ -165,7 +122,6 @@ class TestCallManagerConfiguration:
             assistant_number="+15551111111",
             voice_provider="cartesia",
             voice_id="initial_voice",
-            voice_mode="tts",
         )
 
         new_config = CallConfig(
@@ -175,12 +131,10 @@ class TestCallManagerConfiguration:
             assistant_number="+15552222222",
             voice_provider="elevenlabs",
             voice_id="updated_voice",
-            voice_mode="sts",
         )
 
         manager = LivekitCallManager(initial_config)
         assert manager.assistant_id == "initial"
-        assert manager.uses_realtime_api is False
 
         manager.set_config(new_config)
         assert manager.assistant_id == "updated"
@@ -188,7 +142,6 @@ class TestCallManagerConfiguration:
         assert manager.assistant_number == "+15552222222"
         assert manager.voice_provider == "elevenlabs"
         assert manager.voice_id == "updated_voice"
-        assert manager.uses_realtime_api is True
 
 
 # =============================================================================
@@ -328,7 +281,6 @@ class TestCallSubprocessLifecycle:
             assistant_number="+15551234567",
             voice_provider="cartesia",
             voice_id="test_voice",
-            voice_mode="tts",
         )
         return LivekitCallManager(config)
 
@@ -390,41 +342,6 @@ class TestCallSubprocessLifecycle:
             call_args = mock_run_script.call_args
             # Outbound flag should be in the args
             assert "True" in call_args[0]
-
-    @pytest.mark.asyncio
-    async def test_start_call_sts_mode_uses_sts_script(
-        self,
-        sample_contact,
-        boss_contact,
-    ):
-        """start_call() uses sts_call.py script when in STS mode."""
-        from unity.conversation_manager.domains.call_manager import (
-            CallConfig,
-            LivekitCallManager,
-        )
-
-        sts_config = CallConfig(
-            assistant_id="test",
-            user_id="test_user",
-            assistant_bio="Test",
-            assistant_number="+15551234567",
-            voice_provider="openai",
-            voice_id="test",
-            voice_mode="sts",
-        )
-
-        manager = LivekitCallManager(sts_config)
-
-        with patch(
-            "unity.conversation_manager.domains.call_manager.run_script",
-        ) as mock_run_script:
-            mock_proc = MagicMock()
-            mock_run_script.return_value = mock_proc
-
-            await manager.start_call(sample_contact, boss_contact)
-
-            call_args = mock_run_script.call_args
-            assert "sts_call.py" in str(call_args[0][0])
 
     @pytest.mark.asyncio
     async def test_start_unify_meet_creates_subprocess(
@@ -1248,7 +1165,6 @@ class TestCallErrorHandling:
             assistant_number="+15551234567",
             voice_provider="cartesia",
             voice_id="test",
-            voice_mode="tts",
         )
 
         manager = LivekitCallManager(config)
@@ -1434,7 +1350,6 @@ class TestChannelForwardingTiers:
             assistant_number="+15551234567",
             voice_provider="cartesia",
             voice_id="test_voice",
-            voice_mode="tts",
         )
         broker = create_event_broker()
         mgr = LivekitCallManager(config, event_broker=broker)

@@ -685,10 +685,12 @@ async def log_message(
 
 async def update_session_contacts(
     cm: "ConversationManager",
-    assistant_name: str,
+    assistant_first_name: str,
+    assistant_surname: str,
     assistant_number: str,
     assistant_email: str,
-    user_name: str,
+    user_first_name: str,
+    user_surname: str,
     user_number: str,
     user_email: str,
 ) -> None:
@@ -709,12 +711,6 @@ async def update_session_contacts(
             f"{ICONS['managers_worker']} [ManagersWorker] Cannot update contacts: contact_manager is None",
         )
         return
-
-    def _get_name_parts(name: str) -> tuple[str, str]:
-        if " " in name:
-            parts = name.split(" ", 1)
-            return parts[0], parts[1]
-        return name, ""
 
     async def _update_contact(
         contact_id: int,
@@ -740,12 +736,10 @@ async def update_session_contacts(
                 f"{ICONS['managers_worker']} [ManagersWorker] Failed to update contact {contact_id}: {e}",
             )
 
-    # Always update assistant contact (contact_id=0)
-    assistant_first_name, assistant_last_name = _get_name_parts(assistant_name)
     await _update_contact(
         0,
         assistant_first_name,
-        assistant_last_name,
+        assistant_surname,
         assistant_number,
         assistant_email,
     )
@@ -758,18 +752,10 @@ async def update_session_contacts(
             f"{ICONS['managers_worker']} [ManagersWorker] Demo mode: skipping boss contact (contact_id=1), "
             "updating demoer contact (contact_id=2)",
         )
-        user_first_name, user_last_name = _get_name_parts(user_name)
-        await _update_contact(
-            2,
-            user_first_name,
-            user_last_name,
-            user_number,
-            user_email,
-        )
+        await _update_contact(2, user_first_name, user_surname, user_number, user_email)
         return
 
-    user_first_name, user_last_name = _get_name_parts(user_name)
-    await _update_contact(1, user_first_name, user_last_name, user_number, user_email)
+    await _update_contact(1, user_first_name, user_surname, user_number, user_email)
 
 
 # Queueing operations that need managers
@@ -869,34 +855,11 @@ def _init_managers(
     """
     start_time = perf_counter()
 
-    # 0. Initialize unity using SESSION_DETAILS (the canonical source of session config)
+    # 0. Initialize unity (idempotent — SESSION_DETAILS.assistant.id is already
+    #    set by the startup handler, so unity.init() just reads it for context).
     LOGGER.debug(f"{ICONS['managers_worker']} [ManagersWorker] Initializing unity...")
     local_start_time = perf_counter()
-    if not SESSION_DETAILS.assistant_record:
-        # When default_assistant is provided, unity.init() uses it directly
-        # and ignores the assistant_id parameter entirely
-        unity.init(
-            default_assistant={
-                "agent_id": SESSION_DETAILS.assistant.id,
-                "first_name": SESSION_DETAILS.assistant.name,
-                "age": SESSION_DETAILS.assistant.age,
-                "nationality": SESSION_DETAILS.assistant.nationality,
-                "timezone": SESSION_DETAILS.assistant.timezone or None,
-                "about": SESSION_DETAILS.assistant.about,
-                "phone": SESSION_DETAILS.assistant.number or None,
-                "email": SESSION_DETAILS.assistant.email or None,
-                "user_id": SESSION_DETAILS.user.id,
-                "user_phone": SESSION_DETAILS.user.number or None,
-                "created_at": prompt_now(as_string=False).isoformat(),
-                "updated_at": prompt_now(as_string=False).isoformat(),
-                "surname": "",
-                "weekly_limit": None,
-                "max_parallel": None,
-                "profile_photo": None,
-                "country": None,
-                "user_last_name": "",
-            },
-        )
+    unity.init()
     _unity_init_dur = perf_counter() - local_start_time
     LOGGER.info(
         f"{ICONS['managers_worker']} [ManagersWorker] Unity initialized in {_unity_init_dur:.2f} seconds",
@@ -975,16 +938,8 @@ def _init_managers(
         # Note: We don't add to active_conversations as the demoer isn't someone
         # the assistant would typically interact with (call/email)
         try:
-            demoer_first = (
-                SESSION_DETAILS.user.name.split(" ")[0]
-                if SESSION_DETAILS.user.name
-                else ""
-            )
-            demoer_last = (
-                " ".join(SESSION_DETAILS.user.name.split(" ")[1:])
-                if SESSION_DETAILS.user.name and " " in SESSION_DETAILS.user.name
-                else ""
-            )
+            demoer_first = SESSION_DETAILS.user.first_name
+            demoer_last = SESSION_DETAILS.user.surname
             # Use _create_contact since contact_id=2 doesn't exist yet
             cm.contact_manager._create_contact(
                 first_name=demoer_first,
@@ -1130,6 +1085,20 @@ def _init_managers(
             f"{ICONS['managers_worker']} [ManagersWorker] Error initializing Actor: {e}",
         )
 
+    # 8. Initialize FileManager (eagerly, so the FileRecords context exists
+    #    before any file operations or background tasks attempt to use it)
+    LOGGER.info(
+        f"{ICONS['managers_worker']} [ManagersWorker] Initializing FileManager...",
+    )
+    local_start_time = perf_counter()
+    ManagerRegistry.get_file_manager()
+    _file_dur = perf_counter() - local_start_time
+    LOGGER.info(
+        f"{ICONS['managers_worker']} [ManagersWorker] FileManager initialized in "
+        f"{_file_dur:.2f} seconds",
+    )
+    per_manager_init.record(_file_dur, {"manager": "file_manager"})
+
     # U2: Total manager init duration
     _total_dur = perf_counter() - start_time
     LOGGER.info(
@@ -1226,8 +1195,20 @@ async def init_conv_manager(
             # Get the main event loop to pass to managers that need it
             loop = asyncio.get_running_loop()
 
-            # Run all manager initialization in a thread (non-blocking)
+            # Run all manager initialization in a thread (non-blocking).
+            # unity.init() inside _init_managers sets Unify ContextVars
+            # (CONTEXT_READ/CONTEXT_WRITE) but asyncio.to_thread runs on a
+            # copy of the caller's context — changes don't propagate back.
+            # Re-apply the context afterwards so any lazily-created managers
+            # in the main async context see the correct values.
             await asyncio.to_thread(_init_managers, cm, loop, actor)
+
+            import unify as _unify
+
+            full_ctx = (
+                f"{SESSION_DETAILS.user_context}/{SESSION_DETAILS.assistant_context}"
+            )
+            _unify.set_context(full_ctx, skip_create=True)
 
             store_chat_history = await get_last_store_chat_history()
             if store_chat_history:

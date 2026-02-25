@@ -9,31 +9,20 @@ slow brain for data lookups instead of hallucinating answers.
 
 This file tests "false positive" prevention - scenarios where the fast brain
 might be tempted to hallucinate but should defer with natural language.
-
-Tests are parameterized to run against both:
-- TTS mode fast brain (SETTINGS.conversation.FAST_BRAIN_MODEL, via UnifyLLM)
-- gpt-realtime (STS mode fast brain, via OpenAI Realtime API with text modality)
 """
 
 from __future__ import annotations
 
-import asyncio
-import json
-import os
 import re
 import pytest
-import websockets
 
-import unillm
 from livekit.agents import llm
 
 from unity.conversation_manager.livekit_unify_adapter import UnifyLLM
 from unity.conversation_manager.prompt_builders import build_voice_agent_prompt
 from unity.settings import SETTINGS
 
-# Model identifiers — TTS model reads from the central setting
 MODEL_TTS = SETTINGS.conversation.FAST_BRAIN_MODEL
-MODEL_GPT_REALTIME = "gpt-realtime"
 
 # Patterns indicating proper deferral (case-insensitive)
 # These patterns indicate the assistant is either:
@@ -214,162 +203,21 @@ async def get_unify_llm_response(
     return "".join(response_parts)
 
 
-async def get_realtime_response(
-    system_prompt: str,
-    conversation: list[dict[str, str]],
-    model: str = "gpt-realtime",
-    timeout: float = 30.0,
-) -> str:
-    """
-    Get response from OpenAI Realtime API with text modality.
-
-    Uses WebSocket connection to OpenAI's Realtime API, matching the
-    production sts_call.py architecture but with text-only mode for testing.
-    """
-    api_key = os.environ.get("OPENAI_API_KEY")
-    if not api_key:
-        pytest.skip("OPENAI_API_KEY not set - skipping realtime model test")
-
-    url = f"wss://api.openai.com/v1/realtime?model={model}"
-    headers = {"Authorization": f"Bearer {api_key}"}
-
-    response_text = ""
-
-    async with websockets.connect(
-        url,
-        additional_headers=headers,
-        close_timeout=5,
-    ) as ws:
-        # Configure session with instructions (no modalities in session.update)
-        await ws.send(
-            json.dumps(
-                {
-                    "type": "session.update",
-                    "session": {
-                        "type": "realtime",
-                        "instructions": system_prompt,
-                    },
-                },
-            ),
-        )
-
-        # Wait for session.updated confirmation
-        while True:
-            msg = await asyncio.wait_for(ws.recv(), timeout=timeout)
-            event = json.loads(msg)
-            if event.get("type") == "session.updated":
-                break
-            if event.get("type") == "error":
-                raise RuntimeError(f"Session update error: {event}")
-
-        # Add conversation items
-        for msg in conversation:
-            role = msg["role"]
-            content = msg["content"]
-
-            # User messages use input_text, assistant messages use output_text
-            content_type = "input_text" if role == "user" else "output_text"
-
-            await ws.send(
-                json.dumps(
-                    {
-                        "type": "conversation.item.create",
-                        "item": {
-                            "type": "message",
-                            "role": role,
-                            "content": [{"type": content_type, "text": content}],
-                        },
-                    },
-                ),
-            )
-
-            # Wait for item created confirmation
-            while True:
-                item_msg = await asyncio.wait_for(ws.recv(), timeout=timeout)
-                item_event = json.loads(item_msg)
-                if item_event.get("type") in (
-                    "conversation.item.created",
-                    "conversation.item.added",
-                ):
-                    break
-                if item_event.get("type") == "error":
-                    raise RuntimeError(f"Conversation item error: {item_event}")
-
-        # Request response generation with text-only output modality
-        await ws.send(
-            json.dumps(
-                {
-                    "type": "response.create",
-                    "response": {
-                        "output_modalities": ["text"],
-                    },
-                },
-            ),
-        )
-
-        # Collect response text
-        response_parts = []
-        usage = None
-        while True:
-            resp_msg = await asyncio.wait_for(ws.recv(), timeout=timeout)
-            resp_event = json.loads(resp_msg)
-            event_type = resp_event.get("type", "")
-
-            # Collect text deltas (GA API uses response.output_text.delta)
-            if event_type in ("response.text.delta", "response.output_text.delta"):
-                delta = resp_event.get("delta", "")
-                response_parts.append(delta)
-            # Response complete — extract usage from the event payload
-            elif event_type == "response.done":
-                resp_obj = resp_event.get("response", {})
-                usage = resp_obj.get("usage")
-                break
-            elif event_type == "error":
-                raise RuntimeError(f"Response error: {resp_event}")
-
-        response_text = "".join(response_parts)
-
-    # Log via unillm so LLM I/O appears in UNILLM_LOG_DIR
-    transcript = [{"role": "system", "content": system_prompt}]
-    transcript.extend(conversation)
-    if response_text:
-        transcript.append({"role": "assistant", "content": response_text})
-    unillm.log_usage(
-        model,
-        usage or {},
-        transcript=transcript,
-        label=model,
-    )
-
-    return response_text
-
-
 async def get_fast_brain_response(
     system_prompt: str,
     conversation: list[dict[str, str]],
     model: str = MODEL_TTS,
 ) -> str:
-    """
-    Get response from the fast brain model.
-
-    Dispatches to the appropriate backend based on model:
-    - TTS model (from SETTINGS): Uses UnifyLLM
-    - gpt-realtime: Uses OpenAI Realtime WebSocket API (STS mode)
-    """
-    if model == MODEL_GPT_REALTIME:
-        return await get_realtime_response(system_prompt, conversation, model)
-    else:
-        return await get_unify_llm_response(system_prompt, conversation, model)
+    """Get response from the fast brain model via UnifyLLM."""
+    return await get_unify_llm_response(system_prompt, conversation, model)
 
 
 # =============================================================================
 # Model Parameterization
 # =============================================================================
 
-# List of models to test
 FAST_BRAIN_MODELS = [
     pytest.param(MODEL_TTS, id="tts-" + MODEL_TTS.split("@")[0]),
-    pytest.param(MODEL_GPT_REALTIME, id="sts-realtime"),
 ]
 
 

@@ -52,7 +52,7 @@ availableSecrets:
     env: 'GITHUB_TOKEN'
 
 # Timeout
-timeout: '1200s'  # 20 minutes
+timeout: '1800s'  # 30 minutes
 
 # Images to be pushed (for Cloud Build history)
 images:

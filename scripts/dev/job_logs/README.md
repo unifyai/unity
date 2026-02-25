@@ -9,17 +9,17 @@ View logs from Unity assistant jobs running on Google Kubernetes Engine.
 bash scripts/job_logs/setup_auth.sh
 
 # 2. View logs for a job
-uv run scripts/job_logs/unity_logs.py --job <job_name> --namespace <namespace>
+uv run scripts/dev/job_logs/stream_logs.py --job <job_name> --namespace <namespace>
 
 # Example
-uv run scripts/job_logs/unity_logs.py --job unity-2026-02-10-17-30-53-staging --namespace staging
+uv run scripts/dev/job_logs/stream_logs.py --job unity-2026-02-10-17-30-53-staging --namespace staging
 ```
 
 That's it. The script figures out whether to stream or fetch based on the job's status.
 
 ## How It Works
 
-`unity_logs.py` takes a GKE job name and namespace and does the right thing:
+`stream_logs.py` takes a GKE job name and namespace and does the right thing:
 
 1. **Queries AssistantJobs** (via the Unify REST API) to check if the job is currently running, and prints session metadata (assistant name, user, medium, start time).
 2. **If running** — the job has a live pod, so it prints all existing logs and then streams new ones in real-time using `kubectl logs -f` (press Ctrl+C to stop).

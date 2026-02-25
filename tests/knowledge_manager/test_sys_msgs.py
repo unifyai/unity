@@ -20,7 +20,7 @@ from unity.knowledge_manager.prompt_builders import (
     build_refactor_prompt,
 )
 from unity.knowledge_manager.knowledge_manager import KnowledgeManager
-from unity.session_details import DEFAULT_USER_CONTEXT, DEFAULT_ASSISTANT_CONTEXT
+from unity.session_details import UNASSIGNED_USER_CONTEXT, UNASSIGNED_ASSISTANT_CONTEXT
 
 
 def _build_prompt_in_subprocess(
@@ -250,7 +250,7 @@ def test_refactor_system_prompt_formatting():
 @_handle_project
 def test_ask_prompt_stable():
     # Build a test-specific context path matching _handle_project pattern
-    test_ctx = f"tests/knowledge_manager/test_sys_msgs/test_ask_prompt_stable/{DEFAULT_USER_CONTEXT}/{DEFAULT_ASSISTANT_CONTEXT}"
+    test_ctx = f"tests/knowledge_manager/test_sys_msgs/test_ask_prompt_stable/{UNASSIGNED_USER_CONTEXT}/{UNASSIGNED_ASSISTANT_CONTEXT}"
     # Build prompts in two separate Python processes to catch cross-session drift
     p1 = _build_prompt_in_subprocess("ask", test_ctx)
     p2 = _build_prompt_in_subprocess("ask", test_ctx)
@@ -264,7 +264,7 @@ def test_ask_prompt_stable():
 @_handle_project
 def test_update_prompt_stable():
     # Build a test-specific context path matching _handle_project pattern
-    test_ctx = f"tests/knowledge_manager/test_sys_msgs/test_update_prompt_stable/{DEFAULT_USER_CONTEXT}/{DEFAULT_ASSISTANT_CONTEXT}"
+    test_ctx = f"tests/knowledge_manager/test_sys_msgs/test_update_prompt_stable/{UNASSIGNED_USER_CONTEXT}/{UNASSIGNED_ASSISTANT_CONTEXT}"
     # Build prompts in two separate Python processes to catch cross-session drift
     p1 = _build_prompt_in_subprocess("update", test_ctx)
     p2 = _build_prompt_in_subprocess("update", test_ctx)
@@ -279,7 +279,7 @@ def test_update_prompt_stable():
 @_handle_project
 def test_refactor_prompt_stable():
     # Build a test-specific context path matching _handle_project pattern
-    test_ctx = f"tests/knowledge_manager/test_sys_msgs/test_refactor_prompt_stable/{DEFAULT_USER_CONTEXT}/{DEFAULT_ASSISTANT_CONTEXT}"
+    test_ctx = f"tests/knowledge_manager/test_sys_msgs/test_refactor_prompt_stable/{UNASSIGNED_USER_CONTEXT}/{UNASSIGNED_ASSISTANT_CONTEXT}"
     # Build prompts in two separate Python processes to catch cross-session drift
     p1 = _build_prompt_in_subprocess("refactor", test_ctx)
     p2 = _build_prompt_in_subprocess("refactor", test_ctx)

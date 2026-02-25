@@ -46,6 +46,7 @@ class Event:
     _registry: ClassVar[dict[str, "Event"]] = {}
     loggable: ClassVar[bool] = True
     content_logged: ClassVar[bool] = False
+    prominent: ClassVar[bool] = False
     topic: ClassVar[str | None] = None
 
     def to_json(self):
@@ -118,6 +119,7 @@ class Event:
 @dataclass
 class PhoneCallReceived(Event):
     topic: ClassVar[str | None] = "app:comms:call_received"
+    prominent: ClassVar[bool] = True
 
     contact: dict
     conference_name: str = ""
@@ -126,6 +128,7 @@ class PhoneCallReceived(Event):
 @dataclass
 class PhoneCallAnswered(Event):
     topic: ClassVar[str | None] = "app:comms:call_answered"
+    prominent: ClassVar[bool] = True
 
     contact: dict
 
@@ -135,6 +138,7 @@ class PhoneCallNotAnswered(Event):
     """Outbound call was not answered (no-answer, busy, failed, etc.)."""
 
     topic: ClassVar[str | None] = "app:comms:call_not_answered"
+    prominent: ClassVar[bool] = True
 
     contact: dict
     reason: str = "no-answer"  # Twilio status: no-answer, busy, canceled, failed
@@ -145,6 +149,7 @@ class UnifyMeetReceived(Event):
     """Frontend/worker confirmed agent connected to room; begin LLM."""
 
     topic: ClassVar[str | None] = "app:comms:unify_meet_received"
+    prominent: ClassVar[bool] = True
 
     contact: dict
     room_name: str | None = None
@@ -153,6 +158,7 @@ class UnifyMeetReceived(Event):
 @dataclass
 class PhoneCallStarted(Event):
     topic: ClassVar[str | None] = "app:comms:phone_call_started"
+    prominent: ClassVar[bool] = True
 
     contact: dict
 
@@ -165,6 +171,7 @@ class UnifyMeetStarted(Event):
     """
 
     topic: ClassVar[str | None] = "app:comms:unify_meet_started"
+    prominent: ClassVar[bool] = True
 
     contact: dict
 
@@ -201,6 +208,7 @@ class VoiceInterrupt(Event):
 @dataclass
 class PhoneCallEnded(Event):
     topic: ClassVar[str | None] = "app:comms:phone_call_ended"
+    prominent: ClassVar[bool] = True
 
     contact: dict
 
@@ -210,6 +218,7 @@ class UnifyMeetEnded(Event):
     """The web-based voice/video meeting session has ended."""
 
     topic: ClassVar[str | None] = "app:comms:unify_meet_ended"
+    prominent: ClassVar[bool] = True
 
     contact: dict
 
@@ -254,6 +263,7 @@ class UnifyMessageReceived(Event):
 @dataclass
 class PhoneCallSent(Event):
     topic: ClassVar[str | None] = "app:comms:make_call"
+    prominent: ClassVar[bool] = True
 
     contact: dict
 
@@ -283,8 +293,6 @@ class CallGuidance(Event):
     """
     Guidance from the Main CM Brain sent to the Voice Agent during a call.
 
-    Used in both TTS and STS voice modes. The guidance articulator decides
-    whether to block, silently notify, or speak the guidance.
 
     When should_speak is True, response_text contains the exact text the fast
     brain should utter via session.say(), bypassing its own LLM. When
@@ -412,18 +420,19 @@ class _SessionConfigBase(Event):
     medium: str
     assistant_id: str
     user_id: str
-    assistant_name: str
+    assistant_first_name: str
+    assistant_surname: str
     assistant_age: str
     assistant_nationality: str
     assistant_about: str
     assistant_number: str
     assistant_email: str
-    user_name: str
+    user_first_name: str
+    user_surname: str
     user_number: str
     user_email: str
     voice_id: str
     voice_provider: str = "cartesia"
-    voice_mode: str = "tts"
     assistant_timezone: str = (
         ""  # IANA timezone identifier; default empty for backward compat
     )
@@ -462,6 +471,8 @@ class Ping(Event):
 
 @dataclass
 class Error(Event):
+    prominent: ClassVar[bool] = True
+
     message: str
 
 

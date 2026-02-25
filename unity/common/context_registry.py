@@ -1,7 +1,7 @@
 import unify
-from unify import create_context, create_fields
+from unify import create_fields
 from unity.common.state_managers import BaseStateManager
-from unity.common.context_store import _PRIVATE_FIELDS
+from unity.common.context_store import _PRIVATE_FIELDS, _create_context_with_retry
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import List, Dict, Optional, Any, Union, Type
 from pydantic import BaseModel
@@ -98,7 +98,11 @@ class ContextRegistry:
         from unity.function_manager.function_manager import FunctionManager
         from unity.blacklist_manager.blacklist_manager import BlackListManager
         from unity.data_manager.data_manager import DataManager
-        from unity.environment_manager.environment_manager import EnvironmentManager
+        from unity.file_manager.managers.file_manager import FileManager
+        from unity.customization.environments.environment_manager import (
+            EnvironmentManager,
+        )
+        from unity.customization.configs.config_manager import ConfigManager
 
         return [
             ContactManager,
@@ -112,7 +116,9 @@ class ContextRegistry:
             FunctionManager,
             BlackListManager,
             DataManager,
+            FileManager,
             EnvironmentManager,
+            ConfigManager,
         ]
 
     @classmethod
@@ -131,17 +137,13 @@ class ContextRegistry:
         # Use resolved_foreign_keys (with prefixed references) instead of
         # table.foreign_keys to avoid using mutated class-level config.
         resolved_foreign_keys = entry.get("resolved_foreign_keys")
-        # Idempotent creation: try to create, tolerate if already exists
-        try:
-            create_context(
-                target_name,
-                description=table.description,
-                unique_keys=table.unique_keys,
-                auto_counting=table.auto_counting,
-                foreign_keys=resolved_foreign_keys,
-            )
-        except Exception:
-            pass  # Already exists or transient failure
+        _create_context_with_retry(
+            target_name,
+            unique_keys=table.unique_keys,
+            auto_counting=table.auto_counting,
+            description=table.description,
+            foreign_keys=resolved_foreign_keys,
+        )
         # Idempotent field creation
         if table.fields:
             try:
@@ -172,7 +174,7 @@ class ContextRegistry:
 
         These contexts:
         - Have the same fields as the source context (for consistent querying)
-        - Include private fields (_user, _user_id, _assistant, _assistant_id)
+        - Include private fields (_user, _user_id, _assistant, _assistant_id, _org, _org_id)
         - Have NO unique_keys or auto_counting (logs are added by reference)
         """
         parts = target_name.split("/")
@@ -180,14 +182,14 @@ class ContextRegistry:
             return
 
         # Handle test contexts: tests/.../{default_user_id}/{default_assistant_id}/Suffix
-        # Find the user position by looking for the DEFAULT_USER_CONTEXT marker
+        # Find the user position by looking for the UNASSIGNED_USER_CONTEXT marker
         if parts[0] == "tests":
-            from unity.session_details import DEFAULT_USER_CONTEXT
+            from unity.session_details import UNASSIGNED_USER_CONTEXT
 
             try:
-                user_idx = parts.index(DEFAULT_USER_CONTEXT)
+                user_idx = parts.index(UNASSIGNED_USER_CONTEXT)
             except ValueError:
-                # Can't determine structure without the DEFAULT_USER_CONTEXT marker
+                # Can't determine structure without the UNASSIGNED_USER_CONTEXT marker
                 return
 
             # Need at least User/Assistant/Suffix after the test root
@@ -225,11 +227,7 @@ class ContextRegistry:
             ]
 
         for all_ctx, description in all_ctxs:
-            # Idempotent creation: try to create, tolerate if already exists
-            try:
-                create_context(all_ctx, description=description)
-            except Exception:
-                pass  # Already exists or transient failure
+            _create_context_with_retry(all_ctx, description=description)
 
             # Mirror fields from source context + add private fields
             if table.fields:

@@ -52,7 +52,7 @@ from unity.conversation_manager.events import (
     BackupContactsEvent,
 )
 from unity.conversation_manager.types import Mode
-from unity.session_details import DEFAULT_ASSISTANT_ID
+from unity.session_details import UNASSIGNED_ASSISTANT_ID
 
 # =============================================================================
 # Subprocess Helpers for True Process Isolation
@@ -97,8 +97,10 @@ def _run_cm_in_subprocess(code_body: str, env_vars: dict | None = None) -> dict:
                 job_name=f"unity-test-{{datetime.now().strftime('%Y%m%d%H%M%S')}}",
                 user_id="test_user",
                 assistant_id=assistant_id,
-                user_name="Test User",
-                assistant_name="Test Assistant",
+                user_first_name="Test",
+                user_surname="User",
+                assistant_first_name="Test",
+                assistant_surname="Assistant",
                 assistant_age="25",
                 assistant_nationality="American",
                 assistant_about="A test assistant",
@@ -108,7 +110,6 @@ def _run_cm_in_subprocess(code_body: str, env_vars: dict | None = None) -> dict:
                 user_email="user@test.com",
                 voice_provider="cartesia",
                 voice_id="test_voice",
-                voice_mode="tts",
                 stop=stop,
             ), broker
 
@@ -200,8 +201,10 @@ def create_minimal_cm(event_broker, stop_event, assistant_id="test_assistant"):
         job_name=f"unity-test-{datetime.now().strftime('%Y%m%d%H%M%S')}",
         user_id="test_user",
         assistant_id=assistant_id,
-        user_name="Test User",
-        assistant_name="Test Assistant",
+        user_first_name="Test",
+        user_surname="User",
+        assistant_first_name="Test",
+        assistant_surname="Assistant",
         assistant_age="25",
         assistant_nationality="American",
         assistant_about="A test assistant",
@@ -211,7 +214,6 @@ def create_minimal_cm(event_broker, stop_event, assistant_id="test_assistant"):
         user_email="user@test.com",
         voice_provider="cartesia",
         voice_id="test_voice",
-        voice_mode="tts",
         stop=stop_event,
     )
 
@@ -523,12 +525,12 @@ class TestStaleAssistantJobsState:
     @pytest.mark.asyncio
     async def test_mark_job_done_not_called_for_idle_container(self, event_broker):
         """
-        Idle containers (assistant_id == DEFAULT_ASSISTANT_ID) should NOT
+        Idle containers (assistant_id == UNASSIGNED_ASSISTANT_ID) should NOT
         call mark_job_done since they were never "live".
         """
         stop = asyncio.Event()
 
-        cm = create_minimal_cm(event_broker, stop, assistant_id=DEFAULT_ASSISTANT_ID)
+        cm = create_minimal_cm(event_broker, stop, assistant_id=UNASSIGNED_ASSISTANT_ID)
         cm.initialized = True
         cm.job_name = "unity-idle-job"
 

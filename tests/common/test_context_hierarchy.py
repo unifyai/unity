@@ -8,7 +8,7 @@ This module tests that:
 """
 
 from unity.common.log_utils import _derive_all_contexts
-from unity.session_details import DEFAULT_USER_CONTEXT
+from unity.session_details import UNASSIGNED_USER_CONTEXT
 
 # =============================================================================
 # Tests for _derive_all_contexts - Production contexts
@@ -50,33 +50,33 @@ def test_derive_all_contexts_too_few_parts():
 
 def test_derive_all_contexts_test_simple():
     """Test context should derive aggregation contexts scoped to test root."""
-    context = f"tests/foo/{DEFAULT_USER_CONTEXT}/Assistant/Contacts"
+    context = f"tests/foo/{UNASSIGNED_USER_CONTEXT}/Assistant/Contacts"
     result = _derive_all_contexts(context)
 
     assert result == [
-        f"tests/foo/{DEFAULT_USER_CONTEXT}/All/Contacts",
+        f"tests/foo/{UNASSIGNED_USER_CONTEXT}/All/Contacts",
         "tests/foo/All/Contacts",
     ]
 
 
 def test_derive_all_contexts_test_nested_path():
     """Test context with nested test path should scope correctly."""
-    context = f"tests/contact_manager/test_all_ctx/test_my_test/{DEFAULT_USER_CONTEXT}/Assistant/Contacts"
+    context = f"tests/contact_manager/test_all_ctx/test_my_test/{UNASSIGNED_USER_CONTEXT}/Assistant/Contacts"
     result = _derive_all_contexts(context)
 
     assert result == [
-        f"tests/contact_manager/test_all_ctx/test_my_test/{DEFAULT_USER_CONTEXT}/All/Contacts",
+        f"tests/contact_manager/test_all_ctx/test_my_test/{UNASSIGNED_USER_CONTEXT}/All/Contacts",
         "tests/contact_manager/test_all_ctx/test_my_test/All/Contacts",
     ]
 
 
 def test_derive_all_contexts_test_nested_suffix():
     """Test context with nested suffix should work correctly."""
-    context = f"tests/foo/{DEFAULT_USER_CONTEXT}/Assistant/Knowledge/Sales"
+    context = f"tests/foo/{UNASSIGNED_USER_CONTEXT}/Assistant/Knowledge/Sales"
     result = _derive_all_contexts(context)
 
     assert result == [
-        f"tests/foo/{DEFAULT_USER_CONTEXT}/All/Knowledge/Sales",
+        f"tests/foo/{UNASSIGNED_USER_CONTEXT}/All/Knowledge/Sales",
         "tests/foo/All/Knowledge/Sales",
     ]
 
@@ -86,14 +86,14 @@ def test_derive_all_contexts_test_without_default_user():
     context = "tests/foo/some-other-user/Assistant/Contacts"
     result = _derive_all_contexts(context)
 
-    # "some-other-user" is not the DEFAULT_USER_CONTEXT marker, so can't determine structure
+    # "some-other-user" is not the UNASSIGNED_USER_CONTEXT marker, so can't determine structure
     assert result == []
 
 
 def test_derive_all_contexts_test_insufficient_parts_after_user():
     """Test context without enough parts after User should return empty list."""
     # Only User, no Assistant or Suffix
-    context = f"tests/foo/{DEFAULT_USER_CONTEXT}/Assistant"
+    context = f"tests/foo/{UNASSIGNED_USER_CONTEXT}/Assistant"
     result = _derive_all_contexts(context)
 
     # Need User/Assistant/Suffix (3 parts minimum after test_root)
@@ -127,7 +127,7 @@ def test_production_context_structure():
 def test_test_context_structure():
     """Verify test context hierarchy structure matches production pattern."""
     test_root = "tests/contact_manager/test_all_ctx/test_foo"
-    user = DEFAULT_USER_CONTEXT
+    user = UNASSIGNED_USER_CONTEXT
     assistant = "Assistant"
     manager_ctx = "Contacts"
 
@@ -152,8 +152,8 @@ def test_test_context_isolation():
     test_root_a = "tests/foo/test_a"
     test_root_b = "tests/foo/test_b"
 
-    ctx_a = f"{test_root_a}/{DEFAULT_USER_CONTEXT}/Assistant/Contacts"
-    ctx_b = f"{test_root_b}/{DEFAULT_USER_CONTEXT}/Assistant/Contacts"
+    ctx_a = f"{test_root_a}/{UNASSIGNED_USER_CONTEXT}/Assistant/Contacts"
+    ctx_b = f"{test_root_b}/{UNASSIGNED_USER_CONTEXT}/Assistant/Contacts"
 
     aggregation_a = _derive_all_contexts(ctx_a)
     aggregation_b = _derive_all_contexts(ctx_b)

@@ -41,7 +41,6 @@ class CallConfig:
     assistant_number: str
     voice_provider: str
     voice_id: str
-    voice_mode: str
 
 
 _BASE_FORWARD_CHANNELS = [
@@ -96,7 +95,6 @@ class LivekitCallManager:
         self.assistant_number = config.assistant_number
         self.voice_provider = config.voice_provider
         self.voice_id = config.voice_id
-        self.uses_realtime_api = config.voice_mode == "sts"
 
     def set_event_broker(self, event_broker: "InMemoryEventBroker") -> None:
         """Set the event broker for socket server to publish to."""
@@ -163,8 +161,6 @@ class LivekitCallManager:
             )
 
         target_path = Path(__file__).parent.parent.resolve() / "medium_scripts"
-        # Both TTS and Realtime modes use the fast brain architecture and need
-        # boss details and assistant bio for the phone agent prompt
         args = [
             make_room_name(self.assistant_id, "phone"),
             self.voice_provider,
@@ -177,10 +173,7 @@ class LivekitCallManager:
             self.assistant_id,
             self.user_id,
         ]
-        if self.uses_realtime_api:
-            target_path = target_path / "sts_call.py"
-        else:
-            target_path = target_path / "call.py"
+        target_path = target_path / "call.py"
         args = [str(arg) for arg in args]
         LOGGER.debug(f"{DEFAULT_ICON} target_path: {target_path}, args: {args}")
         self._call_proc = run_script(str(target_path), "dev", *args)
@@ -245,8 +238,6 @@ class LivekitCallManager:
         target_path = Path(__file__).parent.parent.resolve() / "medium_scripts"
         room_name = room_name or make_room_name(self.assistant_id, "meet")
         self.room_name = room_name
-        # Both TTS and Realtime modes use the fast brain architecture and need
-        # boss details and assistant bio for the phone agent prompt
         args = [
             room_name,
             self.voice_provider,
@@ -259,10 +250,7 @@ class LivekitCallManager:
             self.assistant_id,
             self.user_id,
         ]
-        if self.uses_realtime_api:
-            target_path = target_path / "sts_call.py"
-        else:
-            target_path = target_path / "call.py"
+        target_path = target_path / "call.py"
         args = [str(arg) for arg in args]
         LOGGER.debug(f"{DEFAULT_ICON} target_path: {target_path}, args: {args}")
         self._call_proc = run_script(str(target_path), "dev", *args)

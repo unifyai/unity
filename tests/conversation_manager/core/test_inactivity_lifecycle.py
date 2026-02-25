@@ -25,7 +25,7 @@ Production Context (from INFRA.md):
 -----------------------------------
 - Inactivity timeout: 6 minutes (360 seconds)
 - Ping interval: 30 seconds (half the timeout)
-- Idle containers use DEFAULT_ASSISTANT_ID ("0")
+- Idle containers use UNASSIGNED_ASSISTANT_ID ("0")
 - Live containers have a real assistant_id
 - On shutdown: cleanup() → mark_job_done() → stop.set()
 """
@@ -41,7 +41,7 @@ import pytest_asyncio
 from unity.conversation_manager.events import (
     Ping,
 )
-from unity.session_details import DEFAULT_ASSISTANT_ID
+from unity.session_details import UNASSIGNED_ASSISTANT_ID
 
 # =============================================================================
 # Fixtures
@@ -78,8 +78,10 @@ def minimal_cm_config():
         "job_name": "test-job-123",
         "user_id": "user_1",
         "assistant_id": "assistant_1",
-        "user_name": "Test User",
-        "assistant_name": "Test Assistant",
+        "user_first_name": "Test",
+        "user_surname": "User",
+        "assistant_first_name": "Test",
+        "assistant_surname": "Assistant",
         "assistant_age": "25",
         "assistant_nationality": "American",
         "assistant_about": "A helpful assistant",
@@ -89,7 +91,6 @@ def minimal_cm_config():
         "user_email": "user@test.com",
         "voice_provider": "cartesia",
         "voice_id": "test_voice",
-        "voice_mode": "tts",
     }
 
 
@@ -117,8 +118,10 @@ class TestInactivityDetectionBasics:
             job_name="test-job",
             user_id="user_1",
             assistant_id="assistant_1",
-            user_name="Test User",
-            assistant_name="Test Assistant",
+            user_first_name="Test",
+            user_surname="User",
+            assistant_first_name="Test",
+            assistant_surname="Assistant",
             assistant_age="25",
             assistant_nationality="American",
             assistant_about="Test bio",
@@ -169,8 +172,10 @@ class TestInactivityDetectionBasics:
             job_name="test-job",
             user_id="user_1",
             assistant_id="assistant_1",
-            user_name="Test User",
-            assistant_name="Test Assistant",
+            user_first_name="Test",
+            user_surname="User",
+            assistant_first_name="Test",
+            assistant_surname="Assistant",
             assistant_age="25",
             assistant_nationality="American",
             assistant_about="Test bio",
@@ -208,8 +213,10 @@ class TestInactivityDetectionBasics:
             job_name="test-job",
             user_id="user_1",
             assistant_id="assistant_1",
-            user_name="Test User",
-            assistant_name="Test Assistant",
+            user_first_name="Test",
+            user_surname="User",
+            assistant_first_name="Test",
+            assistant_surname="Assistant",
             assistant_age="25",
             assistant_nationality="American",
             assistant_about="Test bio",
@@ -268,9 +275,11 @@ class TestPingKeepAlive:
             event_broker=event_broker,
             job_name="test-job",
             user_id="user_1",
-            assistant_id=DEFAULT_ASSISTANT_ID,  # Idle container
-            user_name="Test User",
-            assistant_name="Test Assistant",
+            assistant_id=UNASSIGNED_ASSISTANT_ID,  # Idle container
+            user_first_name="Test",
+            user_surname="User",
+            assistant_first_name="Test",
+            assistant_surname="Assistant",
             assistant_age="25",
             assistant_nationality="American",
             assistant_about="Test bio",
@@ -319,8 +328,10 @@ class TestCleanupSequence:
             job_name="test-job-live",
             user_id="user_1",
             assistant_id="real_assistant_123",  # Live container
-            user_name="Test User",
-            assistant_name="Test Assistant",
+            user_first_name="Test",
+            user_surname="User",
+            assistant_first_name="Test",
+            assistant_surname="Assistant",
             assistant_age="25",
             assistant_nationality="American",
             assistant_about="Test bio",
@@ -343,7 +354,7 @@ class TestCleanupSequence:
         """
         Verify that cleanup() skips mark_job_done() for idle containers.
 
-        Idle containers (with DEFAULT_ASSISTANT_ID) were never "live" in the
+        Idle containers (with UNASSIGNED_ASSISTANT_ID) were never "live" in the
         AssistantJobs sense, so we don't need to mark them as done.
         """
         from unity.conversation_manager.conversation_manager import ConversationManager
@@ -353,9 +364,11 @@ class TestCleanupSequence:
             event_broker=event_broker,
             job_name="test-job-idle",
             user_id="user_1",
-            assistant_id=DEFAULT_ASSISTANT_ID,  # Idle container
-            user_name="Test User",
-            assistant_name="Test Assistant",
+            assistant_id=UNASSIGNED_ASSISTANT_ID,  # Idle container
+            user_first_name="Test",
+            user_surname="User",
+            assistant_first_name="Test",
+            assistant_surname="Assistant",
             assistant_age="25",
             assistant_nationality="American",
             assistant_about="Test bio",
@@ -388,8 +401,10 @@ class TestCleanupSequence:
             job_name="test-job",
             user_id="user_1",
             assistant_id="assistant_1",
-            user_name="Test User",
-            assistant_name="Test Assistant",
+            user_first_name="Test",
+            user_surname="User",
+            assistant_first_name="Test",
+            assistant_surname="Assistant",
             assistant_age="25",
             assistant_nationality="American",
             assistant_about="Test bio",
@@ -425,8 +440,10 @@ class TestCleanupSequence:
             job_name="test-job",
             user_id="user_1",
             assistant_id="assistant_1",
-            user_name="Test User",
-            assistant_name="Test Assistant",
+            user_first_name="Test",
+            user_surname="User",
+            assistant_first_name="Test",
+            assistant_surname="Assistant",
             assistant_age="25",
             assistant_nationality="American",
             assistant_about="Test bio",
@@ -471,8 +488,10 @@ class TestEventBrokerLifecycle:
             job_name="test-job",
             user_id="user_1",
             assistant_id="assistant_1",
-            user_name="Test User",
-            assistant_name="Test Assistant",
+            user_first_name="Test",
+            user_surname="User",
+            assistant_first_name="Test",
+            assistant_surname="Assistant",
             assistant_age="25",
             assistant_nationality="American",
             assistant_about="Test bio",
@@ -543,9 +562,11 @@ class TestFullLifecycleIntegration:
             event_broker=event_broker,
             job_name="test-lifecycle-job",
             user_id="user_1",
-            assistant_id=DEFAULT_ASSISTANT_ID,  # Start as idle
-            user_name="Test User",
-            assistant_name="Test Assistant",
+            assistant_id=UNASSIGNED_ASSISTANT_ID,  # Start as idle
+            user_first_name="Test",
+            user_surname="User",
+            assistant_first_name="Test",
+            assistant_surname="Assistant",
             assistant_age="25",
             assistant_nationality="American",
             assistant_about="Test bio",
@@ -557,25 +578,26 @@ class TestFullLifecycleIntegration:
         )
 
         # Verify idle state
-        assert cm.assistant_id == DEFAULT_ASSISTANT_ID
+        assert cm.assistant_id == UNASSIGNED_ASSISTANT_ID
 
         # Simulate startup (transition to live)
         startup_payload = {
             "api_key": "test_key",
             "assistant_id": "live_assistant_456",
             "user_id": "user_1",
-            "assistant_name": "Live Assistant",
+            "assistant_first_name": "Live",
+            "assistant_surname": "Assistant",
             "assistant_age": "30",
             "assistant_nationality": "British",
             "assistant_about": "A live assistant",
             "assistant_number": "+15555559999",
             "assistant_email": "live@test.com",
-            "user_name": "Live User",
+            "user_first_name": "Live",
+            "user_surname": "User",
             "user_number": "+15555558888",
             "user_email": "live_user@test.com",
             "voice_provider": "cartesia",
             "voice_id": "voice_123",
-            "voice_mode": "tts",
         }
         cm.set_details(startup_payload)
 
@@ -626,8 +648,10 @@ class TestFullLifecycleIntegration:
             job_name="test-cleanup-order",
             user_id="user_1",
             assistant_id="assistant_1",
-            user_name="Test User",
-            assistant_name="Test Assistant",
+            user_first_name="Test",
+            user_surname="User",
+            assistant_first_name="Test",
+            assistant_surname="Assistant",
             assistant_age="25",
             assistant_nationality="American",
             assistant_about="Test bio",
@@ -693,8 +717,10 @@ class TestEdgeCases:
             job_name="",  # Empty job name
             user_id="user_1",
             assistant_id="assistant_1",
-            user_name="Test User",
-            assistant_name="Test Assistant",
+            user_first_name="Test",
+            user_surname="User",
+            assistant_first_name="Test",
+            assistant_surname="Assistant",
             assistant_age="25",
             assistant_nationality="American",
             assistant_about="Test bio",
@@ -729,8 +755,10 @@ class TestEdgeCases:
             job_name="test-job",
             user_id="user_1",
             assistant_id="assistant_1",
-            user_name="Test User",
-            assistant_name="Test Assistant",
+            user_first_name="Test",
+            user_surname="User",
+            assistant_first_name="Test",
+            assistant_surname="Assistant",
             assistant_age="25",
             assistant_nationality="American",
             assistant_about="Test bio",

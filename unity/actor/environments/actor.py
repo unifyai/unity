@@ -124,7 +124,7 @@ def _build_scoped_gm(
 
 def _resolve_prompt_guidance(
     prompt_guidance: list[str | int] | None,
-) -> str | None:
+) -> tuple[str | None, frozenset[int]]:
     """Resolve guidance entries by title or ID and return formatted text.
 
     Each identifier is looked up from the default ``GuidanceManager``.
@@ -132,10 +132,12 @@ def _resolve_prompt_guidance(
     ``guidance_id``.  Resolved entries are concatenated as Markdown
     sections suitable for injection into the system prompt.
 
-    Returns ``None`` when *prompt_guidance* is empty or no entries match.
+    Returns a tuple of ``(text, resolved_ids)`` where *text* is ``None``
+    when *prompt_guidance* is empty or no entries match, and *resolved_ids*
+    is the set of ``guidance_id`` values that were successfully resolved.
     """
     if not prompt_guidance:
-        return None
+        return None, frozenset()
 
     from unity.guidance_manager.guidance_manager import (
         GuidanceManager as _GM,
@@ -144,15 +146,40 @@ def _resolve_prompt_guidance(
     gm = _GM()
 
     sections: list[str] = []
+    resolved_ids: set[int] = set()
     for identifier in prompt_guidance:
         if isinstance(identifier, int):
             rows = gm.filter(filter=f"guidance_id == {identifier}", limit=1)
         else:
             rows = gm.filter(filter=f"title == '{identifier}'", limit=1)
         for g in rows:
-            sections.append(f"## {g.title}\n\n{g.content}")
+            parts = [f"## {g.title} [guidance_id: {g.guidance_id}]"]
+            parts.append(f"\n{g.content}")
+            if g.function_ids:
+                parts.append(f"\nRelated functions: {g.function_ids}")
+            imgs = g.images.root if hasattr(g.images, "root") else g.images
+            if imgs:
+                img_lines = ["Images:"]
+                for img in imgs:
+                    fp = getattr(
+                        getattr(img, "raw_image_ref", None),
+                        "filepath",
+                        None,
+                    )
+                    ann = getattr(img, "annotation", "")
+                    label = (
+                        fp
+                        or f"image_id={getattr(getattr(img, 'raw_image_ref', None), 'image_id', '?')}"
+                    )
+                    img_lines.append(
+                        f"- {label}: {ann}" if ann else f"- {label}",
+                    )
+                parts.append("\n".join(img_lines))
+            sections.append("\n".join(parts))
+            resolved_ids.add(g.guidance_id)
 
-    return "\n\n---\n\n".join(sections) if sections else None
+    text = "\n\n---\n\n".join(sections) if sections else None
+    return text, frozenset(resolved_ids)
 
 
 def _build_environments_from_db(
@@ -368,6 +395,10 @@ class _ActorRunner:
             instructions, SOPs, composition strategies) to the actor
             without requiring it to discover them via search.
 
+            Prompt-injected guidance entries are automatically excluded
+            from the actor's GuidanceManager search/filter results, so
+            they will not appear as duplicates during discovery.
+
             Example::
 
                 prompt_guidance=["Excel Processing Guide", 42]
@@ -497,7 +528,9 @@ class _ActorRunner:
             inner_envs.append(ActorEnvironment())
 
         # Resolve prompt_guidance entries and merge with guidelines.
-        guidance_text = _resolve_prompt_guidance(prompt_guidance)
+        guidance_text, resolved_guidance_ids = _resolve_prompt_guidance(
+            prompt_guidance,
+        )
         effective_guidelines = guidelines or ""
         if guidance_text:
             effective_guidelines = (
@@ -508,6 +541,8 @@ class _ActorRunner:
 
         # Build a scoped GuidanceManager for subagent discovery.
         inner_gm = _build_scoped_gm(guidance_scope)
+        if resolved_guidance_ids:
+            inner_gm.exclude_ids = resolved_guidance_ids
 
         # Create inner CodeActActor.
         inner_actor = CodeActActor(

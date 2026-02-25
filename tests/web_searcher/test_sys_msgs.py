@@ -19,7 +19,7 @@ from unity.web_searcher.prompt_builders import (
     build_ask_prompt,
 )
 from unity.web_searcher.web_searcher import WebSearcher
-from unity.session_details import DEFAULT_USER_CONTEXT, DEFAULT_ASSISTANT_CONTEXT
+from unity.session_details import UNASSIGNED_USER_CONTEXT, UNASSIGNED_ASSISTANT_CONTEXT
 
 
 def _build_prompt_in_subprocess(method: str, test_context: str) -> str:
@@ -135,7 +135,7 @@ def test_ask_system_prompt_formatting():
 @_handle_project
 def test_ask_prompt_stable():
     # Build a test-specific context path matching _handle_project pattern
-    test_ctx = f"tests/web_searcher/test_sys_msgs/test_ask_prompt_stable/{DEFAULT_USER_CONTEXT}/{DEFAULT_ASSISTANT_CONTEXT}"
+    test_ctx = f"tests/web_searcher/test_sys_msgs/test_ask_prompt_stable/{UNASSIGNED_USER_CONTEXT}/{UNASSIGNED_ASSISTANT_CONTEXT}"
     # Build prompts in two separate Python processes to catch cross-session drift
     p1 = _build_prompt_in_subprocess("ask", test_ctx)
     p2 = _build_prompt_in_subprocess("ask", test_ctx)

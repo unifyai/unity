@@ -3,8 +3,10 @@ Wrappers around unify.log/create_logs with:
 1. _user injection (user ID, matches user_context path component)
 2. _user_id injection (user ID from SESSION_DETAILS)
 3. _assistant injection (assistant ID, matches assistant_context path component)
-4. _assistant_id injection (assistant's agent_id from assistant_record)
-5. Automatic addition to aggregation contexts by reference (copy=False)
+4. _assistant_id injection (assistant's agent_id from SESSION_DETAILS.assistant.id)
+5. _org injection (organization ID from SESSION_DETAILS, None for personal context)
+6. _org_id injection (organization ID from SESSION_DETAILS, None for personal context)
+7. Automatic addition to aggregation contexts by reference (copy=False)
 
 Usage
 -----
@@ -19,7 +21,7 @@ Replace direct unify.log/create_logs calls with these wrappers:
     create_logs(context=ctx, entries=entries_list)
 
 The wrappers automatically:
-- Inject _user, _user_id, _assistant, _assistant_id as private fields
+- Inject _user, _user_id, _assistant, _assistant_id, _org, _org_id as private fields
 - Add logs to aggregation contexts by reference (when add_to_all_context=True):
   - {user_id}/All/{Suffix} - user-level aggregation (all assistants for this user)
   - All/{Suffix} - global aggregation (all users, all assistants)
@@ -71,11 +73,7 @@ def _get_assistant_context() -> Optional[str]:
 
 def _get_assistant_id() -> Optional[str]:
     """Retrieve assistant's agent_id from SESSION_DETAILS as a string."""
-    if SESSION_DETAILS.assistant_record is not None:
-        agent_id = SESSION_DETAILS.assistant_record.get("agent_id")
-        if agent_id is not None:
-            return str(agent_id)
-    return None
+    return SESSION_DETAILS.assistant.id or None
 
 
 def _get_org_id() -> Optional[int]:
@@ -86,7 +84,7 @@ def _get_org_id() -> Optional[int]:
     return SESSION_DETAILS.org_id
 
 
-def _get_org_name() -> Optional[str]:
+def _get_org_context() -> Optional[str]:
     """Retrieve organization name from SESSION_DETAILS.
 
     Returns None/empty for personal (non-org) context.
@@ -114,9 +112,9 @@ def _inject_private_fields(entries: Dict[str, Any]) -> Dict[str, Any]:
     if assistant_id is not None:
         result["_assistant_id"] = assistant_id
 
-    org_name = _get_org_name()
-    if org_name is not None:
-        result["_org"] = org_name
+    org_ctx = _get_org_context()
+    if org_ctx is not None:
+        result["_org"] = org_ctx
 
     org_id = _get_org_id()
     if org_id is not None:
@@ -155,14 +153,14 @@ def _derive_all_contexts(context: str) -> List[str]:
         return []
 
     # Handle test contexts: tests/.../{default_user_id}/{default_assistant_id}/Suffix
-    # Find the user position by looking for the DEFAULT_USER_CONTEXT marker
+    # Find the user position by looking for the UNASSIGNED_USER_CONTEXT marker
     if parts[0] == "tests":
-        from unity.session_details import DEFAULT_USER_CONTEXT
+        from unity.session_details import UNASSIGNED_USER_CONTEXT
 
         try:
-            user_idx = parts.index(DEFAULT_USER_CONTEXT)
+            user_idx = parts.index(UNASSIGNED_USER_CONTEXT)
         except ValueError:
-            # Can't determine structure without the DEFAULT_USER_CONTEXT marker
+            # Can't determine structure without the UNASSIGNED_USER_CONTEXT marker
             return []
 
         # Need at least User/Assistant/Suffix after the test root

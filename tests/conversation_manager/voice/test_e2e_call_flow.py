@@ -201,7 +201,6 @@ class TestEndToEndCallFlow:
             assistant_number="+15555550000",
             voice_provider="cartesia",
             voice_id="test_voice",
-            voice_mode="tts",
         )
 
         call_manager = LivekitCallManager(config, event_broker)
@@ -351,7 +350,6 @@ class TestEndToEndCallFlow:
             assistant_number="+15555550000",
             voice_provider="cartesia",
             voice_id="test_voice",
-            voice_mode="tts",
         )
         call_manager = LivekitCallManager(config, event_broker)
         mock_cm.call_manager = call_manager
@@ -417,7 +415,6 @@ class TestEndToEndCallFlow:
             assistant_number="+15555550000",
             voice_provider="cartesia",
             voice_id="test",
-            voice_mode="tts",
         )
         call_manager = LivekitCallManager(config, event_broker)
         mock_cm.call_manager = call_manager
@@ -590,7 +587,6 @@ class TestRoomNameHandling:
             assistant_number="+15555550000",
             voice_provider="cartesia",
             voice_id="test_voice",
-            voice_mode="tts",
         )
         call_manager = LivekitCallManager(config, event_broker)
         mock_cm.call_manager = call_manager
@@ -657,18 +653,19 @@ class TestRapidEventHandling:
                 medium="sms",
                 assistant_id="25",
                 user_id="123",
-                assistant_name="Test Assistant",
+                assistant_first_name="Test",
+                assistant_surname="Assistant",
                 assistant_age="25",
                 assistant_nationality="American",
                 assistant_about="A test assistant",
                 assistant_number="+15555550000",
                 assistant_email="assistant@test.com",
-                user_name="Boss User",
+                user_first_name="Boss",
+                user_surname="User",
                 user_number="+15555550001",
                 user_email="boss@test.com",
                 voice_provider="cartesia",
                 voice_id="test_voice",
-                voice_mode="tts",
             )
 
             sms = SMSReceived(

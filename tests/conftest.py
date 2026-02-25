@@ -43,7 +43,7 @@ if not _root_logger_early.handlers:
 
 from tests.helpers import PRECREATED_CONTEXTS, set_session_tags
 from tests.settings import SETTINGS
-from unity.session_details import DEFAULT_ASSISTANT_CONTEXT, DEFAULT_USER_CONTEXT
+from unity.session_details import UNASSIGNED_ASSISTANT_CONTEXT, UNASSIGNED_USER_CONTEXT
 
 
 # --------------------------------------------------------------------------- #
@@ -98,7 +98,7 @@ def _derive_test_context(item: pytest.Item) -> str:
         func_name = f"{func_name}/{normalized}"
 
     # Mirror production hierarchy: .../{user_id}/{assistant_id}
-    return f"{test_path}/{func_name}/{DEFAULT_USER_CONTEXT}/{DEFAULT_ASSISTANT_CONTEXT}"
+    return f"{test_path}/{func_name}/{UNASSIGNED_USER_CONTEXT}/{UNASSIGNED_ASSISTANT_CONTEXT}"
 
 
 def _set_unify_context_for_test(item: pytest.Item) -> None:

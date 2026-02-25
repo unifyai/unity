@@ -41,7 +41,7 @@ from unity.conversation_manager.domains.comms_utils import (
     add_unify_message_attachments,
 )
 from unity.conversation_manager.events import *
-from unity.session_details import DEFAULT_ASSISTANT_ID, SESSION_DETAILS
+from unity.session_details import UNASSIGNED_ASSISTANT_ID, SESSION_DETAILS
 from unity.contact_manager.types.contact import UNASSIGNED
 from unity.conversation_manager.types import Medium
 
@@ -69,7 +69,7 @@ def _get_subscription_id() -> str:
     assistant_id = SESSION_DETAILS.assistant.id
     staging_suffix = (
         "-staging"
-        if SETTINGS.STAGING and DEFAULT_ASSISTANT_ID not in assistant_id
+        if SETTINGS.STAGING and UNASSIGNED_ASSISTANT_ID not in assistant_id
         else ""
     )
     return f"unity-{assistant_id}{staging_suffix}-sub"
@@ -79,8 +79,8 @@ def _get_local_contact() -> dict:
     """Build local contact dict from current assistant context."""
     return {
         "contact_id": -1,
-        "first_name": SESSION_DETAILS.user.name,
-        "surname": "",
+        "first_name": SESSION_DETAILS.user.first_name,
+        "surname": SESSION_DETAILS.user.surname,
         "phone_number": SESSION_DETAILS.user.number,
         "email_address": SESSION_DETAILS.user.email,
     }
@@ -285,19 +285,20 @@ class CommsManager:
                     "medium": event.get("medium", "assistant_update"),
                     "assistant_id": event["assistant_id"],
                     "user_id": event["user_id"],
-                    "assistant_name": event["assistant_name"],
+                    "assistant_first_name": event["assistant_first_name"],
+                    "assistant_surname": event["assistant_surname"],
                     "assistant_age": event["assistant_age"],
                     "assistant_nationality": event["assistant_nationality"],
                     "assistant_timezone": event.get("assistant_timezone", ""),
                     "assistant_about": event["assistant_about"],
                     "assistant_number": event["assistant_number"],
                     "assistant_email": event["assistant_email"],
-                    "user_name": event["user_name"],
+                    "user_first_name": event["user_first_name"],
+                    "user_surname": event["user_surname"],
                     "user_number": event["user_number"],
                     "user_email": event["user_email"],
                     "voice_provider": event["voice_provider"],
                     "voice_id": event["voice_id"],
-                    "voice_mode": event["voice_mode"],
                     "desktop_mode": event.get("desktop_mode", "ubuntu"),
                     "desktop_url": event.get("desktop_url"),
                     "user_desktop_mode": event.get("user_desktop_mode"),
@@ -771,7 +772,7 @@ class CommsManager:
 
     async def start(self):
         """Start all subscriptions and maintain connection to event manager."""
-        if SESSION_DETAILS.assistant.id == DEFAULT_ASSISTANT_ID:
+        if SESSION_DETAILS.assistant.id == UNASSIGNED_ASSISTANT_ID:
             # Start the startup subscription
             self.subscribe_to_topic(startup_subscription_id)
             # Start ping mechanism for idle containers
@@ -807,7 +808,7 @@ class CommsManager:
                 await asyncio.sleep(30)
 
                 # Check if we've received a startup message (indicated by assistant_id changed)
-                if SESSION_DETAILS.assistant.id != DEFAULT_ASSISTANT_ID:
+                if SESSION_DETAILS.assistant.id != UNASSIGNED_ASSISTANT_ID:
                     LOGGER.debug(
                         f"{ICONS['subscription']} Startup received, stopping ping mechanism",
                     )

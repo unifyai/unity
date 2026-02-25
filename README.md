@@ -36,6 +36,38 @@ Related repositories:
 - [Communication](https://github.com/unifyai/communication) — External communication gateway (voice, SMS, email)
 - [Console](https://github.com/unifyai/console) — Web UI and observability dashboard
 
+## Security
+
+### Container Runtime
+
+Unity containers run as a non-root `unity` user (UID 1000). The Playwright browser cache and log directories are owned by this user. Tini is used as the init system for proper signal handling.
+
+### Authentication
+
+Unity containers authenticate to all external services using the `ORCHESTRA_ADMIN_KEY`:
+- Calls to the **Communication API** (`UNITY_COMMS_URL`) include `Authorization: Bearer {admin_key}` on all requests (SMS, email, phone, infrastructure management)
+- Calls to the **Adapters** (`UNITY_ADAPTERS_URL`) include the same header for attachment uploads and other adapter endpoints
+- Calls to **Orchestra** (`ORCHESTRA_URL`) use per-user API keys (not the admin key)
+
+### Required Environment Variables (Security)
+
+| Variable | Purpose |
+|----------|---------|
+| `ORCHESTRA_ADMIN_KEY` | Authentication to Communication and Adapter services |
+| `UNIFY_KEY` | API key for Unify SDK operations |
+
+### GCP Infrastructure (not tracked in code)
+
+Unity shares the `responsive-city-458413-a2` GCP project with Communication. The following settings apply:
+
+- **Firewall rules**: All remote-access rules are restricted to the IAP tunnel range (`35.235.240.0/20`). Direct SSH/RDP from the internet is blocked; use `gcloud compute ssh --tunnel-through-iap` instead.
+- **VMs**: Terminated VMs are deleted promptly to release external IPs. No idle VMs with external IPs should remain.
+
+### GitHub Repository Settings (not tracked in code)
+
+- **Branch protection** on `main`: Requires 1 approving pull request review. Force pushes and branch deletions are blocked.
+- **Dependabot**: Vulnerability alerts and automated security fixes are enabled.
+
 ## Table of Contents
 
 - [Architecture Overview](#architecture-overview)

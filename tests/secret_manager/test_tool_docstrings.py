@@ -6,7 +6,7 @@ import subprocess
 import textwrap
 
 from unity.secret_manager.secret_manager import SecretManager
-from unity.session_details import DEFAULT_USER_CONTEXT, DEFAULT_ASSISTANT_CONTEXT
+from unity.session_details import UNASSIGNED_USER_CONTEXT, UNASSIGNED_ASSISTANT_CONTEXT
 from tests.assertion_helpers import first_diff_block
 from tests.helpers import _handle_project
 
@@ -99,7 +99,7 @@ def test_all_update_tools_have_sufficient_docstrings():
 @_handle_project
 def test_ask_tool_schemas_are_stable_across_python_sessions():
     # Build a test-specific context path matching _handle_project pattern
-    test_ctx = f"tests/secret_manager/test_tool_docstrings/test_ask_tool_schemas_are_stable_across_python_sessions/{DEFAULT_USER_CONTEXT}/{DEFAULT_ASSISTANT_CONTEXT}"
+    test_ctx = f"tests/secret_manager/test_tool_docstrings/test_ask_tool_schemas_are_stable_across_python_sessions/{UNASSIGNED_USER_CONTEXT}/{UNASSIGNED_ASSISTANT_CONTEXT}"
     p1 = _build_tools_schema_in_subprocess("ask", test_ctx)
     p2 = _build_tools_schema_in_subprocess("ask", test_ctx)
     if p1 != p2:
@@ -119,7 +119,7 @@ def test_ask_tool_schemas_are_stable_across_python_sessions():
 @_handle_project
 def test_update_tool_schemas_are_stable_across_python_sessions():
     # Build a test-specific context path matching _handle_project pattern
-    test_ctx = f"tests/secret_manager/test_tool_docstrings/test_update_tool_schemas_are_stable_across_python_sessions/{DEFAULT_USER_CONTEXT}/{DEFAULT_ASSISTANT_CONTEXT}"
+    test_ctx = f"tests/secret_manager/test_tool_docstrings/test_update_tool_schemas_are_stable_across_python_sessions/{UNASSIGNED_USER_CONTEXT}/{UNASSIGNED_ASSISTANT_CONTEXT}"
     p1 = _build_tools_schema_in_subprocess("update", test_ctx)
     p2 = _build_tools_schema_in_subprocess("update", test_ctx)
     if p1 != p2:

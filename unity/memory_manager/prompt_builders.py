@@ -17,16 +17,8 @@ def _sig_dict(tools: Dict[str, Callable]) -> Dict[str, str]:
 def _assistant_name() -> str:
     from unity.session_details import SESSION_DETAILS  # noqa: WPS433
 
-    if SESSION_DETAILS.assistant_record is not None:
-        first = SESSION_DETAILS.assistant_record.get("first_name") or ""
-        last = (
-            SESSION_DETAILS.assistant_record.get("surname")
-            or SESSION_DETAILS.assistant_record.get("last_name")
-            or ""
-        )
-        name = f"{first} {last}".strip()
-        if name:
-            return name
+    if SESSION_DETAILS.assistant.name:
+        return SESSION_DETAILS.assistant.name
 
     try:
         from unity.manager_registry import ManagerRegistry  # noqa: WPS433

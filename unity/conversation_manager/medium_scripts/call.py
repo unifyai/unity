@@ -72,7 +72,7 @@ VAD = None
 
 
 # Module-level logger created early for prewarm (before entrypoint runs).
-_log = FastBrainLogger(mode="tts")
+_log = FastBrainLogger()
 
 
 def prewarm(_ctx=None):
@@ -363,6 +363,9 @@ async def entrypoint(ctx: agents.JobContext):
     assistant_screen_share_active = False
     _agent_service_url: str | None = None
     _visual_ctx_msg_id: str | None = None
+    import aiohttp as _aiohttp
+
+    _screenshot_http_session = _aiohttp.ClientSession()
 
     def _clear_visual_context(source: str | None = None) -> None:
         """Remove visual context from chat contexts and clear screenshot history."""
@@ -537,10 +540,17 @@ async def entrypoint(ctx: agents.JobContext):
                     utterance,
                     fb_logger=_log,
                     agent_service_url=_agent_service_url,
+                    http_session=_screenshot_http_session,
                 )
                 if entry:
-                    _handle_screenshot(entry)
-                    captured_any = True
+                    if not assistant_screen_share_active:
+                        if copy_visual_id is not None:
+                            idx = chat_ctx.index_by_id(copy_visual_id)
+                            if idx is not None:
+                                chat_ctx.items.pop(idx)
+                    else:
+                        _handle_screenshot(entry)
+                        captured_any = True
 
             if captured_any:
                 content = screenshot_history.build_visual_context_content()
@@ -667,7 +677,7 @@ async def entrypoint(ctx: agents.JobContext):
             elif "screen sharing is now off" in low:
                 assistant_screen_share_active = False
                 _clear_visual_context(source="assistant")
-            if "stopped sharing" in low or "screen sharing is now off" in low:
+            elif "stopped sharing" in low:
                 source = "user" if "user" in low else "assistant"
                 _clear_visual_context(source=source)
         response_text = payload.get("response_text", "")
@@ -815,7 +825,7 @@ async def entrypoint(ctx: agents.JobContext):
 
 
 if __name__ == "__main__":
-    # Shared CLI handling (same as sts_call.py)
+    # CLI handling
     room_name = configure_from_cli(
         extra_env=[
             ("CONTACT", True),

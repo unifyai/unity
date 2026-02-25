@@ -1,15 +1,18 @@
 """
 CodeActActor routing tests for KnowledgeManager.update (simulated managers).
 
-Mirrors `test_update.py` but validates CodeActActor produces Python that calls
-`primitives.knowledge.update(...)` (on-the-fly; no FunctionManager).
+Validates that CodeActActor uses ``execute_function`` (not ``execute_code``)
+for simple single-primitive knowledge mutations.
 """
 
 from __future__ import annotations
 
 import pytest
 
-from tests.actor.state_managers.utils import make_code_act_actor
+from tests.actor.state_managers.utils import (
+    assert_used_execute_function,
+    make_code_act_actor,
+)
 
 pytestmark = pytest.mark.eval
 
@@ -23,7 +26,7 @@ UPDATE_QUERIES: list[str] = [
 @pytest.mark.asyncio
 @pytest.mark.timeout(240)
 @pytest.mark.parametrize("request_text", UPDATE_QUERIES)
-async def test_code_act_update_only_calls_knowledge_update(
+async def test_code_act_update_uses_execute_function(
     request_text: str,
 ):
     async with make_code_act_actor(impl="simulated") as (actor, _primitives, calls):
@@ -32,8 +35,7 @@ async def test_code_act_update_only_calls_knowledge_update(
             clarification_enabled=False,
         )
         result = await handle.result()
-        # Verify result is not None (routing test, not type test)
         assert result is not None
 
-        assert calls, "Expected at least one state manager call."
+        assert_used_execute_function(handle)
         assert "primitives.knowledge.update" in set(calls), f"Calls seen: {calls}"
