@@ -1085,6 +1085,20 @@ def _init_managers(
             f"{ICONS['managers_worker']} [ManagersWorker] Error initializing Actor: {e}",
         )
 
+    # 8. Initialize FileManager (eagerly, so the FileRecords context exists
+    #    before any file operations or background tasks attempt to use it)
+    LOGGER.info(
+        f"{ICONS['managers_worker']} [ManagersWorker] Initializing FileManager...",
+    )
+    local_start_time = perf_counter()
+    ManagerRegistry.get_file_manager()
+    _file_dur = perf_counter() - local_start_time
+    LOGGER.info(
+        f"{ICONS['managers_worker']} [ManagersWorker] FileManager initialized in "
+        f"{_file_dur:.2f} seconds",
+    )
+    per_manager_init.record(_file_dur, {"manager": "file_manager"})
+
     # U2: Total manager init duration
     _total_dur = perf_counter() - start_time
     LOGGER.info(
@@ -1181,8 +1195,20 @@ async def init_conv_manager(
             # Get the main event loop to pass to managers that need it
             loop = asyncio.get_running_loop()
 
-            # Run all manager initialization in a thread (non-blocking)
+            # Run all manager initialization in a thread (non-blocking).
+            # unity.init() inside _init_managers sets Unify ContextVars
+            # (CONTEXT_READ/CONTEXT_WRITE) but asyncio.to_thread runs on a
+            # copy of the caller's context — changes don't propagate back.
+            # Re-apply the context afterwards so any lazily-created managers
+            # in the main async context see the correct values.
             await asyncio.to_thread(_init_managers, cm, loop, actor)
+
+            import unify as _unify
+
+            full_ctx = (
+                f"{SESSION_DETAILS.user_context}/{SESSION_DETAILS.assistant_context}"
+            )
+            _unify.set_context(full_ctx, skip_create=True)
 
             store_chat_history = await get_last_store_chat_history()
             if store_chat_history:

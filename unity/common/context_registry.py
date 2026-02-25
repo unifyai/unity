@@ -98,6 +98,7 @@ class ContextRegistry:
         from unity.function_manager.function_manager import FunctionManager
         from unity.blacklist_manager.blacklist_manager import BlackListManager
         from unity.data_manager.data_manager import DataManager
+        from unity.file_manager.managers.file_manager import FileManager
         from unity.customization.environments.environment_manager import (
             EnvironmentManager,
         )
@@ -115,6 +116,7 @@ class ContextRegistry:
             FunctionManager,
             BlackListManager,
             DataManager,
+            FileManager,
             EnvironmentManager,
             ConfigManager,
         ]
