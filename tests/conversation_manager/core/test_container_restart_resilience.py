@@ -110,7 +110,6 @@ def _run_cm_in_subprocess(code_body: str, env_vars: dict | None = None) -> dict:
                 user_email="user@test.com",
                 voice_provider="cartesia",
                 voice_id="test_voice",
-                voice_mode="tts",
                 stop=stop,
             ), broker
 
@@ -215,7 +214,6 @@ def create_minimal_cm(event_broker, stop_event, assistant_id="test_assistant"):
         user_email="user@test.com",
         voice_provider="cartesia",
         voice_id="test_voice",
-        voice_mode="tts",
         stop=stop_event,
     )
 

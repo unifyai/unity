@@ -494,7 +494,6 @@ class TestRapidEventsRaceCondition:
                 user_email="boss@test.com",
                 voice_provider="cartesia",
                 voice_id="test",
-                voice_mode="tts",
             )
 
             sms = SMSReceived(

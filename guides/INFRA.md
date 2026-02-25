@@ -152,7 +152,6 @@ All Pub/Sub messages follow this structure:
         "user_number": "+0987654321",
         "voice_provider": "cartesia",
         "voice_id": "...",
-        "voice_mode": "tts"
     }
 }
 ```

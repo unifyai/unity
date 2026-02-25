@@ -666,7 +666,6 @@ class TestRapidEventHandling:
                 user_email="boss@test.com",
                 voice_provider="cartesia",
                 voice_id="test_voice",
-                voice_mode="tts",
             )
 
             sms = SMSReceived(
