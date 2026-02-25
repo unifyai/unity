@@ -1,17 +1,16 @@
 """Real KnowledgeManager routing tests for CodeActActor.
 
-These mirror `test_knowledge.py` but use CodeActActor (code-first tool loop).
+Validates that CodeActActor uses ``execute_function`` for simple single-primitive
+knowledge operations, both with and without FunctionManager discovery tools.
 """
 
 import pytest
 
 from tests.helpers import _handle_project
 from tests.actor.state_managers.utils import (
-    assert_code_act_function_manager_used,
-    extract_code_act_execute_code_snippets,
+    assert_used_execute_function,
     make_code_act_actor,
 )
-from unity.function_manager.function_manager import FunctionManager
 from unity.knowledge_manager.types import ColumnType
 from unity.manager_registry import ManagerRegistry
 
@@ -53,7 +52,7 @@ def _office_hours_fact_present() -> bool:
 @pytest.mark.eval
 @_handle_project
 async def test_ask_calls_manager():
-    """CodeAct routes read-only knowledge question → primitives.knowledge.ask."""
+    """CodeAct routes read-only knowledge question via execute_function."""
     async with make_code_act_actor(impl="real") as (actor, _primitives, calls):
         km = ManagerRegistry.get_knowledge_manager()
         km._create_table(
@@ -73,6 +72,7 @@ async def test_ask_calls_manager():
         result = await handle.result()
 
         assert result and len(str(result)) > 0
+        assert_used_execute_function(handle)
         assert "primitives.knowledge.ask" in calls
         assert all(c.startswith("primitives.knowledge.") for c in calls)
 
@@ -81,21 +81,11 @@ async def test_ask_calls_manager():
 @pytest.mark.timeout(600)
 @pytest.mark.eval
 @_handle_project
-async def test_ask_calls_manager_memoized():
-    """CodeAct uses FunctionManager (when available) for knowledge queries."""
-    fm = FunctionManager()
-    implementation = """
-async def ask_knowledge_question(question: str, response_format=None) -> str:
-    \"\"\"Query internal knowledge via the knowledge manager (read-only).\"\"\"
-    handle = await primitives.knowledge.ask(question, response_format=response_format)
-    return await handle.result()
-"""
-    fm.add_functions(implementations=implementation, overwrite=True)
-
+async def test_ask_calls_manager_with_fm_tools():
+    """CodeAct routes knowledge query via execute_function even with FM discovery tools present."""
     async with make_code_act_actor(
         impl="real",
         include_function_manager_tools=True,
-        function_manager=fm,
     ) as (actor, _primitives, calls):
         km = ManagerRegistry.get_knowledge_manager()
         km._create_table(
@@ -115,10 +105,7 @@ async def ask_knowledge_question(question: str, response_format=None) -> str:
         result = await handle.result()
 
         assert result and len(str(result)) > 0
-        assert_code_act_function_manager_used(handle)
-        snippets = "\n\n".join(extract_code_act_execute_code_snippets(handle))
-        assert "ask_knowledge_question" in snippets
-
+        assert_used_execute_function(handle)
         assert "primitives.knowledge.ask" in calls
         assert all(c.startswith("primitives.knowledge.") for c in calls)
 
@@ -128,7 +115,7 @@ async def ask_knowledge_question(question: str, response_format=None) -> str:
 @pytest.mark.eval
 @_handle_project
 async def test_update_calls_manager():
-    """CodeAct routes knowledge mutation → primitives.knowledge.update."""
+    """CodeAct routes knowledge mutation via execute_function."""
     async with make_code_act_actor(impl="real") as (actor, _primitives, calls):
         _km = ManagerRegistry.get_knowledge_manager()
 
@@ -138,6 +125,7 @@ async def test_update_calls_manager():
         )
         await handle.result()
 
+        assert_used_execute_function(handle)
         assert "primitives.knowledge.update" in calls
         assert all(c.startswith("primitives.knowledge.") for c in calls)
 
@@ -150,21 +138,11 @@ async def test_update_calls_manager():
 @pytest.mark.timeout(600)
 @pytest.mark.eval
 @_handle_project
-async def test_update_calls_manager_memoized():
-    """CodeAct uses FunctionManager (when available) for knowledge mutations."""
-    fm = FunctionManager()
-    implementation = """
-async def store_knowledge(fact: str) -> str:
-    \"\"\"Store knowledge via the knowledge manager.\"\"\"
-    handle = await primitives.knowledge.update(f"Store: {fact}")
-    return await handle.result()
-"""
-    fm.add_functions(implementations=implementation, overwrite=True)
-
+async def test_update_calls_manager_with_fm_tools():
+    """CodeAct routes knowledge mutation via execute_function even with FM discovery tools present."""
     async with make_code_act_actor(
         impl="real",
         include_function_manager_tools=True,
-        function_manager=fm,
     ) as (actor, _primitives, calls):
         _km = ManagerRegistry.get_knowledge_manager()
 
@@ -174,10 +152,7 @@ async def store_knowledge(fact: str) -> str:
         )
         await handle.result()
 
-        assert_code_act_function_manager_used(handle)
-        snippets = "\n\n".join(extract_code_act_execute_code_snippets(handle))
-        assert "store_knowledge" in snippets
-
+        assert_used_execute_function(handle)
         assert "primitives.knowledge.update" in calls
         assert all(c.startswith("primitives.knowledge.") for c in calls)
 

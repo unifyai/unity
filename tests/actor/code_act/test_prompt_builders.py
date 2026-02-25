@@ -68,7 +68,7 @@ def test_code_act_prompt_has_primary_execute_code_and_session_tools_and_no_legac
     assert "close_all_sessions" in prompt
 
     # Introspection-based docstring snippet from the actual tool implementation.
-    assert "brain execution" in prompt.lower()
+    assert "multi-step composition" in prompt.lower()
     assert (
         "multi-language + multi-session" in prompt.lower()
         or "multi-session" in prompt.lower()
@@ -106,7 +106,7 @@ def test_code_act_prompt_includes_diverse_examples_sessions_computer_primitives_
     assert "immediate in-code composition" in prompt
     assert "neutral or uncertain" in prompt.lower()
     assert "default to returning the handle" in prompt.lower()
-    assert "Choose return-handle vs await based on task shape" in prompt
+    assert "execute_function vs execute_code decision" in prompt
 
 
 @pytest.mark.timeout(30)

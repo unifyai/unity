@@ -39,7 +39,12 @@ async def _make_actor_with_computer():
 
     actor = CodeActActor(environments=[state_env, computer_env])
     act_tools = actor.get_tools("act")
-    actor.add_tools("act", {"execute_code": act_tools["execute_code"]})
+    keep = {
+        k: v
+        for k, v in act_tools.items()
+        if not k.startswith("FunctionManager_") and not k.startswith("GuidanceManager_")
+    }
+    actor.add_tools("act", keep)
 
     try:
         yield actor

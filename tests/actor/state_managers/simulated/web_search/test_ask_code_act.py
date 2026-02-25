@@ -1,11 +1,8 @@
 """
 CodeActActor routing tests for WebSearcher.ask (simulated managers).
 
-Mirrors `test_ask.py` but validates CodeActActor routes to `primitives.web.ask(...)`
-(on-the-fly; no FunctionManager).
-
-NOTE: Web calls can be slow and CodeAct may over-plan; we still await completion to
-avoid leaving in-flight CodeAct handles running (CodeActActor.close does not stop handles).
+Validates that CodeActActor uses ``execute_function`` (not ``execute_code``)
+for simple single-primitive web search queries.
 """
 
 from __future__ import annotations
@@ -15,6 +12,7 @@ import asyncio
 import pytest
 
 from tests.actor.state_managers.utils import (
+    assert_used_execute_function,
     make_code_act_actor,
     wait_for_recorded_primitives_call,
 )
@@ -31,7 +29,7 @@ WEB_LIVE_QUESTIONS: list[str] = [
 @pytest.mark.asyncio
 @pytest.mark.timeout(240)
 @pytest.mark.parametrize("question", WEB_LIVE_QUESTIONS)
-async def test_code_act_live_events_use_web_tool(
+async def test_code_act_live_events_use_execute_function(
     question: str,
 ):
     async with make_code_act_actor(impl="simulated") as (actor, _primitives, calls):
@@ -40,7 +38,6 @@ async def test_code_act_live_events_use_web_tool(
             clarification_enabled=False,
         )
 
-        # Only verify routing reaches web tool.
         await wait_for_recorded_primitives_call(
             calls,
             "primitives.web.ask",
@@ -51,5 +48,5 @@ async def test_code_act_live_events_use_web_tool(
         except Exception:
             pass
 
-        assert calls, "Expected at least one state manager call."
+        assert_used_execute_function(handle)
         assert "primitives.web.ask" in set(calls), f"Calls seen: {calls}"

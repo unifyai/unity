@@ -1,18 +1,16 @@
 """Real ContactManager routing tests for CodeActActor.
 
-These mirror `test_contacts.py` but use CodeActActor (code-first tool loop).
+Validates that CodeActActor uses ``execute_function`` for simple single-primitive
+contact operations, both with and without FunctionManager discovery tools.
 """
 
 import pytest
 
 from tests.helpers import _handle_project
 from tests.actor.state_managers.utils import (
-    assert_code_act_function_manager_used,
-    extract_code_act_execute_code_snippets,
-    extract_code_act_execute_function_names,
+    assert_used_execute_function,
     make_code_act_actor,
 )
-from unity.function_manager.function_manager import FunctionManager
 from unity.manager_registry import ManagerRegistry
 
 
@@ -21,7 +19,7 @@ from unity.manager_registry import ManagerRegistry
 @pytest.mark.eval
 @_handle_project
 async def test_ask_calls_manager():
-    """CodeAct routes read-only contact question → primitives.contacts.ask."""
+    """CodeAct routes read-only contact question via execute_function."""
     async with make_code_act_actor(impl="real") as (actor, _primitives, calls):
         cm = ManagerRegistry.get_contact_manager()
         cm._create_contact(
@@ -37,6 +35,7 @@ async def test_ask_calls_manager():
         result = await handle.result()
 
         assert "eve.adams@example.com" in str(result).lower()
+        assert_used_execute_function(handle)
         assert "primitives.contacts.ask" in calls
         assert all(c.startswith("primitives.contacts.") for c in calls)
 
@@ -45,21 +44,11 @@ async def test_ask_calls_manager():
 @pytest.mark.timeout(600)
 @pytest.mark.eval
 @_handle_project
-async def test_ask_calls_manager_memoized():
-    """CodeAct uses FunctionManager (when available) for contact questions."""
-    fm = FunctionManager()
-    implementation = """
-async def ask_contacts(question: str, response_format=None) -> str:
-    \"\"\"Query the contacts database (people/organizations) using the contacts manager.\"\"\"
-    handle = await primitives.contacts.ask(question, response_format=response_format)
-    return await handle.result()
-"""
-    fm.add_functions(implementations=implementation, overwrite=True)
-
+async def test_ask_calls_manager_with_fm_tools():
+    """CodeAct routes contact query via execute_function even with FM discovery tools present."""
     async with make_code_act_actor(
         impl="real",
         include_function_manager_tools=True,
-        function_manager=fm,
     ) as (actor, _primitives, calls):
         cm = ManagerRegistry.get_contact_manager()
         cm._create_contact(
@@ -75,13 +64,7 @@ async def ask_contacts(question: str, response_format=None) -> str:
         result = await handle.result()
 
         assert "eve.adams@example.com" in str(result).lower()
-        assert_code_act_function_manager_used(handle)
-
-        # Either via injected function call or direct primitive call is acceptable,
-        # but the FunctionManager tool must have been used.
-        snippets = "\n\n".join(extract_code_act_execute_code_snippets(handle))
-        assert "ask_contacts" in snippets
-
+        assert_used_execute_function(handle)
         assert "primitives.contacts.ask" in calls
         assert all(c.startswith("primitives.contacts.") for c in calls)
 
@@ -91,7 +74,7 @@ async def ask_contacts(question: str, response_format=None) -> str:
 @pytest.mark.eval
 @_handle_project
 async def test_update_calls_manager():
-    """CodeAct routes contact mutation → primitives.contacts.update."""
+    """CodeAct routes contact mutation via execute_function."""
     async with make_code_act_actor(impl="real") as (actor, _primitives, calls):
         cm = ManagerRegistry.get_contact_manager()
         cm._create_contact(
@@ -106,6 +89,7 @@ async def test_update_calls_manager():
         )
         await handle.result()
 
+        assert_used_execute_function(handle)
         assert "primitives.contacts.update" in calls
         assert "primitives.contacts.ask" not in calls
 
@@ -119,23 +103,11 @@ async def test_update_calls_manager():
 @pytest.mark.timeout(600)
 @pytest.mark.eval
 @_handle_project
-async def test_update_calls_manager_memoized():
-    """CodeAct uses FunctionManager (when available) for contact mutations."""
-    fm = FunctionManager()
-    implementation = """
-async def update_contact_phone(email: str, phone: str) -> str:
-    \"\"\"Update a contact's phone number via the contacts manager.\"\"\"
-    handle = await primitives.contacts.update(
-        f"Update the contact with email {email}: set the phone to {phone}."
-    )
-    return await handle.result()
-"""
-    fm.add_functions(implementations=implementation, overwrite=True)
-
+async def test_update_calls_manager_with_fm_tools():
+    """CodeAct routes contact mutation via execute_function even with FM discovery tools present."""
     async with make_code_act_actor(
         impl="real",
         include_function_manager_tools=True,
-        function_manager=fm,
     ) as (actor, _primitives, calls):
         cm = ManagerRegistry.get_contact_manager()
         cm._create_contact(
@@ -150,16 +122,7 @@ async def update_contact_phone(email: str, phone: str) -> str:
         )
         await handle.result()
 
-        assert_code_act_function_manager_used(handle)
-        snippets = "\n\n".join(extract_code_act_execute_code_snippets(handle))
-        fn_names = extract_code_act_execute_function_names(handle)
-        assert (
-            "update_contact_phone" in snippets or "update_contact_phone" in fn_names
-        ), (
-            f"Expected memoized function 'update_contact_phone' to be invoked. "
-            f"execute_code snippets: {snippets!r}, execute_function calls: {fn_names}"
-        )
-
+        assert_used_execute_function(handle)
         assert "primitives.contacts.update" in calls
         assert "primitives.contacts.ask" not in calls
 
