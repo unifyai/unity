@@ -103,7 +103,7 @@ ENV UNILLM_LOG_DIR=/var/log/unillm
 
 # Create non-root user for runtime
 RUN useradd -m -u 1000 unity && \
-    mkdir -p /var/log/unity /var/log/unify /var/log/unillm && \
+    mkdir -p /var/log/unity /var/log/unify /var/log/unillm /home/unity/.cache && \
     chown -R unity:unity /app /var/log/unity /var/log/unify /var/log/unillm && \
     cp -r /root/.cache/ms-playwright /home/unity/.cache/ms-playwright && \
     chown -R unity:unity /home/unity/.cache
