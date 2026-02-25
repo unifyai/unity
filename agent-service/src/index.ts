@@ -157,6 +157,21 @@ const app = express();
 const wsInstance = expressWs(app);
 app.use(express.json({ limit: '100mb' }));
 
+const ALLOWED_ORIGINS = (process.env.CORS_ALLOWED_ORIGINS || '').split(',').filter(Boolean);
+app.use((req, res, next) => {
+  const origin = req.headers.origin;
+  if (origin && ALLOWED_ORIGINS.includes(origin)) {
+    res.setHeader('Access-Control-Allow-Origin', origin);
+    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', 'Authorization, Content-Type');
+    res.setHeader('Access-Control-Allow-Credentials', 'true');
+  }
+  if (req.method === 'OPTIONS') {
+    return res.sendStatus(204);
+  }
+  next();
+});
+
 // --- Authorization (Bearer) middleware ---
 function verifyApiKeyWithUnify(apiKey: string): Promise<boolean> {
   return new Promise((resolve) => {
@@ -943,7 +958,7 @@ app.post('/resume', isAgentReady, async (req: Request, res: Response) => {
 });
 
 // --- /exec endpoint: Execute shell commands (use /files first to upload files) ---
-app.post('/exec', async (req: Request, res: Response) => {
+app.post('/exec', auth, async (req: Request, res: Response) => {
   const { command, cwd, timeout, shell_mode } = req.body;
   const execId = randomUUID().slice(0, 8);
 
