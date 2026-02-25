@@ -54,7 +54,9 @@ class TasksStore:
         If the context already exists, any missing fields are created.
         Idempotent: tolerates pre-existing contexts and concurrent creation.
         """
-        unify.create_context(
+        from unity.common.context_store import _create_context_with_retry
+
+        _create_context_with_retry(
             self._ctx,
             unique_keys=unique_keys,
             auto_counting=auto_counting,

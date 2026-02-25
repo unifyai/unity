@@ -1,7 +1,7 @@
 import unify
-from unify import create_context, create_fields
+from unify import create_fields
 from unity.common.state_managers import BaseStateManager
-from unity.common.context_store import _PRIVATE_FIELDS
+from unity.common.context_store import _PRIVATE_FIELDS, _create_context_with_retry
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import List, Dict, Optional, Any, Union, Type
 from pydantic import BaseModel
@@ -135,17 +135,13 @@ class ContextRegistry:
         # Use resolved_foreign_keys (with prefixed references) instead of
         # table.foreign_keys to avoid using mutated class-level config.
         resolved_foreign_keys = entry.get("resolved_foreign_keys")
-        # Idempotent creation: try to create, tolerate if already exists
-        try:
-            create_context(
-                target_name,
-                description=table.description,
-                unique_keys=table.unique_keys,
-                auto_counting=table.auto_counting,
-                foreign_keys=resolved_foreign_keys,
-            )
-        except Exception:
-            pass  # Already exists or transient failure
+        _create_context_with_retry(
+            target_name,
+            unique_keys=table.unique_keys,
+            auto_counting=table.auto_counting,
+            description=table.description,
+            foreign_keys=resolved_foreign_keys,
+        )
         # Idempotent field creation
         if table.fields:
             try:
@@ -229,11 +225,7 @@ class ContextRegistry:
             ]
 
         for all_ctx, description in all_ctxs:
-            # Idempotent creation: try to create, tolerate if already exists
-            try:
-                create_context(all_ctx, description=description)
-            except Exception:
-                pass  # Already exists or transient failure
+            _create_context_with_retry(all_ctx, description=description)
 
             # Mirror fields from source context + add private fields
             if table.fields:
