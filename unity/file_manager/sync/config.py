@@ -89,7 +89,7 @@ class SyncConfig:
             )
             return cls(enabled=False)
 
-        ssh_user = SESSION_DETAILS.assistant.name
+        ssh_user = str(SESSION_DETAILS.assistant.id)
         if not ssh_user:
             LOGGER.error(
                 f"{ICONS['file_sync']} [FileSync] No assistant name configured for SSH user",

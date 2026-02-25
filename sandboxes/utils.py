@@ -1137,12 +1137,22 @@ def configure_sandbox_logging(
         _fh = _logging.FileHandler(_abs_main_log, mode=_mode, encoding="utf-8")
         _fh.setFormatter(_fmt)
 
-        # Exclude Unify Request logs from the main log file to keep it high-level
-        # (Unify Request logs have their own dedicated file and stream)
+        # Exclude HTTP-level SDK noise from the main log file.
+        # The unify/unillm loggers emit verbose request/response dumps at
+        # DEBUG level that drown out the conversation-level flow.
+        _SDK_NOISE_PREFIXES = (
+            "unify_requests",
+            "unify",
+            "unillm",
+            "UnifyAsyncLogger",
+        )
+
         class _LazyHTTPExcludeFilter(_logging.Filter):
             def filter(self, record: _logging.LogRecord) -> bool:
                 name = record.name or ""
-                return not any(name.startswith(p) for p in _HTTP_PREFIXES)
+                if any(name.startswith(p) for p in _SDK_NOISE_PREFIXES):
+                    return record.levelno >= _logging.WARNING
+                return True
 
         _fh.addFilter(_LazyHTTPExcludeFilter())
         root_logger.addHandler(_fh)
@@ -1293,6 +1303,10 @@ def configure_sandbox_logging(
     # StreamHandler added at import time.  Strip that handler so the sandbox
     # terminal stays clean, then mirror root's handlers onto LOGGER so that
     # file / TCP routing works for unity.* log records.
+    #
+    # Lower the LOGGER level to DEBUG so the file handler captures the full
+    # conversation flow (slow-brain lifecycle, event traces, etc.) that
+    # production code logs at DEBUG to keep the terminal clean.
     try:
         from unity.logger import LOGGER as _unity_logger
 
@@ -1305,6 +1319,7 @@ def configure_sandbox_logging(
                 _unity_logger.removeHandler(_h)
         for _h in root_logger.handlers:
             _unity_logger.addHandler(_h)
+        _unity_logger.setLevel(_logging.DEBUG)
     except ImportError:
         pass
 

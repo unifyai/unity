@@ -1133,3 +1133,15 @@ class SimulatedFileManager(BaseFileManager):
         Returns an empty list to satisfy the API contract.
         """
         return []
+
+    @functools.wraps(BaseFileManager.render_excel_sheet, updated=())
+    def render_excel_sheet(self, sheet, cell_range=None, scale=1.0):
+        from unity.file_manager.rendering import render_excel_sheet
+
+        return render_excel_sheet(sheet, cell_range=cell_range, scale=scale)
+
+    @functools.wraps(BaseFileManager.render_pdf, updated=())
+    def render_pdf(self, source, page=0, dpi=150):
+        from unity.file_manager.rendering import render_pdf
+
+        return render_pdf(source, page=page, dpi=dpi)

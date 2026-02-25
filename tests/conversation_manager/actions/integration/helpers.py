@@ -244,7 +244,6 @@ async def inject_actor_clarification_request(
     await EventHandler.handle_event(
         evt,
         cm,
-        is_voice_call=cm.call_manager.uses_realtime_api,
     )
 
 
@@ -262,7 +261,6 @@ async def inject_actor_notification(
     await EventHandler.handle_event(
         evt,
         cm,
-        is_voice_call=cm.call_manager.uses_realtime_api,
     )
 
 
@@ -310,7 +308,6 @@ async def inject_actor_result(
     await EventHandler.handle_event(
         evt,
         cm,
-        is_voice_call=cm.call_manager.uses_realtime_api,
     )
 
 
@@ -361,7 +358,6 @@ async def run_cm_until_wait(
             await EventHandler.handle_event(
                 evt,
                 cm,
-                is_voice_call=cm.call_manager.uses_realtime_api,
             )
         # Forward to real broker so actor lifecycle events work correctly.
         return await original_publish(channel, message)

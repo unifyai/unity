@@ -57,7 +57,6 @@ def mock_cm():
     cm.event_broker = MagicMock()
     cm.event_broker.publish = AsyncMock()
     cm.call_manager = MagicMock()
-    cm.call_manager.uses_realtime_api = False
     return cm
 
 
