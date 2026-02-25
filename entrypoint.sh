@@ -42,11 +42,10 @@ trap cleanup SIGTERM SIGINT
 mkdir -p /var/log/unity /var/log/unify /var/log/unillm
 
 # Seed the emptyDir-backed /tmp with pre-downloaded HuggingFace models.
-# The Dockerfile downloads models (turn detector, etc.) to the default cache at
-# /root/.cache/huggingface/, but at runtime HF_HOME=/tmp/huggingface redirects
-# lookups to the emptyDir volume. Copy the baked-in models so they're found.
-if [ -d /root/.cache/huggingface ] && [ ! -d /tmp/huggingface ]; then
-    cp -r /root/.cache/huggingface /tmp/huggingface
+# The Dockerfile bakes models into /opt/hf-cache (user-agnostic); at runtime
+# HF_HOME=/tmp/huggingface redirects lookups to the writable emptyDir volume.
+if [ -d /opt/hf-cache ] && [ ! -d /tmp/huggingface ]; then
+    cp -r /opt/hf-cache /tmp/huggingface
 fi
 
 # Start agent-service on port 3000 (for web automation via Magnitude)
