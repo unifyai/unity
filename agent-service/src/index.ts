@@ -663,24 +663,73 @@ app.post('/query', isAgentReady, async (req: Request, res: Response) => {
   }
 });
 
+// --- Native desktop screenshot via OS commands ---
+
+function nativeScreenshotCommand(dest: string): string {
+  switch (process.platform) {
+    case 'win32':
+      // PowerShell: capture full primary screen using System.Drawing
+      return [
+        'powershell.exe -NoProfile -Command "',
+        'Add-Type -AssemblyName System.Windows.Forms;',
+        'Add-Type -AssemblyName System.Drawing;',
+        '$bounds = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds;',
+        '$bmp = New-Object System.Drawing.Bitmap($bounds.Width, $bounds.Height);',
+        '$g = [System.Drawing.Graphics]::FromImage($bmp);',
+        '$g.CopyFromScreen($bounds.Location, [System.Drawing.Point]::Empty, $bounds.Size);',
+        '$g.Dispose();',
+        `$bmp.Save('${dest.replace(/'/g, "''")}');`,
+        '$bmp.Dispose();"',
+      ].join(' ');
+    case 'darwin':
+      return `screencapture -x "${dest}"`;
+    default:
+      // Linux / other Unix — xfce4-screenshooter ships with xfce4-goodies
+      // (installed in the desktop Docker image). Falls back to scrot, then
+      // ImageMagick's import for non-XFCE environments.
+      return `xfce4-screenshooter -f -s "${dest}" 2>/dev/null || scrot "${dest}" 2>/dev/null || import -window root "${dest}"`;
+  }
+}
+
+function nativeScreenshot(): string {
+  const dest = path.join(os.tmpdir(), `unity-screenshot-${randomUUID()}.png`);
+  try {
+    execSync(nativeScreenshotCommand(dest), { timeout: 10_000 });
+    const buf = fs.readFileSync(dest);
+    return buf.toString('base64');
+  } finally {
+    try { fs.unlinkSync(dest); } catch (_) { /* already cleaned or never created */ }
+  }
+}
+
 let _screenshotInFlight = 0;
 
 app.post('/screenshot', isAgentReady, async (req: Request, res: Response) => {
   const { sessionId } = req.body;
   _screenshotInFlight++;
   const t0 = Date.now();
-  console.log(`[screenshot] START session=${sessionId} mode=${activeSessions.get(sessionId)?.mode} in_flight=${_screenshotInFlight}`);
+  const session = activeSessions.get(sessionId)!;
+  console.log(`[screenshot] START session=${sessionId} mode=${session.mode} in_flight=${_screenshotInFlight}`);
   try {
-    const session = activeSessions.get(sessionId)!;
-    const harness = session.agent.require(BrowserConnector).getHarness();
-    const tHarness = Date.now();
-    console.log(`[screenshot] harness_acquired=${tHarness - t0}ms`);
-    const image = await harness.screenshot();
-    const tCapture = Date.now();
-    console.log(`[screenshot] playwright_capture=${tCapture - tHarness}ms`);
-    const base64Image = await image.toBase64();
-    const tEncode = Date.now();
-    console.log(`[screenshot] base64_encode=${tEncode - tCapture}ms b64_len=${base64Image.length} total=${tEncode - t0}ms`);
+    let base64Image: string;
+
+    if (session.mode === 'desktop') {
+      // Native OS-level screenshot (works on Linux, macOS, Windows)
+      base64Image = nativeScreenshot();
+      console.log(`[screenshot] native_capture=${Date.now() - t0}ms b64_len=${base64Image.length}`);
+    } else {
+      // Playwright harness screenshot for web / web-vm modes
+      const harness = session.agent.require(BrowserConnector).getHarness();
+      const tHarness = Date.now();
+      console.log(`[screenshot] harness_acquired=${tHarness - t0}ms`);
+      const image = await harness.screenshot();
+      const tCapture = Date.now();
+      console.log(`[screenshot] playwright_capture=${tCapture - tHarness}ms`);
+      base64Image = await image.toBase64();
+      const tEncode = Date.now();
+      console.log(`[screenshot] base64_encode=${tEncode - tCapture}ms b64_len=${base64Image.length} total=${tEncode - t0}ms`);
+    }
+
     res.json({ screenshot: base64Image });
     _screenshotInFlight--;
     console.log(`[screenshot] DONE total=${Date.now() - t0}ms in_flight=${_screenshotInFlight}`);
