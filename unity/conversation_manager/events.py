@@ -46,6 +46,7 @@ class Event:
     _registry: ClassVar[dict[str, "Event"]] = {}
     loggable: ClassVar[bool] = True
     content_logged: ClassVar[bool] = False
+    prominent: ClassVar[bool] = False
     topic: ClassVar[str | None] = None
 
     def to_json(self):
@@ -118,6 +119,7 @@ class Event:
 @dataclass
 class PhoneCallReceived(Event):
     topic: ClassVar[str | None] = "app:comms:call_received"
+    prominent: ClassVar[bool] = True
 
     contact: dict
     conference_name: str = ""
@@ -126,6 +128,7 @@ class PhoneCallReceived(Event):
 @dataclass
 class PhoneCallAnswered(Event):
     topic: ClassVar[str | None] = "app:comms:call_answered"
+    prominent: ClassVar[bool] = True
 
     contact: dict
 
@@ -135,6 +138,7 @@ class PhoneCallNotAnswered(Event):
     """Outbound call was not answered (no-answer, busy, failed, etc.)."""
 
     topic: ClassVar[str | None] = "app:comms:call_not_answered"
+    prominent: ClassVar[bool] = True
 
     contact: dict
     reason: str = "no-answer"  # Twilio status: no-answer, busy, canceled, failed
@@ -145,6 +149,7 @@ class UnifyMeetReceived(Event):
     """Frontend/worker confirmed agent connected to room; begin LLM."""
 
     topic: ClassVar[str | None] = "app:comms:unify_meet_received"
+    prominent: ClassVar[bool] = True
 
     contact: dict
     room_name: str | None = None
@@ -153,6 +158,7 @@ class UnifyMeetReceived(Event):
 @dataclass
 class PhoneCallStarted(Event):
     topic: ClassVar[str | None] = "app:comms:phone_call_started"
+    prominent: ClassVar[bool] = True
 
     contact: dict
 
@@ -165,6 +171,7 @@ class UnifyMeetStarted(Event):
     """
 
     topic: ClassVar[str | None] = "app:comms:unify_meet_started"
+    prominent: ClassVar[bool] = True
 
     contact: dict
 
@@ -201,6 +208,7 @@ class VoiceInterrupt(Event):
 @dataclass
 class PhoneCallEnded(Event):
     topic: ClassVar[str | None] = "app:comms:phone_call_ended"
+    prominent: ClassVar[bool] = True
 
     contact: dict
 
@@ -210,6 +218,7 @@ class UnifyMeetEnded(Event):
     """The web-based voice/video meeting session has ended."""
 
     topic: ClassVar[str | None] = "app:comms:unify_meet_ended"
+    prominent: ClassVar[bool] = True
 
     contact: dict
 
@@ -254,6 +263,7 @@ class UnifyMessageReceived(Event):
 @dataclass
 class PhoneCallSent(Event):
     topic: ClassVar[str | None] = "app:comms:make_call"
+    prominent: ClassVar[bool] = True
 
     contact: dict
 
@@ -461,6 +471,8 @@ class Ping(Event):
 
 @dataclass
 class Error(Event):
+    prominent: ClassVar[bool] = True
+
     message: str
 
 

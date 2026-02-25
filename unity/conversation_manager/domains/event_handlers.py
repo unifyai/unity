@@ -59,7 +59,12 @@ class EventHandler:
             and event.__class__.loggable
         ):
             event_trace = getattr(cm, "_current_event_trace", None) or {}
-            cm._session_logger.info(
+            log_fn = (
+                cm._session_logger.info
+                if event.__class__.prominent
+                else cm._session_logger.debug
+            )
+            log_fn(
                 event_key,
                 (
                     f"Event: {event.__class__.__name__} "
