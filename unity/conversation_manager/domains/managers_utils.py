@@ -851,32 +851,17 @@ async def listen_to_operations(cm: "ConversationManager") -> None:
 _init_lock = asyncio.Lock()
 
 
-def _init_managers(
-    cm: "ConversationManager",
-    loop: asyncio.AbstractEventLoop,
-    actor: "BaseActor | None" = None,
-) -> None:
-    """
-    Initialize all managers in a separate thread.
-    The main event loop is passed for managers that need to schedule async tasks.
+def init_unity_runtime() -> None:
+    """Initialize the unity runtime with the correct assistant record.
 
-    Args:
-        cm: The ConversationManager instance to initialize.
-        loop: The main event loop for scheduling async tasks.
-        actor: Optional pre-instantiated Actor. If provided, used directly instead
-            of creating one via ManagerRegistry. Useful for testing with specific
-            Actor implementations.
+    Builds the assistant_record dict from SESSION_DETAILS (populated by the
+    startup event) and passes it to unity.init(). Idempotent — the _INITIALISED
+    guard in unity.init() prevents re-initialization, so this is safe to call
+    from both the startup handler (to close the race) and _init_managers.
     """
-    start_time = perf_counter()
-
-    # 0. Initialize unity using SESSION_DETAILS (the canonical source of session config)
-    LOGGER.debug(f"{ICONS['managers_worker']} [ManagersWorker] Initializing unity...")
-    local_start_time = perf_counter()
     if not SESSION_DETAILS.assistant_record:
-        # When default_assistant is provided, unity.init() uses it directly
-        # and ignores the assistant_id parameter entirely
         unity.init(
-            default_assistant={
+            assistant_record={
                 "agent_id": SESSION_DETAILS.assistant.id,
                 "first_name": SESSION_DETAILS.assistant.name,
                 "age": SESSION_DETAILS.assistant.age,
@@ -897,6 +882,33 @@ def _init_managers(
                 "user_last_name": "",
             },
         )
+    else:
+        unity.init()
+
+
+def _init_managers(
+    cm: "ConversationManager",
+    loop: asyncio.AbstractEventLoop,
+    actor: "BaseActor | None" = None,
+) -> None:
+    """
+    Initialize all managers in a separate thread.
+    The main event loop is passed for managers that need to schedule async tasks.
+
+    Args:
+        cm: The ConversationManager instance to initialize.
+        loop: The main event loop for scheduling async tasks.
+        actor: Optional pre-instantiated Actor. If provided, used directly instead
+            of creating one via ManagerRegistry. Useful for testing with specific
+            Actor implementations.
+    """
+    start_time = perf_counter()
+
+    # 0. Initialize unity (idempotent — may already have been called by the
+    #    startup handler to close the race with _startup_sequence).
+    LOGGER.debug(f"{ICONS['managers_worker']} [ManagersWorker] Initializing unity...")
+    local_start_time = perf_counter()
+    init_unity_runtime()
     _unity_init_dur = perf_counter() - local_start_time
     LOGGER.info(
         f"{ICONS['managers_worker']} [ManagersWorker] Unity initialized in {_unity_init_dur:.2f} seconds",
