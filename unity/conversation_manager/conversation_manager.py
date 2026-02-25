@@ -147,9 +147,6 @@ class ConversationManager(metaclass=SingletonABCMeta):
         # state - TODO: put the state into a dict or state class
         # access is as a property with a lock, that is locked when an llm run
         # such that you can never modify state while the LLM is running (so actions do not break)
-        # Note: uses_realtime_api flag is stored for prompt building in _run_llm
-        self._uses_realtime_api = self.call_manager.uses_realtime_api
-
         self.mode: Mode = Mode.TEXT
         self.chat_history = []
         self.contact_index = ContactIndex()
@@ -194,7 +191,7 @@ class ConversationManager(metaclass=SingletonABCMeta):
         self.proactive_speech = ProactiveSpeech()
         self._proactive_speech_task: asyncio.Task | None = None
         self._fast_brain_active: bool = False
-        self._proactive_logger = FastBrainLogger(mode="tts")
+        self._proactive_logger = FastBrainLogger()
 
         # ask handles (for Actor actions)
         self.active_ask_handle: Optional["SteerableToolHandle"] = None
@@ -1034,7 +1031,6 @@ class ConversationManager(metaclass=SingletonABCMeta):
                     await EventHandler.handle_event(
                         event,
                         self,
-                        is_voice_call=self.call_manager.uses_realtime_api,
                     )
                     await self.flush_llm_requests()
                 finally:
@@ -1131,7 +1127,6 @@ class ConversationManager(metaclass=SingletonABCMeta):
             assistant_number=self.assistant_number,
             voice_provider=self.voice_provider,
             voice_id=self.voice_id,
-            voice_mode=self.voice_mode,
         )
 
     async def store_chat_history(self):
