@@ -6,7 +6,7 @@ import os
 
 from unity.logger import LOGGER
 from unity.common.hierarchical_logger import ICONS
-from unity.session_details import DEFAULT_ASSISTANT_ID, SESSION_DETAILS
+from unity.session_details import UNASSIGNED_ASSISTANT_ID, SESSION_DETAILS
 from unity.settings import SETTINGS
 
 load_dotenv()
@@ -84,7 +84,7 @@ async def send_unify_message(
     assistant_id = SESSION_DETAILS.assistant.id
     staging_suffix = (
         "-staging"
-        if SETTINGS.STAGING and DEFAULT_ASSISTANT_ID not in assistant_id
+        if SETTINGS.STAGING and UNASSIGNED_ASSISTANT_ID not in assistant_id
         else ""
     )
     topic_name = f"unity-{assistant_id}{staging_suffix}"

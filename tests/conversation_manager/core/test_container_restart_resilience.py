@@ -52,7 +52,7 @@ from unity.conversation_manager.events import (
     BackupContactsEvent,
 )
 from unity.conversation_manager.types import Mode
-from unity.session_details import DEFAULT_ASSISTANT_ID
+from unity.session_details import UNASSIGNED_ASSISTANT_ID
 
 # =============================================================================
 # Subprocess Helpers for True Process Isolation
@@ -527,12 +527,12 @@ class TestStaleAssistantJobsState:
     @pytest.mark.asyncio
     async def test_mark_job_done_not_called_for_idle_container(self, event_broker):
         """
-        Idle containers (assistant_id == DEFAULT_ASSISTANT_ID) should NOT
+        Idle containers (assistant_id == UNASSIGNED_ASSISTANT_ID) should NOT
         call mark_job_done since they were never "live".
         """
         stop = asyncio.Event()
 
-        cm = create_minimal_cm(event_broker, stop, assistant_id=DEFAULT_ASSISTANT_ID)
+        cm = create_minimal_cm(event_broker, stop, assistant_id=UNASSIGNED_ASSISTANT_ID)
         cm.initialized = True
         cm.job_name = "unity-idle-job"
 

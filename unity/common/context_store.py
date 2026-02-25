@@ -68,10 +68,10 @@ class TableStore:
         # Handle test contexts: tests/.../{default_user_id}/{default_assistant_id}/Suffix
         # Scope aggregations to the test root to avoid cross-test contamination.
         if parts[0] == "tests":
-            from unity.session_details import DEFAULT_USER_CONTEXT
+            from unity.session_details import UNASSIGNED_USER_CONTEXT
 
             try:
-                user_idx = parts.index(DEFAULT_USER_CONTEXT)
+                user_idx = parts.index(UNASSIGNED_USER_CONTEXT)
             except ValueError:
                 return []
 

@@ -7,14 +7,14 @@ from unify.utils.http import RequestError
 
 from ..knowledge_manager.types import ColumnType
 from ..session_details import (
-    DEFAULT_ASSISTANT_BIO,
-    DEFAULT_ASSISTANT_EMAIL,
-    DEFAULT_ASSISTANT_FIRST_NAME,
-    DEFAULT_ASSISTANT_PHONE,
-    DEFAULT_ASSISTANT_SURNAME,
-    DEFAULT_USER_EMAIL,
-    DEFAULT_USER_FIRST_NAME,
-    DEFAULT_USER_SURNAME,
+    PLACEHOLDER_ASSISTANT_BIO,
+    PLACEHOLDER_ASSISTANT_EMAIL,
+    PLACEHOLDER_ASSISTANT_FIRST_NAME,
+    PLACEHOLDER_ASSISTANT_PHONE,
+    PLACEHOLDER_ASSISTANT_SURNAME,
+    PLACEHOLDER_USER_EMAIL,
+    PLACEHOLDER_USER_FIRST_NAME,
+    PLACEHOLDER_USER_SURNAME,
 )
 
 
@@ -72,9 +72,9 @@ def _resolve_user_details(self) -> Dict[str, Any]:
     # This ensures tests don't call real APIs for user info.
     if not SESSION_DETAILS.is_initialized:
         return {
-            "first_name": DEFAULT_USER_FIRST_NAME,
-            "last_name": DEFAULT_USER_SURNAME,
-            "email": DEFAULT_USER_EMAIL,
+            "first_name": PLACEHOLDER_USER_FIRST_NAME,
+            "last_name": PLACEHOLDER_USER_SURNAME,
+            "email": PLACEHOLDER_USER_EMAIL,
         }
 
     # In production (SESSION_DETAILS initialized), fetch real user info
@@ -97,9 +97,9 @@ def _resolve_user_details(self) -> Dict[str, Any]:
         return user_info
 
     return {
-        "first_name": DEFAULT_USER_FIRST_NAME,
-        "last_name": DEFAULT_USER_SURNAME,
-        "email": DEFAULT_USER_EMAIL,
+        "first_name": PLACEHOLDER_USER_FIRST_NAME,
+        "last_name": PLACEHOLDER_USER_SURNAME,
+        "email": PLACEHOLDER_USER_EMAIL,
     }
 
 
@@ -120,11 +120,13 @@ def provision_assistant_contact(self, assistant_log) -> None:
     base_fields["is_system"] = True
     base_fields.update(
         {
-            "first_name": ast.first_name if populated else DEFAULT_ASSISTANT_FIRST_NAME,
-            "surname": ast.surname if populated else DEFAULT_ASSISTANT_SURNAME,
-            "email_address": ast.email if populated else DEFAULT_ASSISTANT_EMAIL,
-            "phone_number": ast.number if populated else DEFAULT_ASSISTANT_PHONE,
-            "bio": ast.about if populated else DEFAULT_ASSISTANT_BIO,
+            "first_name": (
+                ast.first_name if populated else PLACEHOLDER_ASSISTANT_FIRST_NAME
+            ),
+            "surname": ast.surname if populated else PLACEHOLDER_ASSISTANT_SURNAME,
+            "email_address": ast.email if populated else PLACEHOLDER_ASSISTANT_EMAIL,
+            "phone_number": ast.number if populated else PLACEHOLDER_ASSISTANT_PHONE,
+            "bio": ast.about if populated else PLACEHOLDER_ASSISTANT_BIO,
             "timezone": (ast.timezone or "UTC") if populated else "UTC",
             "rolling_summary": None,
         },

@@ -29,10 +29,10 @@ def _clear_cached_assistant(monkeypatch):
 def test_dummy_assistant(monkeypatch):
     """When the account has no assistants, a default assistant with ID 0 should be created."""
     from unity.session_details import (
-        DEFAULT_ASSISTANT_EMAIL,
-        DEFAULT_ASSISTANT_FIRST_NAME,
-        DEFAULT_ASSISTANT_PHONE,
-        DEFAULT_ASSISTANT_SURNAME,
+        PLACEHOLDER_ASSISTANT_EMAIL,
+        PLACEHOLDER_ASSISTANT_FIRST_NAME,
+        PLACEHOLDER_ASSISTANT_PHONE,
+        PLACEHOLDER_ASSISTANT_SURNAME,
     )
 
     cm = ContactManager()
@@ -41,10 +41,10 @@ def test_dummy_assistant(monkeypatch):
     assert len(assistants) == 1, "Exactly one assistant contact (ID 0) should exist"
 
     a = assistants[0]
-    assert a.first_name == DEFAULT_ASSISTANT_FIRST_NAME
-    assert a.surname == DEFAULT_ASSISTANT_SURNAME
-    assert a.email_address == DEFAULT_ASSISTANT_EMAIL
-    assert a.phone_number == DEFAULT_ASSISTANT_PHONE
+    assert a.first_name == PLACEHOLDER_ASSISTANT_FIRST_NAME
+    assert a.surname == PLACEHOLDER_ASSISTANT_SURNAME
+    assert a.email_address == PLACEHOLDER_ASSISTANT_EMAIL
+    assert a.phone_number == PLACEHOLDER_ASSISTANT_PHONE
     # System contact timezone should be hard-coded to UTC for now
     assert a.timezone == "UTC"
 
@@ -159,11 +159,11 @@ def test_org_members_provisioned_as_system_contacts(monkeypatch):
 @_handle_project
 def test_org_member_skips_primary_user_email(monkeypatch):
     """Org member with same email as primary user (id=1) should be skipped."""
-    from unity.session_details import DEFAULT_USER_EMAIL
+    from unity.session_details import PLACEHOLDER_USER_EMAIL
 
     # Include the primary user's email in org members list
     fake_org_members = [
-        {"email": DEFAULT_USER_EMAIL, "name": "Primary User Duplicate"},
+        {"email": PLACEHOLDER_USER_EMAIL, "name": "Primary User Duplicate"},
         {"email": "other@org.com", "name": "Other Member"},
     ]
     monkeypatch.setattr(
