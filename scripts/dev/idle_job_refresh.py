@@ -144,7 +144,7 @@ def main():
             parser.error(
                 "Job listing requires UNITY_COMMS_URL and ORCHESTRA_ADMIN_KEY "
                 "env vars (or --comms-url and --admin-key). "
-                "Use --no-list-jobs to skip."
+                "Use --no-list-jobs to skip.",
             )
 
     refresh_idle_jobs(adapters_url, args.delay, comms_url, admin_key)

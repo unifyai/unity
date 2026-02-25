@@ -22,7 +22,6 @@ Usage:
 """
 
 import argparse
-import json
 import sys
 
 import requests
@@ -113,7 +112,10 @@ def main():
     )
     parser.add_argument("--api-key", required=True, help="Unify API key")
     group = parser.add_mutually_exclusive_group(required=True)
-    group.add_argument("--name", help="Assistant name (format: 'FirstName' or 'FirstName Surname')")
+    group.add_argument(
+        "--name",
+        help="Assistant name (format: 'FirstName' or 'FirstName Surname')",
+    )
     group.add_argument("--id", type=int, help="Existing assistant agent_id")
     args = parser.parse_args()
 
