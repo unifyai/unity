@@ -5,7 +5,7 @@ Minimal test subprocess for IPC integration testing.
 This script uses the REAL IPC client code from unity.conversation_manager.domains.ipc_socket
 to test bidirectional communication with the parent process.
 
-It mimics what the real voice agent (call.py/sts_call.py) does:
+It mimics what the real voice agent (call.py) does:
 1. Connects to parent's IPC socket
 2. Signals readiness
 3. Receives events from parent (like call guidance)

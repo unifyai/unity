@@ -49,8 +49,7 @@ class TestVoiceCallFlowIntegration:
     """
     Integration tests for voice call flows.
 
-    These tests validate the event flow for both TTS and Realtime modes
-    using the in-memory event broker.
+    These tests validate the event flow using the in-memory event broker.
     """
 
     @pytest.fixture
@@ -128,7 +127,7 @@ class TestVoiceCallFlowIntegration:
 
 @pytest.mark.asyncio
 class TestCallGuidanceChannel:
-    """Tests for call_guidance channel used by both TTS and STS modes."""
+    """Tests for the call_guidance channel."""
 
     async def test_call_guidance_channel_format(self, event_broker):
         """Verify call_guidance channel message format."""

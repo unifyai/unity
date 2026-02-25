@@ -67,14 +67,12 @@ class FastBrainLogger:
     """Lightweight logger using the same ``{emoji} [{label}] {message}`` format
     as the async tool loop's ``LoopLogger``.
 
-    *label* is ``FastBrain({suffix})`` (or ``FastBrain.STS({suffix})``
-    for speech-to-speech mode), matching the ``LoopConfig`` label convention.
+    *label* is ``FastBrain({suffix})``, matching the ``LoopConfig`` label convention.
     """
 
-    def __init__(self, mode: str = "tts") -> None:
+    def __init__(self) -> None:
         suffix = token_hex(2)
-        tag = "FastBrain" if mode == "tts" else "FastBrain.STS"
-        self._label = f"{tag}({suffix})"
+        self._label = f"FastBrain({suffix})"
 
     @property
     def label(self) -> str:
@@ -819,7 +817,7 @@ class UserTrackCaptureManager:
         self._stream = None
 
 
-# Backward-compatible alias used by call.py / sts_call.py imports.
+# Backward-compatible alias used by call.py imports.
 UserScreenCaptureManager = UserTrackCaptureManager
 
 

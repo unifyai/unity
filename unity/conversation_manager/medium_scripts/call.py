@@ -72,7 +72,7 @@ VAD = None
 
 
 # Module-level logger created early for prewarm (before entrypoint runs).
-_log = FastBrainLogger(mode="tts")
+_log = FastBrainLogger()
 
 
 def prewarm(_ctx=None):
@@ -815,7 +815,7 @@ async def entrypoint(ctx: agents.JobContext):
 
 
 if __name__ == "__main__":
-    # Shared CLI handling (same as sts_call.py)
+    # CLI handling
     room_name = configure_from_cli(
         extra_env=[
             ("CONTACT", True),

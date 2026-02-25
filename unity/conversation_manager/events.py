@@ -283,8 +283,6 @@ class CallGuidance(Event):
     """
     Guidance from the Main CM Brain sent to the Voice Agent during a call.
 
-    Used in both TTS and STS voice modes. The guidance articulator decides
-    whether to block, silently notify, or speak the guidance.
 
     When should_speak is True, response_text contains the exact text the fast
     brain should utter via session.say(), bypassing its own LLM. When

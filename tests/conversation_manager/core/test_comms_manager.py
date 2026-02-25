@@ -933,7 +933,7 @@ class TestStartupEvents:
                     "user_email": "user@test.com",
                     "voice_provider": "elevenlabs",
                     "voice_id": "new_voice",
-                    "voice_mode": "sts",
+                    "voice_mode": "tts",
                 },
             )
 
@@ -949,7 +949,7 @@ class TestStartupEvents:
             assert isinstance(event, AssistantUpdateEvent)
             assert event.assistant_first_name == "Updated"
             assert event.assistant_surname == "Assistant"
-            assert event.voice_mode == "sts"
+            assert event.voice_mode == "tts"
 
 
 # =============================================================================
