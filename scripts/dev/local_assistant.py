@@ -39,6 +39,10 @@ ORCHESTRA_URLS = {
     "prod": "https://api.unify.ai/v0",
     "staging": "https://orchestra-staging-lz5fmz6i7q-ew.a.run.app/v0",
 }
+COMMS_URLS = {
+    "prod": "https://unity-comms-app-262420637606.us-central1.run.app",
+    "staging": "https://unity-comms-app-staging-262420637606.us-central1.run.app",
+}
 
 
 def _headers(api_key: str) -> dict:
@@ -56,13 +60,13 @@ def _find_existing(orchestra_url: str, api_key: str, first_name: str, surname: s
 
 
 def _fetch_by_id(orchestra_url: str, api_key: str, agent_id: int):
-    """Fetch an assistant by ID."""
-    resp = requests.get(
-        f"{orchestra_url}/assistant/{agent_id}",
-        headers=_headers(api_key),
-    )
+    """Fetch an assistant by ID from the list endpoint."""
+    resp = requests.get(f"{orchestra_url}/assistant", headers=_headers(api_key))
     resp.raise_for_status()
-    return resp.json().get("info")
+    for a in resp.json().get("info", []):
+        if str(a.get("agent_id")) == str(agent_id):
+            return a
+    return None
 
 
 def _create(
@@ -99,37 +103,65 @@ def _create(
 
 
 def _get_user_info(orchestra_url: str, api_key: str):
-    """Fetch the authenticated user's profile."""
-    resp = requests.get(f"{orchestra_url}/user", headers=_headers(api_key))
+    """Fetch the authenticated user's basic info."""
+    resp = requests.get(f"{orchestra_url}/user/basic-info", headers=_headers(api_key))
     resp.raise_for_status()
-    return resp.json().get("info", resp.json())
+    return resp.json()
 
 
-def _print_env(assistant: dict, user: dict, api_key: str):
-    """Print env vars matching SessionDetails.export_to_env() format."""
+def _v(val):
+    if val is None:
+        return ""
+    return str(val)
+
+
+def _print_env(assistant: dict, user: dict, api_key: str, staging: bool):
+    """Print a .env file matching the unity .env structure.
+
+    Assistant and user fields are populated from the API response.
+    Secrets and service keys are left blank for the developer to fill in.
+    """
+    env = "staging" if staging else "prod"
+    first = _v(assistant.get("first_name"))
+    surname = _v(assistant.get("surname"))
+    name = f"{first} {surname}".strip() if first else ""
+    user_first = _v(user.get("first"))
+    user_last = _v(user.get("last"))
+    user_name = f"{user_first} {user_last}".strip() if user_first else ""
+
     lines = [
-        f'export ASSISTANT_ID="{assistant.get("agent_id", "")}"',
-        f'export ASSISTANT_FIRST_NAME="{assistant.get("first_name", "")}"',
-        f'export ASSISTANT_SURNAME="{assistant.get("surname", "")}"',
-        f'export ASSISTANT_NAME="{assistant.get("first_name", "")} {assistant.get("surname", "")}"',
-        f'export ASSISTANT_AGE="{assistant.get("age", "") or ""}"',
-        f'export ASSISTANT_NATIONALITY="{assistant.get("nationality", "") or ""}"',
-        f'export ASSISTANT_TIMEZONE="{assistant.get("timezone", "") or ""}"',
-        f'export ASSISTANT_ABOUT="{assistant.get("about", "") or ""}"',
-        f'export ASSISTANT_NUMBER="{assistant.get("phone", "") or ""}"',
-        f'export ASSISTANT_EMAIL="{assistant.get("email", "") or ""}"',
-        f'export ASSISTANT_DESKTOP_MODE="{assistant.get("desktop_mode", "ubuntu") or "ubuntu"}"',
-        f'export ASSISTANT_DESKTOP_URL="{assistant.get("desktop_url", "") or ""}"',
-        f'export ASSISTANT_USER_DESKTOP_MODE="{assistant.get("user_desktop_mode", "") or ""}"',
-        f'export ASSISTANT_USER_DESKTOP_FILESYS_SYNC="{assistant.get("user_desktop_filesys_sync", False)}"',
-        f'export ASSISTANT_USER_DESKTOP_URL="{assistant.get("user_desktop_url", "") or ""}"',
-        f'export USER_ID="{assistant.get("user_id", "")}"',
-        f'export USER_FIRST_NAME="{user.get("first_name", "") or ""}"',
-        f'export USER_SURNAME="{user.get("last_name", "") or user.get("surname", "") or ""}"',
-        f'export USER_NAME="{user.get("first_name", "")} {user.get("last_name", "") or user.get("surname", "")}"',
-        f'export USER_NUMBER="{assistant.get("user_phone", "") or ""}"',
-        f'export USER_EMAIL="{user.get("email", "") or ""}"',
-        f'export UNIFY_KEY="{api_key}"',
+        f"UNIFY_BASE_URL={ORCHESTRA_URLS[env]}",
+        "LIVEKIT_SIP_URI=",
+        "LIVEKIT_URL=",
+        "LIVEKIT_API_KEY=",
+        "LIVEKIT_API_SECRET=",
+        "OPENAI_API_KEY=",
+        "ANTHROPIC_API_KEY=",
+        f"USER_ID={_v(assistant.get('user_id'))}",
+        f"UNIFY_KEY={api_key}",
+        f"UNITY_COMMS_URL={COMMS_URLS[env]}",
+        "DEEPGRAM_API_KEY=",
+        "CARTESIA_API_KEY=",
+        "ELEVEN_API_KEY=",
+        "GOOGLE_APPLICATION_CREDENTIALS=",
+        f"ASSISTANT_ID={_v(assistant.get('agent_id'))}",
+        f'USER_NAME="{user_name}"' if user_name else "USER_NAME=",
+        f"ASSISTANT_NAME={name}",
+        f"ASSISTANT_AGE={_v(assistant.get('age'))}",
+        f'ASSISTANT_NATIONALITY="{_v(assistant.get("nationality"))}"',
+        f'ASSISTANT_ABOUT="{_v(assistant.get("about"))}"',
+        f"ASSISTANT_NUMBER={_v(assistant.get('phone'))}",
+        f"ASSISTANT_EMAIL={_v(assistant.get('email'))}",
+        f"USER_NUMBER={_v(user.get('phone_number'))}",
+        f"USER_EMAIL={_v(user.get('email'))}",
+        "ORCHESTRA_ADMIN_KEY=",
+        "STAGING=true" if staging else "",
+        "SHARED_UNIFY_KEY=",
+        f"VOICE_PROVIDER={_v(assistant.get('voice_provider'))}",
+        f"VOICE_ID={_v(assistant.get('voice_id'))}",
+        f"VOICE_MODE={_v(assistant.get('voice_mode'))}",
+        "TAVILY_API_KEY=",
+        "PROJECT_ID=",
     ]
     print("\n".join(lines))
 
@@ -225,7 +257,7 @@ def main():
             )
 
     user = _get_user_info(orchestra_url, api_key)
-    _print_env(assistant, user, api_key)
+    _print_env(assistant, user, api_key, staging=args.staging)
 
 
 if __name__ == "__main__":
