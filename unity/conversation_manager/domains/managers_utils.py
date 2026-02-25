@@ -685,10 +685,12 @@ async def log_message(
 
 async def update_session_contacts(
     cm: "ConversationManager",
-    assistant_name: str,
+    assistant_first_name: str,
+    assistant_surname: str,
     assistant_number: str,
     assistant_email: str,
-    user_name: str,
+    user_first_name: str,
+    user_surname: str,
     user_number: str,
     user_email: str,
 ) -> None:
@@ -709,12 +711,6 @@ async def update_session_contacts(
             f"{ICONS['managers_worker']} [ManagersWorker] Cannot update contacts: contact_manager is None",
         )
         return
-
-    def _get_name_parts(name: str) -> tuple[str, str]:
-        if " " in name:
-            parts = name.split(" ", 1)
-            return parts[0], parts[1]
-        return name, ""
 
     async def _update_contact(
         contact_id: int,
@@ -740,12 +736,10 @@ async def update_session_contacts(
                 f"{ICONS['managers_worker']} [ManagersWorker] Failed to update contact {contact_id}: {e}",
             )
 
-    # Always update assistant contact (contact_id=0)
-    assistant_first_name, assistant_last_name = _get_name_parts(assistant_name)
     await _update_contact(
         0,
         assistant_first_name,
-        assistant_last_name,
+        assistant_surname,
         assistant_number,
         assistant_email,
     )
@@ -758,18 +752,10 @@ async def update_session_contacts(
             f"{ICONS['managers_worker']} [ManagersWorker] Demo mode: skipping boss contact (contact_id=1), "
             "updating demoer contact (contact_id=2)",
         )
-        user_first_name, user_last_name = _get_name_parts(user_name)
-        await _update_contact(
-            2,
-            user_first_name,
-            user_last_name,
-            user_number,
-            user_email,
-        )
+        await _update_contact(2, user_first_name, user_surname, user_number, user_email)
         return
 
-    user_first_name, user_last_name = _get_name_parts(user_name)
-    await _update_contact(1, user_first_name, user_last_name, user_number, user_email)
+    await _update_contact(1, user_first_name, user_surname, user_number, user_email)
 
 
 # Queueing operations that need managers
@@ -851,41 +837,6 @@ async def listen_to_operations(cm: "ConversationManager") -> None:
 _init_lock = asyncio.Lock()
 
 
-def init_unity_runtime() -> None:
-    """Initialize the unity runtime with the correct assistant record.
-
-    Builds the assistant_record dict from SESSION_DETAILS (populated by the
-    startup event) and passes it to unity.init(). Idempotent — the _INITIALISED
-    guard in unity.init() prevents re-initialization, so this is safe to call
-    from both the startup handler (to close the race) and _init_managers.
-    """
-    if not SESSION_DETAILS.assistant_record:
-        unity.init(
-            assistant_record={
-                "agent_id": SESSION_DETAILS.assistant.id,
-                "first_name": SESSION_DETAILS.assistant.name,
-                "age": SESSION_DETAILS.assistant.age,
-                "nationality": SESSION_DETAILS.assistant.nationality,
-                "timezone": SESSION_DETAILS.assistant.timezone or None,
-                "about": SESSION_DETAILS.assistant.about,
-                "phone": SESSION_DETAILS.assistant.number or None,
-                "email": SESSION_DETAILS.assistant.email or None,
-                "user_id": SESSION_DETAILS.user.id,
-                "user_phone": SESSION_DETAILS.user.number or None,
-                "created_at": prompt_now(as_string=False).isoformat(),
-                "updated_at": prompt_now(as_string=False).isoformat(),
-                "surname": "",
-                "weekly_limit": None,
-                "max_parallel": None,
-                "profile_photo": None,
-                "country": None,
-                "user_last_name": "",
-            },
-        )
-    else:
-        unity.init()
-
-
 def _init_managers(
     cm: "ConversationManager",
     loop: asyncio.AbstractEventLoop,
@@ -904,11 +855,11 @@ def _init_managers(
     """
     start_time = perf_counter()
 
-    # 0. Initialize unity (idempotent — may already have been called by the
-    #    startup handler to close the race with _startup_sequence).
+    # 0. Initialize unity (idempotent — SESSION_DETAILS.assistant.id is already
+    #    set by the startup handler, so unity.init() just reads it for context).
     LOGGER.debug(f"{ICONS['managers_worker']} [ManagersWorker] Initializing unity...")
     local_start_time = perf_counter()
-    init_unity_runtime()
+    unity.init()
     _unity_init_dur = perf_counter() - local_start_time
     LOGGER.info(
         f"{ICONS['managers_worker']} [ManagersWorker] Unity initialized in {_unity_init_dur:.2f} seconds",
@@ -987,16 +938,8 @@ def _init_managers(
         # Note: We don't add to active_conversations as the demoer isn't someone
         # the assistant would typically interact with (call/email)
         try:
-            demoer_first = (
-                SESSION_DETAILS.user.name.split(" ")[0]
-                if SESSION_DETAILS.user.name
-                else ""
-            )
-            demoer_last = (
-                " ".join(SESSION_DETAILS.user.name.split(" ")[1:])
-                if SESSION_DETAILS.user.name and " " in SESSION_DETAILS.user.name
-                else ""
-            )
+            demoer_first = SESSION_DETAILS.user.first_name
+            demoer_last = SESSION_DETAILS.user.surname
             # Use _create_contact since contact_id=2 doesn't exist yet
             cm.contact_manager._create_contact(
                 first_name=demoer_first,

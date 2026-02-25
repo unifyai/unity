@@ -71,8 +71,10 @@ class ConversationManager(metaclass=SingletonABCMeta):
         job_name: str,
         user_id: str,
         assistant_id: str,
-        user_name: str,
-        assistant_name: str,
+        user_first_name: str,
+        user_surname: str,
+        assistant_first_name: str,
+        assistant_surname: str,
         assistant_age: str,
         assistant_nationality: str,
         assistant_about: str,
@@ -93,7 +95,8 @@ class ConversationManager(metaclass=SingletonABCMeta):
         self.job_name = job_name
         self.user_id = user_id
         self.assistant_id = assistant_id
-        self.assistant_name = assistant_name
+        self.assistant_first_name = assistant_first_name
+        self.assistant_surname = assistant_surname
         self.assistant_age = assistant_age
         self.assistant_nationality = assistant_nationality
         self.assistant_timezone = assistant_timezone
@@ -105,7 +108,8 @@ class ConversationManager(metaclass=SingletonABCMeta):
         # contact data
         self.assistant_number = assistant_number
         self.assistant_email = assistant_email
-        self.user_name = user_name
+        self.user_first_name = user_first_name
+        self.user_surname = user_surname
         self.user_number = user_number
         self.user_email = user_email
 
@@ -1053,14 +1057,16 @@ class ConversationManager(metaclass=SingletonABCMeta):
         """Populate assistant/user/voice details into SESSION_DETAILS."""
         self.user_id = payload["user_id"]
         self.assistant_id = payload["assistant_id"]
-        self.assistant_name = payload["assistant_name"]
+        self.assistant_first_name = payload["assistant_first_name"]
+        self.assistant_surname = payload["assistant_surname"]
         self.assistant_age = payload["assistant_age"]
         self.assistant_nationality = payload["assistant_nationality"]
         self.assistant_timezone = payload.get("assistant_timezone", "")
         self.assistant_about = payload["assistant_about"]
         self.assistant_number = payload["assistant_number"]
         self.assistant_email = payload["assistant_email"]
-        self.user_name = payload["user_name"]
+        self.user_first_name = payload["user_first_name"]
+        self.user_surname = payload["user_surname"]
         self.user_number = payload["user_number"]
         self.user_email = payload["user_email"]
         self.voice_provider = payload["voice_provider"]
@@ -1077,7 +1083,8 @@ class ConversationManager(metaclass=SingletonABCMeta):
         # Populate the global SessionDetails singleton
         SESSION_DETAILS.populate(
             assistant_id=self.assistant_id,
-            assistant_name=self.assistant_name,
+            assistant_first_name=self.assistant_first_name,
+            assistant_surname=self.assistant_surname,
             assistant_age=self.assistant_age,
             assistant_nationality=self.assistant_nationality,
             assistant_timezone=self.assistant_timezone,
@@ -1085,7 +1092,8 @@ class ConversationManager(metaclass=SingletonABCMeta):
             assistant_number=self.assistant_number,
             assistant_email=self.assistant_email,
             user_id=self.user_id,
-            user_name=self.user_name,
+            user_first_name=self.user_first_name,
+            user_surname=self.user_surname,
             user_number=self.user_number,
             user_email=self.user_email,
             voice_provider=self.voice_provider,
@@ -1105,8 +1113,10 @@ class ConversationManager(metaclass=SingletonABCMeta):
             "job_name": self.job_name,
             "user_id": self.user_id,
             "assistant_id": self.assistant_id,
-            "user_name": self.user_name,
-            "assistant_name": self.assistant_name,
+            "user_first_name": self.user_first_name,
+            "user_surname": self.user_surname,
+            "assistant_first_name": self.assistant_first_name,
+            "assistant_surname": self.assistant_surname,
             "user_number": self.user_number,
             "assistant_number": self.assistant_number,
             "user_email": self.user_email,

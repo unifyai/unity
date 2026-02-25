@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, Dict, List
+from typing import Any, Dict
 
 import unify
 from unify.utils.http import RequestError
@@ -16,11 +16,6 @@ from ..session_details import (
     DEFAULT_USER_FIRST_NAME,
     DEFAULT_USER_SURNAME,
 )
-
-
-def _list_assistants(self) -> List[Dict[str, Any]]:
-    """Return the list of assistants configured for the current account."""
-    return unify.list_assistants()
 
 
 def _ensure_columns_exist(self, extra_fields: Dict[str, Any]) -> None:
@@ -40,36 +35,13 @@ def _ensure_columns_exist(self, extra_fields: Dict[str, Any]) -> None:
             pass
 
 
-def _resolve_assistant_details(self) -> Dict[str, Any] | None:
-    """Resolve assistant details from SESSION_DETAILS, API, or return None for defaults.
-
-    When SESSION_DETAILS has not been initialized (e.g., during tests),
-    returns None to indicate defaults should be used, avoiding real API calls.
-
-    Returns
-    -------
-    dict | None
-        Assistant record dict if found, or None to use defaults.
-    """
+def _is_assistant_populated() -> bool:
+    """Return True if SESSION_DETAILS has real assistant profile data."""
     from ..session_details import SESSION_DETAILS
 
     if not SESSION_DETAILS.is_initialized:
-        return None
-
-    # 1) Prefer the assistant provided by unity.init
-    if SESSION_DETAILS.assistant_record is not None:
-        return SESSION_DETAILS.assistant_record
-
-    # 2) Otherwise map the active context (if numeric) onto the list index
-    assistants = _list_assistants(self)
-    ctxs = unify.get_active_context()
-    read_ctx = ctxs.get("read")
-    try:
-        idx = int(read_ctx) if read_ctx is not None else 0
-    except (TypeError, ValueError):
-        idx = 0
-
-    return assistants[idx] if idx < len(assistants) else None
+        return False
+    return bool(SESSION_DETAILS.assistant.first_name)
 
 
 def _resolve_user_details(self) -> Dict[str, Any]:
@@ -118,11 +90,8 @@ def _resolve_user_details(self) -> Dict[str, Any]:
     }
     user_info.update({k: v for k, v in mapped.items() if v is not None})
 
-    # Fallback to assistant_record.user_phone if API didn't return phone_number
-    if "phone_number" not in user_info and SESSION_DETAILS.assistant_record is not None:
-        phone = SESSION_DETAILS.assistant_record.get("user_phone")
-        if phone:
-            user_info["phone_number"] = phone
+    if "phone_number" not in user_info and SESSION_DETAILS.user.number:
+        user_info["phone_number"] = SESSION_DETAILS.user.number
 
     if user_info:
         return user_info
@@ -137,52 +106,36 @@ def _resolve_user_details(self) -> Dict[str, Any]:
 def provision_assistant_contact(self, assistant_log) -> None:
     """Provision the assistant system contact (id == 0).
 
-    Creates or updates the assistant contact using details resolved from
-    SESSION_DETAILS, the Unify API, or default values.
+    Creates or updates the assistant contact using details from
+    SESSION_DETAILS or default values.
     """
-    selected = _resolve_assistant_details(self)
+    from ..session_details import SESSION_DETAILS
 
-    # Build the canonical assistant record (real or dummy)
-    if selected is not None:
-        a = selected
-        base_fields = {fld: None for fld in self._BUILTIN_FIELDS if fld != "contact_id"}
-        base_fields["should_respond"] = True
-        base_fields["response_policy"] = ""
-        base_fields["is_system"] = True
-        base_fields.update(
-            {
-                "first_name": a.get("first_name"),
-                "surname": a.get("surname"),
-                "email_address": a.get("email"),
-                "phone_number": a.get("phone"),
-                "bio": a.get("about"),
-                "timezone": a.get("timezone") or "UTC",
-                "rolling_summary": None,
-            },
-        )
-    else:
-        base_fields = {fld: None for fld in self._BUILTIN_FIELDS if fld != "contact_id"}
-        base_fields["should_respond"] = True
-        base_fields["response_policy"] = ""
-        base_fields["is_system"] = True
-        base_fields.update(
-            {
-                "first_name": DEFAULT_ASSISTANT_FIRST_NAME,
-                "surname": DEFAULT_ASSISTANT_SURNAME,
-                "email_address": DEFAULT_ASSISTANT_EMAIL,
-                "phone_number": DEFAULT_ASSISTANT_PHONE,
-                "bio": DEFAULT_ASSISTANT_BIO,
-                "timezone": "UTC",
-                "rolling_summary": None,
-            },
-        )
+    populated = _is_assistant_populated()
+    ast = SESSION_DETAILS.assistant
+
+    base_fields = {fld: None for fld in self._BUILTIN_FIELDS if fld != "contact_id"}
+    base_fields["should_respond"] = True
+    base_fields["response_policy"] = ""
+    base_fields["is_system"] = True
+    base_fields.update(
+        {
+            "first_name": ast.first_name if populated else DEFAULT_ASSISTANT_FIRST_NAME,
+            "surname": ast.surname if populated else DEFAULT_ASSISTANT_SURNAME,
+            "email_address": ast.email if populated else DEFAULT_ASSISTANT_EMAIL,
+            "phone_number": ast.number if populated else DEFAULT_ASSISTANT_PHONE,
+            "bio": ast.about if populated else DEFAULT_ASSISTANT_BIO,
+            "timezone": (ast.timezone or "UTC") if populated else "UTC",
+            "rolling_summary": None,
+        },
+    )
 
     if assistant_log is not None:
         try:
             entries = assistant_log.entries
-            fetched_bio = selected.get("about") if selected else None
-            fetched_tz = selected.get("timezone") if selected else None
-            fetched_phone = selected.get("phone") if selected else None
+            fetched_bio = ast.about if populated else None
+            fetched_tz = ast.timezone if populated else None
+            fetched_phone = ast.number if populated else None
 
             needs_timezone = fetched_tz and entries.get("timezone") != fetched_tz
             needs_bio = fetched_bio and entries.get("bio") != fetched_bio

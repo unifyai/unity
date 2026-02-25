@@ -291,10 +291,12 @@ class TestUpdateSessionContactsDemoModeProtection:
 
             await update_session_contacts(
                 cm=mock_cm,
-                assistant_name="Lucy Test",
+                assistant_first_name="Lucy",
+                assistant_surname="Test",
                 assistant_number="+15555550000",
                 assistant_email="lucy@test.com",
-                user_name="Demoer Person",  # This is demoer, NOT prospect
+                user_first_name="Demoer",
+                user_surname="Person",  # This is demoer, NOT prospect
                 user_number="+15555551111",
                 user_email="demoer@unify.ai",
             )
@@ -346,10 +348,12 @@ class TestUpdateSessionContactsDemoModeProtection:
 
             await update_session_contacts(
                 cm=mock_cm,
-                assistant_name="Lucy Test",
+                assistant_first_name="Lucy",
+                assistant_surname="Test",
                 assistant_number="+15555550000",
                 assistant_email="lucy@test.com",
-                user_name="Real Boss",
+                user_first_name="Real",
+                user_surname="Boss",
                 user_number="+15555551111",
                 user_email="boss@company.com",
             )

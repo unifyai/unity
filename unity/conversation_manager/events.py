@@ -412,13 +412,15 @@ class _SessionConfigBase(Event):
     medium: str
     assistant_id: str
     user_id: str
-    assistant_name: str
+    assistant_first_name: str
+    assistant_surname: str
     assistant_age: str
     assistant_nationality: str
     assistant_about: str
     assistant_number: str
     assistant_email: str
-    user_name: str
+    user_first_name: str
+    user_surname: str
     user_number: str
     user_email: str
     voice_id: str

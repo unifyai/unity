@@ -3,7 +3,7 @@ Wrappers around unify.log/create_logs with:
 1. _user injection (user ID, matches user_context path component)
 2. _user_id injection (user ID from SESSION_DETAILS)
 3. _assistant injection (assistant ID, matches assistant_context path component)
-4. _assistant_id injection (assistant's agent_id from assistant_record)
+4. _assistant_id injection (assistant's agent_id from SESSION_DETAILS.assistant.id)
 5. Automatic addition to aggregation contexts by reference (copy=False)
 
 Usage
@@ -70,15 +70,7 @@ def _get_assistant_context() -> Optional[str]:
 
 
 def _get_assistant_id() -> Optional[str]:
-    """Retrieve assistant's agent_id from SESSION_DETAILS as a string.
-
-    Falls back to SESSION_DETAILS.assistant.id (set early by the startup event)
-    so that logs emitted before unity.init() completes still carry _assistant_id.
-    """
-    if SESSION_DETAILS.assistant_record is not None:
-        agent_id = SESSION_DETAILS.assistant_record.get("agent_id")
-        if agent_id is not None:
-            return str(agent_id)
+    """Retrieve assistant's agent_id from SESSION_DETAILS as a string."""
     return SESSION_DETAILS.assistant.id or None
 
 

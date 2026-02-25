@@ -84,10 +84,4 @@ def configure_real_managers(
     if not _in_tree(request, os.path.join("state_managers", "real")):
         return
 
-    # Prevent network access during manager initialization.
-    import unity
-
-    monkeypatch.setattr(unity, "ASSISTANT", None, raising=False)
-    monkeypatch.setattr(unity, "_list_all_assistants", lambda: [], raising=False)
-
     _apply_impl_overrides(monkeypatch, impl="real")
