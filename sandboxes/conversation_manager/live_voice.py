@@ -144,11 +144,17 @@ def _spawn_quiet(log_path: Path):
 
     def _quiet_run_script(script, *args, terminal: bool = False) -> subprocess.Popen:
         py_cmd = [sys.executable, str(Path(script).expanduser().resolve()), *args]
+        child_env = {
+            **os.environ,
+            "UNIFY_TERMINAL_LOG": "false",
+            "UNILLM_TERMINAL_LOG": "false",
+        }
         return subprocess.Popen(
             py_cmd,
             stdout=log_fh,
             stderr=log_fh,
             start_new_session=True,
+            env=child_env,
         )
 
     _helpers.run_script = _quiet_run_script  # type: ignore[assignment]
@@ -523,14 +529,19 @@ async def start_session(
     finally:
         restore()
 
-    # Give the agent worker time to register with the LiveKit server,
-    # then explicitly dispatch it to the room.  Dev-mode auto-dispatch is
-    # unreliable and UNITY_COMMS_URL is typically unset in the sandbox.
-    await asyncio.sleep(8)
-    try:
-        await _dispatch_agent(room_name)
-    except Exception:
-        pass  # best-effort; readiness poll will detect success
+    # When UNITY_COMMS_URL is unset (no --real-comms), call.py's
+    # dispatch_livekit_agent() is skipped, so we dispatch directly via the
+    # LiveKit API.  When UNITY_COMMS_URL IS set, call.py already dispatched
+    # via the comms service — a second dispatch here would create a duplicate
+    # agent process (LiveKit does not deduplicate CreateAgentDispatch calls).
+    from unity.settings import SETTINGS
+
+    if not SETTINGS.conversation.COMMS_URL:
+        await asyncio.sleep(8)
+        try:
+            await _dispatch_agent(room_name)
+        except Exception:
+            pass  # best-effort; readiness poll will detect success
 
     user_token = _generate_user_token(room_name)
     playground_base = _ensure_playground_server()

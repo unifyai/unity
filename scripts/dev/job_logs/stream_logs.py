@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """
-unity_logs.py — View logs for a Unity GKE job.
+stream_logs.py — View logs for a Unity GKE job.
 
 Usage:
-    python unity_logs.py                       # auto-detect latest staging job
-    python unity_logs.py --job <job_name>      # explicit job, staging namespace
-    python unity_logs.py --namespace production # auto-detect latest production job
+    python stream_logs.py                       # auto-detect latest staging job
+    python stream_logs.py --job <job_name>      # explicit job, staging namespace
+    python stream_logs.py --namespace production # auto-detect latest production job
 
 Behaviour:
     1. If --job is omitted, resolves the caller's email from UNIFY_KEY and finds
@@ -20,6 +20,7 @@ Environment:
 """
 
 import os
+import re
 import sys
 
 # The unify SDK reads ORCHESTRA_URL at import time, and .env sets it to
@@ -48,6 +49,8 @@ load_dotenv()
 import argparse
 import shutil
 import subprocess
+from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
 
 import unify
 
@@ -57,6 +60,10 @@ GCP_PROJECT = "responsive-city-458413-a2"
 GKE_CLUSTER = "unity"
 GKE_REGION = "us-central1"
 SHARED_UNIFY_KEY = os.environ["SHARED_UNIFY_KEY"]
+
+# Resolve full paths for CLI tools (handles .cmd on Windows)
+GCLOUD = shutil.which("gcloud") or "gcloud"
+KUBECTL = shutil.which("kubectl") or "kubectl"
 
 
 # ─── Colours ─────────────────────────────────────────────────────────────────
@@ -117,7 +124,7 @@ def ensure_gke_credentials():
     """Silently refresh GKE cluster credentials."""
     result = subprocess.run(
         [
-            "gcloud",
+            GCLOUD,
             "container",
             "clusters",
             "get-credentials",
@@ -236,58 +243,218 @@ def query_job_status(job_name: str) -> tuple[bool | None, dict | None]:
     return None, None
 
 
+# ─── Pod resolution ───────────────────────────────────────────────────────────
+
+
+def resolve_pod_name(job_name: str, namespace: str) -> str | None:
+    """Resolve the pod name for a job. Returns None if no pod is found."""
+    result = subprocess.run(
+        [
+            KUBECTL,
+            "get",
+            "pods",
+            "-n",
+            namespace,
+            "-l",
+            f"job-name={job_name}",
+            "-o",
+            "jsonpath={.items[0].metadata.name}",
+        ],
+        capture_output=True,
+        text=True,
+    )
+    pod = result.stdout.strip()
+    return pod if result.returncode == 0 and pod else None
+
+
+# ─── Log mirroring ────────────────────────────────────────────────────────────
+
+_CONTAINER_LOG_PATH_RE = re.compile(r"/var/log/(unillm|unify|unity)/\S+")
+
+WORKSPACE_ROOT = Path(__file__).resolve().parents[3]
+MIRROR_BASE = WORKSPACE_ROOT / "logs" / "prod_logs"
+
+
+def _mirror_dir(job_name: str, base: Path = MIRROR_BASE) -> Path:
+    d = base / job_name
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+def _fetch_file(
+    pod_name: str,
+    namespace: str,
+    container_path: str,
+    local_path: Path,
+) -> None:
+    """Download a single file from the pod via kubectl exec -- cat."""
+    local_path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        result = subprocess.run(
+            [KUBECTL, "exec", pod_name, "-n", namespace, "--", "cat", container_path],
+            capture_output=True,
+        )
+        if result.returncode == 0:
+            local_path.write_bytes(result.stdout)
+    except Exception:
+        pass
+
+
+_CONTAINER_LOG_DIRS = ("/var/log/unillm", "/var/log/unify", "/var/log/unity")
+
+
+def _sync_all_logs(pod_name: str, namespace: str, mirror_root: Path) -> None:
+    """Bulk-copy all container log directories to the local mirror."""
+    info("Syncing all container logs...")
+    for container_dir in _CONTAINER_LOG_DIRS:
+        subdir = container_dir.split("/")[-1]  # unillm, unify, unity
+        local_dir = mirror_root / subdir
+        local_dir.mkdir(parents=True, exist_ok=True)
+        result = subprocess.run(
+            [
+                KUBECTL,
+                "cp",
+                f"{namespace}/{pod_name}:{container_dir}/.",
+                str(local_dir),
+            ],
+            capture_output=True,
+            text=True,
+        )
+        if result.returncode == 0:
+            success(f"  {container_dir} → {local_dir}")
+        else:
+            warn(f"  {container_dir}: {result.stderr.strip() or 'copy failed'}")
+
+
+def _hyperlink(uri: str, text: str) -> str:
+    """Wrap *text* in an OSC 8 terminal hyperlink pointing to *uri*.
+
+    Supported by iTerm2, VS Code terminal, Kitty, GNOME Terminal, Windows
+    Terminal, and most modern VTE-based emulators. Terminals that don't
+    understand OSC 8 silently ignore the escape sequences and show plain text.
+    """
+    return f"\033]8;;{uri}\007{text}\033]8;;\007"
+
+
+def _rewrite_line(
+    line: str,
+    mirror_root: Path,
+    pod_name: str,
+    namespace: str,
+    executor: ThreadPoolExecutor,
+) -> str:
+    """If the line contains a /var/log/... path, rewrite it to a clickable
+    local hyperlink and schedule a background download."""
+    match = _CONTAINER_LOG_PATH_RE.search(line)
+    if not match:
+        return line
+
+    container_path = match.group(0)
+    # /var/log/unillm/file.txt → unillm/file.txt
+    relative = container_path[len("/var/log/") :]
+    local_path = mirror_root / relative
+
+    executor.submit(_fetch_file, pod_name, namespace, container_path, local_path)
+
+    local_str = str(local_path)
+    link = _hyperlink(local_path.as_uri(), local_str)
+    return line[: match.start()] + link + line[match.end() :]
+
+
 # ─── Log output ──────────────────────────────────────────────────────────────
 
 
-def stream_logs(job_name: str, namespace: str):
+def stream_logs(
+    job_name: str,
+    namespace: str,
+    *,
+    mirror: bool = True,
+    mirror_base: Path = MIRROR_BASE,
+    sync_all: bool = False,
+):
     """Print all existing logs and stream new ones via kubectl -f.
 
-    kubectl logs job/<name> -f --tail=-1 prints the full log history
-    and then continues streaming as new lines arrive.
+    When *mirror* is True, container log-file paths (``/var/log/...``) are
+    rewritten to local paths and the files are downloaded in the background.
+
+    When *sync_all* is True, a bulk copy of all container log directories
+    is performed when the stream ends (Ctrl+C or pod exit).
     """
+    pod_name: str | None = None
+    mirror_root: Path | None = None
+
+    if mirror or sync_all:
+        pod_name = resolve_pod_name(job_name, namespace)
+        if pod_name:
+            mirror_root = _mirror_dir(job_name, mirror_base)
+            info(f"Mirroring container logs → {mirror_root}")
+            if sync_all:
+                info("Full log sync will run when streaming ends.")
+        else:
+            warn("Could not resolve pod name — log mirroring disabled.")
+            mirror = False
+            sync_all = False
+
     info(f"Streaming logs (existing + live) for '{job_name}'...")
     print(f"  {DIM}(Press Ctrl+C to stop){NC}")
     print()
 
+    kubectl_cmd = [
+        KUBECTL,
+        "logs",
+        f"job/{job_name}",
+        "-n",
+        namespace,
+        "-f",
+        "--tail=-1",
+    ]
+
+    def _run_stream(cmd: list[str]) -> None:
+        with ThreadPoolExecutor(max_workers=4) as executor:
+            proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            try:
+                for raw_line in proc.stdout:
+                    line = raw_line.decode("utf-8", errors="replace")
+                    if mirror and mirror_root and pod_name:
+                        line = _rewrite_line(
+                            line,
+                            mirror_root,
+                            pod_name,
+                            namespace,
+                            executor,
+                        )
+                    sys.stdout.write(line)
+                    sys.stdout.flush()
+                proc.wait()
+                if proc.returncode != 0:
+                    stderr = proc.stderr.read().decode("utf-8", errors="replace")
+                    if stderr.strip():
+                        warn(stderr.strip())
+            except KeyboardInterrupt:
+                proc.terminate()
+                proc.wait()
+                print()
+                info("Stopped streaming.")
+            finally:
+                executor.shutdown(wait=True)
+                if sync_all and pod_name and mirror_root:
+                    _sync_all_logs(pod_name, namespace, mirror_root)
+
     try:
-        subprocess.run(
-            [
-                "kubectl",
-                "logs",
-                f"job/{job_name}",
-                "-n",
-                namespace,
-                "-f",
-                "--tail=-1",
-            ],
-            check=True,
-        )
-    except subprocess.CalledProcessError:
+        _run_stream(kubectl_cmd)
+    except Exception:
         warn("kubectl could not attach. Retrying in 5s...")
         import time
 
         time.sleep(5)
-        subprocess.run(
-            [
-                "kubectl",
-                "logs",
-                f"job/{job_name}",
-                "-n",
-                namespace,
-                "-f",
-                "--tail=-1",
-            ],
-        )
-    except KeyboardInterrupt:
-        print()
-        info("Stopped streaming.")
+        _run_stream(kubectl_cmd)
 
 
 def _gcloud_logging_read(log_filter: str):
     """Run gcloud logging read with the given filter."""
     subprocess.run(
         [
-            "gcloud",
+            GCLOUD,
             "logging",
             "read",
             log_filter,
@@ -329,9 +496,9 @@ def main():
             "AssistantJobs for your most recent session.\n"
             "\n"
             "Examples:\n"
-            "  python unity_logs.py                        # latest staging job\n"
-            "  python unity_logs.py --namespace production  # latest production job\n"
-            "  python unity_logs.py --job unity-2026-02-10-17-30-53-staging"
+            "  python stream_logs.py                        # latest staging job\n"
+            "  python stream_logs.py --namespace production  # latest production job\n"
+            "  python stream_logs.py --job unity-2026-02-10-17-30-53-staging"
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
@@ -345,9 +512,29 @@ def main():
         default="staging",
         help="Kubernetes namespace (default: staging)",
     )
+    parser.add_argument(
+        "--no-mirror",
+        action="store_true",
+        default=False,
+        help="Disable automatic log file mirroring (pass-through mode).",
+    )
+    parser.add_argument(
+        "--mirror-dir",
+        default=None,
+        help=f"Local directory for mirrored log files (default: {MIRROR_BASE}).",
+    )
+    parser.add_argument(
+        "--sync-all-logs",
+        action="store_true",
+        default=False,
+        help="Bulk-copy all container log directories on stream exit (Ctrl+C).",
+    )
     args = parser.parse_args()
 
     namespace = args.namespace
+    mirror = not args.no_mirror
+    sync_all = args.sync_all_logs
+    mirror_base = Path(args.mirror_dir).resolve() if args.mirror_dir else MIRROR_BASE
     job_name = args.job or resolve_latest_job(namespace)
 
     check_prerequisites()
@@ -366,7 +553,13 @@ def main():
     print()
     if running is True:
         # AssistantJobs says running → pod exists, stream live.
-        stream_logs(job_name, namespace)
+        stream_logs(
+            job_name,
+            namespace,
+            mirror=mirror,
+            mirror_base=mirror_base,
+            sync_all=sync_all,
+        )
     elif running is False:
         # AssistantJobs says not running → pod is gone, use gcloud.
         fetch_historical_logs(job_name, namespace)
@@ -375,7 +568,13 @@ def main():
         # back to gcloud historical logs.
         warn("Unknown job status. Trying kubectl stream first...")
         print()
-        stream_logs(job_name, namespace)
+        stream_logs(
+            job_name,
+            namespace,
+            mirror=mirror,
+            mirror_base=mirror_base,
+            sync_all=sync_all,
+        )
 
 
 if __name__ == "__main__":

@@ -2,7 +2,7 @@
 Unix domain socket IPC for cross-process event communication.
 
 This module provides a socket-based bridge between the voice agent subprocess
-(call.py/sts_call.py) and the ConversationManager parent process.
+(call.py) and the ConversationManager parent process.
 
 The voice agent runs as a separate process and cannot share the in-memory
 event broker with the parent. This socket bridge allows BIDIRECTIONAL event

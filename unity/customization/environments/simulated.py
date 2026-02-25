@@ -14,7 +14,7 @@ from .environment_manager import (
 )
 
 if TYPE_CHECKING:
-    from ..actor.environments.base import BaseEnvironment
+    from ...actor.environments.base import BaseEnvironment
 
 logger = logging.getLogger(__name__)
 
@@ -116,7 +116,7 @@ class SimulatedEnvironmentManager(BaseEnvironmentManager):
         return envs
 
     def _reconstruct(self, env_def: Environment) -> "BaseEnvironment":
-        from ..actor.environments.base import BaseEnvironment
+        from ...actor.environments.base import BaseEnvironment
 
         if env_def.dependencies:
             _ensure_dependencies(env_def.dependencies)

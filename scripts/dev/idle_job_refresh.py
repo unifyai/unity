@@ -6,12 +6,13 @@ Intended to run after a Unity Cloud Build completes, replacing the
 hourly Cloud Scheduler cron with an event-driven trigger.
 
 Usage:
-    python scripts/idle_job_refresh.py                 # prod (default, lists jobs)
-    python scripts/idle_job_refresh.py --staging       # staging
-    python scripts/idle_job_refresh.py --no-list-jobs  # skip job listing
-    python scripts/idle_job_refresh.py --delay 45
+    python scripts/dev/idle_job_refresh.py                 # prod (default, lists jobs)
+    python scripts/dev/idle_job_refresh.py --staging       # staging
+    python scripts/dev/idle_job_refresh.py --no-list-jobs  # skip job listing
+    python scripts/dev/idle_job_refresh.py --delay 45
 """
 
+from dotenv import load_dotenv
 import argparse
 import os
 import sys
@@ -19,9 +20,15 @@ import time
 
 import requests
 
+load_dotenv()
+
 ADAPTERS_URLS = {
     "prod": "https://unity-adapters-1021024874437.us-central1.run.app",
     "staging": "https://unity-adapters-staging-ky4ja5fxna-uc.a.run.app",
+}
+COMMS_URLS = {
+    "prod": "https://unity-comms-app-262420637606.us-central1.run.app",
+    "staging": "https://unity-comms-app-staging-262420637606.us-central1.run.app",
 }
 
 
@@ -101,11 +108,6 @@ def main():
         help="Target the staging environment (default: prod)",
     )
     parser.add_argument(
-        "--adapters-url",
-        default=None,
-        help="Override the adapters URL (ignores --staging)",
-    )
-    parser.add_argument(
         "--delay",
         type=int,
         default=30,
@@ -116,36 +118,17 @@ def main():
         action="store_true",
         help="Disable job listing at each step",
     )
-    parser.add_argument(
-        "--comms-url",
-        default=None,
-        help="Override the comms service URL for job listing",
-    )
-    parser.add_argument(
-        "--admin-key",
-        default=None,
-        help="Override the admin key for job listing",
-    )
     args = parser.parse_args()
 
-    if args.adapters_url:
-        adapters_url = args.adapters_url
-    else:
-        env = "staging" if args.staging else "prod"
-        adapters_url = os.getenv("UNITY_ADAPTERS_URL", ADAPTERS_URLS[env])
-        print(f"Environment: {env}")
+    env = "staging" if args.staging else "prod"
+    adapters_url = ADAPTERS_URLS[env]
+    print(f"Environment: {env}")
 
     comms_url = None
     admin_key = None
     if not args.no_list_jobs:
-        comms_url = args.comms_url or os.getenv("UNITY_COMMS_URL")
-        admin_key = args.admin_key or os.getenv("ORCHESTRA_ADMIN_KEY")
-        if not comms_url or not admin_key:
-            parser.error(
-                "Job listing requires UNITY_COMMS_URL and ORCHESTRA_ADMIN_KEY "
-                "env vars (or --comms-url and --admin-key). "
-                "Use --no-list-jobs to skip."
-            )
+        comms_url = COMMS_URLS[env]
+        admin_key = os.getenv("ORCHESTRA_ADMIN_KEY")
 
     refresh_idle_jobs(adapters_url, args.delay, comms_url, admin_key)
 

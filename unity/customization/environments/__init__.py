@@ -12,9 +12,9 @@ __all__ = [
 ]
 
 _lazy_map = {
-    "BaseEnvironmentManager": "unity.environment_manager.base",
-    "EnvironmentManager": "unity.environment_manager.environment_manager",
-    "SimulatedEnvironmentManager": "unity.environment_manager.simulated",
+    "BaseEnvironmentManager": "unity.customization.environments.base",
+    "EnvironmentManager": "unity.customization.environments.environment_manager",
+    "SimulatedEnvironmentManager": "unity.customization.environments.simulated",
 }
 
 

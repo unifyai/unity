@@ -18,7 +18,7 @@ from pathlib import Path
 
 import pytest
 
-from unity.environment_manager.simulated import SimulatedEnvironmentManager
+from unity.customization.environments.simulated import SimulatedEnvironmentManager
 from unity.actor.environments.base import BaseEnvironment
 
 # ── Source files for the "colliers-like" environment ──────────────────────────

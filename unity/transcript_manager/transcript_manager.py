@@ -145,25 +145,6 @@ class TranscriptManager(BaseTranscriptManager):
             ),
         }
 
-        ctxs = unify.get_active_context()
-        read_ctx, write_ctx = ctxs["read"], ctxs["write"]
-        if not read_ctx:
-            # Ensure the global assistant/context is selected before we derive our sub-context
-            try:
-                from .. import (
-                    ensure_initialised as _ensure_initialised,
-                )  # local to avoid cycles
-
-                _ensure_initialised()
-                ctxs = unify.get_active_context()
-                read_ctx, write_ctx = ctxs["read"], ctxs["write"]
-            except Exception:
-                # If ensure fails (e.g. offline tests), proceed; downstream will fall back safely
-                pass
-        assert (
-            read_ctx == write_ctx
-        ), "read and write contexts must be the same when instantiating a TranscriptManager."
-
         self._transcripts_ctx = ContextRegistry.get_context(self, "Transcripts")
         self._exchanges_ctx = ContextRegistry.get_context(self, "Exchanges")
 

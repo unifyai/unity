@@ -129,11 +129,11 @@ class TestSubscriptionSwitching:
         This is the core flow for going from idle → live container.
         """
         from unity.conversation_manager.comms_manager import CommsManager
-        from unity.session_details import SESSION_DETAILS, DEFAULT_ASSISTANT_ID
+        from unity.session_details import SESSION_DETAILS, UNASSIGNED_ASSISTANT_ID
 
         # Start with default assistant (idle container state)
         original_id = SESSION_DETAILS.assistant.id
-        SESSION_DETAILS.assistant.id = DEFAULT_ASSISTANT_ID
+        SESSION_DETAILS.assistant.id = UNASSIGNED_ASSISTANT_ID
 
         try:
             cm = CommsManager(event_broker)
@@ -158,18 +158,19 @@ class TestSubscriptionSwitching:
                 "api_key": "test_key",
                 "assistant_id": "test_assistant_42",
                 "user_id": "123",
-                "assistant_name": "Test Assistant",
+                "assistant_first_name": "Test",
+                "assistant_surname": "Assistant",
                 "assistant_age": "25",
                 "assistant_nationality": "American",
                 "assistant_about": "A test assistant",
                 "assistant_number": "+15555550000",
                 "assistant_email": "assistant@test.com",
-                "user_name": "Boss User",
+                "user_first_name": "Boss",
+                "user_surname": "User",
                 "user_number": "+15555550001",
                 "user_email": "boss@test.com",
                 "voice_provider": "cartesia",
                 "voice_id": "test_voice",
-                "voice_mode": "tts",
             }
             message = create_pubsub_message("startup", startup_event)
 
@@ -202,10 +203,10 @@ class TestSubscriptionSwitching:
         This prevents attempts to cancel it again if another startup arrives.
         """
         from unity.conversation_manager.comms_manager import CommsManager
-        from unity.session_details import SESSION_DETAILS, DEFAULT_ASSISTANT_ID
+        from unity.session_details import SESSION_DETAILS, UNASSIGNED_ASSISTANT_ID
 
         original_id = SESSION_DETAILS.assistant.id
-        SESSION_DETAILS.assistant.id = DEFAULT_ASSISTANT_ID
+        SESSION_DETAILS.assistant.id = UNASSIGNED_ASSISTANT_ID
 
         try:
             cm = CommsManager(event_broker)
@@ -220,18 +221,19 @@ class TestSubscriptionSwitching:
                 "api_key": "test_key",
                 "assistant_id": "42",
                 "user_id": "123",
-                "assistant_name": "Test",
+                "assistant_first_name": "Test",
+                "assistant_surname": "",
                 "assistant_age": "25",
                 "assistant_nationality": "American",
                 "assistant_about": "Test",
                 "assistant_number": "+15555550000",
                 "assistant_email": "a@test.com",
-                "user_name": "Boss",
+                "user_first_name": "Boss",
+                "user_surname": "",
                 "user_number": "+15555550001",
                 "user_email": "b@test.com",
                 "voice_provider": "cartesia",
                 "voice_id": "",
-                "voice_mode": "tts",
             }
             message = create_pubsub_message("startup", startup_event)
 
@@ -507,10 +509,10 @@ class TestStartupInboundRace:
         """
         from unity.conversation_manager.comms_manager import CommsManager
         from unity.conversation_manager.events import StartupEvent, Event
-        from unity.session_details import SESSION_DETAILS, DEFAULT_ASSISTANT_ID
+        from unity.session_details import SESSION_DETAILS, UNASSIGNED_ASSISTANT_ID
 
         original_id = SESSION_DETAILS.assistant.id
-        SESSION_DETAILS.assistant.id = DEFAULT_ASSISTANT_ID
+        SESSION_DETAILS.assistant.id = UNASSIGNED_ASSISTANT_ID
 
         try:
             cm = CommsManager(event_broker)
@@ -527,18 +529,19 @@ class TestStartupInboundRace:
                     "api_key": "test_key",
                     "assistant_id": "race_test",
                     "user_id": "123",
-                    "assistant_name": "Test",
+                    "assistant_first_name": "Test",
+                    "assistant_surname": "",
                     "assistant_age": "25",
                     "assistant_nationality": "American",
                     "assistant_about": "Test",
                     "assistant_number": "+15555550000",
                     "assistant_email": "a@test.com",
-                    "user_name": "Boss",
+                    "user_first_name": "Boss",
+                    "user_surname": "",
                     "user_number": "+15555550001",
                     "user_email": "b@test.com",
                     "voice_provider": "cartesia",
                     "voice_id": "",
-                    "voice_mode": "tts",
                 }
                 message = create_pubsub_message("startup", startup_event)
 
@@ -846,10 +849,10 @@ class TestPingMechanismForIdleContainers:
         """Test that pings are published to app:comms:ping channel."""
         from unity.conversation_manager.comms_manager import CommsManager
         from unity.conversation_manager.events import Ping, Event
-        from unity.session_details import SESSION_DETAILS, DEFAULT_ASSISTANT_ID
+        from unity.session_details import SESSION_DETAILS, UNASSIGNED_ASSISTANT_ID
 
         original_id = SESSION_DETAILS.assistant.id
-        SESSION_DETAILS.assistant.id = DEFAULT_ASSISTANT_ID
+        SESSION_DETAILS.assistant.id = UNASSIGNED_ASSISTANT_ID
 
         try:
             cm = CommsManager(event_broker)
@@ -924,10 +927,10 @@ class TestDemoIdPropagation:
         """
         from unity.conversation_manager.comms_manager import CommsManager
         from unity.conversation_manager.events import StartupEvent, Event
-        from unity.session_details import SESSION_DETAILS, DEFAULT_ASSISTANT_ID
+        from unity.session_details import SESSION_DETAILS, UNASSIGNED_ASSISTANT_ID
 
         original_id = SESSION_DETAILS.assistant.id
-        SESSION_DETAILS.assistant.id = DEFAULT_ASSISTANT_ID
+        SESSION_DETAILS.assistant.id = UNASSIGNED_ASSISTANT_ID
 
         try:
             cm = CommsManager(event_broker)
@@ -942,18 +945,19 @@ class TestDemoIdPropagation:
                     "api_key": "test_key",
                     "assistant_id": "demo_test_123",
                     "user_id": "456",
-                    "assistant_name": "Demo Assistant",
+                    "assistant_first_name": "Demo",
+                    "assistant_surname": "Assistant",
                     "assistant_age": "25",
                     "assistant_nationality": "American",
                     "assistant_about": "A demo assistant",
                     "assistant_number": "+15555550000",
                     "assistant_email": "demo@test.com",
-                    "user_name": "Boss",
+                    "user_first_name": "Boss",
+                    "user_surname": "",
                     "user_number": "+15555550001",
                     "user_email": "boss@test.com",
                     "voice_provider": "cartesia",
                     "voice_id": "test_voice",
-                    "voice_mode": "tts",
                     "demo_id": 42,  # Demo ID set
                 }
                 message = create_pubsub_message("startup", startup_event)
@@ -991,10 +995,10 @@ class TestDemoIdPropagation:
         """
         from unity.conversation_manager.comms_manager import CommsManager
         from unity.conversation_manager.events import StartupEvent, Event
-        from unity.session_details import SESSION_DETAILS, DEFAULT_ASSISTANT_ID
+        from unity.session_details import SESSION_DETAILS, UNASSIGNED_ASSISTANT_ID
 
         original_id = SESSION_DETAILS.assistant.id
-        SESSION_DETAILS.assistant.id = DEFAULT_ASSISTANT_ID
+        SESSION_DETAILS.assistant.id = UNASSIGNED_ASSISTANT_ID
 
         try:
             cm = CommsManager(event_broker)
@@ -1010,18 +1014,19 @@ class TestDemoIdPropagation:
                     "api_key": "test_key",
                     "assistant_id": "regular_test_123",
                     "user_id": "456",
-                    "assistant_name": "Regular Assistant",
+                    "assistant_first_name": "Regular",
+                    "assistant_surname": "Assistant",
                     "assistant_age": "25",
                     "assistant_nationality": "American",
                     "assistant_about": "A regular assistant",
                     "assistant_number": "+15555550000",
                     "assistant_email": "regular@test.com",
-                    "user_name": "Boss",
+                    "user_first_name": "Boss",
+                    "user_surname": "",
                     "user_number": "+15555550001",
                     "user_email": "boss@test.com",
                     "voice_provider": "cartesia",
                     "voice_id": "test_voice",
-                    "voice_mode": "tts",
                 }
                 message = create_pubsub_message("startup", startup_event)
 
@@ -1073,17 +1078,18 @@ class TestDemoIdPropagation:
                 medium="startup",
                 assistant_id="demo_handler_test",
                 user_id="456",
-                assistant_name="Demo",
+                assistant_first_name="Demo",
+                assistant_surname="",
                 assistant_age="25",
                 assistant_nationality="American",
                 assistant_about="Demo",
                 assistant_number="+15555550000",
                 assistant_email="demo@test.com",
-                user_name="Boss",
+                user_first_name="Boss",
+                user_surname="",
                 user_number="+15555550001",
                 user_email="boss@test.com",
                 voice_id="test",
-                voice_mode="tts",
                 demo_id=99,
             )
 

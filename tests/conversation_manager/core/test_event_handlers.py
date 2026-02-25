@@ -97,7 +97,6 @@ def mock_call_manager():
     manager.start_call = AsyncMock()
     manager.start_unify_meet = AsyncMock()
     manager.cleanup_call_proc = AsyncMock()
-    manager.uses_realtime_api = False
     manager.conference_name = None
     manager.call_contact = None
     manager.call_exchange_id = -1
@@ -1781,18 +1780,19 @@ class TestAssistantUpdateEventHandler:
             medium="assistant_update",
             assistant_id="asst_123",
             user_id="user_456",
-            assistant_name="Updated Assistant",
+            assistant_first_name="Updated",
+            assistant_surname="Assistant",
             assistant_age="25",
             assistant_nationality="US",
             assistant_about="Test assistant",
             assistant_number="+15555550001",
             assistant_email="assistant@updated.com",
-            user_name="Updated Boss",
+            user_first_name="Updated",
+            user_surname="Boss",
             user_number="+15555550002",
             user_email="boss@updated.com",
             voice_id="voice_123",
             voice_provider="cartesia",
-            voice_mode="tts",
         )
 
         with patch(
@@ -1817,18 +1817,19 @@ class TestAssistantUpdateEventHandler:
             medium="assistant_update",
             assistant_id="asst_123",
             user_id="user_456",
-            assistant_name="Updated Assistant",
+            assistant_first_name="Updated",
+            assistant_surname="Assistant",
             assistant_age="25",
             assistant_nationality="US",
             assistant_about="Test assistant",
             assistant_number="+15555550001",
             assistant_email="assistant@updated.com",
-            user_name="Updated Boss",
+            user_first_name="Updated",
+            user_surname="Boss",
             user_number="+15555550002",
             user_email="boss@updated.com",
             voice_id="voice_123",
             voice_provider="cartesia",
-            voice_mode="tts",
         )
 
         with patch(
@@ -1850,18 +1851,19 @@ class TestAssistantUpdateEventHandler:
             medium="assistant_update",
             assistant_id="asst_123",
             user_id="user_456",
-            assistant_name="Updated Assistant",
+            assistant_first_name="Updated",
+            assistant_surname="Assistant",
             assistant_age="25",
             assistant_nationality="US",
             assistant_about="Test assistant",
             assistant_number="+15555550001",
             assistant_email="assistant@updated.com",
-            user_name="Updated Boss",
+            user_first_name="Updated",
+            user_surname="Boss",
             user_number="+15555550002",
             user_email="boss@updated.com",
             voice_id="voice_123",
             voice_provider="cartesia",
-            voice_mode="tts",
         )
 
         with patch(
@@ -1883,18 +1885,19 @@ class TestAssistantUpdateEventHandler:
             medium="assistant_update",
             assistant_id="asst_123",
             user_id="user_456",
-            assistant_name="New Assistant Name",
+            assistant_first_name="New Assistant",
+            assistant_surname="Name",
             assistant_age="25",
             assistant_nationality="US",
             assistant_about="Test assistant",
             assistant_number="+15555559999",
             assistant_email="new_assistant@test.com",
-            user_name="New Boss Name",
+            user_first_name="New Boss",
+            user_surname="Name",
             user_number="+15555558888",
             user_email="new_boss@test.com",
             voice_id="voice_123",
             voice_provider="cartesia",
-            voice_mode="tts",
         )
 
         with patch(
@@ -1908,15 +1911,17 @@ class TestAssistantUpdateEventHandler:
             call_args = mock_utils.queue_operation.call_args
             # First arg is the function (update_session_contacts)
             assert call_args[0][0] == mock_utils.update_session_contacts
-            # Remaining args are: cm, assistant_name, assistant_number, assistant_email,
-            # user_name, user_number, user_email
+            # Remaining args are: cm, assistant_first_name, assistant_surname,
+            # assistant_number, assistant_email, user_first_name, user_surname, user_number, user_email
             assert call_args[0][1] == mock_cm
-            assert call_args[0][2] == "New Assistant Name"
-            assert call_args[0][3] == "+15555559999"
-            assert call_args[0][4] == "new_assistant@test.com"
-            assert call_args[0][5] == "New Boss Name"
-            assert call_args[0][6] == "+15555558888"
-            assert call_args[0][7] == "new_boss@test.com"
+            assert call_args[0][2] == "New Assistant"
+            assert call_args[0][3] == "Name"
+            assert call_args[0][4] == "+15555559999"
+            assert call_args[0][5] == "new_assistant@test.com"
+            assert call_args[0][6] == "New Boss"
+            assert call_args[0][7] == "Name"
+            assert call_args[0][8] == "+15555558888"
+            assert call_args[0][9] == "new_boss@test.com"
 
     @pytest.mark.asyncio
     async def test_assistant_update_handles_no_contact_manager(self, mock_cm):
@@ -1930,18 +1935,19 @@ class TestAssistantUpdateEventHandler:
             medium="assistant_update",
             assistant_id="asst_123",
             user_id="user_456",
-            assistant_name="Updated Assistant",
+            assistant_first_name="Updated",
+            assistant_surname="Assistant",
             assistant_age="25",
             assistant_nationality="US",
             assistant_about="Test assistant",
             assistant_number="+15555550001",
             assistant_email="assistant@updated.com",
-            user_name="Updated Boss",
+            user_first_name="Updated",
+            user_surname="Boss",
             user_number="+15555550002",
             user_email="boss@updated.com",
             voice_id="voice_123",
             voice_provider="cartesia",
-            voice_mode="tts",
         )
 
         with patch(
@@ -1965,10 +1971,12 @@ class TestAssistantUpdateEventHandler:
 
         await update_session_contacts(
             mock_cm,
-            assistant_name="New Assistant",
+            assistant_first_name="New",
+            assistant_surname="Assistant",
             assistant_number="+15555559999",
             assistant_email="new_assistant@test.com",
-            user_name="New Boss",
+            user_first_name="New",
+            user_surname="Boss",
             user_number="+15555558888",
             user_email="new_boss@test.com",
         )
@@ -2005,10 +2013,12 @@ class TestAssistantUpdateEventHandler:
         # Should not raise - errors are caught and logged
         await update_session_contacts(
             mock_cm,
-            assistant_name="Updated Assistant",
+            assistant_first_name="Updated",
+            assistant_surname="Assistant",
             assistant_number="+15555550001",
             assistant_email="assistant@updated.com",
-            user_name="Updated Boss",
+            user_first_name="Updated",
+            user_surname="Boss",
             user_number="+15555550002",
             user_email="boss@updated.com",
         )
@@ -2034,10 +2044,12 @@ class TestAssistantUpdateEventHandler:
         # Should not raise
         await update_session_contacts(
             mock_cm,
-            assistant_name="Test",
+            assistant_first_name="Test",
+            assistant_surname="",
             assistant_number="+1555",
             assistant_email="test@test.com",
-            user_name="Boss",
+            user_first_name="Boss",
+            user_surname="",
             user_number="+1666",
             user_email="boss@test.com",
         )

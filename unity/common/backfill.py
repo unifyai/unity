@@ -2,8 +2,9 @@
 Utility for backfilling private fields on existing logs.
 
 When the private field injection was added, existing logs won't have
-_user, _user_id, _assistant, or _assistant_id fields. This module provides
-utilities to backfill these fields in bulk.
+_user, _assistant, _org, or _org_id fields. This module provides
+utilities to backfill these fields in bulk. (_user_id and _assistant_id
+are not backfilled as they are identical to _user and _assistant.)
 
 Usage
 -----
@@ -17,18 +18,20 @@ Usage
         "42/7/Contacts",
         user_context="42",
         assistant_context="7",
+        org_id=123,
     )
 
     # Backfill all contexts for a user/assistant combination
     results = backfill_all_contexts_for_user_assistant(
         user_context="42",
         assistant_context="7",
+        org_id=123,
     )
 """
 
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Union
 
 import unify
 
@@ -38,14 +41,21 @@ def backfill_private_fields(
     *,
     user_context: Optional[str] = None,
     assistant_context: Optional[str] = None,
+    org_id: Optional[int] = None,
     batch_size: int = 100,
     filter: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
-    Backfill _user and/or _assistant fields for existing logs in a context.
+    Backfill private fields for existing logs in a context.
 
-    Finds all logs where _user/_assistant is missing or None and updates them
-    with the provided values. Processes in batches to handle large contexts.
+    Finds all logs where private fields (_user, _assistant, _org, _org_id)
+    are missing or None and updates them with the provided values.
+    Processes in batches to handle large contexts.
+
+    Note: _user_id and _assistant_id are not backfilled because they are
+    always identical to _user and _assistant respectively (both derive from
+    the same SESSION_DETAILS field). Only _user, _assistant, _org, and
+    _org_id need backfilling.
 
     Note: Uses client-side filtering because `_field is None` only matches
     logs where the field exists but is NULL, not logs where the field was
@@ -59,6 +69,8 @@ def backfill_private_fields(
         The user ID to set for _user field
     assistant_context : str, optional
         The assistant ID to set for _assistant field
+    org_id : int, optional
+        The organization ID to set for _org and _org_id fields
     batch_size : int, default 100
         Number of logs to fetch per batch
     filter : str, optional
@@ -69,7 +81,7 @@ def backfill_private_fields(
     Dict[str, Any]
         Summary with total_updated count and context
     """
-    if user_context is None and assistant_context is None:
+    if user_context is None and assistant_context is None and org_id is None:
         return {
             "total_updated": 0,
             "context": context,
@@ -100,15 +112,22 @@ def backfill_private_fields(
                 needs_update = True
             if assistant_context is not None and lg.entries.get("_assistant") is None:
                 needs_update = True
+            if org_id is not None and lg.entries.get("_org") is None:
+                needs_update = True
+            if org_id is not None and lg.entries.get("_org_id") is None:
+                needs_update = True
             if needs_update:
                 logs_to_update.append(lg.id)
 
         if logs_to_update:
-            entries: Dict[str, str] = {}
+            entries: Dict[str, Union[str, int]] = {}
             if user_context is not None:
                 entries["_user"] = user_context
             if assistant_context is not None:
                 entries["_assistant"] = assistant_context
+            if org_id is not None:
+                entries["_org"] = org_id
+                entries["_org_id"] = org_id
 
             # Batch update
             unify.update_logs(
@@ -133,11 +152,12 @@ def backfill_all_contexts_for_user_assistant(
     *,
     user_context: str,
     assistant_context: str,
+    org_id: Optional[int] = None,
     contexts: Optional[List[str]] = None,
     batch_size: int = 100,
 ) -> Dict[str, Dict[str, Any]]:
     """
-    Backfill _user and _assistant for all contexts belonging to a user/assistant.
+    Backfill private fields for all contexts belonging to a user/assistant.
 
     If contexts is None, discovers them by prefix "{user_context}/{assistant_context}/".
 
@@ -147,6 +167,8 @@ def backfill_all_contexts_for_user_assistant(
         The user ID (used as context prefix and _user field value)
     assistant_context : str
         The assistant ID (used as context prefix and _assistant field value)
+    org_id : int, optional
+        The organization ID to set for _org and _org_id fields
     contexts : List[str], optional
         Explicit list of contexts to backfill. If None, discovers via prefix.
     batch_size : int, default 100
@@ -169,6 +191,7 @@ def backfill_all_contexts_for_user_assistant(
                 ctx,
                 user_context=user_context,
                 assistant_context=assistant_context,
+                org_id=org_id,
                 batch_size=batch_size,
             )
             results[ctx] = result

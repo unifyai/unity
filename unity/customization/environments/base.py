@@ -3,8 +3,8 @@ from __future__ import annotations
 from abc import abstractmethod
 from typing import Dict, List, Optional, TYPE_CHECKING
 
-from ..manager_registry import SingletonABCMeta
-from ..common.state_managers import BaseStateManager
+from ...manager_registry import SingletonABCMeta
+from ...common.state_managers import BaseStateManager
 
 
 class BaseEnvironmentManager(BaseStateManager, metaclass=SingletonABCMeta):
@@ -129,4 +129,4 @@ class BaseEnvironmentManager(BaseStateManager, metaclass=SingletonABCMeta):
 
 
 if TYPE_CHECKING:
-    from ..actor.environments.base import BaseEnvironment
+    from ...actor.environments.base import BaseEnvironment

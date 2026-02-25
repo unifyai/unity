@@ -11,16 +11,16 @@ from typing import Any, Dict, List, Optional, Tuple, TYPE_CHECKING
 
 import unify
 
-from ..common.log_utils import log as unity_log
-from ..common.model_to_fields import model_to_fields
-from ..common.context_store import TableStore
-from ..common.filter_utils import normalize_filter_expr
-from ..common.context_registry import TableContext, ContextRegistry
+from ...common.log_utils import log as unity_log
+from ...common.model_to_fields import model_to_fields
+from ...common.context_store import TableStore
+from ...common.filter_utils import normalize_filter_expr
+from ...common.context_registry import TableContext, ContextRegistry
 from .base import BaseEnvironmentManager
 from .types.environment import Environment
 
 if TYPE_CHECKING:
-    from ..actor.environments.base import BaseEnvironment
+    from ...actor.environments.base import BaseEnvironment
 
 logger = logging.getLogger(__name__)
 
@@ -54,23 +54,6 @@ class EnvironmentManager(BaseEnvironmentManager):
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__()
-
-        ctxs = unify.get_active_context()
-        read_ctx, write_ctx = ctxs.get("read"), ctxs.get("write")
-        if not read_ctx:
-            try:
-                from .. import ensure_initialised as _ensure_initialised
-
-                _ensure_initialised()
-                ctxs = unify.get_active_context()
-                read_ctx, write_ctx = ctxs.get("read"), ctxs.get("write")
-            except Exception:
-                pass
-
-        assert (
-            read_ctx == write_ctx
-        ), "read and write contexts must be the same when instantiating an EnvironmentManager."
-
         self.include_in_multi_assistant_table = True
         self._ctx = ContextRegistry.get_context(self, "Environments/Packages")
         self._BUILTIN_FIELDS: Tuple[str, ...] = tuple(Environment.model_fields.keys())
@@ -211,7 +194,7 @@ class EnvironmentManager(BaseEnvironmentManager):
 
     def _reconstruct(self, env_def: Environment) -> "BaseEnvironment":
         """Install deps, write files, import module, resolve instance."""
-        from ..actor.environments.base import BaseEnvironment
+        from ...actor.environments.base import BaseEnvironment
 
         if env_def.dependencies:
             _ensure_dependencies(env_def.dependencies)

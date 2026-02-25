@@ -12,7 +12,7 @@ if TYPE_CHECKING:
     from unity.contact_manager.contact_manager import ContactManager
     from unity.task_scheduler.task_scheduler import TaskScheduler
 from unity.events.event_bus import EVENT_BUS
-from unity.session_details import DEFAULT_ASSISTANT_CONTEXT, DEFAULT_USER_CONTEXT
+from unity.session_details import UNASSIGNED_ASSISTANT_CONTEXT, UNASSIGNED_USER_CONTEXT
 
 from tests.settings import SETTINGS
 
@@ -438,7 +438,9 @@ class _TestContext:
         test_path = _ctx_name(self.test_fn, test_fn_name)
         # Append default user_id/assistant_id for proper context hierarchy
         # Mirrors production structure and enables proper All context derivation
-        self.ctx = f"{test_path}/{DEFAULT_USER_CONTEXT}/{DEFAULT_ASSISTANT_CONTEXT}"
+        self.ctx = (
+            f"{test_path}/{UNASSIGNED_USER_CONTEXT}/{UNASSIGNED_ASSISTANT_CONTEXT}"
+        )
         self.fpath = _test_fpath(self.test_fn, test_fn_name)
 
         self.llm_io_before = _list_llm_io_files()

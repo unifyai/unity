@@ -191,7 +191,7 @@ Source: `unity/conversation_manager/metrics.py`, `unity/conversation_manager/met
 | **Labels** | — |
 | **Description** | Time from container start (`entrypoint.sh`) to CommsManager start. |
 | **Recorded by** | `main.py` → `run_conversation_manager()`, computed as `time.time()*1000 - CONTAINER_START_TIME_MS` |
-| **Condition** | Only when `SESSION_DETAILS.assistant.id == DEFAULT_ASSISTANT_ID` (idle cloud containers) |
+| **Condition** | Only when `SESSION_DETAILS.assistant.id == UNASSIGNED_ASSISTANT_ID` (idle cloud containers) |
 
 `CONTAINER_START_TIME_MS` is exported as an env var at the top of `entrypoint.sh`
 (`date +%s%3N`).
@@ -256,14 +256,14 @@ Label values (7 steps):
 
 | Function | File | When called |
 |---|---|---|
-| `init_metrics()` | `main.py` | On startup, only if `assistant.id == DEFAULT_ASSISTANT_ID` |
+| `init_metrics()` | `main.py` | On startup, only if `assistant.id == UNASSIGNED_ASSISTANT_ID` |
 | `flush_metrics()` | `main.py` | During `main()` cleanup, before shutdown |
 | `shutdown_metrics()` | `main.py` | Immediately after `flush_metrics()` |
 
 **Guard conditions** (metrics are silently no-ops when any of these hold):
 - `TEST` env var is set (unit tests)
 - `GOOGLE_APPLICATION_CREDENTIALS` env var is not set (local dev)
-- Assistant ID is not `DEFAULT_ASSISTANT_ID` (pre-specified assistant, not a cloud idle container)
+- Assistant ID is not `UNASSIGNED_ASSISTANT_ID` (pre-specified assistant, not a cloud idle container)
 
 ---
 

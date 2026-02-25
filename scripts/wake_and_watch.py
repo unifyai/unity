@@ -242,12 +242,12 @@ def stream_logs(job_name: str | None):
     script = os.path.join(
         os.path.dirname(os.path.abspath(__file__)),
         "job_logs",
-        "unity_logs.py",
+        "stream_logs.py",
     )
     argv = [sys.executable, script, "--namespace", ENV]
     if job_name:
         argv += ["--job", job_name]
-    info(f"Handing off to unity_logs.py...")
+    info(f"Handing off to stream_logs.py...")
     print(flush=True)
     sys.stdout.flush()
     sys.stderr.flush()

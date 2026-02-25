@@ -17,7 +17,6 @@ if TYPE_CHECKING:
 
 def provision_storage(file_manager: "FileManager") -> None:
     """Ensure FileRecords/<alias> context, schema and local view exist (idempotent)."""
-    # Create the TableStore if not already initialised by the manager
     if (
         not hasattr(file_manager, "_store")
         or getattr(file_manager, "_store", None) is None
@@ -31,11 +30,7 @@ def provision_storage(file_manager: "FileManager") -> None:
             ),
             fields=model_to_fields(FileRow),
         )
-    try:
-        file_manager._store.ensure_context()  # type: ignore[attr-defined]
-    except Exception:
-        # Best-effort
-        pass
+    file_manager._store.ensure_context()  # type: ignore[attr-defined]
 
 
 def get_columns(
@@ -201,11 +196,7 @@ def ensure_file_context(
         fields=fields,
         description=f"Content context for storage_id={storage_id}",
     )
-    try:
-        store.ensure_context()
-    except Exception:
-        # Best-effort provisioning
-        pass
+    store.ensure_context()
 
 
 def ensure_file_table_context(
@@ -275,11 +266,7 @@ def ensure_file_table_context(
         fields=fields_map,
         description=context_description or "",
     )
-    try:
-        store.ensure_context()
-    except Exception:
-        # Best-effort
-        pass
+    store.ensure_context()
 
 
 def resolve_storage_id(

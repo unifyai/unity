@@ -11,7 +11,7 @@ Architecture Overview:
   task execution, and cross-channel communication. Runs in the main process.
 
 - **Fast Brain** (Voice Agent): Lightweight LLM in a subprocess that handles
-  real-time voice conversation. Runs in medium_scripts/call.py or sts_call.py.
+  real-time voice conversation. Runs in medium_scripts/call.py.
 
 What This File Tests:
 ---------------------
@@ -516,7 +516,6 @@ class TestRapidUtteranceHandling:
                 await EventHandler.handle_event(
                     event,
                     cm,
-                    is_voice_call=cm.call_manager.uses_realtime_api,
                 )
 
                 # Flush triggers the debouncer (matches production behavior)

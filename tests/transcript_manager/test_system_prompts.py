@@ -16,7 +16,7 @@ from tests.helpers import _handle_project
 
 from unity.transcript_manager.prompt_builders import build_ask_prompt
 from unity.transcript_manager.transcript_manager import TranscriptManager
-from unity.session_details import DEFAULT_USER_CONTEXT, DEFAULT_ASSISTANT_CONTEXT
+from unity.session_details import UNASSIGNED_USER_CONTEXT, UNASSIGNED_ASSISTANT_CONTEXT
 
 
 def _build_prompt_in_subprocess(test_context: str) -> str:
@@ -181,7 +181,7 @@ def test_ask_system_prompt_formatting():
 @_handle_project
 def test_ask_prompt_stability():
     # Build a test-specific context path matching _handle_project pattern
-    test_ctx = f"tests/transcript_manager/test_system_prompts/test_ask_prompt_stability/{DEFAULT_USER_CONTEXT}/{DEFAULT_ASSISTANT_CONTEXT}"
+    test_ctx = f"tests/transcript_manager/test_system_prompts/test_ask_prompt_stability/{UNASSIGNED_USER_CONTEXT}/{UNASSIGNED_ASSISTANT_CONTEXT}"
     # Build prompts in two separate Python processes to catch cross-session drift
     p1 = _build_prompt_in_subprocess(test_ctx)
     p2 = _build_prompt_in_subprocess(test_ctx)

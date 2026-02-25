@@ -10,8 +10,8 @@ from __future__ import annotations
 
 import pytest
 
-from unity.environment_manager.simulated import SimulatedEnvironmentManager
-from unity.environment_manager.environment_manager import (
+from unity.customization.environments.simulated import SimulatedEnvironmentManager
+from unity.customization.environments.environment_manager import (
     _parse_env_path,
     _write_files_to_package,
     _import_and_resolve,

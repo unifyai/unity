@@ -1,15 +1,19 @@
 """
 CodeActActor routing tests for ContactManager.ask (simulated managers).
 
-Mirrors `test_ask.py` but validates CodeActActor produces Python that calls
-`primitives.contacts.ask(...)` (on-the-fly; no FunctionManager).
+Validates that CodeActActor uses ``execute_function`` (not ``execute_code``)
+for simple single-primitive contact queries, ensuring the returned handle
+is steerable from the outer loop.
 """
 
 from __future__ import annotations
 
 import pytest
 
-from tests.actor.state_managers.utils import make_code_act_actor
+from tests.actor.state_managers.utils import (
+    assert_used_execute_function,
+    make_code_act_actor,
+)
 
 pytestmark = pytest.mark.eval
 
@@ -23,7 +27,7 @@ CONTACT_QUESTIONS: list[str] = [
 @pytest.mark.asyncio
 @pytest.mark.timeout(240)
 @pytest.mark.parametrize("question", CONTACT_QUESTIONS)
-async def test_code_act_questions_use_only_contact_tool(
+async def test_code_act_questions_use_execute_function(
     question: str,
 ):
     async with make_code_act_actor(impl="simulated") as (actor, _primitives, calls):
@@ -32,9 +36,7 @@ async def test_code_act_questions_use_only_contact_tool(
             clarification_enabled=False,
         )
         result = await handle.result()
-        # Verify result is not None (routing test, not type test)
         assert result is not None
 
-        # Routing: must hit contacts.ask for contact questions.
-        assert calls, "Expected at least one state manager call."
+        assert_used_execute_function(handle)
         assert "primitives.contacts.ask" in set(calls), f"Calls seen: {calls}"

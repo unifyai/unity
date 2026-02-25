@@ -935,13 +935,13 @@ class EventBus:
             return
 
         try:
-            from ..session_details import SESSION_DETAILS, DEFAULT_ASSISTANT_ID
+            from ..session_details import SESSION_DETAILS, UNASSIGNED_ASSISTANT_ID
             from ..settings import SETTINGS
 
             assistant_id = SESSION_DETAILS.assistant.id
             staging_suffix = (
                 "-staging"
-                if SETTINGS.STAGING and DEFAULT_ASSISTANT_ID not in assistant_id
+                if SETTINGS.STAGING and UNASSIGNED_ASSISTANT_ID not in assistant_id
                 else ""
             )
             topic_name = f"unity-{assistant_id}{staging_suffix}"

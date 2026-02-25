@@ -110,44 +110,50 @@ async def run_with_steering() -> str:
 
 
 def get_handle_mode_selection_example() -> str:
-    """Example: choosing between return-handle and await modes."""
+    """Example: choosing execute_function vs execute_code."""
 
     return """
-# Example: Choose return-handle vs await based on task shape
-async def long_running_status_visible() -> object:
-    # Long-running or externally dependent work: return the handle so
-    # the outer loop can expose progress and steering.
+# Example: execute_function vs execute_code decision
+#
+# CORRECT — single primitive call → use execute_function (JSON tool call):
+#   execute_function(function_name="primitives.contacts.ask", call_kwargs={"text": "Find contacts in Berlin"})
+#   execute_function(function_name="primitives.tasks.execute", call_kwargs={"task_id": 123})
+#   execute_function(function_name="primitives.knowledge.update", call_kwargs={"text": "Store: Office hours are 9-5 PT."})
+#
+# WRONG — wrapping a single primitive in execute_code just to add notify():
+#   execute_code(code='''
+#       notify({"type": "progress", "message": "Looking up contacts..."})
+#       handle = await primitives.contacts.ask(text="Find contacts in Berlin")
+#       result = await handle.result()
+#       notify({"type": "step_complete", ...})
+#       print(result)
+#   ''')
+#   ^^^ This consumes the handle inside the code block. The outer loop
+#       loses steering and query access. Use execute_function instead.
+#
+# CORRECT — genuine multi-step composition requires execute_code:
+async def cross_reference_contacts_and_transcripts(city: str) -> str:
     notify({
         "type": "progress",
-        "message": "Starting durable task execution and returning a steerable handle."
-    })
-    return await primitives.tasks.execute(task_id=123)
-
-async def neutral_intent_defaults_to_handle() -> object:
-    # Neutral or uncertain intent: return the handle by default so
-    # outer-loop steering and progress visibility stay available.
-    notify({
-        "type": "progress",
-        "message": "Starting contact lookup and returning a handle for steering."
-    })
-    return await primitives.contacts.ask("Find contacts in Berlin")
-
-async def compose_immediately() -> str:
-    # Immediate composition: await the result for same-block logic.
-    notify({
-        "type": "progress",
-        "message": "Resolving contact details for immediate composition.",
+        "message": f"Step 1: Fetching contacts in {city}.",
         "step": 1,
         "total": 2
     })
-    handle = await primitives.contacts.ask("Who is Alice?")
-    answer = await handle.result()
+    contacts_handle = await primitives.contacts.ask(f"List contacts in {city}.")
+    contacts = await contacts_handle.result()
+
     notify({
-        "type": "step_complete",
-        "step_name": "contact_lookup",
-        "result_summary": "Contact details resolved for same-block composition."
+        "type": "progress",
+        "message": "Step 2: Summarizing recent interactions for those contacts.",
+        "step": 2,
+        "total": 2
     })
-    return f"Contact lookup complete: {answer}"
+    transcript_handle = await primitives.transcripts.ask(
+        f"Summarize recent interactions for contacts in {city}."
+    )
+    summary = await transcript_handle.result()
+
+    return f"Contacts: {contacts}\\nInteractions: {summary}"
 """
 
 
@@ -166,16 +172,29 @@ async def tool_call_that_may_clarify() -> str:
 
 
 def get_notify_web_search_example() -> str:
-    """Example: using notify() for staged external research progress."""
+    """Example: single web search vs multi-step research."""
 
     return """
-# Example: Progress notifications during staged web research
-async def gather_role_openings(query: str) -> list[dict]:
+# Example: Single web search → execute_function (NOT execute_code)
+#
+# CORRECT (JSON tool call):
+#   execute_function(function_name="primitives.web.ask",
+#                    call_kwargs={"text": "What is the weather in Berlin today?"})
+#
+# WRONG — wrapping a single web.ask in execute_code:
+#   execute_code(code='''
+#       notify(...)
+#       handle = await primitives.web.ask("What is the weather in Berlin today?")
+#       result = await handle.result()
+#   ''')
+#
+# Multi-step research (genuinely needs execute_code):
+async def gather_and_verify_role_openings(query: str) -> str:
     notify({
         "type": "progress",
         "message": "Searching public sources for relevant role listings.",
         "step": 1,
-        "total": 3
+        "total": 2
     })
 
     initial_handle = await primitives.web.ask(
@@ -185,24 +204,15 @@ async def gather_role_openings(query: str) -> list[dict]:
 
     notify({
         "type": "progress",
-        "message": "Initial listings collected; validating against official company pages.",
+        "message": "Validating listings against official company pages.",
         "step": 2,
-        "total": 3,
-        "candidate_count": len(initial_results) if isinstance(initial_results, list) else None
+        "total": 2,
     })
 
     verified_handle = await primitives.web.ask(
-        "Cross-check the listings against official careers pages and remove outdated posts."
+        f"Cross-check these listings against official careers pages: {initial_results}"
     )
     verified_results = await verified_handle.result()
-
-    notify({
-        "type": "progress",
-        "message": "Validation complete; preparing a concise, deduplicated summary.",
-        "step": 3,
-        "total": 3,
-        "verified_count": len(verified_results) if isinstance(verified_results, list) else None
-    })
 
     return verified_results
 """
@@ -212,7 +222,8 @@ def get_notify_multistep_workflow_example() -> str:
     """Example: using notify() between meaningful workflow milestones."""
 
     return """
-# Example: Multi-step workflow notifications
+# Example: Multi-step workflow (genuinely compositional → execute_code is correct)
+# NOTE: If this were a single primitive call, use execute_function instead.
 async def build_contact_insights(city: str) -> str:
     notify({
         "type": "progress",
@@ -224,16 +235,10 @@ async def build_contact_insights(city: str) -> str:
         f"List contacts in {city} with role and company."
     )
     contacts = await contacts_handle.result()
-    notify({
-        "type": "step_complete",
-        "step_name": "fetch_contacts",
-        "result_summary": f"Retrieved candidate contacts for {city}.",
-        "count": len(contacts) if isinstance(contacts, list) else None
-    })
 
     notify({
         "type": "progress",
-        "message": "Summarizing recent interaction signals for matching contacts.",
+        "message": "Summarizing recent interactions for matching contacts.",
         "step": 2,
         "total": 3
     })
@@ -241,11 +246,6 @@ async def build_contact_insights(city: str) -> str:
         f"Summarize recent interactions for contacts in {city}."
     )
     interaction_summary = await transcript_handle.result()
-    notify({
-        "type": "step_complete",
-        "step_name": "summarize_interactions",
-        "result_summary": "Conversation signals extracted for ranking."
-    })
 
     notify({
         "type": "progress",
@@ -257,11 +257,6 @@ async def build_contact_insights(city: str) -> str:
         f"Store structured contact insights for {city}: contacts={contacts}, summary={interaction_summary}"
     )
     save_result = await save_handle.result()
-    notify({
-        "type": "step_complete",
-        "step_name": "persist_insights",
-        "result_summary": "Insights persisted to knowledge store."
-    })
 
     return str(save_result)
 """

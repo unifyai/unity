@@ -164,7 +164,7 @@ if _TEXTUAL_AVAILABLE:
                         )
                 with Horizontal(id="cmd_row"):
                     yield Input(
-                        placeholder="Commands: msg, sms, email, call, say, end_call, us",
+                        placeholder="Commands: msg, sms, email, meet, say, end_meet, us",
                         id="command_input",
                     )
                     yield Button("Send", id="submit_command")
@@ -247,7 +247,7 @@ if _TEXTUAL_AVAILABLE:
 
     class CallScreen(_BaseScreen):
         def compose_left(self) -> ComposeResult:
-            yield Label("Simulate phone call", id="title")
+            yield Label("Simulate voice call (Unify Meet)", id="title")
             yield Horizontal(
                 Button("Start Call", id="call_start"),
                 Button("End Call", id="call_end"),
@@ -259,9 +259,9 @@ if _TEXTUAL_AVAILABLE:
         async def on_button_pressed(self, event: Button.Pressed) -> None:
             await super().on_button_pressed(event)
             if event.button.id == "call_start":
-                await self._route_raw("call")
+                await self._route_raw("meet")
             elif event.button.id == "call_end":
-                await self._route_raw("end_call")
+                await self._route_raw("end_meet")
             elif event.button.id == "call_say":
                 utt = self.query_one("#call_utt", Input).value.strip()
                 await self._route_raw(f"say {utt}")
@@ -303,10 +303,12 @@ if _TEXTUAL_AVAILABLE:
                             yield Label("Event Controls", id="title")
                             yield Button("Compose SMS", id="btn_sms")
                             yield Button("Compose Email", id="btn_email")
-                            yield Button("Start Call", id="btn_call_start")
-                            yield Button("End Call", id="btn_call_end")
-                            yield Button("Share Screen", id="btn_screen_share_start")
-                            yield Button("Stop Sharing", id="btn_screen_share_stop")
+                            yield Button("Start Call", id="btn_meet_start")
+                            yield Button("End Call", id="btn_meet_end")
+                            yield Button(
+                                "Start Screen Share",
+                                id="btn_screen_share_toggle",
+                            )
                             yield Button("Toggle Trace Panel", id="btn_toggle_trace")
                             yield Button("Quit", id="btn_quit")
                         with Vertical(id="right_tabs"):
@@ -877,33 +879,39 @@ if _TEXTUAL_AVAILABLE:
                     except Exception:
                         pass
                     return
-                if event.button.id == "btn_call_start":
+                if event.button.id == "btn_meet_start":
                     try:
                         app.post_message(AppendLine("[ui] Start Call pressed"))  # type: ignore[attr-defined]
                     except Exception:
                         pass
-                    await app.route_command("call")  # type: ignore[attr-defined]
+                    await app.route_command("meet")  # type: ignore[attr-defined]
                     return
-                if event.button.id == "btn_call_end":
+                if event.button.id == "btn_meet_end":
                     try:
                         app.post_message(AppendLine("[ui] End Call pressed"))  # type: ignore[attr-defined]
                     except Exception:
                         pass
-                    await app.route_command("end_call")  # type: ignore[attr-defined]
+                    await app.route_command("end_meet")  # type: ignore[attr-defined]
                     return
-                if event.button.id == "btn_screen_share_start":
-                    try:
-                        app.post_message(AppendLine("[ui] Share Screen pressed"))  # type: ignore[attr-defined]
-                    except Exception:
-                        pass
-                    await app.route_command("assistant_screen_share_start")  # type: ignore[attr-defined]
-                    return
-                if event.button.id == "btn_screen_share_stop":
-                    try:
-                        app.post_message(AppendLine("[ui] Stop Sharing pressed"))  # type: ignore[attr-defined]
-                    except Exception:
-                        pass
-                    await app.route_command("assistant_screen_share_stop")  # type: ignore[attr-defined]
+                if event.button.id == "btn_screen_share_toggle":
+                    btn = self.query_one("#btn_screen_share_toggle", Button)
+                    sharing = getattr(self, "_screen_share_active", False)
+                    if not sharing:
+                        try:
+                            app.post_message(AppendLine("[ui] Start Screen Share pressed"))  # type: ignore[attr-defined]
+                        except Exception:
+                            pass
+                        await app.route_command("assistant_screen_share_start")  # type: ignore[attr-defined]
+                        self._screen_share_active = True
+                        btn.label = "Stop Screen Share"
+                    else:
+                        try:
+                            app.post_message(AppendLine("[ui] Stop Screen Share pressed"))  # type: ignore[attr-defined]
+                        except Exception:
+                            pass
+                        await app.route_command("assistant_screen_share_stop")  # type: ignore[attr-defined]
+                        self._screen_share_active = False
+                        btn.label = "Start Screen Share"
                     return
                 if event.button.id == "btn_mic":
                     # Toggle mic recording: first click starts, second click stops.

@@ -1,14 +1,9 @@
 """
 CodeActActor tests for DataManager operations (simulated managers).
 
-Mirrors `test_operations.py` but validates CodeActActor produces Python that calls
-`primitives.data.*` (on-the-fly; no FunctionManager).
-
-Pattern: On-the-fly planning (Actor generates plans dynamically)
-
-Tests seed data before asking the LLM to operate on it so the LLM
-spends its budget on the actual operation (filter/reduce/join) rather
-than searching for or creating non-existent tables.
+Data operations (filter, reduce, join) may require multi-step composition,
+so ``execute_code`` is acceptable here. Both tools are exposed; the primary
+assertion is correct routing to data primitives.
 """
 
 from __future__ import annotations
@@ -267,7 +262,7 @@ DATA_JOIN_QUESTIONS: list[str] = list(_JOIN_SEEDERS.keys())
 async def test_code_act_filter_questions_use_data_primitives(
     question: str,
 ):
-    """Verify CodeActActor produces Python calling primitives.data.* for filter queries."""
+    """Verify CodeActActor calls primitives.data.* for filter queries (both tools exposed)."""
     async with make_code_act_actor(impl="simulated") as (actor, _primitives, calls):
         dm = ManagerRegistry.get_data_manager()
         for seeder in _FILTER_SEEDERS[question]:
@@ -291,7 +286,7 @@ async def test_code_act_filter_questions_use_data_primitives(
 async def test_code_act_reduce_questions_use_data_primitives(
     question: str,
 ):
-    """Verify CodeActActor produces Python calling primitives.data.* for aggregation queries."""
+    """Verify CodeActActor calls primitives.data.* for aggregation queries (both tools exposed)."""
     async with make_code_act_actor(impl="simulated") as (actor, _primitives, calls):
         dm = ManagerRegistry.get_data_manager()
         for seeder in _REDUCE_SEEDERS[question]:
@@ -315,7 +310,7 @@ async def test_code_act_reduce_questions_use_data_primitives(
 async def test_code_act_join_questions_use_data_primitives(
     question: str,
 ):
-    """Verify CodeActActor produces Python calling primitives.data.* for join queries."""
+    """Verify CodeActActor calls primitives.data.* for join queries (both tools exposed)."""
     async with make_code_act_actor(impl="simulated") as (actor, _primitives, calls):
         dm = ManagerRegistry.get_data_manager()
         for seeder in _JOIN_SEEDERS[question]:

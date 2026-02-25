@@ -95,7 +95,8 @@ def test_get_local_contact_has_correct_keys():
     """
     # Mock SESSION_DETAILS to avoid needing real session context
     mock_user = MagicMock()
-    mock_user.name = "Test User"
+    mock_user.first_name = "Test User"
+    mock_user.surname = ""
     mock_user.number = "+15555551234"
     mock_user.email = "test@example.com"
 
@@ -153,7 +154,8 @@ def mock_session_details():
     with patch("unity.conversation_manager.comms_manager.SESSION_DETAILS") as mock:
         mock.assistant.id = "test_assistant"
         mock.assistant.email = "assistant@test.com"
-        mock.user.name = "Test User"
+        mock.user.first_name = "Test User"
+        mock.user.surname = ""
         mock.user.number = "+15555550000"
         mock.user.email = "user@test.com"
         mock.unify_key = "test_key"
@@ -265,6 +267,7 @@ class TestHelperFunctions:
         assert result["contact_id"] == -1
         assert result["first_name"] == "Test User"
         assert result["surname"] == ""
+        # first_name carries the combined name from the mock fixture
         assert result["phone_number"] == "+15555550000"
         assert result["email_address"] == "user@test.com"
 
@@ -861,18 +864,19 @@ class TestStartupEvents:
                         "api_key": "test_api_key",
                         "assistant_id": "new_assistant_id",
                         "user_id": "user_123",
-                        "assistant_name": "Test Assistant",
+                        "assistant_first_name": "Test",
+                        "assistant_surname": "Assistant",
                         "assistant_age": "25",
                         "assistant_nationality": "American",
                         "assistant_about": "A helpful assistant",
                         "assistant_number": "+15555551234",
                         "assistant_email": "assistant@test.com",
-                        "user_name": "Test User",
+                        "user_first_name": "Test",
+                        "user_surname": "User",
                         "user_number": "+15555550000",
                         "user_email": "user@test.com",
                         "voice_provider": "cartesia",
                         "voice_id": "voice_123",
-                        "voice_mode": "tts",
                     },
                 )
 
@@ -915,18 +919,19 @@ class TestStartupEvents:
                     "api_key": "updated_api_key",
                     "assistant_id": "updated_assistant_id",
                     "user_id": "user_123",
-                    "assistant_name": "Updated Assistant",
+                    "assistant_first_name": "Updated",
+                    "assistant_surname": "Assistant",
                     "assistant_age": "30",
                     "assistant_nationality": "British",
                     "assistant_about": "An updated assistant",
                     "assistant_number": "+15555551234",
                     "assistant_email": "updated@test.com",
-                    "user_name": "Test User",
+                    "user_first_name": "Test",
+                    "user_surname": "User",
                     "user_number": "+15555550000",
                     "user_email": "user@test.com",
                     "voice_provider": "elevenlabs",
                     "voice_id": "new_voice",
-                    "voice_mode": "sts",
                 },
             )
 
@@ -940,8 +945,8 @@ class TestStartupEvents:
 
             event = Event.from_json(msg["data"])
             assert isinstance(event, AssistantUpdateEvent)
-            assert event.assistant_name == "Updated Assistant"
-            assert event.voice_mode == "sts"
+            assert event.assistant_first_name == "Updated"
+            assert event.assistant_surname == "Assistant"
 
 
 # =============================================================================
@@ -1424,12 +1429,12 @@ class TestPingMechanism:
     ):
         """Test that send_pings publishes keepalive ping events."""
         from unity.conversation_manager.comms_manager import CommsManager
-        from unity.conversation_manager.comms_manager import DEFAULT_ASSISTANT_ID
+        from unity.conversation_manager.comms_manager import UNASSIGNED_ASSISTANT_ID
 
         cm = CommsManager(broker)
 
         # Set assistant to default (triggers ping loop)
-        mock_session_details.assistant.id = DEFAULT_ASSISTANT_ID
+        mock_session_details.assistant.id = UNASSIGNED_ASSISTANT_ID
 
         async with broker.pubsub() as pubsub:
             await pubsub.subscribe("app:comms:ping")
