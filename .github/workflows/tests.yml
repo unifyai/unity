@@ -161,10 +161,10 @@ jobs:
   black:
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v2
+    - uses: actions/checkout@v4
 
     - name: Set up Python
-      uses: actions/setup-python@v2
+      uses: actions/setup-python@v5
       with:
         python-version: '3.12'
 
@@ -189,7 +189,7 @@ jobs:
       # Orchestra branch for local deployment
       orchestra_branch: ${{ steps.set-matrix.outputs.orchestra_branch }}
     steps:
-    - uses: actions/checkout@v2
+    - uses: actions/checkout@v4
 
     - id: set-matrix
       shell: bash
@@ -493,10 +493,10 @@ jobs:
       # No fallback - if delete_on_start is enabled, ORCHESTRA_URL must be set
       ORCHESTRA_URL: ${{ vars.ORCHESTRA_URL }}
     steps:
-    - uses: actions/checkout@v2
+    - uses: actions/checkout@v4
 
     - name: Set up Python
-      uses: actions/setup-python@v2
+      uses: actions/setup-python@v5
       with:
         python-version: '3.12'
 
@@ -566,12 +566,12 @@ jobs:
       # The repos are cloned to ./unillm/ and ./unify/, with packages inside
       PYTHONPATH: ${{ github.workspace }}/unillm:${{ github.workspace }}/unify
     steps:
-    - uses: actions/checkout@v2
+    - uses: actions/checkout@v4
       with:
         fetch-depth: 1
 
     - name: Clone orchestra repo for local deployment
-      uses: actions/checkout@v2
+      uses: actions/checkout@v4
       with:
         repository: unifyai/orchestra
         ref: ${{ needs.discover.outputs.orchestra_branch }}
@@ -580,7 +580,7 @@ jobs:
         fetch-depth: 1
 
     - name: Clone unify repo
-      uses: actions/checkout@v2
+      uses: actions/checkout@v4
       with:
         repository: unifyai/unify
         ref: ${{ github.ref_name == 'main' && 'main' || 'staging' }}
@@ -589,7 +589,7 @@ jobs:
         fetch-depth: 1
 
     - name: Clone unillm repo
-      uses: actions/checkout@v2
+      uses: actions/checkout@v4
       with:
         repository: unifyai/unillm
         ref: ${{ github.ref_name == 'main' && 'main' || 'staging' }}
@@ -696,7 +696,7 @@ jobs:
         echo "timeout_seconds=$((TIMEOUT_MINS * 60))" >> $GITHUB_OUTPUT
 
     - name: Set up Python
-      uses: actions/setup-python@v2
+      uses: actions/setup-python@v5
       with:
         python-version: '3.12'
 
@@ -1090,10 +1090,10 @@ jobs:
       # No fallback - if delete_on_exit is enabled, ORCHESTRA_URL must be set
       ORCHESTRA_URL: ${{ vars.ORCHESTRA_URL }}
     steps:
-    - uses: actions/checkout@v2
+    - uses: actions/checkout@v4
 
     - name: Set up Python
-      uses: actions/setup-python@v2
+      uses: actions/setup-python@v5
       with:
         python-version: '3.12'
 
@@ -1121,7 +1121,7 @@ jobs:
     needs: [should-run-tests, pytest, cleanup]
     if: always() && needs.should-run-tests.outputs.run_tests == 'true'
     steps:
-    - uses: actions/checkout@v2
+    - uses: actions/checkout@v4
 
     - name: Restore existing consolidated cache
       id: cache-restore
