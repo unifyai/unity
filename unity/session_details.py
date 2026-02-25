@@ -257,7 +257,6 @@ class SessionDetails:
         org_name: str = "",
         voice_provider: str = "",
         voice_id: str = "",
-        voice_mode: str = "",
         desktop_mode: str = "ubuntu",
         desktop_url: str | None = None,
         user_desktop_mode: str | None = None,
@@ -292,7 +291,6 @@ class SessionDetails:
         self.org.name = org_name
         self.voice.provider = voice_provider
         self.voice.id = voice_id
-        self.voice.mode = voice_mode
         self._initialized = True
 
     def reset(self) -> None:
