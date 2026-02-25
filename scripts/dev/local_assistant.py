@@ -139,15 +139,41 @@ def main():
         description="Create or fetch a local assistant and print env vars.",
     )
     group = parser.add_mutually_exclusive_group(required=True)
-    group.add_argument("--name", help="Assistant name (format: 'FirstName' or 'FirstName Surname')")
+    group.add_argument(
+        "--name",
+        help="Assistant name (format: 'FirstName' or 'FirstName Surname')",
+    )
     group.add_argument("--id", type=int, help="Existing assistant agent_id")
-    parser.add_argument("--staging", action="store_true", help="Target the staging environment (default: prod)")
-    parser.add_argument("--age", type=int, default=25, help="Age of the assistant (default: 25)")
+    parser.add_argument(
+        "--staging",
+        action="store_true",
+        help="Target the staging environment (default: prod)",
+    )
+    parser.add_argument(
+        "--age", type=int, default=25, help="Age of the assistant (default: 25)"
+    )
     parser.add_argument("--nationality", default="US", help="Nationality (default: US)")
-    parser.add_argument("--about", default="Local Assistant", help="Description (default: Local Assistant)")
-    parser.add_argument("--voice-id", default="ThT5KcBeYPX3keUQqHPh", help="Voice ID (default: ThT5KcBeYPX3keUQqHPh)")
-    parser.add_argument("--voice-provider", default="elevenlabs", help="Voice provider (default: elevenlabs)")
-    parser.add_argument("--voice-mode", choices=["tts", "sts"], default="tts", help="Voice mode (default: tts)")
+    parser.add_argument(
+        "--about",
+        default="Local Assistant",
+        help="Description (default: Local Assistant)",
+    )
+    parser.add_argument(
+        "--voice-id",
+        default="ThT5KcBeYPX3keUQqHPh",
+        help="Voice ID (default: ThT5KcBeYPX3keUQqHPh)",
+    )
+    parser.add_argument(
+        "--voice-provider",
+        default="elevenlabs",
+        help="Voice provider (default: elevenlabs)",
+    )
+    parser.add_argument(
+        "--voice-mode",
+        choices=["tts", "sts"],
+        default="tts",
+        help="Voice mode (default: tts)",
+    )
     args = parser.parse_args()
 
     env = "staging" if args.staging else "prod"

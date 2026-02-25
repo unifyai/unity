@@ -58,6 +58,10 @@ GKE_CLUSTER = "unity"
 GKE_REGION = "us-central1"
 SHARED_UNIFY_KEY = os.environ["SHARED_UNIFY_KEY"]
 
+# Resolve full paths for CLI tools (handles .cmd on Windows)
+GCLOUD = shutil.which("gcloud") or "gcloud"
+KUBECTL = shutil.which("kubectl") or "kubectl"
+
 
 # ─── Colours ─────────────────────────────────────────────────────────────────
 
@@ -117,7 +121,7 @@ def ensure_gke_credentials():
     """Silently refresh GKE cluster credentials."""
     result = subprocess.run(
         [
-            "gcloud",
+            GCLOUD,
             "container",
             "clusters",
             "get-credentials",
@@ -252,7 +256,7 @@ def stream_logs(job_name: str, namespace: str):
     try:
         subprocess.run(
             [
-                "kubectl",
+                KUBECTL,
                 "logs",
                 f"job/{job_name}",
                 "-n",
@@ -269,7 +273,7 @@ def stream_logs(job_name: str, namespace: str):
         time.sleep(5)
         subprocess.run(
             [
-                "kubectl",
+                KUBECTL,
                 "logs",
                 f"job/{job_name}",
                 "-n",
@@ -287,7 +291,7 @@ def _gcloud_logging_read(log_filter: str):
     """Run gcloud logging read with the given filter."""
     subprocess.run(
         [
-            "gcloud",
+            GCLOUD,
             "logging",
             "read",
             log_filter,
