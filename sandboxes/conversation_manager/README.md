@@ -222,11 +222,13 @@ These populate `SESSION_DETAILS` and the boss contact record. Without them the s
 
 | Variable | Default | Description |
 |---|---|---|
-| `USER_NAME` | `"User"` | Boss's first name |
+| `USER_FIRST_NAME` | `"User"` | Boss's first name |
+| `USER_SURNAME` | `""` | Boss's surname |
 | `USER_NUMBER` | `"+15550001234"` | Boss's phone number — **must be set for real SMS** |
 | `USER_EMAIL` | `"user@example.com"` | Boss's email — **must be set for real email** |
 | `USER_ID` | (auto) | Boss's user ID |
-| `ASSISTANT_NAME` | `"Default"` | Assistant's display name |
+| `ASSISTANT_FIRST_NAME` | `"Default"` | Assistant's first name |
+| `ASSISTANT_SURNAME` | `""` | Assistant's surname |
 | `ASSISTANT_NUMBER` | `"+10000000000"` | Assistant's outbound phone number (Twilio) — **must be set for real SMS/calls** |
 | `ASSISTANT_EMAIL` | `"assistant@unify.ai"` | Assistant's outbound email address — **must be set for real email** |
 | `ASSISTANT_ID` | (auto) | Assistant ID |
@@ -297,10 +299,12 @@ ANTHROPIC_API_KEY=sk-ant-...
 UNIFY_ENDPOINT=gpt-5@openai
 
 # Identity
-USER_NAME=Yusha
+USER_FIRST_NAME=Yusha
+USER_SURNAME=Arif
 USER_NUMBER=+19294608302
 USER_EMAIL=yusha@unify.ai
-ASSISTANT_NAME=Liz
+ASSISTANT_FIRST_NAME=Liz
+ASSISTANT_SURNAME=
 ASSISTANT_NUMBER=+19134048493
 ASSISTANT_EMAIL=default-assistant-4@unify.ai
 ASSISTANT_ID=4

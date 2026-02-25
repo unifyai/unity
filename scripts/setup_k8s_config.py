@@ -3,7 +3,7 @@
 Script to set up Kubernetes ConfigMaps and Secrets for Unity cluster.
 
 Creates cluster-wide configuration that all Unity pods will use.
-Only assistant-specific variables (ASSISTANT_ID, USER_NAME, etc.) are set per pod.
+Only assistant-specific variables (ASSISTANT_ID, USER_FIRST_NAME, etc.) are set per pod.
 
 Usage:
     python setup_k8s_config.py --create
