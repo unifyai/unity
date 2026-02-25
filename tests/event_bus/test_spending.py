@@ -219,7 +219,7 @@ class TestAtomicUpsert:
                             },
                         )
 
-        # Verify org_id and org_name are injected from SESSION_DETAILS into initial_data
+        # Verify org fields are injected from SESSION_DETAILS into initial_data
         initial_data = captured_payload.get("initial_data", {})
         assert initial_data.get("_org_id") == 789
         assert initial_data.get("_org") == "TestOrg"

@@ -15,6 +15,8 @@ _PRIVATE_FIELDS: Dict[str, str] = {
     "_user_id": "str",
     "_assistant": "str",
     "_assistant_id": "str",
+    "_org": "str",
+    "_org_id": "int",
 }
 
 _CREATE_CONTEXT_MAX_ATTEMPTS = 3
