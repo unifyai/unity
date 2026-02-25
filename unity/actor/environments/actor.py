@@ -153,7 +153,29 @@ def _resolve_prompt_guidance(
         else:
             rows = gm.filter(filter=f"title == '{identifier}'", limit=1)
         for g in rows:
-            sections.append(f"## {g.title}\n\n{g.content}")
+            parts = [f"## {g.title} [guidance_id: {g.guidance_id}]"]
+            parts.append(f"\n{g.content}")
+            if g.function_ids:
+                parts.append(f"\nRelated functions: {g.function_ids}")
+            imgs = g.images.root if hasattr(g.images, "root") else g.images
+            if imgs:
+                img_lines = ["Images:"]
+                for img in imgs:
+                    fp = getattr(
+                        getattr(img, "raw_image_ref", None),
+                        "filepath",
+                        None,
+                    )
+                    ann = getattr(img, "annotation", "")
+                    label = (
+                        fp
+                        or f"image_id={getattr(getattr(img, 'raw_image_ref', None), 'image_id', '?')}"
+                    )
+                    img_lines.append(
+                        f"- {label}: {ann}" if ann else f"- {label}",
+                    )
+                parts.append("\n".join(img_lines))
+            sections.append("\n".join(parts))
             resolved_ids.add(g.guidance_id)
 
     text = "\n\n---\n\n".join(sections) if sections else None

@@ -183,8 +183,9 @@ class FunctionStoreEnvironment(BaseEnvironment):
     def get_prompt_context(self) -> str:
         """Generate prompt context from stored function metadata.
 
-        Formats each function's signature and docstring as markdown,
-        using the FunctionManager's stored metadata as the source of truth.
+        Formats each function's signature, docstring, and LLM-meaningful
+        metadata as markdown, using the FunctionManager's stored metadata
+        as the source of truth.
         """
         if not self._func_metadata:
             return ""
@@ -201,10 +202,40 @@ class FunctionStoreEnvironment(BaseEnvironment):
             argspec = row.get("argspec", "(...)")
             docstring = row.get("docstring", "")
 
-            lines.append(f"\n**`{self.namespace}.{name}{argspec}`**")
+            header_parts = []
+            fid = row.get("function_id")
+            if fid is not None:
+                header_parts.append(f"function_id: {fid}")
+            lang = row.get("language")
+            if lang:
+                header_parts.append(f"language: {lang}")
+            if row.get("is_primitive"):
+                header_parts.append("primitive")
+            if row.get("windows_os_required"):
+                header_parts.append("windows_os_required")
+            header_tag = f" [{', '.join(header_parts)}]" if header_parts else ""
+
+            lines.append(
+                f"\n**`{self.namespace}.{name}{argspec}`**{header_tag}",
+            )
             if docstring:
                 for doc_line in docstring.splitlines():
                     lines.append(f"  {doc_line}")
+
+            gids = row.get("guidance_ids")
+            if gids:
+                lines.append(f"  Related guidance: {gids}")
+            deps = row.get("depends_on")
+            if deps:
+                lines.append(f"  Depends on: {', '.join(deps)}")
+            precond = row.get("precondition")
+            if precond:
+                lines.append(f"  Precondition: {precond}")
+            venv = row.get("venv_id")
+            if venv is not None:
+                lines.append(f"  Virtual environment: venv_id={venv}")
+            if row.get("verify") is False:
+                lines.append("  Verify: false")
 
         return "\n".join(lines)
 
