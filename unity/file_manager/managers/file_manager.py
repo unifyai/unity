@@ -205,19 +205,8 @@ class FileManager(BaseFileManager):
             ),
             fields=model_to_fields(FileRecord),
         )
-        try:
-            self._store.ensure_context()
-        except unify.RequestError as e:
-            body = getattr(e.response, "text", "") or ""
-            # Treat duplicate context as success and do not emit error output
-            if "already exists" in body:
-                pass
-
-        # Ensure storage via shared helper (idempotent)
-        try:
-            self._provision_storage()
-        except Exception:
-            pass
+        self._store.ensure_context()
+        self._provision_storage()
 
         # Public tool dictionaries, mirroring other managers
         # Multi-table tools (joins across per-file tables)
