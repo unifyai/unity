@@ -69,7 +69,6 @@ def _make_startup_event_kwargs() -> dict:
         user_email="boss@test.com",
         voice_provider="cartesia",
         voice_id="test_voice",
-        voice_mode="tts",
     )
 
 
@@ -96,7 +95,6 @@ def _make_idle_cm(event_broker):
         user_email="",
         voice_provider="",
         voice_id="",
-        voice_mode="",
         project_name="TestProject",
         stop=stop,
     )

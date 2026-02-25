@@ -1793,7 +1793,6 @@ class TestAssistantUpdateEventHandler:
             user_email="boss@updated.com",
             voice_id="voice_123",
             voice_provider="cartesia",
-            voice_mode="tts",
         )
 
         with patch(
@@ -1831,7 +1830,6 @@ class TestAssistantUpdateEventHandler:
             user_email="boss@updated.com",
             voice_id="voice_123",
             voice_provider="cartesia",
-            voice_mode="tts",
         )
 
         with patch(
@@ -1866,7 +1864,6 @@ class TestAssistantUpdateEventHandler:
             user_email="boss@updated.com",
             voice_id="voice_123",
             voice_provider="cartesia",
-            voice_mode="tts",
         )
 
         with patch(
@@ -1901,7 +1898,6 @@ class TestAssistantUpdateEventHandler:
             user_email="new_boss@test.com",
             voice_id="voice_123",
             voice_provider="cartesia",
-            voice_mode="tts",
         )
 
         with patch(
@@ -1952,7 +1948,6 @@ class TestAssistantUpdateEventHandler:
             user_email="boss@updated.com",
             voice_id="voice_123",
             voice_provider="cartesia",
-            voice_mode="tts",
         )
 
         with patch(

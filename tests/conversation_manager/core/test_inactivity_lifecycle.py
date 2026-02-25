@@ -91,7 +91,6 @@ def minimal_cm_config():
         "user_email": "user@test.com",
         "voice_provider": "cartesia",
         "voice_id": "test_voice",
-        "voice_mode": "tts",
     }
 
 
@@ -599,7 +598,6 @@ class TestFullLifecycleIntegration:
             "user_email": "live_user@test.com",
             "voice_provider": "cartesia",
             "voice_id": "voice_123",
-            "voice_mode": "tts",
         }
         cm.set_details(startup_payload)
 

@@ -171,7 +171,6 @@ class TestSubscriptionSwitching:
                 "user_email": "boss@test.com",
                 "voice_provider": "cartesia",
                 "voice_id": "test_voice",
-                "voice_mode": "tts",
             }
             message = create_pubsub_message("startup", startup_event)
 
@@ -235,7 +234,6 @@ class TestSubscriptionSwitching:
                 "user_email": "b@test.com",
                 "voice_provider": "cartesia",
                 "voice_id": "",
-                "voice_mode": "tts",
             }
             message = create_pubsub_message("startup", startup_event)
 
@@ -544,7 +542,6 @@ class TestStartupInboundRace:
                     "user_email": "b@test.com",
                     "voice_provider": "cartesia",
                     "voice_id": "",
-                    "voice_mode": "tts",
                 }
                 message = create_pubsub_message("startup", startup_event)
 
@@ -961,7 +958,6 @@ class TestDemoIdPropagation:
                     "user_email": "boss@test.com",
                     "voice_provider": "cartesia",
                     "voice_id": "test_voice",
-                    "voice_mode": "tts",
                     "demo_id": 42,  # Demo ID set
                 }
                 message = create_pubsub_message("startup", startup_event)
@@ -1031,7 +1027,6 @@ class TestDemoIdPropagation:
                     "user_email": "boss@test.com",
                     "voice_provider": "cartesia",
                     "voice_id": "test_voice",
-                    "voice_mode": "tts",
                 }
                 message = create_pubsub_message("startup", startup_event)
 
@@ -1095,7 +1090,6 @@ class TestDemoIdPropagation:
                 user_number="+15555550001",
                 user_email="boss@test.com",
                 voice_id="test",
-                voice_mode="tts",
                 demo_id=99,
             )
 

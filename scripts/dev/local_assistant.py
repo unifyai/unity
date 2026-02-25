@@ -79,7 +79,6 @@ def _create(
     about: str = "Local Assistant",
     voice_id: str = "ThT5KcBeYPX3keUQqHPh",
     voice_provider: str = "elevenlabs",
-    voice_mode: str = "tts",
 ):
     """Create a local assistant."""
     payload = {
@@ -90,7 +89,6 @@ def _create(
         "about": about,
         "voice_id": voice_id,
         "voice_provider": voice_provider,
-        "voice_mode": voice_mode,
         "is_local": True,
     }
     resp = requests.post(
@@ -159,7 +157,6 @@ def _print_env(assistant: dict, user: dict, api_key: str, staging: bool):
         "SHARED_UNIFY_KEY=",
         f"VOICE_PROVIDER={_v(assistant.get('voice_provider'))}",
         f"VOICE_ID={_v(assistant.get('voice_id'))}",
-        f"VOICE_MODE={_v(assistant.get('voice_mode'))}",
         "TAVILY_API_KEY=",
         "PROJECT_ID=",
     ]
@@ -253,7 +250,6 @@ def main():
                 about=args.about,
                 voice_id=args.voice_id,
                 voice_provider=args.voice_provider,
-                voice_mode=args.voice_mode,
             )
             print(
                 f"# Created assistant id={assistant['agent_id']}",
