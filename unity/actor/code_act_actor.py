@@ -1292,6 +1292,7 @@ class CodeActActor(BaseCodeActActor):
         model: object = _UNSET,
         preprocess_msgs: Optional[Callable[[list[dict]], list[dict]]] = None,
         prompt_caching: object = _UNSET,
+        guidelines: object = _UNSET,
         tool_policy: Union[ToolPolicyFn, None, object] = _USE_DEFAULT,
     ):
         """
@@ -1324,6 +1325,10 @@ class CodeActActor(BaseCodeActActor):
             prompt_caching: Optional list of cache targets (e.g. ["system", "messages"]).
                 Enables Anthropic prompt caching for the specified components to reduce
                 costs and latency. Valid values: "tools", "system", "messages".
+            guidelines: Persistent behavioral guidelines applied to every ``act()``
+                invocation.  Per-invocation ``guidelines`` passed to ``act()`` are
+                appended after these, so the constructor value acts as a baseline
+                and ``act()`` adds task-specific refinements on top.
             tool_policy: Controls per-turn dynamic tool filtering and tool-choice mode.
                 - ``_USE_DEFAULT`` (default): uses the built-in "discovery-first"
                   policy that requires both a FunctionManager and a GuidanceManager
@@ -1353,6 +1358,8 @@ class CodeActActor(BaseCodeActActor):
             db_config.prompt_caching,
             ("system", "tools", "messages"),
         )
+        guidelines = _resolve_param(guidelines, db_config.guidelines, None)
+        self._base_guidelines = guidelines
 
         # Collect function_ids from all environments, split by context, and set
         # them on the FunctionManager via setters. This prevents overlap between
@@ -3249,11 +3256,15 @@ class CodeActActor(BaseCodeActActor):
                 "    session_created, duration_ms).\n"
             )
 
+        effective_guidelines = (
+            "\n\n".join(filter(None, [self._base_guidelines, guidelines])) or None
+        )
+
         system_prompt = build_code_act_prompt(
             environments=sandbox_envs,
             tools=base_tools,
             can_store=effective_can_store,
-            guidelines=guidelines,
+            guidelines=effective_guidelines,
             discovery_first_policy=self.tool_policy is _USE_DEFAULT,
         )
 

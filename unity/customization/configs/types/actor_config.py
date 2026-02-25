@@ -38,6 +38,10 @@ class ActorConfig(BaseModel):
             "Valid values: 'tools', 'system', 'messages'."
         ),
     )
+    guidelines: Optional[str] = Field(
+        default=None,
+        description="Persistent behavioral guidelines applied to every act() invocation.",
+    )
 
     def to_post_json(self) -> dict:
         """Return a JSON-safe dict with only the explicitly set (non-None) fields."""
