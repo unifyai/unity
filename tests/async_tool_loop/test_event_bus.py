@@ -253,7 +253,7 @@ async def test_ask_publishes_boundary_events(llm_config) -> None:
     )
 
     # Wait for the loop to produce its first response
-    await asyncio.sleep(1)
+    await _wait_for_next_assistant_response_event(client)
 
     async with capture_events("ManagerMethod") as mm_events:
         ask_handle = await handle.ask("What are you doing?")
@@ -311,7 +311,7 @@ async def test_ask_sibling_hierarchy(llm_config) -> None:
         max_consecutive_failures=1,
     )
 
-    await asyncio.sleep(1)
+    await _wait_for_next_assistant_response_event(client)
 
     async with capture_events("ManagerMethod") as mm_events:
         ask_handle = await handle.ask("What status?")
@@ -407,7 +407,7 @@ async def test_ask_boundary_suffix_matches_sub_loop(llm_config) -> None:
         max_consecutive_failures=1,
     )
 
-    await asyncio.sleep(1)
+    await _wait_for_next_assistant_response_event(client)
 
     async with (
         capture_events("ManagerMethod") as mm_events,
