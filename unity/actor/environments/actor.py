@@ -373,6 +373,10 @@ class _ActorRunner:
             instructions, SOPs, composition strategies) to the actor
             without requiring it to discover them via search.
 
+            Prompt-injected guidance entries are automatically excluded
+            from the actor's GuidanceManager search/filter results, so
+            they will not appear as duplicates during discovery.
+
             Example::
 
                 prompt_guidance=["Excel Processing Guide", 42]
