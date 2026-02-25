@@ -8,15 +8,18 @@ Usage:
     python scripts/dev/suspend_job.py unity-2026-02-25-12-00-00 --namespace staging
 """
 
+from dotenv import load_dotenv
 import argparse
 import os
 import sys
 
 import requests
 
+load_dotenv()
+
 COMMS_URLS = {
-    "prod": os.getenv("UNITY_COMMS_URL", ""),
-    "staging": os.getenv("UNITY_COMMS_URL", ""),
+    "prod": "https://unity-comms-app-262420637606.us-central1.run.app",
+    "staging": "https://unity-comms-app-staging-262420637606.us-central1.run.app",
 }
 
 DEFAULT_NAMESPACES = {
@@ -64,28 +67,12 @@ def main():
         default=None,
         help="K8s namespace (default: 'production' for prod, 'staging' for staging)",
     )
-    parser.add_argument(
-        "--comms-url",
-        default=None,
-        help="Override the comms service URL",
-    )
-    parser.add_argument(
-        "--admin-key",
-        default=None,
-        help="Override the admin key",
-    )
     args = parser.parse_args()
 
     env = "staging" if args.staging else "prod"
-    comms_url = args.comms_url or os.getenv("UNITY_COMMS_URL")
-    admin_key = args.admin_key or os.getenv("ORCHESTRA_ADMIN_KEY")
     namespace = args.namespace or DEFAULT_NAMESPACES[env]
-
-    if not comms_url or not admin_key:
-        parser.error(
-            "Requires UNITY_COMMS_URL and ORCHESTRA_ADMIN_KEY env vars "
-            "(or --comms-url and --admin-key)"
-        )
+    comms_url = COMMS_URLS[env]
+    admin_key = os.getenv("ORCHESTRA_ADMIN_KEY")
 
     print(f"Environment: {env}")
     suspend_job(comms_url, admin_key, args.job_name, namespace)
