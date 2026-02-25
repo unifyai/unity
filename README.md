@@ -36,6 +36,26 @@ Related repositories:
 - [Communication](https://github.com/unifyai/communication) — External communication gateway (voice, SMS, email)
 - [Console](https://github.com/unifyai/console) — Web UI and observability dashboard
 
+## Security
+
+### Container Runtime
+
+Unity containers run as a non-root `unity` user (UID 1000). The Playwright browser cache and log directories are owned by this user. Tini is used as the init system for proper signal handling.
+
+### Authentication
+
+Unity containers authenticate to all external services using the `ORCHESTRA_ADMIN_KEY`:
+- Calls to the **Communication API** (`UNITY_COMMS_URL`) include `Authorization: Bearer {admin_key}` on all requests (SMS, email, phone, infrastructure management)
+- Calls to the **Adapters** (`UNITY_ADAPTERS_URL`) include the same header for attachment uploads and other adapter endpoints
+- Calls to **Orchestra** (`ORCHESTRA_URL`) use per-user API keys (not the admin key)
+
+### Required Environment Variables (Security)
+
+| Variable | Purpose |
+|----------|---------|
+| `ORCHESTRA_ADMIN_KEY` | Authentication to Communication and Adapter services |
+| `UNIFY_KEY` | API key for Unify SDK operations |
+
 ## Table of Contents
 
 - [Architecture Overview](#architecture-overview)

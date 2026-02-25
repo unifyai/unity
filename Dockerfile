@@ -101,6 +101,16 @@ ENV UNITY_LOG_DIR=/var/log/unity
 ENV UNIFY_LOG_DIR=/var/log/unify
 ENV UNILLM_LOG_DIR=/var/log/unillm
 
+# Create non-root user for runtime
+RUN useradd -m -u 1000 unity && \
+    mkdir -p /var/log/unity /var/log/unify /var/log/unillm && \
+    chown -R unity:unity /app /var/log/unity /var/log/unify /var/log/unillm && \
+    cp -r /root/.cache /home/unity/.cache 2>/dev/null; \
+    chown -R unity:unity /home/unity/.cache 2>/dev/null; \
+    true
+
+USER unity
+
 # Expose the ports that the applications use
 # 8000: conversation manager, 3000: agent-service (Magnitude)
 EXPOSE 8000 3000
