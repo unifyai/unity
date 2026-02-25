@@ -511,7 +511,7 @@ async def entrypoint(ctx: agents.JobContext):
 
             copy_visual_id = _visual_ctx_msg_id
 
-            if screen_capture._latest_frame_data is not None:
+            if is_user_turn and screen_capture._latest_frame_data is not None:
                 b64 = screen_capture.capture_screenshot()
                 if b64:
                     _handle_screenshot(
@@ -523,7 +523,7 @@ async def entrypoint(ctx: agents.JobContext):
                         ),
                     )
                     captured_any = True
-            if webcam_capture._latest_frame_data is not None:
+            if is_user_turn and webcam_capture._latest_frame_data is not None:
                 b64 = webcam_capture.capture_screenshot()
                 if b64:
                     _handle_screenshot(
