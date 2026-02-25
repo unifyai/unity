@@ -884,6 +884,12 @@ async def _startup_sequence(cm: "ConversationManager"):
     from unity.function_manager.primitives.runtime import _vm_ready
 
     _vm_ready.set()
+
+    # Pre-warm the desktop session so it is ready before screen sharing starts.
+    # get_session("desktop") is idempotent — the AssistantScreenShareStarted
+    # handler also calls it as a safety net.
+    asyncio.ensure_future(_ensure_desktop_session(cm))
+
     await managers_utils._start_file_sync()
 
 
@@ -1129,6 +1135,32 @@ def _recent_conversation_snippet(cm: "ConversationManager", n: int = 4) -> str |
     return "\n".join(lines)
 
 
+async def _ensure_desktop_session(cm: "ConversationManager") -> None:
+    """Create a desktop session in agent-service if one doesn't already exist.
+
+    Sessions are lazy (created on first ``get_session`` call), so this must be
+    called explicitly to guarantee the ``/screenshot`` endpoint has an active
+    session to fall back to.  ``get_session`` is idempotent — calling it when a
+    session already exists returns the cached instance.
+    """
+    try:
+        from unity.function_manager.primitives.runtime import ComputerPrimitives
+        from unity.manager_registry import ManagerRegistry
+
+        cp = ManagerRegistry.get_instance(ComputerPrimitives)
+        if cp is not None:
+            session = await cp.backend.get_session("desktop")
+            cm._session_logger.info(
+                "screenshot_capture",
+                f"Desktop session ready: {session._session_id}",
+            )
+    except Exception as e:
+        cm._session_logger.warning(
+            "screenshot_capture",
+            f"Failed to create desktop session: {type(e).__name__}: {e}",
+        )
+
+
 # --------------------------------------------------------------------------- #
 # Meet Interaction Events (screen share / remote control)
 # --------------------------------------------------------------------------- #
@@ -1265,31 +1297,8 @@ async def _(
 
     await cm.schedule_proactive_speech()
 
-    # Eagerly create the desktop session when screen sharing starts so
-    # the agent-service has an active session for fast brain screenshot
-    # capture. Sessions are lazy, so get_session() is needed to trigger
-    # the /start call that populates activeSessions.
     if isinstance(event, AssistantScreenShareStarted):
-
-        async def _ensure_desktop_session():
-            try:
-                from unity.function_manager.primitives.runtime import ComputerPrimitives
-                from unity.manager_registry import ManagerRegistry
-
-                cp = ManagerRegistry.get_instance(ComputerPrimitives)
-                if cp is not None:
-                    session = await cp.backend.get_session("desktop")
-                    cm._session_logger.info(
-                        "screenshot_capture",
-                        f"Desktop session ready: {session._session_id}",
-                    )
-            except Exception as e:
-                cm._session_logger.warning(
-                    "screenshot_capture",
-                    f"Failed to create desktop session: {type(e).__name__}: {e}",
-                )
-
-        asyncio.ensure_future(_ensure_desktop_session())
+        asyncio.ensure_future(_ensure_desktop_session(cm))
 
     # Broadcast remote-control state change to all active CodeActActor loops
     # via the ComputerPrimitives singleton interject queue registry.
