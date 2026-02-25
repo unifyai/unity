@@ -6,10 +6,10 @@ Intended to run after a Unity Cloud Build completes, replacing the
 hourly Cloud Scheduler cron with an event-driven trigger.
 
 Usage:
-    python scripts/idle_job_refresh.py                 # prod (default, lists jobs)
-    python scripts/idle_job_refresh.py --staging       # staging
-    python scripts/idle_job_refresh.py --no-list-jobs  # skip job listing
-    python scripts/idle_job_refresh.py --delay 45
+    python scripts/dev/idle_job_refresh.py                 # prod (default, lists jobs)
+    python scripts/dev/idle_job_refresh.py --staging       # staging
+    python scripts/dev/idle_job_refresh.py --no-list-jobs  # skip job listing
+    python scripts/dev/idle_job_refresh.py --delay 45
 """
 
 import argparse
