@@ -907,6 +907,12 @@ async def _(event: StartupEvent, cm: "ConversationManager", *args, **kwargs):
         cm.set_details(payload)
         cm.call_manager.set_config(cm.get_call_config())
 
+        # Initialize unity with the correct assistant record BEFORE spawning
+        # concurrent tasks. This closes the race where _startup_sequence
+        # triggers ensure_initialised() before _init_managers can call
+        # unity.init() with the authoritative assistant record.
+        await asyncio.to_thread(managers_utils.init_unity_runtime)
+
         # Job logging + file sync run in sequence (file sync needs VM details from job startup)
         asyncio.create_task(_startup_sequence(cm))
 

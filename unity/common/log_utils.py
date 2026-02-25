@@ -70,12 +70,16 @@ def _get_assistant_context() -> Optional[str]:
 
 
 def _get_assistant_id() -> Optional[str]:
-    """Retrieve assistant's agent_id from SESSION_DETAILS as a string."""
+    """Retrieve assistant's agent_id from SESSION_DETAILS as a string.
+
+    Falls back to SESSION_DETAILS.assistant.id (set early by the startup event)
+    so that logs emitted before unity.init() completes still carry _assistant_id.
+    """
     if SESSION_DETAILS.assistant_record is not None:
         agent_id = SESSION_DETAILS.assistant_record.get("agent_id")
         if agent_id is not None:
             return str(agent_id)
-    return None
+    return SESSION_DETAILS.assistant.id or None
 
 
 def _get_org_id() -> Optional[int]:

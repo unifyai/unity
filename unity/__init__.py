@@ -79,7 +79,7 @@ def init(
     project_name: str = "Assistants",
     assistant_id: Optional[int] = None,
     overwrite: bool = False,
-    default_assistant: dict | None = None,
+    assistant_record: dict | None = None,
 ) -> None:  # noqa: D401 – imperative name
     """Initialise the *unity* runtime.
 
@@ -90,6 +90,14 @@ def init(
     2. Construct and wire-up the global :pydata:`unity.events.event_bus.EVENT_BUS`
        singleton.  Until this function is called attempts to use
        ``EVENT_BUS`` raise a :class:`RuntimeError`.
+
+    Parameters
+    ----------
+    assistant_record : dict | None
+        The authoritative assistant dict (from the startup event). When provided,
+        used directly as SESSION_DETAILS.assistant_record. When absent, the record
+        is looked up via *assistant_id* from the Unify API — a matching assistant
+        **must** exist or a ValueError is raised.
     """
 
     global _INITIALISED
@@ -106,27 +114,23 @@ def init(
         unify.activate(project_name, overwrite)
 
     # ── assistant validation & context selection ─────────────────────────
-    # Determine which assistant record to use and store in SESSION_DETAILS
-    assistants = _list_all_assistants()
-
-    if assistants:
-        if not default_assistant:
-            if assistant_id is None:
-                SESSION_DETAILS.assistant_record = assistants[0]
-            else:
-                filtered_assistants = [
-                    assistant
-                    for assistant in assistants
-                    if assistant["agent_id"] == str(assistant_id)
-                ]
-                SESSION_DETAILS.assistant_record = (
-                    filtered_assistants[0] if filtered_assistants else None
-                )
-        else:
-            SESSION_DETAILS.assistant_record = default_assistant
+    if assistant_record:
+        SESSION_DETAILS.assistant_record = assistant_record
+    elif assistant_id is not None:
+        assistants = _list_all_assistants()
+        filtered = [a for a in assistants if a["agent_id"] == str(assistant_id)]
+        if not filtered:
+            raise ValueError(
+                f"No assistant with agent_id={assistant_id} found among "
+                f"{len(assistants)} assistants. Pass assistant_record explicitly "
+                f"or ensure the assistant exists.",
+            )
+        SESSION_DETAILS.assistant_record = filtered[0]
     else:
-        # No assistants returned or explicitly passed (offline)
-        SESSION_DETAILS.assistant_record = default_assistant
+        # No assistant specified — only acceptable in test/offline environments
+        # where SESSION_DETAILS.assistant.id is already populated (provides
+        # the fallback context path via assistant_context property).
+        pass
 
     # 2. Set the Unify context using user_id/assistant_id (e.g., "42/7")
     full_ctx = f"{SESSION_DETAILS.user_context}/{SESSION_DETAILS.assistant_context}"
@@ -165,7 +169,7 @@ def ensure_initialised(
     project_name: str = "Assistants",
     assistant_id: Optional[int] = None,
     overwrite: bool = False,
-    default_assistant: dict | None = None,
+    assistant_record: dict | None = None,
 ) -> None:
     """Ensure the runtime is initialised if no active read/write contexts exist.
 
@@ -189,7 +193,7 @@ def ensure_initialised(
         project_name=project_name,
         assistant_id=assistant_id,
         overwrite=overwrite,
-        default_assistant=default_assistant,
+        assistant_record=assistant_record,
     )
 
 
