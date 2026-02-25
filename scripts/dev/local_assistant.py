@@ -9,34 +9,45 @@ instead of on GKE.
 
 Usage:
     # Create a new local assistant (or fetch existing by name):
-    python scripts/dev/local_assistant.py --api-key YOUR_KEY --name "Dev Assistant"
+    python scripts/dev/local_assistant.py --name "Dev Assistant"
 
     # Fetch an existing local assistant by ID:
-    python scripts/dev/local_assistant.py --api-key YOUR_KEY --id 42
+    python scripts/dev/local_assistant.py --id 42
+
+    # Target staging:
+    python scripts/dev/local_assistant.py --name "Dev" --staging
 
     # Source directly into your shell:
-    source <(python scripts/dev/local_assistant.py --api-key YOUR_KEY --name "Dev")
+    source <(python scripts/dev/local_assistant.py --name "Dev")
 
     # Write to a .env file:
-    python scripts/dev/local_assistant.py --api-key YOUR_KEY --name "Dev" > .env.local
+    python scripts/dev/local_assistant.py --name "Dev" > .env.local
+
+Requires UNIFY_KEY in the environment (loaded from .env).
 """
 
+from dotenv import load_dotenv
 import argparse
-import json
+import os
 import sys
 
 import requests
 
-ORCHESTRA_URL = "https://api.unify.ai/v0"
+load_dotenv()
+
+ORCHESTRA_URLS = {
+    "prod": "https://api.unify.ai/v0",
+    "staging": "https://orchestra-staging-lz5fmz6i7q-ew.a.run.app/v0",
+}
 
 
 def _headers(api_key: str) -> dict:
     return {"Authorization": f"Bearer {api_key}"}
 
 
-def _find_existing(api_key: str, first_name: str, surname: str):
+def _find_existing(orchestra_url: str, api_key: str, first_name: str, surname: str):
     """Find an existing assistant by name."""
-    resp = requests.get(f"{ORCHESTRA_URL}/assistant", headers=_headers(api_key))
+    resp = requests.get(f"{orchestra_url}/assistant", headers=_headers(api_key))
     resp.raise_for_status()
     for a in resp.json().get("info", []):
         if a.get("first_name") == first_name and a.get("surname") == surname:
@@ -44,26 +55,42 @@ def _find_existing(api_key: str, first_name: str, surname: str):
     return None
 
 
-def _fetch_by_id(api_key: str, agent_id: int):
+def _fetch_by_id(orchestra_url: str, api_key: str, agent_id: int):
     """Fetch an assistant by ID."""
     resp = requests.get(
-        f"{ORCHESTRA_URL}/assistant/{agent_id}",
+        f"{orchestra_url}/assistant/{agent_id}",
         headers=_headers(api_key),
     )
     resp.raise_for_status()
     return resp.json().get("info")
 
 
-def _create(api_key: str, first_name: str, surname: str):
-    """Create a local assistant with no infra provisioned."""
+def _create(
+    orchestra_url: str,
+    api_key: str,
+    first_name: str,
+    surname: str,
+    age: int = 25,
+    nationality: str = "US",
+    about: str = "Local Assistant",
+    voice_id: str = "ThT5KcBeYPX3keUQqHPh",
+    voice_provider: str = "elevenlabs",
+    voice_mode: str = "tts",
+):
+    """Create a local assistant."""
     payload = {
         "first_name": first_name,
         "surname": surname,
+        "age": age,
+        "nationality": nationality,
+        "about": about,
+        "voice_id": voice_id,
+        "voice_provider": voice_provider,
+        "voice_mode": voice_mode,
         "is_local": True,
-        "create_infra": False,
     }
     resp = requests.post(
-        f"{ORCHESTRA_URL}/assistant",
+        f"{orchestra_url}/assistant",
         json=payload,
         headers=_headers(api_key),
     )
@@ -71,9 +98,9 @@ def _create(api_key: str, first_name: str, surname: str):
     return resp.json().get("info")
 
 
-def _get_user_info(api_key: str):
+def _get_user_info(orchestra_url: str, api_key: str):
     """Fetch the authenticated user's profile."""
-    resp = requests.get(f"{ORCHESTRA_URL}/user", headers=_headers(api_key))
+    resp = requests.get(f"{orchestra_url}/user", headers=_headers(api_key))
     resp.raise_for_status()
     return resp.json().get("info", resp.json())
 
@@ -111,16 +138,29 @@ def main():
     parser = argparse.ArgumentParser(
         description="Create or fetch a local assistant and print env vars.",
     )
-    parser.add_argument("--api-key", required=True, help="Unify API key")
     group = parser.add_mutually_exclusive_group(required=True)
     group.add_argument("--name", help="Assistant name (format: 'FirstName' or 'FirstName Surname')")
     group.add_argument("--id", type=int, help="Existing assistant agent_id")
+    parser.add_argument("--staging", action="store_true", help="Target the staging environment (default: prod)")
+    parser.add_argument("--age", type=int, default=25, help="Age of the assistant (default: 25)")
+    parser.add_argument("--nationality", default="US", help="Nationality (default: US)")
+    parser.add_argument("--about", default="Local Assistant", help="Description (default: Local Assistant)")
+    parser.add_argument("--voice-id", default="ThT5KcBeYPX3keUQqHPh", help="Voice ID (default: ThT5KcBeYPX3keUQqHPh)")
+    parser.add_argument("--voice-provider", default="elevenlabs", help="Voice provider (default: elevenlabs)")
+    parser.add_argument("--voice-mode", choices=["tts", "sts"], default="tts", help="Voice mode (default: tts)")
     args = parser.parse_args()
 
-    api_key = args.api_key
+    env = "staging" if args.staging else "prod"
+    orchestra_url = ORCHESTRA_URLS[env]
+    api_key = os.getenv("UNIFY_KEY")
+    if not api_key:
+        print("Error: UNIFY_KEY env var required", file=sys.stderr)
+        sys.exit(1)
+
+    print(f"# Environment: {env} ({orchestra_url})", file=sys.stderr)
 
     if args.id is not None:
-        assistant = _fetch_by_id(api_key, args.id)
+        assistant = _fetch_by_id(orchestra_url, api_key, args.id)
         if not assistant:
             print(f"Error: assistant {args.id} not found", file=sys.stderr)
             sys.exit(1)
@@ -129,7 +169,7 @@ def main():
         first_name = parts[0]
         surname = parts[1] if len(parts) > 1 else ""
 
-        assistant = _find_existing(api_key, first_name, surname)
+        assistant = _find_existing(orchestra_url, api_key, first_name, surname)
         if assistant:
             print(
                 f"# Found existing assistant: {first_name} {surname} "
@@ -141,13 +181,24 @@ def main():
                 f"# Creating local assistant: {first_name} {surname}",
                 file=sys.stderr,
             )
-            assistant = _create(api_key, first_name, surname)
+            assistant = _create(
+                orchestra_url,
+                api_key,
+                first_name,
+                surname,
+                age=args.age,
+                nationality=args.nationality,
+                about=args.about,
+                voice_id=args.voice_id,
+                voice_provider=args.voice_provider,
+                voice_mode=args.voice_mode,
+            )
             print(
                 f"# Created assistant id={assistant['agent_id']}",
                 file=sys.stderr,
             )
 
-    user = _get_user_info(api_key)
+    user = _get_user_info(orchestra_url, api_key)
     _print_env(assistant, user, api_key)
 
 
