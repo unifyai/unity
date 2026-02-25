@@ -42,7 +42,10 @@ def suspend_job(comms_url: str, admin_key: str, job_name: str, namespace: str):
         data = resp.json()
         print(f"  {data.get('message', data)}")
     except requests.exceptions.HTTPError as e:
-        print(f"  Failed ({e.response.status_code}): {e.response.text}", file=sys.stderr)
+        print(
+            f"  Failed ({e.response.status_code}): {e.response.text}",
+            file=sys.stderr,
+        )
         sys.exit(1)
     except Exception as e:
         print(f"  Failed: {e}", file=sys.stderr)
