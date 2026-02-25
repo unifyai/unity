@@ -97,7 +97,6 @@ def mock_call_manager():
     manager.start_call = AsyncMock()
     manager.start_unify_meet = AsyncMock()
     manager.cleanup_call_proc = AsyncMock()
-    manager.uses_realtime_api = False
     manager.conference_name = None
     manager.call_contact = None
     manager.call_exchange_id = -1

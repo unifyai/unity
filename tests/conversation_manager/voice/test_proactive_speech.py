@@ -1096,46 +1096,12 @@ class TestProactiveSpeechMediumScriptIntegration:
     """Tests verifying medium scripts properly handle proactive speech."""
 
     def test_tts_call_subscribes_to_call_guidance(self):
-        """call.py (TTS mode) should subscribe to app:call:call_guidance."""
+        """call.py should subscribe to app:call:call_guidance."""
         import inspect
         from unity.conversation_manager.medium_scripts import call
 
-        # Read the source to verify subscription
         source = inspect.getsource(call)
         assert (
             "app:call:call_guidance" in source
-        ), "call.py (TTS mode) should subscribe to app:call:call_guidance"
+        ), "call.py should subscribe to app:call:call_guidance"
         assert "on_guidance" in source, "call.py should have an on_guidance callback"
-
-    def test_sts_call_subscribes_to_call_guidance(self):
-        """sts_call.py (STS/fast mode) should subscribe to app:call:call_guidance."""
-        import inspect
-        from unity.conversation_manager.medium_scripts import sts_call
-
-        # Read the source to verify subscription
-        source = inspect.getsource(sts_call)
-        assert (
-            "app:call:call_guidance" in source
-        ), "sts_call.py (STS mode) should subscribe to app:call:call_guidance"
-        assert (
-            "on_guidance" in source
-        ), "sts_call.py should have an on_guidance callback"
-
-    def test_tts_and_sts_guidance_handlers_have_same_interface(self):
-        """Both TTS and STS guidance handlers should handle the same payload structure."""
-        import inspect
-        from unity.conversation_manager.medium_scripts import call, sts_call
-
-        # Both should extract content from payload
-        tts_source = inspect.getsource(call)
-        sts_source = inspect.getsource(sts_call)
-
-        # Both should handle payload.get("content")
-        assert (
-            'payload.get("content"' in tts_source
-            or "payload.get('content'" in tts_source
-        ), "TTS call.py should extract content from payload"
-        assert (
-            'payload.get("content"' in sts_source
-            or "payload.get('content'" in sts_source
-        ), "STS sts_call.py should extract content from payload"

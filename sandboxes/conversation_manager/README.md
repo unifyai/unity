@@ -235,9 +235,9 @@ These populate `SESSION_DETAILS` and the boss contact record. Without them the s
 | `DEEPGRAM_API_KEY` | **Yes** | Speech-to-text (Deepgram) |
 | `CARTESIA_API_KEY` | Depends | Text-to-speech (Cartesia) — required if `VOICE_PROVIDER=cartesia` |
 | `ELEVEN_API_KEY` | Depends | Text-to-speech (ElevenLabs) — required if `VOICE_PROVIDER=elevenlabs` |
-| `VOICE_PROVIDER` | No | `cartesia`, `elevenlabs`, or `gpt-realtime` (default: `cartesia`) |
+| `VOICE_PROVIDER` | No | `cartesia`, `elevenlabs`(default: `cartesia`) |
 | `VOICE_ID` | No | Voice ID for the selected TTS provider |
-| `VOICE_MODE` | No | `tts` or `sts` (speech-to-speech) |
+| `VOICE_MODE` | No | Voice mode (default: `tts`) |
 
 ### Debugging / Observability
 

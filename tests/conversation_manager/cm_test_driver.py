@@ -142,7 +142,6 @@ class CMStepDriver:
             await EventHandler.handle_event(
                 event,
                 self._cm,
-                is_voice_call=self._cm.call_manager.uses_realtime_api,
             )
 
             llm_requested = bool(step_requests)
@@ -178,7 +177,6 @@ class CMStepDriver:
                 await EventHandler.handle_event(
                     evt,
                     self._cm,
-                    is_voice_call=self._cm.call_manager.uses_realtime_api,
                 )
         finally:
             self._cm.event_broker.publish = original_publish
@@ -242,7 +240,6 @@ class CMStepDriver:
                 await EventHandler.handle_event(
                     evt,
                     self._cm,
-                    is_voice_call=self._cm.call_manager.uses_realtime_api,
                 )
             return 0
 
@@ -267,7 +264,6 @@ class CMStepDriver:
             await EventHandler.handle_event(
                 event,
                 self._cm,
-                is_voice_call=self._cm.call_manager.uses_realtime_api,
             )
 
             llm_requested = bool(step_requests)
