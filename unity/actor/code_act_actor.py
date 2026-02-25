@@ -1276,7 +1276,7 @@ class CodeActActor(BaseCodeActActor):
         function_manager: Optional["FunctionManager"] = None,
         guidance_manager: Optional["GuidanceManager"] = None,
         can_compose: bool = True,
-        can_store: bool = False,
+        can_store: bool = True,
         timeout: float = 3600,
         model: Optional[str] = None,
         preprocess_msgs: Optional[Callable[[list[dict]], list[dict]]] = None,
