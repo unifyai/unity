@@ -174,7 +174,7 @@ class ContextRegistry:
 
         These contexts:
         - Have the same fields as the source context (for consistent querying)
-        - Include private fields (_user, _user_id, _assistant, _assistant_id)
+        - Include private fields (_user, _user_id, _assistant, _assistant_id, _org, _org_id)
         - Have NO unique_keys or auto_counting (logs are added by reference)
         """
         parts = target_name.split("/")
