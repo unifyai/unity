@@ -56,6 +56,18 @@ Unity containers authenticate to all external services using the `ORCHESTRA_ADMI
 | `ORCHESTRA_ADMIN_KEY` | Authentication to Communication and Adapter services |
 | `UNIFY_KEY` | API key for Unify SDK operations |
 
+### GCP Infrastructure (not tracked in code)
+
+Unity shares the `responsive-city-458413-a2` GCP project with Communication. The following settings apply:
+
+- **Firewall rules**: All remote-access rules are restricted to the IAP tunnel range (`35.235.240.0/20`). Direct SSH/RDP from the internet is blocked; use `gcloud compute ssh --tunnel-through-iap` instead.
+- **VMs**: Terminated VMs are deleted promptly to release external IPs. No idle VMs with external IPs should remain.
+
+### GitHub Repository Settings (not tracked in code)
+
+- **Branch protection** on `main`: Requires 1 approving pull request review. Force pushes and branch deletions are blocked.
+- **Dependabot**: Vulnerability alerts and automated security fixes are enabled.
+
 ## Table of Contents
 
 - [Architecture Overview](#architecture-overview)
