@@ -57,7 +57,6 @@ if TYPE_CHECKING:
     from unity.actor.environments.base import BaseEnvironment
     from unity.function_manager.function_manager import FunctionManager
     from unity.guidance_manager.guidance_manager import GuidanceManager
-    from unillm.types import PromptCacheParam
 
 
 # ---------------------------------------------------------------------------
@@ -74,6 +73,18 @@ filtered_tools_dict)`` where *tool_choice_mode* is ``"auto"`` or
 
 _USE_DEFAULT: object = object()
 """Sentinel indicating 'use the built-in discovery-first tool policy'."""
+
+_UNSET: object = object()
+"""Sentinel indicating 'parameter was not explicitly provided'."""
+
+
+def _resolve_param(explicit: object, db_value: object, default: object) -> object:
+    """Three-tier resolution: explicit constructor arg > DB config > hardcoded default."""
+    if explicit is not _UNSET:
+        return explicit
+    if db_value is not None:
+        return db_value
+    return default
 
 
 def _default_tool_policy(
@@ -1275,12 +1286,12 @@ class CodeActActor(BaseCodeActActor):
         environments: Optional[list["BaseEnvironment"]] = None,
         function_manager: Optional["FunctionManager"] = None,
         guidance_manager: Optional["GuidanceManager"] = None,
-        can_compose: bool = True,
-        can_store: bool = True,
-        timeout: float = 3600,
-        model: Optional[str] = None,
+        can_compose: object = _UNSET,
+        can_store: object = _UNSET,
+        timeout: object = _UNSET,
+        model: object = _UNSET,
         preprocess_msgs: Optional[Callable[[list[dict]], list[dict]]] = None,
-        prompt_caching: Optional["PromptCacheParam"] = ("system", "tools", "messages"),
+        prompt_caching: object = _UNSET,
         tool_policy: Union[ToolPolicyFn, None, object] = _USE_DEFAULT,
     ):
         """
@@ -1328,6 +1339,19 @@ class CodeActActor(BaseCodeActActor):
             environments=environments,
             function_manager=function_manager,
             guidance_manager=guidance_manager,
+        )
+
+        # Resolve DB-stored config (ConfigManager), then apply three-tier
+        # precedence: explicit constructor arg > DB config > hardcoded default.
+        db_config = self._resolve_config()
+        can_compose = _resolve_param(can_compose, db_config.can_compose, True)
+        can_store = _resolve_param(can_store, db_config.can_store, True)
+        timeout = _resolve_param(timeout, db_config.timeout, 3600.0)
+        model = _resolve_param(model, db_config.model, None)
+        prompt_caching = _resolve_param(
+            prompt_caching,
+            db_config.prompt_caching,
+            ("system", "tools", "messages"),
         )
 
         # Collect function_ids from all environments, split by context, and set
@@ -1401,6 +1425,22 @@ class CodeActActor(BaseCodeActActor):
         self._act_semaphore = asyncio.Semaphore(20)
         # Timeout used when acquiring the semaphore (prevents unbounded waits).
         self._act_semaphore_timeout_s: float = 30.0
+
+    # ───────────────────────── Config resolution ────────────────────────── #
+
+    @staticmethod
+    def _resolve_config() -> "ActorConfig":
+        """Load actor config from ConfigManager, falling back to empty config."""
+        from unity.customization.configs.types.actor_config import ActorConfig
+
+        try:
+            from unity.manager_registry import ManagerRegistry
+
+            cfg_mgr = ManagerRegistry.get_config_manager()
+            return cfg_mgr.load_config()
+        except Exception:
+            pass
+        return ActorConfig()
 
     # ───────────────────────── Session name registry ─────────────────────── #
 
