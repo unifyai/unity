@@ -80,11 +80,11 @@ ENV UNIFY_KEY=${UNIFY_KEY}
 
 RUN install -m 0755 /app/scripts/sandbox-dpkg /usr/local/bin/sandbox-dpkg
 
-# Download the turn detector model files
-# Set memory-efficient environment variables for model loading
+# Download the turn detector model files to a fixed, user-agnostic path
+# so the entrypoint can seed the emptyDir /tmp volume regardless of which user runs.
 ENV OMP_NUM_THREADS=1
 ENV MKL_NUM_THREADS=1
-RUN python unity/conversation_manager/medium_scripts/call.py download-files
+RUN HF_HOME=/opt/hf-cache python unity/conversation_manager/medium_scripts/call.py download-files
 RUN playwright install
 
 # Set runtime environment variables for memory optimization
@@ -105,9 +105,8 @@ ENV UNILLM_LOG_DIR=/var/log/unillm
 RUN useradd -m -u 1000 unity && \
     mkdir -p /var/log/unity /var/log/unify /var/log/unillm && \
     chown -R unity:unity /app /var/log/unity /var/log/unify /var/log/unillm && \
-    cp -r /root/.cache /home/unity/.cache 2>/dev/null; \
-    chown -R unity:unity /home/unity/.cache 2>/dev/null; \
-    true
+    cp -r /root/.cache/ms-playwright /home/unity/.cache/ms-playwright && \
+    chown -R unity:unity /home/unity/.cache
 
 USER unity
 
