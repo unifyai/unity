@@ -47,9 +47,9 @@ async def test_execute_code_notifications_with_notification_queue():
         assert custom.get("type") == "custom_progress"
         assert custom.get("step") == 1
 
-        assert notification_q.empty(), (
-            f"Expected no more notifications but queue has {notification_q.qsize()} item(s)"
-        )
+        assert (
+            notification_q.empty()
+        ), f"Expected no more notifications but queue has {notification_q.qsize()} item(s)"
     finally:
         try:
             _CURRENT_SANDBOX.reset(token)
