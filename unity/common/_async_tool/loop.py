@@ -474,9 +474,9 @@ async def async_tool_loop_inner(
                 f"System Message: {client.system_message}",
                 prefix=ICONS["system_message"],
             )
-        # Log user message (skip if seeding with a batch - per-item logs are emitted below)
+        # Log request (skip if seeding with a batch - per-item logs are emitted below)
         if not isinstance(message, list):
-            logger.info(f"User Message: {message}", prefix=ICONS["user_message"])
+            logger.info(f"Request: {message}", prefix=ICONS["request"])
 
     # ── 0-a. Inject **system** header with runtime context ─────────────────────
     #
