@@ -288,6 +288,7 @@ async def entrypoint(ctx: agents.JobContext):
         *,
         allow_interruptions: bool = True,
         wait_for_completion: bool = False,
+        user_input: str | None = None,
     ):
         nonlocal generation_seq
         generation_seq += 1
@@ -313,9 +314,10 @@ async def entrypoint(ctx: agents.JobContext):
             source_id=source_id,
             queued_speech=len(_queued_speech),
         )
-        maybe_result = session.generate_reply(
-            allow_interruptions=allow_interruptions,
-        )
+        reply_kwargs = {"allow_interruptions": allow_interruptions}
+        if user_input is not None:
+            reply_kwargs["user_input"] = user_input
+        maybe_result = session.generate_reply(**reply_kwargs)
         if isinstance(maybe_result, asyncio.Task):
             maybe_result.add_done_callback(_log_reply_task)
         if wait_for_completion:
@@ -819,6 +821,7 @@ async def entrypoint(ctx: agents.JobContext):
     await trigger_generate_reply(
         reason="session_start",
         source_id="startup",
+        user_input="[call started]",
         allow_interruptions=True,
         wait_for_completion=True,
     )
