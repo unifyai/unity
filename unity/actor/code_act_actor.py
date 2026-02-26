@@ -1348,10 +1348,12 @@ class CodeActActor(BaseCodeActActor):
         from unity.customization.clients import resolve as _resolve_customization
         from unity.session_details import SESSION_DETAILS
 
-        code_config, code_environments = _resolve_customization(
-            org_id=SESSION_DETAILS.org_id,
-            user_id=SESSION_DETAILS.user.id,
-            assistant_id=SESSION_DETAILS.assistant.agent_id,
+        code_config, code_environments, function_dirs, venv_dirs = (
+            _resolve_customization(
+                org_id=SESSION_DETAILS.org_id,
+                user_id=SESSION_DETAILS.user.id,
+                assistant_id=SESSION_DETAILS.assistant.agent_id,
+            )
         )
 
         merged_environments = code_environments + (environments or [])
@@ -1361,6 +1363,22 @@ class CodeActActor(BaseCodeActActor):
             function_manager=function_manager,
             guidance_manager=guidance_manager,
         )
+
+        # Sync client-specific custom functions/venvs to the DB (needed for
+        # semantic search and runtime discovery by the LLM).
+        if function_dirs or venv_dirs:
+            from unity.function_manager.custom_functions import (
+                collect_functions_from_directories,
+                collect_venvs_from_directories,
+            )
+
+            source_fns = collect_functions_from_directories(function_dirs)
+            source_venvs = collect_venvs_from_directories(venv_dirs)
+            if self.function_manager is not None and (source_fns or source_venvs):
+                self.function_manager.sync_custom(
+                    source_functions=source_fns,
+                    source_venvs=source_venvs,
+                )
 
         can_compose = _resolve_param(can_compose, code_config.can_compose, True)
         can_store = _resolve_param(can_store, code_config.can_store, True)

@@ -1,6 +1,7 @@
 """
-Custom compositional functions for auto-sync.
+Custom compositional functions.
 
-Place Python files in this directory with functions decorated with @custom_function.
-These functions will be automatically synchronized to Functions/Compositional.
+Per-client functions are defined under ``unity/customization/clients/<client>/functions/``
+using the ``@custom_function`` decorator.  See ``unity/function_manager/custom/__init__.py``
+for the decorator definition.
 """

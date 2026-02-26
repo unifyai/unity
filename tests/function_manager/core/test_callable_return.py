@@ -281,12 +281,12 @@ async def test_dependency_injection_handles_custom_decorators_and_annotations(
         encoding="utf-8",
     )
 
-    from unity.function_manager import custom_functions as _cf
+    from unity.function_manager.custom_functions import collect_custom_functions
 
-    monkeypatch.setattr(_cf, "_get_custom_functions_folder", lambda: custom_dir)
+    source_fns = collect_custom_functions(directory=custom_dir)
 
     fm = FunctionManager()
-    fm.sync_custom_functions()
+    fm.sync_custom_functions(source_functions=source_fns)
 
     ns = create_base_globals()
 

@@ -51,9 +51,7 @@ from ..common.context_registry import ContextRegistry, TableContext
 from unity.function_manager.primitives.scope import PrimitiveScope
 from unity.function_manager.primitives.registry import get_registry
 from .custom_functions import (
-    collect_custom_functions,
     compute_custom_functions_hash,
-    collect_custom_venvs,
     compute_custom_venvs_hash,
 )
 
@@ -2349,29 +2347,30 @@ class FunctionManager(BaseFunctionManager):
                     return logs[0].entries.get("venv_id")
         return -1
 
-    def sync_custom_venvs(self) -> Dict[str, int]:
+    def sync_custom_venvs(
+        self,
+        *,
+        source_venvs: Optional[Dict[str, Dict[str, Any]]] = None,
+    ) -> Dict[str, int]:
         """
         Ensure custom venvs in the database match source definitions.
 
-        Scans the custom/venvs/ folder for .toml files and syncs them
-        to Functions/VirtualEnvs. Uses hash comparison to minimize writes.
-
-        Behavior:
-        - New venvs: inserted with auto-assigned venv_id
-        - Changed venvs: updated in place (preserves venv_id)
-        - Deleted venvs (in source): deleted from database
-        - User-added venvs with same name: overwritten by source version
+        Args:
+            source_venvs: Pre-collected venvs (from
+                :func:`collect_custom_venvs` or
+                :func:`collect_venvs_from_directories`).  If *None*,
+                an empty set is assumed (no custom venvs).
 
         Returns:
-            Dict mapping venv name to venv_id (for use by sync_custom_functions).
+            Dict mapping venv name to venv_id.
         """
         if self._custom_venvs_synced:
-            # Return existing name→id mapping
             db_venvs = self._get_custom_venvs_from_db()
             return {name: v["venv_id"] for name, v in db_venvs.items()}
 
-        source_venvs = collect_custom_venvs()
-        expected_hash = compute_custom_venvs_hash()
+        if source_venvs is None:
+            source_venvs = {}
+        expected_hash = compute_custom_venvs_hash(source_venvs=source_venvs)
         current_hash = self._get_stored_custom_venvs_hash()
 
         # Quick check: if aggregate hash matches, skip detailed sync
@@ -2436,25 +2435,19 @@ class FunctionManager(BaseFunctionManager):
     def sync_custom_functions(
         self,
         venv_name_to_id: Optional[Dict[str, int]] = None,
+        *,
+        source_functions: Optional[Dict[str, Dict[str, Any]]] = None,
     ) -> bool:
         """
         Ensure custom functions in the database match source definitions.
 
-        Scans the custom/functions/ folder for functions decorated with
-        @custom_function and syncs them to Functions/Compositional. Uses
-        per-function hash comparison to minimize database writes.
-
         Args:
             venv_name_to_id: Optional mapping from venv name to venv_id.
-                             Used to resolve venv_name in decorators.
-                             If not provided, venv_name resolution is skipped.
-
-        Behavior:
-        - New functions: inserted with auto-assigned function_id
-        - Changed functions: updated in place (preserves function_id)
-        - Deleted functions (in source): deleted from database
-        - User-added functions with same name: overwritten by source version
-        - venv_name: resolved to venv_id using venv_name_to_id mapping
+                Used to resolve ``venv_name`` in decorators.
+            source_functions: Pre-collected functions (from
+                :func:`collect_custom_functions` or
+                :func:`collect_functions_from_directories`).  If *None*,
+                an empty set is assumed (no custom functions).
 
         Returns:
             True if sync was performed, False if already up-to-date.
@@ -2462,9 +2455,11 @@ class FunctionManager(BaseFunctionManager):
         if self._custom_functions_synced:
             return False
 
-        # Collect source-defined custom functions
-        source_functions = collect_custom_functions()
-        expected_hash = compute_custom_functions_hash()
+        if source_functions is None:
+            source_functions = {}
+        expected_hash = compute_custom_functions_hash(
+            source_functions=source_functions,
+        )
         current_hash = self._get_stored_custom_functions_hash()
 
         # Quick check: if aggregate hash matches, skip detailed sync
@@ -2545,27 +2540,34 @@ class FunctionManager(BaseFunctionManager):
         self._custom_functions_synced = True
         return True
 
-    def sync_custom(self) -> bool:
+    def sync_custom(
+        self,
+        *,
+        source_functions: Optional[Dict[str, Dict[str, Any]]] = None,
+        source_venvs: Optional[Dict[str, Dict[str, Any]]] = None,
+    ) -> bool:
         """
-        Sync all custom venvs and functions from source.
+        Sync custom venvs and functions from pre-collected sources.
 
-        This is the recommended method for syncing custom definitions.
-        It ensures venvs are synced first (so venv_name can be resolved),
+        Ensures venvs are synced first (so venv_name can be resolved),
         then syncs functions.
+
+        Args:
+            source_functions: Pre-collected functions dict.
+            source_venvs: Pre-collected venvs dict.
 
         Returns:
             True if any sync was performed, False if everything up-to-date.
         """
-        # Sync venvs first to get name→id mapping
-        venv_name_to_id = self.sync_custom_venvs()
+        venv_name_to_id = self.sync_custom_venvs(source_venvs=source_venvs)
+        functions_changed = self.sync_custom_functions(
+            venv_name_to_id,
+            source_functions=source_functions,
+        )
 
-        # Then sync functions with the mapping
-        functions_changed = self.sync_custom_functions(venv_name_to_id)
-
-        # Return True if venvs were newly synced OR functions changed
-        # (venv sync always returns a dict, not a bool, so check if hash changed)
         venvs_hash_changed = (
-            self._get_stored_custom_venvs_hash() != compute_custom_venvs_hash()
+            self._get_stored_custom_venvs_hash()
+            != compute_custom_venvs_hash(source_venvs=source_venvs)
             if not self._custom_venvs_synced
             else False
         )
