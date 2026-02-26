@@ -41,9 +41,6 @@ async def send_sms_message_via_number(to_number: str, content: str) -> str:
     if not from_number:
         return {"success": False}
 
-    LOGGER.info(
-        f"{ICONS['comms_outbound']} Sending SMS from {from_number} to {to_number}: {content}",
-    )
     async with aiohttp.ClientSession() as session:
         async with session.post(
             f"{SETTINGS.conversation.COMMS_URL}/phone/send-text",
@@ -90,13 +87,6 @@ async def send_unify_message(
     topic_name = f"unity-{assistant_id}{staging_suffix}"
     publisher = _get_publisher()
     topic_path = publisher.topic_path("responsive-city-458413-a2", topic_name)
-
-    attachment_info = (
-        f" with attachment '{attachment['filename']}'" if attachment else ""
-    )
-    LOGGER.info(
-        f"{ICONS['comms_outbound']} Sending unify message to contact_id={contact_id}{attachment_info}: {content}",
-    )
 
     event_data = {"content": content, "role": "assistant", "contact_id": contact_id}
     if attachment:
@@ -213,18 +203,6 @@ async def send_email_via_address(
     if not from_email:
         return {"success": False, "error": "No sender email configured"}
 
-    attachment_info = (
-        f" with attachment '{attachment['filename']}'" if attachment else ""
-    )
-    recipients_summary = f"to={to}"
-    if cc:
-        recipients_summary += f", cc={cc}"
-    if bcc:
-        recipients_summary += f", bcc={bcc}"
-    LOGGER.info(
-        f"{ICONS['comms_outbound']} Sending email from {from_email} ({recipients_summary}): {subject}{attachment_info}",
-    )
-
     payload = {
         "from": from_email,
         "to": to,
@@ -263,9 +241,6 @@ async def start_call(to_number: str) -> str:
         str: The response
     """
     from_number = SESSION_DETAILS.assistant.number
-    LOGGER.info(
-        f"{ICONS['comms_outbound']} Sending call from {from_number} to {to_number}",
-    )
     if not from_number:
         return {"success": False}
 
