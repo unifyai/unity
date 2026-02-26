@@ -350,6 +350,7 @@ def _start_storage_check_loop(
     completed_tool_metadata: dict | None = None,
     actor: "CodeActActor",
     original_result: str,
+    parent_lineage: list[str] | None = None,
 ) -> "AsyncToolLoopHandle | None":
     """Start a loop that reviews a completed trajectory for reusable knowledge.
 
@@ -813,6 +814,7 @@ def _start_storage_check_loop(
         ),
         tools=tools,
         loop_id="StorageCheck(CodeActActor.act)",
+        parent_lineage=parent_lineage,
         max_steps=30,
         timeout=120,
     )
@@ -956,7 +958,7 @@ class _StorageCheckHandle(SteerableToolHandle):
             )
             _sc_hierarchy = [
                 *_sc_parent_lineage,
-                f"StorageCheck({_sc_suffix})",
+                f"StorageCheck(CodeActActor.act)({_sc_suffix})",
             ]
             _sc_lineage_token = TOOL_LOOP_LINEAGE.set(_sc_hierarchy)
             _sc_suffix_token = _PENDING_LOOP_SUFFIX.set(_sc_suffix)
@@ -977,6 +979,7 @@ class _StorageCheckHandle(SteerableToolHandle):
                     completed_tool_metadata=completed_tool_metadata,
                     actor=self._actor,
                     original_result=str(self._original_result),
+                    parent_lineage=_sc_parent_lineage,
                 )
 
                 if storage_handle is None:
