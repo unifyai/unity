@@ -977,7 +977,7 @@ class EventBus:
             future = publisher.publish(
                 topic_path,
                 json.dumps(message_data, default=str).encode("utf-8"),
-                ordering_key=assistant_id,
+                ordering_key=agent_id,
                 thread="action_event",
             )
             future.add_done_callback(self._on_pubsub_publish_done)
