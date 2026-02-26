@@ -10,13 +10,13 @@ from unity.actor.execution import PythonExecutionSession
 @pytest.mark.timeout(60)
 async def test_execute_code_notifications_with_notification_queue():
     """
-    Validate that execute_code emits execution_started/execution_finished notifications
-    and that user code can call notify({...}) from within the sandbox when a
-    _notification_up_q is provided (as the async tool loop does automatically).
+    Validate that user code can call notify({...}) from within the sandbox
+    when a _notification_up_q is provided (as the async tool loop does
+    automatically).  Lifecycle notifications (execution_started/finished)
+    were removed -- only user-emitted notifications should appear.
     """
     from unity.actor.execution import _CURRENT_SANDBOX
 
-    # Create a notification queue that simulates what the async tool loop provides
     notification_q: asyncio.Queue[dict] = asyncio.Queue()
 
     actor = CodeActActor()
@@ -33,7 +33,6 @@ async def test_execute_code_notifications_with_notification_queue():
         tools = actor.get_tools("act")
         execute_code = tools["execute_code"]
 
-        # Call execute_code with _notification_up_q (as the tool loop would)
         _ = await execute_code(
             "emit notifications",
             "notify({'type': 'custom_progress', 'step': 1})\nprint('hi')",
@@ -41,23 +40,16 @@ async def test_execute_code_notifications_with_notification_queue():
             state_mode="stateful",
             session_id=0,
             venv_id=None,
-            _notification_up_q=notification_q,  # Tool loop provides this
+            _notification_up_q=notification_q,
         )
 
-        # Verify execution_started notification
-        started = await asyncio.wait_for(notification_q.get(), timeout=30)
-        assert started.get("type") == "execution_started"
-        assert isinstance(started.get("sandbox_id"), str)
-
-        # Verify custom notification from notify() call in sandbox
         custom = await asyncio.wait_for(notification_q.get(), timeout=30)
         assert custom.get("type") == "custom_progress"
         assert custom.get("step") == 1
 
-        # Verify execution_finished notification
-        finished = await asyncio.wait_for(notification_q.get(), timeout=30)
-        assert finished.get("type") == "execution_finished"
-        assert finished.get("status") == "ok"
+        assert notification_q.empty(), (
+            f"Expected no more notifications but queue has {notification_q.qsize()} item(s)"
+        )
     finally:
         try:
             _CURRENT_SANDBOX.reset(token)
