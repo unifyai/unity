@@ -192,7 +192,7 @@ class UnifyLLMStream(llm.LLMStream):
         if self._temperature is not None:
             generate_kwargs["temperature"] = self._temperature
 
-        LOGGER.info(
+        LOGGER.debug(
             f"{DEFAULT_ICON} "
             + trace_kv(
                 "FAST_BRAIN_REQUEST_START",
@@ -223,7 +223,7 @@ class UnifyLLMStream(llm.LLMStream):
                     )
                     self._event_ch.send_nowait(chat_chunk)
         finally:
-            LOGGER.info(
+            LOGGER.debug(
                 f"{DEFAULT_ICON} "
                 + trace_kv(
                     "FAST_BRAIN_REQUEST_END",

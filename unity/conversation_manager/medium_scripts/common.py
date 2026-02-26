@@ -160,7 +160,7 @@ class FastBrainLogger:
     # ── proactive speech helpers ─────────────────────────────────────────
 
     def proactive_debounce(self, seconds: float) -> None:
-        self._emit(
+        self._emit_debug(
             "proactive_debounce",
             f"Proactive speech debounce {seconds}s",
         )
@@ -172,7 +172,7 @@ class FastBrainLogger:
         )
 
     def proactive_deferred(self, reason: str) -> None:
-        self._emit("proactive_deferred", f"Proactive deferred: {reason}")
+        self._emit_debug("proactive_deferred", f"Proactive deferred: {reason}")
 
     def proactive_dormant(self) -> None:
         self._emit(
@@ -239,7 +239,7 @@ class FastBrainLogger:
         self._emit_debug("dispatch", msg)
 
     def info(self, msg: str) -> None:
-        self._emit("info", msg)
+        self._emit_debug("info", msg)
 
     def warning(self, msg: str) -> None:
         self._emit("warning", msg)
