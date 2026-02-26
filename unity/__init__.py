@@ -19,6 +19,15 @@ LLM I/O logging is now handled directly in the unillm package. Enable it via:
 Logging is configured centrally in unity.logger (imported below).
 """
 
+try:
+    import onnxruntime as _ort
+
+    _ort.set_default_logger_severity(
+        4,
+    )  # FATAL — suppress thread affinity noise in containers
+except Exception:
+    pass
+
 from unity.common.context_registry import ContextRegistry
 
 # Attempt to import the external 'unify' SDK. If unavailable, provide a minimal
