@@ -163,7 +163,7 @@ def _print_env(assistant: dict, user: dict, api_key: str, staging: bool):
     print("\n".join(lines))
     print(
         "The env variables left empty are secrets that you can configure "
-        "through the GCP secret manager..."
+        "through the GCP secret manager...",
     )
 
 
@@ -183,7 +183,10 @@ def main():
         help="Target the staging environment (default: prod)",
     )
     parser.add_argument(
-        "--age", type=int, default=25, help="Age of the assistant (default: 25)"
+        "--age",
+        type=int,
+        default=25,
+        help="Age of the assistant (default: 25)",
     )
     parser.add_argument("--nationality", default="US", help="Nationality (default: US)")
     parser.add_argument(
