@@ -1156,12 +1156,12 @@ async def _ensure_desktop_session(cm: "ConversationManager") -> None:
         if cp is not None:
             session = await cp.backend.get_session("desktop")
             cm._session_logger.info(
-                "screenshot_capture",
+                "desktop_session",
                 f"Desktop session ready: {session._session_id}",
             )
     except Exception as e:
         cm._session_logger.warning(
-            "screenshot_capture",
+            "desktop_session",
             f"Failed to create desktop session: {type(e).__name__}: {e}",
         )
 
