@@ -1851,12 +1851,15 @@ if _TEXTUAL_AVAILABLE:
                     from sandboxes.conversation_manager.call_transcript import (
                         build_timeline,
                         format_timeline,
+                        parse_cm_log,
                         parse_voice_log,
                     )
 
                     voice_data = parse_voice_log(voice_log)
+                    cm_log = _voice_root / ".logs_conversation_sandbox.txt"
+                    cm_data = parse_cm_log(cm_log) if cm_log.exists() else None
                     if voice_data.utterances:
-                        timeline = build_timeline(voice_data)
+                        timeline = build_timeline(voice_data, cm_data)
                         transcript_path = json_path.with_name(
                             json_path.stem + "_transcript.txt",
                         )
