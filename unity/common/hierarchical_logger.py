@@ -93,7 +93,7 @@ ICONS = {
     "llm_error": "❌",
     # ── Async tool loop ─────────────────────────────────────────────────
     "system_message": "📋",
-    "user_message": "🧑‍💻",
+    "request": "➡️",
     "tool_seeding": "⬇️",
     "stop_requested": "🛑",
     "early_exit": "⏹️",

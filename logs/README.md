@@ -193,7 +193,7 @@ logs/unity/
 
 **Sample content:**
 ```
-2026-01-01 14:26:46,175    INFO 🧑‍💻 [ContactManager.ask(ca3e)] User Message: What is Alice Smith's...
+2026-01-01 14:26:46,175    INFO ➡️ [ContactManager.ask(ca3e)] Request: What is Alice Smith's...
 2026-01-01 14:26:46,535    INFO 🔄 [ContactManager.ask(ca3e)] LLM thinking…
 2026-01-01 14:26:50,664    INFO 🛠️  ToolCall Scheduled [ContactManager.ask(ca3e)] search_contacts
 ```
@@ -586,7 +586,7 @@ OpenTelemetry trace IDs link all log types together, enabling end-to-end debuggi
 ```
 logs/pytest/         →  [TRACE] TRACE_ID=...7be454fc test=test_ask
     ↓ (same session)
-logs/unity/          →  🧑‍💻 [ContactManager.ask(ca3e)] User Message: ...
+logs/unity/          →  ➡️ [ContactManager.ask(ca3e)] Request: ...
     ↓ (same trace_id)
 logs/unify/          →  14-26-46.175_GET_logs_331ms_200_7be454fc.json
     ↓ (same trace_id)
