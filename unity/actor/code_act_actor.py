@@ -1348,15 +1348,13 @@ class CodeActActor(BaseCodeActActor):
         from unity.customization.clients import resolve as _resolve_customization
         from unity.session_details import SESSION_DETAILS
 
-        code_config, code_environments, function_dirs, venv_dirs = (
-            _resolve_customization(
-                org_id=SESSION_DETAILS.org_id,
-                user_id=SESSION_DETAILS.user.id,
-                assistant_id=SESSION_DETAILS.assistant.agent_id,
-            )
+        resolved = _resolve_customization(
+            org_id=SESSION_DETAILS.org_id,
+            user_id=SESSION_DETAILS.user.id,
+            assistant_id=SESSION_DETAILS.assistant.agent_id,
         )
 
-        merged_environments = code_environments + (environments or [])
+        merged_environments = resolved.environments + (environments or [])
 
         super().__init__(
             environments=merged_environments,
@@ -1366,30 +1364,35 @@ class CodeActActor(BaseCodeActActor):
 
         # Sync client-specific custom functions/venvs to the DB (needed for
         # semantic search and runtime discovery by the LLM).
-        if function_dirs or venv_dirs:
+        if resolved.function_dirs or resolved.venv_dirs:
             from unity.function_manager.custom_functions import (
                 collect_functions_from_directories,
                 collect_venvs_from_directories,
             )
 
-            source_fns = collect_functions_from_directories(function_dirs)
-            source_venvs = collect_venvs_from_directories(venv_dirs)
+            source_fns = collect_functions_from_directories(resolved.function_dirs)
+            source_venvs = collect_venvs_from_directories(resolved.venv_dirs)
             if self.function_manager is not None and (source_fns or source_venvs):
                 self.function_manager.sync_custom(
                     source_functions=source_fns,
                     source_venvs=source_venvs,
                 )
 
-        can_compose = _resolve_param(can_compose, code_config.can_compose, True)
-        can_store = _resolve_param(can_store, code_config.can_store, True)
-        timeout = _resolve_param(timeout, code_config.timeout, 3600.0)
-        model = _resolve_param(model, code_config.model, None)
+        # Sync seed data (contacts, guidance, knowledge, secrets, blacklist).
+        from unity.customization.seed_sync import sync_all_seed_data
+
+        sync_all_seed_data(resolved)
+
+        can_compose = _resolve_param(can_compose, resolved.config.can_compose, True)
+        can_store = _resolve_param(can_store, resolved.config.can_store, True)
+        timeout = _resolve_param(timeout, resolved.config.timeout, 3600.0)
+        model = _resolve_param(model, resolved.config.model, None)
         prompt_caching = _resolve_param(
             prompt_caching,
-            code_config.prompt_caching,
+            resolved.config.prompt_caching,
             ("system", "tools", "messages"),
         )
-        guidelines = _resolve_param(guidelines, code_config.guidelines, None)
+        guidelines = _resolve_param(guidelines, resolved.config.guidelines, None)
         self._base_guidelines = guidelines
 
         # Collect function_ids from all environments, split by context, and set

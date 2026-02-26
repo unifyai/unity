@@ -2,22 +2,37 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 from unity.customization.configs.types.actor_config import ActorConfig
 from unity.customization.clients import (
+    ResolvedCustomization,
     _ORG_CONFIGS,
     _ORG_ENVIRONMENTS,
     _ORG_FUNCTION_DIRS,
     _ORG_VENV_DIRS,
+    _ORG_CONTACTS,
+    _ORG_GUIDANCE,
+    _ORG_KNOWLEDGE,
+    _ORG_BLACKLIST,
     _USER_CONFIGS,
     _USER_ENVIRONMENTS,
     _USER_FUNCTION_DIRS,
     _USER_VENV_DIRS,
+    _USER_CONTACTS,
+    _USER_GUIDANCE,
+    _USER_KNOWLEDGE,
+    _USER_BLACKLIST,
     _ASSISTANT_CONFIGS,
     _ASSISTANT_ENVIRONMENTS,
     _ASSISTANT_FUNCTION_DIRS,
     _ASSISTANT_VENV_DIRS,
+    _ASSISTANT_CONTACTS,
+    _ASSISTANT_GUIDANCE,
+    _ASSISTANT_KNOWLEDGE,
+    _ASSISTANT_BLACKLIST,
     _merge_configs,
     resolve,
 )
@@ -27,29 +42,42 @@ from unity.actor.code_act_actor import _resolve_param, _UNSET
 # Fixtures: save/restore the global registry dicts around each test
 # ---------------------------------------------------------------------------
 
+_ALL_DICTS = [
+    _ORG_CONFIGS,
+    _ORG_ENVIRONMENTS,
+    _ORG_FUNCTION_DIRS,
+    _ORG_VENV_DIRS,
+    _ORG_CONTACTS,
+    _ORG_GUIDANCE,
+    _ORG_KNOWLEDGE,
+    _ORG_BLACKLIST,
+    _USER_CONFIGS,
+    _USER_ENVIRONMENTS,
+    _USER_FUNCTION_DIRS,
+    _USER_VENV_DIRS,
+    _USER_CONTACTS,
+    _USER_GUIDANCE,
+    _USER_KNOWLEDGE,
+    _USER_BLACKLIST,
+    _ASSISTANT_CONFIGS,
+    _ASSISTANT_ENVIRONMENTS,
+    _ASSISTANT_FUNCTION_DIRS,
+    _ASSISTANT_VENV_DIRS,
+    _ASSISTANT_CONTACTS,
+    _ASSISTANT_GUIDANCE,
+    _ASSISTANT_KNOWLEDGE,
+    _ASSISTANT_BLACKLIST,
+]
+
 
 @pytest.fixture(autouse=True)
 def _clean_registry():
     """Snapshot and restore all registry dicts so tests don't leak."""
-    snapshots = [
-        _ORG_CONFIGS,
-        _ORG_ENVIRONMENTS,
-        _ORG_FUNCTION_DIRS,
-        _ORG_VENV_DIRS,
-        _USER_CONFIGS,
-        _USER_ENVIRONMENTS,
-        _USER_FUNCTION_DIRS,
-        _USER_VENV_DIRS,
-        _ASSISTANT_CONFIGS,
-        _ASSISTANT_ENVIRONMENTS,
-        _ASSISTANT_FUNCTION_DIRS,
-        _ASSISTANT_VENV_DIRS,
-    ]
-    saved = [dict(d) for d in snapshots]
-    for d in snapshots:
+    saved = [dict(d) for d in _ALL_DICTS]
+    for d in _ALL_DICTS:
         d.clear()
     yield
-    for d, s in zip(snapshots, saved):
+    for d, s in zip(_ALL_DICTS, saved):
         d.clear()
         d.update(s)
 
@@ -87,7 +115,7 @@ class TestMergeConfigs:
 
     def test_guidelines_skips_none(self):
         org = ActorConfig(guidelines="Org rules.")
-        user = ActorConfig()  # no guidelines
+        user = ActorConfig()
         assistant = ActorConfig(guidelines="Assistant rules.")
         result = _merge_configs([org, user, assistant])
         assert result.guidelines == "Org rules.\nAssistant rules."
@@ -125,68 +153,115 @@ class TestMergeConfigs:
 
 class TestResolve:
     def test_no_match_returns_defaults(self):
-        config, envs, fn_dirs, venv_dirs = resolve(
-            org_id=999,
-            user_id="nobody",
-            assistant_id=999,
-        )
-        assert config == ActorConfig()
-        assert envs == []
-        assert fn_dirs == []
-        assert venv_dirs == []
+        r = resolve(org_id=999, user_id="nobody", assistant_id=999)
+        assert isinstance(r, ResolvedCustomization)
+        assert r.config == ActorConfig()
+        assert r.environments == []
+        assert r.function_dirs == []
+        assert r.contacts == []
+        assert r.guidance == []
+        assert r.knowledge == {}
+        assert r.blacklist == []
+        assert r.secrets == []
 
     def test_none_ids_returns_defaults(self):
-        config, envs, fn_dirs, venv_dirs = resolve()
-        assert config == ActorConfig()
-        assert envs == []
-        assert fn_dirs == []
-        assert venv_dirs == []
+        r = resolve()
+        assert r.config == ActorConfig()
+        assert r.environments == []
 
     def test_org_config_resolved(self):
         _ORG_CONFIGS[1] = ActorConfig(model="org-model")
-        config, *_ = resolve(org_id=1)
-        assert config.model == "org-model"
+        r = resolve(org_id=1)
+        assert r.config.model == "org-model"
 
     def test_user_overrides_org(self):
         _ORG_CONFIGS[1] = ActorConfig(model="org-model", timeout=60.0)
         _USER_CONFIGS["u1"] = ActorConfig(model="user-model")
-        config, *_ = resolve(org_id=1, user_id="u1")
-        assert config.model == "user-model"
-        assert config.timeout == 60.0
+        r = resolve(org_id=1, user_id="u1")
+        assert r.config.model == "user-model"
+        assert r.config.timeout == 60.0
 
     def test_assistant_overrides_user_and_org(self):
         _ORG_CONFIGS[1] = ActorConfig(model="org-model")
         _USER_CONFIGS["u1"] = ActorConfig(model="user-model")
         _ASSISTANT_CONFIGS[10] = ActorConfig(model="assistant-model")
-        config, *_ = resolve(org_id=1, user_id="u1", assistant_id=10)
-        assert config.model == "assistant-model"
+        r = resolve(org_id=1, user_id="u1", assistant_id=10)
+        assert r.config.model == "assistant-model"
 
     def test_guidelines_concatenated_across_levels(self):
         _ORG_CONFIGS[1] = ActorConfig(guidelines="Org.")
         _USER_CONFIGS["u1"] = ActorConfig(guidelines="User.")
         _ASSISTANT_CONFIGS[10] = ActorConfig(guidelines="Assistant.")
-        config, *_ = resolve(org_id=1, user_id="u1", assistant_id=10)
-        assert config.guidelines == "Org.\nUser.\nAssistant."
+        r = resolve(org_id=1, user_id="u1", assistant_id=10)
+        assert r.config.guidelines == "Org.\nUser.\nAssistant."
 
     def test_function_dirs_cascade(self):
-        from pathlib import Path
-
         _ORG_FUNCTION_DIRS[1] = [Path("/org/functions")]
         _USER_FUNCTION_DIRS["u1"] = [Path("/user/functions")]
         _ASSISTANT_FUNCTION_DIRS[10] = [Path("/asst/functions")]
-        _, _, fn_dirs, _ = resolve(org_id=1, user_id="u1", assistant_id=10)
-        assert fn_dirs == [
+        r = resolve(org_id=1, user_id="u1", assistant_id=10)
+        assert r.function_dirs == [
             Path("/org/functions"),
             Path("/user/functions"),
             Path("/asst/functions"),
         ]
 
     def test_venv_dirs_cascade(self):
-        from pathlib import Path
-
         _ORG_VENV_DIRS[1] = [Path("/org/venvs")]
-        _, _, _, venv_dirs = resolve(org_id=1)
-        assert venv_dirs == [Path("/org/venvs")]
+        r = resolve(org_id=1)
+        assert r.venv_dirs == [Path("/org/venvs")]
+
+    def test_contacts_cascade_dedup_by_name(self):
+        _ORG_CONTACTS[1] = [
+            {"first_name": "Alice", "surname": "Smith", "email_address": "a@x.com"},
+        ]
+        _USER_CONTACTS["u1"] = [
+            {
+                "first_name": "Alice",
+                "surname": "Smith",
+                "email_address": "alice@new.com",
+            },
+            {"first_name": "Bob", "surname": "Jones"},
+        ]
+        r = resolve(org_id=1, user_id="u1")
+        names = {c["first_name"] for c in r.contacts}
+        assert "Alice" in names
+        assert "Bob" in names
+        alice = next(c for c in r.contacts if c["first_name"] == "Alice")
+        assert alice["email_address"] == "alice@new.com"
+
+    def test_guidance_cascade_dedup_by_title(self):
+        _ORG_GUIDANCE[1] = [{"title": "Workflow", "content": "Org version"}]
+        _USER_GUIDANCE["u1"] = [{"title": "Workflow", "content": "User version"}]
+        r = resolve(org_id=1, user_id="u1")
+        assert len(r.guidance) == 1
+        assert r.guidance[0]["content"] == "User version"
+
+    def test_knowledge_cascade_merges_tables(self):
+        _ORG_KNOWLEDGE[1] = {
+            "Companies": {
+                "columns": {"name": "str"},
+                "seed_key": "name",
+                "rows": [{"name": "OrgCo"}],
+            },
+        }
+        _USER_KNOWLEDGE["u1"] = {
+            "Products": {
+                "columns": {"product": "str"},
+                "seed_key": "product",
+                "rows": [{"product": "Widget"}],
+            },
+        }
+        r = resolve(org_id=1, user_id="u1")
+        assert "Companies" in r.knowledge
+        assert "Products" in r.knowledge
+
+    def test_blacklist_cascade(self):
+        _ORG_BLACKLIST[1] = [
+            {"medium": "email", "contact_detail": "s@x.com", "reason": "Spam"},
+        ]
+        r = resolve(org_id=1)
+        assert len(r.blacklist) == 1
 
 
 # ---------------------------------------------------------------------------

@@ -1,26 +1,45 @@
 """
 Code-first client customization registry.
 
-Client configs, environments, and custom functions are defined in Python
-code under per-client subpackages (e.g. ``colliers/``, ``midland_heart/``).
-Each subpackage registers its org-level, user-level, and/or assistant-level
+Client configs, environments, custom functions, and seed data are defined
+in Python code under per-client subpackages (e.g. ``colliers/``).  Each
+subpackage registers its org-level, user-level, and/or assistant-level
 customizations into the module-level dicts below.
 
 At Actor construction time, ``resolve()`` is called with the current
-org_id / user_id / assistant_id to produce a merged ``ActorConfig``,
-a combined list of ``BaseEnvironment`` instances, and the directories
-containing ``@custom_function`` definitions and custom venvs to sync.
+org_id / user_id / assistant_id to produce a ``ResolvedCustomization``
+containing merged configs, environments, function dirs, and seed data.
 """
 
 from __future__ import annotations
 
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import Any, TYPE_CHECKING
 
 from unity.customization.configs.types.actor_config import ActorConfig
 
 if TYPE_CHECKING:
     from unity.actor.environments.base import BaseEnvironment
+
+
+# ---------------------------------------------------------------------------
+# Resolved result
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class ResolvedCustomization:
+    config: ActorConfig
+    environments: list[BaseEnvironment]
+    function_dirs: list[Path]
+    venv_dirs: list[Path]
+    contacts: list[dict[str, Any]]
+    guidance: list[dict[str, Any]]
+    knowledge: dict[str, dict[str, Any]]
+    blacklist: list[dict[str, Any]]
+    secrets: list[dict[str, Any]]
+
 
 # ---------------------------------------------------------------------------
 # Registry dicts — populated by client subpackages at import time
@@ -30,16 +49,28 @@ _ORG_CONFIGS: dict[int, ActorConfig] = {}
 _ORG_ENVIRONMENTS: dict[int, list[BaseEnvironment]] = {}
 _ORG_FUNCTION_DIRS: dict[int, list[Path]] = {}
 _ORG_VENV_DIRS: dict[int, list[Path]] = {}
+_ORG_CONTACTS: dict[int, list[dict]] = {}
+_ORG_GUIDANCE: dict[int, list[dict]] = {}
+_ORG_KNOWLEDGE: dict[int, dict[str, dict]] = {}
+_ORG_BLACKLIST: dict[int, list[dict]] = {}
 
 _USER_CONFIGS: dict[str, ActorConfig] = {}
 _USER_ENVIRONMENTS: dict[str, list[BaseEnvironment]] = {}
 _USER_FUNCTION_DIRS: dict[str, list[Path]] = {}
 _USER_VENV_DIRS: dict[str, list[Path]] = {}
+_USER_CONTACTS: dict[str, list[dict]] = {}
+_USER_GUIDANCE: dict[str, list[dict]] = {}
+_USER_KNOWLEDGE: dict[str, dict[str, dict]] = {}
+_USER_BLACKLIST: dict[str, list[dict]] = {}
 
 _ASSISTANT_CONFIGS: dict[int, ActorConfig] = {}
 _ASSISTANT_ENVIRONMENTS: dict[int, list[BaseEnvironment]] = {}
 _ASSISTANT_FUNCTION_DIRS: dict[int, list[Path]] = {}
 _ASSISTANT_VENV_DIRS: dict[int, list[Path]] = {}
+_ASSISTANT_CONTACTS: dict[int, list[dict]] = {}
+_ASSISTANT_GUIDANCE: dict[int, list[dict]] = {}
+_ASSISTANT_KNOWLEDGE: dict[int, dict[str, dict]] = {}
+_ASSISTANT_BLACKLIST: dict[int, list[dict]] = {}
 
 
 # ---------------------------------------------------------------------------
@@ -54,6 +85,10 @@ def register_org(
     environments: list[BaseEnvironment] | None = None,
     function_dir: Path | None = None,
     venv_dir: Path | None = None,
+    contacts: list[dict] | None = None,
+    guidance: list[dict] | None = None,
+    knowledge: dict[str, dict] | None = None,
+    blacklist: list[dict] | None = None,
 ) -> None:
     if config is not None:
         _ORG_CONFIGS[org_id] = config
@@ -63,6 +98,14 @@ def register_org(
         _ORG_FUNCTION_DIRS.setdefault(org_id, []).append(function_dir)
     if venv_dir is not None:
         _ORG_VENV_DIRS.setdefault(org_id, []).append(venv_dir)
+    if contacts:
+        _ORG_CONTACTS.setdefault(org_id, []).extend(contacts)
+    if guidance:
+        _ORG_GUIDANCE.setdefault(org_id, []).extend(guidance)
+    if knowledge:
+        _ORG_KNOWLEDGE.setdefault(org_id, {}).update(knowledge)
+    if blacklist:
+        _ORG_BLACKLIST.setdefault(org_id, []).extend(blacklist)
 
 
 def register_user(
@@ -72,6 +115,10 @@ def register_user(
     environments: list[BaseEnvironment] | None = None,
     function_dir: Path | None = None,
     venv_dir: Path | None = None,
+    contacts: list[dict] | None = None,
+    guidance: list[dict] | None = None,
+    knowledge: dict[str, dict] | None = None,
+    blacklist: list[dict] | None = None,
 ) -> None:
     if config is not None:
         _USER_CONFIGS[user_id] = config
@@ -81,6 +128,14 @@ def register_user(
         _USER_FUNCTION_DIRS.setdefault(user_id, []).append(function_dir)
     if venv_dir is not None:
         _USER_VENV_DIRS.setdefault(user_id, []).append(venv_dir)
+    if contacts:
+        _USER_CONTACTS.setdefault(user_id, []).extend(contacts)
+    if guidance:
+        _USER_GUIDANCE.setdefault(user_id, []).extend(guidance)
+    if knowledge:
+        _USER_KNOWLEDGE.setdefault(user_id, {}).update(knowledge)
+    if blacklist:
+        _USER_BLACKLIST.setdefault(user_id, []).extend(blacklist)
 
 
 def register_assistant(
@@ -90,6 +145,10 @@ def register_assistant(
     environments: list[BaseEnvironment] | None = None,
     function_dir: Path | None = None,
     venv_dir: Path | None = None,
+    contacts: list[dict] | None = None,
+    guidance: list[dict] | None = None,
+    knowledge: dict[str, dict] | None = None,
+    blacklist: list[dict] | None = None,
 ) -> None:
     if config is not None:
         _ASSISTANT_CONFIGS[assistant_id] = config
@@ -99,6 +158,14 @@ def register_assistant(
         _ASSISTANT_FUNCTION_DIRS.setdefault(assistant_id, []).append(function_dir)
     if venv_dir is not None:
         _ASSISTANT_VENV_DIRS.setdefault(assistant_id, []).append(venv_dir)
+    if contacts:
+        _ASSISTANT_CONTACTS.setdefault(assistant_id, []).extend(contacts)
+    if guidance:
+        _ASSISTANT_GUIDANCE.setdefault(assistant_id, []).extend(guidance)
+    if knowledge:
+        _ASSISTANT_KNOWLEDGE.setdefault(assistant_id, {}).update(knowledge)
+    if blacklist:
+        _ASSISTANT_BLACKLIST.setdefault(assistant_id, []).extend(blacklist)
 
 
 # ---------------------------------------------------------------------------
@@ -139,7 +206,6 @@ def _collect_dirs(
     registries: list[dict],
     keys: list,
 ) -> list[Path]:
-    """Gather directory paths from multiple registry dicts in cascade order."""
     dirs: list[Path] = []
     for registry, key in zip(registries, keys):
         if key is not None and key in registry:
@@ -147,21 +213,75 @@ def _collect_dirs(
     return dirs
 
 
+def _merge_list_seed(
+    registries: list[dict],
+    keys: list,
+    natural_key_fn: Any = None,
+) -> list[dict]:
+    """Merge list-based seed data across cascade levels.
+
+    Later (more specific) records override earlier ones by natural key
+    if ``natural_key_fn`` is provided.  Otherwise just concatenate.
+    """
+    merged: list[dict] = []
+    for registry, key in zip(registries, keys):
+        if key is not None and key in registry:
+            merged.extend(registry[key])
+    if natural_key_fn is not None and merged:
+        seen: dict[str, dict] = {}
+        for rec in merged:
+            try:
+                seen[natural_key_fn(rec)] = rec
+            except Exception:
+                seen[id(rec)] = rec
+        return list(seen.values())
+    return merged
+
+
+def _merge_knowledge_seed(
+    registries: list[dict],
+    keys: list,
+) -> dict[str, dict]:
+    """Merge knowledge table specs across cascade levels.
+
+    Later levels can add new tables or override rows in existing tables.
+    Row merging within a table uses ``seed_key`` for dedup.
+    """
+    merged: dict[str, dict] = {}
+    for registry, key in zip(registries, keys):
+        if key is not None and key in registry:
+            for table_name, spec in registry[key].items():
+                if table_name not in merged:
+                    merged[table_name] = dict(spec)
+                else:
+                    existing = merged[table_name]
+                    seed_key = spec.get("seed_key") or existing.get("seed_key")
+                    if spec.get("columns"):
+                        existing.setdefault("columns", {}).update(spec["columns"])
+                    if spec.get("description"):
+                        existing["description"] = spec["description"]
+                    if seed_key:
+                        existing["seed_key"] = seed_key
+                    if spec.get("rows"):
+                        all_rows = existing.get("rows", []) + spec["rows"]
+                        if seed_key:
+                            seen: dict[str, dict] = {}
+                            for row in all_rows:
+                                seen[str(row.get(seed_key, id(row)))] = row
+                            existing["rows"] = list(seen.values())
+                        else:
+                            existing["rows"] = all_rows
+    return merged
+
+
 def resolve(
     org_id: int | None = None,
     user_id: str | None = None,
     assistant_id: int | None = None,
-) -> tuple[ActorConfig, list[BaseEnvironment], list[Path], list[Path]]:
+) -> ResolvedCustomization:
     """Resolve merged customizations for the given identity.
 
     Cascade order (least to most specific): org -> user -> assistant.
-
-    Returns:
-        A 4-tuple of:
-        - Merged ``ActorConfig`` (scalars: last non-None wins; guidelines: concatenated)
-        - Environments (additive, deduplicated by name)
-        - Function directories (ordered org -> user -> assistant)
-        - Venv directories (ordered org -> user -> assistant)
     """
     configs: list[ActorConfig] = []
     environments: list[BaseEnvironment] = []
@@ -200,7 +320,45 @@ def resolve(
         [org_id, user_id, assistant_id],
     )
 
-    return merged_config, deduped_envs, function_dirs, venv_dirs
+    keys = [org_id, user_id, assistant_id]
+
+    contacts = _merge_list_seed(
+        [_ORG_CONTACTS, _USER_CONTACTS, _ASSISTANT_CONTACTS],
+        keys,
+        natural_key_fn=lambda r: (
+            f"{r.get('first_name', '')}|{r.get('surname', '')}"
+        ).lower(),
+    )
+    guidance = _merge_list_seed(
+        [_ORG_GUIDANCE, _USER_GUIDANCE, _ASSISTANT_GUIDANCE],
+        keys,
+        natural_key_fn=lambda r: str(r.get("title", "")),
+    )
+    blacklist = _merge_list_seed(
+        [_ORG_BLACKLIST, _USER_BLACKLIST, _ASSISTANT_BLACKLIST],
+        keys,
+        natural_key_fn=lambda r: f"{r.get('medium', '')}|{r.get('contact_detail', '')}",
+    )
+    knowledge = _merge_knowledge_seed(
+        [_ORG_KNOWLEDGE, _USER_KNOWLEDGE, _ASSISTANT_KNOWLEDGE],
+        keys,
+    )
+
+    from unity.customization.secrets_file import load_secrets
+
+    secrets = load_secrets(org_id=org_id, user_id=user_id, assistant_id=assistant_id)
+
+    return ResolvedCustomization(
+        config=merged_config,
+        environments=deduped_envs,
+        function_dirs=function_dirs,
+        venv_dirs=venv_dirs,
+        contacts=contacts,
+        guidance=guidance,
+        knowledge=knowledge,
+        blacklist=blacklist,
+        secrets=secrets,
+    )
 
 
 # ---------------------------------------------------------------------------
