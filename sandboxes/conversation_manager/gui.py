@@ -285,7 +285,6 @@ if _TEXTUAL_AVAILABLE:
             #cmd_row { height: auto; }
             #command_input { width: 1fr; }
             #logs { height: 18; }
-            #trace_panel { height: 14; }
             """
 
             async def _route_raw(self, raw: str) -> None:
@@ -309,7 +308,6 @@ if _TEXTUAL_AVAILABLE:
                                 "Start Screen Share",
                                 id="btn_screen_share_toggle",
                             )
-                            yield Button("Toggle Trace Panel", id="btn_toggle_trace")
                             yield Button("Quit", id="btn_quit")
                         with Vertical(id="right_tabs"):
                             with TabbedContent(id="tabs"):
@@ -358,27 +356,15 @@ if _TEXTUAL_AVAILABLE:
                         )
                         yield Collapsible(
                             _make_rich_log(
-                                id="logs_manager",
+                                id="trace_panel",
                                 wrap=True,
                                 highlight=True,
                                 max_lines=1200,
                             ),
-                            title="Manager Logs",
-                            id="coll_manager",
+                            title="Trace (CodeAct)",
+                            id="coll_trace",
                             collapsed=True,
                         )
-                    with Collapsible(
-                        _make_rich_log(
-                            id="trace_panel",
-                            wrap=True,
-                            highlight=True,
-                            max_lines=1200,
-                        ),
-                        title="Trace (CodeAct)",
-                        id="coll_trace",
-                        collapsed=True,
-                    ):
-                        pass
                 yield Footer()
 
             def on_mount(self) -> None:
@@ -529,7 +515,6 @@ if _TEXTUAL_AVAILABLE:
                         "coll_trace",
                         "coll_cm",
                         "coll_actor",
-                        "coll_manager",
                     }:
                         self._refresh_logs()
                 except Exception:
@@ -679,29 +664,19 @@ if _TEXTUAL_AVAILABLE:
                 try:
                     cm_log = self.query_one("#logs_cm", RichLog)
                     actor_log = self.query_one("#logs_actor", RichLog)
-                    mgr_log = self.query_one("#logs_manager", RichLog)
                 except Exception:
                     return
-                # Replace content (RichLog may not expose clear(); best-effort).
                 try:
                     cm_log.clear()  # type: ignore[attr-defined]
                     actor_log.clear()  # type: ignore[attr-defined]
-                    mgr_log.clear()  # type: ignore[attr-defined]
                 except Exception:
                     pass
 
-                # Check if there are multiple handles to decide whether to group
                 try:
                     actor_handles = lg.get_active_handles("actor")
                     group_actor = len(actor_handles) > 1
                 except Exception:
                     group_actor = False
-
-                try:
-                    mgr_handles = lg.get_active_handles("manager")
-                    group_mgr = len(mgr_handles) > 1
-                except Exception:
-                    group_mgr = False
 
                 try:
                     cm_log.write(lg.render_expanded("cm"))
@@ -711,9 +686,6 @@ if _TEXTUAL_AVAILABLE:
                             group_by_handle=group_actor,
                             max_message_length=0,
                         ),
-                    )
-                    mgr_log.write(
-                        lg.render_expanded("manager", group_by_handle=group_mgr),
                     )
                 except Exception:
                     pass
@@ -984,12 +956,6 @@ if _TEXTUAL_AVAILABLE:
 
                     asyncio.create_task(_finish(rec))
                     return
-                if event.button.id == "btn_toggle_trace":
-                    try:
-                        coll = self.query_one("#coll_trace", Collapsible)
-                        coll.collapsed = not coll.collapsed
-                    except Exception:
-                        pass
 
     class ModernizedMessagingApp(App):
         CSS = """
