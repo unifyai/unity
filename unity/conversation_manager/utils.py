@@ -59,9 +59,9 @@ def dispatch_livekit_agent(
             )
             return False
         else:
-            LOGGER.info(f"{DEFAULT_ICON} LiveKit agent dispatched")
+            LOGGER.debug(f"{DEFAULT_ICON} LiveKit agent dispatched")
     except requests.exceptions.Timeout:
-        LOGGER.info(f"{DEFAULT_ICON} LiveKit agent dispatched (timeout)")
+        LOGGER.debug(f"{DEFAULT_ICON} LiveKit agent dispatched (timeout)")
     except requests.exceptions.RequestException as e:
         # Connection errors, DNS failures, etc. - don't crash, just log
         LOGGER.error(
