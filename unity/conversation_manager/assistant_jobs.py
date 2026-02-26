@@ -369,4 +369,4 @@ def mark_job_done(job_name: str):
     # Stop VM if applicable (managed VM, not user's own desktop)
     if _is_managed_vm():
         vm_type = SESSION_DETAILS.assistant.desktop_mode
-        _stop_vm(SESSION_DETAILS.assistant.agent_id, vm_type)
+        _stop_vm(str(SESSION_DETAILS.assistant.agent_id), vm_type)
