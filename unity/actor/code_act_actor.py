@@ -78,12 +78,12 @@ _UNSET: object = object()
 """Sentinel indicating 'parameter was not explicitly provided'."""
 
 
-def _resolve_param(explicit: object, db_value: object, default: object) -> object:
-    """Three-tier resolution: explicit constructor arg > DB config > hardcoded default."""
+def _resolve_param(explicit: object, code_value: object, default: object) -> object:
+    """Three-tier resolution: explicit constructor arg > code config > hardcoded default."""
     if explicit is not _UNSET:
         return explicit
-    if db_value is not None:
-        return db_value
+    if code_value is not None:
+        return code_value
     return default
 
 
@@ -1343,25 +1343,35 @@ class CodeActActor(BaseCodeActActor):
                 - ``None``: no dynamic policy; only the static ``can_compose`` /
                   ``can_store`` filters apply.
         """
+        # Resolve code-defined client customizations, then apply three-tier
+        # precedence: explicit constructor arg > code config > hardcoded default.
+        from unity.customization.clients import resolve as _resolve_customization
+        from unity.session_details import SESSION_DETAILS
+
+        code_config, code_environments = _resolve_customization(
+            org_id=SESSION_DETAILS.org_id,
+            user_id=SESSION_DETAILS.user.id,
+            assistant_id=SESSION_DETAILS.assistant.agent_id,
+        )
+
+        merged_environments = code_environments + (environments or [])
+
         super().__init__(
-            environments=environments,
+            environments=merged_environments,
             function_manager=function_manager,
             guidance_manager=guidance_manager,
         )
 
-        # Resolve DB-stored config (ConfigManager), then apply three-tier
-        # precedence: explicit constructor arg > DB config > hardcoded default.
-        db_config = self._resolve_config()
-        can_compose = _resolve_param(can_compose, db_config.can_compose, True)
-        can_store = _resolve_param(can_store, db_config.can_store, True)
-        timeout = _resolve_param(timeout, db_config.timeout, 3600.0)
-        model = _resolve_param(model, db_config.model, None)
+        can_compose = _resolve_param(can_compose, code_config.can_compose, True)
+        can_store = _resolve_param(can_store, code_config.can_store, True)
+        timeout = _resolve_param(timeout, code_config.timeout, 3600.0)
+        model = _resolve_param(model, code_config.model, None)
         prompt_caching = _resolve_param(
             prompt_caching,
-            db_config.prompt_caching,
+            code_config.prompt_caching,
             ("system", "tools", "messages"),
         )
-        guidelines = _resolve_param(guidelines, db_config.guidelines, None)
+        guidelines = _resolve_param(guidelines, code_config.guidelines, None)
         self._base_guidelines = guidelines
 
         # Collect function_ids from all environments, split by context, and set
@@ -1435,22 +1445,6 @@ class CodeActActor(BaseCodeActActor):
         self._act_semaphore = asyncio.Semaphore(20)
         # Timeout used when acquiring the semaphore (prevents unbounded waits).
         self._act_semaphore_timeout_s: float = 30.0
-
-    # ───────────────────────── Config resolution ────────────────────────── #
-
-    @staticmethod
-    def _resolve_config() -> "ActorConfig":
-        """Load actor config from ConfigManager, falling back to empty config."""
-        from unity.customization.configs.types.actor_config import ActorConfig
-
-        try:
-            from unity.manager_registry import ManagerRegistry
-
-            cfg_mgr = ManagerRegistry.get_config_manager()
-            return cfg_mgr.load_config()
-        except Exception:
-            pass
-        return ActorConfig()
 
     # ───────────────────────── Session name registry ─────────────────────── #
 
