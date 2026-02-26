@@ -310,7 +310,7 @@ async def subscribe_to_responses(
                             actor_in_flight = bool(
                                 actor_in_flight_ids
                                 - actor_completed_ids
-                                - actor_idle_ids
+                                - actor_idle_ids,
                             )
                             actor_waiting_clarification = bool(
                                 actor_waiting_clarification_ids,
