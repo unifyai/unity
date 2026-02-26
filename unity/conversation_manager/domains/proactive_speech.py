@@ -57,10 +57,11 @@ class ProactiveSpeech:
                 origin="ConversationManager.proactive_speech",
             )
             client.set_response_format(ProactiveDecision)
-            response = await client.generate(
-                system_message=f"{system_prompt}\n\n{PROACTIVE_PROMPT}",
-                messages=chat_history,
-            )
+            messages = [
+                {"role": "system", "content": f"{system_prompt}\n\n{PROACTIVE_PROMPT}"},
+                *chat_history,
+            ]
+            response = await client.generate(messages=messages)
             return ProactiveDecision.model_validate_json(response)
         except Exception as e:
             LOGGER.error(f"{DEFAULT_ICON} Error in ProactiveSpeech decision: {e}")
