@@ -135,6 +135,8 @@ ICONS = {
     "boss_event": "📣",
     # ── Screenshots / media ─────────────────────────────────────────────
     "screenshot": "📸",
+    "screenshot_capture": "📸",
+    "desktop_session": "🖥️",
     # ── Generic / misc ──────────────────────────────────────────────────
     "event": "📣",
     "ping": "🏓",
