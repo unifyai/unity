@@ -73,7 +73,8 @@ def _get_assistant_context() -> Optional[str]:
 
 def _get_assistant_id() -> Optional[str]:
     """Retrieve assistant's agent_id from SESSION_DETAILS as a string."""
-    return SESSION_DETAILS.assistant.agent_id
+    aid = SESSION_DETAILS.assistant.agent_id
+    return str(aid) if aid is not None else None
 
 
 def _get_org_id() -> Optional[int]:
