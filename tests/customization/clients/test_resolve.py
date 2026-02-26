@@ -8,10 +8,16 @@ from unity.customization.configs.types.actor_config import ActorConfig
 from unity.customization.clients import (
     _ORG_CONFIGS,
     _ORG_ENVIRONMENTS,
+    _ORG_FUNCTION_DIRS,
+    _ORG_VENV_DIRS,
     _USER_CONFIGS,
     _USER_ENVIRONMENTS,
+    _USER_FUNCTION_DIRS,
+    _USER_VENV_DIRS,
     _ASSISTANT_CONFIGS,
     _ASSISTANT_ENVIRONMENTS,
+    _ASSISTANT_FUNCTION_DIRS,
+    _ASSISTANT_VENV_DIRS,
     _merge_configs,
     resolve,
 )
@@ -28,10 +34,16 @@ def _clean_registry():
     snapshots = [
         _ORG_CONFIGS,
         _ORG_ENVIRONMENTS,
+        _ORG_FUNCTION_DIRS,
+        _ORG_VENV_DIRS,
         _USER_CONFIGS,
         _USER_ENVIRONMENTS,
+        _USER_FUNCTION_DIRS,
+        _USER_VENV_DIRS,
         _ASSISTANT_CONFIGS,
         _ASSISTANT_ENVIRONMENTS,
+        _ASSISTANT_FUNCTION_DIRS,
+        _ASSISTANT_VENV_DIRS,
     ]
     saved = [dict(d) for d in snapshots]
     for d in snapshots:
@@ -113,24 +125,32 @@ class TestMergeConfigs:
 
 class TestResolve:
     def test_no_match_returns_defaults(self):
-        config, envs = resolve(org_id=999, user_id="nobody", assistant_id=999)
+        config, envs, fn_dirs, venv_dirs = resolve(
+            org_id=999,
+            user_id="nobody",
+            assistant_id=999,
+        )
         assert config == ActorConfig()
         assert envs == []
+        assert fn_dirs == []
+        assert venv_dirs == []
 
     def test_none_ids_returns_defaults(self):
-        config, envs = resolve()
+        config, envs, fn_dirs, venv_dirs = resolve()
         assert config == ActorConfig()
         assert envs == []
+        assert fn_dirs == []
+        assert venv_dirs == []
 
     def test_org_config_resolved(self):
         _ORG_CONFIGS[1] = ActorConfig(model="org-model")
-        config, _ = resolve(org_id=1)
+        config, *_ = resolve(org_id=1)
         assert config.model == "org-model"
 
     def test_user_overrides_org(self):
         _ORG_CONFIGS[1] = ActorConfig(model="org-model", timeout=60.0)
         _USER_CONFIGS["u1"] = ActorConfig(model="user-model")
-        config, _ = resolve(org_id=1, user_id="u1")
+        config, *_ = resolve(org_id=1, user_id="u1")
         assert config.model == "user-model"
         assert config.timeout == 60.0
 
@@ -138,15 +158,35 @@ class TestResolve:
         _ORG_CONFIGS[1] = ActorConfig(model="org-model")
         _USER_CONFIGS["u1"] = ActorConfig(model="user-model")
         _ASSISTANT_CONFIGS[10] = ActorConfig(model="assistant-model")
-        config, _ = resolve(org_id=1, user_id="u1", assistant_id=10)
+        config, *_ = resolve(org_id=1, user_id="u1", assistant_id=10)
         assert config.model == "assistant-model"
 
     def test_guidelines_concatenated_across_levels(self):
         _ORG_CONFIGS[1] = ActorConfig(guidelines="Org.")
         _USER_CONFIGS["u1"] = ActorConfig(guidelines="User.")
         _ASSISTANT_CONFIGS[10] = ActorConfig(guidelines="Assistant.")
-        config, _ = resolve(org_id=1, user_id="u1", assistant_id=10)
+        config, *_ = resolve(org_id=1, user_id="u1", assistant_id=10)
         assert config.guidelines == "Org.\nUser.\nAssistant."
+
+    def test_function_dirs_cascade(self):
+        from pathlib import Path
+
+        _ORG_FUNCTION_DIRS[1] = [Path("/org/functions")]
+        _USER_FUNCTION_DIRS["u1"] = [Path("/user/functions")]
+        _ASSISTANT_FUNCTION_DIRS[10] = [Path("/asst/functions")]
+        _, _, fn_dirs, _ = resolve(org_id=1, user_id="u1", assistant_id=10)
+        assert fn_dirs == [
+            Path("/org/functions"),
+            Path("/user/functions"),
+            Path("/asst/functions"),
+        ]
+
+    def test_venv_dirs_cascade(self):
+        from pathlib import Path
+
+        _ORG_VENV_DIRS[1] = [Path("/org/venvs")]
+        _, _, _, venv_dirs = resolve(org_id=1)
+        assert venv_dirs == [Path("/org/venvs")]
 
 
 # ---------------------------------------------------------------------------
