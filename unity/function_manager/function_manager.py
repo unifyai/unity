@@ -2054,7 +2054,7 @@ class FunctionManager(BaseFunctionManager):
                 batched=True,
                 add_to_all_context=self.include_in_multi_assistant_table,
             )
-            logger.info(f"Inserted {len(entries)} primitives")
+            logger.debug(f"Inserted {len(entries)} primitives")
         except Exception as e:
             logger.error(f"Failed to insert primitives: {e}")
 
@@ -2105,7 +2105,7 @@ class FunctionManager(BaseFunctionManager):
             return False
 
         changed_managers = [alias for alias, _, _ in pending_updates]
-        logger.info(f"Primitives changed for managers: {changed_managers}, syncing...")
+        logger.debug(f"Primitives changed for managers: {changed_managers}, syncing...")
 
         # Step 4: Batched delete for all changed managers (one backend call)
         self._delete_primitives_for_managers(changed_managers)
