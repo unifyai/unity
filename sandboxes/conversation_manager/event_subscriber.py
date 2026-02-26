@@ -19,6 +19,7 @@ from unity.conversation_manager.events import (
     ActorHandleStarted,
     ActorNotification,
     ActorResult,
+    ActorSessionResponse,
     AssistantScreenShareStarted,
     AssistantScreenShareStopped,
     CallGuidance,
@@ -262,6 +263,7 @@ async def subscribe_to_responses(
     # false "still working" hints caused by late notifications after completion.
     actor_in_flight_ids: set[int] = set()
     actor_completed_ids: set[int] = set()
+    actor_idle_ids: set[int] = set()
     actor_waiting_clarification_ids: set[int] = set()
     last_actor_event_at = 0.0
     last_progress_hint_at = 0.0
@@ -305,7 +307,11 @@ async def subscribe_to_responses(
                         # Best-effort progress hint while Actor is running.
                         try:
                             now = time.monotonic()
-                            actor_in_flight = bool(actor_in_flight_ids)
+                            actor_in_flight = bool(
+                                actor_in_flight_ids
+                                - actor_completed_ids
+                                - actor_idle_ids
+                            )
                             actor_waiting_clarification = bool(
                                 actor_waiting_clarification_ids,
                             )
@@ -552,6 +558,12 @@ async def subscribe_to_responses(
                                         ).strip()
                                         if r:
                                             msg = f"ActorClarificationResponse: {r}"
+                                    elif isinstance(event, ActorSessionResponse):
+                                        r = str(
+                                            getattr(event, "content", "") or "",
+                                        ).strip()
+                                        if r:
+                                            msg = f"ActorSessionResponse: {r}"
                                     elif isinstance(event, ActorNotification):
                                         r = str(
                                             getattr(event, "response", "") or "",
@@ -593,6 +605,7 @@ async def subscribe_to_responses(
                             if hid >= 0:
                                 actor_in_flight_ids.add(hid)
                                 actor_completed_ids.discard(hid)
+                                actor_idle_ids.discard(hid)
                                 actor_waiting_clarification_ids.discard(hid)
                             last_actor_event_at = now
                             try:
@@ -624,6 +637,7 @@ async def subscribe_to_responses(
                                 continue
                             if hid >= 0:
                                 actor_in_flight_ids.add(hid)
+                                actor_idle_ids.discard(hid)
                                 actor_waiting_clarification_ids.discard(hid)
                             last_actor_event_at = now
                         elif isinstance(event, ActorClarificationRequest):
@@ -636,10 +650,17 @@ async def subscribe_to_responses(
                                 actor_in_flight_ids.add(hid)
                                 actor_waiting_clarification_ids.add(hid)
                             last_actor_event_at = now
+                        elif isinstance(event, ActorSessionResponse):
+                            hid = int(getattr(event, "handle_id", -1))
+                            if hid >= 0:
+                                actor_idle_ids.add(hid)
+                                actor_waiting_clarification_ids.discard(hid)
+                            last_actor_event_at = now
                         elif isinstance(event, ActorResult):
                             hid = int(getattr(event, "handle_id", -1))
                             if hid >= 0:
                                 actor_in_flight_ids.discard(hid)
+                                actor_idle_ids.discard(hid)
                                 actor_waiting_clarification_ids.discard(hid)
                                 actor_completed_ids.add(hid)
                             last_actor_event_at = now
