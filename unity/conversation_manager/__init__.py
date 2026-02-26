@@ -159,13 +159,13 @@ def get_status() -> Dict[str, Any]:
     if _conversation_manager is not None:
         return {
             "running": True,
-            "assistant_id": SESSION_DETAILS.assistant.id,
+            "assistant_id": SESSION_DETAILS.assistant.agent_id,
             "shutdown_reason": _shutdown_reason,
         }
 
     return {
         "running": False,
-        "assistant_id": SESSION_DETAILS.assistant.id,
+        "assistant_id": SESSION_DETAILS.assistant.agent_id,
         "shutdown_reason": _shutdown_reason,
     }
 

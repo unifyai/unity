@@ -855,8 +855,8 @@ def _init_managers(
     """
     start_time = perf_counter()
 
-    # 0. Initialize unity (idempotent — SESSION_DETAILS.assistant.id is already
-    #    set by the startup handler, so unity.init() just reads it for context).
+    # 0. Initialize unity (idempotent — SESSION_DETAILS.assistant.agent_id is
+    #    already set by the startup handler, so unity.init() reads it for context).
     LOGGER.debug(f"{ICONS['managers_worker']} [ManagersWorker] Initializing unity...")
     local_start_time = perf_counter()
     unity.init()
@@ -1028,7 +1028,7 @@ def _init_managers(
         cm._conversation_manager_handle = (
             ManagerRegistry.get_conversation_manager_handle(
                 description="production deployment",
-                assistant_id=SESSION_DETAILS.assistant.id,
+                assistant_id=SESSION_DETAILS.assistant.agent_id,
                 contact_id="1",
             )
         )
@@ -1036,7 +1036,7 @@ def _init_managers(
         cm._conversation_manager_handle = (
             ManagerRegistry.get_conversation_manager_handle(
                 event_broker=cm.event_broker,
-                conversation_id=SESSION_DETAILS.assistant.id,
+                conversation_id=SESSION_DETAILS.assistant.agent_id,
                 contact_id="1",
                 transcript_manager=cm.transcript_manager,
                 conversation_manager=cm,

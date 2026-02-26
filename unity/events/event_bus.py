@@ -935,16 +935,14 @@ class EventBus:
             return
 
         try:
-            from ..session_details import SESSION_DETAILS, UNASSIGNED_ASSISTANT_ID
+            from ..session_details import SESSION_DETAILS
             from ..settings import SETTINGS
 
-            assistant_id = SESSION_DETAILS.assistant.id
+            agent_id = SESSION_DETAILS.assistant.agent_id
             staging_suffix = (
-                "-staging"
-                if SETTINGS.STAGING and UNASSIGNED_ASSISTANT_ID not in assistant_id
-                else ""
+                "-staging" if SETTINGS.STAGING and agent_id is not None else ""
             )
-            topic_name = f"unity-{assistant_id}{staging_suffix}"
+            topic_name = f"unity-{agent_id}{staging_suffix}"
 
             publisher = self._get_pubsub_publisher()
             topic_path = publisher.topic_path(self._GCP_PROJECT, topic_name)

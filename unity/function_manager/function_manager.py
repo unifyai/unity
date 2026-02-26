@@ -5045,7 +5045,7 @@ class FunctionManager(BaseFunctionManager):
 
         comms_url = SETTINGS.conversation.COMMS_URL.rstrip("/")
         admin_key = SETTINGS.ORCHESTRA_ADMIN_KEY.get_secret_value()
-        assistant_id = SESSION_DETAILS.assistant.id
+        assistant_id = SESSION_DETAILS.assistant.agent_id
 
         if not comms_url or not admin_key:
             raise RuntimeError(

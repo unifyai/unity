@@ -3,7 +3,7 @@ Wrappers around unify.log/create_logs with:
 1. _user injection (user ID, matches user_context path component)
 2. _user_id injection (user ID from SESSION_DETAILS)
 3. _assistant injection (assistant ID, matches assistant_context path component)
-4. _assistant_id injection (assistant's agent_id from SESSION_DETAILS.assistant.id)
+4. _assistant_id injection (assistant's agent_id from SESSION_DETAILS.assistant.agent_id)
 5. _org injection (organization ID from SESSION_DETAILS, None for personal context)
 6. _org_id injection (organization ID from SESSION_DETAILS, None for personal context)
 7. Automatic addition to aggregation contexts by reference (copy=False)
@@ -73,7 +73,7 @@ def _get_assistant_context() -> Optional[str]:
 
 def _get_assistant_id() -> Optional[str]:
     """Retrieve assistant's agent_id from SESSION_DETAILS as a string."""
-    return SESSION_DETAILS.assistant.id or None
+    return SESSION_DETAILS.assistant.agent_id
 
 
 def _get_org_id() -> Optional[int]:

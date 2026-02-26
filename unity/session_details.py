@@ -28,7 +28,6 @@ from dataclasses import dataclass, field
 # Unassigned Identity Sentinels
 # Used by idle containers that haven't been assigned a real assistant/user yet.
 # ─────────────────────────────────────────────────────────────────────────────
-UNASSIGNED_ASSISTANT_ID = "default-assistant"
 UNASSIGNED_USER_ID = "default"
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -46,10 +45,10 @@ PLACEHOLDER_USER_EMAIL = "user@example.com"
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Context Path Defaults (for Unify context hierarchy)
-# Format: {user_id}/{assistant_id}/... e.g., "default/default-assistant/Contacts"
+# Format: {user_id}/{agent_id}/... e.g., "default/0/Contacts"
 # ─────────────────────────────────────────────────────────────────────────────
 UNASSIGNED_USER_CONTEXT = UNASSIGNED_USER_ID
-UNASSIGNED_ASSISTANT_CONTEXT = UNASSIGNED_ASSISTANT_ID
+UNASSIGNED_ASSISTANT_CONTEXT = "0"
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Voice Defaults
@@ -62,7 +61,7 @@ DEFAULT_VOICE_MODE = "tts"
 class AssistantDetails:
     """Details about the assistant."""
 
-    id: str = UNASSIGNED_ASSISTANT_ID
+    agent_id: int | None = None
     first_name: str = ""
     surname: str = ""
     age: str = ""
@@ -164,11 +163,13 @@ class SessionDetails:
 
     @property
     def assistant_context(self) -> str:
-        """The assistant's ID used as the context path component.
+        """The assistant's agent_id as the context path component.
 
-        Used for Unify context paths like '{user_id}/{assistant_id}/...'.
+        Used for Unify context paths like '{user_id}/{agent_id}/...'.
         """
-        return self.assistant.id or UNASSIGNED_ASSISTANT_CONTEXT
+        if self.assistant.agent_id is not None:
+            return str(self.assistant.agent_id)
+        return UNASSIGNED_ASSISTANT_CONTEXT
 
     @property
     def user_context(self) -> str:
@@ -238,7 +239,7 @@ class SessionDetails:
     def populate(
         self,
         *,
-        assistant_id: str = "",
+        agent_id: int | None = None,
         assistant_first_name: str = "",
         assistant_surname: str = "",
         assistant_age: str = "",
@@ -267,7 +268,7 @@ class SessionDetails:
 
         Called by ConversationManager when a StartupEvent is received.
         """
-        self.assistant.id = assistant_id
+        self.assistant.agent_id = agent_id
         self.assistant.first_name = assistant_first_name
         self.assistant.surname = assistant_surname
         self.assistant.age = assistant_age
@@ -309,7 +310,9 @@ class SessionDetails:
 
         Called after populate() to ensure subprocesses can inherit values.
         """
-        os.environ["ASSISTANT_ID"] = self.assistant.id
+        os.environ["ASSISTANT_ID"] = (
+            str(self.assistant.agent_id) if self.assistant.agent_id is not None else ""
+        )
         os.environ["ASSISTANT_FIRST_NAME"] = self.assistant.first_name
         os.environ["ASSISTANT_SURNAME"] = self.assistant.surname
         os.environ["ASSISTANT_NAME"] = self.assistant.name
@@ -353,7 +356,10 @@ class SessionDetails:
         Only sets fields if the corresponding env var is non-empty.
         """
         if val := os.environ.get("ASSISTANT_ID"):
-            self.assistant.id = val
+            try:
+                self.assistant.agent_id = int(val)
+            except (ValueError, TypeError):
+                pass
         if val := os.environ.get("ASSISTANT_FIRST_NAME"):
             self.assistant.first_name = val
         if val := os.environ.get("ASSISTANT_SURNAME"):
