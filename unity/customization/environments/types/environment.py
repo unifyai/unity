@@ -7,7 +7,7 @@ UNASSIGNED = -1
 
 
 class Environment(BaseModel):
-    """Persisted environment definition.
+    """Serialized environment definition.
 
     Stores everything needed to reconstruct a ``BaseEnvironment`` instance
     at actor construction time: source files, pip dependencies, and the

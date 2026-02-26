@@ -26,8 +26,6 @@ from unity.memory_manager.settings import MemorySettings
 from unity.secret_manager.settings import SecretSettings
 from unity.task_scheduler.settings import TaskSettings
 from unity.transcript_manager.settings import TranscriptSettings
-from unity.customization.configs.settings import ConfigSettings
-from unity.customization.environments.settings import EnvironmentSettings
 from unity.web_searcher.settings import WebSettings
 
 
@@ -172,11 +170,9 @@ class ProductionSettings(BaseSettings):
     # Each manager owns its settings in its own settings.py file.
     # Access via SETTINGS.contact.IMPL, SETTINGS.transcript.IMPL, etc.
     actor: ActorSettings = Field(default_factory=ActorSettings)
-    config: ConfigSettings = Field(default_factory=ConfigSettings)
     contact: ContactSettings = Field(default_factory=ContactSettings)
     conversation: ConversationSettings = Field(default_factory=ConversationSettings)
     data: DataSettings = Field(default_factory=DataSettings)
-    environment: EnvironmentSettings = Field(default_factory=EnvironmentSettings)
     file: FileSettings = Field(default_factory=FileSettings)
     function: FunctionSettings = Field(default_factory=FunctionSettings)
     guidance: GuidanceSettings = Field(default_factory=GuidanceSettings)

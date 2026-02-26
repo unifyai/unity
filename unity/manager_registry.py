@@ -26,7 +26,6 @@ Available typed methods:
     - get_contact_manager()
     - get_conversation_manager_handle()
     - get_data_manager()
-    - get_environment_manager()
     - get_file_manager()
     - get_function_manager()
     - get_guidance_manager()
@@ -60,8 +59,6 @@ if TYPE_CHECKING:
     from .task_scheduler.base import BaseTaskScheduler
     from .transcript_manager.base import BaseTranscriptManager
     from .web_searcher.base import BaseWebSearcher
-    from .customization.environments.base import BaseEnvironmentManager
-    from .customization.configs.base import BaseConfigManager
     from .function_manager.primitives.scope import PrimitiveScope
 
 __all__ = [
@@ -607,42 +604,6 @@ class ManagerRegistry:
             **kwargs,
         )
 
-    @classmethod
-    def get_environment_manager(
-        cls,
-        *,
-        description: str | None = None,
-        simulation_guidance: str | None = None,
-        _force_new: bool = False,
-        **kwargs: Any,
-    ) -> "BaseEnvironmentManager":
-        """Get the EnvironmentManager singleton (respects IMPL settings)."""
-        return cls.get(
-            "environments",
-            description=description,
-            simulation_guidance=simulation_guidance,
-            _force_new=_force_new,
-            **kwargs,
-        )
-
-    @classmethod
-    def get_config_manager(
-        cls,
-        *,
-        description: str | None = None,
-        simulation_guidance: str | None = None,
-        _force_new: bool = False,
-        **kwargs: Any,
-    ) -> "BaseConfigManager":
-        """Get the ConfigManager singleton (respects IMPL settings)."""
-        return cls.get(
-            "configs",
-            description=description,
-            simulation_guidance=simulation_guidance,
-            _force_new=_force_new,
-            **kwargs,
-        )
-
 
 class SingletonABCMeta(ABCMeta):
     """Metaclass that enforces the Singleton pattern via ManagerRegistry.
@@ -694,8 +655,6 @@ def _populate_registry() -> None:
     ManagerRegistry.register_settings("web_search", lambda: SETTINGS.web)
     ManagerRegistry.register_settings("data", lambda: SETTINGS.data)
     ManagerRegistry.register_settings("files", lambda: SETTINGS.file)
-    ManagerRegistry.register_settings("configs", lambda: SETTINGS.config)
-    ManagerRegistry.register_settings("environments", lambda: SETTINGS.environment)
     ManagerRegistry.register_settings("functions", lambda: SETTINGS.function)
     ManagerRegistry.register_settings("images", lambda: SETTINGS.image)
     ManagerRegistry.register_settings("memory", lambda: SETTINGS.memory)
@@ -825,32 +784,6 @@ def _populate_registry() -> None:
 
     ManagerRegistry.register_class("functions", "real", FunctionManager)
     ManagerRegistry.register_class("functions", "simulated", SimulatedFunctionManager)
-
-    # ─────────────────────────────────────────────────────────────────────────
-    # EnvironmentManager implementations
-    # ─────────────────────────────────────────────────────────────────────────
-    from .customization.environments.environment_manager import EnvironmentManager
-    from .customization.environments.simulated import SimulatedEnvironmentManager
-
-    ManagerRegistry.register_class("environments", "real", EnvironmentManager)
-    ManagerRegistry.register_class(
-        "environments",
-        "simulated",
-        SimulatedEnvironmentManager,
-    )
-
-    # ─────────────────────────────────────────────────────────────────────────
-    # ConfigManager implementations
-    # ─────────────────────────────────────────────────────────────────────────
-    from .customization.configs.config_manager import ConfigManager
-    from .customization.configs.simulated import SimulatedConfigManager
-
-    ManagerRegistry.register_class("configs", "real", ConfigManager)
-    ManagerRegistry.register_class(
-        "configs",
-        "simulated",
-        SimulatedConfigManager,
-    )
 
     # ─────────────────────────────────────────────────────────────────────────
     # ImageManager implementations
