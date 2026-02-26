@@ -71,7 +71,7 @@ class TestUploadUnifyAttachment:
                 "unity.conversation_manager.domains.comms_utils.SETTINGS",
             ) as mock_settings,
         ):
-            mock_session_details.assistant.id = "test-assistant"
+            mock_session_details.assistant.agent_id = 42
             mock_settings.conversation.ADAPTERS_URL = ADAPTERS_URL
 
             result = await comms_utils.upload_unify_attachment(
@@ -128,7 +128,7 @@ class TestUploadUnifyAttachment:
                 "unity.conversation_manager.domains.comms_utils.SETTINGS",
             ) as mock_settings,
         ):
-            mock_session_details.assistant.id = "test-assistant"
+            mock_session_details.assistant.agent_id = 42
             mock_settings.conversation.ADAPTERS_URL = ADAPTERS_URL
 
             result = await comms_utils.upload_unify_attachment(
@@ -168,7 +168,7 @@ class TestUploadUnifyAttachment:
                 "unity.conversation_manager.domains.comms_utils.SETTINGS",
             ) as mock_settings,
         ):
-            mock_session_details.assistant.id = "test-assistant"
+            mock_session_details.assistant.agent_id = 42
             mock_settings.conversation.COMMS_URL = comms_app_url
             mock_settings.conversation.ADAPTERS_URL = adapters_url
 
@@ -303,7 +303,7 @@ class TestSendUnifyMessage:
             ) as mock_settings,
         ):
             mock_settings.STAGING = False
-            mock_session.assistant.id = "test-assistant"
+            mock_session.assistant.agent_id = 42
 
             mock_publisher = MagicMock()
             mock_future = MagicMock()
@@ -338,7 +338,7 @@ class TestSendUnifyMessage:
             ) as mock_settings,
         ):
             mock_settings.STAGING = False
-            mock_session.assistant.id = "test-assistant"
+            mock_session.assistant.agent_id = 42
 
             mock_publisher = MagicMock()
             mock_future = MagicMock()

@@ -4,7 +4,7 @@ import contextlib
 
 from unity.logger import LOGGER
 from unity.common.hierarchical_logger import DEFAULT_ICON
-from unity.session_details import UNASSIGNED_ASSISTANT_ID, SESSION_DETAILS
+from unity.session_details import SESSION_DETAILS
 from unity.settings import SETTINGS
 from unity.manager_registry import SingletonABCMeta
 from unity.common.async_tool_loop import SteerableToolHandle
@@ -70,7 +70,7 @@ class ConversationManager(metaclass=SingletonABCMeta):
         event_broker,
         job_name: str,
         user_id: str,
-        assistant_id: str,
+        assistant_id: int | None,
         user_first_name: str,
         user_surname: str,
         assistant_first_name: str,
@@ -1012,7 +1012,7 @@ class ConversationManager(metaclass=SingletonABCMeta):
     def set_details(self, payload: dict):
         """Populate assistant/user/voice details into SESSION_DETAILS."""
         self.user_id = payload["user_id"]
-        self.assistant_id = payload["assistant_id"]
+        self.assistant_id = int(payload["assistant_id"])
         self.assistant_first_name = payload["assistant_first_name"]
         self.assistant_surname = payload["assistant_surname"]
         self.assistant_age = payload["assistant_age"]
@@ -1037,7 +1037,7 @@ class ConversationManager(metaclass=SingletonABCMeta):
             SESSION_DETAILS.unify_key = payload["api_key"]
         # Populate the global SessionDetails singleton
         SESSION_DETAILS.populate(
-            assistant_id=self.assistant_id,
+            agent_id=self.assistant_id,
             assistant_first_name=self.assistant_first_name,
             assistant_surname=self.assistant_surname,
             assistant_age=self.assistant_age,
@@ -1103,7 +1103,7 @@ class ConversationManager(metaclass=SingletonABCMeta):
         # Stop file sync to ensure final sync to VM
         await self._stop_file_sync()
 
-        if self.job_name and self.assistant_id != UNASSIGNED_ASSISTANT_ID:
+        if self.job_name and self.assistant_id is not None:
             self._session_logger.debug(
                 "session_end",
                 f"Marking job {self.job_name} done",

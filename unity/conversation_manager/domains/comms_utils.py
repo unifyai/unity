@@ -6,7 +6,7 @@ import os
 
 from unity.logger import LOGGER
 from unity.common.hierarchical_logger import ICONS
-from unity.session_details import UNASSIGNED_ASSISTANT_ID, SESSION_DETAILS
+from unity.session_details import SESSION_DETAILS
 from unity.settings import SETTINGS
 
 load_dotenv()
@@ -78,13 +78,9 @@ async def send_unify_message(
     Returns:
         dict with "success" key indicating delivery status.
     """
-    assistant_id = SESSION_DETAILS.assistant.id
-    staging_suffix = (
-        "-staging"
-        if SETTINGS.STAGING and UNASSIGNED_ASSISTANT_ID not in assistant_id
-        else ""
-    )
-    topic_name = f"unity-{assistant_id}{staging_suffix}"
+    agent_id = SESSION_DETAILS.assistant.agent_id
+    staging_suffix = "-staging" if SETTINGS.STAGING and agent_id is not None else ""
+    topic_name = f"unity-{agent_id}{staging_suffix}"
     publisher = _get_publisher()
     topic_path = publisher.topic_path("responsive-city-458413-a2", topic_name)
 
@@ -119,7 +115,7 @@ async def send_unify_message(
 async def upload_unify_attachment(
     file_content: bytes,
     filename: str,
-    assistant_id: str | None = None,
+    assistant_id: int | None = None,
 ) -> dict:
     """
     Upload a file attachment for use in outbound Unify messages.
@@ -134,7 +130,7 @@ async def upload_unify_attachment(
         or {"success": False, "error": str} on failure.
     """
     if assistant_id is None:
-        assistant_id = SESSION_DETAILS.assistant.id
+        assistant_id = SESSION_DETAILS.assistant.agent_id
 
     import aiohttp
     from io import BytesIO

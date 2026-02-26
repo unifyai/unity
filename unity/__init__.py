@@ -72,8 +72,8 @@ def init(
 ) -> None:  # noqa: D401 – imperative name
     """Initialise the *unity* runtime.
 
-    Reads SESSION_DETAILS.assistant.id (set by the startup event) for the
-    context path. All assistant identity and profile data lives on
+    Reads SESSION_DETAILS.assistant.agent_id (set by the startup event) for
+    the context path. All assistant identity and profile data lives on
     SESSION_DETAILS — this function only handles project activation,
     context setup, EventBus, and hooks.
     """

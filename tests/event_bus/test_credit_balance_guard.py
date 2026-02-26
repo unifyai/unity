@@ -64,7 +64,7 @@ def _patch_context(*, org_id=None):
             mock_session = stack.enter_context(
                 patch("unity.session_details.SESSION_DETAILS"),
             )
-            mock_session.assistant.id = "agent_1"
+            mock_session.assistant.agent_id = 1
             mock_session.user_id = "user_1"
             mock_session.org_id = org_id
             mock_session.assistant.timezone = "UTC"
@@ -734,7 +734,7 @@ class TestEdgeCases:
 
         with patch("unity.spending_limits._get_api_key", return_value="key"):
             with patch("unity.session_details.SESSION_DETAILS") as mock_session:
-                mock_session.assistant.id = ""
+                mock_session.assistant.agent_id = None
                 mock_session.user_id = None
                 mock_session.org_id = None
 

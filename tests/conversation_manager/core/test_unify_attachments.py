@@ -455,7 +455,7 @@ class TestUploadUnifyAttachmentEnhanced:
                 "unity.conversation_manager.domains.comms_utils.SETTINGS",
             ) as mock_settings,
         ):
-            mock_session_details.assistant.id = "test-assistant"
+            mock_session_details.assistant.agent_id = 42
             mock_settings.conversation.COMMS_URL = "http://localhost:8080"
 
             result = await comms_utils.upload_unify_attachment(

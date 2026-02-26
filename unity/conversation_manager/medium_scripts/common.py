@@ -626,7 +626,10 @@ def configure_from_cli(
             elif env_name == "ASSISTANT_BIO":
                 SESSION_DETAILS.assistant.about = value
             elif env_name == "ASSISTANT_ID":
-                SESSION_DETAILS.assistant.id = value
+                try:
+                    SESSION_DETAILS.assistant.agent_id = int(value)
+                except (ValueError, TypeError):
+                    pass
             elif env_name == "USER_ID":
                 SESSION_DETAILS.user.id = value
 

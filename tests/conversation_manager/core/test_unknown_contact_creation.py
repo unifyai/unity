@@ -70,7 +70,7 @@ def broker():
 def mock_session_details():
     """Mock SESSION_DETAILS for testing."""
     with patch("unity.conversation_manager.comms_manager.SESSION_DETAILS") as mock:
-        mock.assistant.id = "test_assistant"
+        mock.assistant.agent_id = 42
         mock.assistant.email = "assistant@test.com"
         mock.user.name = "Test User"
         mock.user.number = "+15555550000"

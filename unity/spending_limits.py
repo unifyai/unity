@@ -359,7 +359,7 @@ async def check_spending_limits_callback(
     base_url = _get_base_url()
     timeout = LIMIT_CHECK_TIMEOUT
 
-    agent_id = SESSION_DETAILS.assistant.id or None
+    agent_id = SESSION_DETAILS.assistant.agent_id
 
     user_id = SESSION_DETAILS.user_id
     org_id = SESSION_DETAILS.org_id  # None for personal context

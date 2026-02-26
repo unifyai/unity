@@ -841,7 +841,7 @@ if __name__ == "__main__":
         dispatch_livekit_agent(
             room_name,
             record=True,
-            assistant_id=SESSION_DETAILS.assistant.id,
+            assistant_id=SESSION_DETAILS.assistant.agent_id,
             user_id=SESSION_DETAILS.user.id,
         )
         _log.dispatch(f"LiveKit agent {room_name} dispatched")
