@@ -350,11 +350,23 @@ class EventBus:
 
     @classmethod
     def _get_pubsub_publisher(cls):
-        """Lazily initialize the GCP Pub/Sub publisher client."""
+        """Lazily initialize the GCP Pub/Sub publisher client.
+
+        Message ordering is enabled so that messages published with the same
+        ``ordering_key`` are delivered to subscribers in publish order.  Each
+        assistant's action events share a single ordering key (the assistant
+        ID), guaranteeing the console receives ManagerMethod and ToolLoop
+        events in the exact sequence they occurred.
+        """
         if cls._pubsub_publisher is None:
             from google.cloud import pubsub_v1
+            from google.cloud.pubsub_v1.types import PublisherOptions
 
-            cls._pubsub_publisher = pubsub_v1.PublisherClient()
+            cls._pubsub_publisher = pubsub_v1.PublisherClient(
+                publisher_options=PublisherOptions(
+                    enable_message_ordering=True,
+                ),
+            )
         return cls._pubsub_publisher
 
     def __init__(self):
@@ -959,9 +971,13 @@ class EventBus:
                 },
             }
 
+            # ordering_key ensures Pub/Sub delivers all action events for this
+            # assistant in publish order.  The subscription must also have
+            # enable_message_ordering=True (configured in communication service).
             future = publisher.publish(
                 topic_path,
                 json.dumps(message_data, default=str).encode("utf-8"),
+                ordering_key=assistant_id,
                 thread="action_event",
             )
             future.add_done_callback(self._on_pubsub_publish_done)
