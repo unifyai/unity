@@ -253,8 +253,8 @@ class TestFormatJsonForLog:
 class TestFormatLlmResponseForLog:
     """Tests for format_llm_response_for_log — bespoke execute_code rendering."""
 
-    def test_execute_code_gets_visual_delimiters(self):
-        """execute_code tool calls have ┄ delimiters around the code block."""
+    def test_execute_code_gets_markdown_fences(self):
+        """execute_code tool calls have markdown fenced code blocks."""
         msg = {
             "content": "Running the code.",
             "role": "assistant",
@@ -275,17 +275,22 @@ class TestFormatLlmResponseForLog:
         }
         result = format_llm_response_for_log(msg)
 
-        assert "┄┄┄┄┄┄┄┄ python ┄┄┄┄┄┄┄┄" in result
+        assert "```python" in result
         lines = result.split("\n")
-        banner_indices = [i for i, l in enumerate(lines) if "┄┄┄┄" in l]
-        assert len(banner_indices) == 2
-        code_lines = lines[banner_indices[0] + 1 : banner_indices[1]]
+        open_idx = next(i for i, l in enumerate(lines) if "```python" in l)
+        close_indices = [
+            i
+            for i, l in enumerate(lines)
+            if i > open_idx and l.strip() == '```"' or l.strip() == "```"
+        ]
+        assert len(close_indices) >= 1
+        code_lines = lines[open_idx + 1 : close_indices[0]]
         code_text = "\n".join(l.strip() for l in code_lines)
         assert "import os" in code_text
         assert "print(os.getcwd())" in code_text
 
     def test_non_execute_code_tool_calls_unaffected(self):
-        """Tool calls other than execute_code don't get delimiters."""
+        """Tool calls other than execute_code don't get fenced delimiters."""
         msg = {
             "content": "",
             "role": "assistant",
@@ -300,8 +305,7 @@ class TestFormatLlmResponseForLog:
         }
         result = format_llm_response_for_log(msg)
 
-        assert "┄┄┄┄" not in result
-        # But newlines in arguments are still expanded
+        assert "```" not in result
         lines = result.split("\n")
         hello_line = next(l for l in lines if "hello" in l)
         idx = lines.index(hello_line)
@@ -326,19 +330,11 @@ class TestFormatLlmResponseForLog:
 
 
 class TestHighlightCodeBlocks:
-    """Tests for Pygments-based syntax highlighting of code blocks."""
-
-    # ── ┄-bar delimiters ──────────────────────────────────────────────
+    """Tests for Pygments-based syntax highlighting of markdown-fenced code blocks."""
 
     def test_highlights_python_code_block(self):
-        """Code between ┄ delimiters receives ANSI escape codes."""
-        text = (
-            "some prefix\n"
-            "┄┄┄┄┄┄┄┄ python ┄┄┄┄┄┄┄┄\n"
-            "x = 42\n"
-            "┄┄┄┄┄┄┄┄ python ┄┄┄┄┄┄┄┄\n"
-            "some suffix"
-        )
+        """Code between ```lang and ``` receives ANSI escape codes."""
+        text = "some prefix\n" "```python\n" "x = 42\n" "```\n" "some suffix"
         result = highlight_code_blocks(text)
         assert "\033[" in result
         assert "42" in result
@@ -347,13 +343,7 @@ class TestHighlightCodeBlocks:
 
     def test_preserves_text_outside_delimiters(self):
         """Text outside code blocks is unchanged."""
-        text = (
-            "before\n"
-            "┄┄┄┄┄┄┄┄ python ┄┄┄┄┄┄┄┄\n"
-            "pass\n"
-            "┄┄┄┄┄┄┄┄ python ┄┄┄┄┄┄┄┄\n"
-            "after"
-        )
+        text = "before\n" "```python\n" "pass\n" "```\n" "after"
         result = highlight_code_blocks(text)
         assert result.startswith("before\n")
         assert result.endswith("after")
@@ -365,50 +355,28 @@ class TestHighlightCodeBlocks:
 
     def test_unknown_language_falls_back_to_plain(self):
         """Unrecognised language leaves the code block unchanged."""
-        text = (
-            "┄┄┄┄┄┄┄┄ nonexistent_lang_xyz ┄┄┄┄┄┄┄┄\n"
-            "some code\n"
-            "┄┄┄┄┄┄┄┄ nonexistent_lang_xyz ┄┄┄┄┄┄┄┄"
-        )
+        text = "```nonexistent_lang_xyz\n" "some code\n" "```"
         result = highlight_code_blocks(text)
         assert "some code" in result
 
     def test_multiple_code_blocks(self):
         """Multiple code blocks in the same message are each highlighted."""
         text = (
-            "┄┄┄┄┄┄┄┄ python ┄┄┄┄┄┄┄┄\n"
+            "```python\n"
             "x = 1\n"
-            "┄┄┄┄┄┄┄┄ python ┄┄┄┄┄┄┄┄\n"
+            "```\n"
             "middle text\n"
-            "┄┄┄┄┄┄┄┄ python ┄┄┄┄┄┄┄┄\n"
+            "```python\n"
             "y = 2\n"
-            "┄┄┄┄┄┄┄┄ python ┄┄┄┄┄┄┄┄"
+            "```"
         )
         result = highlight_code_blocks(text)
         assert "middle text" in result
         ansi_count = result.count("\033[")
         assert ansi_count > 2
 
-    # ── Markdown fenced code blocks ───────────────────────────────────
-
-    def test_highlights_markdown_fenced_block(self):
-        """Code between ```lang and ``` receives ANSI escape codes."""
-        text = "some text\n" "```python\n" "x = 42\n" "```\n" "more text"
-        result = highlight_code_blocks(text)
-        assert "\033[" in result
-        assert "42" in result
-        assert "some text" in result
-        assert "more text" in result
-
-    def test_markdown_preserves_surrounding_text(self):
-        """Text outside markdown code blocks is unchanged."""
-        text = "before\n" "```python\n" "pass\n" "```\n" "after"
-        result = highlight_code_blocks(text)
-        assert result.startswith("before\n")
-        assert result.endswith("after")
-
-    def test_markdown_with_indentation(self):
-        """Indented markdown blocks (from JSON expansion) are highlighted."""
+    def test_with_indentation(self):
+        """Indented blocks (from JSON expansion) are highlighted."""
         text = (
             "                ```python\n"
             "                img = render(page=0)\n"
@@ -418,28 +386,10 @@ class TestHighlightCodeBlocks:
         assert "\033[" in result
         assert "render" in result
 
-    def test_markdown_closing_not_confused_with_opening(self):
+    def test_closing_not_confused_with_opening(self):
         """Closing ``` is not confused with an opening ```lang."""
         text = "```python\n" "x = 1\n" "```\n" "```python\n" "y = 2\n" "```"
         result = highlight_code_blocks(text)
-        ansi_count = result.count("\033[")
-        assert ansi_count > 2
-
-    # ── Mixed delimiter styles ────────────────────────────────────────
-
-    def test_mixed_bar_and_markdown_blocks(self):
-        """Both ┄ and markdown blocks are highlighted in the same text."""
-        text = (
-            "┄┄┄┄┄┄┄┄ python ┄┄┄┄┄┄┄┄\n"
-            "x = 1\n"
-            "┄┄┄┄┄┄┄┄ python ┄┄┄┄┄┄┄┄\n"
-            "some text\n"
-            "```python\n"
-            "y = 2\n"
-            "```"
-        )
-        result = highlight_code_blocks(text)
-        assert "some text" in result
         ansi_count = result.count("\033[")
         assert ansi_count > 2
 
@@ -468,9 +418,9 @@ class TestMillisFormatterTtyHighlighting:
         fmt = _MillisFormatter(stream=FakeTTY())
         msg = (
             "🤖 [CodeActActor.act(abcd)] {\n"
-            "    ┄┄┄┄┄┄┄┄ python ┄┄┄┄┄┄┄┄\n"
+            "    ```python\n"
             "    x = 42\n"
-            "    ┄┄┄┄┄┄┄┄ python ┄┄┄┄┄┄┄┄\n"
+            "    ```\n"
             "}"
         )
         result = fmt.format(self._make_record(msg))
@@ -487,9 +437,9 @@ class TestMillisFormatterTtyHighlighting:
         fmt = _MillisFormatter(stream=FakeFile())
         msg = (
             "🤖 [CodeActActor.act(abcd)] {\n"
-            "    ┄┄┄┄┄┄┄┄ python ┄┄┄┄┄┄┄┄\n"
+            "    ```python\n"
             "    x = 42\n"
-            "    ┄┄┄┄┄┄┄┄ python ┄┄┄┄┄┄┄┄\n"
+            "    ```\n"
             "}"
         )
         result = fmt.format(self._make_record(msg))
@@ -499,7 +449,7 @@ class TestMillisFormatterTtyHighlighting:
     def test_no_stream_defaults_to_no_highlighting(self):
         """When no stream is provided, highlighting is off."""
         fmt = _MillisFormatter()
-        msg = "┄┄┄┄┄┄┄┄ python ┄┄┄┄┄┄┄┄\n" "x = 42\n" "┄┄┄┄┄┄┄┄ python ┄┄┄┄┄┄┄┄"
+        msg = "```python\n" "x = 42\n" "```"
         result = fmt.format(self._make_record(msg))
         assert "\033[" not in result
 
