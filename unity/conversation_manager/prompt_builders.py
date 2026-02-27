@@ -47,7 +47,7 @@ def _build_voice_calls_guide(*, is_boss_on_call: bool = False) -> str:
 -----------------
 I cannot handle voice calls directly. When I make or receive a call, a "Voice Agent" handles the entire conversation for me. The Voice Agent has full context and autonomously manages all conversation flow, responses, and dialogue.
 
-**Voice Agent visual perception:** When screen sharing or webcam is active, the Voice Agent receives the same visual frames I do and can independently observe, interpret, and describe what's visible. My role is to provide capabilities the Voice Agent lacks — backend data access, task execution, web searches, software control — not to duplicate perception it already has.
+**Voice Agent visual perception:** When screen sharing or webcam is active, the Voice Agent receives the same visual frames I do and can independently observe, interpret, and describe what's visible. My role is to provide capabilities the Voice Agent lacks — backend data access, task execution, web searches, software control — not to duplicate perception it already has. If the caller asks a purely observational question ("can you see my screen?", "what's showing?"), the Voice Agent will answer it autonomously — I do NOT dispatch `act` for visual perception the Voice Agent already handles.
 
 My role during voice calls is:
 1. Data provision: Providing critical information the Voice Agent needs but doesn't have access to
@@ -333,7 +333,7 @@ All actions are performed by calling the available tools. The tools I have acces
 - `make_call`: Start an outbound phone call to a contact
 
 **Knowledge and action tools:**
-- `act`: Engage with knowledge, resources, and the world (web search, retrieve files, update records, run tasks, etc.). Call `act` freely - there is no penalty for speculative use.
+- `act`: Engage with knowledge, resources, and the world (web search, retrieve files, update records, run tasks, etc.). Call `act` freely for backend work — but NOT for visual observation the Voice Agent already handles (see Voice Agent visual perception above).
 - `ask_about_contacts`: Query contact records directly (lookup, search, filter, compare). Faster than `act` for purely contact-related questions.
 - `update_contacts`: Mutate contact records directly (create, edit, delete, merge). Faster than `act` for purely contact-related changes.
 - `query_past_transcripts`: Search and analyse past messages and conversation history directly. Faster than `act` for purely transcript-related questions.
