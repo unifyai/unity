@@ -424,11 +424,19 @@ async def add_unify_message_attachments(
         elif result is not None:
             saved_display_names.append(result)
 
-    # Phase 2: Ingest all saved files (parse, index, embed).
+    # Phase 2: Ingest all saved files (parse, index, embed) in parallel.
     # Files are already on disk and accessible to the assistant.
     if saved_display_names:
         try:
-            await asyncio.to_thread(file_manager.ingest_files, saved_display_names)
+            from unity.file_manager.types.config import FilePipelineConfig
+
+            cfg = FilePipelineConfig()
+            cfg.execution.parallel_files = True
+            await asyncio.to_thread(
+                file_manager.ingest_files,
+                saved_display_names,
+                config=cfg,
+            )
         except Exception as e:
             LOGGER.error(
                 f"{ICONS['comms_outbound']} Failed to ingest downloaded attachments: {e}",
