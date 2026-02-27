@@ -149,7 +149,7 @@ async def upload_unify_attachment(
         filename=filename,
         content_type="application/octet-stream",
     )
-    form_data.add_field("assistant_id", assistant_id)
+    form_data.add_field("assistant_id", str(assistant_id))
 
     async with aiohttp.ClientSession() as session:
         async with session.post(
