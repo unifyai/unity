@@ -205,7 +205,6 @@ def log_job_startup(job_name: str, user_id: str, assistant_id: str):
     The adapter already created the running=True record with all assistant info.
     This function just adds the container-specific details: job_name and liveview_url.
     """
-    LOGGER.info(f"latency: jobs.log_job_startup.enter | job={job_name}")
     api_key = SESSION_DETAILS.shared_unify_key or None
     if not api_key:
         LOGGER.debug(
@@ -282,7 +281,6 @@ def log_job_startup(job_name: str, user_id: str, assistant_id: str):
         LOGGER.debug(
             f"{ICONS['assistant_jobs']} [assistant_jobs] Updated record with liveview_url={liveview_url}",
         )
-    LOGGER.info("latency: jobs.log_job_startup.exit")
 
 
 def _stop_vm(assistant_id: str, vm_type: str) -> None:
