@@ -964,11 +964,13 @@ async def _screenshot_post(
     Returns the status code, raw body text (on error), and parsed JSON (on
     success) so callers can handle retries without duplicating HTTP plumbing.
     """
+    use_ssl = False if "vm.unify.ai" in url else None
     async with session.post(
         url,
         json={},
         headers=headers,
         timeout=timeout,
+        ssl=use_ssl,
     ) as resp:
         if resp.status >= 400:
             return resp.status, await resp.text(), None
