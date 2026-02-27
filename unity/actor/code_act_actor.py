@@ -1166,6 +1166,11 @@ class _StorageCheckHandle(SteerableToolHandle):
 
     async def result(self) -> str:
         await self._task_done_event.wait()
+        if self._stopped and self._stop_reason:
+            return (
+                f"Task stopped as requested. Reason: {self._stop_reason}\n"
+                f"Background skill storage is reviewing the completed work."
+            )
         return self._original_result or ""
 
     # ── Events ────────────────────────────────────────────────────────

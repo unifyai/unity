@@ -2,7 +2,6 @@ import asyncio
 import traceback
 from typing import TYPE_CHECKING, Union
 
-import unity
 from unity.contact_manager.types.contact import UNASSIGNED
 from unity.common.hierarchical_logger import DEFAULT_ICON
 from unity.conversation_manager import assistant_jobs
