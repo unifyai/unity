@@ -44,6 +44,7 @@ __all__ = ["Event", "EventBus", "Subscription", "EVENT_BUS"]
 from ..common.global_docstrings import CLEAR_METHOD_DOCSTRING
 from ..common.log_utils import _derive_all_contexts, _inject_private_fields
 from ..common.model_to_fields import model_to_fields
+from ..logger import LOGGER
 
 # ---------------------------------------------------------------------------
 # Context-variable to track the *root* sequence number of a callback cascade.
@@ -347,6 +348,10 @@ class EventBus:
                 cls._pubsub_streaming_enabled = SETTINGS.EVENTBUS_PUBSUB_STREAMING
             except Exception:
                 cls._pubsub_streaming_enabled = False
+            LOGGER.info(
+                "Pub/Sub action streaming %s",
+                "enabled" if cls._pubsub_streaming_enabled else "disabled",
+            )
 
     @classmethod
     def _get_pubsub_publisher(cls):
@@ -937,10 +942,6 @@ class EventBus:
         Errors are logged at DEBUG level and never propagate — the Orchestra
         dual-write is the authoritative persistence path.
         """
-        import logging
-
-        _log = logging.getLogger(__name__)
-
         if EventBus._pubsub_streaming_enabled is None:
             EventBus._init_pubsub_streaming()
         if not EventBus._pubsub_streaming_enabled:
@@ -980,27 +981,29 @@ class EventBus:
                 ordering_key=agent_id,
                 thread="action_event",
             )
+            LOGGER.debug(
+                "Pub/Sub publish fired: topic=%s event_type=%s row_id=%s",
+                topic_name,
+                event.type,
+                event.row_id,
+            )
             future.add_done_callback(self._on_pubsub_publish_done)
 
         except Exception:
-            _log.debug(
-                "Pub/Sub action streaming unavailable — falling back to "
+            LOGGER.warning(
+                "Pub/Sub action streaming failed — falling back to "
                 "Orchestra-only persistence",
                 exc_info=True,
             )
 
     @staticmethod
     def _on_pubsub_publish_done(future) -> None:
-        """Callback for fire-and-forget Pub/Sub publishes.
-
-        Logs failures at WARNING; successes are silent.
-        """
-        import logging
-
+        """Callback for fire-and-forget Pub/Sub publishes."""
         try:
-            future.result()
+            message_id = future.result()
+            LOGGER.debug("Pub/Sub publish confirmed: message_id=%s", message_id)
         except Exception:
-            logging.getLogger(__name__).warning(
+            LOGGER.warning(
                 "Failed to publish action event to Pub/Sub",
                 exc_info=True,
             )
