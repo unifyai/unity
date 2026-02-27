@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING
 from pydantic import BaseModel
 
 from .comms import CommsPayload
+from .desktop_primitive import DesktopPrimitivePayload
 from .llm import LLMPayload
 from .manager_method import ManagerMethodPayload
 from .message import MessagePayload
@@ -25,6 +26,7 @@ __all__ = [
     "MessagePayload",
     "CommsPayload",
     "LLMPayload",
+    "DesktopPrimitivePayload",
     "PAYLOAD_REGISTRY",
 ]
 
@@ -35,4 +37,5 @@ PAYLOAD_REGISTRY: dict[str, type[BaseModel]] = {
     "Message": MessagePayload,
     "Comms": CommsPayload,
     "LLM": LLMPayload,
+    "DesktopPrimitiveInvoked": DesktopPrimitivePayload,
 }

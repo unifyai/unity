@@ -173,6 +173,10 @@ class ConversationManager(metaclass=SingletonABCMeta):
         self.user_webcam_active: bool = False
         self.user_remote_control_active: bool = False
 
+        # desktop fast-path gating: handle_ids of in-flight `act` sessions
+        # that have invoked at least one primitives.computer.desktop.* method.
+        self._act_handles_with_desktop_usage: set[int] = set()
+
         # screenshot buffer for slow brain visual context
         self._screenshot_buffer: list[ScreenshotEntry] = []
         # mapping from local_message_id (ephemeral CM counter) to
@@ -237,6 +241,25 @@ class ConversationManager(metaclass=SingletonABCMeta):
     def session_logger(self) -> SessionLogger:
         """The hierarchical session logger for this ConversationManager instance."""
         return self._session_logger
+
+    @property
+    def computer_primitives(self):
+        """Lazily resolve the ``ComputerPrimitives`` singleton via ManagerRegistry."""
+        from unity.function_manager.primitives.runtime import ComputerPrimitives
+        from unity.manager_registry import ManagerRegistry
+
+        return ManagerRegistry.get_instance(ComputerPrimitives)
+
+    @property
+    def desktop_fast_path_eligible(self) -> bool:
+        """True when the CM should expose desktop fast-path tools.
+
+        Requires assistant screen share to be active AND at least one
+        in-flight ``act`` session to have invoked a desktop primitive.
+        """
+        return self.assistant_screen_share_active and bool(
+            self._act_handles_with_desktop_usage & set(self.in_flight_actions),
+        )
 
     def get_active_contact(self) -> dict | None:
         """Get the contact for the current active call, or fall back to the boss contact."""
@@ -828,6 +851,11 @@ class ConversationManager(metaclass=SingletonABCMeta):
             if is_boss_on_call or not self._has_non_forwarded_event:
                 tools.pop("guide_voice_agent")
         self._has_non_forwarded_event = False
+
+        if self.desktop_fast_path_eligible:
+            tools["desktop_act"] = action_tools.desktop_act
+            tools["desktop_observe"] = action_tools.desktop_observe
+            tools["desktop_get_screenshot"] = action_tools.desktop_get_screenshot
 
         # Single-shot LLM call: one decision, one action
         client = new_llm_client(
