@@ -336,6 +336,48 @@ async def _get_signed_url_from_gs_url(
         return result.get("signed_url", "")
 
 
+async def _download_single_attachment(
+    session: aiohttp.ClientSession,
+    att: dict[str, str],
+    adapter,
+) -> str | None:
+    """Download one attachment and write it to disk. Returns the display name, or None on failure."""
+    att_id = att.get("id", "")
+    raw_filename = att.get("filename") or f"attachment_{att_id}"
+    safe_filename = os.path.basename(raw_filename)
+
+    url = att.get("url")
+    gs_url = att.get("gs_url")
+
+    if not url and gs_url:
+        try:
+            url = await _get_signed_url_from_gs_url(session, gs_url)
+        except Exception as e:
+            LOGGER.error(
+                f"{ICONS['comms_outbound']} Failed to get signed URL for {gs_url}: {e}",
+            )
+            url = None
+
+    if url:
+        async with session.get(url) as resp:
+            resp.raise_for_status()
+            data = await resp.read()
+    else:
+        data = b""
+
+    display_name = await asyncio.to_thread(
+        adapter.save_file_to_downloads,
+        safe_filename,
+        data,
+    )
+
+    LOGGER.debug(
+        f"{ICONS['comms_outbound']} Downloaded unify attachment {safe_filename} "
+        f"(size={len(data)} bytes)",
+    )
+    return display_name
+
+
 async def add_unify_message_attachments(
     attachments: list[dict[str, str]],
 ) -> None:
@@ -350,9 +392,8 @@ async def add_unify_message_attachments(
     If gs_url is present but url is not, a signed URL will be generated
     from Orchestra before downloading.
 
-    Two-phase approach: all files are downloaded and written to disk first
-    (fast), then ingestion (parse/index/embed) runs afterward so that the
-    files are immediately available to the assistant.
+    All downloads run in parallel, then ingestion (parse/index/embed) runs
+    afterward so files are immediately available to the assistant.
     """
     if not attachments:
         return
@@ -361,55 +402,30 @@ async def add_unify_message_attachments(
 
     LOGGER.debug(f"{ICONS['comms_outbound']} Saving unify message attachments...")
 
-    # Phase 1: Download all files and write to disk immediately.
     file_manager = ManagerRegistry.get_file_manager()
     adapter = file_manager._adapter
-    saved_display_names: list[str] = []
 
+    # Phase 1: Download all files to disk in parallel.
     async with aiohttp.ClientSession() as session:
-        for att in attachments:
-            try:
-                att_id = att.get("id", "")
-                raw_filename = att.get("filename") or f"attachment_{att_id}"
-                safe_filename = os.path.basename(raw_filename)
+        results = await asyncio.gather(
+            *(
+                _download_single_attachment(session, att, adapter)
+                for att in attachments
+            ),
+            return_exceptions=True,
+        )
 
-                url = att.get("url")
-                gs_url = att.get("gs_url")
-
-                if not url and gs_url:
-                    try:
-                        url = await _get_signed_url_from_gs_url(session, gs_url)
-                    except Exception as e:
-                        LOGGER.error(
-                            f"{ICONS['comms_outbound']} Failed to get signed URL for {gs_url}: {e}",
-                        )
-                        url = None
-
-                if url:
-                    async with session.get(url) as resp:
-                        resp.raise_for_status()
-                        data = await resp.read()
-                else:
-                    data = b""
-
-                display_name = await asyncio.to_thread(
-                    adapter.save_file_to_downloads,
-                    safe_filename,
-                    data,
-                )
-                saved_display_names.append(display_name)
-
-                LOGGER.debug(
-                    f"{ICONS['comms_outbound']} Downloaded unify attachment {safe_filename} "
-                    f"(size={len(data)} bytes)",
-                )
-            except Exception as e:
-                LOGGER.error(
-                    f"{ICONS['comms_outbound']} Failed to download unify attachment '{att}': {e}",
-                )
+    saved_display_names: list[str] = []
+    for att, result in zip(attachments, results):
+        if isinstance(result, BaseException):
+            LOGGER.error(
+                f"{ICONS['comms_outbound']} Failed to download unify attachment '{att}': {result}",
+            )
+        elif result is not None:
+            saved_display_names.append(result)
 
     # Phase 2: Ingest all saved files (parse, index, embed).
-    # This is slow but files are already on disk and accessible.
+    # Files are already on disk and accessible to the assistant.
     if saved_display_names:
         try:
             await asyncio.to_thread(file_manager.ingest_files, saved_display_names)
