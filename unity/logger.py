@@ -423,9 +423,14 @@ for _lib in (
     "livekit",
     "livekit.agents",
     "livekit.plugins",
-    "RapidOCR",
 ):
     logging.getLogger(_lib).setLevel(logging.WARNING)
+
+# RapidOCR reconfigures its own logger on import (unconditionally calling
+# setLevel(INFO)), so setLevel here would be clobbered.  A filter survives.
+logging.getLogger("RapidOCR").addFilter(
+    lambda record: record.levelno >= logging.WARNING,
+)
 
 # ─────────────────────────────────────────────────────────────────────────────
 # File-based Logging Configuration
