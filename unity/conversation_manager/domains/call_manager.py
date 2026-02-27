@@ -279,7 +279,7 @@ class LivekitCallManager:
             if channel == "phone"
             else UnifyMeetEnded(contact=contact)
         )
-        LOGGER.info(
+        LOGGER.debug(
             f"{ICONS['ipc']} [LivekitCallManager] IPC client disconnected without cleanup, "
             f"publishing fallback {event.__class__.__name__}",
         )
@@ -317,12 +317,12 @@ class LivekitCallManager:
 
         # Check if process is still running
         if proc.poll() is not None:
-            LOGGER.info(
+            LOGGER.debug(
                 f"{ICONS['ipc']} [LivekitCallManager] Process already exited with code {proc.returncode}",
             )
             return
 
-        LOGGER.info(
+        LOGGER.debug(
             f"{ICONS['ipc']} [LivekitCallManager] Killing voice agent process {proc.pid}...",
         )
         await asyncio.to_thread(terminate_process, proc, 0)
