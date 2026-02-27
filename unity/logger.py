@@ -420,9 +420,6 @@ for _lib in (
     "LiteLLM",
     "LiteLLM Proxy",
     "LiteLLM Router",
-    "livekit",
-    "livekit.agents",
-    "livekit.plugins",
 ):
     logging.getLogger(_lib).setLevel(logging.WARNING)
 
