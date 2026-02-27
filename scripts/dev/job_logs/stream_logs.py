@@ -5,7 +5,7 @@ stream_logs.py — View logs for a Unity GKE job.
 Usage:
     python stream_logs.py                       # auto-detect latest staging job
     python stream_logs.py --job <job_name>      # explicit job, staging namespace
-    python stream_logs.py --namespace production # auto-detect latest production job
+    python stream_logs.py --production          # auto-detect latest production job
 
 Behaviour:
     1. If --job is omitted, resolves the caller's email from UNIFY_KEY and finds
@@ -25,7 +25,7 @@ import sys
 
 # The unify SDK reads ORCHESTRA_URL at import time, and .env sets it to
 # localhost for local development. This script needs the real backend, so
-# derive the URL from --namespace before importing anything else.
+# derive the URL from --production before importing anything else.
 _ORCHESTRA_URLS = {
     "staging": "https://orchestra-staging-lz5fmz6i7q-ew.a.run.app/v0",
     "production": "https://api.unify.ai/v0",
@@ -33,11 +33,8 @@ _ORCHESTRA_URLS = {
 
 
 def _parse_namespace_early() -> str:
-    for i, arg in enumerate(sys.argv):
-        if arg == "--namespace" and i + 1 < len(sys.argv):
-            return sys.argv[i + 1]
-        if arg.startswith("--namespace="):
-            return arg.split("=", 1)[1]
+    if "--production" in sys.argv:
+        return "production"
     return "staging"
 
 
@@ -497,7 +494,7 @@ def main():
             "\n"
             "Examples:\n"
             "  python stream_logs.py                        # latest staging job\n"
-            "  python stream_logs.py --namespace production  # latest production job\n"
+            "  python stream_logs.py --production            # latest production job\n"
             "  python stream_logs.py --job unity-2026-02-10-17-30-53-staging"
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -508,9 +505,9 @@ def main():
         help="Name of the GKE job. If omitted, auto-detects the latest job for your account.",
     )
     parser.add_argument(
-        "--namespace",
-        default="staging",
-        help="Kubernetes namespace (default: staging)",
+        "--production",
+        action="store_true",
+        help="Target the production environment (default: staging)",
     )
     parser.add_argument(
         "--no-mirror",
@@ -531,7 +528,7 @@ def main():
     )
     args = parser.parse_args()
 
-    namespace = args.namespace
+    namespace = "production" if args.production else "staging"
     mirror = not args.no_mirror
     sync_all = args.sync_all_logs
     mirror_base = Path(args.mirror_dir).resolve() if args.mirror_dir else MIRROR_BASE

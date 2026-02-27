@@ -9,10 +9,10 @@ View logs from Unity assistant jobs running on Google Kubernetes Engine.
 bash scripts/job_logs/setup_auth.sh
 
 # 2. View logs for a job
-uv run scripts/dev/job_logs/stream_logs.py --job <job_name> --namespace <namespace>
+uv run scripts/dev/job_logs/stream_logs.py --job <job_name>
 
-# Example
-uv run scripts/dev/job_logs/stream_logs.py --job unity-2026-02-10-17-30-53-staging --namespace staging
+# Example (staging is the default)
+uv run scripts/dev/job_logs/stream_logs.py --job unity-2026-02-10-17-30-53-staging
 ```
 
 That's it. The script figures out whether to stream or fetch based on the job's status.
