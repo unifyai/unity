@@ -7,8 +7,9 @@ Symbolic tests for the desktop fast-path tools on the ConversationManager.
 Verifies:
 - Tool surface: desktop_act, desktop_observe, desktop_get_screenshot appear/disappear
   based on gating conditions (assistant screen share + in-flight act with desktop usage).
-- EventBus signal: DesktopPrimitiveInvoked is published for desktop method calls.
-- Silent interjection: fast-path tools silently interject in-flight act sessions.
+- EventBus signal: DesktopPrimitiveInvoked is a registered event type.
+- Async lifecycle: fast-path tools return immediately, register in in_flight_actions,
+  publish ActorHandleStarted, and silently interject Actor sessions on completion.
 """
 
 from __future__ import annotations
@@ -167,25 +168,26 @@ async def test_desktop_primitive_event_type_registered(initialized_cm):
 
 
 # =============================================================================
-# Silent interjection
+# Async lifecycle and silent interjection
 # =============================================================================
 
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_desktop_act_sends_silent_interjection(initialized_cm):
-    """desktop_act should silently interject in-flight act sessions."""
+async def test_desktop_act_returns_acting_and_interjects_on_completion(initialized_cm):
+    """desktop_act should return immediately with 'acting' status and silently
+    interject in-flight act sessions once the background task completes."""
     from unity.conversation_manager.domains.brain_action_tools import (
         ConversationManagerBrainActionTools,
     )
 
     cm = initialized_cm.cm
 
-    mock_handle = MagicMock()
-    mock_handle.done.return_value = False
-    mock_handle.interject = AsyncMock()
+    mock_actor_handle = MagicMock()
+    mock_actor_handle.done.return_value = False
+    mock_actor_handle.interject = AsyncMock()
     cm.in_flight_actions[10] = {
-        "handle": mock_handle,
+        "handle": mock_actor_handle,
         "query": "guide through app",
         "action_type": "act",
         "handle_actions": [],
@@ -205,35 +207,54 @@ async def test_desktop_act_sends_silent_interjection(initialized_cm):
     ):
         result = await action_tools.desktop_act(instruction="Click Submit")
 
-    assert result["status"] == "completed"
-    assert result["result"] == "Clicked Submit"
+    assert result["status"] == "acting"
+    assert result["query"] == "Click Submit"
 
-    mock_handle.interject.assert_called_once()
-    call_kwargs = mock_handle.interject.call_args
+    # A new in-flight action should have been registered (beyond handle 10)
+    desktop_actions = {
+        hid: data
+        for hid, data in cm.in_flight_actions.items()
+        if data.get("action_type") == "desktop_act"
+    }
+    assert (
+        len(desktop_actions) == 1
+    ), f"Expected 1 desktop_act in-flight action, got {len(desktop_actions)}"
+
+    # Wait for the background task to complete
+    desktop_hid = next(iter(desktop_actions))
+    desktop_handle = desktop_actions[desktop_hid]["handle"]
+    await desktop_handle.result()
+
+    # After completion, the silent interjection should have fired
+    mock_actor_handle.interject.assert_called_once()
+    call_kwargs = mock_actor_handle.interject.call_args
     assert call_kwargs.kwargs.get("trigger_immediate_llm_turn") is False
     assert "Click Submit" in call_kwargs.args[0]
-    assert "Clicked Submit" in call_kwargs.args[0]
 
     # Clean up
     cm.in_flight_actions.pop(10, None)
+    cm.in_flight_actions.pop(desktop_hid, None)
     cm._act_handles_with_desktop_usage.clear()
 
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_desktop_observe_sends_silent_interjection(initialized_cm):
-    """desktop_observe should silently interject in-flight act sessions."""
+async def test_desktop_observe_returns_acting_and_interjects_on_completion(
+    initialized_cm,
+):
+    """desktop_observe should return immediately with 'acting' status and silently
+    interject in-flight act sessions once the background task completes."""
     from unity.conversation_manager.domains.brain_action_tools import (
         ConversationManagerBrainActionTools,
     )
 
     cm = initialized_cm.cm
 
-    mock_handle = MagicMock()
-    mock_handle.done.return_value = False
-    mock_handle.interject = AsyncMock()
+    mock_actor_handle = MagicMock()
+    mock_actor_handle.done.return_value = False
+    mock_actor_handle.interject = AsyncMock()
     cm.in_flight_actions[11] = {
-        "handle": mock_handle,
+        "handle": mock_actor_handle,
         "query": "guide through app",
         "action_type": "act",
         "handle_actions": [],
@@ -253,38 +274,38 @@ async def test_desktop_observe_sends_silent_interjection(initialized_cm):
     ):
         result = await action_tools.desktop_observe(query="What is on screen?")
 
-    assert result["status"] == "completed"
-    assert result["result"] == "Login page with username field"
+    assert result["status"] == "acting"
 
-    mock_handle.interject.assert_called_once()
-    call_kwargs = mock_handle.interject.call_args
+    # Wait for the background task
+    desktop_actions = {
+        hid: data
+        for hid, data in cm.in_flight_actions.items()
+        if data.get("action_type") == "desktop_observe"
+    }
+    assert len(desktop_actions) == 1
+    desktop_hid = next(iter(desktop_actions))
+    await desktop_actions[desktop_hid]["handle"].result()
+
+    mock_actor_handle.interject.assert_called_once()
+    call_kwargs = mock_actor_handle.interject.call_args
     assert call_kwargs.kwargs.get("trigger_immediate_llm_turn") is False
 
     # Clean up
     cm.in_flight_actions.pop(11, None)
+    cm.in_flight_actions.pop(desktop_hid, None)
     cm._act_handles_with_desktop_usage.clear()
 
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_desktop_get_screenshot_no_interjection(initialized_cm):
-    """desktop_get_screenshot should NOT interject (read-only, no side effects)."""
+async def test_desktop_get_screenshot_returns_acting(initialized_cm):
+    """desktop_get_screenshot should return immediately with 'acting' status
+    and register as an in-flight action."""
     from unity.conversation_manager.domains.brain_action_tools import (
         ConversationManagerBrainActionTools,
     )
 
     cm = initialized_cm.cm
-
-    mock_handle = MagicMock()
-    mock_handle.done.return_value = False
-    mock_handle.interject = AsyncMock()
-    cm.in_flight_actions[12] = {
-        "handle": mock_handle,
-        "query": "guide through app",
-        "action_type": "act",
-        "handle_actions": [],
-    }
-    cm._act_handles_with_desktop_usage = {12}
 
     mock_image = MagicMock()
     mock_cp = MagicMock()
@@ -300,11 +321,18 @@ async def test_desktop_get_screenshot_no_interjection(initialized_cm):
     ):
         result = await action_tools.desktop_get_screenshot()
 
-    assert result["status"] == "completed"
-    assert result["image"] is mock_image
+    assert result["status"] == "acting"
 
-    mock_handle.interject.assert_not_called()
+    desktop_actions = {
+        hid: data
+        for hid, data in cm.in_flight_actions.items()
+        if data.get("action_type") == "desktop_get_screenshot"
+    }
+    assert len(desktop_actions) == 1
+
+    # Wait for completion and verify
+    desktop_hid = next(iter(desktop_actions))
+    await desktop_actions[desktop_hid]["handle"].result()
 
     # Clean up
-    cm.in_flight_actions.pop(12, None)
-    cm._act_handles_with_desktop_usage.clear()
+    cm.in_flight_actions.pop(desktop_hid, None)

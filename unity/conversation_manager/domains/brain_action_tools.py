@@ -309,6 +309,56 @@ def _resolve_or_attach_detail(
     return (None, updated_contact)
 
 
+class _DesktopActionHandle:
+    """Lightweight handle wrapping a single desktop primitive call.
+
+    Provides the minimal interface consumed by the CM watcher infrastructure
+    (``actor_watch_result``) so desktop fast-path actions participate in the
+    same in-flight lifecycle as ``act`` and the contact/transcript fast paths.
+
+    Steering operations (pause/resume/interject/ask) are no-ops because these
+    are atomic single-step actions with no inner loop to steer.
+    """
+
+    def __init__(self, task: asyncio.Task):
+        self._task = task
+        self._notification_q: asyncio.Queue = asyncio.Queue()
+
+    def done(self) -> bool:
+        return self._task.done()
+
+    async def result(self) -> str:
+        return await self._task
+
+    async def next_notification(self) -> dict:
+        while not self._task.done():
+            try:
+                return await asyncio.wait_for(self._notification_q.get(), timeout=30)
+            except asyncio.TimeoutError:
+                continue
+        raise asyncio.CancelledError
+
+    async def next_clarification(self) -> dict:
+        while not self._task.done():
+            await asyncio.sleep(30)
+        raise asyncio.CancelledError
+
+    async def stop(self, reason=None, **kwargs):
+        self._task.cancel()
+
+    async def interject(self, message, **kwargs):
+        pass
+
+    async def ask(self, question, **kwargs):
+        pass
+
+    async def pause(self):
+        pass
+
+    async def resume(self):
+        pass
+
+
 class ConversationManagerBrainActionTools:
     """
     Side-effecting tools for the Main CM Brain.
@@ -1443,6 +1493,66 @@ class ConversationManagerBrainActionTools:
                     except TypeError:
                         await handle.interject(message)
 
+    async def _invoke_desktop_action(
+        self,
+        *,
+        coro,
+        text: str,
+        action_type: str,
+    ) -> dict[str, Any]:
+        """Shared lifecycle for desktop fast-path tools.
+
+        Runs the desktop primitive call in the background and registers it as
+        an in-flight action with the same lifecycle as ``act`` and the contact/
+        transcript fast paths: ``ActorHandleStarted`` event, watcher tasks for
+        result delivery, and automatic cleanup on completion.
+
+        After the primitive completes, silently interjects any in-flight Actor
+        sessions that have used desktop primitives so they stay coherent.
+        """
+        global _next_handle_id
+
+        cm = self._cm
+        handle_id = _next_handle_id
+        _next_handle_id += 1
+
+        async def _run():
+            result = await coro
+            await self._silent_interject_desktop_act_sessions(
+                f"[Desktop fast-path] {action_type}: {text}\nResult: {result}",
+            )
+            return str(result) if result is not None else "done"
+
+        handle = _DesktopActionHandle(asyncio.create_task(_run()))
+
+        cm.in_flight_actions[handle_id] = {
+            "handle": handle,
+            "query": text,
+            "persist": False,
+            "action_type": action_type,
+            "handle_actions": [
+                {
+                    "action_name": f"{action_type}_started",
+                    "query": text,
+                    "timestamp": prompt_now(),
+                },
+            ],
+            "initial_snapshot_state": getattr(cm, "_current_snapshot_state", None),
+            "context_opted_in": False,
+        }
+        asyncio.create_task(managers_utils.actor_watch_result(handle_id, handle))
+
+        await self._event_broker.publish(
+            f"app:actor:actor_started_handle_{handle_id}",
+            ActorHandleStarted(
+                handle_id=handle_id,
+                action_name=action_type,
+                query=text,
+            ).to_json(),
+        )
+
+        return {"status": "acting", "query": text}
+
     async def desktop_act(
         self,
         *,
@@ -1451,8 +1561,8 @@ class ConversationManagerBrainActionTools:
         """Execute a single atomic action on the assistant's desktop.
 
         This is a **direct shortcut** to the desktop agent, bypassing the
-        general ``act`` pathway.  The action completes within this turn and
-        the result is returned immediately.
+        general ``act`` pathway.  The action runs in the background and its
+        result is delivered asynchronously (same lifecycle as ``act``).
 
         Use for **single atomic actions** where the user has explicitly
         described both the action and the target:
@@ -1471,11 +1581,11 @@ class ConversationManagerBrainActionTools:
                 (e.g. "Click the Submit button").
         """
         cp = self._cm.computer_primitives
-        result = await cp.desktop.act(instruction)
-        await self._silent_interject_desktop_act_sessions(
-            f"[Desktop fast-path] Executed: {instruction}\nResult: {result}",
+        return await self._invoke_desktop_action(
+            coro=cp.desktop.act(instruction),
+            text=instruction,
+            action_type="desktop_act",
         )
-        return {"status": "completed", "result": result}
 
     async def desktop_observe(
         self,
@@ -1485,8 +1595,8 @@ class ConversationManagerBrainActionTools:
         """Observe or extract information from the current desktop screen.
 
         This is a **direct shortcut** to the desktop agent's vision
-        capability, bypassing the general ``act`` pathway.  Returns the
-        answer immediately.
+        capability, bypassing the general ``act`` pathway.  The observation
+        runs in the background and the answer is delivered asynchronously.
 
         Use for quick visual queries about what is currently on screen:
 
@@ -1502,22 +1612,25 @@ class ConversationManagerBrainActionTools:
                 (e.g. "What text is in the search box?").
         """
         cp = self._cm.computer_primitives
-        result = await cp.desktop.observe(query)
-        await self._silent_interject_desktop_act_sessions(
-            f"[Desktop fast-path] Observed: {query}\nResult: {result}",
+        return await self._invoke_desktop_action(
+            coro=cp.desktop.observe(query),
+            text=query,
+            action_type="desktop_observe",
         )
-        return {"status": "completed", "result": result}
 
     async def desktop_get_screenshot(self) -> dict[str, Any]:
         """Capture a screenshot of the current assistant desktop.
 
         This is a **direct shortcut** to get the desktop screenshot,
-        bypassing the general ``act`` pathway.  Returns the image
-        immediately.
+        bypassing the general ``act`` pathway.  The capture runs in the
+        background and the image is delivered asynchronously.
         """
         cp = self._cm.computer_primitives
-        image = await cp.desktop.get_screenshot()
-        return {"status": "completed", "image": image}
+        return await self._invoke_desktop_action(
+            coro=cp.desktop.get_screenshot(),
+            text="capture desktop screenshot",
+            action_type="desktop_get_screenshot",
+        )
 
     async def set_boss_details(
         self,
