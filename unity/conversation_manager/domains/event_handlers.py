@@ -114,7 +114,9 @@ async def _(event: CallInitEvents, cm: "ConversationManager", *args, **kwargs):
     """
     Handle incoming/outgoing call initiation - spawn voice agent subprocess.
     """
-    cm._session_logger.info("latency", f"eh.call_init.enter | event={event.__class__.__name__}")
+    cm._session_logger.info(
+        "latency", f"eh.call_init.enter | event={event.__class__.__name__}"
+    )
     # Don't start a new call if we're already in voice mode
     if cm.mode.is_voice:
         return
@@ -168,7 +170,10 @@ async def _(event: CallInitEvents, cm: "ConversationManager", *args, **kwargs):
         role=role,
         timestamp=event.timestamp,
     )
-    cm._session_logger.info("latency", f"[LATENCY_DEBUG] eh.call_init.exit | event={event.__class__.__name__}")
+    cm._session_logger.info(
+        "latency",
+        f"[LATENCY_DEBUG] eh.call_init.exit | event={event.__class__.__name__}",
+    )
 
 
 @EventHandler.register((PhoneCallStarted, UnifyMeetStarted))
@@ -486,7 +491,9 @@ async def _(
             f"{exchange_id} for {name}",
         )
     else:
-        cm._session_logger.debug(f"{DEFAULT_ICON} [RecordingReady] No exchange_id found for {name}")
+        cm._session_logger.debug(
+            f"{DEFAULT_ICON} [RecordingReady] No exchange_id found for {name}"
+        )
 
 
 @EventHandler.register(
