@@ -466,8 +466,10 @@ async def async_tool_loop_inner(
     if log_steps:
         if log_steps == "full":
             if parent_chat_context_safe:
+                from .utils import format_json_for_log
+
                 logger.info(
-                    f"Parent Context: {json.dumps(parent_chat_context_safe, indent=4)}",
+                    f"Parent Context: {format_json_for_log(parent_chat_context_safe)}",
                     prefix=ICONS["tool_seeding"],
                 )
             logger.info(
@@ -2375,18 +2377,10 @@ async def async_tool_loop_inner(
 
             if log_steps:
                 with suppress(Exception):
-                    # Pretty-print tool_call arguments in assistant messages for readability
-                    from .utils import (
-                        try_parse_json as _try_parse_json,
-                    )  # local import to avoid cycles
+                    from .utils import format_llm_response_for_log
 
-                    _msg_for_logging = copy.deepcopy(msg)
-                    _tcs = _msg_for_logging.get("tool_calls") or []
-                    for _tc in _tcs:
-                        _fn = _tc.get("function", {})
-                        _fn["arguments"] = _try_parse_json(_fn.get("arguments"))
                     logger.info(
-                        f"{json.dumps(_msg_for_logging, indent=4)}",
+                        format_llm_response_for_log(msg),
                         prefix=ICONS["llm_response"],
                     )
 

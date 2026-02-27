@@ -13,6 +13,8 @@ import pytest
 from pydantic import BaseModel, Field
 
 from unity.common._async_tool.utils import (
+    format_json_for_log,
+    format_llm_response_for_log,
     get_handle_paused_state,
     maybe_await,
     try_parse_json,
@@ -200,6 +202,119 @@ class TestTryParseJson:
         """Returns None unchanged."""
         result = try_parse_json(None)
         assert result is None
+
+
+# =============================================================================
+# format_json_for_log / format_llm_response_for_log tests
+# =============================================================================
+
+
+class TestFormatJsonForLog:
+    """Tests for format_json_for_log — newline expansion in terminal logs."""
+
+    def test_expands_newlines_in_string_values(self):
+        """Escaped newlines in string values become real newlines."""
+        body = {"content": "Line one\nLine two\nLine three"}
+        result = format_json_for_log(body)
+        lines = result.split("\n")
+
+        content_line = next(l for l in lines if "Line one" in l)
+        idx = lines.index(content_line)
+        assert "Line two" in lines[idx + 1]
+        assert "Line three" in lines[idx + 2]
+
+    def test_preserves_json_structure(self):
+        """Keys, brackets, and non-newline content are unchanged."""
+        body = {"key": "value", "nested": {"inner": "data"}}
+        result = format_json_for_log(body)
+        assert '"key"' in result
+        assert '"nested"' in result
+        assert '"inner"' in result
+        assert '"data"' in result
+
+    def test_markdown_content_renders_naturally(self):
+        """Markdown with headers and bullets renders across lines."""
+        body = {
+            "content": "### Title\n- Item one\n- Item two\n\nParagraph.",
+            "role": "assistant",
+        }
+        result = format_json_for_log(body)
+        lines = result.split("\n")
+
+        title_line = next(l for l in lines if "### Title" in l)
+        idx = lines.index(title_line)
+        assert "- Item one" in lines[idx + 1]
+        assert "- Item two" in lines[idx + 2]
+
+
+class TestFormatLlmResponseForLog:
+    """Tests for format_llm_response_for_log — bespoke execute_code rendering."""
+
+    def test_execute_code_gets_visual_delimiters(self):
+        """execute_code tool calls have ┄ delimiters around the code block."""
+        msg = {
+            "content": "Running the code.",
+            "role": "assistant",
+            "tool_calls": [
+                {
+                    "function": {
+                        "name": "execute_code",
+                        "arguments": json.dumps(
+                            {
+                                "thought": "Render the PDF",
+                                "language": "python",
+                                "code": "\nimport os\nprint(os.getcwd())\n",
+                            },
+                        ),
+                    },
+                },
+            ],
+        }
+        result = format_llm_response_for_log(msg)
+
+        assert "┄┄┄┄┄┄┄┄ python ┄┄┄┄┄┄┄┄" in result
+        lines = result.split("\n")
+        banner_indices = [i for i, l in enumerate(lines) if "┄┄┄┄" in l]
+        assert len(banner_indices) == 2
+        code_lines = lines[banner_indices[0] + 1 : banner_indices[1]]
+        code_text = "\n".join(l.strip() for l in code_lines)
+        assert "import os" in code_text
+        assert "print(os.getcwd())" in code_text
+
+    def test_non_execute_code_tool_calls_unaffected(self):
+        """Tool calls other than execute_code don't get delimiters."""
+        msg = {
+            "content": "",
+            "role": "assistant",
+            "tool_calls": [
+                {
+                    "function": {
+                        "name": "some_other_tool",
+                        "arguments": json.dumps({"query": "hello\nworld"}),
+                    },
+                },
+            ],
+        }
+        result = format_llm_response_for_log(msg)
+
+        assert "┄┄┄┄" not in result
+        # But newlines in arguments are still expanded
+        lines = result.split("\n")
+        hello_line = next(l for l in lines if "hello" in l)
+        idx = lines.index(hello_line)
+        assert "world" in lines[idx + 1]
+
+    def test_does_not_mutate_original_message(self):
+        """The original message dict is not modified."""
+        original_args = json.dumps({"code": "x = 1\ny = 2\n", "language": "python"})
+        msg = {
+            "role": "assistant",
+            "tool_calls": [
+                {"function": {"name": "execute_code", "arguments": original_args}},
+            ],
+        }
+        format_llm_response_for_log(msg)
+        assert msg["tool_calls"][0]["function"]["arguments"] == original_args
 
 
 # =============================================================================
