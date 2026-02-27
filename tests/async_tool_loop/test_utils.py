@@ -21,7 +21,8 @@ from unity.common._async_tool.utils import (
     try_parse_json,
 )
 from unity.common._async_tool.formatting import serialize_tool_content
-from unity.logger import _MillisFormatter, highlight_code_blocks
+from unity.logger import _MillisFormatter
+from unity.syntax_highlight import highlight_code_blocks
 
 # =============================================================================
 # get_handle_paused_state tests
@@ -325,7 +326,9 @@ class TestFormatLlmResponseForLog:
 
 
 class TestHighlightCodeBlocks:
-    """Tests for Pygments-based syntax highlighting of ┄-delimited code blocks."""
+    """Tests for Pygments-based syntax highlighting of code blocks."""
+
+    # ── ┄-bar delimiters ──────────────────────────────────────────────
 
     def test_highlights_python_code_block(self):
         """Code between ┄ delimiters receives ANSI escape codes."""
@@ -383,6 +386,60 @@ class TestHighlightCodeBlocks:
         )
         result = highlight_code_blocks(text)
         assert "middle text" in result
+        ansi_count = result.count("\033[")
+        assert ansi_count > 2
+
+    # ── Markdown fenced code blocks ───────────────────────────────────
+
+    def test_highlights_markdown_fenced_block(self):
+        """Code between ```lang and ``` receives ANSI escape codes."""
+        text = "some text\n" "```python\n" "x = 42\n" "```\n" "more text"
+        result = highlight_code_blocks(text)
+        assert "\033[" in result
+        assert "42" in result
+        assert "some text" in result
+        assert "more text" in result
+
+    def test_markdown_preserves_surrounding_text(self):
+        """Text outside markdown code blocks is unchanged."""
+        text = "before\n" "```python\n" "pass\n" "```\n" "after"
+        result = highlight_code_blocks(text)
+        assert result.startswith("before\n")
+        assert result.endswith("after")
+
+    def test_markdown_with_indentation(self):
+        """Indented markdown blocks (from JSON expansion) are highlighted."""
+        text = (
+            "                ```python\n"
+            "                img = render(page=0)\n"
+            "                ```"
+        )
+        result = highlight_code_blocks(text)
+        assert "\033[" in result
+        assert "render" in result
+
+    def test_markdown_closing_not_confused_with_opening(self):
+        """Closing ``` is not confused with an opening ```lang."""
+        text = "```python\n" "x = 1\n" "```\n" "```python\n" "y = 2\n" "```"
+        result = highlight_code_blocks(text)
+        ansi_count = result.count("\033[")
+        assert ansi_count > 2
+
+    # ── Mixed delimiter styles ────────────────────────────────────────
+
+    def test_mixed_bar_and_markdown_blocks(self):
+        """Both ┄ and markdown blocks are highlighted in the same text."""
+        text = (
+            "┄┄┄┄┄┄┄┄ python ┄┄┄┄┄┄┄┄\n"
+            "x = 1\n"
+            "┄┄┄┄┄┄┄┄ python ┄┄┄┄┄┄┄┄\n"
+            "some text\n"
+            "```python\n"
+            "y = 2\n"
+            "```"
+        )
+        result = highlight_code_blocks(text)
+        assert "some text" in result
         ansi_count = result.count("\033[")
         assert ansi_count > 2
 

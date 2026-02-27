@@ -34,7 +34,6 @@ from __future__ import annotations
 import json
 import logging
 import os
-import re
 import threading
 from contextlib import contextmanager
 from datetime import datetime, timezone
@@ -366,39 +365,7 @@ def get_otel_log_dir() -> Optional[Path]:
 LOGGER.propagate = False
 
 
-_CODE_BLOCK_RE = re.compile(
-    r"([ \t]*┄{4,}\s*(\w+)\s*┄{4,})\n(.*?)\n([ \t]*┄{4,}.*?┄{4,})",
-    re.DOTALL,
-)
-
-
-def highlight_code_blocks(text: str) -> str:
-    """Apply Pygments syntax highlighting to ``┄``-delimited code blocks.
-
-    Scans *text* for pairs of ``┄┄┄┄ <language> ┄┄┄┄`` delimiters and
-    runs the code between them through the appropriate Pygments lexer.
-    Falls back to plain text if the language is unrecognised or Pygments
-    is unavailable.
-    """
-    try:
-        from pygments import highlight
-        from pygments.formatters import Terminal256Formatter
-        from pygments.lexers import get_lexer_by_name
-    except ImportError:
-        return text
-
-    formatter = Terminal256Formatter(style="monokai")
-
-    def _highlight_match(m: re.Match) -> str:
-        lang, code = m.group(2), m.group(3)
-        try:
-            lexer = get_lexer_by_name(lang)
-            highlighted = highlight(code, lexer, formatter).rstrip("\n")
-            return f"{m.group(1)}\n{highlighted}\n{m.group(4)}"
-        except Exception:
-            return m.group(0)
-
-    return _CODE_BLOCK_RE.sub(_highlight_match, text)
+from unity.syntax_highlight import highlight_code_blocks  # noqa: E402
 
 
 class _MillisFormatter(logging.Formatter):

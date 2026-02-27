@@ -51,6 +51,13 @@ from pathlib import Path
 
 import unify
 
+from unity.syntax_highlight import (
+    BAR_DELIMITER_RE,
+    MARKDOWN_CLOSING_RE,
+    MARKDOWN_OPENING_RE,
+    highlight_code_blocks,
+)
+
 # ─── Configuration ───────────────────────────────────────────────────────────
 
 GCP_PROJECT = "responsive-city-458413-a2"
@@ -360,6 +367,72 @@ def _rewrite_line(
 
 # ─── Log output ──────────────────────────────────────────────────────────────
 
+_IS_TTY = hasattr(sys.stdout, "isatty") and sys.stdout.isatty()
+
+
+def _emit_lines(
+    proc: subprocess.Popen,
+    *,
+    rewrite_fn=None,
+) -> None:
+    """Read lines from *proc* stdout, apply code-block highlighting, and emit.
+
+    When the output stream is a TTY, code blocks are buffered and syntax-
+    highlighted via Pygments before being written.  Supports both
+    ``┄``-delimited blocks (execute_code) and markdown-fenced blocks
+    (LLM text content).
+
+    *rewrite_fn*, if provided, is called on each decoded line before
+    highlight processing (used for log-file hyperlink rewriting).
+    """
+    code_buf: list[str] = []
+    block_type: str | None = None  # None | "bar" | "backtick"
+
+    def _flush_code_block() -> None:
+        nonlocal block_type
+        block = "".join(code_buf)
+        if _IS_TTY:
+            block = highlight_code_blocks(block)
+        sys.stdout.write(block)
+        sys.stdout.flush()
+        code_buf.clear()
+        block_type = None
+
+    for raw_line in proc.stdout:
+        line = raw_line.decode("utf-8", errors="replace")
+        if rewrite_fn:
+            line = rewrite_fn(line)
+
+        if block_type == "bar":
+            code_buf.append(line)
+            if BAR_DELIMITER_RE.search(line):
+                _flush_code_block()
+            continue
+
+        if block_type == "backtick":
+            code_buf.append(line)
+            if MARKDOWN_CLOSING_RE.search(line) and not MARKDOWN_OPENING_RE.search(
+                line,
+            ):
+                _flush_code_block()
+            continue
+
+        if BAR_DELIMITER_RE.search(line):
+            block_type = "bar"
+            code_buf.append(line)
+            continue
+
+        if MARKDOWN_OPENING_RE.search(line):
+            block_type = "backtick"
+            code_buf.append(line)
+            continue
+
+        sys.stdout.write(line)
+        sys.stdout.flush()
+
+    if code_buf:
+        _flush_code_block()
+
 
 def stream_logs(
     job_name: str,
@@ -408,20 +481,19 @@ def stream_logs(
 
     def _run_stream(cmd: list[str]) -> None:
         with ThreadPoolExecutor(max_workers=4) as executor:
+            rewrite_fn = None
+            if mirror and mirror_root and pod_name:
+                rewrite_fn = lambda line: _rewrite_line(
+                    line,
+                    mirror_root,
+                    pod_name,
+                    namespace,
+                    executor,
+                )
+
             proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
             try:
-                for raw_line in proc.stdout:
-                    line = raw_line.decode("utf-8", errors="replace")
-                    if mirror and mirror_root and pod_name:
-                        line = _rewrite_line(
-                            line,
-                            mirror_root,
-                            pod_name,
-                            namespace,
-                            executor,
-                        )
-                    sys.stdout.write(line)
-                    sys.stdout.flush()
+                _emit_lines(proc, rewrite_fn=rewrite_fn)
                 proc.wait()
                 if proc.returncode != 0:
                     stderr = proc.stderr.read().decode("utf-8", errors="replace")
@@ -448,8 +520,8 @@ def stream_logs(
 
 
 def _gcloud_logging_read(log_filter: str):
-    """Run gcloud logging read with the given filter."""
-    subprocess.run(
+    """Run gcloud logging read with the given filter, applying highlighting."""
+    proc = subprocess.Popen(
         [
             GCLOUD,
             "logging",
@@ -460,7 +532,11 @@ def _gcloud_logging_read(log_filter: str):
             "--format=value(textPayload)",
             "--order=asc",
         ],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
     )
+    _emit_lines(proc)
+    proc.wait()
 
 
 def fetch_historical_logs(job_name: str, namespace: str):
