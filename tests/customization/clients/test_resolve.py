@@ -17,6 +17,14 @@ from unity.customization.clients import (
     _ORG_GUIDANCE,
     _ORG_KNOWLEDGE,
     _ORG_BLACKLIST,
+    _TEAM_CONFIGS,
+    _TEAM_ENVIRONMENTS,
+    _TEAM_FUNCTION_DIRS,
+    _TEAM_VENV_DIRS,
+    _TEAM_CONTACTS,
+    _TEAM_GUIDANCE,
+    _TEAM_KNOWLEDGE,
+    _TEAM_BLACKLIST,
     _USER_CONFIGS,
     _USER_ENVIRONMENTS,
     _USER_FUNCTION_DIRS,
@@ -51,6 +59,14 @@ _ALL_DICTS = [
     _ORG_GUIDANCE,
     _ORG_KNOWLEDGE,
     _ORG_BLACKLIST,
+    _TEAM_CONFIGS,
+    _TEAM_ENVIRONMENTS,
+    _TEAM_FUNCTION_DIRS,
+    _TEAM_VENV_DIRS,
+    _TEAM_CONTACTS,
+    _TEAM_GUIDANCE,
+    _TEAM_KNOWLEDGE,
+    _TEAM_BLACKLIST,
     _USER_CONFIGS,
     _USER_ENVIRONMENTS,
     _USER_FUNCTION_DIRS,
@@ -262,6 +278,166 @@ class TestResolve:
         ]
         r = resolve(org_id=1)
         assert len(r.blacklist) == 1
+
+
+# ---------------------------------------------------------------------------
+# resolve() with team_ids
+# ---------------------------------------------------------------------------
+
+
+class TestResolveTeam:
+    def test_team_config_resolved(self):
+        _TEAM_CONFIGS[100] = ActorConfig(model="team-model")
+        r = resolve(team_ids=[100])
+        assert r.config.model == "team-model"
+
+    def test_team_overrides_org(self):
+        _ORG_CONFIGS[1] = ActorConfig(model="org-model", timeout=60.0)
+        _TEAM_CONFIGS[100] = ActorConfig(model="team-model")
+        r = resolve(org_id=1, team_ids=[100])
+        assert r.config.model == "team-model"
+        assert r.config.timeout == 60.0
+
+    def test_user_overrides_team(self):
+        _TEAM_CONFIGS[100] = ActorConfig(model="team-model")
+        _USER_CONFIGS["u1"] = ActorConfig(model="user-model")
+        r = resolve(team_ids=[100], user_id="u1")
+        assert r.config.model == "user-model"
+
+    def test_full_cascade_org_team_user_assistant(self):
+        _ORG_CONFIGS[1] = ActorConfig(guidelines="Org.", timeout=120.0)
+        _TEAM_CONFIGS[100] = ActorConfig(guidelines="Team.", model="team-model")
+        _USER_CONFIGS["u1"] = ActorConfig(guidelines="User.")
+        _ASSISTANT_CONFIGS[10] = ActorConfig(
+            guidelines="Assistant.",
+            model="asst-model",
+        )
+        r = resolve(org_id=1, team_ids=[100], user_id="u1", assistant_id=10)
+        assert r.config.guidelines == "Org.\nTeam.\nUser.\nAssistant."
+        assert r.config.model == "asst-model"
+        assert r.config.timeout == 120.0
+
+    def test_multi_team_merge_ordered_by_id(self):
+        _TEAM_CONFIGS[200] = ActorConfig(model="team-200")
+        _TEAM_CONFIGS[100] = ActorConfig(model="team-100", timeout=30.0)
+        r = resolve(team_ids=[200, 100])
+        assert r.config.model == "team-200"
+        assert r.config.timeout == 30.0
+
+    def test_multi_team_guidelines_concatenated_in_order(self):
+        _TEAM_CONFIGS[100] = ActorConfig(guidelines="Team100.")
+        _TEAM_CONFIGS[200] = ActorConfig(guidelines="Team200.")
+        r = resolve(team_ids=[200, 100])
+        assert r.config.guidelines == "Team100.\nTeam200."
+
+    def test_team_function_dirs_cascade(self):
+        _ORG_FUNCTION_DIRS[1] = [Path("/org/fn")]
+        _TEAM_FUNCTION_DIRS[100] = [Path("/team100/fn")]
+        _TEAM_FUNCTION_DIRS[200] = [Path("/team200/fn")]
+        _USER_FUNCTION_DIRS["u1"] = [Path("/user/fn")]
+        r = resolve(org_id=1, team_ids=[200, 100], user_id="u1")
+        assert r.function_dirs == [
+            Path("/org/fn"),
+            Path("/team100/fn"),
+            Path("/team200/fn"),
+            Path("/user/fn"),
+        ]
+
+    def test_team_venv_dirs_cascade(self):
+        _TEAM_VENV_DIRS[100] = [Path("/team/venvs")]
+        r = resolve(team_ids=[100])
+        assert r.venv_dirs == [Path("/team/venvs")]
+
+    def test_team_contacts_cascade_dedup(self):
+        _ORG_CONTACTS[1] = [
+            {"first_name": "Alice", "surname": "Smith", "email_address": "org@x.com"},
+        ]
+        _TEAM_CONTACTS[100] = [
+            {"first_name": "Alice", "surname": "Smith", "email_address": "team@x.com"},
+            {"first_name": "TeamBob", "surname": "Jones"},
+        ]
+        _USER_CONTACTS["u1"] = [
+            {"first_name": "UserCarol", "surname": "Lee"},
+        ]
+        r = resolve(org_id=1, team_ids=[100], user_id="u1")
+        names = {c["first_name"] for c in r.contacts}
+        assert names == {"Alice", "TeamBob", "UserCarol"}
+        alice = next(c for c in r.contacts if c["first_name"] == "Alice")
+        assert alice["email_address"] == "team@x.com"
+
+    def test_team_guidance_cascade_dedup(self):
+        _ORG_GUIDANCE[1] = [{"title": "Workflow", "content": "Org version"}]
+        _TEAM_GUIDANCE[100] = [{"title": "Workflow", "content": "Team version"}]
+        r = resolve(org_id=1, team_ids=[100])
+        assert len(r.guidance) == 1
+        assert r.guidance[0]["content"] == "Team version"
+
+    def test_team_knowledge_cascade(self):
+        _ORG_KNOWLEDGE[1] = {
+            "Companies": {
+                "columns": {"name": "str"},
+                "seed_key": "name",
+                "rows": [{"name": "OrgCo"}],
+            },
+        }
+        _TEAM_KNOWLEDGE[100] = {
+            "Companies": {
+                "columns": {"name": "str"},
+                "seed_key": "name",
+                "rows": [{"name": "TeamCo"}],
+            },
+            "TeamTable": {
+                "columns": {"x": "str"},
+                "seed_key": "x",
+                "rows": [{"x": "val"}],
+            },
+        }
+        r = resolve(org_id=1, team_ids=[100])
+        assert "Companies" in r.knowledge
+        assert "TeamTable" in r.knowledge
+        co_names = {row["name"] for row in r.knowledge["Companies"]["rows"]}
+        assert co_names == {"OrgCo", "TeamCo"}
+
+    def test_multi_team_knowledge_merge(self):
+        _TEAM_KNOWLEDGE[100] = {
+            "Tbl": {
+                "columns": {"k": "str"},
+                "seed_key": "k",
+                "rows": [{"k": "from100", "v": "a"}],
+            },
+        }
+        _TEAM_KNOWLEDGE[200] = {
+            "Tbl": {
+                "columns": {"k": "str"},
+                "seed_key": "k",
+                "rows": [{"k": "from100", "v": "overridden"}, {"k": "from200"}],
+            },
+        }
+        r = resolve(team_ids=[200, 100])
+        rows = r.knowledge["Tbl"]["rows"]
+        by_k = {row["k"]: row for row in rows}
+        assert by_k["from100"]["v"] == "overridden"
+        assert "from200" in by_k
+
+    def test_team_blacklist_cascade(self):
+        _TEAM_BLACKLIST[100] = [
+            {"medium": "email", "contact_detail": "t@x.com", "reason": "Team block"},
+        ]
+        r = resolve(team_ids=[100])
+        assert len(r.blacklist) == 1
+        assert r.blacklist[0]["reason"] == "Team block"
+
+    def test_empty_team_ids_same_as_no_teams(self):
+        _ORG_CONFIGS[1] = ActorConfig(model="org-model")
+        r1 = resolve(org_id=1, team_ids=[])
+        r2 = resolve(org_id=1, team_ids=None)
+        r3 = resolve(org_id=1)
+        assert r1.config == r2.config == r3.config
+
+    def test_team_ids_with_no_registrations_is_noop(self):
+        _ORG_CONFIGS[1] = ActorConfig(model="org-model")
+        r = resolve(org_id=1, team_ids=[999, 888])
+        assert r.config.model == "org-model"
 
 
 # ---------------------------------------------------------------------------

@@ -1,6 +1,6 @@
 """
 Parser for ``.secrets.json`` — a gitignored file containing secret values
-organized by org / user / assistant.
+organized by org / team / user / assistant.
 
 The file lives at the repo root and is **never committed to source control**.
 Only ``name`` + ``description`` metadata appears in client code; the actual
@@ -14,6 +14,9 @@ File format::
                 "SECRET_NAME": {"value": "...", "description": "..."},
                 ...
             }
+        },
+        "team": {
+            "<team_id>": { ... }
         },
         "user": {
             "<user_id>": { ... }
@@ -38,6 +41,7 @@ _DEFAULT_PATH = Path(__file__).resolve().parents[2] / ".secrets.json"
 
 def load_secrets(
     org_id: int | None = None,
+    team_ids: list[int] | None = None,
     user_id: str | None = None,
     assistant_id: int | None = None,
     *,
@@ -45,7 +49,9 @@ def load_secrets(
 ) -> list[dict[str, Any]]:
     """Load and merge secrets for the given identity from ``.secrets.json``.
 
-    Cascade order: org -> user -> assistant (more specific wins by ``name``).
+    Cascade order: org -> team(s) -> user -> assistant (more specific wins
+    by ``name``).  When multiple team_ids are provided, they are processed
+    in ascending order so higher team_ids take precedence.
     Returns an empty list if the file does not exist.
     """
     secrets_path = path or _DEFAULT_PATH
@@ -60,14 +66,40 @@ def load_secrets(
 
     merged: dict[str, dict[str, Any]] = {}
 
-    for level_key, id_value in [
-        ("org", str(org_id) if org_id is not None else None),
-        ("user", str(user_id) if user_id is not None else None),
-        ("assistant", str(assistant_id) if assistant_id is not None else None),
-    ]:
-        if id_value is None:
-            continue
-        level_data = data.get(level_key, {}).get(id_value, {})
+    # org level
+    if org_id is not None:
+        level_data = data.get("org", {}).get(str(org_id), {})
+        for secret_name, secret_info in level_data.items():
+            merged[secret_name] = {
+                "name": secret_name,
+                "value": secret_info.get("value", ""),
+                "description": secret_info.get("description", ""),
+            }
+
+    # team level (sorted ascending — later teams override earlier)
+    if team_ids:
+        team_data = data.get("team", {})
+        for tid in sorted(team_ids):
+            for secret_name, secret_info in team_data.get(str(tid), {}).items():
+                merged[secret_name] = {
+                    "name": secret_name,
+                    "value": secret_info.get("value", ""),
+                    "description": secret_info.get("description", ""),
+                }
+
+    # user level
+    if user_id is not None:
+        level_data = data.get("user", {}).get(str(user_id), {})
+        for secret_name, secret_info in level_data.items():
+            merged[secret_name] = {
+                "name": secret_name,
+                "value": secret_info.get("value", ""),
+                "description": secret_info.get("description", ""),
+            }
+
+    # assistant level
+    if assistant_id is not None:
+        level_data = data.get("assistant", {}).get(str(assistant_id), {})
         for secret_name, secret_info in level_data.items():
             merged[secret_name] = {
                 "name": secret_name,

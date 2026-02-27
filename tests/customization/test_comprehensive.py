@@ -2,7 +2,7 @@
 
 Covers registration helpers, environment reconstruction, the Colliers
 client scaffold, knowledge row-level dedup, ActorConfig model behavior,
-and the sync_all_seed_data orchestrator.
+team-level customization, and the sync_all_seed_data orchestrator.
 """
 
 from __future__ import annotations
@@ -28,6 +28,14 @@ from unity.customization.clients import (
     _ORG_GUIDANCE,
     _ORG_KNOWLEDGE,
     _ORG_BLACKLIST,
+    _TEAM_CONFIGS,
+    _TEAM_ENVIRONMENTS,
+    _TEAM_FUNCTION_DIRS,
+    _TEAM_VENV_DIRS,
+    _TEAM_CONTACTS,
+    _TEAM_GUIDANCE,
+    _TEAM_KNOWLEDGE,
+    _TEAM_BLACKLIST,
     _USER_CONFIGS,
     _USER_ENVIRONMENTS,
     _USER_FUNCTION_DIRS,
@@ -45,6 +53,7 @@ from unity.customization.clients import (
     _ASSISTANT_KNOWLEDGE,
     _ASSISTANT_BLACKLIST,
     register_org,
+    register_team,
     register_user,
     register_assistant,
     resolve,
@@ -65,6 +74,14 @@ _ALL_DICTS = [
     _ORG_GUIDANCE,
     _ORG_KNOWLEDGE,
     _ORG_BLACKLIST,
+    _TEAM_CONFIGS,
+    _TEAM_ENVIRONMENTS,
+    _TEAM_FUNCTION_DIRS,
+    _TEAM_VENV_DIRS,
+    _TEAM_CONTACTS,
+    _TEAM_GUIDANCE,
+    _TEAM_KNOWLEDGE,
+    _TEAM_BLACKLIST,
     _USER_CONFIGS,
     _USER_ENVIRONMENTS,
     _USER_FUNCTION_DIRS,
@@ -139,6 +156,51 @@ class TestRegisterOrg:
         register_org(1, contacts=[{"first_name": "A"}])
         register_org(1, contacts=[{"first_name": "B"}])
         assert len(_ORG_CONTACTS[1]) == 2
+
+
+class TestRegisterTeam:
+    def test_registers_config(self):
+        register_team(100, config=ActorConfig(model="team-m"))
+        assert _TEAM_CONFIGS[100].model == "team-m"
+
+    def test_registers_contacts(self):
+        register_team(100, contacts=[{"first_name": "TeamAlice"}])
+        assert len(_TEAM_CONTACTS[100]) == 1
+
+    def test_registers_guidance(self):
+        register_team(100, guidance=[{"title": "TG", "content": "TC"}])
+        assert _TEAM_GUIDANCE[100][0]["title"] == "TG"
+
+    def test_registers_knowledge(self):
+        register_team(
+            100,
+            knowledge={
+                "TeamTbl": {"columns": {"k": "str"}, "seed_key": "k", "rows": []},
+            },
+        )
+        assert "TeamTbl" in _TEAM_KNOWLEDGE[100]
+
+    def test_registers_blacklist(self):
+        register_team(
+            100,
+            blacklist=[
+                {"medium": "sms_message", "contact_detail": "+1", "reason": "z"},
+            ],
+        )
+        assert len(_TEAM_BLACKLIST[100]) == 1
+
+    def test_registers_function_dir(self):
+        register_team(100, function_dir=Path("/team/fn"))
+        assert _TEAM_FUNCTION_DIRS[100] == [Path("/team/fn")]
+
+    def test_registers_venv_dir(self):
+        register_team(100, venv_dir=Path("/team/v"))
+        assert _TEAM_VENV_DIRS[100] == [Path("/team/v")]
+
+    def test_multiple_calls_append(self):
+        register_team(100, contacts=[{"first_name": "A"}])
+        register_team(100, contacts=[{"first_name": "B"}])
+        assert len(_TEAM_CONTACTS[100]) == 2
 
 
 class TestRegisterUser:
@@ -359,6 +421,37 @@ class TestKnowledgeCascade:
         r = resolve(org_id=999)
         assert r.knowledge == {}
 
+    def test_team_knowledge_inserted_between_org_and_user(self):
+        _ORG_KNOWLEDGE[1] = {
+            "Companies": {
+                "columns": {"name": "str", "source": "str"},
+                "seed_key": "name",
+                "rows": [{"name": "OrgCo", "source": "org"}],
+            },
+        }
+        _TEAM_KNOWLEDGE[100] = {
+            "Companies": {
+                "columns": {"name": "str", "source": "str"},
+                "seed_key": "name",
+                "rows": [
+                    {"name": "OrgCo", "source": "team"},
+                    {"name": "TeamCo", "source": "team"},
+                ],
+            },
+        }
+        _USER_KNOWLEDGE["u1"] = {
+            "Companies": {
+                "columns": {"name": "str", "source": "str"},
+                "seed_key": "name",
+                "rows": [{"name": "TeamCo", "source": "user"}],
+            },
+        }
+        r = resolve(org_id=1, team_ids=[100], user_id="u1")
+        rows = r.knowledge["Companies"]["rows"]
+        by_name = {row["name"]: row for row in rows}
+        assert by_name["OrgCo"]["source"] == "team"
+        assert by_name["TeamCo"]["source"] == "user"
+
 
 # ---------------------------------------------------------------------------
 # 6. Blacklist cascade dedup
@@ -378,6 +471,17 @@ class TestBlacklistCascade:
         assert len(r.blacklist) == 2
         email_entry = next(e for e in r.blacklist if e["contact_detail"] == "x@x.com")
         assert email_entry["reason"] == "User reason"
+
+    def test_team_blacklist_overrides_org(self):
+        _ORG_BLACKLIST[1] = [
+            {"medium": "email", "contact_detail": "x@x.com", "reason": "Org"},
+        ]
+        _TEAM_BLACKLIST[100] = [
+            {"medium": "email", "contact_detail": "x@x.com", "reason": "Team"},
+        ]
+        r = resolve(org_id=1, team_ids=[100])
+        assert len(r.blacklist) == 1
+        assert r.blacklist[0]["reason"] == "Team"
 
 
 # ---------------------------------------------------------------------------
@@ -403,7 +507,7 @@ class TestSyncAllSeedData:
 
 
 # ---------------------------------------------------------------------------
-# 8. Secrets file: assistant-level cascade
+# 8. Secrets file: cascade with team level
 # ---------------------------------------------------------------------------
 
 
@@ -422,6 +526,105 @@ class TestSecretsAssistantLevel:
         result = load_secrets(org_id=1, user_id="u1", assistant_id=10, path=f)
         assert len(result) == 1
         assert result[0]["value"] == "asst"
+
+    def test_team_secrets_override_org(self, tmp_path):
+        f = tmp_path / ".secrets.json"
+        f.write_text(
+            json.dumps(
+                {
+                    "org": {"1": {"K": {"value": "org", "description": "d"}}},
+                    "team": {"100": {"K": {"value": "team", "description": "d"}}},
+                },
+            ),
+        )
+        result = load_secrets(org_id=1, team_ids=[100], path=f)
+        assert len(result) == 1
+        assert result[0]["value"] == "team"
+
+    def test_user_overrides_team_secrets(self, tmp_path):
+        f = tmp_path / ".secrets.json"
+        f.write_text(
+            json.dumps(
+                {
+                    "team": {"100": {"K": {"value": "team", "description": "d"}}},
+                    "user": {"u1": {"K": {"value": "user", "description": "d"}}},
+                },
+            ),
+        )
+        result = load_secrets(team_ids=[100], user_id="u1", path=f)
+        assert len(result) == 1
+        assert result[0]["value"] == "user"
+
+    def test_multi_team_secrets_higher_id_wins(self, tmp_path):
+        f = tmp_path / ".secrets.json"
+        f.write_text(
+            json.dumps(
+                {
+                    "team": {
+                        "100": {"K": {"value": "t100", "description": "d"}},
+                        "200": {"K": {"value": "t200", "description": "d"}},
+                    },
+                },
+            ),
+        )
+        result = load_secrets(team_ids=[200, 100], path=f)
+        assert len(result) == 1
+        assert result[0]["value"] == "t200"
+
+    def test_full_cascade_org_team_user_assistant(self, tmp_path):
+        f = tmp_path / ".secrets.json"
+        f.write_text(
+            json.dumps(
+                {
+                    "org": {
+                        "1": {
+                            "SHARED": {"value": "org", "description": "d"},
+                            "ORG_ONLY": {"value": "org_v", "description": "d"},
+                        },
+                    },
+                    "team": {
+                        "100": {
+                            "SHARED": {"value": "team", "description": "d"},
+                            "TEAM_ONLY": {"value": "team_v", "description": "d"},
+                        },
+                    },
+                    "user": {
+                        "u1": {
+                            "SHARED": {"value": "user", "description": "d"},
+                        },
+                    },
+                    "assistant": {
+                        "10": {
+                            "SHARED": {"value": "asst", "description": "d"},
+                        },
+                    },
+                },
+            ),
+        )
+        result = load_secrets(
+            org_id=1,
+            team_ids=[100],
+            user_id="u1",
+            assistant_id=10,
+            path=f,
+        )
+        by_name = {s["name"]: s["value"] for s in result}
+        assert by_name["SHARED"] == "asst"
+        assert by_name["ORG_ONLY"] == "org_v"
+        assert by_name["TEAM_ONLY"] == "team_v"
+
+    def test_empty_team_ids_skips_team_level(self, tmp_path):
+        f = tmp_path / ".secrets.json"
+        f.write_text(
+            json.dumps(
+                {
+                    "org": {"1": {"K": {"value": "org", "description": "d"}}},
+                    "team": {"100": {"K": {"value": "team", "description": "d"}}},
+                },
+            ),
+        )
+        result = load_secrets(org_id=1, team_ids=[], path=f)
+        assert result[0]["value"] == "org"
 
 
 # ---------------------------------------------------------------------------
@@ -480,3 +683,89 @@ class TestHashEdgeCases:
         h1 = _record_hash({"name": "A", "v": 1}, set())
         h2 = _record_hash({"name": "A", "v": 2}, set())
         assert h1 != h2
+
+
+# ---------------------------------------------------------------------------
+# 11. Full four-level cascade integration
+# ---------------------------------------------------------------------------
+
+
+class TestFullCascadeIntegration:
+    def test_all_four_levels_config_merge(self):
+        register_org(
+            1,
+            config=ActorConfig(
+                timeout=120.0,
+                guidelines="Org.",
+                model="org-model",
+            ),
+        )
+        register_team(
+            100,
+            config=ActorConfig(
+                guidelines="Team.",
+                can_compose=False,
+            ),
+        )
+        register_user(
+            "u1",
+            config=ActorConfig(
+                guidelines="User.",
+                model="user-model",
+            ),
+        )
+        register_assistant(
+            10,
+            config=ActorConfig(
+                guidelines="Assistant.",
+                can_store=False,
+            ),
+        )
+        r = resolve(org_id=1, team_ids=[100], user_id="u1", assistant_id=10)
+        assert r.config.guidelines == "Org.\nTeam.\nUser.\nAssistant."
+        assert r.config.timeout == 120.0
+        assert r.config.model == "user-model"
+        assert r.config.can_compose is False
+        assert r.config.can_store is False
+
+    def test_all_four_levels_contacts(self):
+        register_org(
+            1,
+            contacts=[
+                {"first_name": "Org", "surname": "Person"},
+            ],
+        )
+        register_team(
+            100,
+            contacts=[
+                {"first_name": "Team", "surname": "Person"},
+            ],
+        )
+        register_user(
+            "u1",
+            contacts=[
+                {"first_name": "User", "surname": "Person"},
+            ],
+        )
+        register_assistant(
+            10,
+            contacts=[
+                {"first_name": "Asst", "surname": "Person"},
+            ],
+        )
+        r = resolve(org_id=1, team_ids=[100], user_id="u1", assistant_id=10)
+        names = {c["first_name"] for c in r.contacts}
+        assert names == {"Org", "Team", "User", "Asst"}
+
+    def test_all_four_levels_function_dirs(self):
+        register_org(1, function_dir=Path("/org/fn"))
+        register_team(100, function_dir=Path("/team/fn"))
+        register_user("u1", function_dir=Path("/user/fn"))
+        register_assistant(10, function_dir=Path("/asst/fn"))
+        r = resolve(org_id=1, team_ids=[100], user_id="u1", assistant_id=10)
+        assert r.function_dirs == [
+            Path("/org/fn"),
+            Path("/team/fn"),
+            Path("/user/fn"),
+            Path("/asst/fn"),
+        ]

@@ -114,6 +114,17 @@ class OrgDetails:
 
 
 @dataclass
+class TeamDetails:
+    """Details about team memberships within the current org.
+
+    A user can belong to multiple teams.  ``ids`` contains all team IDs
+    the user is a member of (empty list for personal / no-team context).
+    """
+
+    ids: list[int] = field(default_factory=list)
+
+
+@dataclass
 class VoiceConfig:
     """Voice configuration for the session."""
 
@@ -158,6 +169,9 @@ class SessionDetails:
 
     # Organization context (None id for personal/non-org context)
     org: OrgDetails = field(default_factory=OrgDetails)
+
+    # Team memberships within the org
+    team: TeamDetails = field(default_factory=TeamDetails)
 
     _initialized: bool = field(default=False, repr=False)
 
@@ -208,6 +222,15 @@ class SessionDetails:
         self.org.name = value
 
     @property
+    def team_ids(self) -> list[int]:
+        """Shortcut to team.ids for convenient access."""
+        return self.team.ids
+
+    @team_ids.setter
+    def team_ids(self, value: list[int]) -> None:
+        self.team.ids = value
+
+    @property
     def unify_key(self) -> str:
         """API key for Unify services.
 
@@ -256,6 +279,7 @@ class SessionDetails:
         user_email: str = "",
         org_id: int | None = None,
         org_name: str = "",
+        team_ids: list[int] | None = None,
         voice_provider: str = "",
         voice_id: str = "",
         desktop_mode: str = "ubuntu",
@@ -290,6 +314,7 @@ class SessionDetails:
         self.user.email = user_email
         self.org.id = org_id
         self.org.name = org_name
+        self.team.ids = team_ids or []
         self.voice.provider = voice_provider
         self.voice.id = voice_id
         self._initialized = True
@@ -299,6 +324,7 @@ class SessionDetails:
         self.assistant = AssistantDetails()
         self.user = UserDetails()
         self.org = OrgDetails()
+        self.team = TeamDetails()
         self.voice = VoiceConfig()
         self.voice_call = VoiceCallConfig()
         self._unify_key = ""
@@ -339,6 +365,9 @@ class SessionDetails:
         os.environ["USER_EMAIL"] = self.user.email
         os.environ["ORG_ID"] = str(self.org.id) if self.org.id is not None else ""
         os.environ["ORG_NAME"] = self.org.name
+        os.environ["TEAM_IDS"] = (
+            ",".join(str(t) for t in self.team.ids) if self.team.ids else ""
+        )
         os.environ["VOICE_PROVIDER"] = self.voice.provider
         os.environ["VOICE_ID"] = self.voice.id
         os.environ["VOICE_MODE"] = self.voice.mode
@@ -408,6 +437,11 @@ class SessionDetails:
                 pass
         if val := os.environ.get("ORG_NAME"):
             self.org.name = val
+        if val := os.environ.get("TEAM_IDS"):
+            try:
+                self.team.ids = [int(t) for t in val.split(",") if t.strip()]
+            except (ValueError, TypeError):
+                pass
         if val := os.environ.get("VOICE_PROVIDER"):
             self.voice.provider = val
         if val := os.environ.get("VOICE_ID"):

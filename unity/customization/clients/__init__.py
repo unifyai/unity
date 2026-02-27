@@ -3,12 +3,17 @@ Code-first client customization registry.
 
 Client configs, environments, custom functions, and seed data are defined
 in Python code under per-client subpackages (e.g. ``colliers/``).  Each
-subpackage registers its org-level, user-level, and/or assistant-level
-customizations into the module-level dicts below.
+subpackage registers its org-level, team-level, user-level, and/or
+assistant-level customizations into the module-level dicts below.
 
 At Actor construction time, ``resolve()`` is called with the current
-org_id / user_id / assistant_id to produce a ``ResolvedCustomization``
-containing merged configs, environments, function dirs, and seed data.
+org_id / team_ids / user_id / assistant_id to produce a
+``ResolvedCustomization`` containing merged configs, environments,
+function dirs, and seed data.
+
+Cascade order (least to most specific): org -> team(s) -> user -> assistant.
+When a user belongs to multiple teams, team customizations are merged in
+ascending team_id order before being fed into the cascade.
 """
 
 from __future__ import annotations
@@ -53,6 +58,15 @@ _ORG_CONTACTS: dict[int, list[dict]] = {}
 _ORG_GUIDANCE: dict[int, list[dict]] = {}
 _ORG_KNOWLEDGE: dict[int, dict[str, dict]] = {}
 _ORG_BLACKLIST: dict[int, list[dict]] = {}
+
+_TEAM_CONFIGS: dict[int, ActorConfig] = {}
+_TEAM_ENVIRONMENTS: dict[int, list[BaseEnvironment]] = {}
+_TEAM_FUNCTION_DIRS: dict[int, list[Path]] = {}
+_TEAM_VENV_DIRS: dict[int, list[Path]] = {}
+_TEAM_CONTACTS: dict[int, list[dict]] = {}
+_TEAM_GUIDANCE: dict[int, list[dict]] = {}
+_TEAM_KNOWLEDGE: dict[int, dict[str, dict]] = {}
+_TEAM_BLACKLIST: dict[int, list[dict]] = {}
 
 _USER_CONFIGS: dict[str, ActorConfig] = {}
 _USER_ENVIRONMENTS: dict[str, list[BaseEnvironment]] = {}
@@ -106,6 +120,36 @@ def register_org(
         _ORG_KNOWLEDGE.setdefault(org_id, {}).update(knowledge)
     if blacklist:
         _ORG_BLACKLIST.setdefault(org_id, []).extend(blacklist)
+
+
+def register_team(
+    team_id: int,
+    *,
+    config: ActorConfig | None = None,
+    environments: list[BaseEnvironment] | None = None,
+    function_dir: Path | None = None,
+    venv_dir: Path | None = None,
+    contacts: list[dict] | None = None,
+    guidance: list[dict] | None = None,
+    knowledge: dict[str, dict] | None = None,
+    blacklist: list[dict] | None = None,
+) -> None:
+    if config is not None:
+        _TEAM_CONFIGS[team_id] = config
+    if environments:
+        _TEAM_ENVIRONMENTS[team_id] = environments
+    if function_dir is not None:
+        _TEAM_FUNCTION_DIRS.setdefault(team_id, []).append(function_dir)
+    if venv_dir is not None:
+        _TEAM_VENV_DIRS.setdefault(team_id, []).append(venv_dir)
+    if contacts:
+        _TEAM_CONTACTS.setdefault(team_id, []).extend(contacts)
+    if guidance:
+        _TEAM_GUIDANCE.setdefault(team_id, []).extend(guidance)
+    if knowledge:
+        _TEAM_KNOWLEDGE.setdefault(team_id, {}).update(knowledge)
+    if blacklist:
+        _TEAM_BLACKLIST.setdefault(team_id, []).extend(blacklist)
 
 
 def register_user(
@@ -213,6 +257,21 @@ def _collect_dirs(
     return dirs
 
 
+def _collect_dirs_multi(
+    registries: list[tuple[dict, list[int] | int | str | None]],
+) -> list[Path]:
+    """Collect directories from registries, supporting multi-key lookups for teams."""
+    dirs: list[Path] = []
+    for registry, key_or_keys in registries:
+        if key_or_keys is None:
+            continue
+        keys = key_or_keys if isinstance(key_or_keys, list) else [key_or_keys]
+        for k in keys:
+            if k in registry:
+                dirs.extend(registry[k])
+    return dirs
+
+
 def _merge_list_seed(
     registries: list[dict],
     keys: list,
@@ -227,6 +286,30 @@ def _merge_list_seed(
     for registry, key in zip(registries, keys):
         if key is not None and key in registry:
             merged.extend(registry[key])
+    if natural_key_fn is not None and merged:
+        seen: dict[str, dict] = {}
+        for rec in merged:
+            try:
+                seen[natural_key_fn(rec)] = rec
+            except Exception:
+                seen[id(rec)] = rec
+        return list(seen.values())
+    return merged
+
+
+def _merge_list_seed_multi(
+    registries: list[tuple[dict, list[int] | int | str | None]],
+    natural_key_fn: Any = None,
+) -> list[dict]:
+    """Like _merge_list_seed but supports multi-key lookups for teams."""
+    merged: list[dict] = []
+    for registry, key_or_keys in registries:
+        if key_or_keys is None:
+            continue
+        keys = key_or_keys if isinstance(key_or_keys, list) else [key_or_keys]
+        for k in keys:
+            if k in registry:
+                merged.extend(registry[k])
     if natural_key_fn is not None and merged:
         seen: dict[str, dict] = {}
         for rec in merged:
@@ -274,15 +357,58 @@ def _merge_knowledge_seed(
     return merged
 
 
+def _merge_knowledge_seed_multi(
+    registries: list[tuple[dict, list[int] | int | str | None]],
+) -> dict[str, dict]:
+    """Like _merge_knowledge_seed but supports multi-key lookups for teams."""
+    merged: dict[str, dict] = {}
+    for registry, key_or_keys in registries:
+        if key_or_keys is None:
+            continue
+        keys = key_or_keys if isinstance(key_or_keys, list) else [key_or_keys]
+        for k in keys:
+            if k not in registry:
+                continue
+            for table_name, spec in registry[k].items():
+                if table_name not in merged:
+                    merged[table_name] = dict(spec)
+                else:
+                    existing = merged[table_name]
+                    seed_key = spec.get("seed_key") or existing.get("seed_key")
+                    if spec.get("columns"):
+                        existing.setdefault("columns", {}).update(spec["columns"])
+                    if spec.get("description"):
+                        existing["description"] = spec["description"]
+                    if seed_key:
+                        existing["seed_key"] = seed_key
+                    if spec.get("rows"):
+                        all_rows = existing.get("rows", []) + spec["rows"]
+                        if seed_key:
+                            seen: dict[str, dict] = {}
+                            for row in all_rows:
+                                seen[str(row.get(seed_key, id(row)))] = row
+                            existing["rows"] = list(seen.values())
+                        else:
+                            existing["rows"] = all_rows
+    return merged
+
+
 def resolve(
     org_id: int | None = None,
+    team_ids: list[int] | None = None,
     user_id: str | None = None,
     assistant_id: int | None = None,
 ) -> ResolvedCustomization:
     """Resolve merged customizations for the given identity.
 
-    Cascade order (least to most specific): org -> user -> assistant.
+    Cascade order (least to most specific):
+    org -> team(s) -> user -> assistant.
+
+    When a user belongs to multiple teams, team customizations are merged
+    in ascending team_id order before being fed into the cascade.
     """
+    sorted_team_ids = sorted(team_ids) if team_ids else []
+
     configs: list[ActorConfig] = []
     environments: list[BaseEnvironment] = []
 
@@ -291,6 +417,12 @@ def resolve(
             configs.append(_ORG_CONFIGS[org_id])
         if org_id in _ORG_ENVIRONMENTS:
             environments.extend(_ORG_ENVIRONMENTS[org_id])
+
+    for tid in sorted_team_ids:
+        if tid in _TEAM_CONFIGS:
+            configs.append(_TEAM_CONFIGS[tid])
+        if tid in _TEAM_ENVIRONMENTS:
+            environments.extend(_TEAM_ENVIRONMENTS[tid])
 
     if user_id is not None:
         if user_id in _USER_CONFIGS:
@@ -311,42 +443,69 @@ def resolve(
         seen[env.name] = env
     deduped_envs = list(seen.values())
 
-    function_dirs = _collect_dirs(
-        [_ORG_FUNCTION_DIRS, _USER_FUNCTION_DIRS, _ASSISTANT_FUNCTION_DIRS],
-        [org_id, user_id, assistant_id],
-    )
-    venv_dirs = _collect_dirs(
-        [_ORG_VENV_DIRS, _USER_VENV_DIRS, _ASSISTANT_VENV_DIRS],
-        [org_id, user_id, assistant_id],
-    )
+    cascade = [
+        (_ORG_FUNCTION_DIRS, org_id),
+        (_TEAM_FUNCTION_DIRS, sorted_team_ids or None),
+        (_USER_FUNCTION_DIRS, user_id),
+        (_ASSISTANT_FUNCTION_DIRS, assistant_id),
+    ]
+    function_dirs = _collect_dirs_multi(cascade)
 
-    keys = [org_id, user_id, assistant_id]
+    venv_cascade = [
+        (_ORG_VENV_DIRS, org_id),
+        (_TEAM_VENV_DIRS, sorted_team_ids or None),
+        (_USER_VENV_DIRS, user_id),
+        (_ASSISTANT_VENV_DIRS, assistant_id),
+    ]
+    venv_dirs = _collect_dirs_multi(venv_cascade)
 
-    contacts = _merge_list_seed(
-        [_ORG_CONTACTS, _USER_CONTACTS, _ASSISTANT_CONTACTS],
-        keys,
+    seed_cascade = [
+        (_ORG_CONTACTS, org_id),
+        (_TEAM_CONTACTS, sorted_team_ids or None),
+        (_USER_CONTACTS, user_id),
+        (_ASSISTANT_CONTACTS, assistant_id),
+    ]
+    contacts = _merge_list_seed_multi(
+        seed_cascade,
         natural_key_fn=lambda r: (
             f"{r.get('first_name', '')}|{r.get('surname', '')}"
         ).lower(),
     )
-    guidance = _merge_list_seed(
-        [_ORG_GUIDANCE, _USER_GUIDANCE, _ASSISTANT_GUIDANCE],
-        keys,
+    guidance = _merge_list_seed_multi(
+        [
+            (_ORG_GUIDANCE, org_id),
+            (_TEAM_GUIDANCE, sorted_team_ids or None),
+            (_USER_GUIDANCE, user_id),
+            (_ASSISTANT_GUIDANCE, assistant_id),
+        ],
         natural_key_fn=lambda r: str(r.get("title", "")),
     )
-    blacklist = _merge_list_seed(
-        [_ORG_BLACKLIST, _USER_BLACKLIST, _ASSISTANT_BLACKLIST],
-        keys,
+    blacklist = _merge_list_seed_multi(
+        [
+            (_ORG_BLACKLIST, org_id),
+            (_TEAM_BLACKLIST, sorted_team_ids or None),
+            (_USER_BLACKLIST, user_id),
+            (_ASSISTANT_BLACKLIST, assistant_id),
+        ],
         natural_key_fn=lambda r: f"{r.get('medium', '')}|{r.get('contact_detail', '')}",
     )
-    knowledge = _merge_knowledge_seed(
-        [_ORG_KNOWLEDGE, _USER_KNOWLEDGE, _ASSISTANT_KNOWLEDGE],
-        keys,
+    knowledge = _merge_knowledge_seed_multi(
+        [
+            (_ORG_KNOWLEDGE, org_id),
+            (_TEAM_KNOWLEDGE, sorted_team_ids or None),
+            (_USER_KNOWLEDGE, user_id),
+            (_ASSISTANT_KNOWLEDGE, assistant_id),
+        ],
     )
 
     from unity.customization.secrets_file import load_secrets
 
-    secrets = load_secrets(org_id=org_id, user_id=user_id, assistant_id=assistant_id)
+    secrets = load_secrets(
+        org_id=org_id,
+        team_ids=sorted_team_ids or None,
+        user_id=user_id,
+        assistant_id=assistant_id,
+    )
 
     return ResolvedCustomization(
         config=merged_config,

@@ -1032,6 +1032,7 @@ class ConversationManager(metaclass=SingletonABCMeta):
         self.user_desktop_mode = payload.get("user_desktop_mode")
         self.user_desktop_filesys_sync = payload.get("user_desktop_filesys_sync", False)
         self.user_desktop_url = payload.get("user_desktop_url")
+        self.team_ids: list[int] = payload.get("team_ids") or []
         # Set API key on SESSION_DETAILS for runtime access
         if payload.get("api_key"):
             SESSION_DETAILS.unify_key = payload["api_key"]
@@ -1051,6 +1052,7 @@ class ConversationManager(metaclass=SingletonABCMeta):
             user_surname=self.user_surname,
             user_number=self.user_number,
             user_email=self.user_email,
+            team_ids=self.team_ids,
             voice_provider=self.voice_provider,
             voice_id=self.voice_id,
             desktop_mode=self.desktop_mode,
