@@ -65,10 +65,26 @@ _COMPUTER_METHODS = (
 )
 
 
+def _publish_desktop_invoked(method_name: str) -> None:
+    """Fire-and-forget EventBus publish for desktop primitive invocations."""
+    try:
+        from unity.events.event_bus import EVENT_BUS, Event
+
+        asyncio.get_running_loop().create_task(
+            EVENT_BUS.publish(
+                Event(type="DesktopPrimitiveInvoked", payload={"method": method_name}),
+            ),
+        )
+    except Exception:
+        pass
+
+
 def _make_session_method(
     method_name: str,
     owner: "ComputerPrimitives",
     session_resolver,
+    *,
+    mode: str = "",
 ):
     """Build a wrapped async method that routes through a session.
 
@@ -77,6 +93,8 @@ def _make_session_method(
     (bound instance).
     """
     from unity.function_manager.computer_backends import ComputerSession
+
+    is_desktop = mode == "desktop"
 
     if method_name == "get_screenshot":
 
@@ -94,6 +112,8 @@ def _make_session_method(
 
             session = await session_resolver()
             b64 = await session.get_screenshot()
+            if is_desktop:
+                _publish_desktop_invoked(method_name)
             return _Image.open(io.BytesIO(base64.b64decode(b64)))
 
         screenshot_wrapper.__name__ = method_name
@@ -116,7 +136,10 @@ def _make_session_method(
             resolved = await owner.secret_manager.from_placeholder(args[0])
             args = (resolved,) + args[1:]
         session = await session_resolver()
-        return await getattr(session, method_name)(*args, **kwargs)
+        result = await getattr(session, method_name)(*args, **kwargs)
+        if is_desktop:
+            _publish_desktop_invoked(method_name)
+        return result
 
     wrapper.__name__ = method_name
     # Prefer the rich docstrings from ComputerBackend ABC over ComputerSession's terse ones
@@ -143,7 +166,7 @@ class _ComputerNamespace:
             return await owner.backend.get_session(mode)
 
         for name in _COMPUTER_METHODS:
-            setattr(self, name, _make_session_method(name, owner, _resolve))
+            setattr(self, name, _make_session_method(name, owner, _resolve, mode=mode))
 
 
 class WebSessionHandle:

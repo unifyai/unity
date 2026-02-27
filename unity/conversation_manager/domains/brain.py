@@ -208,6 +208,7 @@ def build_brain_spec(
         is_voice_call=cm.mode.is_voice,
         is_boss_on_call=is_boss_on_call,
         demo_mode=SETTINGS.DEMO_MODE,
+        desktop_fast_path=cm.desktop_fast_path_eligible,
     )
 
     response_model = _RESPONSE_MODELS[cm.mode]

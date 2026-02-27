@@ -1421,6 +1421,104 @@ class ConversationManagerBrainActionTools:
             response_format=response_format,
         )
 
+    # ── Desktop fast-path tools ───────────────────────────────────────────
+
+    async def _silent_interject_desktop_act_sessions(
+        self,
+        message: str,
+    ) -> None:
+        """Send a silent interjection to all in-flight act sessions that have
+        used desktop primitives, keeping the Actor informed without triggering
+        an immediate LLM turn."""
+        for hid in list(self._cm._act_handles_with_desktop_usage):
+            data = self._cm.in_flight_actions.get(hid)
+            if data:
+                handle = data.get("handle")
+                if handle and not handle.done():
+                    try:
+                        await handle.interject(
+                            message,
+                            trigger_immediate_llm_turn=False,
+                        )
+                    except TypeError:
+                        await handle.interject(message)
+
+    async def desktop_act(
+        self,
+        *,
+        instruction: str,
+    ) -> dict[str, Any]:
+        """Execute a single atomic action on the assistant's desktop.
+
+        This is a **direct shortcut** to the desktop agent, bypassing the
+        general ``act`` pathway.  The action completes within this turn and
+        the result is returned immediately.
+
+        Use for **single atomic actions** where the user has explicitly
+        described both the action and the target:
+
+        - "Click the blue Submit button"
+        - "Type 'hello world' into the search box"
+        - "Scroll down"
+        - "Press Enter"
+
+        **Route through ``act`` instead** when the request requires reasoning
+        about *what* to do, involves multiple steps, or benefits from guidance
+        and compositional functions.
+
+        Args:
+            instruction: A concrete desktop action to perform
+                (e.g. "Click the Submit button").
+        """
+        cp = self._cm.computer_primitives
+        result = await cp.desktop.act(instruction)
+        await self._silent_interject_desktop_act_sessions(
+            f"[Desktop fast-path] Executed: {instruction}\nResult: {result}",
+        )
+        return {"status": "completed", "result": result}
+
+    async def desktop_observe(
+        self,
+        *,
+        query: str,
+    ) -> dict[str, Any]:
+        """Observe or extract information from the current desktop screen.
+
+        This is a **direct shortcut** to the desktop agent's vision
+        capability, bypassing the general ``act`` pathway.  Returns the
+        answer immediately.
+
+        Use for quick visual queries about what is currently on screen:
+
+        - "What does the screen show right now?"
+        - "What is the value in the Total cell?"
+        - "Is the Save dialog open?"
+
+        **Route through ``act`` instead** when the observation is part of a
+        larger multi-step task.
+
+        Args:
+            query: A question about the current screen state
+                (e.g. "What text is in the search box?").
+        """
+        cp = self._cm.computer_primitives
+        result = await cp.desktop.observe(query)
+        await self._silent_interject_desktop_act_sessions(
+            f"[Desktop fast-path] Observed: {query}\nResult: {result}",
+        )
+        return {"status": "completed", "result": result}
+
+    async def desktop_get_screenshot(self) -> dict[str, Any]:
+        """Capture a screenshot of the current assistant desktop.
+
+        This is a **direct shortcut** to get the desktop screenshot,
+        bypassing the general ``act`` pathway.  Returns the image
+        immediately.
+        """
+        cp = self._cm.computer_primitives
+        image = await cp.desktop.get_screenshot()
+        return {"status": "completed", "image": image}
+
     async def set_boss_details(
         self,
         *,

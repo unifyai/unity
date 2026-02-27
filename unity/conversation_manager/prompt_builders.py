@@ -147,6 +147,7 @@ def build_system_prompt(
     is_voice_call: bool = False,
     is_boss_on_call: bool = False,
     demo_mode: bool = False,
+    desktop_fast_path: bool = False,
 ) -> PromptParts:
     """Build the system prompt for the ConversationManager LLM.
 
@@ -171,6 +172,8 @@ def build_system_prompt(
         When True, the voice calls guide shifts to supplementary-guidance mode.
     demo_mode : bool
         Whether the assistant is operating in demo mode (pre-signup).
+    desktop_fast_path : bool
+        Whether desktop fast-path tools are currently available.
 
     Returns
     -------
@@ -591,6 +594,29 @@ Examples of requests that should use the direct tools:
 - BAD: `act("check what tasks are due")` → then → `act("update priorities on overdue tasks")`
 - GOOD: `act("check what tasks are due and update priorities on any overdue ones")`""",
         )
+
+        if desktop_fast_path:
+            parts.add(
+                """Desktop fast-path tools
+-----------------------
+`desktop_act`, `desktop_observe`, and `desktop_get_screenshot` are **direct shortcuts** to the desktop agent, bypassing the general `act` pathway. They complete within this turn and return results immediately.
+
+Use these for **single atomic desktop actions** where the user has explicitly described both the action and the target:
+- "Click the blue Submit button" → `desktop_act`
+- "Type 'hello world' into the search box" → `desktop_act`
+- "Scroll down" → `desktop_act`
+- "What does the screen show right now?" → `desktop_observe`
+- "What is the value in the Total cell?" → `desktop_observe`
+- "Take a screenshot" → `desktop_get_screenshot`
+
+**Use `act` instead when:**
+- The request requires reasoning about *what* to do (not just *where*)
+- Multiple steps are needed ("copy the sales data to a Word template")
+- The request involves non-desktop work alongside desktop actions
+- The request benefits from guidance, compositional functions, or planning
+
+These tools are only available while the desktop is being actively shared and a desktop session is in progress.""",
+            )
 
         parts.add(
             """Act capabilities
