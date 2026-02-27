@@ -953,7 +953,7 @@ class EventBus:
             from ..session_details import SESSION_DETAILS
             from ..settings import SETTINGS
 
-            agent_id = SESSION_DETAILS.assistant.agent_id
+            agent_id = str(SESSION_DETAILS.assistant.agent_id)
             staging_suffix = (
                 "-staging" if SETTINGS.STAGING and agent_id is not None else ""
             )
