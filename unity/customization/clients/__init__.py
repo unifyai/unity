@@ -58,6 +58,7 @@ _ORG_CONTACTS: dict[int, list[dict]] = {}
 _ORG_GUIDANCE: dict[int, list[dict]] = {}
 _ORG_KNOWLEDGE: dict[int, dict[str, dict]] = {}
 _ORG_BLACKLIST: dict[int, list[dict]] = {}
+_ORG_SECRETS: dict[int, list[dict]] = {}
 
 _TEAM_CONFIGS: dict[int, ActorConfig] = {}
 _TEAM_ENVIRONMENTS: dict[int, list[BaseEnvironment]] = {}
@@ -67,6 +68,7 @@ _TEAM_CONTACTS: dict[int, list[dict]] = {}
 _TEAM_GUIDANCE: dict[int, list[dict]] = {}
 _TEAM_KNOWLEDGE: dict[int, dict[str, dict]] = {}
 _TEAM_BLACKLIST: dict[int, list[dict]] = {}
+_TEAM_SECRETS: dict[int, list[dict]] = {}
 
 _USER_CONFIGS: dict[str, ActorConfig] = {}
 _USER_ENVIRONMENTS: dict[str, list[BaseEnvironment]] = {}
@@ -76,6 +78,7 @@ _USER_CONTACTS: dict[str, list[dict]] = {}
 _USER_GUIDANCE: dict[str, list[dict]] = {}
 _USER_KNOWLEDGE: dict[str, dict[str, dict]] = {}
 _USER_BLACKLIST: dict[str, list[dict]] = {}
+_USER_SECRETS: dict[str, list[dict]] = {}
 
 _ASSISTANT_CONFIGS: dict[int, ActorConfig] = {}
 _ASSISTANT_ENVIRONMENTS: dict[int, list[BaseEnvironment]] = {}
@@ -85,6 +88,7 @@ _ASSISTANT_CONTACTS: dict[int, list[dict]] = {}
 _ASSISTANT_GUIDANCE: dict[int, list[dict]] = {}
 _ASSISTANT_KNOWLEDGE: dict[int, dict[str, dict]] = {}
 _ASSISTANT_BLACKLIST: dict[int, list[dict]] = {}
+_ASSISTANT_SECRETS: dict[int, list[dict]] = {}
 
 
 # ---------------------------------------------------------------------------
@@ -103,6 +107,7 @@ def register_org(
     guidance: list[dict] | None = None,
     knowledge: dict[str, dict] | None = None,
     blacklist: list[dict] | None = None,
+    secrets: list[dict] | None = None,
 ) -> None:
     if config is not None:
         _ORG_CONFIGS[org_id] = config
@@ -120,6 +125,8 @@ def register_org(
         _ORG_KNOWLEDGE.setdefault(org_id, {}).update(knowledge)
     if blacklist:
         _ORG_BLACKLIST.setdefault(org_id, []).extend(blacklist)
+    if secrets:
+        _ORG_SECRETS.setdefault(org_id, []).extend(secrets)
 
 
 def register_team(
@@ -133,6 +140,7 @@ def register_team(
     guidance: list[dict] | None = None,
     knowledge: dict[str, dict] | None = None,
     blacklist: list[dict] | None = None,
+    secrets: list[dict] | None = None,
 ) -> None:
     if config is not None:
         _TEAM_CONFIGS[team_id] = config
@@ -150,6 +158,8 @@ def register_team(
         _TEAM_KNOWLEDGE.setdefault(team_id, {}).update(knowledge)
     if blacklist:
         _TEAM_BLACKLIST.setdefault(team_id, []).extend(blacklist)
+    if secrets:
+        _TEAM_SECRETS.setdefault(team_id, []).extend(secrets)
 
 
 def register_user(
@@ -163,6 +173,7 @@ def register_user(
     guidance: list[dict] | None = None,
     knowledge: dict[str, dict] | None = None,
     blacklist: list[dict] | None = None,
+    secrets: list[dict] | None = None,
 ) -> None:
     if config is not None:
         _USER_CONFIGS[user_id] = config
@@ -180,6 +191,8 @@ def register_user(
         _USER_KNOWLEDGE.setdefault(user_id, {}).update(knowledge)
     if blacklist:
         _USER_BLACKLIST.setdefault(user_id, []).extend(blacklist)
+    if secrets:
+        _USER_SECRETS.setdefault(user_id, []).extend(secrets)
 
 
 def register_assistant(
@@ -193,6 +206,7 @@ def register_assistant(
     guidance: list[dict] | None = None,
     knowledge: dict[str, dict] | None = None,
     blacklist: list[dict] | None = None,
+    secrets: list[dict] | None = None,
 ) -> None:
     if config is not None:
         _ASSISTANT_CONFIGS[assistant_id] = config
@@ -210,6 +224,8 @@ def register_assistant(
         _ASSISTANT_KNOWLEDGE.setdefault(assistant_id, {}).update(knowledge)
     if blacklist:
         _ASSISTANT_BLACKLIST.setdefault(assistant_id, []).extend(blacklist)
+    if secrets:
+        _ASSISTANT_SECRETS.setdefault(assistant_id, []).extend(secrets)
 
 
 # ---------------------------------------------------------------------------
@@ -498,14 +514,31 @@ def resolve(
         ],
     )
 
+    code_secrets = _merge_list_seed_multi(
+        [
+            (_ORG_SECRETS, org_id),
+            (_TEAM_SECRETS, sorted_team_ids or None),
+            (_USER_SECRETS, user_id),
+            (_ASSISTANT_SECRETS, assistant_id),
+        ],
+        natural_key_fn=lambda r: str(r.get("name", "")),
+    )
+
     from unity.customization.secrets_file import load_secrets
 
-    secrets = load_secrets(
+    file_secrets = load_secrets(
         org_id=org_id,
         team_ids=sorted_team_ids or None,
         user_id=user_id,
         assistant_id=assistant_id,
     )
+
+    secrets_by_name: dict[str, dict[str, Any]] = {}
+    for s in code_secrets:
+        secrets_by_name[s["name"]] = s
+    for s in file_secrets:
+        secrets_by_name[s["name"]] = {**secrets_by_name.get(s["name"], {}), **s}
+    secrets = list(secrets_by_name.values())
 
     return ResolvedCustomization(
         config=merged_config,
