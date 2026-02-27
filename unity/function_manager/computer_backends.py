@@ -659,10 +659,11 @@ class ComputerSession:
     the VM display through noVNC inside the agent-service).
     """
 
-    def __init__(self, session_id: str, mode: str, agent_base_url: str):
+    def __init__(self, session_id: str, mode: str, agent_base_url: str, ssl=None):
         self._session_id = session_id
         self._mode = mode
         self._agent_base_url = agent_base_url
+        self._ssl = ssl
 
     async def _request(
         self,
@@ -687,6 +688,7 @@ class ComputerSession:
                         json=payload,
                         headers=headers,
                         timeout=1000,
+                        ssl=self._ssl,
                     ) as resp:
                         if resp.status >= 400:
                             try:
@@ -880,6 +882,12 @@ class MagnitudeBackend(ComputerBackend):
 
         self._container_url = container_url
         self._local_url = local_url
+        # Skip TLS verification for VM connections only.  Caddy may serve a
+        # temporary self-signed cert during ACME; the connection is within
+        # GCP's VPC where infrastructure-level encryption already applies.
+        self._vm_ssl = (
+            False if container_url and container_url.startswith("https://") else None
+        )
 
         # Primary sessions: one per mode, created lazily
         self._sessions: dict[str, ComputerSession] = {}
@@ -931,12 +939,14 @@ class MagnitudeBackend(ComputerBackend):
         params = dict(self._MODE_START_PARAMS[mode])
         auth_key = SESSION_DETAILS.unify_key
         headers = {"authorization": f"Bearer {auth_key}"}
+        use_ssl = self._vm_ssl if mode in ("desktop", "web-vm") else None
         async with aiohttp.ClientSession() as s:
             async with s.post(
                 f"{url}/start",
                 json=params,
                 headers=headers,
                 timeout=300,
+                ssl=use_ssl,
             ) as resp:
                 if resp.status >= 400:
                     raise RuntimeError(
@@ -946,7 +956,7 @@ class MagnitudeBackend(ComputerBackend):
         session_id = data.get("sessionId")
         if not session_id:
             raise RuntimeError(f"Failed to get sessionId for {mode} session")
-        session = ComputerSession(session_id, mode, url)
+        session = ComputerSession(session_id, mode, url, ssl=use_ssl)
         logger.info(f"✅ Created {mode} session {session_id}")
         return session
 
@@ -957,6 +967,10 @@ class MagnitudeBackend(ComputerBackend):
         session = await self._create_session_async(mode)
         self._sessions[mode] = session
         return session
+
+    def clear_session(self, mode: str) -> None:
+        """Remove a cached session so the next get_session re-creates it."""
+        self._sessions.pop(mode, None)
 
     async def create_session(self, mode: str) -> ComputerSession:
         """Spawn an additional parallel session (web/web-vm only).
@@ -1171,6 +1185,7 @@ class MagnitudeBackend(ComputerBackend):
         url = f"{self.agent_base_url}{endpoint}"
         if payload is None:
             payload = {}
+        use_ssl = self._vm_ssl
         retries = 3
         for attempt in range(retries):
             try:
@@ -1183,6 +1198,7 @@ class MagnitudeBackend(ComputerBackend):
                         json=payload,
                         headers=headers,
                         timeout=1000,
+                        ssl=use_ssl,
                     ) as resp:
                         if resp.status >= 400:
                             try:

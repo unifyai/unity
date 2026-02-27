@@ -1143,23 +1143,47 @@ async def _ensure_desktop_session(cm: "ConversationManager") -> None:
     called explicitly to guarantee the ``/screenshot`` endpoint has an active
     session to fall back to.  ``get_session`` is idempotent — calling it when a
     session already exists returns the cached instance.
-    """
-    try:
-        from unity.function_manager.primitives.runtime import ComputerPrimitives
-        from unity.manager_registry import ManagerRegistry
 
-        cp = ManagerRegistry.get_instance(ComputerPrimitives)
-        if cp is not None:
+    Retries with exponential backoff because the VM's Caddy reverse proxy may
+    still be starting up or obtaining its TLS certificate from Let's Encrypt
+    even after the Communication service reports the VM as "ready".
+    """
+    from unity.function_manager.primitives.runtime import ComputerPrimitives
+    from unity.manager_registry import ManagerRegistry
+
+    cp = ManagerRegistry.get_instance(ComputerPrimitives)
+    if cp is None:
+        return
+
+    max_attempts = 12
+    base_delay = 5.0
+    max_delay = 30.0
+    delay = base_delay
+
+    for attempt in range(1, max_attempts + 1):
+        try:
             session = await cp.backend.get_session("desktop")
             cm._session_logger.info(
                 "desktop_session",
                 f"Desktop session ready: {session._session_id}",
             )
-    except Exception as e:
-        cm._session_logger.warning(
-            "desktop_session",
-            f"Failed to create desktop session: {type(e).__name__}: {e}",
-        )
+            return
+        except Exception as e:
+            if attempt == max_attempts:
+                cm._session_logger.warning(
+                    "desktop_session",
+                    f"Failed to create desktop session after {max_attempts} attempts: "
+                    f"{type(e).__name__}: {e}",
+                )
+                return
+            cm._session_logger.debug(
+                "desktop_session",
+                f"Attempt {attempt}/{max_attempts} failed ({type(e).__name__}), "
+                f"retrying in {delay:.0f}s",
+            )
+            await asyncio.sleep(delay)
+            delay = min(delay * 1.5, max_delay)
+            cp.backend.clear_session("desktop")
 
 
 # --------------------------------------------------------------------------- #
