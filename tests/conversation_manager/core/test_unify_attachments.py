@@ -181,10 +181,11 @@ class TestAddUnifyMessageAttachments:
             assert call_args[0][0] == "report.pdf"  # filename
             assert call_args[0][1] == b"PDF file content"  # content
 
-            # Verify ingestion was triggered
-            mock_file_manager.ingest_files.assert_called_once_with(
-                ["Downloads/report.pdf"],
-            )
+            # Verify parallel ingestion was triggered
+            mock_file_manager.ingest_files.assert_called_once()
+            ingest_args = mock_file_manager.ingest_files.call_args
+            assert ingest_args[0][0] == ["Downloads/report.pdf"]
+            assert ingest_args[1]["config"].execution.parallel_files is True
 
     @pytest.mark.asyncio
     async def test_handles_empty_attachments(self):
