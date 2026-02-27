@@ -58,11 +58,12 @@ def list_jobs(comms_url: str, admin_key: str, label: str):
 
 def refresh_idle_jobs(
     adapters_url: str,
+    admin_key: str,
     delay: int = 30,
     comms_url: str | None = None,
-    admin_key: str | None = None,
 ):
-    show_jobs = comms_url and admin_key
+    show_jobs = comms_url is not None
+    headers = {"Authorization": f"Bearer {admin_key}"}
     create_url = f"{adapters_url}/scheduled/jobs/create"
     cleanup_url = f"{adapters_url}/scheduled/jobs/cleanup"
 
@@ -72,7 +73,7 @@ def refresh_idle_jobs(
     for i in range(1, 3):
         print(f"[{i}/2] Creating idle job via {create_url}")
         try:
-            resp = requests.post(create_url, timeout=120)
+            resp = requests.post(create_url, headers=headers, timeout=120)
             resp.raise_for_status()
             print(f"       Response: {resp.json()}")
         except Exception as e:
@@ -86,7 +87,7 @@ def refresh_idle_jobs(
 
     print(f"Cleaning up stale idle jobs via {cleanup_url}")
     try:
-        resp = requests.post(cleanup_url, timeout=120)
+        resp = requests.post(cleanup_url, headers=headers, timeout=120)
         resp.raise_for_status()
         print(f"       Response: {resp.json()}")
     except Exception as e:
@@ -122,15 +123,12 @@ def main():
 
     env = "prod" if args.production else "staging"
     adapters_url = ADAPTERS_URLS[env]
+    admin_key = os.environ["ORCHESTRA_ADMIN_KEY"]
     print(f"Environment: {env}")
 
-    comms_url = None
-    admin_key = None
-    if not args.no_list_jobs:
-        comms_url = COMMS_URLS[env]
-        admin_key = os.getenv("ORCHESTRA_ADMIN_KEY")
+    comms_url = COMMS_URLS[env] if not args.no_list_jobs else None
 
-    refresh_idle_jobs(adapters_url, args.delay, comms_url, admin_key)
+    refresh_idle_jobs(adapters_url, admin_key, args.delay, comms_url)
 
 
 if __name__ == "__main__":
