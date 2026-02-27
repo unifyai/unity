@@ -478,12 +478,14 @@ async def _(
             {"recording_url": event.recording_url},
         )
         cm._session_logger.debug(
+            "recording",
             f"{DEFAULT_ICON} [RecordingReady] Stored recording_url on exchange "
             f"{exchange_id} for {name}",
         )
     else:
         cm._session_logger.debug(
-            f"{DEFAULT_ICON} [RecordingReady] No exchange_id found for {name}"
+            "recording",
+            f"{DEFAULT_ICON} [RecordingReady] No exchange_id found for {name}",
         )
 
 
