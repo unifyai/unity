@@ -947,6 +947,8 @@ class EventBus:
         if not EventBus._pubsub_streaming_enabled:
             return
 
+        topic_name = None
+        agent_id = None
         try:
             from ..session_details import SESSION_DETAILS
             from ..settings import SETTINGS
@@ -960,9 +962,6 @@ class EventBus:
             publisher = self._get_pubsub_publisher()
             topic_path = publisher.topic_path(self._GCP_PROJECT, topic_name)
 
-            # Build the message in the same flat shape that Orchestra stores
-            # (base_entries merged with payload fields) so the frontend can
-            # consume either source with identical parsing logic.
             message_data = {
                 "thread": "action_event",
                 "event": {
@@ -972,9 +971,6 @@ class EventBus:
                 },
             }
 
-            # ordering_key ensures Pub/Sub delivers all action events for this
-            # assistant in publish order.  The subscription must also have
-            # enable_message_ordering=True (configured in communication service).
             future = publisher.publish(
                 topic_path,
                 json.dumps(message_data, default=str).encode("utf-8"),
@@ -987,26 +983,66 @@ class EventBus:
                 event.type,
                 event.row_id,
             )
-            future.add_done_callback(self._on_pubsub_publish_done)
+            future.add_done_callback(
+                self._make_publish_done_callback(topic_path, agent_id),
+            )
 
-        except Exception:
+        except Exception as exc:
             LOGGER.warning(
-                "Pub/Sub action streaming failed — falling back to "
-                "Orchestra-only persistence",
+                "Pub/Sub action streaming failed: topic=%s agent_id=%s "
+                "event_type=%s row_id=%s error=%s",
+                topic_name,
+                agent_id,
+                event.type,
+                event.row_id,
+                exc,
                 exc_info=True,
             )
 
-    @staticmethod
-    def _on_pubsub_publish_done(future) -> None:
-        """Callback for fire-and-forget Pub/Sub publishes."""
-        try:
-            message_id = future.result()
-            LOGGER.debug("Pub/Sub publish confirmed: message_id=%s", message_id)
-        except Exception:
-            LOGGER.warning(
-                "Failed to publish action event to Pub/Sub",
-                exc_info=True,
-            )
+    @classmethod
+    def _make_publish_done_callback(cls, topic_path: str, ordering_key: str):
+        """Return a callback that handles publish success/failure.
+
+        On failure, calls ``resume_publish`` so that subsequent messages with the
+        same ordering key are not permanently blocked by a single transient error.
+        """
+
+        def _on_done(future) -> None:
+            try:
+                message_id = future.result()
+                LOGGER.debug(
+                    "Pub/Sub publish confirmed: topic=%s ordering_key=%s message_id=%s",
+                    topic_path,
+                    ordering_key,
+                    message_id,
+                )
+            except Exception as exc:
+                LOGGER.warning(
+                    "Pub/Sub publish failed: topic=%s ordering_key=%s error=%s",
+                    topic_path,
+                    ordering_key,
+                    exc,
+                    exc_info=True,
+                )
+                try:
+                    if cls._pubsub_publisher and ordering_key:
+                        cls._pubsub_publisher.resume_publish(topic_path, ordering_key)
+                        LOGGER.info(
+                            "Resumed Pub/Sub publishing: topic=%s ordering_key=%s",
+                            topic_path,
+                            ordering_key,
+                        )
+                except Exception as resume_exc:
+                    LOGGER.warning(
+                        "Failed to resume Pub/Sub publishing: topic=%s "
+                        "ordering_key=%s error=%s",
+                        topic_path,
+                        ordering_key,
+                        resume_exc,
+                        exc_info=True,
+                    )
+
+        return _on_done
 
     def join_published(self):
         """Ensures all published events have been uploaded"""
