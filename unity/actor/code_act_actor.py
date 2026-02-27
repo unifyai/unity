@@ -351,6 +351,7 @@ def _start_storage_check_loop(
     actor: "CodeActActor",
     original_result: str,
     parent_lineage: list[str] | None = None,
+    stop_reason: str | None = None,
 ) -> "AsyncToolLoopHandle | None":
     """Start a loop that reviews a completed trajectory for reusable knowledge.
 
@@ -639,6 +640,23 @@ def _start_storage_check_loop(
             "about what you plan to store at the higher level).\n\n"
         )
 
+    stop_context_section = ""
+    if stop_reason:
+        stop_context_section = (
+            "## Session Termination Context\n\n"
+            "This session was explicitly stopped by the user. The stop reason "
+            "provides important signal about whether the user intended the "
+            "work to be saved:\n\n"
+            f"> {stop_reason}\n\n"
+            "Weigh this context when deciding what to store. If the reason "
+            "indicates the user wanted the workflow remembered or saved, that "
+            "is a strong positive signal — look for reusable patterns in the "
+            "trajectory. If the reason indicates cancellation or abandonment, "
+            "the trajectory is less likely to contain patterns worth "
+            "persisting, though genuinely reusable sub-patterns may still "
+            "be worth storing.\n\n"
+        )
+
     system_prompt = (
         "You are a skill librarian. A CodeActActor has just completed a task. "
         "Your job is to review the execution trajectory and decide whether "
@@ -648,6 +666,7 @@ def _start_storage_check_loop(
         f"{trajectory_json}\n\n"
         "## Final Result\n\n"
         f"{original_result}\n\n"
+        f"{stop_context_section}"
         f"{inner_storage_section}"
         "## What Can Be Stored\n\n"
         "Any code that executed successfully in `execute_code` during "
@@ -858,6 +877,7 @@ class _StorageCheckHandle(SteerableToolHandle):
         self._storage_handle: Optional["AsyncToolLoopHandle"] = None
         self._phase: str = "task"  # "task" | "storage" | "done"
         self._stopped: bool = False
+        self._stop_reason: Optional[str] = None
         self._active_relay: Optional[asyncio.Task] = None
 
         # Start the two-phase lifecycle manager.
@@ -912,9 +932,6 @@ class _StorageCheckHandle(SteerableToolHandle):
             self._original_result = await self._inner.result()
             await self._cancel_relay()
             self._task_done_event.set()
-
-            if self._stopped:
-                return
 
             # Snapshot trajectory and ask tools (client/messages are still
             # valid after result() returns -- cleanup only resets context
@@ -980,6 +997,7 @@ class _StorageCheckHandle(SteerableToolHandle):
                     actor=self._actor,
                     original_result=str(self._original_result),
                     parent_lineage=_sc_parent_lineage,
+                    stop_reason=self._stop_reason,
                 )
 
                 if storage_handle is None:
@@ -1119,6 +1137,7 @@ class _StorageCheckHandle(SteerableToolHandle):
 
     async def stop(self, reason: Optional[str] = None, **kwargs) -> None:
         self._stopped = True
+        self._stop_reason = reason
         handle = self._active_handle
         if handle is not None:
             await handle.stop(reason=reason, **kwargs)
