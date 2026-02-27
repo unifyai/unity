@@ -774,6 +774,12 @@ class CommsManager:
         if SESSION_DETAILS.assistant.agent_id is None:
             # Start the startup subscription
             self.subscribe_to_topic(startup_subscription_id)
+            # Label this container as idle so cleanup endpoints can find it
+            threading.Thread(
+                target=mark_job_label,
+                args=(SETTINGS.conversation.JOB_NAME, "idle"),
+                daemon=True,
+            ).start()
             # Start ping mechanism for idle containers
             asyncio.create_task(self.send_pings())
         else:
