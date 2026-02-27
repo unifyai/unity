@@ -6,8 +6,8 @@ Intended to run after a Unity Cloud Build completes, replacing the
 hourly Cloud Scheduler cron with an event-driven trigger.
 
 Usage:
-    python scripts/dev/idle_job_refresh.py                 # prod (default, lists jobs)
-    python scripts/dev/idle_job_refresh.py --staging       # staging
+    python scripts/dev/idle_job_refresh.py                 # staging (default, lists jobs)
+    python scripts/dev/idle_job_refresh.py --production    # production
     python scripts/dev/idle_job_refresh.py --no-list-jobs  # skip job listing
     python scripts/dev/idle_job_refresh.py --delay 45
 """
@@ -103,9 +103,9 @@ def main():
         description="Create fresh idle jobs and clean up stale ones.",
     )
     parser.add_argument(
-        "--staging",
+        "--production",
         action="store_true",
-        help="Target the staging environment (default: prod)",
+        help="Target the production environment (default: staging)",
     )
     parser.add_argument(
         "--delay",
@@ -120,7 +120,7 @@ def main():
     )
     args = parser.parse_args()
 
-    env = "staging" if args.staging else "prod"
+    env = "prod" if args.production else "staging"
     adapters_url = ADAPTERS_URLS[env]
     print(f"Environment: {env}")
 

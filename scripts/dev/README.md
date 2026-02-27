@@ -23,8 +23,8 @@ Create fresh idle K8s jobs and clean up stale ones. Designed to run after a Unit
 - Lists all job names before, after creation, and after cleanup (disable with `--no-list-jobs`).
 
 ```bash
-python scripts/dev/idle_job_refresh.py                 # prod (default)
-python scripts/dev/idle_job_refresh.py --staging       # staging
+python scripts/dev/idle_job_refresh.py                 # staging (default)
+python scripts/dev/idle_job_refresh.py --production    # production
 python scripts/dev/idle_job_refresh.py --no-list-jobs  # skip job listing
 python scripts/dev/idle_job_refresh.py --delay 45      # custom wait
 ```
