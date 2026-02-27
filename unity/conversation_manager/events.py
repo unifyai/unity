@@ -441,6 +441,9 @@ class _SessionConfigBase(Event):
     user_desktop_mode: str | None = None
     user_desktop_filesys_sync: bool = False
     user_desktop_url: str | None = None
+    org_id: int | None = None
+    org_name: str = ""
+    team_ids: list[int] = field(default_factory=list)
     # Demo assistant metadata ID. If set, this is a demo session.
     # Unity derives demo_mode from (demo_id is not None).
     demo_id: int | None = None

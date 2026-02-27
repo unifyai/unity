@@ -303,6 +303,9 @@ class CommsManager:
                         False,
                     ),
                     "user_desktop_url": event.get("user_desktop_url"),
+                    "org_id": event.get("org_id"),
+                    "org_name": event.get("org_name", ""),
+                    "team_ids": event.get("team_ids") or [],
                     "demo_id": event.get("demo_id"),
                 }
                 self._publish_from_callback(
