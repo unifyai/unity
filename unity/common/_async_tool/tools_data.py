@@ -296,12 +296,21 @@ class ToolsData:
 
         Merges three sources with increasing precedence:
         completed ask handles < extra_ask_tools < live dynamic tools.
+
+        The ``ask_about_completed_tool`` meta-dispatcher is excluded because
+        it is a routing tool, not a per-tool ask function.
         """
         result = dict(self._completed_ask_handles)
         result.update(self._extra_ask_tools)
         dt = self._dynamic_tools_ref
         if dt and isinstance(dt, dict):
-            result.update({k: v for k, v in dt.items() if k.startswith("ask_")})
+            result.update(
+                {
+                    k: v
+                    for k, v in dt.items()
+                    if k.startswith("ask_") and k != "ask_about_completed_tool"
+                },
+            )
         return result
 
     # Local helper: pretty-print tool payloads consistently
