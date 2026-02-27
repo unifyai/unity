@@ -440,7 +440,7 @@ def resolve(
 
     seen: dict[str, BaseEnvironment] = {}
     for env in environments:
-        seen[env.name] = env
+        seen[env.namespace] = env
     deduped_envs = list(seen.values())
 
     cascade = [
