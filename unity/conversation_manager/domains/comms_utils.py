@@ -349,24 +349,33 @@ async def add_unify_message_attachments(
 
     If gs_url is present but url is not, a signed URL will be generated
     from Orchestra before downloading.
+
+    Two-phase approach: all files are downloaded and written to disk first
+    (fast), then ingestion (parse/index/embed) runs afterward so that the
+    files are immediately available to the assistant.
     """
     if not attachments:
         return
 
+    from unity.manager_registry import ManagerRegistry
+
     LOGGER.debug(f"{ICONS['comms_outbound']} Saving unify message attachments...")
+
+    # Phase 1: Download all files and write to disk immediately.
+    file_manager = ManagerRegistry.get_file_manager()
+    adapter = file_manager._adapter
+    saved_display_names: list[str] = []
+
     async with aiohttp.ClientSession() as session:
         for att in attachments:
             try:
                 att_id = att.get("id", "")
                 raw_filename = att.get("filename") or f"attachment_{att_id}"
-                # very basic filename sanitization
                 safe_filename = os.path.basename(raw_filename)
 
-                # Determine download URL
                 url = att.get("url")
                 gs_url = att.get("gs_url")
 
-                # If no direct URL but we have gs_url, generate signed URL
                 if not url and gs_url:
                     try:
                         url = await _get_signed_url_from_gs_url(session, gs_url)
@@ -376,29 +385,35 @@ async def add_unify_message_attachments(
                         )
                         url = None
 
-                # Download from the URL
-                # Don't pass auth headers to signed URLs - they're self-authenticating
                 if url:
                     async with session.get(url) as resp:
                         resp.raise_for_status()
                         data = await resp.read()
                 else:
-                    # No URL available - use empty placeholder
                     data = b""
 
-                from unity.manager_registry import ManagerRegistry
-
-                file_manager = ManagerRegistry.get_file_manager()
-                await asyncio.to_thread(
-                    file_manager.save_file_to_downloads,
+                display_name = await asyncio.to_thread(
+                    adapter.save_file_to_downloads,
                     safe_filename,
                     data,
                 )
+                saved_display_names.append(display_name)
 
                 LOGGER.debug(
-                    f"{ICONS['comms_outbound']} Downloaded unify attachment {safe_filename} (size={len(data)} bytes)",
+                    f"{ICONS['comms_outbound']} Downloaded unify attachment {safe_filename} "
+                    f"(size={len(data)} bytes)",
                 )
             except Exception as e:
                 LOGGER.error(
-                    f"{ICONS['comms_outbound']} Failed to fetch/write unify attachment '{att}': {e}",
+                    f"{ICONS['comms_outbound']} Failed to download unify attachment '{att}': {e}",
                 )
+
+    # Phase 2: Ingest all saved files (parse, index, embed).
+    # This is slow but files are already on disk and accessible.
+    if saved_display_names:
+        try:
+            await asyncio.to_thread(file_manager.ingest_files, saved_display_names)
+        except Exception as e:
+            LOGGER.error(
+                f"{ICONS['comms_outbound']} Failed to ingest downloaded attachments: {e}",
+            )
