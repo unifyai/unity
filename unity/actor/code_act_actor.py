@@ -22,6 +22,7 @@ from typing import (
 from pydantic import BaseModel
 
 from unity.actor.base import BaseCodeActActor
+from unity.common.context_dump import make_messages_safe_for_context_dump
 from unity.actor.execution import (
     ExecutionResult,
     PackageOverlay,
@@ -941,7 +942,9 @@ class _StorageCheckHandle(SteerableToolHandle):
             try:
                 client = getattr(self._inner, "_client", None)
                 if client is not None:
-                    trajectory = list(getattr(client, "messages", []) or [])
+                    trajectory = make_messages_safe_for_context_dump(
+                        list(getattr(client, "messages", []) or []),
+                    )
             except Exception:
                 pass
             try:
@@ -1013,8 +1016,10 @@ class _StorageCheckHandle(SteerableToolHandle):
                     self._storage_handle = storage_handle
                     try:
                         await self._storage_handle.result()
-                    except Exception:
-                        pass
+                    except Exception as exc:
+                        logger.warning(
+                            f"StorageCheck failed: {type(exc).__name__}: {exc}",
+                        )
 
                     await publish_manager_method_event(
                         _sc_call_id,
