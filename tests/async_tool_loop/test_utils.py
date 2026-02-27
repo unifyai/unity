@@ -7,6 +7,7 @@ Unit tests for utility functions in unity.common._async_tool.
 
 import asyncio
 import json
+import logging
 from unittest.mock import MagicMock
 
 import pytest
@@ -20,6 +21,7 @@ from unity.common._async_tool.utils import (
     try_parse_json,
 )
 from unity.common._async_tool.formatting import serialize_tool_content
+from unity.logger import _MillisFormatter, highlight_code_blocks
 
 # =============================================================================
 # get_handle_paused_state tests
@@ -315,6 +317,134 @@ class TestFormatLlmResponseForLog:
         }
         format_llm_response_for_log(msg)
         assert msg["tool_calls"][0]["function"]["arguments"] == original_args
+
+
+# =============================================================================
+# highlight_code_blocks / _MillisFormatter TTY-aware highlighting
+# =============================================================================
+
+
+class TestHighlightCodeBlocks:
+    """Tests for Pygments-based syntax highlighting of ┄-delimited code blocks."""
+
+    def test_highlights_python_code_block(self):
+        """Code between ┄ delimiters receives ANSI escape codes."""
+        text = (
+            "some prefix\n"
+            "┄┄┄┄┄┄┄┄ python ┄┄┄┄┄┄┄┄\n"
+            "x = 42\n"
+            "┄┄┄┄┄┄┄┄ python ┄┄┄┄┄┄┄┄\n"
+            "some suffix"
+        )
+        result = highlight_code_blocks(text)
+        assert "\033[" in result
+        assert "42" in result
+        assert "some prefix" in result
+        assert "some suffix" in result
+
+    def test_preserves_text_outside_delimiters(self):
+        """Text outside code blocks is unchanged."""
+        text = (
+            "before\n"
+            "┄┄┄┄┄┄┄┄ python ┄┄┄┄┄┄┄┄\n"
+            "pass\n"
+            "┄┄┄┄┄┄┄┄ python ┄┄┄┄┄┄┄┄\n"
+            "after"
+        )
+        result = highlight_code_blocks(text)
+        assert result.startswith("before\n")
+        assert result.endswith("after")
+
+    def test_no_delimiters_returns_unchanged(self):
+        """Text without code block delimiters passes through unchanged."""
+        text = "just a regular log message with no code"
+        assert highlight_code_blocks(text) == text
+
+    def test_unknown_language_falls_back_to_plain(self):
+        """Unrecognised language leaves the code block unchanged."""
+        text = (
+            "┄┄┄┄┄┄┄┄ nonexistent_lang_xyz ┄┄┄┄┄┄┄┄\n"
+            "some code\n"
+            "┄┄┄┄┄┄┄┄ nonexistent_lang_xyz ┄┄┄┄┄┄┄┄"
+        )
+        result = highlight_code_blocks(text)
+        assert "some code" in result
+
+    def test_multiple_code_blocks(self):
+        """Multiple code blocks in the same message are each highlighted."""
+        text = (
+            "┄┄┄┄┄┄┄┄ python ┄┄┄┄┄┄┄┄\n"
+            "x = 1\n"
+            "┄┄┄┄┄┄┄┄ python ┄┄┄┄┄┄┄┄\n"
+            "middle text\n"
+            "┄┄┄┄┄┄┄┄ python ┄┄┄┄┄┄┄┄\n"
+            "y = 2\n"
+            "┄┄┄┄┄┄┄┄ python ┄┄┄┄┄┄┄┄"
+        )
+        result = highlight_code_blocks(text)
+        assert "middle text" in result
+        ansi_count = result.count("\033[")
+        assert ansi_count > 2
+
+
+class TestMillisFormatterTtyHighlighting:
+    """Tests for _MillisFormatter conditional TTY highlighting."""
+
+    def _make_record(self, msg: str) -> logging.LogRecord:
+        return logging.LogRecord(
+            name="unity",
+            level=logging.INFO,
+            pathname="",
+            lineno=0,
+            msg=msg,
+            args=(),
+            exc_info=None,
+        )
+
+    def test_tty_formatter_highlights_code_blocks(self):
+        """When stream.isatty() is True, code blocks get ANSI highlighting."""
+
+        class FakeTTY:
+            def isatty(self):
+                return True
+
+        fmt = _MillisFormatter(stream=FakeTTY())
+        msg = (
+            "🤖 [CodeActActor.act(abcd)] {\n"
+            "    ┄┄┄┄┄┄┄┄ python ┄┄┄┄┄┄┄┄\n"
+            "    x = 42\n"
+            "    ┄┄┄┄┄┄┄┄ python ┄┄┄┄┄┄┄┄\n"
+            "}"
+        )
+        result = fmt.format(self._make_record(msg))
+        assert "\033[" in result
+        assert "42" in result
+
+    def test_non_tty_formatter_does_not_highlight(self):
+        """When stream.isatty() is False, code blocks are plain text."""
+
+        class FakeFile:
+            def isatty(self):
+                return False
+
+        fmt = _MillisFormatter(stream=FakeFile())
+        msg = (
+            "🤖 [CodeActActor.act(abcd)] {\n"
+            "    ┄┄┄┄┄┄┄┄ python ┄┄┄┄┄┄┄┄\n"
+            "    x = 42\n"
+            "    ┄┄┄┄┄┄┄┄ python ┄┄┄┄┄┄┄┄\n"
+            "}"
+        )
+        result = fmt.format(self._make_record(msg))
+        assert "\033[" not in result
+        assert "x = 42" in result
+
+    def test_no_stream_defaults_to_no_highlighting(self):
+        """When no stream is provided, highlighting is off."""
+        fmt = _MillisFormatter()
+        msg = "┄┄┄┄┄┄┄┄ python ┄┄┄┄┄┄┄┄\n" "x = 42\n" "┄┄┄┄┄┄┄┄ python ┄┄┄┄┄┄┄┄"
+        result = fmt.format(self._make_record(msg))
+        assert "\033[" not in result
 
 
 # =============================================================================
