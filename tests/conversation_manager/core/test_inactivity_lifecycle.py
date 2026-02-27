@@ -582,7 +582,7 @@ class TestFullLifecycleIntegration:
         # Simulate startup (transition to live)
         startup_payload = {
             "api_key": "test_key",
-            "assistant_id": "live_assistant_456",
+            "assistant_id": 456,
             "user_id": "user_1",
             "assistant_first_name": "Live",
             "assistant_surname": "Assistant",
@@ -601,7 +601,7 @@ class TestFullLifecycleIntegration:
         cm.set_details(startup_payload)
 
         # Verify live state
-        assert cm.assistant_id == "live_assistant_456"
+        assert cm.assistant_id == 456
 
         # Set short timeout for testing
         cm.inactivity_timeout = 0.1
