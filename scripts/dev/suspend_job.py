@@ -3,9 +3,9 @@
 Suspend a running Unity Kubernetes job by name.
 
 Usage:
-    python scripts/dev/suspend_job.py unity-2026-02-25-12-00-00
-    python scripts/dev/suspend_job.py unity-2026-02-25-12-00-00 --staging
-    python scripts/dev/suspend_job.py unity-2026-02-25-12-00-00 --namespace staging
+    python scripts/dev/suspend_job.py unity-2026-02-25-12-00-00                # staging (default)
+    python scripts/dev/suspend_job.py unity-2026-02-25-12-00-00 --production   # production
+    python scripts/dev/suspend_job.py unity-2026-02-25-12-00-00 --namespace my-ns
 """
 
 from dotenv import load_dotenv
@@ -61,18 +61,18 @@ def main():
         help="Name of the K8s job to suspend (e.g. unity-2026-02-25-12-00-00)",
     )
     parser.add_argument(
-        "--staging",
+        "--production",
         action="store_true",
-        help="Target the staging environment (default: prod)",
+        help="Target the production environment (default: staging)",
     )
     parser.add_argument(
         "--namespace",
         default=None,
-        help="K8s namespace (default: 'production' for prod, 'staging' for staging)",
+        help="K8s namespace (default: 'staging' for staging, 'production' for prod)",
     )
     args = parser.parse_args()
 
-    env = "staging" if args.staging else "prod"
+    env = "prod" if args.production else "staging"
     namespace = args.namespace or DEFAULT_NAMESPACES[env]
     comms_url = COMMS_URLS[env]
     admin_key = os.getenv("ORCHESTRA_ADMIN_KEY")
