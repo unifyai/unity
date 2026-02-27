@@ -87,6 +87,38 @@ class TestUploadUnifyAttachment:
             assert posted_url == f"{ADAPTERS_URL}/unify/attachment"
 
     @pytest.mark.asyncio
+    async def test_upload_int_agent_id_serializes_form_data(self):
+        """Integer agent_id must be string-coerced for multipart form serialization.
+
+        aiohttp.FormData cannot serialize int values — calling form_data()
+        raises LookupError("Can not serialize value type: <class 'int'>").
+        This catches the regression from the str→int agent_id migration.
+        """
+        mock_session = _mock_aiohttp_session(
+            response_json={"id": "uuid", "filename": "f.txt", "url": "https://url"},
+        )
+
+        with (
+            patch("aiohttp.ClientSession", return_value=mock_session),
+            patch(
+                "unity.conversation_manager.domains.comms_utils.SESSION_DETAILS",
+            ) as mock_session_details,
+            patch(
+                "unity.conversation_manager.domains.comms_utils.SETTINGS",
+            ) as mock_settings,
+        ):
+            mock_session_details.assistant.agent_id = 42
+            mock_settings.conversation.ADAPTERS_URL = ADAPTERS_URL
+
+            await comms_utils.upload_unify_attachment(
+                file_content=b"test content",
+                filename="file.txt",
+            )
+
+            form_data = mock_session.post.call_args.kwargs["data"]
+            form_data()
+
+    @pytest.mark.asyncio
     async def test_upload_with_custom_assistant_id(self):
         """Uses provided assistant_id instead of session default."""
         mock_session = _mock_aiohttp_session(
