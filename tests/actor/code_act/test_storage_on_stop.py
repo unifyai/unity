@@ -20,7 +20,6 @@ import pytest
 
 from unity.actor.code_act_actor import CodeActActor, _StorageCheckHandle
 
-
 # ---------------------------------------------------------------------------
 # Symbolic: _StorageCheckHandle runs Phase 2 after stop
 # ---------------------------------------------------------------------------
@@ -65,11 +64,14 @@ async def test_storage_check_runs_after_stop():
     actor.function_manager = None
     actor.guidance_manager = None
 
-    with patch(
-        "unity.actor.code_act_actor._start_storage_check_loop",
-    ) as mock_loop, patch(
-        "unity.actor.code_act_actor.publish_manager_method_event",
-        new_callable=AsyncMock,
+    with (
+        patch(
+            "unity.actor.code_act_actor._start_storage_check_loop",
+        ) as mock_loop,
+        patch(
+            "unity.actor.code_act_actor.publish_manager_method_event",
+            new_callable=AsyncMock,
+        ),
     ):
         mock_loop.return_value = None
 
@@ -125,11 +127,14 @@ async def test_storage_check_runs_after_stop_no_reason():
     actor.function_manager = None
     actor.guidance_manager = None
 
-    with patch(
-        "unity.actor.code_act_actor._start_storage_check_loop",
-    ) as mock_loop, patch(
-        "unity.actor.code_act_actor.publish_manager_method_event",
-        new_callable=AsyncMock,
+    with (
+        patch(
+            "unity.actor.code_act_actor._start_storage_check_loop",
+        ) as mock_loop,
+        patch(
+            "unity.actor.code_act_actor.publish_manager_method_event",
+            new_callable=AsyncMock,
+        ),
     ):
         mock_loop.return_value = None
 
