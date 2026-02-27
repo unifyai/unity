@@ -115,6 +115,7 @@ async def _(event: CallInitEvents, cm: "ConversationManager", *args, **kwargs):
     """
     Handle incoming/outgoing call initiation - spawn voice agent subprocess.
     """
+    LOGGER.debug(f"[LATENCY_DEBUG] eh.call_init.enter | event={event.__class__.__name__}")
     # Don't start a new call if we're already in voice mode
     if cm.mode.is_voice:
         return
@@ -145,11 +146,13 @@ async def _(event: CallInitEvents, cm: "ConversationManager", *args, **kwargs):
             message_content = "<Sending Call...>"
             notif_content = f"Call sent to {sender_name}"
         case UnifyMeetReceived() as e:
+            LOGGER.debug("[LATENCY_DEBUG] eh.call_init.before_start_unify_meet")
             await cm.call_manager.start_unify_meet(
                 contact,
                 boss,
                 e.room_name,
             )
+            LOGGER.debug("[LATENCY_DEBUG] eh.call_init.after_start_unify_meet")
             message_content = "<Recieving Call...>"
             notif_content = f"Call received from {sender_name}"
 
@@ -166,6 +169,7 @@ async def _(event: CallInitEvents, cm: "ConversationManager", *args, **kwargs):
         role=role,
         timestamp=event.timestamp,
     )
+    LOGGER.debug(f"[LATENCY_DEBUG] eh.call_init.exit | event={event.__class__.__name__}")
 
 
 @EventHandler.register((PhoneCallStarted, UnifyMeetStarted))
@@ -879,12 +883,14 @@ async def _startup_sequence(cm: "ConversationManager"):
     log_job_startup includes _resolve_vm_liveview polling for managed VMs,
     so once it returns the VM is confirmed reachable (or retries exhausted).
     """
+    LOGGER.debug("[LATENCY_DEBUG] eh._startup_sequence.enter")
     await asyncio.to_thread(
         assistant_jobs.log_job_startup,
         job_name=cm.job_name,
         user_id=cm.user_id,
         assistant_id=cm.assistant_id,
     )
+    LOGGER.debug("[LATENCY_DEBUG] eh._startup_sequence.after_log_job_startup")
     # Unblock any pending MagnitudeBackend lazy initialization.
     from unity.function_manager.primitives.runtime import _vm_ready
 
@@ -895,12 +901,15 @@ async def _startup_sequence(cm: "ConversationManager"):
     # handler also calls it as a safety net.
     asyncio.ensure_future(_ensure_desktop_session(cm))
 
+    LOGGER.debug("[LATENCY_DEBUG] eh._startup_sequence.before_file_sync")
     await managers_utils._start_file_sync()
+    LOGGER.debug("[LATENCY_DEBUG] eh._startup_sequence.exit")
 
 
 @EventHandler.register((StartupEvent))
 async def _(event: StartupEvent, cm: "ConversationManager", *args, **kwargs):
     try:
+        LOGGER.debug("[LATENCY_DEBUG] eh.startup.enter")
         cm._session_logger.debug("startup", "Received startup event")
 
         # Set demo mode from startup event before initializing managers
@@ -916,21 +925,29 @@ async def _(event: StartupEvent, cm: "ConversationManager", *args, **kwargs):
             )
 
         payload = event.to_dict()["payload"]
+        LOGGER.debug("[LATENCY_DEBUG] eh.startup.before_set_details")
         cm.set_details(payload)
+        LOGGER.debug("[LATENCY_DEBUG] eh.startup.after_set_details")
         cm.call_manager.set_config(cm.get_call_config())
+        LOGGER.debug("[LATENCY_DEBUG] eh.startup.after_set_config")
 
         # Initialize unity BEFORE spawning concurrent tasks. SESSION_DETAILS
         # is already populated by set_details() above, so unity.init() just
         # reads assistant.id for the context path. This prevents races where
         # _startup_sequence triggers ensure_initialised() first.
+        LOGGER.debug("[LATENCY_DEBUG] eh.startup.before_unity_init")
         await asyncio.to_thread(unity.init)
+        LOGGER.debug("[LATENCY_DEBUG] eh.startup.after_unity_init")
 
         # Job logging + file sync run in sequence (file sync needs VM details from job startup)
         asyncio.create_task(_startup_sequence(cm))
+        LOGGER.debug("[LATENCY_DEBUG] eh.startup.created_startup_sequence_task")
 
         # Manager initialization runs in parallel
         asyncio.create_task(managers_utils.init_conv_manager(cm))
+        LOGGER.debug("[LATENCY_DEBUG] eh.startup.created_init_conv_manager_task")
         asyncio.create_task(managers_utils.listen_to_operations(cm))
+        LOGGER.debug("[LATENCY_DEBUG] eh.startup.exit")
     except Exception as e:
         cm._session_logger.error("startup", f"Error in startup sequence: {e}")
         traceback.print_exc()
