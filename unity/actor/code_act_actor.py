@@ -1350,6 +1350,7 @@ class CodeActActor(BaseCodeActActor):
 
         resolved = _resolve_customization(
             org_id=SESSION_DETAILS.org_id,
+            team_ids=SESSION_DETAILS.team_ids or None,
             user_id=SESSION_DETAILS.user.id,
             assistant_id=SESSION_DETAILS.assistant.agent_id,
         )
