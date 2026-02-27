@@ -320,6 +320,12 @@ class EventBus:
     # first EventBus instantiation. Can be overridden (e.g., tests use markers).
     _publishing_enabled: bool | None = None
 
+    # Monotonic timestamp of the most recent publish() call. Used by
+    # ConversationManager's inactivity check to detect that internal work
+    # (LLM calls, tool-loop turns, manager methods, …) is still happening
+    # even when no external pubsub messages are arriving.
+    last_publish_monotonic: float = 0.0
+
     # ── Pub/Sub streaming for Live Actions ────────────────────────────────
     _GCP_PROJECT = "responsive-city-458413-a2"
     _ACTION_EVENT_TYPES = frozenset({"ManagerMethod", "ToolLoop"})
@@ -821,6 +827,10 @@ class EventBus:
             self._next_row_ids.setdefault(event_type, 0)
 
     async def publish(self, event: Event, *, blocking: bool = False) -> None:
+        import time as _time
+
+        EventBus.last_publish_monotonic = _time.monotonic()
+
         # Initialize publishing flag from settings if not already done
         if EventBus._publishing_enabled is None:
             EventBus._init_publishing_enabled()

@@ -1025,11 +1025,23 @@ class ConversationManager(metaclass=SingletonABCMeta):
                     self._current_event_trace = None
 
     async def check_inactivity(self):
-        """Monitor for inactivity and shut down gracefully after timeout"""
+        """Monitor for inactivity and shut down gracefully after timeout.
+
+        Activity is detected from two sources:
+        - External pubsub messages (updated by wait_for_events via last_activity_time)
+        - Internal EventBus publishes (LLM calls, tool-loop turns, manager methods)
+        """
+        import time as _time
+
+        from unity.events.event_bus import EventBus
+
         while True:
             await asyncio.sleep(self.inactivity_check_interval)
             current_time = self.loop.time()
-            if current_time - self.last_activity_time > self.inactivity_timeout:
+            pubsub_idle = current_time - self.last_activity_time
+            eventbus_idle = _time.monotonic() - EventBus.last_publish_monotonic
+            idle_seconds = min(pubsub_idle, eventbus_idle)
+            if idle_seconds > self.inactivity_timeout:
                 log_str = f"Inactivity timeout reached ({self.inactivity_timeout}s), requesting shutdown"
                 LOGGER.debug(f"{DEFAULT_ICON} {log_str}")
                 self._session_logger.debug("session_end", log_str)

@@ -33,6 +33,7 @@ Production Context (from INFRA.md):
 from __future__ import annotations
 
 import asyncio
+import contextlib
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -248,6 +249,120 @@ class TestInactivityDetectionBasics:
             await check_task
         except asyncio.CancelledError:
             pass
+
+
+# =============================================================================
+# Test: EventBus Activity Keep-Alive
+# =============================================================================
+
+
+class TestEventBusKeepAlive:
+    """Tests that internal EventBus publishes prevent inactivity shutdown.
+
+    When the assistant is actively working (LLM calls, tool-loop turns, manager
+    methods) the EventBus fires events even though no external pubsub messages
+    arrive.  check_inactivity() must treat these as activity.
+    """
+
+    @pytest.mark.asyncio
+    async def test_eventbus_publish_prevents_shutdown(self, event_broker):
+        """EventBus.publish() keeps the container alive even without pubsub events."""
+        import time as _time
+
+        from unity.conversation_manager.conversation_manager import ConversationManager
+        from unity.events.event_bus import EventBus
+
+        stop_event = asyncio.Event()
+        cm = ConversationManager(
+            event_broker=event_broker,
+            job_name="test-job",
+            user_id="user_1",
+            assistant_id="assistant_1",
+            user_first_name="Test",
+            user_surname="User",
+            assistant_first_name="Test",
+            assistant_surname="Assistant",
+            assistant_age="25",
+            assistant_nationality="American",
+            assistant_about="Test bio",
+            assistant_number="+15555550000",
+            assistant_email="assistant@test.com",
+            user_number="+15555551111",
+            user_email="user@test.com",
+            stop=stop_event,
+        )
+
+        cm.inactivity_timeout = 0.3
+        cm.inactivity_check_interval = 0.05
+
+        # Simulate stale pubsub — no external events for a long time
+        cm.last_activity_time = cm.loop.time() - 10.0
+
+        # But the EventBus was active very recently
+        EventBus.last_publish_monotonic = _time.monotonic()
+
+        check_task = asyncio.create_task(cm.check_inactivity())
+
+        # Keep bumping the EventBus timestamp faster than the timeout
+        for _ in range(8):
+            EventBus.last_publish_monotonic = _time.monotonic()
+            await asyncio.sleep(0.05)
+
+        assert (
+            not stop_event.is_set()
+        ), "Container should stay alive when EventBus is active"
+
+        check_task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await check_task
+
+    @pytest.mark.asyncio
+    async def test_shutdown_when_both_sources_idle(self, event_broker):
+        """Container shuts down when both pubsub and EventBus are idle."""
+        import time as _time
+
+        from unity.conversation_manager.conversation_manager import ConversationManager
+        from unity.events.event_bus import EventBus
+
+        stop_event = asyncio.Event()
+        cm = ConversationManager(
+            event_broker=event_broker,
+            job_name="test-job",
+            user_id="user_1",
+            assistant_id="assistant_1",
+            user_first_name="Test",
+            user_surname="User",
+            assistant_first_name="Test",
+            assistant_surname="Assistant",
+            assistant_age="25",
+            assistant_nationality="American",
+            assistant_about="Test bio",
+            assistant_number="+15555550000",
+            assistant_email="assistant@test.com",
+            user_number="+15555551111",
+            user_email="user@test.com",
+            stop=stop_event,
+        )
+
+        cm.inactivity_timeout = 0.1
+        cm.inactivity_check_interval = 0.05
+
+        # Both sources are stale
+        cm.last_activity_time = cm.loop.time() - 10.0
+        EventBus.last_publish_monotonic = _time.monotonic() - 10.0
+
+        check_task = asyncio.create_task(cm.check_inactivity())
+
+        try:
+            await asyncio.wait_for(stop_event.wait(), timeout=1.0)
+        except asyncio.TimeoutError:
+            pytest.fail("Inactivity timeout should have triggered shutdown")
+        finally:
+            check_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await check_task
+
+        assert stop_event.is_set()
 
 
 # =============================================================================
