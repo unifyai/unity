@@ -175,7 +175,7 @@ class LivekitCallManager:
         ]
         target_path = target_path / "call.py"
         args = [str(arg) for arg in args]
-        LOGGER.debug(f"{DEFAULT_ICON} target_path: {target_path}, args: {args}")
+        LOGGER.info(f"{DEFAULT_ICON} target_path: {target_path}, args: {args}")
         self._call_proc = run_script(str(target_path), "dev", *args)
         self._disconnect_contact = contact
 
@@ -252,7 +252,7 @@ class LivekitCallManager:
         ]
         target_path = target_path / "call.py"
         args = [str(arg) for arg in args]
-        LOGGER.debug(f"{DEFAULT_ICON} target_path: {target_path}, args: {args}")
+        LOGGER.info(f"{DEFAULT_ICON} target_path: {target_path}, args: {args}")
         self._call_proc = run_script(str(target_path), "dev", *args)
         self._disconnect_contact = contact
 
