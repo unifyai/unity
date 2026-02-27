@@ -120,27 +120,25 @@ class DataManager(BaseDataManager):
         context : str
             Context path. Can be:
             - Relative: "projects/housing" → resolved to "{base_ctx}/projects/housing"
-            - Absolute owned: "Data/MH/arrears" → used as-is
-            - Foreign: "Files/Local/..." → used as-is
+            - Short-form absolute: "Data/MH/arrears", "Contacts" → used as-is
+            - Fully-qualified: "org123/42/Contacts", "org123/42/Data/foo" → as-is
 
         Returns
         -------
         str
             Fully resolved context path.
         """
-        # Check for known absolute prefixes
+        # Short-form absolute: starts with a known context root name
         if any(context.startswith(p) for p in _ABSOLUTE_PREFIXES):
             return context
 
-        # Check if it looks like a fully-qualified path already
-        if self._base_ctx and context.startswith(self._base_ctx):
-            return context
-
-        # Heuristic: if it has many path parts and doesn't start with base,
-        # it might be fully qualified
-        parts = context.split("/")
-        if len(parts) > 3:
-            return context
+        # Fully-qualified: shares the org/assistant scope with our base context.
+        # _base_ctx = "org/42/Data" → scope = "org/42/" →
+        # "org/42/Contacts" is recognised as already-qualified.
+        if self._base_ctx and "/" in self._base_ctx:
+            scope = self._base_ctx.rsplit("/", 1)[0] + "/"
+            if context.startswith(scope):
+                return context
 
         # Relative path: prepend base context
         return f"{self._base_ctx}/{context}" if self._base_ctx else context
