@@ -113,12 +113,11 @@ async def _check_assistant_limit(
         )
     except httpx.HTTPStatusError as e:
         if e.response.status_code == 404:
-            # Assistant not found or no spend data - allow
             return _LimitCheckResult(exceeded=False)
-        logger.warning(f"Failed to check assistant limit: {e}")
+        logger.warning(f"Failed to check assistant limit: {type(e).__name__}: {e}")
         return _LimitCheckResult(exceeded=False)  # Fail open
     except Exception as e:
-        logger.warning(f"Failed to check assistant limit: {e}")
+        logger.warning(f"Failed to check assistant limit: {type(e).__name__}: {e}")
         return _LimitCheckResult(exceeded=False)  # Fail open
 
 
@@ -164,10 +163,10 @@ async def _check_user_limit(
     except httpx.HTTPStatusError as e:
         if e.response.status_code == 404:
             return _LimitCheckResult(exceeded=False)
-        logger.warning(f"Failed to check user limit: {e}")
+        logger.warning(f"Failed to check user limit: {type(e).__name__}: {e}")
         return _LimitCheckResult(exceeded=False)
     except Exception as e:
-        logger.warning(f"Failed to check user limit: {e}")
+        logger.warning(f"Failed to check user limit: {type(e).__name__}: {e}")
         return _LimitCheckResult(exceeded=False)
 
 
@@ -215,10 +214,10 @@ async def _check_member_limit(
     except httpx.HTTPStatusError as e:
         if e.response.status_code == 404:
             return _LimitCheckResult(exceeded=False)
-        logger.warning(f"Failed to check member limit: {e}")
+        logger.warning(f"Failed to check member limit: {type(e).__name__}: {e}")
         return _LimitCheckResult(exceeded=False)
     except Exception as e:
-        logger.warning(f"Failed to check member limit: {e}")
+        logger.warning(f"Failed to check member limit: {type(e).__name__}: {e}")
         return _LimitCheckResult(exceeded=False)
 
 
@@ -265,10 +264,10 @@ async def _check_org_limit(
     except httpx.HTTPStatusError as e:
         if e.response.status_code == 404:
             return _LimitCheckResult(exceeded=False)
-        logger.warning(f"Failed to check org limit: {e}")
+        logger.warning(f"Failed to check org limit: {type(e).__name__}: {e}")
         return _LimitCheckResult(exceeded=False)
     except Exception as e:
-        logger.warning(f"Failed to check org limit: {e}")
+        logger.warning(f"Failed to check org limit: {type(e).__name__}: {e}")
         return _LimitCheckResult(exceeded=False)
 
 
