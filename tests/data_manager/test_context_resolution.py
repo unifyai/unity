@@ -71,6 +71,38 @@ def test_foreign_context_for_search():
     assert isinstance(results, list)
 
 
+def test_fully_qualified_foreign_path_not_double_prefixed():
+    """Fully-qualified foreign paths (e.g., org/asst/Contacts) must not be
+    prepended with DataManager's own base context.
+
+    When KnowledgeManager passes ContactManager's fully-qualified Contacts
+    context (like "org123/42/Contacts") to DataManager, _resolve_context must
+    recognise it as already absolute and return it unchanged — not produce
+    "org123/42/Data/org123/42/Contacts".
+    """
+    from unity.data_manager.data_manager import DataManager
+
+    dm = DataManager.__new__(DataManager)
+    dm._base_ctx = "org123/42/Data"
+
+    foreign_contexts = [
+        "org123/42/Contacts",
+        "org123/42/Tasks",
+        "org123/42/Knowledge",
+        "org123/42/Secrets",
+        "org123/42/Images",
+        "org123/42/Transcripts",
+        "org123/42/Exchanges",
+        "org123/42/BlackList",
+    ]
+    for ctx in foreign_contexts:
+        resolved = dm._resolve_context(ctx)
+        assert resolved == ctx, (
+            f"Expected '{ctx}' to be returned as-is, "
+            f"got '{resolved}' (double-prefixed with base context)"
+        )
+
+
 def test_context_resolution_for_reduce():
     """Context resolution should work for reduce operations."""
     dm = SimulatedDataManager()
