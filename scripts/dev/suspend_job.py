@@ -1,21 +1,38 @@
 #!/usr/bin/env python3
 """
-Suspend a running Unity Kubernetes job by name.
+Suspend a running Unity Kubernetes job.
 
 Usage:
-    python scripts/dev/suspend_job.py unity-2026-02-25-12-00-00                # staging (default)
-    python scripts/dev/suspend_job.py unity-2026-02-25-12-00-00 --production   # production
+    python scripts/dev/suspend_job.py                                           # auto-detect latest running staging job
+    python scripts/dev/suspend_job.py unity-2026-02-25-12-00-00                 # explicit job, staging (default)
+    python scripts/dev/suspend_job.py --production                              # auto-detect latest running production job
+    python scripts/dev/suspend_job.py unity-2026-02-25-12-00-00 --production    # explicit job, production
     python scripts/dev/suspend_job.py unity-2026-02-25-12-00-00 --namespace my-ns
 """
 
-from dotenv import load_dotenv
-import argparse
 import os
 import sys
 
-import requests
+from job_utils import ORCHESTRA_URLS
+
+
+def _parse_namespace_early() -> str:
+    if "--production" in sys.argv:
+        return "production"
+    return "staging"
+
+
+os.environ["ORCHESTRA_URL"] = ORCHESTRA_URLS[_parse_namespace_early()]
+
+from dotenv import load_dotenv
 
 load_dotenv()
+
+import argparse
+
+import requests
+
+from job_utils import resolve_latest_job
 
 COMMS_URLS = {
     "prod": "https://unity-comms-app-262420637606.us-central1.run.app",
@@ -55,10 +72,23 @@ def suspend_job(comms_url: str, admin_key: str, job_name: str, namespace: str):
 def main():
     parser = argparse.ArgumentParser(
         description="Suspend a running Unity Kubernetes job.",
+        epilog=(
+            "When no job name is provided, the script auto-detects the latest\n"
+            "running job by resolving your identity from UNIFY_KEY and searching\n"
+            "AssistantJobs for your most recent active session.\n"
+            "\n"
+            "Examples:\n"
+            "  python scripts/dev/suspend_job.py                          # latest running staging job\n"
+            "  python scripts/dev/suspend_job.py --production             # latest running production job\n"
+            "  python scripts/dev/suspend_job.py unity-2026-02-25-12-00-00-staging"
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument(
         "job_name",
-        help="Name of the K8s job to suspend (e.g. unity-2026-02-25-12-00-00)",
+        nargs="?",
+        default=None,
+        help="Name of the K8s job to suspend. If omitted, auto-detects the latest running job for your account.",
     )
     parser.add_argument(
         "--production",
@@ -77,8 +107,10 @@ def main():
     comms_url = COMMS_URLS[env]
     admin_key = os.getenv("ORCHESTRA_ADMIN_KEY")
 
+    job_name = args.job_name or resolve_latest_job(namespace, running_only=True)
+
     print(f"Environment: {env}")
-    suspend_job(comms_url, admin_key, args.job_name, namespace)
+    suspend_job(comms_url, admin_key, job_name, namespace)
 
 
 if __name__ == "__main__":

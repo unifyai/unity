@@ -22,14 +22,29 @@ Environment:
 import os
 import re
 import sys
+from pathlib import Path
+
+# Add scripts/dev/ to path for shared job_utils import.
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from job_utils import (
+    ORCHESTRA_URLS,
+    BOLD,
+    CYAN,
+    DIM,
+    GREEN,
+    NC,
+    YELLOW,
+    error,
+    info,
+    resolve_latest_job,
+    success,
+    warn,
+)
 
 # The unify SDK reads ORCHESTRA_URL at import time, and .env sets it to
 # localhost for local development. This script needs the real backend, so
 # derive the URL from --production before importing anything else.
-_ORCHESTRA_URLS = {
-    "staging": "https://orchestra-staging-lz5fmz6i7q-ew.a.run.app/v0",
-    "production": "https://api.unify.ai/v0",
-}
 
 
 def _parse_namespace_early() -> str:
@@ -38,7 +53,7 @@ def _parse_namespace_early() -> str:
     return "staging"
 
 
-os.environ["ORCHESTRA_URL"] = _ORCHESTRA_URLS[_parse_namespace_early()]
+os.environ["ORCHESTRA_URL"] = ORCHESTRA_URLS[_parse_namespace_early()]
 
 from dotenv import load_dotenv
 
@@ -47,7 +62,6 @@ import argparse
 import shutil
 import subprocess
 from concurrent.futures import ThreadPoolExecutor
-from pathlib import Path
 
 import unify
 
@@ -67,33 +81,6 @@ SHARED_UNIFY_KEY = os.environ["SHARED_UNIFY_KEY"]
 # Resolve full paths for CLI tools (handles .cmd on Windows)
 GCLOUD = shutil.which("gcloud") or "gcloud"
 KUBECTL = shutil.which("kubectl") or "kubectl"
-
-
-# ─── Colours ─────────────────────────────────────────────────────────────────
-
-RED = "\033[0;31m"
-GREEN = "\033[0;32m"
-YELLOW = "\033[1;33m"
-CYAN = "\033[0;36m"
-BOLD = "\033[1m"
-DIM = "\033[2m"
-NC = "\033[0m"
-
-
-def info(msg):
-    print(f"{CYAN}[INFO]{NC} {msg}")
-
-
-def warn(msg):
-    print(f"{YELLOW}[WARN]{NC} {msg}")
-
-
-def error(msg):
-    print(f"{RED}[ERROR]{NC} {msg}", file=sys.stderr)
-
-
-def success(msg):
-    print(f"{GREEN}[OK]{NC} {msg}")
 
 
 # ─── Prerequisite checks ────────────────────────────────────────────────────
@@ -144,48 +131,6 @@ def ensure_gke_credentials():
         error("Failed to get GKE cluster credentials.")
         print("  Run ./setup_auth.sh to configure GCP authentication.")
         sys.exit(1)
-
-
-# ─── Job auto-detection ──────────────────────────────────────────────────────
-
-
-def resolve_latest_job(namespace: str) -> str:
-    """Resolve the most recent job for the current user in the given namespace.
-
-    Uses UNIFY_KEY to identify the caller, then queries AssistantJobs for
-    their most recent job whose name ends with ``-{namespace}``.
-    """
-    unify_key = os.environ.get("UNIFY_KEY")
-    if not unify_key:
-        error("UNIFY_KEY is required to auto-detect jobs.")
-        print("  Set it in .env or pass --job explicitly.")
-        sys.exit(1)
-
-    info("Resolving identity from UNIFY_KEY...")
-    user_info = unify.get_user_basic_info(api_key=unify_key)
-    email = user_info["email"]
-    info(f"Authenticated as {user_info['first']} {user_info['last']} ({email})")
-
-    info(f"Searching for latest '{namespace}' job...")
-    logs = unify.get_logs(
-        project="AssistantJobs",
-        context="startup_events",
-        filter=f"user_email == '{email}'",
-        api_key=SHARED_UNIFY_KEY,
-        limit=20,
-    )
-
-    suffix = f"-{namespace}"
-    for log in logs:
-        job_name = log.entries.get("job_name")
-        if job_name and job_name.endswith(suffix):
-            running = str(log.entries.get("running", "false")).lower() == "true"
-            status = f"{GREEN}running{NC}" if running else f"{YELLOW}completed{NC}"
-            success(f"Found job: {job_name} ({status})")
-            return job_name
-
-    error(f"No jobs found for {email} in namespace '{namespace}'.")
-    sys.exit(1)
 
 
 # ─── AssistantJobs query ─────────────────────────────────────────────────────
