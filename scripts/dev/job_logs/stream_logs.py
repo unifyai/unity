@@ -52,7 +52,6 @@ from pathlib import Path
 import unify
 
 from unity.syntax_highlight import (
-    BAR_DELIMITER_RE,
     MARKDOWN_CLOSING_RE,
     MARKDOWN_OPENING_RE,
     highlight_code_blocks,
@@ -377,39 +376,31 @@ def _emit_lines(
 ) -> None:
     """Read lines from *proc* stdout, apply code-block highlighting, and emit.
 
-    When the output stream is a TTY, code blocks are buffered and syntax-
-    highlighted via Pygments before being written.  Supports both
-    ``┄``-delimited blocks (execute_code) and markdown-fenced blocks
-    (LLM text content).
+    When the output stream is a TTY, markdown-fenced code blocks are
+    buffered and syntax-highlighted via Pygments before being written.
 
     *rewrite_fn*, if provided, is called on each decoded line before
     highlight processing (used for log-file hyperlink rewriting).
     """
     code_buf: list[str] = []
-    block_type: str | None = None  # None | "bar" | "backtick"
+    in_code_block = False
 
     def _flush_code_block() -> None:
-        nonlocal block_type
+        nonlocal in_code_block
         block = "".join(code_buf)
         if _IS_TTY:
             block = highlight_code_blocks(block)
         sys.stdout.write(block)
         sys.stdout.flush()
         code_buf.clear()
-        block_type = None
+        in_code_block = False
 
     for raw_line in proc.stdout:
         line = raw_line.decode("utf-8", errors="replace")
         if rewrite_fn:
             line = rewrite_fn(line)
 
-        if block_type == "bar":
-            code_buf.append(line)
-            if BAR_DELIMITER_RE.search(line):
-                _flush_code_block()
-            continue
-
-        if block_type == "backtick":
+        if in_code_block:
             code_buf.append(line)
             if MARKDOWN_CLOSING_RE.search(line) and not MARKDOWN_OPENING_RE.search(
                 line,
@@ -417,13 +408,8 @@ def _emit_lines(
                 _flush_code_block()
             continue
 
-        if BAR_DELIMITER_RE.search(line):
-            block_type = "bar"
-            code_buf.append(line)
-            continue
-
         if MARKDOWN_OPENING_RE.search(line):
-            block_type = "backtick"
+            in_code_block = True
             code_buf.append(line)
             continue
 

@@ -375,7 +375,7 @@ class _MillisFormatter(logging.Formatter):
     emoji icon from the hierarchical logger) are auto-prefixed with ``⬥``
     so every terminal line has a consistent visual anchor.
 
-    When *stream* is a TTY, ``┄``-delimited code blocks are syntax-
+    When *stream* is a TTY, markdown-fenced code blocks are syntax-
     highlighted via Pygments.
     """
 
