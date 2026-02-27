@@ -411,6 +411,7 @@ for _lib in (
     "livekit",
     "livekit.agents",
     "livekit.plugins",
+    "RapidOCR",
 ):
     logging.getLogger(_lib).setLevel(logging.WARNING)
 
