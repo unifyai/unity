@@ -1108,6 +1108,35 @@ class TestMeetInteractionEventHandlers:
         assert mock_cm.user_webcam_active is False
 
     @pytest.mark.asyncio
+    async def test_webcam_events_skip_brain_step_before_meet_started(self, mock_cm):
+        """Webcam events before UnifyMeetStarted should track state but not
+        wake the slow brain.  The meeting hasn't started yet, so there is
+        nothing useful for the LLM to reason about."""
+        mock_cm.mode = Mode.TEXT
+        mock_cm.user_webcam_active = False
+
+        event = UserWebcamStarted(reason="User enabled their webcam")
+        await EventHandler.handle_event(event, mock_cm)
+
+        assert mock_cm.user_webcam_active is True
+        mock_cm.request_llm_run.assert_not_called()
+        mock_cm.schedule_proactive_speech.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_webcam_events_trigger_brain_step_after_meet_started(self, mock_cm):
+        """Once the meeting is live (Mode.MEET), webcam events should wake
+        the slow brain as usual."""
+        mock_cm.mode = Mode.MEET
+        mock_cm.user_webcam_active = False
+
+        event = UserWebcamStarted(reason="User enabled their webcam")
+        await EventHandler.handle_event(event, mock_cm)
+
+        assert mock_cm.user_webcam_active is True
+        mock_cm.request_llm_run.assert_called()
+        mock_cm.schedule_proactive_speech.assert_called()
+
+    @pytest.mark.asyncio
     async def test_meet_interaction_pushes_notification(self, mock_cm):
         """All meet interaction events push a notification to the bar."""
         mock_cm.assistant_screen_share_active = False
