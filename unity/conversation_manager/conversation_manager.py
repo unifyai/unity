@@ -1022,6 +1022,13 @@ class ConversationManager(metaclass=SingletonABCMeta):
                         self,
                     )
                     await self.flush_llm_requests()
+                except Exception as exc:
+                    LOGGER.error(
+                        f"⚠️ [EventLoop] Unhandled error processing "
+                        f"event_id={event_id} event={event_name} "
+                        f"channel={channel or '-'}: {exc}",
+                        exc_info=True,
+                    )
                 finally:
                     self._current_event_trace = None
 

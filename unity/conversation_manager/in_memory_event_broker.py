@@ -12,10 +12,13 @@ from __future__ import annotations
 
 import asyncio
 import fnmatch
+import logging
 import threading
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from typing import Any, AsyncIterator
+
+_log = logging.getLogger("unity")
 
 
 @dataclass
@@ -285,9 +288,21 @@ class InMemoryEventBroker:
                     else:
                         sub.loop.call_soon_threadsafe(sub.queue.put_nowait, msg)
                     receivers += 1
-                except Exception:
-                    # Queue might be closed/full - skip this subscriber
-                    pass
+                except Exception as exc:
+                    _log.warning(
+                        "EventBroker: failed to deliver message on channel %r "
+                        "to subscriber (pattern=%r): %s",
+                        channel,
+                        sub.value,
+                        exc,
+                    )
+
+        if receivers == 0 and subs_snapshot:
+            _log.debug(
+                "EventBroker: published to %r but 0 of %d subscriber(s) matched",
+                channel,
+                len(subs_snapshot),
+            )
 
         return receivers
 
