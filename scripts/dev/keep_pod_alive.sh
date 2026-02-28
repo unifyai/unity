@@ -7,25 +7,33 @@
 # internally, routed through GCP Pub/Sub → comms_manager → event broker.
 #
 # Usage:
-#   ./scripts/dev/keep_pod_alive.sh <assistant_id>                  # staging (default)
-#   ./scripts/dev/keep_pod_alive.sh <assistant_id> --production     # production
+#   ./scripts/dev/keep_pod_alive.sh                                 # auto-detect latest staging pod
+#   ./scripts/dev/keep_pod_alive.sh <assistant_id>                  # explicit assistant, staging
+#   ./scripts/dev/keep_pod_alive.sh --production                    # auto-detect latest production pod
+#   ./scripts/dev/keep_pod_alive.sh <assistant_id> --production     # explicit assistant, production
 #   ./scripts/dev/keep_pod_alive.sh <assistant_id> --interval 60    # custom interval
 #
 # Requires:
 #   - gcloud CLI authenticated with access to the responsive-city-458413-a2 project
+#   - When auto-detecting: UNIFY_KEY and SHARED_UNIFY_KEY env vars (or in .env)
 
 set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
+PYTHON="${REPO_ROOT}/.venv/bin/python"
 
 GCP_PROJECT="responsive-city-458413-a2"
 DEFAULT_INTERVAL=30
 
 usage() {
-    echo "Usage: $0 <assistant_id> [--production] [--interval SECONDS]"
+    echo "Usage: $0 [assistant_id] [--production] [--interval SECONDS]"
     echo
     echo "Keep a Unity pod alive by sending periodic keepalive pings via Pub/Sub."
     echo
     echo "Arguments:"
-    echo "  assistant_id          The assistant's numeric ID"
+    echo "  assistant_id          The assistant's numeric ID (optional; auto-detected from"
+    echo "                        your latest running pod when omitted)"
     echo
     echo "Options:"
     echo "  --production          Target the production environment (default: staging)"
@@ -69,9 +77,12 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
+# --- Auto-detect assistant_id if not provided ---
+
 if [[ -z "$ASSISTANT_ID" ]]; then
-    echo "Error: assistant_id is required" >&2
-    usage
+    NAMESPACE_FLAG=""
+    [[ "$STAGING" == "false" ]] && NAMESPACE_FLAG="--production"
+    ASSISTANT_ID=$("$PYTHON" "${SCRIPT_DIR}/job_utils.py" assistant-id $NAMESPACE_FLAG)
 fi
 
 # --- Build topic name ---
