@@ -1322,7 +1322,7 @@ async def _(
         contact = cm.get_active_contact()
         if contact:
             guidance_id = content_trace_id("guid", fast_brain_text)
-            cm._session_logger.info(
+            cm._session_logger.debug(
                 "call_guidance",
                 (
                     f"Publishing meet interaction guidance_id={guidance_id} "
