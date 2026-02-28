@@ -1192,6 +1192,17 @@ async def _ensure_desktop_session(cm: "ConversationManager") -> None:
 # --------------------------------------------------------------------------- #
 
 # Mapping from event class to a human-readable notification for the slow brain.
+_MEET_LOG_TYPES: dict[type, str] = {
+    AssistantScreenShareStarted: "screen_share",
+    AssistantScreenShareStopped: "screen_share_off",
+    UserScreenShareStarted: "user_screen_share",
+    UserScreenShareStopped: "user_screen_share_off",
+    UserWebcamStarted: "webcam_on",
+    UserWebcamStopped: "webcam_off",
+    UserRemoteControlStarted: "remote_control",
+    UserRemoteControlStopped: "remote_control_off",
+}
+
 _MEET_INTERACTION_NOTIFICATIONS: dict[type, str] = {
     AssistantScreenShareStarted: "The user enabled assistant screen sharing — they can now see your desktop.",
     AssistantScreenShareStopped: "The user disabled assistant screen sharing — they can no longer see your desktop.",
@@ -1281,7 +1292,8 @@ async def _(
     **kwargs,
 ):
     event_name = event.__class__.__name__
-    cm._session_logger.info("meet_interaction", f"{event_name}: {event.reason}")
+    log_type = _MEET_LOG_TYPES.get(event.__class__, "meet_interaction")
+    cm._session_logger.info(log_type, f"{event_name}: {event.reason}")
 
     # Update state flag on the CM.
     attr, value = _MEET_STATE_FLAGS[event.__class__]

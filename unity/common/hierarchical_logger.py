@@ -136,6 +136,14 @@ ICONS = {
     # ── Screenshots / media ─────────────────────────────────────────────
     "screenshot": "📸",
     "screenshot_capture": "📸",
+    "webcam_on": "📸",
+    "webcam_off": "🚫",
+    "screen_share": "🖥️",
+    "screen_share_off": "🚫",
+    "user_screen_share": "📺",
+    "user_screen_share_off": "🚫",
+    "remote_control": "🕹️",
+    "remote_control_off": "🚫",
     "desktop_session": "🖥️",
     # ── Generic / misc ──────────────────────────────────────────────────
     "event": "📣",
