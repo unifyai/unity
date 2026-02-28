@@ -596,26 +596,7 @@ class TestInitializationTimeout:
     """
 
     @pytest.mark.asyncio
-    async def test_wait_for_initialization_times_out(self):
-        """
-        Test that wait_for_initialization raises after timeout.
-
-        This prevents the system from hanging if initialization fails.
-        """
-        from unity.conversation_manager.domains.managers_utils import (
-            wait_for_initialization,
-        )
-
-        mock_cm = MagicMock()
-        mock_cm.initialized = False  # Never becomes True
-
-        with pytest.raises(RuntimeError) as exc_info:
-            await wait_for_initialization(mock_cm, timeout=0.5)
-
-        assert "initialization did not complete" in str(exc_info.value).lower()
-
-    @pytest.mark.asyncio
-    async def test_wait_for_initialization_succeeds_when_init_completes(self):
+    async def test_wait_for_initialization_polls_until_ready(self):
         """
         Test that wait_for_initialization returns when cm.initialized becomes True.
         """
@@ -630,14 +611,14 @@ class TestInitializationTimeout:
             await asyncio.sleep(0.2)
             mock_cm.initialized = True
 
-        # Start initialization in background
         asyncio.create_task(set_initialized_after_delay())
 
-        # This should complete without raising
         try:
-            await wait_for_initialization(mock_cm, timeout=2.0)
-        except RuntimeError:
-            pytest.fail("wait_for_initialization timed out even though init completed")
+            await asyncio.wait_for(wait_for_initialization(mock_cm), timeout=2.0)
+        except asyncio.TimeoutError:
+            pytest.fail(
+                "wait_for_initialization never returned even though init completed",
+            )
 
 
 class TestContactIndexInitializationState:
