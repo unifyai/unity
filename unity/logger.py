@@ -434,6 +434,16 @@ logging.getLogger("RapidOCR").addFilter(
     lambda record: record.levelno >= logging.WARNING,
 )
 
+# LiveKit loggers: file-only (no terminal).  We cut propagation so nothing
+# reaches the root/terminal handlers, and attach file handlers in
+# configure_log_dir() so the output still lands in unity.log.
+_LIVEKIT_LOGGERS = [
+    logging.getLogger(name) for name in ("livekit", "livekit.agents", "livekit.plugins")
+]
+for _lk in _LIVEKIT_LOGGERS:
+    _lk.setLevel(logging.DEBUG)
+    _lk.propagate = False
+
 # ─────────────────────────────────────────────────────────────────────────────
 # File-based Logging Configuration
 # ─────────────────────────────────────────────────────────────────────────────
@@ -464,10 +474,14 @@ def configure_log_dir(log_dir: Optional[str] = None) -> Optional[Path]:
     # Remove existing file handlers if any
     if _FILE_HANDLER is not None:
         LOGGER.removeHandler(_FILE_HANDLER)
+        for _lk in _LIVEKIT_LOGGERS:
+            _lk.removeHandler(_FILE_HANDLER)
         _FILE_HANDLER.close()
         _FILE_HANDLER = None
     if _INFO_FILE_HANDLER is not None:
         LOGGER.removeHandler(_INFO_FILE_HANDLER)
+        for _lk in _LIVEKIT_LOGGERS:
+            _lk.removeHandler(_INFO_FILE_HANDLER)
         _INFO_FILE_HANDLER.close()
         _INFO_FILE_HANDLER = None
     _LOG_DIR = None
@@ -494,6 +508,8 @@ def configure_log_dir(log_dir: Optional[str] = None) -> Optional[Path]:
         handler.setLevel(logging.DEBUG)
         handler._unity_file_handler = True  # type: ignore[attr-defined]
         LOGGER.addHandler(handler)
+        for _lk in _LIVEKIT_LOGGERS:
+            _lk.addHandler(handler)
         _FILE_HANDLER = handler
 
         info_log_file = log_path / "unity_info_only.log"
@@ -502,6 +518,8 @@ def configure_log_dir(log_dir: Optional[str] = None) -> Optional[Path]:
         info_handler.setLevel(logging.INFO)
         info_handler._unity_file_handler = True  # type: ignore[attr-defined]
         LOGGER.addHandler(info_handler)
+        for _lk in _LIVEKIT_LOGGERS:
+            _lk.addHandler(info_handler)
         _INFO_FILE_HANDLER = info_handler
 
         _LOG_DIR = log_path
