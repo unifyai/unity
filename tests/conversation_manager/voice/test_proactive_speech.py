@@ -110,6 +110,7 @@ def mock_cm(mock_session_logger, mock_event_broker, sample_contacts):
     cm.event_broker = mock_event_broker
     cm.mode = "call"  # Default to voice mode where proactive speech is active
     cm._proactive_speech_task = None
+    cm._proactive_speech_gen = 0
     cm._fast_brain_active = False
     cm.assistant_screen_share_active = False
 
@@ -1134,7 +1135,7 @@ class TestProactiveSpeechConcurrentScheduling:
             lambda: ConversationManager.cancel_proactive_speech(mock_cm)
         )
         mock_cm._proactive_speech_loop = (
-            lambda: ConversationManager._proactive_speech_loop(mock_cm)
+            lambda gen=0: ConversationManager._proactive_speech_loop(mock_cm, gen)
         )
 
         mock_cm.PROACTIVE_DEBOUNCE_SECONDS = 0
