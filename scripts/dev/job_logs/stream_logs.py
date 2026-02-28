@@ -536,14 +536,20 @@ def main():
     parser.add_argument(
         "--sync-all-logs",
         action="store_true",
+        default=True,
+        help="Bulk-copy all container log directories on stream exit (Ctrl+C). On by default.",
+    )
+    parser.add_argument(
+        "--no-sync",
+        action="store_true",
         default=False,
-        help="Bulk-copy all container log directories on stream exit (Ctrl+C).",
+        help="Disable automatic log sync on stream exit.",
     )
     args = parser.parse_args()
 
     namespace = "production" if args.production else "staging"
     mirror = not args.no_mirror
-    sync_all = args.sync_all_logs
+    sync_all = args.sync_all_logs and not args.no_sync
     mirror_base = Path(args.mirror_dir).resolve() if args.mirror_dir else MIRROR_BASE
     job_name = args.job or resolve_latest_job(namespace)
 
