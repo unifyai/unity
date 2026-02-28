@@ -61,6 +61,7 @@ load_dotenv()
 import argparse
 import shutil
 import subprocess
+import threading
 from concurrent.futures import ThreadPoolExecutor
 
 import unify
@@ -81,6 +82,53 @@ SHARED_UNIFY_KEY = os.environ["SHARED_UNIFY_KEY"]
 # Resolve full paths for CLI tools (handles .cmd on Windows)
 GCLOUD = shutil.which("gcloud") or "gcloud"
 KUBECTL = shutil.which("kubectl") or "kubectl"
+
+
+# ─── Keepalive ────────────────────────────────────────────────────────────────
+
+KEEPALIVE_INTERVAL = 30
+KEEPALIVE_MESSAGE = '{"thread":"ping","event":{}}'
+
+
+class Keepalive:
+    """Background thread that publishes Pub/Sub pings to prevent pod eviction."""
+
+    def __init__(self, assistant_id: str, namespace: str):
+        topic = f"unity-{assistant_id}"
+        if namespace == "staging":
+            topic += "-staging"
+        self._topic = topic
+        self._stop = threading.Event()
+        self._thread: threading.Thread | None = None
+
+    def start(self) -> None:
+        info(f"Keepalive enabled (topic={self._topic}, interval={KEEPALIVE_INTERVAL}s)")
+        self._thread = threading.Thread(target=self._loop, daemon=True)
+        self._thread.start()
+
+    def stop(self) -> None:
+        self._stop.set()
+        if self._thread:
+            self._thread.join(timeout=5)
+
+    def _loop(self) -> None:
+        while not self._stop.wait(KEEPALIVE_INTERVAL):
+            try:
+                subprocess.run(
+                    [
+                        GCLOUD,
+                        "pubsub",
+                        "topics",
+                        "publish",
+                        self._topic,
+                        f"--project={GCP_PROJECT}",
+                        f"--message={KEEPALIVE_MESSAGE}",
+                        "--quiet",
+                    ],
+                    capture_output=True,
+                )
+            except Exception:
+                pass
 
 
 # ─── Prerequisite checks ────────────────────────────────────────────────────
@@ -545,6 +593,12 @@ def main():
         default=False,
         help="Disable automatic log sync on stream exit.",
     )
+    parser.add_argument(
+        "--no-keepalive",
+        action="store_true",
+        default=False,
+        help="Disable automatic keepalive pings (by default, pings are sent to prevent pod eviction while streaming).",
+    )
     args = parser.parse_args()
 
     namespace = "production" if args.production else "staging"
@@ -564,33 +618,45 @@ def main():
     print(f"{BOLD}{'═' * 56}{NC}")
     print()
 
-    running, _ = query_job_status(job_name)
+    running, metadata = query_job_status(job_name)
+
+    keepalive: Keepalive | None = None
+    if not args.no_keepalive and metadata:
+        assistant_id = metadata.get("assistant_id")
+        if assistant_id:
+            keepalive = Keepalive(str(assistant_id), namespace)
 
     print()
-    if running is True:
-        # AssistantJobs says running → pod exists, stream live.
-        stream_logs(
-            job_name,
-            namespace,
-            mirror=mirror,
-            mirror_base=mirror_base,
-            sync_all=sync_all,
-        )
-    elif running is False:
-        # AssistantJobs says not running → pod is gone, use gcloud.
-        fetch_historical_logs(job_name, namespace)
-    else:
-        # No AssistantJobs record. Try streaming; if kubectl fails, fall
-        # back to gcloud historical logs.
-        warn("Unknown job status. Trying kubectl stream first...")
-        print()
-        stream_logs(
-            job_name,
-            namespace,
-            mirror=mirror,
-            mirror_base=mirror_base,
-            sync_all=sync_all,
-        )
+    try:
+        if running is True:
+            if keepalive:
+                keepalive.start()
+            stream_logs(
+                job_name,
+                namespace,
+                mirror=mirror,
+                mirror_base=mirror_base,
+                sync_all=sync_all,
+            )
+        elif running is False:
+            fetch_historical_logs(job_name, namespace)
+        else:
+            # No AssistantJobs record. Try streaming; if kubectl fails, fall
+            # back to gcloud historical logs.
+            warn("Unknown job status. Trying kubectl stream first...")
+            print()
+            if keepalive:
+                keepalive.start()
+            stream_logs(
+                job_name,
+                namespace,
+                mirror=mirror,
+                mirror_base=mirror_base,
+                sync_all=sync_all,
+            )
+    finally:
+        if keepalive:
+            keepalive.stop()
 
 
 if __name__ == "__main__":
