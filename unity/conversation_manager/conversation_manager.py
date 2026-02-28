@@ -847,8 +847,8 @@ class ConversationManager(metaclass=SingletonABCMeta):
             user_remote_control_active=self.user_remote_control_active,
         )
 
-        # Log LLM thinking start
-        self._session_logger.log_llm_thinking()
+        reason = (trace_meta or {}).get("origin_event_name", "")
+        self._session_logger.log_llm_thinking(reason)
 
         # Build response model dynamically with current in-flight actions
         response_model = brain_spec.response_model
