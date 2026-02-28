@@ -6,6 +6,7 @@ from typing import List, Dict, Optional, Type, Union, Any, Callable, Literal
 
 import unify
 from pydantic import BaseModel
+from ..common.embed_utils import ensure_vector_column
 from ..common.log_utils import log as unity_log, _inject_private_fields, _add_to_all
 from ..contact_manager.base import BaseContactManager
 from ..manager_registry import ManagerRegistry
@@ -998,6 +999,16 @@ class TranscriptManager(BaseTranscriptManager):
         return _storage_num_messages(self)
 
     # Internal provisioning helper
+    def warm_embeddings(self) -> None:
+        try:
+            ensure_vector_column(
+                self._transcripts_ctx,
+                embed_column="_content_emb",
+                source_column="content",
+            )
+        except Exception:
+            pass
+
     def _provision_storage(self) -> None:
         _storage_provision(self)
 

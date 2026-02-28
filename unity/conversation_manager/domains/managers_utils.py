@@ -1038,7 +1038,62 @@ def _init_managers(
     )
     per_manager_init.record(_cmhandle_dur, {"manager": "conversation_manager_handle"})
 
-    # 7. Initialize Actor (use provided actor or create via ManagerRegistry)
+    # 7. Resolve client customization (org -> team -> user -> assistant cascade)
+    LOGGER.debug(
+        f"{ICONS['managers_worker']} [ManagersWorker] Resolving customization...",
+    )
+    local_start_time = perf_counter()
+    from unity.customization.clients import resolve as _resolve_customization
+
+    resolved = _resolve_customization(
+        org_id=SESSION_DETAILS.org_id,
+        team_ids=SESSION_DETAILS.team_ids or None,
+        user_id=SESSION_DETAILS.user.id,
+        assistant_id=SESSION_DETAILS.assistant.agent_id,
+    )
+    _resolve_dur = perf_counter() - local_start_time
+    LOGGER.info(
+        f"{ICONS['managers_worker']} [ManagersWorker] Customization resolved in {_resolve_dur:.2f} seconds",
+    )
+
+    # 8. Sync cross-cutting seed data (contacts, guidance, knowledge, secrets, blacklist)
+    LOGGER.debug(
+        f"{ICONS['managers_worker']} [ManagersWorker] Syncing seed data...",
+    )
+    local_start_time = perf_counter()
+    from unity.customization.seed_sync import sync_all_seed_data
+
+    sync_all_seed_data(resolved)
+    _seed_dur = perf_counter() - local_start_time
+    LOGGER.info(
+        f"{ICONS['managers_worker']} [ManagersWorker] Seed data synced in {_seed_dur:.2f} seconds",
+    )
+
+    # 9. Sync custom functions/venvs from client customization
+    if resolved.function_dirs or resolved.venv_dirs:
+        LOGGER.debug(
+            f"{ICONS['managers_worker']} [ManagersWorker] Syncing custom functions...",
+        )
+        local_start_time = perf_counter()
+        from unity.function_manager.custom_functions import (
+            collect_functions_from_directories,
+            collect_venvs_from_directories,
+        )
+
+        source_fns = collect_functions_from_directories(resolved.function_dirs)
+        source_venvs = collect_venvs_from_directories(resolved.venv_dirs)
+        fm = ManagerRegistry.get_function_manager()
+        if source_fns or source_venvs:
+            fm.sync_custom(
+                source_functions=source_fns,
+                source_venvs=source_venvs,
+            )
+        _func_dur = perf_counter() - local_start_time
+        LOGGER.info(
+            f"{ICONS['managers_worker']} [ManagersWorker] Custom functions synced in {_func_dur:.2f} seconds",
+        )
+
+    # 10. Initialize Actor (use provided actor or create via ManagerRegistry)
     LOGGER.debug(f"{ICONS['managers_worker']} [ManagersWorker] Initializing Actor...")
     try:
         local_start_time = perf_counter()
@@ -1061,6 +1116,7 @@ def _init_managers(
                     ComputerEnvironment(ComputerPrimitives()),
                     ActorEnvironment(),
                 ],
+                resolved=resolved,
             )
         _actor_dur = perf_counter() - local_start_time
         actor_cls = type(cm.actor).__name__
@@ -1074,8 +1130,8 @@ def _init_managers(
             f"{ICONS['managers_worker']} [ManagersWorker] Error initializing Actor: {e}",
         )
 
-    # 8. Initialize FileManager (eagerly, so the FileRecords context exists
-    #    before any file operations or background tasks attempt to use it)
+    # 11. Initialize FileManager (eagerly, so the FileRecords context exists
+    #     before any file operations or background tasks attempt to use it)
     LOGGER.info(
         f"{ICONS['managers_worker']} [ManagersWorker] Initializing FileManager...",
     )
@@ -1094,6 +1150,18 @@ def _init_managers(
         f"{ICONS['managers_worker']} [ManagersWorker] All managers initialized in {_total_dur:.2f} seconds",
     )
     manager_init_total.record(_total_dur)
+
+    # 12. Pre-warm embedding columns for all managers (best-effort, avoids
+    #     cold-start latency on the first vector search after a fresh hire).
+    LOGGER.debug(
+        f"{ICONS['managers_worker']} [ManagersWorker] Warming embedding columns...",
+    )
+    local_start_time = perf_counter()
+    ManagerRegistry.warm_all_embeddings()
+    _warm_dur = perf_counter() - local_start_time
+    LOGGER.info(
+        f"{ICONS['managers_worker']} [ManagersWorker] Embedding columns warmed in {_warm_dur:.2f} seconds",
+    )
 
 
 async def _start_file_sync() -> None:

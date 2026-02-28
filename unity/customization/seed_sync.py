@@ -453,7 +453,8 @@ def _sync_knowledge(tables: dict[str, dict], meta: SeedMetaStore) -> bool:
 def sync_all_seed_data(resolved: ResolvedCustomization) -> bool:
     """Sync all seed data from a resolved customization to the DB.
 
-    Called from ``CodeActActor.__init__`` after function sync.
+    Called from ``_init_managers()`` as an explicit cross-cutting step
+    after all managers are constructed but before the Actor is initialized.
     Returns True if any manager was updated.
     """
     has_data = (

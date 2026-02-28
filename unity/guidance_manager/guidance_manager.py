@@ -16,7 +16,7 @@ from .base import BaseGuidanceManager
 from .types.guidance import Guidance
 from ..manager_registry import ManagerRegistry
 from ..image_manager.types import AnnotatedImageRefs, AnnotatedImageRef
-from ..common.embed_utils import list_private_fields
+from ..common.embed_utils import ensure_vector_column, list_private_fields
 from ..common.filter_utils import normalize_filter_expr
 from ..common.context_registry import TableContext, ContextRegistry
 
@@ -165,6 +165,16 @@ class GuidanceManager(BaseGuidanceManager):
                     break
                 except Exception:
                     _time.sleep(0.05)
+        except Exception:
+            pass
+
+    def warm_embeddings(self) -> None:
+        try:
+            ensure_vector_column(
+                self._ctx,
+                embed_column="_content_emb",
+                source_column="content",
+            )
         except Exception:
             pass
 

@@ -101,6 +101,9 @@ class SecretManager(BaseSecretManager):
             fields=model_to_fields(Secret),
         )
 
+    def warm_embeddings(self) -> None:
+        self._ensure_description_vector()
+
     @functools.cache
     def _ensure_description_vector(self) -> None:
         # Ensure vector for description (best-effort)

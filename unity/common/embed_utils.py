@@ -175,13 +175,6 @@ def ensure_derived_column(
                 return
 
             try:
-                try:
-                    fields = unify.get_fields(context=context)
-                    if key in fields and not from_ids:
-                        return
-                except Exception:
-                    pass
-
                 referenced_logs = {}
                 if from_ids:
                     # Instruct backend to scope the operation to a subset of log entries

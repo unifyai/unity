@@ -22,6 +22,7 @@ from dataclasses import dataclass
 from functools import cached_property
 
 from ..settings import SETTINGS
+from ..common.embed_utils import ensure_vector_column
 from ..common.tool_spec import read_only
 from ..common.llm_helpers import (
     methods_to_tool_dict,
@@ -266,6 +267,17 @@ class TaskScheduler(BaseTaskScheduler):
         return self.__actor
 
     # ------------------------------ Provisioning ----------------------------- #
+    def warm_embeddings(self) -> None:
+        for col in ("name", "description"):
+            try:
+                ensure_vector_column(
+                    self._ctx,
+                    embed_column=f"_{col}_emb",
+                    source_column=col,
+                )
+            except Exception:
+                pass
+
     def _provision_storage(self) -> None:
         """Ensure Tasks context, schema and local view exist (idempotent)."""
         # Install storage adapter and ensure context/fields exist

@@ -330,6 +330,28 @@ class ManagerRegistry:
             cls._instances.clear()
 
     # ──────────────────────────────────────────────────────────────────────────
+    # Lifecycle Hooks
+    # ──────────────────────────────────────────────────────────────────────────
+
+    @classmethod
+    def warm_all_embeddings(cls) -> None:
+        """Pre-create embedding columns on all cached manager singletons.
+
+        Iterates over every cached instance and calls ``warm_embeddings()``
+        (defined on ``BaseStateManager``) so that the first vector search
+        against each manager's context hits an already-populated embedding
+        column rather than paying the cold-start creation cost.
+        """
+        with cls._lock:
+            instances = list(cls._instances.values())
+        for instance in instances:
+            if callable(getattr(instance, "warm_embeddings", None)):
+                try:
+                    instance.warm_embeddings()
+                except Exception:
+                    pass
+
+    # ──────────────────────────────────────────────────────────────────────────
     # Typed Factory Methods
     # ──────────────────────────────────────────────────────────────────────────
 

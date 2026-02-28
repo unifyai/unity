@@ -34,7 +34,7 @@ import unify
 from .shell_pool import ShellPool
 from unify.utils.http import RequestError as _UnifyRequestError
 from ..common.log_utils import create_logs as unity_create_logs
-from ..common.embed_utils import list_private_fields
+from ..common.embed_utils import ensure_vector_column, list_private_fields
 from ..common.search_utils import table_search_top_k
 from .execution_env import create_base_globals
 from .dependency_analysis import collect_dependencies_from_function_node
@@ -1885,6 +1885,17 @@ class FunctionManager(BaseFunctionManager):
     # ------------------------------------------------------------------ #
     #  Public API                                                        #
     # ------------------------------------------------------------------ #
+
+    def warm_embeddings(self) -> None:
+        for ctx in (self._compositional_ctx, self._primitives_ctx):
+            try:
+                ensure_vector_column(
+                    ctx,
+                    embed_column="_embedding_text_emb",
+                    source_column="embedding_text",
+                )
+            except Exception:
+                pass
 
     @functools.wraps(BaseFunctionManager.clear, updated=())
     def clear(self) -> None:

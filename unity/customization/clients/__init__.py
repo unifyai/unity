@@ -6,10 +6,13 @@ in Python code under per-client subpackages (e.g. ``colliers/``).  Each
 subpackage registers its org-level, team-level, user-level, and/or
 assistant-level customizations into the module-level dicts below.
 
-At Actor construction time, ``resolve()`` is called with the current
+During manager initialization, ``resolve()`` is called with the current
 org_id / team_ids / user_id / assistant_id to produce a
 ``ResolvedCustomization`` containing merged configs, environments,
-function dirs, and seed data.
+function dirs, and seed data.  Cross-cutting seed data (contacts,
+guidance, knowledge, secrets, blacklist) is synced separately by
+``_init_managers()``, while actor-specific fields (config, environments)
+are forwarded to the ``CodeActActor`` constructor.
 
 Cascade order (least to most specific): org -> team(s) -> user -> assistant.
 When a user belongs to multiple teams, team customizations are merged in
