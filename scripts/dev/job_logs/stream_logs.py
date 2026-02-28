@@ -477,6 +477,12 @@ def fetch_historical_logs(job_name: str, namespace: str):
     Goes straight to gcloud — no kubectl attempt needed.
     """
     info(f"Fetching historical logs from Cloud Logging for '{job_name}'...")
+    gcs_path = f"gs://unity-pod-logs/{namespace}/{job_name}/"
+    print(
+        f"\n  {DIM}Cloud Logging only has INFO+ (terminal output).{NC}"
+        f"\n  {DIM}Full DEBUG logs (if uploaded on shutdown): {CYAN}{gcs_path}{NC}"
+        f"\n  {DIM}Download: gcloud storage cp --recursive {gcs_path} ./pod-logs/{NC}\n",
+    )
     print()
 
     log_filter = (
