@@ -773,27 +773,16 @@ async def queue_operation(async_func: callable, *args, **kwargs) -> None:
 
 async def wait_for_initialization(
     cm: "ConversationManager",
-    timeout: float = 30.0,
 ) -> None:
     """
     Wait for initialization to complete.
 
-    Args:
-        cm: The ConversationManager instance to wait for.
-        timeout: Maximum seconds to wait before raising an error. Default 30s.
-
-    Raises:
-        RuntimeError: If initialization does not complete within the timeout.
+    Polls cm.initialized with no timeout. Initialization failures are
+    surfaced by init_conv_manager itself (logged errors, pod inactivity
+    shutdown). A timeout here would silently kill the operations queue
+    processor on slow cold starts, causing queued work to be orphaned.
     """
-    import time
-
-    start = time.monotonic()
     while not cm.initialized:
-        if time.monotonic() - start > timeout:
-            raise RuntimeError(
-                f"ConversationManager initialization did not complete within {timeout}s. "
-                "Check for initialization errors above.",
-            )
         await asyncio.sleep(0.1)
 
 
