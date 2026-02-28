@@ -144,7 +144,7 @@ class FastBrainLogger:
 
     def guidance_say(self, guidance_id: str, text: str, **kv: object) -> None:
         extra = _kv_suffix(kv)
-        self._emit(
+        self._emit_debug(
             "guidance_say",
             f"Speaking guidance {guidance_id}: {_trunc(text)}{extra}",
         )
@@ -157,10 +157,16 @@ class FastBrainLogger:
             f"Proactive speech debounce {seconds}s",
         )
 
-    def proactive_decision(self, should_speak: bool, delay: float) -> None:
+    def proactive_decision(
+        self,
+        should_speak: bool,
+        delay: float,
+        content: str = "",
+    ) -> None:
+        suffix = f": {_trunc(content)}" if content else ""
         self._emit(
             "proactive_decision",
-            f"Proactive decision{_kv_suffix(dict(should_speak=should_speak, delay=f'{delay}s'))}",
+            f"Proactive decision{_kv_suffix(dict(should_speak=should_speak, delay=f'{delay}s'))}{suffix}",
         )
 
     def proactive_deferred(self, reason: str) -> None:
@@ -173,13 +179,13 @@ class FastBrainLogger:
         )
 
     def proactive_speaking(self, delay: float, content: str) -> None:
-        self._emit(
+        self._emit_debug(
             "proactive_speaking",
             f"Proactive speaking in {delay}s: {_trunc(content)}",
         )
 
     def proactive_published(self, guidance_id: str, content: str) -> None:
-        self._emit(
+        self._emit_debug(
             "proactive_published",
             f"Proactive spoke: {_trunc(content)}{_kv_suffix(dict(guidance_id=guidance_id))}",
         )

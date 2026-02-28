@@ -1336,7 +1336,11 @@ class ConversationManager(metaclass=SingletonABCMeta):
             if _superseded():
                 return
 
-            _log.proactive_decision(decision.should_speak, decision.delay)
+            _log.proactive_decision(
+                decision.should_speak,
+                decision.delay,
+                decision.content,
+            )
 
             if not decision.should_speak:
                 _log.proactive_dormant()
