@@ -1299,6 +1299,12 @@ async def _(
     attr, value = _MEET_STATE_FLAGS[event.__class__]
     setattr(cm, attr, value)
 
+    if (
+        isinstance(event, (UserWebcamStarted, UserWebcamStopped))
+        and not cm.mode.is_voice
+    ):
+        return
+
     # Push a notification so the slow brain sees the state change.
     notification_text = _MEET_INTERACTION_NOTIFICATIONS[event.__class__]
     cm.notifications_bar.push_notif("Meet", notification_text, event.timestamp)
