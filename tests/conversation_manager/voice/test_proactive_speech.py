@@ -27,7 +27,9 @@ from unity.conversation_manager.domains.proactive_speech import (
     ProactiveDecision,
     ProactiveSpeech,
 )
-from unity.conversation_manager.types import Medium, Mode
+from datetime import datetime, timezone
+
+from unity.conversation_manager.types import Medium, Mode, ScreenshotEntry
 
 # =============================================================================
 # Mock Helpers
@@ -1373,3 +1375,294 @@ class TestProactiveSpeechActionAwareness:
                 f"'EXECUTING (in-flight)' — the LLM must not hallucinate "
                 f"completion."
             )
+
+
+# =============================================================================
+# 11. Visual Context Regression Tests
+# =============================================================================
+
+FAKE_B64 = "iVBORw0KGgoAAAANSUhEUg=="
+FIXED_TS = datetime(2026, 2, 28, 12, 0, 0, tzinfo=timezone.utc)
+
+
+@pytest.mark.asyncio
+class TestProactiveSpeechVisualContext:
+    """Regression tests: proactive speech should receive actual screenshots.
+
+    The proactive speech module currently receives only text indicators
+    (e.g., "the assistant's desktop is being shared") but never actual
+    screenshot images. This means it cannot visually verify screen state
+    and may confabulate about what is or isn't visible — for example,
+    claiming "the browser is open" when the assistant screen clearly
+    shows a blank desktop.
+
+    These tests assert the desired behavior: screenshots should flow
+    through to the proactive speech LLM just as they do for the main brain.
+    """
+
+    async def test_loop_forwards_buffered_screenshots_to_decide(self, mock_cm):
+        """The proactive loop should peek the screenshot buffer and forward
+        the entries to decide() so the LLM can see what's on screen."""
+        from unity.conversation_manager.conversation_manager import ConversationManager
+
+        mock_cm.mode = Mode.CALL
+        mock_cm.assistant_screen_share_active = True
+        mock_cm.user_screen_share_active = False
+        mock_cm.user_webcam_active = False
+        mock_cm.in_flight_actions = {}
+        mock_cm.completed_actions = {}
+
+        mock_cm.peek_screenshot_buffer = MagicMock(
+            return_value=[
+                ScreenshotEntry(FAKE_B64, "Open the browser", FIXED_TS, "assistant"),
+            ],
+        )
+
+        captured = {}
+
+        async def spy_decide(chat_history, system_prompt, **kwargs):
+            captured["chat_history"] = chat_history
+            captured["system_prompt"] = system_prompt
+            captured["kwargs"] = kwargs
+            return ProactiveDecision(should_speak=False)
+
+        mock_cm.proactive_speech.decide = spy_decide
+
+        with (
+            patch("asyncio.sleep", new=AsyncMock()),
+            patch(
+                "unity.conversation_manager.conversation_manager.build_brain_spec",
+                return_value=MockBrainSpec(),
+            ),
+        ):
+            await ConversationManager._proactive_speech_loop(mock_cm)
+
+        assert captured, "decide() was never called"
+
+        all_inputs = json.dumps(captured, default=str)
+        assert FAKE_B64 in all_inputs, (
+            "Buffered screenshots should be forwarded to decide() so the "
+            "proactive speech LLM can see what's on screen. Currently, "
+            "screenshots are only forwarded to the main brain."
+        )
+
+    async def test_assistant_screen_image_not_just_text_indicator(self, mock_cm):
+        """When the assistant screen is shared, proactive speech should see
+        the actual screenshot — not just text saying 'the assistant's desktop
+        is being shared'."""
+        from unity.conversation_manager.conversation_manager import ConversationManager
+
+        mock_cm.mode = Mode.CALL
+        mock_cm.assistant_screen_share_active = True
+        mock_cm.user_screen_share_active = False
+        mock_cm.user_webcam_active = False
+        mock_cm.in_flight_actions = {}
+        mock_cm.completed_actions = {}
+
+        mock_cm.peek_screenshot_buffer = MagicMock(
+            return_value=[
+                ScreenshotEntry(FAKE_B64, "Open the browser", FIXED_TS, "assistant"),
+            ],
+        )
+
+        captured = {}
+
+        async def spy_decide(chat_history, system_prompt, **kwargs):
+            captured["chat_history"] = chat_history
+            captured["kwargs"] = kwargs
+            return ProactiveDecision(should_speak=False)
+
+        mock_cm.proactive_speech.decide = spy_decide
+
+        with (
+            patch("asyncio.sleep", new=AsyncMock()),
+            patch(
+                "unity.conversation_manager.conversation_manager.build_brain_spec",
+                return_value=MockBrainSpec(),
+            ),
+        ):
+            await ConversationManager._proactive_speech_loop(mock_cm)
+
+        assert captured, "decide() was never called"
+
+        all_inputs = json.dumps(captured, default=str)
+        has_image_data = "image_url" in all_inputs or "data:image" in all_inputs
+        has_text_only = "the assistant's desktop is being shared" in all_inputs.lower()
+
+        assert has_image_data, (
+            "The proactive speech LLM should receive the actual assistant "
+            "screen screenshot as image content, not just a text indicator"
+            + (' ("the assistant\'s desktop is being shared")' if has_text_only else "")
+            + ". Without visual grounding, it cannot verify whether actions "
+            "(like opening a browser) have actually completed."
+        )
+
+    async def test_all_three_visual_sources_in_decide_inputs(self, mock_cm):
+        """When all three visual sources are active, all three screenshot
+        images should reach the proactive speech LLM."""
+        from unity.conversation_manager.conversation_manager import ConversationManager
+
+        mock_cm.mode = Mode.CALL
+        mock_cm.assistant_screen_share_active = True
+        mock_cm.user_screen_share_active = True
+        mock_cm.user_webcam_active = True
+        mock_cm.in_flight_actions = {}
+        mock_cm.completed_actions = {}
+
+        b64_assistant = "ASSISTANT_SCREEN_B64_DATA"
+        b64_user = "USER_SCREEN_B64_DATA"
+        b64_webcam = "WEBCAM_B64_DATA"
+
+        mock_cm.peek_screenshot_buffer = MagicMock(
+            return_value=[
+                ScreenshotEntry(b64_assistant, "Open browser", FIXED_TS, "assistant"),
+                ScreenshotEntry(b64_user, "Look at my screen", FIXED_TS, "user"),
+                ScreenshotEntry(b64_webcam, "Can you see me?", FIXED_TS, "webcam"),
+            ],
+        )
+
+        captured = {}
+
+        async def spy_decide(chat_history, system_prompt, **kwargs):
+            captured["chat_history"] = chat_history
+            captured["kwargs"] = kwargs
+            return ProactiveDecision(should_speak=False)
+
+        mock_cm.proactive_speech.decide = spy_decide
+
+        with (
+            patch("asyncio.sleep", new=AsyncMock()),
+            patch(
+                "unity.conversation_manager.conversation_manager.build_brain_spec",
+                return_value=MockBrainSpec(),
+            ),
+        ):
+            await ConversationManager._proactive_speech_loop(mock_cm)
+
+        assert captured, "decide() was never called"
+
+        all_inputs = json.dumps(captured, default=str)
+
+        assert (
+            b64_assistant in all_inputs
+        ), "Assistant screen screenshot should reach the proactive speech LLM"
+        assert (
+            b64_user in all_inputs
+        ), "User screen screenshot should reach the proactive speech LLM"
+        assert (
+            b64_webcam in all_inputs
+        ), "Webcam frame should reach the proactive speech LLM"
+
+    async def test_screenshot_source_labels_in_decide_inputs(self, mock_cm):
+        """Each screenshot forwarded to proactive speech should carry its
+        source label so the LLM knows which screen it's looking at."""
+        from unity.conversation_manager.conversation_manager import ConversationManager
+
+        mock_cm.mode = Mode.CALL
+        mock_cm.assistant_screen_share_active = True
+        mock_cm.user_screen_share_active = True
+        mock_cm.user_webcam_active = True
+        mock_cm.in_flight_actions = {}
+        mock_cm.completed_actions = {}
+
+        mock_cm.peek_screenshot_buffer = MagicMock(
+            return_value=[
+                ScreenshotEntry(FAKE_B64, "Step one", FIXED_TS, "assistant"),
+                ScreenshotEntry(FAKE_B64, "Step two", FIXED_TS, "user"),
+                ScreenshotEntry(FAKE_B64, "Step three", FIXED_TS, "webcam"),
+            ],
+        )
+
+        captured = {}
+
+        async def spy_decide(chat_history, system_prompt, **kwargs):
+            captured["chat_history"] = chat_history
+            captured["kwargs"] = kwargs
+            return ProactiveDecision(should_speak=False)
+
+        mock_cm.proactive_speech.decide = spy_decide
+
+        with (
+            patch("asyncio.sleep", new=AsyncMock()),
+            patch(
+                "unity.conversation_manager.conversation_manager.build_brain_spec",
+                return_value=MockBrainSpec(),
+            ),
+        ):
+            await ConversationManager._proactive_speech_loop(mock_cm)
+
+        assert captured, "decide() was never called"
+
+        all_inputs = json.dumps(captured, default=str)
+
+        assert (
+            "Assistant's Screen" in all_inputs
+        ), "Assistant screenshots should be labeled 'Assistant's Screen'"
+        assert (
+            "User's Screen" in all_inputs
+        ), "User screenshots should be labeled 'User's Screen'"
+        assert (
+            "User's Webcam" in all_inputs
+        ), "Webcam frames should be labeled 'User's Webcam'"
+
+    async def test_proactive_and_main_brain_both_see_screenshots(self, mock_cm):
+        """The main brain receives screenshots via BrainSpec.state_message().
+        Proactive speech should receive the same visual context."""
+        from unity.conversation_manager.conversation_manager import ConversationManager
+        from unity.conversation_manager.domains.brain import BrainSpec
+
+        mock_cm.mode = Mode.CALL
+        mock_cm.assistant_screen_share_active = True
+        mock_cm.user_screen_share_active = False
+        mock_cm.user_webcam_active = False
+        mock_cm.in_flight_actions = {}
+        mock_cm.completed_actions = {}
+
+        screenshots = [
+            ScreenshotEntry(FAKE_B64, "Open browser", FIXED_TS, "assistant"),
+        ]
+
+        mock_cm.peek_screenshot_buffer = MagicMock(return_value=screenshots)
+
+        # Verify the main brain CAN see the screenshot (sanity baseline).
+        brain_spec = BrainSpec(
+            system_prompt=_default_prompt_parts(),
+            state_prompt="<state>test</state>",
+            response_model=ProactiveDecision,
+            screenshots=screenshots,
+        )
+        main_brain_msg = brain_spec.state_message()
+        main_brain_json = json.dumps(main_brain_msg, default=str)
+        assert (
+            FAKE_B64 in main_brain_json
+        ), "Sanity check: the main brain should see screenshots"
+
+        # Now check proactive speech.
+        captured = {}
+
+        async def spy_decide(chat_history, system_prompt, **kwargs):
+            captured["chat_history"] = chat_history
+            captured["kwargs"] = kwargs
+            return ProactiveDecision(should_speak=False)
+
+        mock_cm.proactive_speech.decide = spy_decide
+
+        with (
+            patch("asyncio.sleep", new=AsyncMock()),
+            patch(
+                "unity.conversation_manager.conversation_manager.build_brain_spec",
+                return_value=MockBrainSpec(),
+            ),
+        ):
+            await ConversationManager._proactive_speech_loop(mock_cm)
+
+        assert captured, "decide() was never called"
+
+        proactive_json = json.dumps(captured, default=str)
+        assert FAKE_B64 in proactive_json, (
+            f"Proactive speech should see the same screenshot data as the "
+            f"main brain. Main brain sees {len(screenshots)} screenshot(s) "
+            f"via BrainSpec.state_message(), but proactive speech receives "
+            f"none. This gap means proactive speech cannot visually verify "
+            f"screen state."
+        )
