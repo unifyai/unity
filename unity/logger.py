@@ -396,11 +396,14 @@ class _MillisFormatter(logging.Formatter):
         return f"{ts} {msg}"
 
 
+LOGGER.setLevel(logging.DEBUG)
+
 if SETTINGS.UNITY_TERMINAL_LOG:
     import sys
 
     _handler = logging.StreamHandler(sys.stdout)
     _handler.setFormatter(_MillisFormatter(stream=sys.stdout))
+    _handler.setLevel(getattr(logging, SETTINGS.UNITY_TERMINAL_LOG_LEVEL, logging.INFO))
 
     _already_configured = any(
         isinstance(h, logging.StreamHandler) and getattr(h, "_unity_terminal", False)
@@ -408,7 +411,6 @@ if SETTINGS.UNITY_TERMINAL_LOG:
     )
 
     if not _already_configured:
-        LOGGER.setLevel(logging.INFO)
         _handler._unity_terminal = True  # type: ignore[attr-defined]
         LOGGER.addHandler(_handler)
 
@@ -485,7 +487,6 @@ def configure_log_dir(log_dir: Optional[str] = None) -> Optional[Path]:
         handler._unity_file_handler = True  # type: ignore[attr-defined]
 
         LOGGER.addHandler(handler)
-        LOGGER.setLevel(logging.INFO)
 
         _FILE_HANDLER = handler
         _LOG_DIR = log_path

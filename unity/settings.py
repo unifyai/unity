@@ -126,6 +126,7 @@ class ProductionSettings(BaseSettings):
     # Terminal Logging
     # ─────────────────────────────────────────────────────────────────────────
     UNITY_TERMINAL_LOG: bool = True
+    UNITY_TERMINAL_LOG_LEVEL: str = "INFO"
 
     # ─────────────────────────────────────────────────────────────────────────
     # Debug Modes (performance overhead, development-only)
