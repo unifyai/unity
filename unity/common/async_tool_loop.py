@@ -150,10 +150,11 @@ class SteerableToolHandle(ABC):
         _parent_chat_context: list[dict] | None = None,
     ) -> "SteerableToolHandle":
         """
-        Query the status or progress of this running task (async - result arrives on next turn).
+        Ask a question about this task (async - result arrives on next turn).
 
-        Use this to check on updates, get a summary of what has happened so far,
-        or ask clarifying questions about the task's state without modifying it.
+        Works on both running and completed tasks. Use this to check on progress,
+        ask how something was done, query results or methodology, or ask any
+        clarifying question about the task without modifying it.
 
         This operation is asynchronous: it returns immediately with "Query submitted",
         and the actual response appears in the task's history when ready (status
