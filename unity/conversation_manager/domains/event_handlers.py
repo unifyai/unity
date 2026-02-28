@@ -1293,7 +1293,11 @@ async def _(
 ):
     event_name = event.__class__.__name__
     log_type = _MEET_LOG_TYPES.get(event.__class__, "meet_interaction")
-    cm._session_logger.info(log_type, f"{event_name}: {event.reason}")
+    log_msg = f"{event_name}: {event.reason}"
+    if event.reason == "LiveKit track auto-detected":
+        cm._session_logger.debug(log_type, log_msg)
+    else:
+        cm._session_logger.info(log_type, log_msg)
 
     # Update state flag on the CM.
     attr, value = _MEET_STATE_FLAGS[event.__class__]
