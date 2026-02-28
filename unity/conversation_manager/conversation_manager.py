@@ -979,7 +979,12 @@ class ConversationManager(metaclass=SingletonABCMeta):
         # If the LLM called wait(delay=N), schedule a delayed follow-up turn.
         if result.tool_name == "wait":
             delay = (result.tool_args or {}).get("delay")
-            self._session_logger.info("wait", "Waiting...")
+            msg = (
+                f"Decided to wait {delay} seconds"
+                if delay is not None
+                else "Decided to wait"
+            )
+            self._session_logger.info("wait", msg)
             if delay is not None:
                 await self.request_llm_run(delay=delay)
 
