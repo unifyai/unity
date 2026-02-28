@@ -232,16 +232,16 @@ LLM request/response traces are handled directly by the `unillm` package. These 
 ```
 logs/unillm/
 ├── 2025-12-05T09-15-22_unity_dev_ttys042/
-│   └── *.txt  (e.g., 142536_123456789_hit.txt, 142537_987654321_miss.txt)
+│   └── *.txt  (e.g., 142536_123456789.cache_hit.txt, 142537_987654321.cache_miss.txt)
 └── ...
 ```
 
 **Log file format:**
-- `{HHMMSS}_{nanoseconds}_pending.txt` - Written immediately when LLM call starts
-- `{HHMMSS}_{nanoseconds}_hit.txt` - Finalized after call completes (cache hit)
-- `{HHMMSS}_{nanoseconds}_miss.txt` - Finalized after call completes (cache miss)
+- `{HHMMSS}_{nanoseconds}.cache_pending.txt` - Written immediately when LLM call starts
+- `{HHMMSS}_{nanoseconds}.cache_hit.txt` - Finalized after call completes (cache hit)
+- `{HHMMSS}_{nanoseconds}.cache_miss.txt` - Finalized after call completes (cache miss)
 
-If an LLM call hangs or crashes, the `_pending.txt` file remains as evidence.
+If an LLM call hangs or crashes, the `.cache_pending.txt` file remains as evidence.
 
 **Environment variables:**
 - `UNILLM_TERMINAL_LOG=true` (default) - Enable terminal (console) output
