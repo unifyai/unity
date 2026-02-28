@@ -91,6 +91,7 @@ def _resolve_param(explicit: object, code_value: object, default: object) -> obj
 def _default_tool_policy(
     has_fm_tools: bool,
     has_gm_tools: bool,
+    has_computer_tools: bool,
     filter_tools: Callable[[Dict[str, Any]], Dict[str, Any]],
 ) -> ToolPolicyFn:
     """Build the default *discovery-first* tool policy.
@@ -105,12 +106,20 @@ def _default_tool_policy(
     family acts as the sole gate.  When neither is present the policy is a
     no-op pass-through.
 
+    When *has_computer_tools* is ``True``, ``execute_function`` is also
+    exposed in the gated set so that latency-critical computer actions can
+    fire on the very first turn alongside discovery searches.
+
     Parameters
     ----------
     has_fm_tools:
         Whether the base tool set contains any ``FunctionManager_*`` tools.
     has_gm_tools:
         Whether the base tool set contains any ``GuidanceManager_*`` tools.
+    has_computer_tools:
+        Whether the actor has computer primitives available.  When ``True``,
+        ``execute_function`` is included in the gated tool set so computer
+        actions are not blocked by discovery.
     filter_tools:
         The static-filter callable (``_filter_tools``) that enforces
         ``can_compose`` / ``can_store`` / ``can_spawn_sub_agents``.
@@ -151,6 +160,10 @@ def _default_tool_policy(
                     if isinstance(k, str) and k.startswith("GuidanceManager_")
                 },
             )
+
+        if has_computer_tools and "execute_function" in filtered:
+            gated["execute_function"] = filtered["execute_function"]
+
         return ("required", gated) if gated else ("auto", filtered)
 
     return _policy
@@ -3314,6 +3327,7 @@ class CodeActActor(BaseCodeActActor):
             can_store=effective_can_store,
             guidelines=effective_guidelines,
             discovery_first_policy=self.tool_policy is _USE_DEFAULT,
+            has_computer_tools=self._computer_primitives is not None,
         )
 
         # Tool policy controls which tools are visible per turn, and whether a
@@ -3336,9 +3350,11 @@ class CodeActActor(BaseCodeActActor):
                 isinstance(k, str) and k.startswith("GuidanceManager_")
                 for k in base_tools.keys()
             )
+            _has_computer_tools = self._computer_primitives is not None
             tool_policy = _default_tool_policy(
                 _has_fm_tools,
                 _has_gm_tools,
+                _has_computer_tools,
                 _filter_tools,
             )
         else:
