@@ -315,7 +315,7 @@ class SessionLogger:
 
     def log_llm_thinking(self, context: str = "") -> None:
         """Log that the LLM brain is processing."""
-        msg = "LLM thinking..." if not context else f"{context}. LLM thinking..."
+        msg = "LLM thinking..." if not context else f"LLM thinking... ({context})"
         self.info("llm_thinking", msg)
 
     def log_llm_response(self, summary: str = "") -> None:
