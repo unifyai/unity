@@ -63,7 +63,6 @@ ICONS = {
     "assistant_speech": "🔊",
     # ── Guidance pipeline ───────────────────────────────────────────────
     "guidance_received": "📨",
-    "guidance_applied": "🎙️",
     "guidance_buffered": "⏳",
     "guidance_say": "🗣️",
     # ── Proactive speech ────────────────────────────────────────────────

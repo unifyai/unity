@@ -604,8 +604,6 @@ async def entrypoint(ctx: agents.JobContext):
         source: str = "",
         guidance_source: str = "",
     ) -> None:
-        _log.guidance_applied(guidance_id, source=guidance_source or source)
-
         if should_speak and response_text:
             _queued_speech.append(
                 (response_text, guidance_id, guidance_source, content),
@@ -685,11 +683,16 @@ async def entrypoint(ctx: agents.JobContext):
         should_speak = payload.get("should_speak", False)
         guidance_source = payload.get("source", "")
         guidance_id = content_trace_id("guid", content)
-        _log.guidance_received(
+        triggers_turn = (
+            not (should_speak and response_text)
+            and guidance_source != "meet_interaction"
+        )
+        _log.guidance(
             guidance_source,
-            should_speak,
             content,
             guidance_id=guidance_id,
+            speak=should_speak,
+            turn=triggers_turn,
         )
         touch_activity()
 
