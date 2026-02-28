@@ -1273,20 +1273,59 @@ class ConversationManager(metaclass=SingletonABCMeta):
             # Gather context for the decision.
             conversation_turns, _ = self.get_recent_voice_transcript()
 
-            active_visuals = []
-            if self.user_screen_share_active:
-                active_visuals.append("the user is sharing their screen")
-            if self.user_webcam_active:
-                active_visuals.append("the user's webcam is on")
-            if self.assistant_screen_share_active:
-                active_visuals.append("the assistant's desktop is being shared")
-            if active_visuals:
+            # Attach the latest screenshot from each active visual source
+            # so the proactive LLM can visually verify screen state.
+            screenshots = self.peek_screenshot_buffer()
+            latest_by_source: dict[str, ScreenshotEntry] = {}
+            for entry in screenshots:
+                latest_by_source[entry.source] = entry
+
+            if latest_by_source:
+                source_labels = {
+                    "assistant": "Assistant's Screen",
+                    "user": "User's Screen",
+                    "webcam": "User's Webcam",
+                }
+                content_parts: list[dict] = []
+                for source, entry in latest_by_source.items():
+                    label = source_labels.get(source, "Screenshot")
+                    content_parts.append(
+                        {
+                            "type": "text",
+                            "text": (f'[{label}] User said: "{entry.utterance}"'),
+                        },
+                    )
+                    content_parts.append(
+                        {
+                            "type": "image_url",
+                            "image_url": {
+                                "url": f"data:image/jpeg;base64,{entry.b64}",
+                            },
+                        },
+                    )
                 conversation_turns.append(
-                    {
-                        "role": "system",
-                        "content": f"[context] {', '.join(active_visuals).capitalize()}.",
-                    },
+                    {"role": "user", "content": content_parts},
                 )
+            else:
+                active_visuals = []
+                if self.user_screen_share_active:
+                    active_visuals.append("the user is sharing their screen")
+                if self.user_webcam_active:
+                    active_visuals.append("the user's webcam is on")
+                if self.assistant_screen_share_active:
+                    active_visuals.append(
+                        "the assistant's desktop is being shared",
+                    )
+                if active_visuals:
+                    conversation_turns.append(
+                        {
+                            "role": "system",
+                            "content": (
+                                f"[context] "
+                                f"{', '.join(active_visuals).capitalize()}."
+                            ),
+                        },
+                    )
 
             brain_spec = build_brain_spec(self)
 
