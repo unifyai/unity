@@ -1651,13 +1651,13 @@ class TestFastBrainGuidanceFlow:
 @pytest.mark.eval
 @pytest.mark.asyncio
 class TestFastBrainOpeningGreeting:
-    """The fast brain's first turn (session_start with a [call started] user
-    message) should produce a short, natural greeting — not an acknowledgment
-    of the system prompt, not a capability list, and not a tutorial."""
+    """The fast brain's first turn (session_start with no user message) should
+    produce a short, natural greeting — not an acknowledgment of the system
+    prompt, not a capability list, and not a tutorial."""
 
     async def test_session_start_produces_natural_greeting(self):
-        """With the system prompt and a [call started] anchor message, the
-        fast brain should greet briefly and naturally.
+        """With only the system prompt (no user message), the fast brain should
+        greet briefly and naturally.
 
         Uses reasoning_effort='low' to match the production voice pipeline
         (call.py UnifyLLM configuration)."""
@@ -1682,7 +1682,7 @@ class TestFastBrainOpeningGreeting:
         )
         response = await client.generate(
             system_message=prompt,
-            messages=[{"role": "user", "content": "[call started]"}],
+            messages=[],
         )
 
         response_lower = response.lower().strip()
