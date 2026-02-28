@@ -87,8 +87,10 @@ class FastBrainLogger:
     # ── typed helpers ────────────────────────────────────────────────────
 
     def llm_thinking(self, reason: str, **kv: object) -> None:
-        extra = _kv_suffix(kv)
-        self._emit("llm_thinking", f"LLM thinking… reason={reason}{extra}")
+        self._emit(
+            "llm_thinking",
+            f"LLM thinking…{_kv_suffix(dict(reason=reason, **kv))}",
+        )
 
     def llm_completed(self, generation_id: str = "", **kv: object) -> None:
         extra = _kv_suffix(kv)
@@ -126,10 +128,9 @@ class FastBrainLogger:
         content: str,
         **kv: object,
     ) -> None:
-        extra = _kv_suffix(kv)
         self._emit(
             "guidance_received",
-            f"Guidance from {source}: speak={should_speak} {_trunc(content)}{extra}",
+            f"Guidance from {source}: {_trunc(content)}{_kv_suffix(dict(speak=should_speak, **kv))}",
         )
 
     def guidance_applied(
@@ -138,10 +139,9 @@ class FastBrainLogger:
         source: str = "",
         **kv: object,
     ) -> None:
-        extra = _kv_suffix(kv)
         self._emit(
             "guidance_applied",
-            f"Applied guidance {guidance_id} source={source}{extra}",
+            f"Applied guidance {guidance_id}{_kv_suffix(dict(source=source, **kv))}",
         )
 
     def guidance_buffered(self, guidance_id: str, count: int) -> None:
@@ -168,7 +168,7 @@ class FastBrainLogger:
     def proactive_decision(self, should_speak: bool, delay: float) -> None:
         self._emit(
             "proactive_decision",
-            f"Proactive decision: should_speak={should_speak}, delay={delay}s",
+            f"Proactive decision{_kv_suffix(dict(should_speak=should_speak, delay=f'{delay}s'))}",
         )
 
     def proactive_deferred(self, reason: str) -> None:
@@ -189,7 +189,7 @@ class FastBrainLogger:
     def proactive_published(self, guidance_id: str, content: str) -> None:
         self._emit(
             "proactive_published",
-            f"Proactive spoke guidance_id={guidance_id}: {_trunc(content)}",
+            f"Proactive spoke: {_trunc(content)}{_kv_suffix(dict(guidance_id=guidance_id))}",
         )
 
     def proactive_cancelled(self) -> None:
@@ -255,11 +255,11 @@ class FastBrainLogger:
 
 
 def _kv_suffix(kv: dict[str, object]) -> str:
-    """Render extra key=value pairs as a compact suffix string."""
+    """Render extra key=value pairs as a parenthesised, comma-separated suffix."""
     if not kv:
         return ""
-    parts = [f" {k}={v}" for k, v in kv.items() if v is not None and v != ""]
-    return "".join(parts)
+    parts = [f"{k}={v}" for k, v in kv.items() if v is not None and v != ""]
+    return f" ({', '.join(parts)})" if parts else ""
 
 
 def _id(val: str) -> str:
@@ -1039,7 +1039,7 @@ async def capture_assistant_screenshot(
                 if err_body and "no_desktop_session" in err_body:
                     _log(
                         f"Assistant screenshot: no desktop session yet, "
-                        f"retrying in 2s (url={url} total={total_ms:.0f}ms)",
+                        f"retrying in 2s (url={url}, total={total_ms:.0f}ms)",
                     )
                     await asyncio.sleep(2)
                     status, err_body, data = await _screenshot_post(
@@ -1052,30 +1052,30 @@ async def capture_assistant_screenshot(
                     if status >= 400:
                         _log(
                             f"Assistant screenshot failed after retry: "
-                            f"HTTP {status} url={url} total={total_ms:.0f}ms "
-                            f"body={(err_body or '')[:200]}",
+                            f"HTTP {status} (url={url}, total={total_ms:.0f}ms, "
+                            f"body={(err_body or '')[:200]})",
                         )
                         return None
                 else:
                     _log(
                         f"Assistant screenshot failed: HTTP {status} "
-                        f"url={url} total={total_ms:.0f}ms "
-                        f"body={(err_body or '')[:200]}",
+                        f"(url={url}, total={total_ms:.0f}ms, "
+                        f"body={(err_body or '')[:200]})",
                     )
                     return None
             if data:
                 b64 = data.get("screenshot")
                 if b64:
                     _log(
-                        f"Assistant screenshot OK: url={url} "
-                        f"total={total_ms:.0f}ms b64_len={len(b64)}",
+                        f"Assistant screenshot OK"
+                        f" (url={url}, total={total_ms:.0f}ms, b64_len={len(b64)})",
                     )
                     return _make_entry(b64)
         except Exception as e:
             total_ms = (_time.monotonic() - t_start) * 1000
             _log(
                 f"Assistant screenshot error: {type(e).__name__}: {e} "
-                f"url={url} total={total_ms:.0f}ms",
+                f"(url={url}, total={total_ms:.0f}ms)",
             )
         return None
 
@@ -1114,8 +1114,8 @@ async def capture_assistant_screenshot(
 
     def _phase_str() -> str:
         return (
-            f"dns={phases.get('dns_ms', 0):.0f}ms "
-            f"conn={phases.get('conn_ms', 0):.0f}ms "
+            f"dns={phases.get('dns_ms', 0):.0f}ms, "
+            f"conn={phases.get('conn_ms', 0):.0f}ms, "
             f"first_byte={phases.get('first_byte_ms', 0):.0f}ms"
         )
 
@@ -1132,7 +1132,7 @@ async def capture_assistant_screenshot(
                 if err_body and "no_desktop_session" in err_body:
                     _log(
                         f"Assistant screenshot: no desktop session yet, "
-                        f"retrying in 2s (url={url} total={total_ms:.0f}ms)",
+                        f"retrying in 2s (url={url}, total={total_ms:.0f}ms)",
                     )
                     await asyncio.sleep(2)
                     status, err_body, data = await _screenshot_post(
@@ -1145,31 +1145,31 @@ async def capture_assistant_screenshot(
                     if status >= 400:
                         _log(
                             f"Assistant screenshot failed after retry: "
-                            f"HTTP {status} url={url} total={total_ms:.0f}ms "
-                            f"body={(err_body or '')[:200]}",
+                            f"HTTP {status} (url={url}, total={total_ms:.0f}ms, "
+                            f"body={(err_body or '')[:200]})",
                         )
                         return None
                 else:
                     _log(
                         f"Assistant screenshot failed: HTTP {status} "
-                        f"url={url} total={total_ms:.0f}ms {_phase_str()} "
-                        f"body={(err_body or '')[:200]}",
+                        f"(url={url}, total={total_ms:.0f}ms, {_phase_str()}, "
+                        f"body={(err_body or '')[:200]})",
                     )
                     return None
             if data:
                 b64 = data.get("screenshot")
                 if b64:
                     _log(
-                        f"Assistant screenshot OK: url={url} "
-                        f"total={total_ms:.0f}ms {_phase_str()} "
-                        f"b64_len={len(b64)}",
+                        f"Assistant screenshot OK"
+                        f" (url={url}, total={total_ms:.0f}ms, {_phase_str()}, "
+                        f"b64_len={len(b64)})",
                     )
                     return _make_entry(b64)
     except Exception as e:
         total_ms = (_time.monotonic() - t_start) * 1000
         _log(
             f"Assistant screenshot error: {type(e).__name__}: {e} "
-            f"url={url} total={total_ms:.0f}ms {_phase_str()}",
+            f"(url={url}, total={total_ms:.0f}ms, {_phase_str()})",
         )
     return None
 
