@@ -6,7 +6,9 @@ Unity's runtime logging and OpenTelemetry tracing configuration.
 
 File-based logging:
     When UNITY_LOG_DIR is set (via env var or configure_log_dir()),
-    Unity's LOGGER output is written to {UNITY_LOG_DIR}/unity.log.
+    Unity's LOGGER output is written to two files:
+      - {UNITY_LOG_DIR}/unity.log           (DEBUG + INFO)
+      - {UNITY_LOG_DIR}/unity_info_only.log (INFO only)
     This captures async tool loop events, manager operations, etc.
 
 OpenTelemetry tracing:
@@ -53,6 +55,7 @@ SESSION_ID = datetime.now(timezone.utc).isoformat()
 
 # File handler state (managed by configure_log_dir)
 _FILE_HANDLER: Optional[logging.FileHandler] = None
+_INFO_FILE_HANDLER: Optional[logging.FileHandler] = None
 _LOG_DIR: Optional[Path] = None
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -439,7 +442,10 @@ logging.getLogger("RapidOCR").addFilter(
 def configure_log_dir(log_dir: Optional[str] = None) -> Optional[Path]:
     """Configure or reconfigure the Unity LOGGER file output directory.
 
-    When configured, LOGGER output is written to {log_dir}/unity.log.
+    When configured, LOGGER output is written to two files:
+      - {log_dir}/unity.log           (DEBUG + INFO — full verbosity)
+      - {log_dir}/unity_info_only.log (INFO only — high-level overview)
+
     This captures async tool loop events, manager operations, hierarchical
     session logs, and any other code using LOGGER.
 
@@ -453,14 +459,18 @@ def configure_log_dir(log_dir: Optional[str] = None) -> Optional[Path]:
     Returns:
         The configured log directory Path, or None if disabled.
     """
-    global _FILE_HANDLER, _LOG_DIR
+    global _FILE_HANDLER, _INFO_FILE_HANDLER, _LOG_DIR
 
-    # Remove existing file handler if any
+    # Remove existing file handlers if any
     if _FILE_HANDLER is not None:
         LOGGER.removeHandler(_FILE_HANDLER)
         _FILE_HANDLER.close()
         _FILE_HANDLER = None
-        _LOG_DIR = None
+    if _INFO_FILE_HANDLER is not None:
+        LOGGER.removeHandler(_INFO_FILE_HANDLER)
+        _INFO_FILE_HANDLER.close()
+        _INFO_FILE_HANDLER = None
+    _LOG_DIR = None
 
     # Determine log directory
     if log_dir is not None:
@@ -476,19 +486,24 @@ def configure_log_dir(log_dir: Optional[str] = None) -> Optional[Path]:
         log_path = Path(dir_path)
         log_path.mkdir(parents=True, exist_ok=True)
 
+        fmt = "%(asctime)s %(levelname)7s %(message)s"
+
         log_file = log_path / "unity.log"
         handler = logging.FileHandler(log_file, mode="a", encoding="utf-8")
-
-        fmt = "%(asctime)s %(levelname)7s %(message)s"
         handler.setFormatter(logging.Formatter(fmt))
         handler.setLevel(logging.DEBUG)
-
-        # Mark handler for identification
         handler._unity_file_handler = True  # type: ignore[attr-defined]
-
         LOGGER.addHandler(handler)
-
         _FILE_HANDLER = handler
+
+        info_log_file = log_path / "unity_info_only.log"
+        info_handler = logging.FileHandler(info_log_file, mode="a", encoding="utf-8")
+        info_handler.setFormatter(logging.Formatter(fmt))
+        info_handler.setLevel(logging.INFO)
+        info_handler._unity_file_handler = True  # type: ignore[attr-defined]
+        LOGGER.addHandler(info_handler)
+        _INFO_FILE_HANDLER = info_handler
+
         _LOG_DIR = log_path
 
         LOGGER.debug(f"Unity file logging enabled: {log_file}")
