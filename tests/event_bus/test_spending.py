@@ -666,12 +666,12 @@ class TestCheckSpendingLimitsCallback:
                     mock_session.org_id = None  # Personal context
                     mock_session.assistant.timezone = "UTC"
 
-                    with patch("httpx.AsyncClient") as mock_client:
-                        mock_instance = AsyncMock()
-                        mock_instance.get.return_value = mock_response
-                        mock_instance.__aenter__.return_value = mock_instance
-                        mock_instance.__aexit__.return_value = None
-                        mock_client.return_value = mock_instance
+                    with patch(
+                        "unity.spending_limits._get_http_client",
+                    ) as mock_get_client:
+                        mock_instance = MagicMock()
+                        mock_instance.get = AsyncMock(return_value=mock_response)
+                        mock_get_client.return_value = mock_instance
 
                         request = LimitCheckRequest(model="gpt-4", endpoint="test")
                         response = await check_spending_limits_callback(request)
@@ -701,12 +701,12 @@ class TestCheckSpendingLimitsCallback:
                     mock_session.org_id = None
                     mock_session.assistant.timezone = "UTC"
 
-                    with patch("httpx.AsyncClient") as mock_client:
-                        mock_instance = AsyncMock()
-                        mock_instance.get.return_value = mock_response
-                        mock_instance.__aenter__.return_value = mock_instance
-                        mock_instance.__aexit__.return_value = None
-                        mock_client.return_value = mock_instance
+                    with patch(
+                        "unity.spending_limits._get_http_client",
+                    ) as mock_get_client:
+                        mock_instance = MagicMock()
+                        mock_instance.get = AsyncMock(return_value=mock_response)
+                        mock_get_client.return_value = mock_instance
 
                         request = LimitCheckRequest(model="gpt-4", endpoint="test")
                         response = await check_spending_limits_callback(request)
@@ -747,12 +747,12 @@ class TestPersonalContextLimitChecks:
                     mock_session.org_id = None  # Personal context
                     mock_session.assistant.timezone = "UTC"
 
-                    with patch("httpx.AsyncClient") as mock_client:
-                        mock_instance = AsyncMock()
+                    with patch(
+                        "unity.spending_limits._get_http_client",
+                    ) as mock_get_client:
+                        mock_instance = MagicMock()
                         mock_instance.get = mock_get
-                        mock_instance.__aenter__.return_value = mock_instance
-                        mock_instance.__aexit__.return_value = None
-                        mock_client.return_value = mock_instance
+                        mock_get_client.return_value = mock_instance
 
                         request = LimitCheckRequest(model="gpt-4", endpoint="test")
                         await check_spending_limits_callback(request)
@@ -794,12 +794,12 @@ class TestOrgContextLimitChecks:
                     mock_session.org_id = 789  # Org context
                     mock_session.assistant.timezone = "UTC"
 
-                    with patch("httpx.AsyncClient") as mock_client:
-                        mock_instance = AsyncMock()
+                    with patch(
+                        "unity.spending_limits._get_http_client",
+                    ) as mock_get_client:
+                        mock_instance = MagicMock()
                         mock_instance.get = mock_get
-                        mock_instance.__aenter__.return_value = mock_instance
-                        mock_instance.__aexit__.return_value = None
-                        mock_client.return_value = mock_instance
+                        mock_get_client.return_value = mock_instance
 
                         request = LimitCheckRequest(model="gpt-4", endpoint="test")
                         await check_spending_limits_callback(request)
@@ -842,12 +842,12 @@ class TestOrgContextLimitChecks:
                     mock_session.org_id = 789
                     mock_session.assistant.timezone = "UTC"
 
-                    with patch("httpx.AsyncClient") as mock_client:
-                        mock_instance = AsyncMock()
+                    with patch(
+                        "unity.spending_limits._get_http_client",
+                    ) as mock_get_client:
+                        mock_instance = MagicMock()
                         mock_instance.get = mock_get
-                        mock_instance.__aenter__.return_value = mock_instance
-                        mock_instance.__aexit__.return_value = None
-                        mock_client.return_value = mock_instance
+                        mock_get_client.return_value = mock_instance
 
                         request = LimitCheckRequest(model="gpt-4", endpoint="test")
                         response = await check_spending_limits_callback(request)
@@ -878,12 +878,12 @@ class TestLimitCheckErrorHandling:
                     mock_session.org_id = None
                     mock_session.assistant.timezone = "UTC"
 
-                    with patch("httpx.AsyncClient") as mock_client:
-                        mock_instance = AsyncMock()
+                    with patch(
+                        "unity.spending_limits._get_http_client",
+                    ) as mock_get_client:
+                        mock_instance = MagicMock()
                         mock_instance.get = mock_get
-                        mock_instance.__aenter__.return_value = mock_instance
-                        mock_instance.__aexit__.return_value = None
-                        mock_client.return_value = mock_instance
+                        mock_get_client.return_value = mock_instance
 
                         request = LimitCheckRequest(model="gpt-4", endpoint="test")
                         response = await check_spending_limits_callback(request)
@@ -917,12 +917,12 @@ class TestLimitCheckErrorHandling:
                     mock_session.org_id = None
                     mock_session.assistant.timezone = "UTC"
 
-                    with patch("httpx.AsyncClient") as mock_client:
-                        mock_instance = AsyncMock()
+                    with patch(
+                        "unity.spending_limits._get_http_client",
+                    ) as mock_get_client:
+                        mock_instance = MagicMock()
                         mock_instance.get = mock_get
-                        mock_instance.__aenter__.return_value = mock_instance
-                        mock_instance.__aexit__.return_value = None
-                        mock_client.return_value = mock_instance
+                        mock_get_client.return_value = mock_instance
 
                         request = LimitCheckRequest(model="gpt-4", endpoint="test")
                         response = await check_spending_limits_callback(request)
@@ -956,12 +956,12 @@ class TestLimitCheckErrorHandling:
                     mock_session.org_id = None
                     mock_session.assistant.timezone = "UTC"
 
-                    with patch("httpx.AsyncClient") as mock_client:
-                        mock_instance = AsyncMock()
+                    with patch(
+                        "unity.spending_limits._get_http_client",
+                    ) as mock_get_client:
+                        mock_instance = MagicMock()
                         mock_instance.get = mock_get
-                        mock_instance.__aenter__.return_value = mock_instance
-                        mock_instance.__aexit__.return_value = None
-                        mock_client.return_value = mock_instance
+                        mock_get_client.return_value = mock_instance
 
                         request = LimitCheckRequest(model="gpt-4", endpoint="test")
                         response = await check_spending_limits_callback(request)
@@ -1001,12 +1001,12 @@ class TestParallelLimitChecks:
                     mock_session.org_id = 789  # Org context (3 checks)
                     mock_session.assistant.timezone = "UTC"
 
-                    with patch("httpx.AsyncClient") as mock_client:
-                        mock_instance = AsyncMock()
+                    with patch(
+                        "unity.spending_limits._get_http_client",
+                    ) as mock_get_client:
+                        mock_instance = MagicMock()
                         mock_instance.get = mock_get
-                        mock_instance.__aenter__.return_value = mock_instance
-                        mock_instance.__aexit__.return_value = None
-                        mock_client.return_value = mock_instance
+                        mock_get_client.return_value = mock_instance
 
                         start_time = asyncio.get_event_loop().time()
                         request = LimitCheckRequest(model="gpt-4", endpoint="test")
@@ -1050,12 +1050,12 @@ class TestNoLimitSet:
                     mock_session.org_id = None
                     mock_session.assistant.timezone = "UTC"
 
-                    with patch("httpx.AsyncClient") as mock_client:
-                        mock_instance = AsyncMock()
-                        mock_instance.get.return_value = mock_response
-                        mock_instance.__aenter__.return_value = mock_instance
-                        mock_instance.__aexit__.return_value = None
-                        mock_client.return_value = mock_instance
+                    with patch(
+                        "unity.spending_limits._get_http_client",
+                    ) as mock_get_client:
+                        mock_instance = MagicMock()
+                        mock_instance.get = AsyncMock(return_value=mock_response)
+                        mock_get_client.return_value = mock_instance
 
                         request = LimitCheckRequest(model="gpt-4", endpoint="test")
                         response = await check_spending_limits_callback(request)
@@ -1122,12 +1122,12 @@ class TestLimitBoundary:
                     mock_session.org_id = None
                     mock_session.assistant.timezone = "UTC"
 
-                    with patch("httpx.AsyncClient") as mock_client:
-                        mock_instance = AsyncMock()
-                        mock_instance.get.return_value = mock_response
-                        mock_instance.__aenter__.return_value = mock_instance
-                        mock_instance.__aexit__.return_value = None
-                        mock_client.return_value = mock_instance
+                    with patch(
+                        "unity.spending_limits._get_http_client",
+                    ) as mock_get_client:
+                        mock_instance = MagicMock()
+                        mock_instance.get = AsyncMock(return_value=mock_response)
+                        mock_get_client.return_value = mock_instance
 
                         request = LimitCheckRequest(model="gpt-4", endpoint="test")
                         response = await check_spending_limits_callback(request)
@@ -1157,12 +1157,12 @@ class TestLimitBoundary:
                     mock_session.org_id = None
                     mock_session.assistant.timezone = "UTC"
 
-                    with patch("httpx.AsyncClient") as mock_client:
-                        mock_instance = AsyncMock()
-                        mock_instance.get.return_value = mock_response
-                        mock_instance.__aenter__.return_value = mock_instance
-                        mock_instance.__aexit__.return_value = None
-                        mock_client.return_value = mock_instance
+                    with patch(
+                        "unity.spending_limits._get_http_client",
+                    ) as mock_get_client:
+                        mock_instance = MagicMock()
+                        mock_instance.get = AsyncMock(return_value=mock_response)
+                        mock_get_client.return_value = mock_instance
 
                         request = LimitCheckRequest(model="gpt-4", endpoint="test")
                         response = await check_spending_limits_callback(request)
@@ -2015,12 +2015,10 @@ class TestNotifyLimitReached:
             captured_request["payload"] = json
             return mock_response
 
-        with patch("httpx.AsyncClient") as mock_client:
-            mock_instance = AsyncMock()
+        with patch("unity.spending_limits._get_http_client") as mock_get_client:
+            mock_instance = MagicMock()
             mock_instance.post = capture_post
-            mock_instance.__aenter__.return_value = mock_instance
-            mock_instance.__aexit__.return_value = None
-            mock_client.return_value = mock_instance
+            mock_get_client.return_value = mock_instance
 
             result = _LimitCheckResult(
                 exceeded=True,
@@ -2061,12 +2059,10 @@ class TestNotifyLimitReached:
             captured_request["payload"] = json
             return mock_response
 
-        with patch("httpx.AsyncClient") as mock_client:
-            mock_instance = AsyncMock()
+        with patch("unity.spending_limits._get_http_client") as mock_get_client:
+            mock_instance = MagicMock()
             mock_instance.post = capture_post
-            mock_instance.__aenter__.return_value = mock_instance
-            mock_instance.__aexit__.return_value = None
-            mock_client.return_value = mock_instance
+            mock_get_client.return_value = mock_instance
 
             result = _LimitCheckResult(
                 exceeded=True,
@@ -2094,12 +2090,10 @@ class TestNotifyLimitReached:
         async def failing_post(url, headers=None, json=None):
             raise httpx.TimeoutException("Timeout")
 
-        with patch("httpx.AsyncClient") as mock_client:
-            mock_instance = AsyncMock()
+        with patch("unity.spending_limits._get_http_client") as mock_get_client:
+            mock_instance = MagicMock()
             mock_instance.post = failing_post
-            mock_instance.__aenter__.return_value = mock_instance
-            mock_instance.__aexit__.return_value = None
-            mock_client.return_value = mock_instance
+            mock_get_client.return_value = mock_instance
 
             result = _LimitCheckResult(
                 exceeded=True,
@@ -2129,12 +2123,10 @@ class TestNotifyLimitReached:
         async def error_post(url, headers=None, json=None):
             return mock_response
 
-        with patch("httpx.AsyncClient") as mock_client:
-            mock_instance = AsyncMock()
+        with patch("unity.spending_limits._get_http_client") as mock_get_client:
+            mock_instance = MagicMock()
             mock_instance.post = error_post
-            mock_instance.__aenter__.return_value = mock_instance
-            mock_instance.__aexit__.return_value = None
-            mock_client.return_value = mock_instance
+            mock_get_client.return_value = mock_instance
 
             result = _LimitCheckResult(
                 exceeded=True,
@@ -2175,12 +2167,10 @@ class TestNotificationStress:
                 notification_count += 1
             return mock_response
 
-        with patch("httpx.AsyncClient") as mock_client:
-            mock_instance = AsyncMock()
+        with patch("unity.spending_limits._get_http_client") as mock_get_client:
+            mock_instance = MagicMock()
             mock_instance.post = counting_post
-            mock_instance.__aenter__.return_value = mock_instance
-            mock_instance.__aexit__.return_value = None
-            mock_client.return_value = mock_instance
+            mock_get_client.return_value = mock_instance
 
             # Launch 10 concurrent notifications
             tasks = []
@@ -2245,26 +2235,28 @@ class TestNotificationStress:
                     mock_session.org_id = None
                     mock_session.assistant.timezone = "UTC"
 
-                    with patch("httpx.AsyncClient") as mock_client:
-                        mock_instance = AsyncMock()
+                    with patch(
+                        "unity.spending_limits._get_http_client",
+                    ) as mock_get_client:
+                        mock_instance = MagicMock()
                         mock_instance.get = mock_get
                         mock_instance.post = slow_notify_post
-                        mock_instance.__aenter__.return_value = mock_instance
-                        mock_instance.__aexit__.return_value = None
-                        mock_client.return_value = mock_instance
+                        mock_get_client.return_value = mock_instance
 
                         start_time = asyncio.get_event_loop().time()
                         request = LimitCheckRequest(model="gpt-4", endpoint="test")
                         response = await check_spending_limits_callback(request)
                         callback_time = asyncio.get_event_loop().time() - start_time
 
-        # Response should be fast (not waiting for notification)
-        assert response.allowed is False
-        assert callback_time < 0.2  # Should complete in < 200ms
+                        # Response should be fast (not waiting for notification)
+                        assert response.allowed is False
+                        assert callback_time < 0.2  # Should complete in < 200ms
 
-        # Wait for notification to complete in background
-        await asyncio.sleep(0.1)
-        assert notification_started.is_set()  # Notification was triggered
+                        # Wait for notification to complete in background
+                        await asyncio.sleep(0.1)
+                        assert (
+                            notification_started.is_set()
+                        )  # Notification was triggered
 
     @pytest.mark.asyncio
     async def test_rapid_limit_checks_with_notifications(self):
@@ -2305,13 +2297,13 @@ class TestNotificationStress:
                     mock_session.org_id = None
                     mock_session.assistant.timezone = "UTC"
 
-                    with patch("httpx.AsyncClient") as mock_client:
-                        mock_instance = AsyncMock()
+                    with patch(
+                        "unity.spending_limits._get_http_client",
+                    ) as mock_get_client:
+                        mock_instance = MagicMock()
                         mock_instance.get = mock_get
                         mock_instance.post = tracking_post
-                        mock_instance.__aenter__.return_value = mock_instance
-                        mock_instance.__aexit__.return_value = None
-                        mock_client.return_value = mock_instance
+                        mock_get_client.return_value = mock_instance
 
                         # Fire 5 rapid limit checks
                         tasks = []
@@ -2346,12 +2338,10 @@ class TestNotificationStress:
             captured_payloads.append(json)
             return mock_response
 
-        with patch("httpx.AsyncClient") as mock_client:
-            mock_instance = AsyncMock()
+        with patch("unity.spending_limits._get_http_client") as mock_get_client:
+            mock_instance = MagicMock()
             mock_instance.post = capture_post
-            mock_instance.__aenter__.return_value = mock_instance
-            mock_instance.__aexit__.return_value = None
-            mock_client.return_value = mock_instance
+            mock_get_client.return_value = mock_instance
 
             results = [
                 _LimitCheckResult(
@@ -2411,12 +2401,10 @@ class TestNotificationStress:
             captured_payload.update(json)
             return mock_response
 
-        with patch("httpx.AsyncClient") as mock_client:
-            mock_instance = AsyncMock()
+        with patch("unity.spending_limits._get_http_client") as mock_get_client:
+            mock_instance = MagicMock()
             mock_instance.post = capture_post
-            mock_instance.__aenter__.return_value = mock_instance
-            mock_instance.__aexit__.return_value = None
-            mock_client.return_value = mock_instance
+            mock_get_client.return_value = mock_instance
 
             result = _LimitCheckResult(
                 exceeded=True,
