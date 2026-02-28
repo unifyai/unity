@@ -133,7 +133,6 @@ class Assistant(Agent):
         Note: User utterance publishing is handled by _on_chat_item_added
         to keep all transcript logging in one place alongside assistant utterances.
         """
-        _log.user_speech(new_message.text_content or "")
 
     async def llm_node(
         self,
