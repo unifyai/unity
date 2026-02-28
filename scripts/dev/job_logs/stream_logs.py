@@ -66,11 +66,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 import unify
 
-from unity.syntax_highlight import (
-    MARKDOWN_CLOSING_RE,
-    MARKDOWN_OPENING_RE,
-    highlight_code_blocks,
-)
+from unity.syntax_highlight import highlight_code_blocks
 
 # ─── Configuration ───────────────────────────────────────────────────────────
 
@@ -362,6 +358,11 @@ def _rewrite_line(
 _IS_TTY = hasattr(sys.stdout, "isatty") and sys.stdout.isatty()
 
 
+_FENCE_OPEN = re.compile(r"^\s*```\w+")
+_FENCE_CLOSE = re.compile(r"^\s*```\s*$")
+_MAX_CODE_BLOCK_LINES = 150
+
+
 def _emit_lines(
     proc: subprocess.Popen,
     *,
@@ -374,14 +375,21 @@ def _emit_lines(
 
     *rewrite_fn*, if provided, is called on each decoded line before
     highlight processing (used for log-file hyperlink rewriting).
+
+    Code-fence detection is anchored to the start of the line so that
+    backticks embedded mid-line (e.g. inside JSON string values in tool
+    call results) don't trigger buffering and freeze the stream.  As a
+    safety valve, the buffer is force-flushed (without highlighting) if
+    it exceeds ``_MAX_CODE_BLOCK_LINES`` without encountering a closing
+    fence — preventing indefinite buffering regardless of cause.
     """
     code_buf: list[str] = []
     in_code_block = False
 
-    def _flush_code_block() -> None:
+    def _flush_code_block(*, highlight: bool = True) -> None:
         nonlocal in_code_block
         block = "".join(code_buf)
-        if _IS_TTY:
+        if highlight and _IS_TTY:
             block = highlight_code_blocks(block)
         sys.stdout.write(block)
         sys.stdout.flush()
@@ -395,13 +403,13 @@ def _emit_lines(
 
         if in_code_block:
             code_buf.append(line)
-            if MARKDOWN_CLOSING_RE.search(line) and not MARKDOWN_OPENING_RE.search(
-                line,
-            ):
+            if _FENCE_CLOSE.match(line):
                 _flush_code_block()
+            elif len(code_buf) >= _MAX_CODE_BLOCK_LINES:
+                _flush_code_block(highlight=False)
             continue
 
-        if MARKDOWN_OPENING_RE.search(line):
+        if _FENCE_OPEN.match(line):
             in_code_block = True
             code_buf.append(line)
             continue
