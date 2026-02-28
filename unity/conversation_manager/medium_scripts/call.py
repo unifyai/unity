@@ -820,7 +820,6 @@ async def entrypoint(ctx: agents.JobContext):
     await trigger_generate_reply(
         reason="session_start",
         source_id="startup",
-        user_input="[call started]",
         allow_interruptions=True,
         wait_for_completion=True,
     )
