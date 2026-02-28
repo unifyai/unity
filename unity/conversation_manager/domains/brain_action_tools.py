@@ -2000,9 +2000,8 @@ class ConversationManagerBrainActionTools:
             params = []
 
         ask_completed_action.__signature__ = inspect.Signature(params)
-        ask_completed_action.__doc__ = (
-            docstring or f"Ask about completed action: {query}"
-        )
+        base_doc = docstring or "Ask about this completed action."
+        ask_completed_action.__doc__ = f"{base_doc}\n\nFor action: {query}"
         return ask_completed_action
 
     def _make_steering_tool(
@@ -2225,19 +2224,18 @@ class ConversationManagerBrainActionTools:
 
             return {"status": "ok", "operation": operation, "result": result}
 
-        # Copy signature from the handle's method to get proper tool schema.
-        # Parameters starting with _ (like _parent_chat_context_cont) are automatically
-        # hidden by method_to_schema, and images: Optional[ImageRefs] is schema-safe.
+        # Copy signature + docstring from the handle's method. Parameters
+        # starting with _ are automatically hidden by method_to_schema.
         if handle is not None and hasattr(handle, operation):
             DynamicToolFactory._adopt_signature_and_annotations(
                 getattr(handle, operation),
                 steering_tool,
             )
 
-        # Always set a custom docstring that describes this specific action
-        # (overrides any docstring copied from handle, e.g. from MagicMock in tests)
-        steering_tool.__doc__ = f"{docstring}\n\nFor action: {query}"
-        if param_name:
-            steering_tool.__doc__ += f"\n\nArgs:\n    {param_name}: {docstring}"
+        # Append action context so the CM knows which action this tool steers.
+        # Preserve the docstring set by _adopt_signature_and_annotations (or
+        # fall back to the docstring passed in from SteeringOperation).
+        base_doc = inspect.getdoc(steering_tool) or docstring
+        steering_tool.__doc__ = f"{base_doc}\n\nFor action: {query}"
 
         return steering_tool
