@@ -57,6 +57,18 @@ source <(python scripts/dev/local_assistant.py --api-key YOUR_KEY --name "Dev")
 python scripts/dev/local_assistant.py --api-key YOUR_KEY --name "Dev" > .env.local
 ```
 
+## keep_pod_alive.sh
+
+Keep a deployed Unity pod alive by sending periodic keepalive pings to its Pub/Sub topic. Prevents the inactivity timeout from shutting down the container while you're debugging or developing.
+
+```bash
+./scripts/dev/keep_pod_alive.sh 25                    # staging (default), ping every 30s
+./scripts/dev/keep_pod_alive.sh 25 --production       # production
+./scripts/dev/keep_pod_alive.sh 25 --interval 60      # custom interval
+```
+
+Requires `gcloud` CLI authenticated with access to the `responsive-city-458413-a2` project.
+
 ## job_logs/
 
 Tooling for streaming and inspecting Unity K8s job logs. See [`job_logs/README.md`](job_logs/README.md) for setup and usage.

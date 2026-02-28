@@ -316,6 +316,12 @@ class CommsManager:
                         else AssistantUpdateEvent(**details)
                     ).to_json(),
                 )
+            elif thread == "ping":
+                self._publish_from_callback(
+                    "app:comms:ping",
+                    Ping(kind="keepalive").to_json(),
+                )
+                message.ack()
             elif thread == "unity_system_event":
                 system_event_type = event.get("event_type")
                 system_message = event.get("message")
