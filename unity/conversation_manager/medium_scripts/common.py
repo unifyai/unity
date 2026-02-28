@@ -115,7 +115,7 @@ class FastBrainLogger:
 
     def user_state(self, new_state: str, **kv: object) -> None:
         extra = _kv_suffix(kv)
-        self._emit("user_state", f"User state: {new_state}{extra}")
+        self._emit_debug("user_state", f"User state: {new_state}{extra}")
 
     def assistant_speech(self, text: str, **kv: object) -> None:
         extra = _kv_suffix(kv)
