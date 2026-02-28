@@ -192,6 +192,7 @@ class ConversationManager(metaclass=SingletonABCMeta):
         # proactive speech
         self.proactive_speech = ProactiveSpeech()
         self._proactive_speech_task: asyncio.Task | None = None
+        self._proactive_speech_gen: int = 0
         self._fast_brain_active: bool = False
         self._proactive_logger = FastBrainLogger()
 
@@ -1202,13 +1203,18 @@ class ConversationManager(metaclass=SingletonABCMeta):
         Called on every user/assistant utterance event to reset the silence
         timer.  Only operates in voice modes (call / meet).
         """
+        self._proactive_speech_gen += 1
+        my_gen = self._proactive_speech_gen
         await self.cancel_proactive_speech()
 
         if not self.mode.is_voice:
             return
 
+        if self._proactive_speech_gen != my_gen:
+            return
+
         self._proactive_speech_task = asyncio.create_task(
-            self._proactive_speech_loop(),
+            self._proactive_speech_loop(my_gen),
         )
         self._proactive_speech_task.add_done_callback(log_task_exc)
 
@@ -1222,11 +1228,18 @@ class ConversationManager(metaclass=SingletonABCMeta):
                 await self._proactive_speech_task
             self._proactive_speech_task = None
 
-    async def _proactive_speech_loop(self):
+    async def _proactive_speech_loop(self, gen: int = 0):
         _log = self._proactive_logger
+
+        def _superseded() -> bool:
+            return self._proactive_speech_gen != gen
+
         try:
             _log.proactive_debounce(self.PROACTIVE_DEBOUNCE_SECONDS)
             await asyncio.sleep(self.PROACTIVE_DEBOUNCE_SECONDS)
+
+            if _superseded():
+                return
 
             if self._fast_brain_active:
                 _log.proactive_deferred("fast brain is active")
@@ -1256,6 +1269,10 @@ class ConversationManager(metaclass=SingletonABCMeta):
                 conversation_turns,
                 brain_spec.system_prompt.flatten(),
             )
+
+            if _superseded():
+                return
+
             _log.proactive_decision(decision.should_speak, decision.delay)
 
             if not decision.should_speak:
@@ -1266,6 +1283,9 @@ class ConversationManager(metaclass=SingletonABCMeta):
             if decision.delay > 0:
                 _log.proactive_speaking(decision.delay, decision.content)
                 await asyncio.sleep(decision.delay)
+
+            if _superseded():
+                return
 
             # Record in contact_index.
             contact = self.get_active_contact()
