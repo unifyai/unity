@@ -64,6 +64,24 @@ def _save_screenshot(entry: ScreenshotEntry) -> str:
     return path
 
 
+def _render_action_context(
+    in_flight_actions: dict,
+    completed_actions: dict,
+) -> str | None:
+    """Build a concise action-status summary for proactive speech."""
+    lines: list[str] = []
+    for handle_data in in_flight_actions.values():
+        query = handle_data.get("query", "unknown")
+        lines.append(f"- EXECUTING (in-flight): {query}")
+    for handle_data in completed_actions.values():
+        query = handle_data.get("query", "unknown")
+        lines.append(f"- COMPLETED: {query}")
+    if not lines:
+        return None
+    header = "[action status] The following actions are currently in progress or recently completed:"
+    return f"{header}\n" + "\n".join(lines)
+
+
 class ConversationManager(metaclass=SingletonABCMeta):
     def __init__(
         self,
@@ -1272,9 +1290,15 @@ class ConversationManager(metaclass=SingletonABCMeta):
 
             brain_spec = build_brain_spec(self)
 
+            action_context = _render_action_context(
+                self.in_flight_actions,
+                self.completed_actions,
+            )
+
             decision = await self.proactive_speech.decide(
                 conversation_turns,
                 brain_spec.system_prompt.flatten(),
+                action_context=action_context,
             )
 
             if _superseded():

@@ -33,6 +33,14 @@ assistant). You have the full conversation history above.
 - The conversation is wrapping up (goodbyes were exchanged).
 - The user explicitly asked to wait or said they need a moment.
 
+## Action awareness
+
+You may be given an `[action status]` block listing actions that are currently \
+executing or recently completed. This is the ground truth for what has and hasn't \
+happened. NEVER claim an in-flight action is finished. If the assistant said "one \
+moment" and the action is still executing, a brief reassurance like "still working \
+on it" is fine, but do NOT say it is done.
+
 ## If you decide to speak
 
 - `delay`: additional seconds to wait before speaking (0 = now, higher = more patient). \
@@ -50,6 +58,7 @@ class ProactiveSpeech:
         self,
         chat_history: list[dict],
         system_prompt: str,
+        action_context: str | None = None,
     ) -> ProactiveDecision:
         """Decides whether to speak proactively based on the conversation history."""
         try:
@@ -61,6 +70,10 @@ class ProactiveSpeech:
                 {"role": "system", "content": f"{system_prompt}\n\n{PROACTIVE_PROMPT}"},
                 *chat_history,
             ]
+            if action_context:
+                messages.append(
+                    {"role": "system", "content": action_context},
+                )
             response = await client.generate(messages=messages)
             return ProactiveDecision.model_validate_json(response)
         except Exception as e:
