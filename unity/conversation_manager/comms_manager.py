@@ -344,12 +344,8 @@ class CommsManager:
                     "user_screen_share_stopped": lambda r: UserScreenShareStopped(
                         reason=r or "User stopped sharing their screen.",
                     ),
-                    "user_webcam_started": lambda r: UserWebcamStarted(
-                        reason=r or "User enabled their webcam.",
-                    ),
-                    "user_webcam_stopped": lambda r: UserWebcamStopped(
-                        reason=r or "User disabled their webcam.",
-                    ),
+                    "user_webcam_started": lambda r: UserWebcamStarted(),
+                    "user_webcam_stopped": lambda r: UserWebcamStopped(),
                     "user_remote_control_started": lambda r: UserRemoteControlStarted(
                         reason=r or "User took remote control of assistant desktop.",
                     ),

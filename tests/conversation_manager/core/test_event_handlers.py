@@ -1092,7 +1092,7 @@ class TestMeetInteractionEventHandlers:
         """UserWebcamStarted sets user_webcam_active to True."""
         mock_cm.user_webcam_active = False
 
-        event = UserWebcamStarted(reason="User enabled their webcam")
+        event = UserWebcamStarted()
         await EventHandler.handle_event(event, mock_cm)
 
         assert mock_cm.user_webcam_active is True
@@ -1102,7 +1102,7 @@ class TestMeetInteractionEventHandlers:
         """UserWebcamStopped sets user_webcam_active to False."""
         mock_cm.user_webcam_active = True
 
-        event = UserWebcamStopped(reason="User disabled their webcam")
+        event = UserWebcamStopped()
         await EventHandler.handle_event(event, mock_cm)
 
         assert mock_cm.user_webcam_active is False
@@ -1115,7 +1115,7 @@ class TestMeetInteractionEventHandlers:
         mock_cm.mode = Mode.TEXT
         mock_cm.user_webcam_active = False
 
-        event = UserWebcamStarted(reason="User enabled their webcam")
+        event = UserWebcamStarted()
         await EventHandler.handle_event(event, mock_cm)
 
         assert mock_cm.user_webcam_active is True
@@ -1129,7 +1129,7 @@ class TestMeetInteractionEventHandlers:
         mock_cm.mode = Mode.MEET
         mock_cm.user_webcam_active = False
 
-        event = UserWebcamStarted(reason="User enabled their webcam")
+        event = UserWebcamStarted()
         await EventHandler.handle_event(event, mock_cm)
 
         assert mock_cm.user_webcam_active is True

@@ -1031,12 +1031,12 @@ class TestMeetInteractionSystemEvents:
         (
             "user_webcam_started",
             UserWebcamStarted,
-            "User enabled their webcam",
+            "",
         ),
         (
             "user_webcam_stopped",
             UserWebcamStopped,
-            "User disabled their webcam",
+            "",
         ),
         (
             "user_remote_control_started",
