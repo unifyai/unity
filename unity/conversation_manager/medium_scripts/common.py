@@ -121,27 +121,19 @@ class FastBrainLogger:
         extra = _kv_suffix(kv)
         self._emit("assistant_speech", f"{_trunc(text)}{extra}")
 
-    def guidance_received(
+    def guidance(
         self,
         source: str,
-        should_speak: bool,
         content: str,
-        **kv: object,
+        *,
+        guidance_id: str = "",
+        speak: bool = False,
+        turn: bool = False,
     ) -> None:
         self._emit(
             "guidance_received",
-            f"Guidance from {source}: {_trunc(content)}{_kv_suffix(dict(speak=should_speak, **kv))}",
-        )
-
-    def guidance_applied(
-        self,
-        guidance_id: str,
-        source: str = "",
-        **kv: object,
-    ) -> None:
-        self._emit(
-            "guidance_applied",
-            f"Applied guidance {guidance_id}{_kv_suffix(dict(source=source, **kv))}",
+            f"Guidance from {source}: {_trunc(content)}"
+            f" (guidance_id={guidance_id}, speak={speak}, turn={turn})",
         )
 
     def guidance_buffered(self, guidance_id: str, count: int) -> None:
