@@ -45,14 +45,14 @@ class SteeringOperation:
     requires_clarification: bool = False  # Whether this needs a call_id suffix
 
     def get_docstring(self) -> str:
-        """Get the first line of the docstring from SteerableToolHandle."""
+        """Get the full docstring from SteerableToolHandle."""
         method = getattr(SteerableToolHandle, self.method_name, None)
         if method is None:
             return ""
         doc = inspect.getdoc(method)
         if not doc:
             return ""
-        return doc.strip().split("\n")[0]
+        return doc.strip()
 
 
 # Core steering operations - derived from SteerableToolHandle's abstract methods
