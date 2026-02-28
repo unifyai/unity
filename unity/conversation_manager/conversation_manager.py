@@ -599,20 +599,8 @@ class ConversationManager(metaclass=SingletonABCMeta):
     async def interject_or_run(self, content: str):
         """Interject the ask handle or run the LLM"""
         if self.active_ask_handle and not self.active_ask_handle.done():
-            self._session_logger.info(
-                "event",
-                "Routing to active ask handle",
-                icon_override="🔀",
-            )
             await self.active_ask_handle.interject(content)
         else:
-            # With single-shot LLM, there's no ongoing brain loop to interject.
-            # Just trigger a new LLM run.
-            self._session_logger.info(
-                "llm_thinking",
-                "Triggering main CM brain",
-                icon_override="🔀",
-            )
             # Voice mode: cancel_running=False so running LLM tasks complete
             # while only pending tasks are replaced ("queue of 2"). This
             # prevents rapid user speech from cancelling every LLM run.
