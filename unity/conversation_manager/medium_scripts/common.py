@@ -236,7 +236,7 @@ class FastBrainLogger:
         self._emit_debug("config", msg)
 
     def dispatch(self, msg: str) -> None:
-        self._emit("dispatch", msg)
+        self._emit_debug("dispatch", msg)
 
     def info(self, msg: str) -> None:
         self._emit_debug("info", msg)
