@@ -202,6 +202,27 @@ class ComputerEnvironment(BaseEnvironment):
             "completion is sufficient.",
         )
 
+        parts.append(
+            "### Latency: Act and Observe Concurrently\n\n"
+            "Computer actions are the single biggest latency bottleneck — "
+            "especially during interactive sessions where the user is waiting "
+            "in real time.  **Never** follow a sequential observe → act → "
+            "observe pattern (three separate round trips).  Instead:\n\n"
+            "1. **Act immediately** based on known or assumed state.  If the "
+            "user says \"open Chrome\", just call `act('Open Chrome')` — do "
+            "not take a screenshot first to confirm the desktop is visible.\n"
+            "2. **Observe after acting** to verify the outcome.  If the state "
+            "is not what you expected, course-correct with a follow-up action.\n"
+            "3. **Combine observe + act in one turn** when possible.  If you "
+            "need both a screenshot and an action, issue them concurrently "
+            "rather than waiting for the screenshot before deciding to act.\n\n"
+            "The principle: **assume the likely state and act on it; verify "
+            "and correct afterwards.**  One optimistic action + one "
+            "verification is almost always faster than observe → plan → act → "
+            "verify, and the cost of an occasional correction is far less "
+            "than the cost of an extra round trip on every single interaction.",
+        )
+
         if self._allowed_methods is not None:
             filtered_docs = build_filtered_method_docs(
                 self._allowed_methods,
