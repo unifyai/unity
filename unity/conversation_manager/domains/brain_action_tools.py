@@ -1507,8 +1507,9 @@ class ConversationManagerBrainActionTools:
         transcript fast paths: ``ActorHandleStarted`` event, watcher tasks for
         result delivery, and automatic cleanup on completion.
 
-        After the primitive completes, silently interjects any in-flight Actor
-        sessions that have used desktop primitives so they stay coherent.
+        Interjects in-flight Actor desktop sessions twice:
+        1. Immediately when the request is made (so the Actor knows what's happening)
+        2. After the primitive completes with the result
         """
         global _next_handle_id
 
@@ -1519,7 +1520,14 @@ class ConversationManagerBrainActionTools:
         async def _run():
             result = await coro
             await self._silent_interject_desktop_act_sessions(
-                f"[Desktop fast-path] {action_type}: {text}\nResult: {result}",
+                f"[FYI — already done] The outer process executed "
+                f'{action_type}("{text}") via a direct fast path. '
+                f"Result: {result}\n"
+                f"No action needed from you — this is for awareness only. "
+                f"If you have relevant context (e.g. a stored skill that "
+                f"should be used instead, or a reason to adjust your own "
+                f"desktop plan), you may act on it; otherwise treat as a "
+                f"no-op.",
             )
             return str(result) if result is not None else "done"
 
@@ -1549,6 +1557,14 @@ class ConversationManagerBrainActionTools:
                 action_name=action_type,
                 query=text,
             ).to_json(),
+        )
+
+        await self._silent_interject_desktop_act_sessions(
+            f"[FYI — being handled] The outer process is executing "
+            f'{action_type}("{text}") via a direct fast path. '
+            f"Do NOT replicate this action — it is already in progress. "
+            f"You will receive the result shortly. If this conflicts with "
+            f"your current plan, you may adjust accordingly.",
         )
 
         return {"status": "acting", "query": text}

@@ -355,8 +355,25 @@ For communication tools, provide the contact_id when the contact is in the activ
 
     # Action steering guidelines (not applicable in demo mode)
     if not demo_mode:
+        if desktop_fast_path:
+            desktop_click_example = (
+                "`desktop_act` (atomic desktop action — faster than interjecting)"
+            )
+            desktop_interject_caveat = (
+                " **Exception:** For atomic desktop actions (click, type, scroll) "
+                "when desktop fast-path tools are available, prefer `desktop_act` "
+                "over `interject_*` — it is significantly faster. The in-flight "
+                "`act` session is automatically interjected with both the request "
+                "and the result, so it stays fully in sync."
+            )
+        else:
+            desktop_click_example = (
+                "`interject_*` (the session needs to continue executing)"
+            )
+            desktop_interject_caveat = ""
+
         parts.add(
-            """Action steering guidelines
+            f"""Action steering guidelines
 --------------------------
 **Understanding in-flight actions:**
 Actions shown in in_flight_actions are ALREADY EXECUTING their original request. The work is happening right now. I should use steering tools to interact with running actions - do NOT call `act`, `ask_about_contacts`, `update_contacts`, or `query_past_transcripts` to duplicate work that is already in progress.
@@ -388,7 +405,7 @@ Critically, "remember this" / "save this workflow" / "I want you to do this on y
 
 Contrastive examples:
 - Boss says "remember this for next time" during a guided session → `stop_*` (teaching is done; storage happens automatically)
-- Boss says "now click the Submit button" during a guided session → `interject_*` (the session needs to continue executing)
+- Boss says "now click the Submit button" during a guided session → {desktop_click_example}
 - Boss says "cancel this, start over" → `stop_*` (with reason indicating cancellation)
 
 **Pausing actions (pause_*):**
@@ -398,7 +415,7 @@ Use when my boss wants to temporarily halt an action but keep its state so it ca
 Use to continue a previously paused action from where it stopped.
 
 **Interjecting (interject_*):**
-Use to proactively provide new information or updated instructions to a running action. For example, if my boss says "actually, only include US contacts" while a contact-listing action runs, interject with that constraint.
+Use to proactively provide new information or updated instructions to a running action. For example, if my boss says "actually, only include US contacts" while a contact-listing action runs, interject with that constraint.{desktop_interject_caveat}
 
 **Answering clarifications (answer_clarification_*):**
 Use when an action has asked a specific question (shown in its history as a clarification request). This responds directly to what the action asked.
@@ -601,15 +618,17 @@ Examples of requests that should use the direct tools:
 -----------------------
 `desktop_act`, `desktop_observe`, and `desktop_get_screenshot` are **direct shortcuts** to the desktop agent, bypassing the general `act` pathway. They complete within this turn and return results immediately.
 
+**IMPORTANT — priority over interject_*:** When these tools are available and the request is an atomic desktop action, ALWAYS prefer `desktop_act` / `desktop_observe` over interjecting a persistent `act` session — even if one is running. Interjecting routes through an extra LLM hop and is much slower. The in-flight `act` session is automatically interjected when the request is made and again with the result, so it stays fully in sync — just via a faster path.
+
 Use these for **single atomic desktop actions** where the user has explicitly described both the action and the target:
-- "Click the blue Submit button" → `desktop_act`
-- "Type 'hello world' into the search box" → `desktop_act`
-- "Scroll down" → `desktop_act`
+- "Click the blue Submit button" → `desktop_act` (NOT interject_*)
+- "Type 'hello world' into the search box" → `desktop_act` (NOT interject_*)
+- "Scroll down" → `desktop_act` (NOT interject_*)
 - "What does the screen show right now?" → `desktop_observe`
 - "What is the value in the Total cell?" → `desktop_observe`
 - "Take a screenshot" → `desktop_get_screenshot`
 
-**Use `act` instead when:**
+**Use `act` or `interject_*` instead when:**
 - The request requires reasoning about *what* to do (not just *where*)
 - Multiple steps are needed ("copy the sales data to a Word template")
 - The request involves non-desktop work alongside desktop actions
@@ -651,8 +670,19 @@ Examples of questions that should trigger `act`:
 **Skill storage notifications:** After `act` completes, I may see progress events mentioning that skills or reusable functions are being stored for future use. This is an internal housekeeping process — there is no need to relay information about skill storage to my boss unless they specifically ask about how skills are being learned or stored.""",
         )
 
+        persistent_desktop_note = (
+            "\n\n**Exception — desktop fast-path tools:** When `desktop_act` / "
+            "`desktop_observe` / `desktop_get_screenshot` are available, use them "
+            "for atomic desktop actions instead of ``interject_*``. They are "
+            "significantly faster, and the in-flight ``act`` session is "
+            "automatically interjected with both the request and the result, "
+            "so it stays fully in sync — just via a faster path."
+            if desktop_fast_path
+            else ""
+        )
+
         parts.add(
-            """Persistent sessions (persist=True)
+            f"""Persistent sessions (persist=True)
 -----------------------------------
 A ``persist=False`` action completes on its own and is gone. If my boss sends a follow-up instruction after it finishes, there is no session to receive it. Use ``persist=True`` whenever the action may need further direction — the session stays alive and subsequent instructions arrive via ``interject_*``.
 
@@ -669,7 +699,7 @@ A ``persist=False`` action completes on its own and is gone. If my boss sends a 
 
 **Combine entangled objectives into a single ``act`` call.** If a moment has both a storage component (e.g., "remember the procedure I just showed you") and an interactive component (e.g., "now you try it"), I issue ONE ``act(persist=True)`` with a comprehensive query covering both — not two separate actions that lose shared context.
 
-Once a persistent action is running, all further instructions that belong to the same session go through ``interject_*`` — I do NOT start a new ``act`` for each step.""",
+Once a persistent action is running, all further instructions that belong to the same session go through ``interject_*`` — I do NOT start a new ``act`` for each step.{persistent_desktop_note}""",
         )
 
         parts.add(

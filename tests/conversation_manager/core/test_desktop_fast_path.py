@@ -176,7 +176,8 @@ async def test_desktop_primitive_event_type_registered(initialized_cm):
 @_handle_project
 async def test_desktop_act_returns_acting_and_interjects_on_completion(initialized_cm):
     """desktop_act should return immediately with 'acting' status and silently
-    interject in-flight act sessions once the background task completes."""
+    interject in-flight act sessions twice: once when the request is made, and
+    again when the background task completes with the result."""
     from unity.conversation_manager.domains.brain_action_tools import (
         ConversationManagerBrainActionTools,
     )
@@ -220,16 +221,37 @@ async def test_desktop_act_returns_acting_and_interjects_on_completion(initializ
         len(desktop_actions) == 1
     ), f"Expected 1 desktop_act in-flight action, got {len(desktop_actions)}"
 
+    # The request-time interjection should have already fired
+    assert mock_actor_handle.interject.call_count == 1
+    request_msg = mock_actor_handle.interject.call_args_list[0].args[0]
+    assert "being handled" in request_msg.lower()
+    assert "Click Submit" in request_msg
+    assert "do not replicate" in request_msg.lower()
+    assert (
+        mock_actor_handle.interject.call_args_list[0].kwargs.get(
+            "trigger_immediate_llm_turn",
+        )
+        is False
+    )
+
     # Wait for the background task to complete
     desktop_hid = next(iter(desktop_actions))
     desktop_handle = desktop_actions[desktop_hid]["handle"]
     await desktop_handle.result()
 
-    # After completion, the silent interjection should have fired
-    mock_actor_handle.interject.assert_called_once()
-    call_kwargs = mock_actor_handle.interject.call_args
-    assert call_kwargs.kwargs.get("trigger_immediate_llm_turn") is False
-    assert "Click Submit" in call_kwargs.args[0]
+    # After completion, a second interjection should have fired with the result
+    assert mock_actor_handle.interject.call_count == 2
+    result_msg = mock_actor_handle.interject.call_args_list[1].args[0]
+    assert "already done" in result_msg.lower()
+    assert "Click Submit" in result_msg
+    assert "Clicked Submit" in result_msg
+    assert "no action needed" in result_msg.lower()
+    assert (
+        mock_actor_handle.interject.call_args_list[1].kwargs.get(
+            "trigger_immediate_llm_turn",
+        )
+        is False
+    )
 
     # Clean up
     cm.in_flight_actions.pop(10, None)
@@ -243,7 +265,8 @@ async def test_desktop_observe_returns_acting_and_interjects_on_completion(
     initialized_cm,
 ):
     """desktop_observe should return immediately with 'acting' status and silently
-    interject in-flight act sessions once the background task completes."""
+    interject in-flight act sessions twice: once when the request is made, and
+    again when the background task completes with the result."""
     from unity.conversation_manager.domains.brain_action_tools import (
         ConversationManagerBrainActionTools,
     )
@@ -276,6 +299,18 @@ async def test_desktop_observe_returns_acting_and_interjects_on_completion(
 
     assert result["status"] == "acting"
 
+    # Request-time interjection should have already fired
+    assert mock_actor_handle.interject.call_count == 1
+    request_msg = mock_actor_handle.interject.call_args_list[0].args[0]
+    assert "being handled" in request_msg.lower()
+    assert "do not replicate" in request_msg.lower()
+    assert (
+        mock_actor_handle.interject.call_args_list[0].kwargs.get(
+            "trigger_immediate_llm_turn",
+        )
+        is False
+    )
+
     # Wait for the background task
     desktop_actions = {
         hid: data
@@ -286,9 +321,18 @@ async def test_desktop_observe_returns_acting_and_interjects_on_completion(
     desktop_hid = next(iter(desktop_actions))
     await desktop_actions[desktop_hid]["handle"].result()
 
-    mock_actor_handle.interject.assert_called_once()
-    call_kwargs = mock_actor_handle.interject.call_args
-    assert call_kwargs.kwargs.get("trigger_immediate_llm_turn") is False
+    # After completion, a second interjection should have fired with the result
+    assert mock_actor_handle.interject.call_count == 2
+    result_msg = mock_actor_handle.interject.call_args_list[1].args[0]
+    assert "already done" in result_msg.lower()
+    assert "Login page with username field" in result_msg
+    assert "no action needed" in result_msg.lower()
+    assert (
+        mock_actor_handle.interject.call_args_list[1].kwargs.get(
+            "trigger_immediate_llm_turn",
+        )
+        is False
+    )
 
     # Clean up
     cm.in_flight_actions.pop(11, None)
