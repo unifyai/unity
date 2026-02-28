@@ -6,7 +6,6 @@ import asyncio
 import fnmatch
 import json
 import sys
-from secrets import token_hex
 from typing import TYPE_CHECKING, Awaitable, Callable, Iterable, Optional
 
 if TYPE_CHECKING:
@@ -67,12 +66,13 @@ class FastBrainLogger:
     """Lightweight logger using the same ``{emoji} [{label}] {message}`` format
     as the async tool loop's ``LoopLogger``.
 
-    *label* is ``FastBrain({suffix})``, matching the ``LoopConfig`` label convention.
+    Unlike async tool loops (which may have many concurrent instances and need
+    unique suffixes for disambiguation), there is exactly one FastBrain and one
+    ProactiveSpeech module per session — so the label is a fixed string.
     """
 
-    def __init__(self) -> None:
-        suffix = token_hex(2)
-        self._label = f"FastBrain({suffix})"
+    def __init__(self, label: str = "FastBrain") -> None:
+        self._label = label
 
     @property
     def label(self) -> str:

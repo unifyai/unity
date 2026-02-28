@@ -212,7 +212,7 @@ class ConversationManager(metaclass=SingletonABCMeta):
         self._proactive_speech_task: asyncio.Task | None = None
         self._proactive_speech_gen: int = 0
         self._fast_brain_active: bool = False
-        self._proactive_logger = FastBrainLogger()
+        self._proactive_logger = FastBrainLogger("ProactiveSpeech")
 
         # ask handles (for Actor actions)
         self.active_ask_handle: Optional["SteerableToolHandle"] = None
@@ -867,7 +867,7 @@ class ConversationManager(metaclass=SingletonABCMeta):
         # Single-shot LLM call: one decision, one action
         client = new_llm_client(
             SETTINGS.UNIFY_MODEL,
-            origin="ConversationManager.decide",
+            origin="ConversationManager",
         )
         client.set_system_message(system_prompt.to_list())
         client.set_prompt_caching(["system"])

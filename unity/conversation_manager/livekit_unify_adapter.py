@@ -175,7 +175,7 @@ class UnifyLLMStream(llm.LLMStream):
         # Create Unify client
         client = new_llm_client(
             self._model,
-            origin="ConversationManager.livekit",
+            origin="FastBrain",
             **client_kwargs,
         )
         client.set_stream(True)
