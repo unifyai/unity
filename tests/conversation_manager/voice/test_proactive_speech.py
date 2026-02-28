@@ -1304,17 +1304,18 @@ class TestProactiveSpeechActionAwareness:
 
     @pytest.mark.eval
     async def test_no_completion_claim_while_action_in_flight(self):
-        """When an action is in-flight, proactive speech must not generate
-        content that claims the action is complete.
-
-        This is the user-visible failure: "the browser should be up now"
-        spoken while the browser hasn't been opened yet.
+        """When given explicit action status showing an action is in-flight,
+        proactive speech must not claim the action is complete.
 
         Uses a real LLM call. The scenario is maximally provocative: the
         assistant said "one moment" a while ago, silence has elapsed, and
         the natural LLM tendency is to say "it should be ready now".
-        The fix must inject action status so the LLM knows better.
+        With action_context injected, the LLM must respect the ground truth.
         """
+        from unity.conversation_manager.conversation_manager import (
+            _render_action_context,
+        )
+
         ps = ProactiveSpeech()
 
         chat_history = [
@@ -1331,10 +1332,21 @@ class TestProactiveSpeechActionAwareness:
             "You are a helpful assistant on a live call. "
             "Your desktop is being screen-shared to the user."
         )
+        action_context = _render_action_context(
+            in_flight_actions={
+                42: {
+                    "query": "Open the web browser on the desktop",
+                    "handle": None,
+                    "handle_actions": [],
+                },
+            },
+            completed_actions={},
+        )
 
         decision = await ps.decide(
             chat_history=chat_history,
             system_prompt=system_prompt,
+            action_context=action_context,
         )
 
         if decision.should_speak and decision.content:
@@ -1357,6 +1369,7 @@ class TestProactiveSpeechActionAwareness:
             ]
             assert not any(phrase in lower for phrase in completion_claims), (
                 f"Proactive speech claimed an in-flight action was complete: "
-                f"'{decision.content}'. The LLM has no action status context "
-                f"and must not hallucinate completion of 'Open the browser'."
+                f"'{decision.content}'. The action status explicitly says "
+                f"'EXECUTING (in-flight)' — the LLM must not hallucinate "
+                f"completion."
             )
