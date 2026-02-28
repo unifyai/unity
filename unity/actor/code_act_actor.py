@@ -56,6 +56,7 @@ from unity.events.manager_event_logging import (
 
 if TYPE_CHECKING:
     from unity.actor.environments.base import BaseEnvironment
+    from unity.customization.clients import ResolvedCustomization
     from unity.function_manager.function_manager import FunctionManager
     from unity.guidance_manager.guidance_manager import GuidanceManager
 
@@ -1339,6 +1340,7 @@ class CodeActActor(BaseCodeActActor):
         prompt_caching: object = _UNSET,
         guidelines: object = _UNSET,
         tool_policy: Union[ToolPolicyFn, None, object] = _USE_DEFAULT,
+        resolved: Optional["ResolvedCustomization"] = None,
     ):
         """
         Initializes the CodeActActor.
@@ -1384,18 +1386,21 @@ class CodeActActor(BaseCodeActActor):
                   the tools.
                 - ``None``: no dynamic policy; only the static ``can_compose`` /
                   ``can_store`` filters apply.
+            resolved: Pre-resolved client customization. When provided, the
+                actor uses it directly for config and environments. When
+                ``None`` (e.g. in tests), resolution is performed internally.
+                Cross-cutting seed sync is the caller's responsibility.
         """
-        # Resolve code-defined client customizations, then apply three-tier
-        # precedence: explicit constructor arg > code config > hardcoded default.
-        from unity.customization.clients import resolve as _resolve_customization
-        from unity.session_details import SESSION_DETAILS
+        if resolved is None:
+            from unity.customization.clients import resolve as _resolve_customization
+            from unity.session_details import SESSION_DETAILS
 
-        resolved = _resolve_customization(
-            org_id=SESSION_DETAILS.org_id,
-            team_ids=SESSION_DETAILS.team_ids or None,
-            user_id=SESSION_DETAILS.user.id,
-            assistant_id=SESSION_DETAILS.assistant.agent_id,
-        )
+            resolved = _resolve_customization(
+                org_id=SESSION_DETAILS.org_id,
+                team_ids=SESSION_DETAILS.team_ids or None,
+                user_id=SESSION_DETAILS.user.id,
+                assistant_id=SESSION_DETAILS.assistant.agent_id,
+            )
 
         merged_environments = resolved.environments + (environments or [])
 
@@ -1404,27 +1409,6 @@ class CodeActActor(BaseCodeActActor):
             function_manager=function_manager,
             guidance_manager=guidance_manager,
         )
-
-        # Sync client-specific custom functions/venvs to the DB (needed for
-        # semantic search and runtime discovery by the LLM).
-        if resolved.function_dirs or resolved.venv_dirs:
-            from unity.function_manager.custom_functions import (
-                collect_functions_from_directories,
-                collect_venvs_from_directories,
-            )
-
-            source_fns = collect_functions_from_directories(resolved.function_dirs)
-            source_venvs = collect_venvs_from_directories(resolved.venv_dirs)
-            if self.function_manager is not None and (source_fns or source_venvs):
-                self.function_manager.sync_custom(
-                    source_functions=source_fns,
-                    source_venvs=source_venvs,
-                )
-
-        # Sync seed data (contacts, guidance, knowledge, secrets, blacklist).
-        from unity.customization.seed_sync import sync_all_seed_data
-
-        sync_all_seed_data(resolved)
 
         can_compose = _resolve_param(can_compose, resolved.config.can_compose, True)
         can_store = _resolve_param(can_store, resolved.config.can_store, True)
