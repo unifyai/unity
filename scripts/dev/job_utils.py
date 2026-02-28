@@ -33,15 +33,8 @@ def success(msg):
     print(f"{GREEN}[OK]{NC} {msg}")
 
 
-def resolve_latest_job(namespace: str, *, running_only: bool = False) -> str:
-    """Resolve the most recent job for the current user.
-
-    Uses UNIFY_KEY to identify the caller, then queries AssistantJobs for
-    their most recent job whose name ends with ``-{namespace}``.
-
-    When *running_only* is True, only jobs with running status are
-    considered — useful for suspension where completed jobs are irrelevant.
-    """
+def _find_latest_job_entry(namespace: str, *, running_only: bool = False):
+    """Return the log entry for the latest matching job, or exit."""
     import unify
 
     shared_key = os.environ.get("SHARED_UNIFY_KEY")
@@ -79,8 +72,58 @@ def resolve_latest_job(namespace: str, *, running_only: bool = False) -> str:
             continue
         status = f"{GREEN}running{NC}" if running else f"{YELLOW}completed{NC}"
         success(f"Found job: {job_name} ({status})")
-        return job_name
+        return log
 
     qualifier = "running " if running_only else ""
     error(f"No {qualifier}jobs found for {email} in namespace '{namespace}'.")
     sys.exit(1)
+
+
+def resolve_latest_job(namespace: str, *, running_only: bool = False) -> str:
+    """Resolve the most recent job name for the current user.
+
+    Uses UNIFY_KEY to identify the caller, then queries AssistantJobs for
+    their most recent job whose name ends with ``-{namespace}``.
+
+    When *running_only* is True, only jobs with running status are
+    considered — useful for suspension where completed jobs are irrelevant.
+    """
+    return _find_latest_job_entry(namespace, running_only=running_only).entries[
+        "job_name"
+    ]
+
+
+def resolve_latest_assistant_id(namespace: str) -> str:
+    """Resolve the assistant_id for the most recent running job.
+
+    Uses UNIFY_KEY to identify the caller, then queries AssistantJobs for
+    their most recent *running* job and returns its assistant_id.
+    """
+    entry = _find_latest_job_entry(namespace, running_only=True).entries
+    assistant_id = entry.get("assistant_id")
+    if not assistant_id:
+        error(f"Job '{entry.get('job_name')}' has no assistant_id in metadata.")
+        sys.exit(1)
+    return str(assistant_id)
+
+
+if __name__ == "__main__":
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Job utilities CLI")
+    parser.add_argument(
+        "command",
+        choices=["assistant-id"],
+    )
+    parser.add_argument("--production", action="store_true")
+    args = parser.parse_args()
+
+    namespace = "production" if args.production else "staging"
+    os.environ["ORCHESTRA_URL"] = ORCHESTRA_URLS[namespace]
+
+    from dotenv import load_dotenv
+
+    load_dotenv()
+
+    if args.command == "assistant-id":
+        print(resolve_latest_assistant_id(namespace))
