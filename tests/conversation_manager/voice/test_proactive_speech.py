@@ -1092,6 +1092,91 @@ class TestProactiveSpeechLLMBehavior:
 
 
 @pytest.mark.asyncio
+class TestProactiveSpeechConcurrentScheduling:
+    """Tests for concurrent scheduling race conditions.
+
+    Regression: two concurrent schedule_proactive_speech() calls can interleave
+    at the ``await cancel_proactive_speech()`` yield point, causing both to
+    create a loop task — but only one is tracked by ``_proactive_speech_task``,
+    leaving the other orphaned. Both orphaned and tracked loops run to
+    completion and publish duplicate guidance events.
+    """
+
+    async def test_concurrent_schedule_publishes_only_once(self, mock_cm):
+        """Two concurrent schedule_proactive_speech() calls must not produce
+        two loops that both publish guidance.
+
+        This reproduces the race: an existing proactive loop is running (the
+        debounce sleep). Two ``schedule_proactive_speech`` calls arrive
+        concurrently. Both enter ``cancel_proactive_speech`` and await the
+        same existing task. When it finishes, both resume and each creates a
+        new loop — but only one is tracked by ``_proactive_speech_task``. The
+        orphaned loop runs to completion and publishes a duplicate guidance.
+        """
+        from unity.conversation_manager.conversation_manager import ConversationManager
+
+        mock_cm.mode = Mode.CALL
+
+        async def mock_decide(*args, **kwargs):
+            return ProactiveDecision(
+                should_speak=True,
+                delay=0,
+                content="Still with you!",
+            )
+
+        mock_cm.proactive_speech.decide = mock_decide
+
+        # Bind real methods to the mock so the full cancel→create flow executes.
+        mock_cm.schedule_proactive_speech = (
+            lambda: ConversationManager.schedule_proactive_speech(mock_cm)
+        )
+        mock_cm.cancel_proactive_speech = (
+            lambda: ConversationManager.cancel_proactive_speech(mock_cm)
+        )
+        mock_cm._proactive_speech_loop = (
+            lambda: ConversationManager._proactive_speech_loop(mock_cm)
+        )
+
+        mock_cm.PROACTIVE_DEBOUNCE_SECONDS = 0
+
+        # Seed an existing long-running proactive task so both concurrent
+        # schedule calls have a live task to cancel (forcing them both to
+        # yield at ``await self._proactive_speech_task`` simultaneously).
+        async def slow_existing_loop():
+            await asyncio.sleep(100)
+
+        mock_cm._proactive_speech_task = asyncio.create_task(slow_existing_loop())
+
+        with patch(
+            "unity.conversation_manager.conversation_manager.build_brain_spec",
+            return_value=MockBrainSpec(),
+        ):
+            # Fire two schedules concurrently. Both find the existing slow
+            # task, both cancel it, both await its completion, both resume
+            # and create new loop tasks — but only the last writer wins the
+            # _proactive_speech_task reference.
+            await asyncio.gather(
+                mock_cm.schedule_proactive_speech(),
+                mock_cm.schedule_proactive_speech(),
+            )
+
+            # Give both loops time to run to completion (debounce is 0).
+            await asyncio.sleep(0.2)
+
+        guidance_publishes = [
+            c
+            for c in mock_cm.event_broker.publish.call_args_list
+            if c.args[0] == "app:call:call_guidance"
+        ]
+
+        assert len(guidance_publishes) == 1, (
+            f"Expected exactly 1 guidance publish from concurrent scheduling, "
+            f"got {len(guidance_publishes)}. "
+            f"This indicates an orphaned proactive loop escaped cancellation."
+        )
+
+
+@pytest.mark.asyncio
 class TestProactiveSpeechMediumScriptIntegration:
     """Tests verifying medium scripts properly handle proactive speech."""
 
