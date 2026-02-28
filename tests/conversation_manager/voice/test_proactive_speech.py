@@ -1191,3 +1191,172 @@ class TestProactiveSpeechMediumScriptIntegration:
             "app:call:call_guidance" in source
         ), "call.py should subscribe to app:call:call_guidance"
         assert "on_guidance" in source, "call.py should have an on_guidance callback"
+
+
+# =============================================================================
+# 10. Action-Awareness Regression Tests
+# =============================================================================
+
+
+@pytest.mark.asyncio
+class TestProactiveSpeechActionAwareness:
+    """Regression: proactive speech must not claim in-flight actions are done.
+
+    Reproduces the bug from unity-2026-02-28-15-10-22-staging where proactive
+    speech said "the browser should be up now" while the CodeActActor was still
+    in the discovery phase and hadn't yet opened anything.
+
+    Root cause: _proactive_speech_loop passes only conversation_turns and
+    system_prompt to ProactiveSpeech.decide(). Neither contains the action
+    status (in_flight_actions / completed_actions), so the LLM sees
+    "one moment, I'm pulling up the browser" in the transcript and infers
+    completion that hasn't happened.
+    """
+
+    async def test_decide_receives_in_flight_action_context(self, mock_cm):
+        """_proactive_speech_loop must tell decide() which actions are still
+        executing so it knows what is pending vs. done.
+
+        The conversation history alone says "I'm pulling up the browser" but
+        not whether that action has COMPLETED. The fix can thread this info
+        however it likes (extra param, system message, enriched turns, etc.)
+        — the test checks that the serialised decide() input contains an
+        explicit marker that an action is still executing (not just the
+        query words, which already appear in the transcript).
+        """
+        from unity.conversation_manager.conversation_manager import ConversationManager
+
+        mock_cm.mode = Mode.CALL
+        mock_cm.in_flight_actions = {
+            42: {
+                "query": "Open the web browser on the desktop",
+                "handle": MagicMock(),
+                "handle_actions": [],
+            },
+        }
+        mock_cm.completed_actions = {}
+        mock_cm.user_screen_share_active = False
+        mock_cm.user_webcam_active = False
+
+        captured_inputs: dict = {}
+
+        async def spy_decide(chat_history, system_prompt, **kwargs):
+            captured_inputs["chat_history"] = chat_history
+            captured_inputs["system_prompt"] = system_prompt
+            captured_inputs["kwargs"] = kwargs
+            return ProactiveDecision(should_speak=False)
+
+        mock_cm.proactive_speech.decide = spy_decide
+        mock_cm.get_recent_voice_transcript = MagicMock(
+            return_value=(
+                [
+                    {
+                        "role": "user",
+                        "content": "Could you please open the browser?",
+                    },
+                    {
+                        "role": "assistant",
+                        "content": "Got it — one moment, I'm pulling up the browser.",
+                    },
+                ],
+                None,
+            ),
+        )
+
+        with (
+            patch("asyncio.sleep", new=AsyncMock()),
+            patch(
+                "unity.conversation_manager.conversation_manager.build_brain_spec",
+                return_value=MockBrainSpec(),
+            ),
+        ):
+            await ConversationManager._proactive_speech_loop(mock_cm)
+
+        assert captured_inputs, "decide() was never called"
+
+        all_text = json.dumps(captured_inputs, default=str).lower()
+
+        # The decide() input must contain explicit STATUS markers about
+        # in-flight actions — not just the query words (which already
+        # appear in the transcript). Look for phrases that convey
+        # "something is currently executing / in-flight / in progress".
+        status_markers = [
+            "in-flight",
+            "in_flight",
+            "in flight",
+            "in progress",
+            "executing",
+            "running",
+            "pending",
+            "still running",
+            "currently executing",
+            "not yet complete",
+        ]
+        has_status_marker = any(marker in all_text for marker in status_markers)
+        assert has_status_marker, (
+            "decide() must receive explicit action STATUS context (e.g. "
+            "'in-flight', 'executing', 'in progress') so it knows 'Open the "
+            "web browser' is still running and must not claim completion. "
+            "Currently it only sees the transcript, which says 'I'm pulling "
+            "up the browser' but never says whether that action finished.\n"
+            f"Actual decide() inputs:\n{json.dumps(captured_inputs, default=str)[:800]}"
+        )
+
+    @pytest.mark.eval
+    async def test_no_completion_claim_while_action_in_flight(self):
+        """When an action is in-flight, proactive speech must not generate
+        content that claims the action is complete.
+
+        This is the user-visible failure: "the browser should be up now"
+        spoken while the browser hasn't been opened yet.
+
+        Uses a real LLM call. The scenario is maximally provocative: the
+        assistant said "one moment" a while ago, silence has elapsed, and
+        the natural LLM tendency is to say "it should be ready now".
+        The fix must inject action status so the LLM knows better.
+        """
+        ps = ProactiveSpeech()
+
+        chat_history = [
+            {
+                "role": "user",
+                "content": "Could you please open the browser?",
+            },
+            {
+                "role": "assistant",
+                "content": "Got it — one moment, I'm pulling up the browser.",
+            },
+        ]
+        system_prompt = (
+            "You are a helpful assistant on a live call. "
+            "Your desktop is being screen-shared to the user."
+        )
+
+        decision = await ps.decide(
+            chat_history=chat_history,
+            system_prompt=system_prompt,
+        )
+
+        if decision.should_speak and decision.content:
+            lower = decision.content.lower()
+            completion_claims = [
+                "should be up",
+                "is up now",
+                "browser is open",
+                "browser is ready",
+                "it's open",
+                "all set",
+                "good to go",
+                "loaded",
+                "pulled up",
+                "should be open",
+                "is open now",
+                "ready now",
+                "can see it",
+                "it's up",
+            ]
+            assert not any(phrase in lower for phrase in completion_claims), (
+                f"Proactive speech claimed an in-flight action was complete: "
+                f"'{decision.content}'. The LLM has no action status context "
+                f"and must not hallucinate completion of 'Open the browser'."
+            )
