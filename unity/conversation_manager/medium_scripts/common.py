@@ -232,6 +232,9 @@ class FastBrainLogger:
     def screenshot(self, msg: str) -> None:
         self._emit("screenshot", msg)
 
+    def screenshot_debug(self, msg: str) -> None:
+        self._emit_debug("screenshot", msg)
+
     def config(self, msg: str) -> None:
         self._emit_debug("config", msg)
 
@@ -731,7 +734,7 @@ class UserTrackCaptureManager:
             and publication.source == self._rtc_source
         ):
             if self._log:
-                self._log.screenshot(
+                self._log.screenshot_debug(
                     f"{self._label} track subscribed, starting capture",
                 )
             stream = rtc.VideoStream(track, format=rtc.VideoBufferType.RGBA)
@@ -743,7 +746,7 @@ class UserTrackCaptureManager:
     def _handle_track_unsubscribed(self, publication) -> None:
         if publication.source == self._rtc_source:
             if self._log:
-                self._log.screenshot(
+                self._log.screenshot_debug(
                     f"{self._label} track unsubscribed, stopping capture",
                 )
             self._latest_frame_data = None
