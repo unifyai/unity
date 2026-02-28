@@ -1007,6 +1007,12 @@ async def capture_assistant_screenshot(
         else:
             LOGGER.warning(msg)
 
+    def _log_debug(msg: str) -> None:
+        if fb_logger:
+            fb_logger.screenshot_debug(msg)
+        else:
+            LOGGER.debug(msg)
+
     t_start = _time.monotonic()
 
     def _make_entry(b64: str) -> ScreenshotEntry:
@@ -1058,7 +1064,7 @@ async def capture_assistant_screenshot(
             if data:
                 b64 = data.get("screenshot")
                 if b64:
-                    _log(
+                    _log_debug(
                         f"Assistant screenshot OK"
                         f" (url={url}, total={total_ms:.0f}ms, b64_len={len(b64)})",
                     )
@@ -1151,7 +1157,7 @@ async def capture_assistant_screenshot(
             if data:
                 b64 = data.get("screenshot")
                 if b64:
-                    _log(
+                    _log_debug(
                         f"Assistant screenshot OK"
                         f" (url={url}, total={total_ms:.0f}ms, {_phase_str()}, "
                         f"b64_len={len(b64)})",
