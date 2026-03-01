@@ -162,7 +162,7 @@ class Assistant(Agent):
         else:
             trimmed_ctx = chat_ctx
 
-        _log.info("LLM thinking… reason=llm_node_start")
+        _log.info("LLM thinking… (llm_node_start)")
         async for chunk in super().llm_node(trimmed_ctx, tools, model_settings):
             yield chunk
 
