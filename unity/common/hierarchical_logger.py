@@ -142,6 +142,8 @@ ICONS = {
     "remote_control": "🕹️",
     "remote_control_off": "🚫",
     "desktop_session": "🖥️",
+    # ── Fast paths (direct manager / desktop shortcuts) ────────────────
+    "fast_path": "🏎️",
     # ── Generic / misc ──────────────────────────────────────────────────
     "event": "📣",
     "ping": "🏓",
