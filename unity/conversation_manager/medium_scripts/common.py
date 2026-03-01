@@ -158,7 +158,7 @@ class FastBrainLogger:
         suffix = f": {content}" if content else ""
         self._emit(
             "proactive_decision",
-            f"Proactive decision{_kv_suffix(dict(should_speak=should_speak, delay=f'{delay}s'))}{suffix}",
+            f"should_speak={should_speak}, delay={delay}s{suffix}",
         )
 
     def proactive_deferred(self, reason: str) -> None:
