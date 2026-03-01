@@ -182,7 +182,7 @@ def mark_job_label(job_name: str, status: str):
                 "labels": json.dumps({"unity-status": status}),
             },
             headers={"Authorization": f"Bearer {admin_key}"},
-            timeout=10,
+            timeout=30,
         )
         if resp.ok:
             LOGGER.debug(
