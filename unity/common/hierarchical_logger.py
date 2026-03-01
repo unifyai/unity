@@ -66,6 +66,7 @@ ICONS = {
     "notification_say": "🗣️",
     # ── Proactive speech ────────────────────────────────────────────────
     "proactive_speech": "🗣️",
+    "proactive_waiting": "⏳",
     "proactive_debounce": "⏱️",
     "proactive_decision": "🗣️",
     "proactive_deferred": "⏸️",

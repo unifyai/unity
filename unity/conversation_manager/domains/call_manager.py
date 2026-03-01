@@ -75,8 +75,9 @@ class LivekitCallManager:
         # Set by the ConversationManager to route screenshots to its buffer.
         self.on_screenshot: Callable[[str], None] | None = None
         # Callback when the fast brain starts generating a reply.
-        # Used to suppress proactive speech during generation+TTS.
         self.on_fast_brain_generating: Callable[[], None] | None = None
+        # Callback when the voice pipeline quiescence state changes.
+        self.on_pipeline_quiescent: Callable[[bool], None] | None = None
         # Track the active call's channel type so the disconnect fallback
         # can publish the correct call-ended event.
         self._call_channel: str | None = None
@@ -116,6 +117,14 @@ class LivekitCallManager:
                     and self.on_fast_brain_generating is not None
                 ):
                     self.on_fast_brain_generating()
+                elif (
+                    channel == "app:comms:pipeline_quiescent"
+                    and self.on_pipeline_quiescent is not None
+                ):
+                    import json as _json
+
+                    payload = _json.loads(event_json)
+                    self.on_pipeline_quiescent(payload["quiescent"])
                 else:
                     await self._event_broker.publish(channel, event_json)
 

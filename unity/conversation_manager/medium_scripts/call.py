@@ -270,6 +270,7 @@ async def entrypoint(ctx: agents.JobContext):
     _last_say_meta: dict | None = None
     generation_seq = 0
     user_state_seq = 0
+    _was_quiescent = True
 
     def _log_reply_task(task: asyncio.Task) -> None:
         try:
@@ -332,6 +333,20 @@ async def entrypoint(ctx: agents.JobContext):
     touch_activity = setup_inactivity_timeout(end_call)
     setup_participant_disconnect_handler(ctx.room, end_call)
 
+    def _check_quiescence_transition() -> None:
+        nonlocal _was_quiescent
+        now_quiescent = _is_pipeline_quiescent()
+        if now_quiescent != _was_quiescent:
+            _was_quiescent = now_quiescent
+            import json as _json
+
+            asyncio.create_task(
+                event_broker.publish(
+                    "app:comms:pipeline_quiescent",
+                    _json.dumps({"quiescent": now_quiescent}),
+                ),
+            )
+
     @session.on("user_state_changed")
     def _on_user_state_changed(ev):
         nonlocal user_is_speaking, user_state_seq
@@ -340,6 +355,7 @@ async def entrypoint(ctx: agents.JobContext):
         user_is_speaking = ev.new_state == "speaking"
         _log.user_state(ev.new_state, state_id=state_id)
         touch_activity()
+        _check_quiescence_transition()
 
     @session.on("agent_state_changed")
     def _on_agent_state_changed(ev):
@@ -355,6 +371,7 @@ async def entrypoint(ctx: agents.JobContext):
         """
         if ev.new_state in ("listening", "idle"):
             maybe_speak_queued()
+        _check_quiescence_transition()
 
     # -- Screenshot state --
     screenshot_history = ScreenshotHistory()

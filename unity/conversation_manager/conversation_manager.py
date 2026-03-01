@@ -154,6 +154,7 @@ class ConversationManager(metaclass=SingletonABCMeta):
         self.call_manager = LivekitCallManager(self.get_call_config(), event_broker)
         self.call_manager.on_screenshot = self._buffer_screenshot
         self.call_manager.on_fast_brain_generating = self._on_fast_brain_generating
+        self.call_manager.on_pipeline_quiescent = self._on_pipeline_quiescent
 
         # renderer
         self.prompt_renderer = Renderer()
@@ -209,7 +210,8 @@ class ConversationManager(metaclass=SingletonABCMeta):
         self.proactive_speech = ProactiveSpeech()
         self._proactive_speech_task: asyncio.Task | None = None
         self._proactive_speech_gen: int = 0
-        self._fast_brain_active: bool = False
+        self._voice_pipeline_quiescent = asyncio.Event()
+        self._voice_pipeline_quiescent.set()
         self._proactive_logger = FastBrainLogger("ProactiveSpeech")
 
         # ask handles (for Actor actions)
@@ -1241,14 +1243,18 @@ class ConversationManager(metaclass=SingletonABCMeta):
     def _on_fast_brain_generating(self) -> None:
         """Called via IPC when the fast brain starts generating a reply.
 
-        Sets ``_fast_brain_active`` so the proactive speech loop knows the
-        user is about to hear (or is already hearing) the assistant speak.
-        The flag is cleared when the corresponding ``OutboundUtterance``
-        arrives, and ``schedule_proactive_speech`` restarts the cycle from
-        the correct baseline.
+        Restarts the proactive speech cycle so any in-flight decision is
+        cancelled.  The quiescence gate in ``_proactive_speech_loop`` will
+        prevent the countdown from starting until the pipeline is idle again.
         """
-        self._fast_brain_active = True
         asyncio.ensure_future(self.schedule_proactive_speech())
+
+    def _on_pipeline_quiescent(self, quiescent: bool) -> None:
+        """Called via IPC when the voice pipeline quiescence state changes."""
+        if quiescent:
+            self._voice_pipeline_quiescent.set()
+        else:
+            self._voice_pipeline_quiescent.clear()
 
     async def schedule_proactive_speech(self):
         """Cancel any pending proactive speech and start a fresh cycle.
@@ -1288,14 +1294,20 @@ class ConversationManager(metaclass=SingletonABCMeta):
             return self._proactive_speech_gen != gen
 
         try:
+            if not self._voice_pipeline_quiescent.is_set():
+                _log.proactive_waiting_for_quiescence()
+                await self._voice_pipeline_quiescent.wait()
+                if _superseded():
+                    return
+
             _log.proactive_debounce(self.PROACTIVE_DEBOUNCE_SECONDS)
             await asyncio.sleep(self.PROACTIVE_DEBOUNCE_SECONDS)
 
             if _superseded():
                 return
 
-            if self._fast_brain_active:
-                _log.proactive_deferred("fast brain is active")
+            if not self._voice_pipeline_quiescent.is_set():
+                _log.proactive_deferred("pipeline not quiescent")
                 return
 
             # Gather context for the decision.
