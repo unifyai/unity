@@ -134,6 +134,10 @@ class LoopLogger:
         txt = f"{prefix} [{self._label}] {msg}"
         LOGGER.info(txt)
 
+    def debug(self, msg, prefix=""):
+        txt = f"{prefix} [{self._label}] {msg}"
+        LOGGER.debug(txt)
+
     def error(self, msg, prefix=""):
         txt = f"{prefix} [{self._label}] {msg}"
         LOGGER.error(txt)
