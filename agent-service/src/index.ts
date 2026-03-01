@@ -572,10 +572,11 @@ app.post('/nav', isAgentReady, async (req: Request, res: Response) => {
 });
 
 app.post('/act', isAgentReady, async (req: Request, res: Response) => {
-  const { task, sessionId, override_cache } = req.body;
+  const { task, sessionId } = req.body;
   if (!task) return res.status(400).json({ error: 'bad_request', message: 'Task description is required.' });
   try {
     const session = activeSessions.get(sessionId)!;
+    const agent = session.agent;
 
     const memory = new AgentMemory({ promptCaching: true });
 
@@ -600,7 +601,16 @@ app.post('/act', isAgentReady, async (req: Request, res: Response) => {
 
     const boundary = memory.observationCount;
 
-    await session.agent.act(task, { memory, override_cache: override_cache === true } as any);
+    // 0-shot: single LLM call, blind execution, no verification loop.
+    await agent.recordConnectorObservations(memory);
+    const context = await agent.buildContext(memory);
+    const actActions = agent.actions.filter(a => !a.name.startsWith('task:'));
+    const { reasoning, actions } = await agent.models.partialAct(context, task, [], actActions);
+    console.log(`[act-0shot] reasoning=${reasoning}`);
+    console.log(`[act-0shot] planned ${actions.length} action(s): ${actions.map(a => a.variant).join(', ')}`);
+    for (const action of actions) {
+      await agent.exec(action, memory);
+    }
 
     const newObservations = memory.getObservationsSlice(boundary);
     const filtered = newObservations.filter(obs => {
