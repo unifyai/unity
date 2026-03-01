@@ -381,7 +381,7 @@ class TestPendingThinkingLog:
         from pathlib import Path
 
         log = PendingThinkingLog("FastBrain")
-        log.set_thinking_context(" (reason=test, generation_id=gen-001)")
+        log.set_thinking_context(" (reason=test)")
         log.on_pending_path(Path("/tmp/fake.cache_pending.txt"))
 
         out = capfd.readouterr().out
@@ -389,6 +389,8 @@ class TestPendingThinkingLog:
         assert "[FastBrain]" in out
         assert "LLM thinking…" in out
         assert "reason=test" in out
+        assert "generation_id" not in out
+        assert "source_id" not in out
         assert "→ /tmp/fake.cache_pending.txt" in out
         lines = [l for l in out.splitlines() if "FastBrain" in l]
         assert len(lines) == 1
