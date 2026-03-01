@@ -131,8 +131,9 @@ class FastBrainLogger:
     ) -> None:
         self._emit(
             "notification_received",
-            f"Notification from {source}: {_trunc(content)}"
-            f" (notification_id={notification_id}, speak={speak}, turn={turn})",
+            f"Notification from {source}"
+            f" (notification_id={notification_id}, speak={speak}, turn={turn})"
+            f": {_trunc(content)}",
         )
 
     def notification_buffered(self, notification_id: str, count: int) -> None:
