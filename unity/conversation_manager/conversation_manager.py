@@ -880,8 +880,6 @@ class ConversationManager(metaclass=SingletonABCMeta):
 
         if self.desktop_fast_path_eligible:
             tools["desktop_act"] = action_tools.desktop_act
-            tools["desktop_observe"] = action_tools.desktop_observe
-            tools["desktop_get_screenshot"] = action_tools.desktop_get_screenshot
 
         # Single-shot LLM call: one decision, one action
         client = new_llm_client(
