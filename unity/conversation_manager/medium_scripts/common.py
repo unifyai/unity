@@ -122,9 +122,10 @@ class FastBrainLogger:
         speak: bool = False,
         turn: bool = False,
     ) -> None:
+        flag = f"speak={speak}" if speak else f"turn={turn}"
         self._emit(
             "notification_received",
-            f"Notification (src={source}, speak={speak}, turn={turn})" f": {content}",
+            f"Notification ({flag}, src={source}): {content}",
         )
 
     def notification_buffered(self, count: int) -> None:
