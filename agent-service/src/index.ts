@@ -615,7 +615,25 @@ app.post('/act', isAgentReady, async (req: Request, res: Response) => {
 
     console.log(`[memory-carryover] Stored ${filtered.length} filtered observations for task "${task}" (history: ${session.actHistory.length}/${ACT_HISTORY_DEPTH})`);
 
-    res.json({ status: 'success', message: `Task "${task}" completed.` });
+    const thoughts = filtered
+      .filter(obs => obs.source.startsWith('thought'))
+      .map(obs => String(obs.content))
+      .join('\n');
+
+    let screenshot = '';
+    try {
+      if (session.mode === 'desktop') {
+        screenshot = nativeScreenshot();
+      } else {
+        const harness = session.agent.require(BrowserConnector).getHarness();
+        const image = await harness.screenshot();
+        screenshot = await image.toBase64();
+      }
+    } catch (screenshotErr) {
+      console.warn(`[act] Post-act screenshot failed: ${screenshotErr}`);
+    }
+
+    res.json({ status: 'success', summary: thoughts, screenshot });
   } catch (err) {
     handleAgentError(err, res);
   }

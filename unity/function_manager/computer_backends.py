@@ -2,6 +2,7 @@ import inspect
 import subprocess
 from abc import ABC, abstractmethod
 from collections import defaultdict
+from dataclasses import dataclass
 from typing import Any
 from typing import Optional, List, Dict
 import logging
@@ -14,6 +15,25 @@ from unity.session_details import SESSION_DETAILS
 from unity.image_manager.utils import make_solid_png_base64
 
 logger = logging.getLogger("websockets")
+
+
+@dataclass
+class ActResult:
+    """Result of a ``desktop.act()`` call with post-completion context."""
+
+    summary: str
+    screenshot: str  # base64 PNG
+
+    def __str__(self) -> str:
+        return self.summary
+
+    def __repr__(self) -> str:
+        screenshot_preview = (
+            f"{self.screenshot[:20]}..."
+            if len(self.screenshot) > 20
+            else self.screenshot
+        )
+        return f"ActResult(summary={self.summary!r}, screenshot={screenshot_preview!r})"
 
 
 class ComputerAgentError(Exception):
@@ -34,7 +54,7 @@ class ComputerBackend(ABC):
     """
 
     @abstractmethod
-    async def act(self, instruction: str) -> str:
+    async def act(self, instruction: str) -> "ActResult":
         """
         Perform an autonomous action on the current page or screen.
 
@@ -70,9 +90,10 @@ class ComputerBackend(ABC):
 
         Returns
         -------
-        str
-            Confirmation message describing what action was performed, or an
-            error message if the action could not be completed.
+        ActResult
+            Contains ``summary`` (the agent's description of what was done)
+            and ``screenshot`` (base64 PNG of the screen after completion).
+            ``str(result)`` returns the summary for backward compatibility.
         """
 
     @abstractmethod
@@ -365,7 +386,7 @@ class MockComputerBackend(ComputerBackend):
         *,
         url: str = "https://google.com",
         screenshot: str = VALID_MOCK_SCREENSHOT_PNG,
-        act_response: str = "done",
+        act_response: ActResult | None = None,
         observe_response: str = "Mock observation",
         query_response: str = "Mock query response",
         **kwargs,
@@ -383,7 +404,10 @@ class MockComputerBackend(ComputerBackend):
         """
         self._url = url
         self._screenshot = screenshot
-        self._act_response = act_response
+        self._act_response = act_response or ActResult(
+            summary="done",
+            screenshot=VALID_MOCK_SCREENSHOT_PNG,
+        )
         self._observe_response = observe_response
         self._query_response = query_response
 
@@ -590,7 +614,7 @@ class _MockSession:
         self._mode = mode
         self._backend = backend
 
-    async def act(self, instruction: str) -> str:
+    async def act(self, instruction: str) -> ActResult:
         return self._backend._act_response
 
     async def observe(self, query: str, response_format: Any = str) -> Any:
@@ -761,10 +785,13 @@ class ComputerSession:
                 return {}
         return result
 
-    async def act(self, instruction: str) -> str:
+    async def act(self, instruction: str) -> ActResult:
         """Perform an autonomous action on the current page or screen."""
         response = await self._request("POST", "/act", {"task": instruction})
-        return response.get("status", "success")
+        return ActResult(
+            summary=response.get("summary", ""),
+            screenshot=response.get("screenshot", ""),
+        )
 
     async def observe(self, query: str, response_format: Any = str) -> Any:
         """Observe and extract information from the current page/screen."""
@@ -1267,7 +1294,7 @@ class MagnitudeBackend(ComputerBackend):
             "No sessions created yet. Use get_session(mode) to create one.",
         )
 
-    async def act(self, instruction: str, **kwargs) -> str:
+    async def act(self, instruction: str, **kwargs) -> ActResult:
         s = await self._default_session()
         return await s.act(instruction)
 
