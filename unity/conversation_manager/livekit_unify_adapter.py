@@ -181,13 +181,13 @@ class UnifyLLMStream(llm.LLMStream):
         client.set_stream(True)
 
         # Set thinking context from trace metadata so the pending callback
-        # emits a combined "LLM thinking… (reason=…) → /path" line.
+        # emits a combined "LLM thinking… (reason) → /path" line.
         tc = self._trace_context
         if tc and hasattr(client, "_pending_thinking_log"):
             reason = tc.get("reason", "")
             if reason:
                 client._pending_thinking_log.set_thinking_context(
-                    f" (reason={reason})",
+                    f" ({reason})",
                 )
 
         # Stream the response

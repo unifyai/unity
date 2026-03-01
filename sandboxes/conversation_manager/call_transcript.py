@@ -600,30 +600,13 @@ def parse_voice_log(path: Path) -> VoiceLogData:
             elif _ASSISTANT_SPEECH_ICON in line:
                 source = "generate_reply"
                 gid = ""
-                if " source=" in body:
-                    source = _extract_field(line, "source", "guidance_id")
-                    gid = _extract_field(line, "guidance_id")
-                    text = body.split(" source=")[0].strip()
+                # Format: "speech text (source_value)"
+                m = re.match(r"^(.*?)\s+\((\w+)\)\s*$", body)
+                if m:
+                    text = m.group(1).strip()
+                    source = m.group(2)
                 else:
-                    text_parts = [body.strip()]
-                    for j in range(i + 1, min(i + 10, len(lines))):
-                        nxt = lines[j]
-                        if " source=" in nxt:
-                            pre = nxt[: nxt.index(" source=")].strip()
-                            if pre:
-                                text_parts.append(pre)
-                            raw_src = nxt[nxt.index("source=") + 7 :]
-                            source = raw_src.split()[0]
-                            if "guidance_id=" in nxt:
-                                gid = _extract_field(nxt, "guidance_id")
-                            break
-                        if (
-                            nxt.strip()
-                            and not _TS_MILLIS_RE.match(nxt)
-                            and not _TS_FULL_RE.match(nxt)
-                        ):
-                            text_parts.append(nxt.strip())
-                    text = "\n".join(text_parts)
+                    text = body.strip()
                 if text.endswith("\u2026"):
                     text = text[:-1]
                 if text:
