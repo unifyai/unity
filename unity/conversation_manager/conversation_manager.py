@@ -622,6 +622,7 @@ class ConversationManager(metaclass=SingletonABCMeta):
             kwargs={"trace_meta": trace_meta or {}},
             delay=delay,
             cancel_running=cancel_running,
+            label=(trace_meta or {}).get("origin_event_name", ""),
         )
 
     async def request_llm_run(self, delay=0, cancel_running=False) -> None:
