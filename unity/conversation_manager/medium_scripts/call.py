@@ -595,6 +595,43 @@ async def entrypoint(ctx: agents.JobContext):
         elif event_type == "stop":
             asyncio.create_task(end_call())
 
+    def _is_pipeline_quiescent() -> bool:
+        """True when the voice pipeline is completely idle (no speech in flight)."""
+        if user_is_speaking:
+            return False
+        if session.agent_state not in ("listening", "idle"):
+            return False
+        current = session.current_speech
+        if current is not None and not current.done:
+            return False
+        return True
+
+    def _speak_now(
+        text: str,
+        notification_id: str,
+        notification_source: str,
+        notification_content: str,
+        llm_log_path: str,
+    ) -> None:
+        nonlocal _last_say_meta
+        _last_say_meta = {
+            "notification_id": notification_id,
+            "source": notification_source,
+            "text": text,
+            "llm_log_path": llm_log_path,
+        }
+        notification_message = f"[notification] {notification_content}"
+        assistant._chat_ctx.add_message(
+            role="system",
+            content=[notification_message],
+        )
+        session._chat_ctx.add_message(
+            role="system",
+            content=[notification_message],
+        )
+        _log.notification_say(text, notification_source=notification_source)
+        session.say(text, allow_interruptions=True, add_to_chat_ctx=True)
+
     def apply_notification(
         content: str,
         response_text: str = "",
@@ -606,16 +643,30 @@ async def entrypoint(ctx: agents.JobContext):
         llm_log_path: str = "",
     ) -> None:
         if should_speak and response_text:
-            _queued_speech.append(
-                (
+            if notification_source == "proactive_speech":
+                # Proactive speech exists purely to fill silence — never queue it.
+                # Play immediately if the pipeline is fully quiescent and nothing
+                # else is waiting; otherwise discard silently.
+                if not _is_pipeline_quiescent() or _queued_speech:
+                    return
+                _speak_now(
                     response_text,
                     notification_id,
                     notification_source,
                     content,
                     llm_log_path,
-                ),
-            )
-            maybe_speak_queued()
+                )
+            else:
+                _queued_speech.append(
+                    (
+                        response_text,
+                        notification_id,
+                        notification_source,
+                        content,
+                        llm_log_path,
+                    ),
+                )
+                maybe_speak_queued()
         else:
             notification_message = f"[notification] {content}"
             assistant._chat_ctx.add_message(
@@ -640,13 +691,7 @@ async def entrypoint(ctx: agents.JobContext):
         speaking → listening. We only speak queued text once the agent has settled
         back to a quiescent state, guaranteeing the fast brain's reply comes first.
         """
-        nonlocal _last_say_meta
-        if not _queued_speech or user_is_speaking:
-            return
-        if session.agent_state not in ("listening", "idle"):
-            return
-        current = session.current_speech
-        if current is not None and not current.done:
+        if not _queued_speech or not _is_pipeline_quiescent():
             return
         (
             text,
@@ -655,28 +700,13 @@ async def entrypoint(ctx: agents.JobContext):
             notification_content,
             llm_log_path,
         ) = _queued_speech.pop(0)
-        _last_say_meta = {
-            "notification_id": notification_id,
-            "source": notification_source,
-            "text": text,
-            "llm_log_path": llm_log_path,
-        }
-
-        notification_message = f"[notification] {notification_content}"
-        assistant._chat_ctx.add_message(
-            role="system",
-            content=[notification_message],
-        )
-        session._chat_ctx.add_message(
-            role="system",
-            content=[notification_message],
-        )
-
-        _log.notification_say(
+        _speak_now(
             text,
-            notification_source=notification_source,
+            notification_id,
+            notification_source,
+            notification_content,
+            llm_log_path,
         )
-        session.say(text, allow_interruptions=True, add_to_chat_ctx=True)
 
     def on_notification(data: dict) -> None:
         """Handle notifications from conversation manager."""
