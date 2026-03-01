@@ -671,10 +671,18 @@ class ComputerSession:
         endpoint: str,
         payload: dict | None = None,
     ) -> Any:
+        import time as _rq_time
+
+        _rq_t0 = _rq_time.perf_counter()
         url = f"{self._agent_base_url}{endpoint}"
         if payload is None:
             payload = {}
         payload["sessionId"] = self._session_id
+
+        logger.debug(
+            f"⏱️ [ComputerSession._request] {method} {endpoint} start "
+            f"(session={self._session_id})",
+        )
 
         auth_key = SESSION_DETAILS.unify_key
         headers = {"authorization": f"Bearer {auth_key}"}
@@ -690,7 +698,12 @@ class ComputerSession:
                         timeout=1000,
                         ssl=self._ssl,
                     ) as resp:
+                        _rq_ms = (_rq_time.perf_counter() - _rq_t0) * 1000
                         if resp.status >= 400:
+                            logger.debug(
+                                f"⏱️ [ComputerSession._request] {method} {endpoint} "
+                                f"HTTP {resp.status} ({_rq_ms:.0f}ms, attempt={attempt})",
+                            )
                             try:
                                 error_data = await resp.json()
                                 raise ComputerAgentError(
@@ -704,7 +717,13 @@ class ComputerSession:
                                     "http_error",
                                     f"HTTP {resp.status}: {await resp.text()}",
                                 )
-                        return await resp.json()
+                        result = await resp.json()
+                        _rq_ms = (_rq_time.perf_counter() - _rq_t0) * 1000
+                        logger.debug(
+                            f"⏱️ [ComputerSession._request] {method} {endpoint} "
+                            f"OK ({_rq_ms:.0f}ms, attempt={attempt})",
+                        )
+                        return result
             except aiohttp.ClientConnectorError:
                 if attempt < retries - 1:
                     await asyncio.sleep(1.5 * (attempt + 1))
@@ -935,11 +954,17 @@ class MagnitudeBackend(ComputerBackend):
 
     async def _create_session_async(self, mode: str) -> ComputerSession:
         """Create a session asynchronously."""
+        import time as _cs_time
+
+        _cs_t0 = _cs_time.perf_counter()
         url = self._url_for_mode(mode)
         params = dict(self._MODE_START_PARAMS[mode])
         auth_key = SESSION_DETAILS.unify_key
         headers = {"authorization": f"Bearer {auth_key}"}
         use_ssl = self._vm_ssl if mode in ("desktop", "web-vm") else None
+        logger.debug(
+            f"⏱️ [MagnitudeBackend._create_session] POST /start ({mode}) begin",
+        )
         async with aiohttp.ClientSession() as s:
             async with s.post(
                 f"{url}/start",
@@ -948,22 +973,32 @@ class MagnitudeBackend(ComputerBackend):
                 timeout=300,
                 ssl=use_ssl,
             ) as resp:
+                _cs_ms = (_cs_time.perf_counter() - _cs_t0) * 1000
                 if resp.status >= 400:
+                    logger.debug(
+                        f"⏱️ [MagnitudeBackend._create_session] POST /start FAILED "
+                        f"({_cs_ms:.0f}ms, status={resp.status})",
+                    )
                     raise RuntimeError(
                         f"Failed to create {mode} session: {resp.status}",
                     )
                 data = await resp.json()
+        _cs_ms = (_cs_time.perf_counter() - _cs_t0) * 1000
         session_id = data.get("sessionId")
         if not session_id:
             raise RuntimeError(f"Failed to get sessionId for {mode} session")
         session = ComputerSession(session_id, mode, url, ssl=use_ssl)
-        logger.info(f"✅ Created {mode} session {session_id}")
+        logger.info(f"✅ Created {mode} session {session_id} ({_cs_ms:.0f}ms)")
         return session
 
     async def get_session(self, mode: str) -> ComputerSession:
         """Get or lazily create the primary session for the given mode."""
         if mode in self._sessions:
+            logger.debug(f"⏱️ [MagnitudeBackend.get_session] cache hit for {mode}")
             return self._sessions[mode]
+        logger.debug(
+            f"⏱️ [MagnitudeBackend.get_session] cache miss for {mode}, creating",
+        )
         session = await self._create_session_async(mode)
         self._sessions[mode] = session
         return session

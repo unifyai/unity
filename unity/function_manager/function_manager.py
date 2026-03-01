@@ -2084,13 +2084,27 @@ class FunctionManager(BaseFunctionManager):
         Returns:
             True if sync was performed, False if already up-to-date.
         """
+        import time as _sp_time
+
+        _sp_t0 = _sp_time.perf_counter()
+
+        def _sp_ms():
+            return f"{(_sp_time.perf_counter() - _sp_t0) * 1000:.0f}ms"
+
+        logger.debug(f"⏱️ [FM.sync_primitives +{_sp_ms()}] entered")
+
         if self._primitives_synced:
+            logger.debug(
+                f"⏱️ [FM.sync_primitives +{_sp_ms()}] already synced, skipping",
+            )
             return False
 
         target_managers = sorted(self._primitive_scope.scoped_managers)
 
         # Step 1: Read current hashes (one backend call)
+        logger.debug(f"⏱️ [FM.sync_primitives +{_sp_ms()}] reading stored hashes")
         current_hashes = self._get_stored_primitives_hash_by_manager()
+        logger.debug(f"⏱️ [FM.sync_primitives +{_sp_ms()}] hashes read")
 
         # Step 2: Compute expected hashes and collect pending updates if they differ
         pending_updates: List[Tuple[str, List[Dict[str, Any]], str]] = []
@@ -2108,28 +2122,35 @@ class FunctionManager(BaseFunctionManager):
         # Step 3: If nothing changed, mark synced and return
         if not pending_updates:
             logger.debug(
-                "Primitives hashes match for all scoped managers, skipping sync",
+                f"⏱️ [FM.sync_primitives +{_sp_ms()}] hashes match, skipping sync",
             )
             self._primitives_synced = True
             return False
 
         changed_managers = [alias for alias, _, _ in pending_updates]
-        logger.debug(f"Primitives changed for managers: {changed_managers}, syncing...")
+        logger.debug(
+            f"⏱️ [FM.sync_primitives +{_sp_ms()}] changed: {changed_managers}, syncing...",
+        )
 
         # Step 4: Batched delete for all changed managers (one backend call)
         self._delete_primitives_for_managers(changed_managers)
+        logger.debug(f"⏱️ [FM.sync_primitives +{_sp_ms()}] delete done")
 
         # Step 5: Batched insert all new primitives (one backend call)
         all_rows = []
         for _, rows, _ in pending_updates:
             all_rows.extend(rows)
         self._insert_primitives(all_rows)
+        logger.debug(
+            f"⏱️ [FM.sync_primitives +{_sp_ms()}] insert done ({len(all_rows)} rows)",
+        )
 
         # Step 6: Update Meta with new hashes (one backend call)
         new_hashes = dict(current_hashes)
         for alias, _, hash_val in pending_updates:
             new_hashes[alias] = hash_val
         self._store_primitives_hash_by_manager(new_hashes)
+        logger.debug(f"⏱️ [FM.sync_primitives +{_sp_ms()}] hashes stored, done")
 
         self._primitives_synced = True
         return True
@@ -3014,6 +3035,11 @@ class FunctionManager(BaseFunctionManager):
 
         Returns the full stored record (as a dict) or ``None`` if not found.
         """
+        import time as _time
+
+        _gfdn_t0 = _time.perf_counter()
+        logger.debug(f"⏱️ [FM._get_function_data_by_name] start: {name}")
+
         # Normalize to the Unify filter grammar (and avoid quote-escaping issues).
         try:
             normalized = normalize_filter_expr(f"name == {json.dumps(name)}")
@@ -3021,21 +3047,30 @@ class FunctionManager(BaseFunctionManager):
             normalized = f"name == {json.dumps(name)}"
 
         last_exc: Exception | None = None
-        import time as _time
 
         # The backend can return 404 for missing contexts in fresh projects/tests.
-        for delay in (0.0, 0.05, 0.15):
+        for attempt, delay in enumerate((0.0, 0.05, 0.15)):
             if delay:
                 _time.sleep(delay)
             try:
+                _q_t0 = _time.perf_counter()
                 logs = unify.get_logs(
                     context=self._compositional_ctx,
                     filter=normalized,
                     limit=1,
                     exclude_fields=list_private_fields(self._compositional_ctx),
                 )
+                _q_ms = (_time.perf_counter() - _q_t0) * 1000
                 if logs:
+                    logger.debug(
+                        f"⏱️ [FM._get_function_data_by_name] found (attempt={attempt}, "
+                        f"query={_q_ms:.0f}ms, total={(_time.perf_counter() - _gfdn_t0) * 1000:.0f}ms)",
+                    )
                     return logs[0].entries
+                logger.debug(
+                    f"⏱️ [FM._get_function_data_by_name] miss (attempt={attempt}, "
+                    f"query={_q_ms:.0f}ms, total={(_time.perf_counter() - _gfdn_t0) * 1000:.0f}ms)",
+                )
                 return None
             except _UnifyRequestError as e:
                 status = getattr(getattr(e, "response", None), "status_code", None)
@@ -3048,6 +3083,10 @@ class FunctionManager(BaseFunctionManager):
                 break
 
         # Treat missing context as empty library.
+        logger.debug(
+            f"⏱️ [FM._get_function_data_by_name] exhausted retries "
+            f"(total={(_time.perf_counter() - _gfdn_t0) * 1000:.0f}ms)",
+        )
         if isinstance(last_exc, _UnifyRequestError):
             status = getattr(getattr(last_exc, "response", None), "status_code", None)
             if status == 404:

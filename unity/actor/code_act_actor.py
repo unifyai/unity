@@ -2255,6 +2255,19 @@ class CodeActActor(BaseCodeActActor):
                 """
                 call_kwargs = call_kwargs or {}
 
+                import time as _ef_time
+                import logging as _ef_logging
+
+                _ef_t0 = _ef_time.perf_counter()
+                _ef_log = _ef_logging.getLogger("unity")
+
+                def _ef_ms():
+                    return f"{(_ef_time.perf_counter() - _ef_t0) * 1000:.0f}ms"
+
+                _ef_log.debug(
+                    f"⏱️ [execute_function +{_ef_ms()}] entered: {function_name}",
+                )
+
                 # ── Synthesize the code string ────────────────────────────
                 code: str | None = None
 
@@ -2272,6 +2285,9 @@ class CodeActActor(BaseCodeActActor):
                         call_kwargs=call_kwargs,
                         function_manager=self.function_manager,
                     )
+                _ef_log.debug(
+                    f"⏱️ [execute_function +{_ef_ms()}] code synthesized",
+                )
 
                 # ── Lineage boundary ─────────────────────────────────────
                 _ef_suffix = _token_hex(2)
@@ -2304,10 +2320,16 @@ class CodeActActor(BaseCodeActActor):
                             level="warning",
                         )
 
+                _ef_log.debug(
+                    f"⏱️ [execute_function +{_ef_ms()}] lineage boundary (incoming) start",
+                )
                 try:
                     await _ef_pub_safe(phase="incoming")
                 except Exception:
                     pass
+                _ef_log.debug(
+                    f"⏱️ [execute_function +{_ef_ms()}] lineage boundary (incoming) done",
+                )
                 log_boundary_event(
                     "->".join(_ef_hierarchy),
                     f"Executing function {function_name}...",
@@ -2358,6 +2380,9 @@ class CodeActActor(BaseCodeActActor):
                     except Exception:
                         pass
 
+                    _ef_log.debug(
+                        f"⏱️ [execute_function +{_ef_ms()}] sandbox.execute start",
+                    )
                     _pcc_token = _PARENT_CHAT_CONTEXT.set(_parent_chat_context)
                     try:
                         try:
@@ -2369,6 +2394,9 @@ class CodeActActor(BaseCodeActActor):
                                 venv_id=venv_id,
                                 primitives=primitives,
                                 computer_primitives=computer_primitives,
+                            )
+                            _ef_log.debug(
+                                f"⏱️ [execute_function +{_ef_ms()}] sandbox.execute done",
                             )
                         except Exception as e:
                             exec_exc = e
@@ -2407,8 +2435,14 @@ class CodeActActor(BaseCodeActActor):
                     ):
                         out = ExecutionResult(**out)
 
+                    _ef_log.debug(
+                        f"⏱️ [execute_function +{_ef_ms()}] returning result",
+                    )
                     return out
                 finally:
+                    _ef_log.debug(
+                        f"⏱️ [execute_function +{_ef_ms()}] lineage boundary (outgoing) start",
+                    )
                     try:
                         _out_err = (
                             (
@@ -2435,6 +2469,9 @@ class CodeActActor(BaseCodeActActor):
                             await _ef_pub_safe(phase="outgoing", status="ok")
                     except Exception:
                         pass
+                    _ef_log.debug(
+                        f"⏱️ [execute_function +{_ef_ms()}] lineage boundary (outgoing) done",
+                    )
                     try:
                         TOOL_LOOP_LINEAGE.reset(_ef_lineage_token)
                     except Exception:
