@@ -22,7 +22,7 @@ from unity.conversation_manager.events import (
     ActorSessionResponse,
     AssistantScreenShareStarted,
     AssistantScreenShareStopped,
-    CallGuidance,
+    FastBrainNotification,
     DirectMessageEvent,
     EmailReceived,
     EmailSent,
@@ -176,9 +176,9 @@ def _format_outbound_event(event: Event, *, sandbox_state: object) -> Optional[s
         return "🎙️ Live voice ready — you can start speaking."
     if isinstance(event, UnifyMeetEnded):
         return "📞 Live voice call ended."
-    if isinstance(event, CallGuidance):
-        # In a simulated call (no real voice agent), treat guidance as the
-        # assistant's spoken reply. In live voice mode the real voice agent
+    if isinstance(event, FastBrainNotification):
+        # In a simulated call (no real voice agent), treat the notification as
+        # the assistant's spoken reply. In live voice mode the real voice agent
         # speaks the guidance, so show it as observability info instead.
         try:
             in_call = bool(getattr(sandbox_state, "in_call", False))
@@ -276,7 +276,7 @@ async def subscribe_to_responses(
         try:
             async with cm.event_broker.pubsub() as pubsub:
                 await pubsub.psubscribe("app:comms:*", "app:actor:*")
-                await pubsub.subscribe("app:call:call_guidance")
+                await pubsub.subscribe("app:call:notification")
                 backoff = 0.5  # reset after successful subscription
 
                 # Register (once) for ManagerMethod events on the in-process EventBus.
@@ -476,12 +476,12 @@ async def subscribe_to_responses(
                                     elif isinstance(event, VoiceInterrupt):
                                         m = "VoiceInterrupt"
                                     # Call guidance
-                                    elif isinstance(event, CallGuidance):
+                                    elif isinstance(event, FastBrainNotification):
                                         content = str(
                                             getattr(event, "content", "") or "",
                                         ).strip()
                                         if content:
-                                            m = f"CallGuidance: {content}"
+                                            m = f"FastBrainNotification: {content}"
                                     # Other useful events
                                     elif isinstance(event, UnknownContactCreated):
                                         medium = str(
@@ -594,7 +594,10 @@ async def subscribe_to_responses(
                     except Exception:
                         pass
 
-                    if (not include_call_guidance) and isinstance(event, CallGuidance):
+                    if (not include_call_guidance) and isinstance(
+                        event,
+                        FastBrainNotification,
+                    ):
                         continue
 
                     # Track Actor in-flight status for UX hints.
@@ -689,7 +692,7 @@ async def subscribe_to_responses(
                         isinstance(event, OutboundPhoneUtterance)
                         or (
                             bool(getattr(sandbox_state, "in_call", False))
-                            and isinstance(event, CallGuidance)
+                            and isinstance(event, FastBrainNotification)
                         )
                     ):
                         try:

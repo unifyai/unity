@@ -107,12 +107,12 @@ Manages voice call lifecycle using the TTS (Text-to-Speech) pipeline.
 
 ## Voice Architecture
 
-The voice system uses the "fast brain / slow brain" architecture where the Voice Agent (fast brain) handles conversation autonomously while the Main CM Brain (slow brain) provides guidance.
+The voice system uses the "fast brain / slow brain" architecture where the Voice Agent (fast brain) handles conversation autonomously while the Main CM Brain (slow brain) sends notifications.
 
 ```
 User speaks → STT transcribes → Fast Brain (text LLM) → TTS speaks
     ↑                                                      ↓
-    └──────── Main CM Brain provides CallGuidance ─────────┘
+    └────── Main CM Brain sends FastBrainNotification ─────┘
 ```
 
 Uses separate STT/TTS services with a lightweight text-based LLM (gpt-5-mini) for fast responses.

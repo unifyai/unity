@@ -53,7 +53,6 @@ from unity.conversation_manager.medium_scripts.common import (
     UserTrackCaptureManager,
     ScreenshotHistory,
     capture_assistant_screenshot,
-    render_event_for_fast_brain,
     render_participant_comms,
     publish_meet_interaction_from_track,
     FastBrainLogger,
@@ -267,7 +266,7 @@ async def entrypoint(ctx: agents.JobContext):
     )
 
     user_is_speaking = False
-    _queued_speech: list[tuple[str, str, str]] = []  # (text, guidance_id, source)
+    _queued_speech: list[tuple[str, str, str]] = []  # (text, notification_id, source)
     _last_say_meta: dict | None = None
     generation_seq = 0
     user_state_seq = 0
@@ -354,7 +353,7 @@ async def entrypoint(ctx: agents.JobContext):
         is None — firing then would race ahead of the fast brain's reply.
 
         Triggering here guarantees the full thinking → speaking → listening cycle
-        has completed before queued guidance speech plays.
+        has completed before queued notification speech plays.
         """
         if ev.new_state in ("listening", "idle"):
             maybe_speak_queued()
@@ -444,7 +443,7 @@ async def entrypoint(ctx: agents.JobContext):
             _log.assistant_speech(
                 text,
                 source=(say_meta or {}).get("source", "generate_reply"),
-                guidance_id=(say_meta or {}).get("guidance_id", ""),
+                notification_id=(say_meta or {}).get("notification_id", ""),
             )
         if role == "user":
             event = user_utterance_event(contact, content=text)
@@ -578,9 +577,9 @@ async def entrypoint(ctx: agents.JobContext):
     await publish_call_started(contact, channel)
     touch_activity()
 
-    pending_guidance: list[tuple[str, str, bool, str, str]] = (
+    pending_notifications: list[tuple[str, str, bool, str, str]] = (
         []
-    )  # (content, response_text, should_speak, guidance_id, guidance_source)
+    )  # (content, response_text, should_speak, notification_id, notification_source)
     session_ready = False
 
     def on_status(data: dict) -> None:
@@ -595,34 +594,34 @@ async def entrypoint(ctx: agents.JobContext):
         elif event_type == "stop":
             asyncio.create_task(end_call())
 
-    def apply_guidance(
+    def apply_notification(
         content: str,
         response_text: str = "",
         should_speak: bool = False,
         *,
-        guidance_id: str = "",
+        notification_id: str = "",
         source: str = "",
-        guidance_source: str = "",
+        notification_source: str = "",
     ) -> None:
         if should_speak and response_text:
             _queued_speech.append(
-                (response_text, guidance_id, guidance_source, content),
+                (response_text, notification_id, notification_source, content),
             )
             maybe_speak_queued()
         else:
-            guidance_message = f"[notification] {content}"
+            notification_message = f"[notification] {content}"
             assistant._chat_ctx.add_message(
                 role="system",
-                content=[guidance_message],
+                content=[notification_message],
             )
             session._chat_ctx.add_message(
                 role="system",
-                content=[guidance_message],
+                content=[notification_message],
             )
-            if guidance_source != "meet_interaction":
+            if notification_source != "meet_interaction":
                 trigger_generate_reply(
                     reason="notification",
-                    source_id=guidance_id or "guidance_notify",
+                    source_id=notification_id or "notification",
                 )
 
     def maybe_speak_queued() -> None:
@@ -641,32 +640,38 @@ async def entrypoint(ctx: agents.JobContext):
         current = session.current_speech
         if current is not None and not current.done:
             return
-        text, guidance_id, guidance_source, notification_content = _queued_speech.pop(0)
+        text, notification_id, notification_source, notification_content = (
+            _queued_speech.pop(0)
+        )
         _last_say_meta = {
-            "guidance_id": guidance_id,
-            "source": guidance_source,
+            "notification_id": notification_id,
+            "source": notification_source,
             "text": text,
         }
 
-        guidance_message = f"[notification] {notification_content}"
+        notification_message = f"[notification] {notification_content}"
         assistant._chat_ctx.add_message(
             role="system",
-            content=[guidance_message],
+            content=[notification_message],
         )
         session._chat_ctx.add_message(
             role="system",
-            content=[guidance_message],
+            content=[notification_message],
         )
 
-        _log.guidance_say(guidance_id, text, guidance_source=guidance_source)
+        _log.notification_say(
+            notification_id,
+            text,
+            notification_source=notification_source,
+        )
         session.say(text, allow_interruptions=True, add_to_chat_ctx=True)
 
-    def on_guidance(data: dict) -> None:
-        """Handle guidance from conversation manager."""
+    def on_notification(data: dict) -> None:
+        """Handle notifications from conversation manager."""
         nonlocal assistant_screen_share_active, _agent_service_url
         payload = data.get("payload") or data
         content = payload.get("content", "")
-        # Track screen share state from meet interaction guidance.
+        # Track screen share state from meet interaction notifications.
         if payload.get("source") == "meet_interaction":
             low = content.lower()
             if "screen sharing is now on" in low:
@@ -681,16 +686,16 @@ async def entrypoint(ctx: agents.JobContext):
                 _clear_visual_context(source=source)
         response_text = payload.get("response_text", "")
         should_speak = payload.get("should_speak", False)
-        guidance_source = payload.get("source", "")
-        guidance_id = content_trace_id("guid", content)
+        notification_source = payload.get("source", "")
+        notification_id = content_trace_id("guid", content)
         triggers_turn = (
             not (should_speak and response_text)
-            and guidance_source != "meet_interaction"
+            and notification_source != "meet_interaction"
         )
-        _log.guidance(
-            guidance_source,
+        _log.notification(
+            notification_source,
             content,
-            guidance_id=guidance_id,
+            notification_id=notification_id,
             speak=should_speak,
             turn=triggers_turn,
         )
@@ -698,31 +703,30 @@ async def entrypoint(ctx: agents.JobContext):
 
         if content:
             if not session_ready:
-                pending_guidance.append(
+                pending_notifications.append(
                     (
                         content,
                         response_text,
                         should_speak,
-                        guidance_id,
-                        guidance_source,
+                        notification_id,
+                        notification_source,
                     ),
                 )
-                _log.guidance_buffered(guidance_id, len(pending_guidance))
+                _log.notification_buffered(notification_id, len(pending_notifications))
             else:
-                apply_guidance(
+                apply_notification(
                     content,
                     response_text,
                     should_speak,
-                    guidance_id=guidance_id,
+                    notification_id=notification_id,
                     source="socket_callback",
-                    guidance_source=guidance_source,
+                    notification_source=notification_source,
                 )
 
     event_broker.register_callback("app:call:status", on_status)
-    event_broker.register_callback("app:call:call_guidance", on_guidance)
+    event_broker.register_callback("app:call:notification", on_notification)
 
     # --- Tier 1: Comms from call participants (all calls) ---
-    # Build the set of contact_ids on this call.
     is_boss_user = contact.get("contact_id") == 1
     participant_ids: set[int] = set()
     if contact.get("contact_id") is not None:
@@ -750,26 +754,6 @@ async def entrypoint(ctx: agents.JobContext):
 
     event_broker.register_callback("app:comms:*", on_participant_comms)
 
-    # --- Tier 2: All other system events (boss calls only) ---
-    if is_boss_user:
-
-        def on_system_event(data: dict) -> None:
-            raw = data.get("event") if "event" in data else json.dumps(data)
-            text = render_event_for_fast_brain(
-                raw if isinstance(raw, str) else json.dumps(raw),
-            )
-            if not text:
-                return
-            _log.boss_event(text)
-            touch_activity()
-            if not session_ready:
-                return
-            _inject_and_reply(f"[notification] {text}", reason="boss_event")
-
-        event_broker.register_callback("app:actor:*", on_system_event)
-        event_broker.register_callback("app:managers:output", on_system_event)
-        event_broker.register_callback("app:logging:message_logged", on_system_event)
-
     # Handle call_answered that arrived during initialization
     if call_answered_flag.is_set():
         _log.call_status("call_answered (arrived during init)")
@@ -795,30 +779,30 @@ async def entrypoint(ctx: agents.JobContext):
         session._chat_ctx.add_message(role="system", content=[history_block])
         _log.info(f"Hydrated {len(history_lines)} historical events into context")
 
-    # Mark session ready and process any buffered guidance BEFORE first utterance.
-    # After this, the on_guidance callback will apply guidance immediately.
+    # Mark session ready and process any buffered notifications BEFORE first utterance.
+    # After this, the on_notification callback will apply notifications immediately.
     # Note: For outbound calls, llm_node will wait for call_received (set by on_status).
     session_ready = True
-    if pending_guidance:
+    if pending_notifications:
         _log.session_ready(
-            f"Applying {len(pending_guidance)} buffered guidance message(s)",
+            f"Applying {len(pending_notifications)} buffered notification(s)",
         )
         for (
             content,
             response_text,
             should_speak,
-            guidance_id,
-            guidance_source,
-        ) in pending_guidance:
-            apply_guidance(
+            notification_id,
+            notification_source,
+        ) in pending_notifications:
+            apply_notification(
                 content,
                 response_text,
                 should_speak,
-                guidance_id=guidance_id,
+                notification_id=notification_id,
                 source="pending_buffer_flush",
-                guidance_source=guidance_source,
+                notification_source=notification_source,
             )
-        pending_guidance.clear()
+        pending_notifications.clear()
 
     await trigger_generate_reply(
         reason="session_start",

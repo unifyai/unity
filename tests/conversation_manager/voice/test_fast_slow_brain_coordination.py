@@ -76,7 +76,7 @@ from unity.conversation_manager.events import (
     PhoneCallStarted,
     PhoneCallSent,
     InboundPhoneUtterance,
-    CallGuidance,
+    FastBrainNotification,
 )
 from unity.conversation_manager.types import Medium, Mode
 
@@ -140,7 +140,7 @@ class TestSlowBrainDecisionBoundaries:
         original_publish = initialized_cm.cm.event_broker.publish
 
         async def capture_guidance(channel: str, message: str) -> int:
-            if channel == "app:call:call_guidance":
+            if channel == "app:call:notification":
                 try:
                     data = json.loads(message)
                     # Handle both Event format and plain dict format
@@ -208,10 +208,10 @@ class TestSlowBrainDecisionBoundaries:
 
         Flow for outbound calls:
         1. Slow brain decides to call → calls make_call(context="...")
-        2. make_call stores context on call_manager.initial_call_guidance
+        2. make_call stores context on call_manager.initial_notification
         3. comms_utils.start_call() places the call
         4. PhoneCallSent arrives → event handler spawns subprocess
-        5. CallManager.start_call() publishes stored guidance as CallGuidance
+        5. CallManager.start_call() publishes stored guidance as FastBrainNotification
         6. Fast brain receives guidance via on_guidance / pending_guidance buffer
         7. PhoneCallStarted arrives → mode set to CALL
         8. Ongoing guidance flows via the guide_voice_agent tool (called in parallel)
@@ -341,7 +341,7 @@ class TestSlowBrainAppropriateGuidance:
         await initialized_cm.step(started_event)
 
         # Manually publish a data-provision guidance (this is appropriate)
-        guidance = CallGuidance(
+        guidance = FastBrainNotification(
             contact=boss_contact,
             content="The meeting time mentioned in the earlier SMS was 3pm on Thursday",
         )
@@ -376,7 +376,7 @@ class TestSlowBrainAppropriateGuidance:
         await initialized_cm.step(started_event)
 
         # Manually publish a notification guidance (this is appropriate)
-        guidance = CallGuidance(
+        guidance = FastBrainNotification(
             contact=boss_contact,
             content="SMS just received from Alice: 'Running 10 minutes late'",
         )
@@ -829,9 +829,9 @@ class TestInFlightActionOrchestration:
 
 
 @pytest.mark.asyncio
-class TestCallGuidanceSpeakMode:
+class TestFastBrainNotificationSpeakMode:
     """Verify that guide_voice_agent's should_speak and response_text
-    parameters propagate correctly through the CallGuidance event to the
+    parameters propagate correctly through the FastBrainNotification event to the
     fast brain."""
 
     async def test_should_speak_params_carried_through_to_event(
@@ -839,7 +839,7 @@ class TestCallGuidanceSpeakMode:
         initialized_cm,
     ):
         """When the slow brain calls guide_voice_agent with should_speak=True
-        and response_text, the published CallGuidance event must carry both
+        and response_text, the published FastBrainNotification event must carry both
         fields so the fast brain can speak via TTS."""
         import json
 
@@ -855,7 +855,7 @@ class TestCallGuidanceSpeakMode:
         original_publish = cm.event_broker.publish
 
         async def capture_publish(channel: str, message: str) -> int:
-            if channel == "app:call:call_guidance":
+            if channel == "app:call:notification":
                 published.append(json.loads(message))
             return await original_publish(channel, message)
 
@@ -894,10 +894,10 @@ class TestCallGuidanceSpeakMode:
                 payload = event_data.get("payload", event_data)
                 assert (
                     "should_speak" in payload
-                ), f"CallGuidance event missing should_speak field: {payload}"
+                ), f"FastBrainNotification event missing should_speak field: {payload}"
                 assert (
                     "response_text" in payload
-                ), f"CallGuidance event missing response_text field: {payload}"
+                ), f"FastBrainNotification event missing response_text field: {payload}"
 
         finally:
             cm.event_broker.publish = original_publish

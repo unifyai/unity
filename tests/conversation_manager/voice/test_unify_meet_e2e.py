@@ -52,7 +52,7 @@ from unity.conversation_manager.events import (
     UnifyMeetEnded,
     InboundUnifyMeetUtterance,
     OutboundUnifyMeetUtterance,
-    CallGuidance,
+    FastBrainNotification,
 )
 from unity.conversation_manager.types import Medium, Mode
 
@@ -458,11 +458,11 @@ class TestUnifyMeetUtteranceHandling:
 
 
 @pytest.mark.asyncio
-class TestUnifyMeetCallGuidance:
+class TestUnifyMeetFastBrainNotification:
     """
-    Tests for CallGuidance flow during Unify Meet sessions.
+    Tests for FastBrainNotification flow during Unify Meet sessions.
 
-    The slow brain sends CallGuidance to the fast brain (voice agent) via IPC.
+    The slow brain sends FastBrainNotification to the fast brain (voice agent) via IPC.
     This must work correctly for the voice agent to receive context.
     """
 
@@ -472,14 +472,14 @@ class TestUnifyMeetCallGuidance:
         boss_contact,
     ):
         """
-        CallGuidance should be pushed to UNIFY_MEET thread during a meet.
+        FastBrainNotification should be pushed to UNIFY_MEET thread during a meet.
         """
         # Start meet first
         started = UnifyMeetStarted(contact=boss_contact)
         await initialized_cm.step(started)
 
         # Send guidance
-        guidance = CallGuidance(
+        guidance = FastBrainNotification(
             contact=boss_contact,
             content="The meeting you mentioned is scheduled for 3pm Thursday",
         )
@@ -502,7 +502,7 @@ class TestUnifyMeetCallGuidance:
         boss_contact,
     ):
         """
-        CallGuidance should use UNIFY_MEET medium when mode=MEET.
+        FastBrainNotification should use UNIFY_MEET medium when mode=MEET.
 
         This ensures guidance goes to the correct thread.
         """
@@ -514,7 +514,7 @@ class TestUnifyMeetCallGuidance:
 
         # The event handler uses cm.mode to determine the medium
         # When mode=MEET, it should use Medium.UNIFY_MEET
-        guidance = CallGuidance(
+        guidance = FastBrainNotification(
             contact=boss_contact,
             content="Test guidance content",
         )
@@ -786,7 +786,7 @@ class TestFullUnifyMeetLifecycle:
         await initialized_cm.step(assistant_utterance)
 
         # 5. Slow brain sends guidance
-        guidance = CallGuidance(
+        guidance = FastBrainNotification(
             contact=boss_contact,
             content="Remember to mention the deadline is Friday",
         )
@@ -1072,7 +1072,7 @@ class TestRealLiveKitUnifyMeet:
             guidance_content = "The boss mentioned they prefer morning meetings"
 
             await event_broker.publish(
-                "app:call:call_guidance",
+                "app:call:notification",
                 json.dumps({"content": guidance_content}),
             )
 

@@ -56,14 +56,14 @@ ICONS = {
     # ── Voice / utterance ───────────────────────────────────────────────
     "inbound_utterance": "🎤",
     "outbound_utterance": "🔊",
-    "call_guidance": "🎙️",
+    "call_notification": "🎙️",
     "user_speech": "🧑‍💻",
     "user_state": "🎤",
     "assistant_speech": "🔊",
-    # ── Guidance pipeline ───────────────────────────────────────────────
-    "guidance_received": "📨",
-    "guidance_buffered": "⏳",
-    "guidance_say": "🗣️",
+    # ── Notification pipeline ────────────────────────────────────────────
+    "notification_received": "📨",
+    "notification_buffered": "⏳",
+    "notification_say": "🗣️",
     # ── Proactive speech ────────────────────────────────────────────────
     "proactive_speech": "🗣️",
     "proactive_debounce": "⏱️",
@@ -128,9 +128,8 @@ ICONS = {
     "ipc_inbound": "⬇️",
     "ipc_outbound": "⬆️",
     "ipc_error": "❌",
-    # ── Inbound comms & boss events ─────────────────────────────────────
+    # ── Inbound comms ────────────────────────────────────────────────────
     "participant_comms": "📱",
-    "boss_event": "📣",
     # ── Screenshots / media ─────────────────────────────────────────────
     "screenshot": "📸",
     "screenshot_capture": "📸",

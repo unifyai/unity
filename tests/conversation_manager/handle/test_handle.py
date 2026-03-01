@@ -1327,7 +1327,7 @@ async def test_only_one_active_ask_handle_at_a_time(initialized_cm):
 
 
 # =============================================================================
-# Integration Tests: Transcript Content (CallGuidance Exclusion)
+# Integration Tests: Transcript Content (FastBrainNotification Exclusion)
 # =============================================================================
 
 
@@ -1335,7 +1335,7 @@ async def test_only_one_active_ask_handle_at_a_time(initialized_cm):
 @_handle_project
 async def test_transcript_excludes_call_guidance(initialized_cm):
     """
-    CallGuidance (internal orchestration) should NOT appear in the transcript.
+    FastBrainNotification (internal orchestration) should NOT appear in the transcript.
 
     The transcript passed to handle.ask() should only contain actual communications
     between the assistant and contacts, not internal guidance from the Main CM Brain
@@ -1343,13 +1343,13 @@ async def test_transcript_excludes_call_guidance(initialized_cm):
 
     This test verifies that:
     1. User utterances appear in the transcript
-    2. CallGuidance messages are filtered out
+    2. FastBrainNotification messages are filtered out
     3. Only "user" and "assistant" roles appear (not "guidance")
     """
     cm = initialized_cm
     contact = TEST_CONTACTS[1]
 
-    # Start a Unify Meet session - this will trigger CallGuidance from the CM brain
+    # Start a Unify Meet session - this will trigger FastBrainNotification from the CM brain
     await cm.step(UnifyMeetReceived(contact=contact))
     await cm.step(UnifyMeetStarted(contact=contact))
 

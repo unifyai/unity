@@ -36,7 +36,6 @@ from unity.conversation_manager.events import (
     ActorHandleStarted,
     ActorSessionResponse,
     NotificationInjectedEvent,
-    CallGuidance,
     UserScreenShareStarted,
     UserScreenShareStopped,
     UserWebcamStarted,
@@ -121,32 +120,32 @@ class FastBrainLogger:
         extra = _kv_suffix(kv)
         self._emit("assistant_speech", f"{_trunc(text)}{extra}")
 
-    def guidance(
+    def notification(
         self,
         source: str,
         content: str,
         *,
-        guidance_id: str = "",
+        notification_id: str = "",
         speak: bool = False,
         turn: bool = False,
     ) -> None:
         self._emit(
-            "guidance_received",
-            f"Guidance from {source}: {_trunc(content)}"
-            f" (guidance_id={guidance_id}, speak={speak}, turn={turn})",
+            "notification_received",
+            f"Notification from {source}: {_trunc(content)}"
+            f" (notification_id={notification_id}, speak={speak}, turn={turn})",
         )
 
-    def guidance_buffered(self, guidance_id: str, count: int) -> None:
+    def notification_buffered(self, notification_id: str, count: int) -> None:
         self._emit(
-            "guidance_buffered",
-            f"Buffered guidance {guidance_id} (total={count})",
+            "notification_buffered",
+            f"Buffered notification {notification_id} (total={count})",
         )
 
-    def guidance_say(self, guidance_id: str, text: str, **kv: object) -> None:
+    def notification_say(self, notification_id: str, text: str, **kv: object) -> None:
         extra = _kv_suffix(kv)
         self._emit_debug(
-            "guidance_say",
-            f"Speaking guidance {guidance_id}: {_trunc(text)}{extra}",
+            "notification_say",
+            f"Speaking notification {notification_id}: {_trunc(text)}{extra}",
         )
 
     # ── proactive speech helpers ─────────────────────────────────────────
@@ -184,10 +183,10 @@ class FastBrainLogger:
             f"Proactive speaking in {delay}s: {_trunc(content)}",
         )
 
-    def proactive_published(self, guidance_id: str, content: str) -> None:
+    def proactive_published(self, notification_id: str, content: str) -> None:
         self._emit_debug(
             "proactive_published",
-            f"Proactive spoke: {_trunc(content)}{_kv_suffix(dict(guidance_id=guidance_id))}",
+            f"Proactive spoke: {_trunc(content)}{_kv_suffix(dict(notification_id=notification_id))}",
         )
 
     def proactive_cancelled(self) -> None:
@@ -212,9 +211,6 @@ class FastBrainLogger:
 
     def participant_comms(self, text: str) -> None:
         self._emit("participant_comms", _trunc(text))
-
-    def boss_event(self, text: str) -> None:
-        self._emit("boss_event", _trunc(text))
 
     def ipc_inbound(self, channel: str, **kv: object) -> None:
         extra = _kv_suffix(kv)
@@ -390,7 +386,7 @@ async def start_event_broker_receive() -> bool:
     Start receiving events from parent process.
 
     Call this at the start of call scripts to enable receiving
-    inbound events (call_guidance, call_status, etc.) from the parent.
+    inbound events (notification, call_status, etc.) from the parent.
     """
     return await event_broker.start_receiving()
 
@@ -1231,28 +1227,19 @@ def render_participant_comms(event_json: str, participant_ids: set[int]) -> str 
 
 
 def render_event_for_fast_brain(event_json: str) -> str | None:
-    """Render a CM event as a ``[notification]``-style string for the fast brain.
+    """Render an actor lifecycle event as a human-readable string.
 
-    Used for boss-on-call mode where the fast brain sees all system events.
-    Returns None for events that should be silently ignored (e.g. own
-    utterances, call guidance which is handled by a dedicated callback, or
-    events with no user-meaningful content).
+    Called from the CM side (``LivekitCallManager._render_boss_notifications``)
+    to convert raw actor events into notification content before publishing
+    them to the fast brain via ``app:call:notification``.
+
+    Returns None for event types that should not be surfaced.
     """
     try:
         event = Event.from_json(event_json)
     except Exception:
         return None
 
-    if isinstance(event, CallGuidance):
-        return None
-
-    if isinstance(event, SMSReceived):
-        return f"SMS from {_contact_name(event.contact)}: {event.content}"
-    if isinstance(event, EmailReceived):
-        subj = event.subject or "(no subject)"
-        return f"Email from {_contact_name(event.contact)}: {subj}"
-    if isinstance(event, UnifyMessageReceived):
-        return f"Unify message from {_contact_name(event.contact)}: {event.content}"
     if isinstance(event, ActorNotification):
         return f"Action progress: {event.response}"
     if isinstance(event, ActorResult):

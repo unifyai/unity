@@ -289,10 +289,8 @@ class OutboundUnifyMeetUtterance(Event):
 
 
 @dataclass
-class CallGuidance(Event):
-    """
-    Guidance from the Main CM Brain sent to the Voice Agent during a call.
-
+class FastBrainNotification(Event):
+    """Notification delivered to the fast brain during a voice call.
 
     When should_speak is True, response_text contains the exact text the fast
     brain should utter via session.say(), bypassing its own LLM. When
@@ -300,7 +298,7 @@ class CallGuidance(Event):
     and must NOT speak in response.
     """
 
-    topic: ClassVar[str | None] = "app:comms:assistant_call_guidance"
+    topic: ClassVar[str | None] = "app:comms:assistant_notification"
 
     contact: dict
     content: str
@@ -308,6 +306,10 @@ class CallGuidance(Event):
     should_speak: bool = False
     source: str = ""
     agent_service_url: str = ""
+
+
+# Backward-compatible alias for deserialization of persisted events.
+CallGuidance = FastBrainNotification
 
 
 @dataclass

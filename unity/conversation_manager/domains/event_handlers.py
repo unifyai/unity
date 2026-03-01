@@ -220,15 +220,15 @@ async def _(
         )
 
         guidance_text = _MEET_FAST_BRAIN_GUIDANCE[AssistantScreenShareStarted]
-        guidance_event = CallGuidance(
+        notification_event = FastBrainNotification(
             contact=contact,
             content=guidance_text,
             source="meet_interaction",
             agent_service_url=_resolve_agent_service_url(),
         )
         await cm.call_manager._socket_server.queue_for_clients(
-            "app:call:call_guidance",
-            guidance_event.to_json(),
+            "app:call:notification",
+            notification_event.to_json(),
         )
 
     # No LLM run here — call guidance is pre-computed via make_call(context=...).
@@ -371,17 +371,17 @@ async def _(event: Event, cm: "ConversationManager", *args, **kwargs):
         await cm.interject_or_run(event.content)
 
 
-@EventHandler.register(CallGuidance)
+@EventHandler.register(FastBrainNotification)
 async def _(
-    event: CallGuidance,
+    event: FastBrainNotification,
     cm: "ConversationManager",
     *args,
     **kwargs,
 ):
-    guidance_id = content_trace_id("guid", event.content or "")
+    notification_id = content_trace_id("guid", event.content or "")
     cm._session_logger.info(
-        "call_guidance",
-        f"Received guidance guidance_id={guidance_id}: {event.content[:50]}...",
+        "call_notification",
+        f"Received notification notification_id={notification_id}: {event.content[:50]}...",
     )
     contact_id = event.contact["contact_id"]
     contact = cm.contact_index.get_contact(contact_id=contact_id)
@@ -1067,8 +1067,8 @@ async def _(event: ActorNotification, cm: "ConversationManager", *args, **kwargs
     working.  Progress is recorded in the action's history.
 
     The slow brain is woken to decide whether to relay progress via
-    ``guide_voice_agent``.  On boss-on-call, the fast brain receives the
-    raw event directly via channel forwarding (so guidance is not needed).
+    ``guide_voice_agent``.  On boss-on-call, the call manager renders
+    actor events into FastBrainNotification messages for the fast brain.
     """
     cm._has_non_forwarded_event = True
     if event.handle_id in cm.in_flight_actions:
@@ -1323,11 +1323,11 @@ async def _(
     if fast_brain_text and cm.mode.is_voice:
         contact = cm.get_active_contact()
         if contact:
-            guidance_id = content_trace_id("guid", fast_brain_text)
+            notification_id = content_trace_id("guid", fast_brain_text)
             cm._session_logger.debug(
-                "call_guidance",
+                "call_notification",
                 (
-                    f"Publishing meet interaction guidance_id={guidance_id} "
+                    f"Publishing meet interaction notification_id={notification_id} "
                     f"reason={event_name}"
                 ),
             )
@@ -1335,15 +1335,15 @@ async def _(
                 _resolve_agent_service_url,
             )
 
-            guidance_event = CallGuidance(
+            notification_event = FastBrainNotification(
                 contact=contact,
                 content=fast_brain_text,
                 source="meet_interaction",
                 agent_service_url=_resolve_agent_service_url(),
             )
             await cm.event_broker.publish(
-                "app:call:call_guidance",
-                guidance_event.to_json(),
+                "app:call:notification",
+                notification_event.to_json(),
             )
 
     await cm.schedule_proactive_speech()
@@ -1400,13 +1400,13 @@ async def _(event: DirectMessageEvent, cm: "ConversationManager", *args, **kwarg
     )
 
     if cm.mode.is_voice:
-        guidance_id = content_trace_id("guid", event.content or "")
+        notification_id = content_trace_id("guid", event.content or "")
         cm._session_logger.info(
-            "call_guidance",
-            f"Publishing direct-message guidance guidance_id={guidance_id}",
+            "call_notification",
+            f"Publishing direct-message notification notification_id={notification_id}",
         )
         await cm.event_broker.publish(
-            "app:call:call_guidance",
+            "app:call:notification",
             json.dumps({"content": event.content}),
         )
 
