@@ -59,8 +59,12 @@ class ProactiveSpeech:
         chat_history: list[dict],
         system_prompt: str,
         action_context: str | None = None,
-    ) -> ProactiveDecision:
-        """Decides whether to speak proactively based on the conversation history."""
+    ) -> tuple[ProactiveDecision, str]:
+        """Decides whether to speak proactively based on the conversation history.
+
+        Returns (decision, llm_log_path) where llm_log_path is the unillm
+        request+response file for the LLM call that produced this decision.
+        """
         try:
             client = new_llm_client(
                 origin="ProactiveSpeech",
@@ -75,10 +79,14 @@ class ProactiveSpeech:
                     {"role": "system", "content": action_context},
                 )
             response = await client.generate(messages=messages)
-            return ProactiveDecision.model_validate_json(response)
+            log_path = ""
+            pending = getattr(client, "_pending_thinking_log", None)
+            if pending is not None:
+                log_path = pending.last_path or ""
+            return ProactiveDecision.model_validate_json(response), log_path
         except Exception as e:
             LOGGER.error(f"{DEFAULT_ICON} Error in ProactiveSpeech decision: {e}")
             import traceback
 
             traceback.print_exc()
-            return ProactiveDecision(should_speak=False)
+            return ProactiveDecision(should_speak=False), ""

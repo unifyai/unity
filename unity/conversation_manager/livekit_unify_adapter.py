@@ -57,6 +57,7 @@ class UnifyLLM(llm.LLM):
         self._temperature = temperature
         self._extra_kwargs = kwargs
         self._pending_trace_contexts: deque[dict[str, Any]] = deque()
+        self.last_log_path: str = ""
 
     @property
     def model(self) -> str:
@@ -227,8 +228,10 @@ class UnifyLLMStream(llm.LLMStream):
                     )
                     self._event_ch.send_nowait(chat_chunk)
         finally:
-            if hasattr(client, "_pending_thinking_log"):
-                client._pending_thinking_log.emit_fallback()
+            pending = getattr(client, "_pending_thinking_log", None)
+            if pending is not None:
+                pending.emit_fallback()
+                self._llm.last_log_path = pending.last_path or ""
             LOGGER.debug(
                 f"{DEFAULT_ICON} "
                 + trace_kv(
