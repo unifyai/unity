@@ -260,12 +260,12 @@ class ConversationManager(metaclass=SingletonABCMeta):
     def desktop_fast_path_eligible(self) -> bool:
         """True when the CM should expose desktop fast-path tools.
 
-        Requires assistant screen share to be active AND at least one
-        in-flight ``act`` session to have invoked a desktop primitive.
+        Requires assistant screen share to be active.  The tools are available
+        regardless of whether an in-flight ``act`` session has already invoked
+        desktop primitives — the prompt guides the LLM to spin up a concurrent
+        ``act(persist=True)`` session when one isn't already running.
         """
-        return self.assistant_screen_share_active and bool(
-            self._act_handles_with_desktop_usage & set(self.in_flight_actions),
-        )
+        return self.assistant_screen_share_active
 
     def get_active_contact(self) -> dict | None:
         """Get the contact for the current active call, or fall back to the boss contact."""

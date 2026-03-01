@@ -616,9 +616,14 @@ Examples of requests that should use the direct tools:
             parts.add(
                 """Desktop fast-path tools
 -----------------------
-`desktop_act`, `desktop_observe`, and `desktop_get_screenshot` are **direct shortcuts** to the desktop agent, bypassing the general `act` pathway. They complete within this turn and return results immediately.
+`desktop_act`, `desktop_observe`, and `desktop_get_screenshot` are **direct shortcuts** to the desktop agent for trivially atomic actions (click, type, scroll, observe). They bypass the general `act` pathway and return results immediately.
 
-**IMPORTANT — priority over interject_*:** When these tools are available and the request is an atomic desktop action, ALWAYS prefer `desktop_act` / `desktop_observe` over interjecting a persistent `act` session — even if one is running. Interjecting routes through an extra LLM hop and is much slower. The in-flight `act` session is automatically interjected when the request is made and again with the result, so it stays fully in sync — just via a faster path.
+**NEVER use a desktop fast-path tool without an `act` session.** The fast-path tools can only execute trivial atomic actions — they have NO access to stored functions, guidance, compositional workflows, or skills. The full `act` pathway provides all of this, and these capabilities are often relevant even during interactive desktop sessions. Therefore:
+
+- **If NO `act` session is currently in-flight** (check `in_flight_actions`): ALWAYS call `act(persist=True)` **in the same response** as the fast-path tool. The `act` query should describe the desktop session context (e.g. "Desktop session is active. The user requested: '<action>'. Establish context, load any relevant guidance or stored functions, and stay available for subsequent desktop interactions.").
+- **If an `act` session IS already in-flight:** Just use the fast-path tool directly. The in-flight session is automatically interjected with both the request and the result.
+
+**Priority over interject_*:** When these tools are available and the request is an atomic desktop action, ALWAYS prefer `desktop_act` / `desktop_observe` over interjecting a persistent `act` session — even if one is running. Interjecting routes through an extra LLM hop and is much slower. The in-flight `act` session is automatically interjected when the request is made and again with the result, so it stays fully in sync — just via a faster path.
 
 Use these for **single atomic desktop actions** where the user has explicitly described both the action and the target:
 - "Click the blue Submit button" → `desktop_act` (NOT interject_*)
@@ -634,7 +639,7 @@ Use these for **single atomic desktop actions** where the user has explicitly de
 - The request involves non-desktop work alongside desktop actions
 - The request benefits from guidance, compositional functions, or planning
 
-These tools are only available while the desktop is being actively shared and a desktop session is in progress.""",
+These tools are only available while the desktop is being actively shared.""",
             )
 
         parts.add(
@@ -676,7 +681,11 @@ Examples of questions that should trigger `act`:
             "for atomic desktop actions instead of ``interject_*``. They are "
             "significantly faster, and the in-flight ``act`` session is "
             "automatically interjected with both the request and the result, "
-            "so it stays fully in sync — just via a faster path."
+            "so it stays fully in sync — just via a faster path. If no "
+            "persistent ``act`` session is running yet and the first user "
+            "request is atomic, call both the fast-path tool AND "
+            "``act(persist=True)`` in the same response to establish the "
+            "full-capability session."
             if desktop_fast_path
             else ""
         )

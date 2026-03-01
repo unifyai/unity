@@ -5,6 +5,8 @@ tests/conversation_manager/actions/test_desktop_fast_path_routing.py
 Eval tests verifying the CM brain routes:
 - Atomic desktop requests to fast-path tools (desktop_act, desktop_observe)
 - Complex / multi-step requests to ``act`` even when fast paths are available
+- Concurrent ``act(persist=True)`` is spun up alongside fast-path tools when
+  no act session is already in-flight
 
 These tests follow the same end-to-end pattern as test_take_action.py and
 test_ask_about_contacts.py: the ``initialized_cm`` fixture provides a real
@@ -13,8 +15,8 @@ real ``_run_llm()`` with a real LLM call.
 
 A ``ComputerPrimitives(computer_mode="mock")`` singleton is registered so
 ``cm.computer_primitives`` resolves naturally via ManagerRegistry (no
-property patching). The gating state (screen share + desktop usage tracking)
-is set up after a real ``act`` call creates a natural in-flight action.
+property patching). Desktop fast-path tools are exposed when screen share
+is active — no bootstrap ``act`` call is required.
 """
 
 from __future__ import annotations
@@ -48,13 +50,17 @@ def _ensure_mock_computer_primitives():
         ComputerPrimitives(computer_mode="mock")
 
 
+def _enable_desktop_fast_path(cm_driver):
+    """Activate desktop fast-path tools by turning on screen share."""
+    cm_driver.cm.assistant_screen_share_active = True
+
+
 def _setup_desktop_fast_path_from_real_act(cm_driver):
-    """Activate desktop fast-path gating using whatever in-flight act exists.
+    """Activate desktop fast-path gating and mark existing act sessions as
+    desktop-active (for interjection targeting).
 
     Call this AFTER a ``step_until_wait`` that triggered ``act`` — the
-    SimulatedActor handle will be sitting in ``in_flight_actions``.  We flip
-    ``assistant_screen_share_active`` and mark those handles as desktop-active
-    so the next LLM turn sees the desktop tools.
+    SimulatedActor handle will be sitting in ``in_flight_actions``.
     """
     cm = cm_driver.cm
     cm.assistant_screen_share_active = True
@@ -76,7 +82,7 @@ def _teardown_desktop_fast_path(cm_driver):
 
 
 # ---------------------------------------------------------------------------
-#  Atomic requests → fast path
+#  Atomic requests → fast path (with existing act session)
 # ---------------------------------------------------------------------------
 
 
@@ -86,7 +92,7 @@ async def test_click_routes_to_desktop_act(initialized_cm):
     """A simple 'click X' request should route to desktop_act.
 
     Flow: first message triggers ``act`` (creates in-flight action) →
-    flip gating flags → second message should route to ``desktop_act``.
+    mark act as desktop-active → second message should route to ``desktop_act``.
     """
     cm = initialized_cm
     _ensure_mock_computer_primitives()
@@ -148,6 +154,74 @@ async def test_observe_routes_to_desktop_observe(initialized_cm):
 
         assert "desktop_observe" in cm.all_tool_calls, (
             f"Expected 'desktop_observe' for screen observation request, "
+            f"got: {cm.all_tool_calls}"
+        )
+        assert_efficient(result, 5)
+    finally:
+        _teardown_desktop_fast_path(cm)
+
+
+# ---------------------------------------------------------------------------
+#  Atomic requests → fast path + concurrent act (no existing session)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+@_handle_project
+async def test_click_routes_to_desktop_act_with_concurrent_act(initialized_cm):
+    """When no act session is in-flight, an atomic click request should trigger
+    both ``desktop_act`` (for the immediate action) AND ``act`` with
+    ``persist=True`` (for the full-capability session) in the same turn.
+    """
+    cm = initialized_cm
+    _ensure_mock_computer_primitives()
+    _enable_desktop_fast_path(cm)
+
+    try:
+        result = await cm.step_until_wait(
+            UnifyMessageReceived(
+                contact=BOSS,
+                content="Click the Submit button on the screen",
+            ),
+        )
+
+        assert "desktop_act" in cm.all_tool_calls, (
+            f"Expected 'desktop_act' for atomic click request, "
+            f"got: {cm.all_tool_calls}"
+        )
+        assert "act" in cm.all_tool_calls, (
+            f"Expected concurrent 'act' session alongside desktop_act, "
+            f"got: {cm.all_tool_calls}"
+        )
+        assert_efficient(result, 5)
+    finally:
+        _teardown_desktop_fast_path(cm)
+
+
+@pytest.mark.asyncio
+@_handle_project
+async def test_observe_routes_to_desktop_observe_with_concurrent_act(initialized_cm):
+    """When no act session is in-flight, a screen observation request should
+    trigger both ``desktop_observe`` AND ``act(persist=True)`` in the same turn.
+    """
+    cm = initialized_cm
+    _ensure_mock_computer_primitives()
+    _enable_desktop_fast_path(cm)
+
+    try:
+        result = await cm.step_until_wait(
+            UnifyMessageReceived(
+                contact=BOSS,
+                content="What text is currently visible on the desktop screen?",
+            ),
+        )
+
+        assert "desktop_observe" in cm.all_tool_calls, (
+            f"Expected 'desktop_observe' for screen observation request, "
+            f"got: {cm.all_tool_calls}"
+        )
+        assert "act" in cm.all_tool_calls, (
+            f"Expected concurrent 'act' session alongside desktop_observe, "
             f"got: {cm.all_tool_calls}"
         )
         assert_efficient(result, 5)
