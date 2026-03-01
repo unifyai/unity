@@ -321,7 +321,7 @@ class TestHandleEventCore:
 
         mock_cm._session_logger.info.assert_called_with(
             "stub_loggable_event",
-            "Event: StubLoggableEvent (event_id=evt-test)",
+            "Event: StubLoggableEvent",
         )
 
     @pytest.mark.asyncio

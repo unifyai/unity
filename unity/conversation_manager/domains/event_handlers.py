@@ -55,7 +55,6 @@ class EventHandler:
             and not event.__class__.content_logged
             and event.__class__.loggable
         ):
-            event_trace = getattr(cm, "_current_event_trace", None) or {}
             log_fn = (
                 cm._session_logger.info
                 if event.__class__.prominent
@@ -63,10 +62,7 @@ class EventHandler:
             )
             log_fn(
                 event_key,
-                (
-                    f"Event: {event.__class__.__name__} "
-                    f"(event_id={event_trace.get('event_id', '-')})"
-                ),
+                f"Event: {event.__class__.__name__}",
             )
 
         if event.__class__.loggable:
@@ -1291,10 +1287,8 @@ async def _(
 ):
     event_name = event.__class__.__name__
     log_type = _MEET_LOG_TYPES.get(event.__class__, "meet_interaction")
-    event_trace = getattr(cm, "_current_event_trace", None) or {}
-    event_id = event_trace.get("event_id", "-")
     reason_part = f" ({event.reason})" if event.reason else ""
-    log_msg = f"Event: {event_name}{reason_part} (event_id={event_id})"
+    log_msg = f"Event: {event_name}{reason_part}"
     if event.reason == "LiveKit track auto-detected":
         cm._session_logger.debug(log_type, log_msg)
     else:
