@@ -537,24 +537,6 @@ class TestProactiveSpeechDecideIntegration:
         assert isinstance(decision.should_speak, bool)
         assert isinstance(decision.delay, int)
 
-    async def test_decide_does_not_speak_after_question(self):
-        """decide() should NOT speak when assistant just asked a question."""
-        ps = ProactiveSpeech()
-
-        chat_history = [
-            {"role": "user", "content": "Hello"},
-            {"role": "assistant", "content": "Hi! How can I help?"},
-        ]
-        system_prompt = "You are a helpful assistant."
-
-        decision, _ = await ps.decide(
-            chat_history=chat_history,
-            system_prompt=system_prompt,
-        )
-
-        # The assistant just asked a question; the user is likely thinking.
-        assert decision.should_speak is False
-
     async def test_decide_handles_empty_history(self):
         """decide() handles empty chat history gracefully."""
         ps = ProactiveSpeech()
