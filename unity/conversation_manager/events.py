@@ -685,6 +685,17 @@ class ActorHandleStarted(Event):
     response_format: dict | None = None
 
 
+@dataclass
+class DesktopActCompleted(_TruncatedReprMixin, Event):
+    """Fired when primitives.computer.desktop.act() completes anywhere in the
+    system (CM fast path, CodeActActor, sub-agents).  Carries the instruction,
+    the agent's summary, and a post-completion screenshot."""
+
+    instruction: str = ""
+    summary: str = ""
+    screenshot: str = ""  # base64 PNG
+
+
 # --------------------------------------------------------------------------- #
 # Meet Interaction Events (screen share / remote control)
 # --------------------------------------------------------------------------- #

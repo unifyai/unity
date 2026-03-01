@@ -79,6 +79,27 @@ def _publish_desktop_invoked(method_name: str) -> None:
         pass
 
 
+def _publish_desktop_act_completed(instruction: str, result: "ActResult") -> None:
+    """Fire-and-forget EventBus publish when desktop.act() completes."""
+    try:
+        from unity.events.event_bus import EVENT_BUS, Event
+
+        asyncio.get_running_loop().create_task(
+            EVENT_BUS.publish(
+                Event(
+                    type="DesktopActCompleted",
+                    payload={
+                        "instruction": instruction,
+                        "summary": result.summary,
+                        "screenshot": result.screenshot,
+                    },
+                ),
+            ),
+        )
+    except Exception:
+        pass
+
+
 def _make_session_method(
     method_name: str,
     owner: "ComputerPrimitives",
@@ -169,6 +190,8 @@ def _make_session_method(
         )
         if is_desktop:
             _publish_desktop_invoked(method_name)
+            if method_name == "act":
+                _publish_desktop_act_completed(args[0] if args else "", result)
         return result
 
     wrapper.__name__ = method_name

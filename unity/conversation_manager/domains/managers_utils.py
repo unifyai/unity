@@ -1263,6 +1263,39 @@ async def _register_desktop_primitive_callback(cm: "ConversationManager") -> Non
         pass
 
 
+async def _register_desktop_act_completed_callback(cm: "ConversationManager") -> None:
+    """Bridge ``DesktopActCompleted`` events from the in-process EventBUS to the
+    CM's ``event_broker`` so both the slow brain and fast brain see them.
+
+    Only publishes when the assistant is actively screen-sharing on a meet.
+    """
+    from unity.conversation_manager.events import DesktopActCompleted
+
+    async def _on_desktop_act_completed(events):  # noqa: ANN001
+        if not cm.assistant_screen_share_active:
+            return
+        for evt in events:
+            payload = evt.payload if isinstance(evt.payload, dict) else {}
+            cm_event = DesktopActCompleted(
+                instruction=payload.get("instruction", ""),
+                summary=payload.get("summary", ""),
+                screenshot=payload.get("screenshot", ""),
+            )
+            await cm.event_broker.publish(
+                "app:actor:desktop_act_completed",
+                cm_event.to_json(),
+            )
+
+    try:
+        await EVENT_BUS.register_callback(
+            event_type="DesktopActCompleted",
+            callback=_on_desktop_act_completed,
+            every_n=1,
+        )
+    except Exception:
+        pass
+
+
 async def init_conv_manager(
     cm: "ConversationManager",
     *,
@@ -1323,6 +1356,7 @@ async def init_conv_manager(
             cm.initialized = True
 
             await _register_desktop_primitive_callback(cm)
+            await _register_desktop_act_completed_callback(cm)
 
             # Publish initialization complete event for test synchronization
             await event_broker.publish(

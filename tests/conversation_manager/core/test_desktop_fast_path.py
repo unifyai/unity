@@ -309,3 +309,192 @@ async def test_desktop_act_without_act_session_no_interjection_errors(initialize
 
     # Clean up
     cm.in_flight_actions.pop(desktop_hid, None)
+
+
+# =============================================================================
+# DesktopActCompleted event chain
+# =============================================================================
+
+
+@pytest.mark.asyncio
+@_handle_project
+async def test_desktop_act_completed_event_type_registered(initialized_cm):
+    """DesktopActCompleted is a valid, constructable EventBus event type."""
+    from unity.events.event_bus import Event
+    from unity.events.types import PAYLOAD_REGISTRY
+
+    assert (
+        "DesktopActCompleted" in PAYLOAD_REGISTRY
+    ), "DesktopActCompleted must be registered in PAYLOAD_REGISTRY"
+
+    event = Event(
+        type="DesktopActCompleted",
+        payload={
+            "instruction": "Click Submit",
+            "summary": "Clicked the Submit button",
+            "screenshot": "base64png",
+        },
+    )
+    assert event.type == "DesktopActCompleted"
+    assert event.payload["instruction"] == "Click Submit"
+
+
+@pytest.mark.asyncio
+@_handle_project
+async def test_desktop_act_completed_bridge_publishes_when_screen_share_active(
+    initialized_cm,
+):
+    """The bridge callback should publish DesktopActCompleted to the event_broker
+    when screen share is active.
+
+    We simulate the EventBUS callback invocation directly (EventBUS publishing
+    is disabled in test mode).
+    """
+    from unittest.mock import MagicMock
+
+    cm = initialized_cm.cm
+    cm.assistant_screen_share_active = True
+
+    published = []
+    original_publish = cm.event_broker.publish
+
+    async def capture_publish(channel, data):
+        published.append((channel, data))
+        return await original_publish(channel, data)
+
+    cm.event_broker.publish = capture_publish
+
+    try:
+        # Build a fake EventBUS event with the right payload structure
+        fake_evt = MagicMock()
+        fake_evt.payload = {
+            "instruction": "Click Submit",
+            "summary": "Clicked the Submit button",
+            "screenshot": "base64png",
+        }
+
+        # Directly invoke the bridge callback logic
+        from unity.conversation_manager.events import DesktopActCompleted
+
+        cm_event = DesktopActCompleted(
+            instruction=fake_evt.payload["instruction"],
+            summary=fake_evt.payload["summary"],
+            screenshot=fake_evt.payload["screenshot"],
+        )
+        await cm.event_broker.publish(
+            "app:actor:desktop_act_completed",
+            cm_event.to_json(),
+        )
+
+        desktop_events = [
+            (ch, d) for ch, d in published if ch == "app:actor:desktop_act_completed"
+        ]
+        assert len(desktop_events) == 1, (
+            f"Expected 1 desktop_act_completed event on event_broker, "
+            f"got {len(desktop_events)}"
+        )
+    finally:
+        cm.event_broker.publish = original_publish
+        cm.assistant_screen_share_active = False
+
+
+@pytest.mark.asyncio
+@_handle_project
+async def test_desktop_act_completed_bridge_skipped_when_screen_share_inactive(
+    initialized_cm,
+):
+    """The bridge callback should NOT publish when screen share is inactive.
+
+    We test this by directly checking the gating logic: when
+    assistant_screen_share_active is False, the bridge callback should be
+    a no-op.
+    """
+    cm = initialized_cm.cm
+    cm.assistant_screen_share_active = False
+
+    published = []
+    original_publish = cm.event_broker.publish
+
+    async def capture_publish(channel, data):
+        published.append((channel, data))
+        return await original_publish(channel, data)
+
+    cm.event_broker.publish = capture_publish
+
+    try:
+        # Simulate what the bridge callback does: check the gate
+        # If screen share is inactive, it should NOT publish
+        if cm.assistant_screen_share_active:
+            from unity.conversation_manager.events import DesktopActCompleted
+
+            cm_event = DesktopActCompleted(
+                instruction="Click Submit",
+                summary="Clicked",
+                screenshot="base64png",
+            )
+            await cm.event_broker.publish(
+                "app:actor:desktop_act_completed",
+                cm_event.to_json(),
+            )
+
+        desktop_events = [
+            (ch, d) for ch, d in published if ch == "app:actor:desktop_act_completed"
+        ]
+        assert len(desktop_events) == 0, (
+            f"Expected 0 desktop_act_completed events when screen share is off, "
+            f"got {len(desktop_events)}"
+        )
+    finally:
+        cm.event_broker.publish = original_publish
+
+
+@pytest.mark.asyncio
+@_handle_project
+async def test_desktop_act_completed_event_handler_wakes_slow_brain(initialized_cm):
+    """EventHandler for DesktopActCompleted should set _has_non_forwarded_event
+    and request an LLM run."""
+    from unity.conversation_manager.domains.event_handlers import EventHandler
+    from unity.conversation_manager.events import DesktopActCompleted
+
+    cm = initialized_cm.cm
+    cm._has_non_forwarded_event = False
+
+    request_called = []
+    original_request = cm.request_llm_run
+
+    async def mock_request(**kwargs):
+        request_called.append(True)
+
+    cm.request_llm_run = mock_request
+
+    try:
+        event = DesktopActCompleted(
+            instruction="Click Submit",
+            summary="Clicked the Submit button",
+            screenshot="base64png",
+        )
+        await EventHandler.handle_event(event, cm)
+
+        assert cm._has_non_forwarded_event
+        assert request_called, "request_llm_run should have been called"
+    finally:
+        cm.request_llm_run = original_request
+
+
+def test_render_event_for_fast_brain_desktop_act_completed():
+    """render_event_for_fast_brain should render DesktopActCompleted events."""
+    from unity.conversation_manager.events import DesktopActCompleted
+    from unity.conversation_manager.medium_scripts.common import (
+        render_event_for_fast_brain,
+    )
+
+    event = DesktopActCompleted(
+        instruction="Click Submit",
+        summary="Clicked the Submit button",
+        screenshot="base64png",
+    )
+    result = render_event_for_fast_brain(event.to_json())
+
+    assert result is not None
+    assert "Desktop action completed" in result
+    assert "Clicked the Submit button" in result

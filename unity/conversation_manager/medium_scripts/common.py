@@ -35,6 +35,7 @@ from unity.conversation_manager.events import (
     ActorResult,
     ActorHandleStarted,
     ActorSessionResponse,
+    DesktopActCompleted,
     NotificationInjectedEvent,
     UserScreenShareStarted,
     UserScreenShareStopped,
@@ -1253,6 +1254,9 @@ def render_event_for_fast_brain(event_json: str) -> str | None:
         return f"Action update: {event.content}"
     if isinstance(event, NotificationInjectedEvent):
         return event.content
+    if isinstance(event, DesktopActCompleted):
+        snippet = event.summary[:200] if event.summary else event.instruction[:200]
+        return f"Desktop action completed: {snippet}"
 
     return None
 
