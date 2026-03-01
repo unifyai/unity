@@ -110,17 +110,9 @@ class FastBrainLogger:
         extra = _kv_suffix(kv)
         self._emit_debug("user_state", f"User state: {new_state}{extra}")
 
-    _SPEECH_SOURCE_LABELS = {
-        "generate_reply": "Reply",
-        "proactive_speech": "Proactive Speech",
-    }
-
     def assistant_speech(self, text: str, source: str = "") -> None:
         if source:
-            label = self._SPEECH_SOURCE_LABELS.get(
-                source,
-                source.replace("_", " ").title(),
-            )
+            label = source.replace("_", " ").title()
             self._emit("assistant_speech", f"{label}: {text}")
         else:
             self._emit("assistant_speech", text)
