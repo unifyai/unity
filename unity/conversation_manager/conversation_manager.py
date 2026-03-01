@@ -148,8 +148,7 @@ class ConversationManager(metaclass=SingletonABCMeta):
         self.memory_manager: MemoryManager = None
         self.actor: BaseActor | None = None
 
-        # debouncer (used to debounce llm runs)
-        self.debouncer = Debouncer()
+        self.debouncer = Debouncer(name="ConversationManager")
 
         # call manager - pass event_broker for socket IPC with voice agent subprocess
         self.call_manager = LivekitCallManager(self.get_call_config(), event_broker)
@@ -872,7 +871,12 @@ class ConversationManager(metaclass=SingletonABCMeta):
             origin="ConversationManager",
         )
         if hasattr(client, "_pending_thinking_log"):
-            suffix = f" ({reason})" if reason else ""
+            parts = [
+                p
+                for p in [reason, "from queue" if self.debouncer.was_queued else ""]
+                if p
+            ]
+            suffix = f" ({', '.join(parts)})" if parts else ""
             client._pending_thinking_log.set_thinking_context(suffix)
         client.set_system_message(system_prompt.to_list())
         client.set_prompt_caching(["system"])

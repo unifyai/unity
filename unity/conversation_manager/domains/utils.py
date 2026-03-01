@@ -1,6 +1,8 @@
 import asyncio
 import traceback
 
+from unity.logger import LOGGER
+
 
 def log_task_exc(task: asyncio.Task) -> None:
     try:
@@ -12,9 +14,11 @@ def log_task_exc(task: asyncio.Task) -> None:
 
 
 class Debouncer:
-    def __init__(self):
+    def __init__(self, name: str | None = None):
         self.running_task: asyncio.Task = None
         self.pending_task: asyncio.Task = None
+        self._name = name
+        self.was_queued: bool = False
 
     async def submit(
         self,
@@ -24,14 +28,27 @@ class Debouncer:
         delay=0,
         cancel_running=False,
     ):
-        # cancel pending task (debounce) and, optionally, cancel running task as well
         args, kwargs = args or (), kwargs or {}
+
+        had_pending = self.pending_task is not None and not self.pending_task.done()
+        has_running = self.running_task is not None and not self.running_task.done()
+
         await self._cancel_tasks(running=cancel_running)
 
-        # schedule a new task to run
+        if self._name and not cancel_running:
+            if had_pending and has_running:
+                LOGGER.info(
+                    f"🔄 [{self._name}] Pending run replaced (newer request)",
+                )
+            elif has_running:
+                LOGGER.info(
+                    f"⏳ [{self._name}] Run queued behind in-flight thinking",
+                )
+
         async def wait_for_running_task():
             if delay > 0:
                 await asyncio.sleep(delay)
+            queued = self.running_task is not None and not self.running_task.done()
             try:
                 # Wait for any currently running task to complete.
                 # Use asyncio.shield() to protect the running task from being
@@ -53,7 +70,7 @@ class Debouncer:
                 else:
                     # We (the pending task) were cancelled, re-raise to stop
                     raise
-            # Create a running task (only if we weren't cancelled)
+            self.was_queued = queued
             self.running_task = asyncio.create_task(async_fn(*args, **kwargs))
             self.running_task.add_done_callback(log_task_exc)
             self.pending_task = None
