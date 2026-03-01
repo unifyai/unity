@@ -308,8 +308,6 @@ async def entrypoint(ctx: agents.JobContext):
             enqueue_trace_context(trigger)
         _log.llm_thinking(
             reason=reason,
-            generation_id=generation_id,
-            source_id=source_id,
             queued_speech=len(_queued_speech),
         )
         reply_kwargs = {"allow_interruptions": allow_interruptions}

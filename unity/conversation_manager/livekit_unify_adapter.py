@@ -184,14 +184,11 @@ class UnifyLLMStream(llm.LLMStream):
         # emits a combined "LLM thinking… (reason=…) → /path" line.
         tc = self._trace_context
         if tc and hasattr(client, "_pending_thinking_log"):
-            kv = {
-                k: tc[k]
-                for k in ("reason", "generation_id", "source_id")
-                if k in tc and tc[k]
-            }
-            if kv:
-                parts = ", ".join(f"{k}={v}" for k, v in kv.items())
-                client._pending_thinking_log.set_thinking_context(f" ({parts})")
+            reason = tc.get("reason", "")
+            if reason:
+                client._pending_thinking_log.set_thinking_context(
+                    f" (reason={reason})",
+                )
 
         # Stream the response
         generate_kwargs: dict[str, Any] = {}

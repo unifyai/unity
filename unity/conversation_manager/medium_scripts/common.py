@@ -91,19 +91,13 @@ class FastBrainLogger:
             f"LLM thinking…{_kv_suffix(dict(reason=reason, **kv))}",
         )
 
-    def llm_completed(self, generation_id: str = "", **kv: object) -> None:
+    def llm_completed(self, **kv: object) -> None:
         extra = _kv_suffix(kv)
-        self._emit(
-            "llm_completed",
-            f"Generation completed{_id(generation_id)}{extra}",
-        )
+        self._emit("llm_completed", f"Generation completed{extra}")
 
-    def llm_cancelled(self, generation_id: str = "", **kv: object) -> None:
+    def llm_cancelled(self, **kv: object) -> None:
         extra = _kv_suffix(kv)
-        self._emit(
-            "llm_cancelled",
-            f"Generation cancelled{_id(generation_id)}{extra}",
-        )
+        self._emit("llm_cancelled", f"Generation cancelled{extra}")
 
     def llm_error(self, error: str, **kv: object) -> None:
         extra = _kv_suffix(kv)
@@ -254,10 +248,6 @@ def _kv_suffix(kv: dict[str, object]) -> str:
         return ""
     parts = [f"{k}={v}" for k, v in kv.items() if v is not None and v != ""]
     return f" ({', '.join(parts)})" if parts else ""
-
-
-def _id(val: str) -> str:
-    return f" {val}" if val else ""
 
 
 class SocketAwareEventBroker:
