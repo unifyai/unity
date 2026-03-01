@@ -45,7 +45,6 @@ from unity.conversation_manager.types.screenshot import (
 )
 from unity.actor.base import BaseActor
 from unity.conversation_manager.domains.proactive_speech import ProactiveSpeech
-from unity.conversation_manager.tracing import content_trace_id
 from unity.conversation_manager.medium_scripts.common import FastBrainLogger
 
 MAX_CONV_MANAGER_MSGS = 50
@@ -915,7 +914,6 @@ class ConversationManager(metaclass=SingletonABCMeta):
                     break
 
             if notification_content:
-                notification_id = content_trace_id("guid", notification_content)
                 contact = self.get_active_contact()
                 event = FastBrainNotification(
                     contact=contact,
@@ -926,10 +924,7 @@ class ConversationManager(metaclass=SingletonABCMeta):
                 )
                 self._session_logger.info(
                     "call_notification",
-                    (
-                        f"Publishing notification notification_id={notification_id} "
-                        f"run_id={run_id} speak={should_speak}"
-                    ),
+                    f"Publishing notification run_id={run_id} speak={should_speak}",
                 )
                 event_json = event.to_json()
                 await self.event_broker.publish(
@@ -1377,7 +1372,6 @@ class ConversationManager(metaclass=SingletonABCMeta):
                     role="assistant",
                 )
 
-            notification_id = content_trace_id("guid", decision.content)
             event = FastBrainNotification(
                 contact=contact or {},
                 content=decision.content,
@@ -1389,7 +1383,7 @@ class ConversationManager(metaclass=SingletonABCMeta):
                 "app:call:notification",
                 event.to_json(),
             )
-            _log.proactive_published(notification_id, decision.content)
+            _log.proactive_published(decision.content)
 
         except asyncio.CancelledError:
             _log.proactive_cancelled()

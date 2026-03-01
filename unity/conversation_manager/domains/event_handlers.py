@@ -7,7 +7,6 @@ from unity.common.hierarchical_logger import DEFAULT_ICON
 from unity.conversation_manager import assistant_jobs
 from unity.conversation_manager.events import *
 from unity.conversation_manager.domains import managers_utils
-from unity.conversation_manager.tracing import content_trace_id
 from unity.conversation_manager.types import Medium, Mode
 
 if TYPE_CHECKING:
@@ -378,10 +377,9 @@ async def _(
     *args,
     **kwargs,
 ):
-    notification_id = content_trace_id("guid", event.content or "")
     cm._session_logger.info(
         "call_notification",
-        f"Received notification notification_id={notification_id}: {event.content[:50]}...",
+        f"Received notification: {event.content[:50]}...",
     )
     contact_id = event.contact["contact_id"]
     contact = cm.contact_index.get_contact(contact_id=contact_id)
@@ -1323,13 +1321,9 @@ async def _(
     if fast_brain_text and cm.mode.is_voice:
         contact = cm.get_active_contact()
         if contact:
-            notification_id = content_trace_id("guid", fast_brain_text)
             cm._session_logger.debug(
                 "call_notification",
-                (
-                    f"Publishing meet interaction notification_id={notification_id} "
-                    f"reason={event_name}"
-                ),
+                f"Publishing meet interaction reason={event_name}",
             )
             from unity.conversation_manager.medium_scripts.common import (
                 _resolve_agent_service_url,
@@ -1400,10 +1394,9 @@ async def _(event: DirectMessageEvent, cm: "ConversationManager", *args, **kwarg
     )
 
     if cm.mode.is_voice:
-        notification_id = content_trace_id("guid", event.content or "")
         cm._session_logger.info(
             "call_notification",
-            f"Publishing direct-message notification notification_id={notification_id}",
+            "Publishing direct-message notification",
         )
         await cm.event_broker.publish(
             "app:call:notification",
