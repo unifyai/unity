@@ -67,7 +67,7 @@ ICONS = {
     # ── Proactive speech ────────────────────────────────────────────────
     "proactive_speech": "🗣️",
     "proactive_debounce": "⏱️",
-    "proactive_decision": "🎯",
+    "proactive_decision": "🗣️",
     "proactive_deferred": "⏸️",
     "proactive_dormant": "💤",
     "proactive_speaking": "🗣️",
