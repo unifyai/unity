@@ -443,7 +443,6 @@ async def entrypoint(ctx: agents.JobContext):
             _log.assistant_speech(
                 text,
                 source=(say_meta or {}).get("source", "generate_reply"),
-                notification_id=(say_meta or {}).get("notification_id", ""),
             )
         if role == "user":
             event = user_utterance_event(contact, content=text)
@@ -660,7 +659,6 @@ async def entrypoint(ctx: agents.JobContext):
         )
 
         _log.notification_say(
-            notification_id,
             text,
             notification_source=notification_source,
         )
@@ -695,7 +693,6 @@ async def entrypoint(ctx: agents.JobContext):
         _log.notification(
             notification_source,
             content,
-            notification_id=notification_id,
             speak=should_speak,
             turn=triggers_turn,
         )
@@ -712,7 +709,7 @@ async def entrypoint(ctx: agents.JobContext):
                         notification_source,
                     ),
                 )
-                _log.notification_buffered(notification_id, len(pending_notifications))
+                _log.notification_buffered(len(pending_notifications))
             else:
                 apply_notification(
                     content,

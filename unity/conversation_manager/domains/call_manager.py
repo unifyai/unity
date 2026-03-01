@@ -12,7 +12,7 @@ from unity.conversation_manager.domains.ipc_socket import (
     CallEventSocketServer,
     CM_EVENT_SOCKET_ENV,
 )
-from unity.conversation_manager.tracing import content_trace_id, trace_kv
+from unity.conversation_manager.tracing import trace_kv
 from unity.logger import LOGGER
 from unity.common.hierarchical_logger import DEFAULT_ICON, ICONS
 from unity.helpers import (
@@ -182,7 +182,6 @@ class LivekitCallManager:
         # directly into the socket server buffer so the message cannot be lost
         # due to the forward-subscription task not having subscribed yet.
         if self.initial_notification:
-            notification_id = content_trace_id("guid", self.initial_notification)
             notification_event = FastBrainNotification(
                 contact=contact,
                 content=self.initial_notification,
@@ -199,7 +198,7 @@ class LivekitCallManager:
                 notification_event.to_json(),
             )
             LOGGER.debug(
-                f"{ICONS['ipc']} {trace_kv('CALL_MANAGER_INITIAL_NOTIFICATION', notification_id=notification_id, content_preview=self.initial_notification[:80])}",
+                f"{ICONS['ipc']} {trace_kv('CALL_MANAGER_INITIAL_NOTIFICATION', content_preview=self.initial_notification[:80])}",
             )
             self.initial_notification = ""
 

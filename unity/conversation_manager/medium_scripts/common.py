@@ -125,28 +125,27 @@ class FastBrainLogger:
         source: str,
         content: str,
         *,
-        notification_id: str = "",
         speak: bool = False,
         turn: bool = False,
     ) -> None:
         self._emit(
             "notification_received",
             f"Notification from {source}"
-            f" (notification_id={notification_id}, speak={speak}, turn={turn})"
+            f" (speak={speak}, turn={turn})"
             f": {content}",
         )
 
-    def notification_buffered(self, notification_id: str, count: int) -> None:
+    def notification_buffered(self, count: int) -> None:
         self._emit(
             "notification_buffered",
-            f"Buffered notification {notification_id} (total={count})",
+            f"Buffered notification (total={count})",
         )
 
-    def notification_say(self, notification_id: str, text: str, **kv: object) -> None:
+    def notification_say(self, text: str, **kv: object) -> None:
         extra = _kv_suffix(kv)
         self._emit_debug(
             "notification_say",
-            f"Speaking notification {notification_id}: {text}{extra}",
+            f"Speaking notification: {text}{extra}",
         )
 
     # ── proactive speech helpers ─────────────────────────────────────────
@@ -184,10 +183,10 @@ class FastBrainLogger:
             f"Proactive speaking in {delay}s: {content}",
         )
 
-    def proactive_published(self, notification_id: str, content: str) -> None:
+    def proactive_published(self, content: str) -> None:
         self._emit_debug(
             "proactive_published",
-            f"Proactive spoke: {content}{_kv_suffix(dict(notification_id=notification_id))}",
+            f"Proactive spoke: {content}",
         )
 
     def proactive_cancelled(self) -> None:
