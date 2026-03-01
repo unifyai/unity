@@ -440,7 +440,7 @@ async def entrypoint(ctx: agents.JobContext):
         else:
             _log.assistant_speech(
                 text,
-                source=(say_meta or {}).get("source", "generate_reply"),
+                source=(say_meta or {}).get("source", "reply"),
             )
         if role == "user":
             event = user_utterance_event(contact, content=text)

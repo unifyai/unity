@@ -5,7 +5,7 @@ Parses .logs_voice_agent.txt (and optionally .logs_conversation_sandbox.txt)
 to produce a deterministic, source-traced call transcript with anomaly detection.
 
 Every assistant utterance is traced to its source path:
-  - Path 1: fast_brain (generate_reply)
+  - Path 1: fast_brain (reply)
   - Path 2: proactive_speech
   - Path 3: slow_brain / actor_notification
 
@@ -80,7 +80,7 @@ class FastBrainRequest:
 
 @dataclass
 class GenerateReplyTrigger:
-    """A generate_reply trigger event."""
+    """A reply trigger event from the fast brain."""
 
     monotonic_ms: int
     ts_utc: str
@@ -598,7 +598,7 @@ def parse_voice_log(path: Path) -> VoiceLogData:
                 )
 
             elif _ASSISTANT_SPEECH_ICON in line:
-                source = "generate_reply"
+                source = "reply"
                 gid = ""
                 # Format: "Source Label: speech text"
                 m = re.match(r"^([\w ]+):\s+(.+)$", body)
@@ -637,7 +637,7 @@ def parse_voice_log(path: Path) -> VoiceLogData:
                             role="user",
                             text=text,
                             utterance_id=_content_hash("utt", f"user:{text}"),
-                            speech_source="generate_reply",
+                            speech_source="reply",
                             guidance_id="",
                         ),
                     )
@@ -883,7 +883,7 @@ def build_timeline(
 
         fb_request: FastBrainRequest | None = None
         fb_trigger: GenerateReplyTrigger | None = None
-        if utt.speech_source == "generate_reply" and utt.role == "assistant":
+        if utt.speech_source == "reply" and utt.role == "assistant":
             fb_request = _find_fb_request_for_utterance(utt, data.fb_requests)
             if fb_request:
                 fb_trigger = _find_fb_trigger_for_request(fb_request, data.fb_triggers)
@@ -1094,7 +1094,7 @@ _SEP = "\u2500" * 72  # ────────
 _DSEP = "\u2550" * 72  # ════════
 
 SOURCE_LABELS = {
-    "generate_reply": "fast_brain",
+    "reply": "fast_brain",
     "proactive_speech": "proactive_speech",
     "slow_brain": "slow_brain",
     "actor_notification": "actor_notification",
