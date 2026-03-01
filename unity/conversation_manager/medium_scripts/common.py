@@ -152,6 +152,12 @@ class FastBrainLogger:
 
     # ── proactive speech helpers ─────────────────────────────────────────
 
+    def proactive_waiting_for_quiescence(self) -> None:
+        self._emit_debug(
+            "proactive_waiting",
+            "Proactive speech waiting for pipeline quiescence",
+        )
+
     def proactive_debounce(self, seconds: float) -> None:
         self._emit_debug(
             "proactive_debounce",

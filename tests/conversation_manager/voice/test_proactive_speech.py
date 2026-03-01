@@ -113,7 +113,8 @@ def mock_cm(mock_session_logger, mock_event_broker, sample_contacts):
     cm.mode = "call"  # Default to voice mode where proactive speech is active
     cm._proactive_speech_task = None
     cm._proactive_speech_gen = 0
-    cm._fast_brain_active = False
+    cm._voice_pipeline_quiescent = asyncio.Event()
+    cm._voice_pipeline_quiescent.set()
     cm.assistant_screen_share_active = False
 
     # Create SimulatedContactManager and populate with sample contacts
@@ -296,18 +297,13 @@ class TestCancelProactiveSpeech:
 class TestProactiveSpeechLoop:
     """Tests for the _proactive_speech_loop() method."""
 
-    async def test_loop_defers_when_fast_brain_active(self, mock_cm):
-        """When _fast_brain_active is True, the loop exits without consulting
-        the LLM -- deferring to the next cycle when the fast brain finishes.
-
-        Regression test: without fast-brain state awareness, the proactive
-        speech LLM fires during long TTS responses (e.g. visual descriptions)
-        and produces contradictory content that plays after the fast brain.
+    async def test_loop_defers_when_pipeline_not_quiescent(self, mock_cm):
+        """When the pipeline becomes non-quiescent during the debounce sleep,
+        the loop exits without consulting the LLM.
         """
         from unity.conversation_manager.conversation_manager import ConversationManager
 
         mock_cm.mode = Mode.CALL
-        mock_cm._fast_brain_active = True
 
         decide_called = False
 
@@ -318,20 +314,60 @@ class TestProactiveSpeechLoop:
 
         mock_cm.proactive_speech.decide = mock_decide
 
-        with patch("asyncio.sleep", new=AsyncMock()):
+        original_sleep = asyncio.sleep
+
+        async def sleep_then_clear_quiescence(seconds):
+            mock_cm._voice_pipeline_quiescent.clear()
+            await original_sleep(0)
+
+        with patch("asyncio.sleep", new=sleep_then_clear_quiescence):
             await ConversationManager._proactive_speech_loop(mock_cm)
 
         assert (
             not decide_called
-        ), "LLM should NOT be consulted when fast brain is active"
+        ), "LLM should NOT be consulted when pipeline is not quiescent"
         mock_cm.event_broker.publish.assert_not_called()
 
-    async def test_loop_proceeds_when_fast_brain_inactive(self, mock_cm):
-        """When _fast_brain_active is False, the loop proceeds normally."""
+    async def test_loop_waits_for_quiescence_before_countdown(self, mock_cm):
+        """When the pipeline is not quiescent at the start, the loop waits
+        for quiescence before beginning the debounce countdown.
+        """
         from unity.conversation_manager.conversation_manager import ConversationManager
 
         mock_cm.mode = Mode.CALL
-        mock_cm._fast_brain_active = False
+        mock_cm._voice_pipeline_quiescent.clear()
+
+        decide_called = False
+
+        async def mock_decide(*args, **kwargs):
+            nonlocal decide_called
+            decide_called = True
+            return ProactiveDecision(should_speak=False)
+
+        mock_cm.proactive_speech.decide = mock_decide
+
+        async def set_quiescent_after_delay():
+            await asyncio.sleep(0.05)
+            mock_cm._voice_pipeline_quiescent.set()
+
+        asyncio.create_task(set_quiescent_after_delay())
+
+        with (
+            patch("asyncio.sleep", new=AsyncMock()),
+            patch(
+                "unity.conversation_manager.conversation_manager.build_brain_spec",
+                return_value=MockBrainSpec(),
+            ),
+        ):
+            await ConversationManager._proactive_speech_loop(mock_cm)
+
+        assert decide_called, "LLM should be consulted after pipeline becomes quiescent"
+
+    async def test_loop_proceeds_when_pipeline_quiescent(self, mock_cm):
+        """When the pipeline is quiescent, the loop proceeds normally."""
+        from unity.conversation_manager.conversation_manager import ConversationManager
+
+        mock_cm.mode = Mode.CALL
 
         async def mock_decide(*args, **kwargs):
             return ProactiveDecision(should_speak=False)
@@ -347,8 +383,6 @@ class TestProactiveSpeechLoop:
         ):
             await ConversationManager._proactive_speech_loop(mock_cm)
 
-        # The LLM was consulted (it decided not to speak, but it WAS asked)
-        # No publish because should_speak=False, but the decide path was hit
         mock_cm.event_broker.publish.assert_not_called()
 
     async def test_loop_goes_dormant_when_should_not_speak(self, mock_cm):
@@ -637,29 +671,6 @@ class TestEventHandlerProactiveSpeechIntegration:
 
         await EventHandler.handle_event(event, mock_cm, is_voice_call=False)
 
-        mock_cm.schedule_proactive_speech.assert_called_once()
-
-    async def test_outbound_utterance_clears_fast_brain_active_flag(self, mock_cm):
-        """OutboundUtterance clears _fast_brain_active, ending the suppression window.
-
-        The fast brain's generation+TTS cycle ends when the OutboundUtterance
-        arrives at the CM. Clearing the flag allows the next proactive speech
-        cycle to proceed normally.
-        """
-        from unity.conversation_manager.events import OutboundPhoneUtterance
-        from unity.conversation_manager.domains.event_handlers import EventHandler
-
-        mock_cm._fast_brain_active = True
-        mock_cm.schedule_proactive_speech = AsyncMock()
-
-        event = OutboundPhoneUtterance(
-            contact={"contact_id": 1, "first_name": "Boss", "surname": "User"},
-            content="I see your desktop with a terminal window.",
-        )
-
-        await EventHandler.handle_event(event, mock_cm, is_voice_call=False)
-
-        assert mock_cm._fast_brain_active is False
         mock_cm.schedule_proactive_speech.assert_called_once()
 
     async def test_phone_call_ended_cancels_proactive(self, mock_cm):

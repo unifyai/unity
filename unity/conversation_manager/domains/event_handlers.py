@@ -347,11 +347,6 @@ async def _(event: Event, cm: "ConversationManager", *args, **kwargs):
         local_message_id=message_id,
     )
 
-    # Outbound utterances signal that the fast brain's generation+TTS cycle
-    # completed — clear the suppression flag so proactive speech can resume.
-    if role == "assistant":
-        cm._fast_brain_active = False
-
     # Reset proactive speech on any utterance (user or assistant).
     await cm.schedule_proactive_speech()
 
