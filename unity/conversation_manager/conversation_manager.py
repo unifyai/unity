@@ -836,7 +836,10 @@ class ConversationManager(metaclass=SingletonABCMeta):
         )
 
         reason = (trace_meta or {}).get("origin_event_name", "")
-        self._session_logger.log_llm_thinking(reason)
+        self._session_logger.debug(
+            "llm_thinking",
+            f"LLM thinking... ({reason})" if reason else "LLM thinking...",
+        )
 
         # Build response model dynamically with current in-flight actions
         response_model = brain_spec.response_model
@@ -869,6 +872,9 @@ class ConversationManager(metaclass=SingletonABCMeta):
             SETTINGS.UNIFY_MODEL,
             origin="ConversationManager",
         )
+        if hasattr(client, "_pending_thinking_log"):
+            suffix = f" ({reason})" if reason else ""
+            client._pending_thinking_log.set_thinking_context(suffix)
         client.set_system_message(system_prompt.to_list())
         client.set_prompt_caching(["system"])
         messages = self._preprocess_messages(self.chat_history + [input_message])
@@ -882,6 +888,8 @@ class ConversationManager(metaclass=SingletonABCMeta):
                 response_format=response_model,
             )
         finally:
+            if hasattr(client, "_pending_thinking_log"):
+                client._pending_thinking_log.emit_fallback()
             _EVENT_SOURCE.reset(_source_token)
 
         # Extract structured output (thoughts)

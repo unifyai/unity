@@ -180,6 +180,19 @@ class UnifyLLMStream(llm.LLMStream):
         )
         client.set_stream(True)
 
+        # Set thinking context from trace metadata so the pending callback
+        # emits a combined "LLM thinking… (reason=…) → /path" line.
+        tc = self._trace_context
+        if tc and hasattr(client, "_pending_thinking_log"):
+            kv = {
+                k: tc[k]
+                for k in ("reason", "generation_id", "source_id")
+                if k in tc and tc[k]
+            }
+            if kv:
+                parts = ", ".join(f"{k}={v}" for k, v in kv.items())
+                client._pending_thinking_log.set_thinking_context(f" ({parts})")
+
         # Stream the response
         generate_kwargs: dict[str, Any] = {}
         if messages:
@@ -217,6 +230,8 @@ class UnifyLLMStream(llm.LLMStream):
                     )
                     self._event_ch.send_nowait(chat_chunk)
         finally:
+            if hasattr(client, "_pending_thinking_log"):
+                client._pending_thinking_log.emit_fallback()
             LOGGER.debug(
                 f"{DEFAULT_ICON} "
                 + trace_kv(

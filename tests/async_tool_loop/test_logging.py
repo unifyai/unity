@@ -10,7 +10,7 @@ from unity.common.async_tool_loop import (
     AsyncToolLoopHandle,
 )
 from unity.events.event_bus import EVENT_BUS
-from unity.common.llm_client import new_llm_client
+from unity.common.llm_client import new_llm_client, PendingThinkingLog
 
 # All tests in this file require EventBus publishing to verify event behavior
 pytestmark = pytest.mark.enable_eventbus
@@ -368,3 +368,70 @@ async def test_thinking_log_fallback_without_log_dir(llm_config, capfd):
         if old_env is not None:
             os.environ["UNILLM_LOG_DIR"] = old_env
         unillm_logger.configure_log_dir(old_env)
+
+
+# ── PendingThinkingLog unit tests ─────────────────────────────────────────
+
+
+class TestPendingThinkingLog:
+
+    def test_combined_line_with_context(self, capfd):
+        """When a pending path arrives and thinking context is set,
+        a single combined '🔄 ... LLM thinking…(suffix) → /path' line is emitted."""
+        from pathlib import Path
+
+        log = PendingThinkingLog("FastBrain")
+        log.set_thinking_context(" (reason=test, generation_id=gen-001)")
+        log.on_pending_path(Path("/tmp/fake.cache_pending.txt"))
+
+        out = capfd.readouterr().out
+        assert "🔄" in out
+        assert "[FastBrain]" in out
+        assert "LLM thinking…" in out
+        assert "reason=test" in out
+        assert "→ /tmp/fake.cache_pending.txt" in out
+        lines = [l for l in out.splitlines() if "FastBrain" in l]
+        assert len(lines) == 1
+
+    def test_fallback_without_log_dir(self, capfd):
+        """When no pending path arrives, emit_fallback produces a plain thinking line."""
+        log = PendingThinkingLog("ConversationManager")
+        log.set_thinking_context(" (UserWebcamStarted)")
+        log.emit_fallback()
+
+        out = capfd.readouterr().out
+        assert "🔄" in out
+        assert "[ConversationManager]" in out
+        assert "LLM thinking…" in out
+        assert "(UserWebcamStarted)" in out
+        assert "→" not in out
+
+    def test_fallback_suppressed_after_pending(self, capfd):
+        """If pending callback already fired, emit_fallback is a no-op."""
+        from pathlib import Path
+
+        log = PendingThinkingLog("ProactiveSpeech")
+        log.on_pending_path(Path("/tmp/fake.txt"))
+
+        capfd.readouterr()  # drain the first emission
+
+        log.emit_fallback()
+        out = capfd.readouterr().out
+        assert out.strip() == ""
+
+    def test_no_context_produces_generic_line(self, capfd):
+        """Without set_thinking_context, the combined line has no suffix."""
+        from pathlib import Path
+
+        log = PendingThinkingLog("ProactiveSpeech")
+        log.on_pending_path(Path("/tmp/fake.txt"))
+
+        out = capfd.readouterr().out
+        assert "LLM thinking… →" in out
+        assert "ProactiveSpeech" in out
+
+    def test_new_llm_client_attaches_pending_log(self):
+        """new_llm_client with origin should attach _pending_thinking_log."""
+        client = new_llm_client(origin="TestOrigin")
+        assert hasattr(client, "_pending_thinking_log")
+        assert isinstance(client._pending_thinking_log, PendingThinkingLog)

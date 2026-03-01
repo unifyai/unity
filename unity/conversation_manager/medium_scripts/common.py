@@ -86,7 +86,7 @@ class FastBrainLogger:
     # ── typed helpers ────────────────────────────────────────────────────
 
     def llm_thinking(self, reason: str, **kv: object) -> None:
-        self._emit(
+        self._emit_debug(
             "llm_thinking",
             f"LLM thinking…{_kv_suffix(dict(reason=reason, **kv))}",
         )
