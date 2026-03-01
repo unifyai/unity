@@ -438,10 +438,14 @@ async def entrypoint(ctx: agents.JobContext):
         if role == "user":
             _log.user_speech(text)
         else:
-            _log.assistant_speech(
-                text,
-                source=(say_meta or {}).get("source", "reply"),
-            )
+            source = (say_meta or {}).get("source", "reply")
+            if say_meta and say_meta.get("llm_log_path"):
+                log_path = say_meta["llm_log_path"]
+            elif source == "reply":
+                log_path = getattr(llm_model, "last_log_path", "")
+            else:
+                log_path = ""
+            _log.assistant_speech(text, source=source, llm_log_path=log_path)
         if role == "user":
             event = user_utterance_event(contact, content=text)
             from datetime import datetime, timezone
@@ -574,9 +578,9 @@ async def entrypoint(ctx: agents.JobContext):
     await publish_call_started(contact, channel)
     touch_activity()
 
-    pending_notifications: list[tuple[str, str, bool, str, str]] = (
+    pending_notifications: list[tuple[str, str, bool, str, str, str]] = (
         []
-    )  # (content, response_text, should_speak, notification_id, notification_source)
+    )  # (content, response_text, should_speak, notification_id, notification_source, llm_log_path)
     session_ready = False
 
     def on_status(data: dict) -> None:
@@ -599,10 +603,17 @@ async def entrypoint(ctx: agents.JobContext):
         notification_id: str = "",
         source: str = "",
         notification_source: str = "",
+        llm_log_path: str = "",
     ) -> None:
         if should_speak and response_text:
             _queued_speech.append(
-                (response_text, notification_id, notification_source, content),
+                (
+                    response_text,
+                    notification_id,
+                    notification_source,
+                    content,
+                    llm_log_path,
+                ),
             )
             maybe_speak_queued()
         else:
@@ -637,13 +648,18 @@ async def entrypoint(ctx: agents.JobContext):
         current = session.current_speech
         if current is not None and not current.done:
             return
-        text, notification_id, notification_source, notification_content = (
-            _queued_speech.pop(0)
-        )
+        (
+            text,
+            notification_id,
+            notification_source,
+            notification_content,
+            llm_log_path,
+        ) = _queued_speech.pop(0)
         _last_say_meta = {
             "notification_id": notification_id,
             "source": notification_source,
             "text": text,
+            "llm_log_path": llm_log_path,
         }
 
         notification_message = f"[notification] {notification_content}"
@@ -683,6 +699,7 @@ async def entrypoint(ctx: agents.JobContext):
         response_text = payload.get("response_text", "")
         should_speak = payload.get("should_speak", False)
         notification_source = payload.get("source", "")
+        llm_log_path = payload.get("llm_log_path", "")
         notification_id = content_trace_id("guid", content)
         triggers_turn = (
             not (should_speak and response_text)
@@ -705,6 +722,7 @@ async def entrypoint(ctx: agents.JobContext):
                         should_speak,
                         notification_id,
                         notification_source,
+                        llm_log_path,
                     ),
                 )
                 _log.notification_buffered(len(pending_notifications))
@@ -716,6 +734,7 @@ async def entrypoint(ctx: agents.JobContext):
                     notification_id=notification_id,
                     source="socket_callback",
                     notification_source=notification_source,
+                    llm_log_path=llm_log_path,
                 )
 
     event_broker.register_callback("app:call:status", on_status)
@@ -788,6 +807,7 @@ async def entrypoint(ctx: agents.JobContext):
             should_speak,
             notification_id,
             notification_source,
+            llm_log_path,
         ) in pending_notifications:
             apply_notification(
                 content,
@@ -796,6 +816,7 @@ async def entrypoint(ctx: agents.JobContext):
                 notification_id=notification_id,
                 source="pending_buffer_flush",
                 notification_source=notification_source,
+                llm_log_path=llm_log_path,
             )
         pending_notifications.clear()
 

@@ -485,7 +485,7 @@ class TestProactiveSpeechDecideIntegration:
         ]
         system_prompt = "You are a helpful assistant."
 
-        decision = await ps.decide(
+        decision, log_path = await ps.decide(
             chat_history=chat_history,
             system_prompt=system_prompt,
         )
@@ -504,7 +504,7 @@ class TestProactiveSpeechDecideIntegration:
         ]
         system_prompt = "You are a helpful assistant."
 
-        decision = await ps.decide(
+        decision, _ = await ps.decide(
             chat_history=chat_history,
             system_prompt=system_prompt,
         )
@@ -516,7 +516,7 @@ class TestProactiveSpeechDecideIntegration:
         """decide() handles empty chat history gracefully."""
         ps = ProactiveSpeech()
 
-        decision = await ps.decide(
+        decision, _ = await ps.decide(
             chat_history=[],
             system_prompt="You are a helpful assistant.",
         )
@@ -532,7 +532,7 @@ class TestProactiveSpeechDecideIntegration:
             "unity.conversation_manager.domains.proactive_speech.new_llm_client",
             side_effect=RuntimeError("connection failed"),
         ):
-            decision = await ps.decide(
+            decision, _ = await ps.decide(
                 chat_history=[{"role": "user", "content": "Hello"}],
                 system_prompt="Test",
             )
@@ -1036,7 +1036,7 @@ class TestProactiveSpeechLLMBehavior:
         ]
         system_prompt = "You are a helpful assistant."
 
-        decision = await ps.decide(
+        decision, _ = await ps.decide(
             chat_history=chat_history,
             system_prompt=system_prompt,
         )
@@ -1060,7 +1060,7 @@ class TestProactiveSpeechLLMBehavior:
         ]
         system_prompt = "You are a helpful assistant."
 
-        decision = await ps.decide(
+        decision, _ = await ps.decide(
             chat_history=chat_history,
             system_prompt=system_prompt,
         )
@@ -1084,7 +1084,7 @@ class TestProactiveSpeechLLMBehavior:
         ]
         system_prompt = "You are a helpful assistant."
 
-        decision = await ps.decide(
+        decision, _ = await ps.decide(
             chat_history=chat_history,
             system_prompt=system_prompt,
         )
@@ -1345,7 +1345,7 @@ class TestProactiveSpeechActionAwareness:
             completed_actions={},
         )
 
-        decision = await ps.decide(
+        decision, _ = await ps.decide(
             chat_history=chat_history,
             system_prompt=system_prompt,
             action_context=action_context,

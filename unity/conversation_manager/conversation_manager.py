@@ -914,6 +914,10 @@ class ConversationManager(metaclass=SingletonABCMeta):
                     break
 
             if notification_content:
+                pending = getattr(client, "_pending_thinking_log", None)
+                slow_brain_log_path = (
+                    pending.last_path or "" if pending is not None else ""
+                )
                 contact = self.get_active_contact()
                 event = FastBrainNotification(
                     contact=contact,
@@ -921,6 +925,7 @@ class ConversationManager(metaclass=SingletonABCMeta):
                     response_text=response_text,
                     should_speak=should_speak,
                     source="slow_brain",
+                    llm_log_path=slow_brain_log_path,
                 )
                 self._session_logger.info(
                     "call_notification",
@@ -1330,7 +1335,7 @@ class ConversationManager(metaclass=SingletonABCMeta):
                 self.completed_actions,
             )
 
-            decision = await self.proactive_speech.decide(
+            decision, llm_log_path = await self.proactive_speech.decide(
                 conversation_turns,
                 brain_spec.system_prompt.flatten(),
                 action_context=action_context,
@@ -1378,6 +1383,7 @@ class ConversationManager(metaclass=SingletonABCMeta):
                 response_text=decision.content,
                 should_speak=True,
                 source="proactive_speech",
+                llm_log_path=llm_log_path,
             )
             await self.event_broker.publish(
                 "app:call:notification",

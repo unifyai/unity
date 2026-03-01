@@ -306,6 +306,7 @@ class FastBrainNotification(Event):
     should_speak: bool = False
     source: str = ""
     agent_service_url: str = ""
+    llm_log_path: str = ""
 
 
 # Backward-compatible alias for deserialization of persisted events.

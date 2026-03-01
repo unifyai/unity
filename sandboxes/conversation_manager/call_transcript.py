@@ -38,6 +38,7 @@ class Utterance:
     utterance_id: str
     speech_source: str
     guidance_id: str
+    llm_log_path: str = ""
 
 
 @dataclass
@@ -600,13 +601,20 @@ def parse_voice_log(path: Path) -> VoiceLogData:
             elif _ASSISTANT_SPEECH_ICON in line:
                 source = "reply"
                 gid = ""
+                llm_log_path = ""
+                # Strip trailing "→ /path" (LLM log path suffix).
+                raw_body = body
+                arrow_idx = raw_body.rfind(" → /")
+                if arrow_idx != -1:
+                    llm_log_path = raw_body[arrow_idx + 3 :].strip()
+                    raw_body = raw_body[:arrow_idx].strip()
                 # Format: "Source Label: speech text"
-                m = re.match(r"^([\w ]+):\s+(.+)$", body)
+                m = re.match(r"^([\w ]+):\s+(.+)$", raw_body)
                 if m:
                     source = m.group(1).strip().lower().replace(" ", "_")
                     text = m.group(2).strip()
                 else:
-                    text = body.strip()
+                    text = raw_body.strip()
                 if text.endswith("\u2026"):
                     text = text[:-1]
                 if text:
@@ -622,6 +630,7 @@ def parse_voice_log(path: Path) -> VoiceLogData:
                             ),
                             speech_source=source,
                             guidance_id=gid,
+                            llm_log_path=llm_log_path,
                         ),
                     )
 

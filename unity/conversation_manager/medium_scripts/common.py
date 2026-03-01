@@ -110,12 +110,18 @@ class FastBrainLogger:
         extra = _kv_suffix(kv)
         self._emit_debug("user_state", f"User state: {new_state}{extra}")
 
-    def assistant_speech(self, text: str, source: str = "") -> None:
+    def assistant_speech(
+        self,
+        text: str,
+        source: str = "",
+        llm_log_path: str = "",
+    ) -> None:
+        suffix = f" → {llm_log_path}" if llm_log_path else ""
         if source:
             label = source.replace("_", " ").title()
-            self._emit("assistant_speech", f"{label}: {text}")
+            self._emit("assistant_speech", f"{label}: {text}{suffix}")
         else:
-            self._emit("assistant_speech", text)
+            self._emit("assistant_speech", f"{text}{suffix}")
 
     def notification(
         self,
