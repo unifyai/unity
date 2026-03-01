@@ -1867,8 +1867,14 @@ async def async_tool_loop_inner(
 
                 needs_turn = False
                 # Only process completion for actual tool tasks; exclude helper waiters
+                _completed_tools = done & tools_data.pending
+                if _completed_tools:
+                    logger.debug(
+                        f"⏱️ [ToolLoop] {len(_completed_tools)} tool task(s) completed, "
+                        f"{len(tools_data.pending) - len(_completed_tools)} still pending",
+                    )
                 for task in _sort_completed_tasks_by_call_id(
-                    done & tools_data.pending,
+                    _completed_tools,
                     tools_data,
                 ):
                     if await tools_data.process_completed_task(
@@ -2275,7 +2281,11 @@ async def async_tool_loop_inner(
                 )
 
                 # 0️⃣ A *different* tool finished before the LLM answered -----
-                if done & pending_snapshot:  # ← NEW
+                if done & pending_snapshot:
+                    logger.debug(
+                        f"⏱️ [ToolLoop] tool(s) finished during LLM race: "
+                        f"{len(done & pending_snapshot)} completed",
+                    )
                     # — cancel the half-finished reasoning step
                     if not llm_task.done():
                         llm_task.cancel()

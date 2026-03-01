@@ -126,17 +126,47 @@ def _make_session_method(
         return screenshot_wrapper
 
     async def wrapper(*args, **kwargs):
+        import time as _w_time
+        import logging as _w_logging
+
+        _w_t0 = _w_time.perf_counter()
+        _w_log = _w_logging.getLogger("unity")
+
+        def _w_ms():
+            return f"{(_w_time.perf_counter() - _w_t0) * 1000:.0f}ms"
+
+        _w_log.debug(
+            f"⏱️ [desktop.{method_name} +{_w_ms()}] entered",
+        )
         kwargs.pop("_clarification_up_q", None)
         kwargs.pop("_clarification_down_q", None)
         if not _vm_ready.is_set():
+            _w_log.debug(f"⏱️ [desktop.{method_name} +{_w_ms()}] waiting for _vm_ready")
             ready = await asyncio.to_thread(_vm_ready.wait, 300)
+            _w_log.debug(
+                f"⏱️ [desktop.{method_name} +{_w_ms()}] _vm_ready resolved (ready={ready})",
+            )
             if not ready:
                 raise RuntimeError("Managed VM did not become ready within 5 minutes")
+        else:
+            _w_log.debug(f"⏱️ [desktop.{method_name} +{_w_ms()}] _vm_ready already set")
         if method_name in owner._SECRET_INJECTED_METHODS and args:
+            _w_log.debug(f"⏱️ [desktop.{method_name} +{_w_ms()}] resolving secrets")
             resolved = await owner.secret_manager.from_placeholder(args[0])
             args = (resolved,) + args[1:]
+            _w_log.debug(f"⏱️ [desktop.{method_name} +{_w_ms()}] secrets resolved")
+        _w_log.debug(f"⏱️ [desktop.{method_name} +{_w_ms()}] session_resolver start")
         session = await session_resolver()
+        _w_log.debug(
+            f"⏱️ [desktop.{method_name} +{_w_ms()}] session resolved (id={getattr(session, '_session_id', '?')})",
+        )
+        _w_log.debug(
+            f"⏱️ [desktop.{method_name} +{_w_ms()}] calling session.{method_name}",
+        )
         result = await getattr(session, method_name)(*args, **kwargs)
+        _w_log.debug(
+            f"⏱️ [desktop.{method_name} +{_w_ms()}] session.{method_name} returned",
+        )
         if is_desktop:
             _publish_desktop_invoked(method_name)
         return result
