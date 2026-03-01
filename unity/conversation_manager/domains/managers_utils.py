@@ -72,7 +72,7 @@ _MESSAGE_PRODUCING_EVENTS = {
     "OutboundPhoneUtterance",
     "InboundUnifyMeetUtterance",
     "OutboundUnifyMeetUtterance",
-    "CallGuidance",
+    "FastBrainNotification",
     "PhoneCallReceived",
     "PhoneCallSent",
     "UnifyMeetReceived",
@@ -251,8 +251,8 @@ async def hydrate_global_thread(cm: "ConversationManager") -> None:
                     timestamp=ts,
                 )
 
-            # --- Call guidance ---
-            case "CallGuidance":
+            # --- Fast brain notification ---
+            case "FastBrainNotification":
                 entry = cm.contact_index.build_message(
                     contact_id=contact_id,
                     sender_name=sender_name,

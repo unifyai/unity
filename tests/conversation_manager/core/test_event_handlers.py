@@ -41,7 +41,7 @@ from unity.conversation_manager.events import (
     InboundPhoneUtterance,
     InboundUnifyMeetUtterance,
     OutboundPhoneUtterance,
-    CallGuidance,
+    FastBrainNotification,
     GetChatHistory,
     ActorHandleStarted,
     ActorHandleResponse,
@@ -830,8 +830,8 @@ class TestVoiceUtteranceHandlers:
 
     @pytest.mark.asyncio
     async def test_call_guidance_updates_contact_index(self, mock_cm):
-        """CallGuidance adds guidance message to voice thread."""
-        event = CallGuidance(
+        """FastBrainNotification adds guidance message to voice thread."""
+        event = FastBrainNotification(
             contact={"contact_id": 2},
             content="Please mention the meeting at 3pm",
         )
@@ -1334,7 +1334,7 @@ class TestMeetInteractionEventHandlers:
         self,
         mock_cm,
     ):
-        """Screen share events publish direct CallGuidance to the fast brain
+        """Screen share events publish direct FastBrainNotification to the fast brain
         when in voice mode, bypassing the slow brain for instant delivery."""
         mock_cm.assistant_screen_share_active = False
         mock_cm.user_screen_share_active = False
@@ -1346,9 +1346,9 @@ class TestMeetInteractionEventHandlers:
         )
         await EventHandler.handle_event(event, mock_cm)
 
-        # Verify CallGuidance was published to the fast brain channel
+        # Verify FastBrainNotification was published to the fast brain channel
         calls = mock_cm.event_broker.publish.call_args_list
-        guidance_calls = [c for c in calls if c.args[0] == "app:call:call_guidance"]
+        guidance_calls = [c for c in calls if c.args[0] == "app:call:notification"]
         assert len(guidance_calls) == 1
         # The guidance text should contain behavioral instructions
         import json as _json
@@ -1374,9 +1374,9 @@ class TestMeetInteractionEventHandlers:
         )
         await EventHandler.handle_event(event, mock_cm)
 
-        # No CallGuidance should be published
+        # No FastBrainNotification should be published
         calls = mock_cm.event_broker.publish.call_args_list
-        guidance_calls = [c for c in calls if c.args[0] == "app:call:call_guidance"]
+        guidance_calls = [c for c in calls if c.args[0] == "app:call:notification"]
         assert len(guidance_calls) == 0
 
     @pytest.mark.asyncio
@@ -1423,7 +1423,7 @@ class TestMeetInteractionEventHandlers:
 
         mock_socket.queue_for_clients.assert_called_once()
         channel, event_json = mock_socket.queue_for_clients.call_args.args
-        assert channel == "app:call:call_guidance"
+        assert channel == "app:call:notification"
         import json
 
         event_data = json.loads(event_json)
@@ -1478,7 +1478,7 @@ class TestMeetInteractionEventHandlers:
 
         mock_socket.queue_for_clients.assert_called_once()
         channel, _ = mock_socket.queue_for_clients.call_args.args
-        assert channel == "app:call:call_guidance"
+        assert channel == "app:call:notification"
 
     # --------------------------------------------------------------------- #
     # Renderer tests
@@ -1750,7 +1750,7 @@ class TestDirectMessageEventHandler:
 
         mock_cm.event_broker.publish.assert_called()
         call_args = mock_cm.event_broker.publish.call_args
-        assert call_args[0][0] == "app:call:call_guidance"
+        assert call_args[0][0] == "app:call:notification"
 
     @pytest.mark.asyncio
     async def test_direct_message_records_in_contact_index(self, mock_cm):

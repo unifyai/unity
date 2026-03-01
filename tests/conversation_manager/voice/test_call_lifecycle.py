@@ -7,7 +7,7 @@ Full call lifecycle tests for ConversationManager.
 Tests the complete flow of voice calls including:
 1. LivekitCallManager.start_call() and start_unify_meet() thread launching
 2. Voice interrupts (VoiceInterrupt event handling)
-3. CallGuidance flowing from Main CM Brain to Voice Agent
+3. FastBrainNotification flowing from Main CM Brain to Voice Agent
 4. Graceful call cleanup via cleanup_call_proc()
 5. Full call lifecycle: receive → start → utterances → guidance → end
 
@@ -21,7 +21,7 @@ Tests the complete flow of voice calls including:
 ### Integration Tests (use CMStepDriver with simulated managers)
 - Event handler responses to call events
 - State transitions during call lifecycle
-- CallGuidance event flow through the system
+- FastBrainNotification event flow through the system
 """
 
 from __future__ import annotations
@@ -47,7 +47,7 @@ from unity.conversation_manager.events import (
     InboundUnifyMeetUtterance,
     OutboundUnifyMeetUtterance,
     VoiceInterrupt,
-    CallGuidance,
+    FastBrainNotification,
 )
 
 from tests.conversation_manager.conftest import TEST_CONTACTS
@@ -203,8 +203,8 @@ class TestCallEventSerialization:
         assert restored.contact["contact_id"] == sample_contact["contact_id"]
 
     def test_call_guidance_serialization(self, sample_contact):
-        """CallGuidance event serializes and deserializes correctly."""
-        event = CallGuidance(
+        """FastBrainNotification event serializes and deserializes correctly."""
+        event = FastBrainNotification(
             contact=sample_contact,
             content="Please ask about their schedule",
         )
@@ -212,11 +212,11 @@ class TestCallEventSerialization:
         json_str = event.to_json()
         data = json.loads(json_str)
 
-        assert data["event_name"] == "CallGuidance"
+        assert data["event_name"] == "FastBrainNotification"
         assert data["payload"]["content"] == "Please ask about their schedule"
 
         restored = Event.from_json(json_str)
-        assert isinstance(restored, CallGuidance)
+        assert isinstance(restored, FastBrainNotification)
         assert restored.content == "Please ask about their schedule"
 
     def test_inbound_phone_utterance_serialization(self, sample_contact):
@@ -841,26 +841,26 @@ class TestVoiceInterruptHandler:
 
 
 # =============================================================================
-# Integration Tests: CallGuidance Event Flow
+# Integration Tests: FastBrainNotification Event Flow
 # =============================================================================
 
 
 @pytest.mark.asyncio
-class TestCallGuidanceFlow:
-    """Integration tests for CallGuidance events from Main CM Brain to Voice Agent."""
+class TestFastBrainNotificationFlow:
+    """Integration tests for FastBrainNotification events from Main CM Brain to Voice Agent."""
 
     @pytest.fixture
     def alice_contact(self):
         return TEST_CONTACTS[2]
 
     async def test_call_guidance_event_handled(self, initialized_cm, alice_contact):
-        """CallGuidance event is processed by the handler."""
+        """FastBrainNotification event is processed by the handler."""
         # Start a call first
         started_event = PhoneCallStarted(contact=alice_contact)
         await initialized_cm.step(started_event)
 
         # Send guidance
-        guidance_event = CallGuidance(
+        guidance_event = FastBrainNotification(
             contact=alice_contact,
             content="Please ask about their availability for next week",
         )
@@ -874,13 +874,13 @@ class TestCallGuidanceFlow:
         initialized_cm,
         alice_contact,
     ):
-        """CallGuidance adds message to contact_index with 'guidance' role."""
+        """FastBrainNotification adds message to contact_index with 'guidance' role."""
         # Start a call first
         started_event = PhoneCallStarted(contact=alice_contact)
         await initialized_cm.step(started_event)
 
         # Send guidance
-        guidance_event = CallGuidance(
+        guidance_event = FastBrainNotification(
             contact=alice_contact,
             content="Reminder: User prefers morning meetings",
         )
@@ -1070,7 +1070,7 @@ class TestFullCallLifecycle:
         await initialized_cm.step(user_utterance)
 
         # Main CM Brain sends guidance to Voice Agent
-        guidance_event = CallGuidance(
+        guidance_event = FastBrainNotification(
             contact=alice_contact,
             content="You have a 10am meeting with the marketing team and a 2pm call with the client",
         )
@@ -1256,17 +1256,17 @@ class TestCallEventBrokerChannels:
             assert data["type"] == "stop"
 
     async def test_call_guidance_channel(self, event_broker):
-        """app:call:call_guidance channel receives guidance messages."""
+        """app:call:notification channel receives guidance messages."""
         async with event_broker.pubsub() as pubsub:
-            await pubsub.subscribe("app:call:call_guidance")
+            await pubsub.subscribe("app:call:notification")
 
             # Publish guidance
-            guidance = CallGuidance(
+            guidance = FastBrainNotification(
                 contact={"contact_id": 1, "first_name": "Test"},
                 content="Ask about their schedule",
             )
             await event_broker.publish(
-                "app:call:call_guidance",
+                "app:call:notification",
                 guidance.to_json(),
             )
 
@@ -1277,7 +1277,7 @@ class TestCallEventBrokerChannels:
 
             assert msg is not None
             restored = Event.from_json(msg["data"])
-            assert isinstance(restored, CallGuidance)
+            assert isinstance(restored, FastBrainNotification)
             assert restored.content == "Ask about their schedule"
 
     async def test_phone_utterance_channel(self, event_broker):
@@ -1332,8 +1332,8 @@ class TestCallEventBrokerChannels:
 
 @pytest.mark.asyncio
 class TestChannelForwardingTiers:
-    """Verify the two-tier channel policy: all calls get comms channels,
-    boss calls additionally get actor/manager channels."""
+    """Verify channel forwarding: all calls get base channels, boss calls
+    additionally start a notification rendering task for actor events."""
 
     @pytest_asyncio.fixture
     async def call_manager_with_broker(self):
@@ -1370,7 +1370,7 @@ class TestChannelForwardingTiers:
         call_manager_with_broker,
         boss_contact,
     ):
-        """Boss calls should forward app:comms:* AND app:actor:* channels."""
+        """Boss calls forward base channels and start boss notification rendering."""
         mgr = call_manager_with_broker
         with patch(
             "unity.conversation_manager.domains.call_manager.run_script",
@@ -1380,8 +1380,10 @@ class TestChannelForwardingTiers:
 
         channels = mgr._socket_server._forward_channels
         assert "app:comms:*" in channels, "Boss call must forward comms"
-        assert "app:actor:*" in channels, "Boss call must forward actor events"
         assert "app:call:*" in channels, "Boss call must forward call events"
+        assert (
+            mgr._boss_notification_task is not None
+        ), "Boss call must start notification rendering task"
 
     async def test_non_boss_call_gets_comms_but_not_actor_channels(
         self,
@@ -1389,7 +1391,7 @@ class TestChannelForwardingTiers:
         non_boss_contact,
         boss_contact,
     ):
-        """Non-boss calls should forward app:comms:* but NOT app:actor:*."""
+        """Non-boss calls forward base channels only, no notification rendering."""
         mgr = call_manager_with_broker
         with patch(
             "unity.conversation_manager.domains.call_manager.run_script",
@@ -1399,17 +1401,17 @@ class TestChannelForwardingTiers:
 
         channels = mgr._socket_server._forward_channels
         assert "app:comms:*" in channels, "Non-boss call must forward comms"
-        assert (
-            "app:actor:*" not in channels
-        ), "Non-boss call must NOT forward actor events"
         assert "app:call:*" in channels, "Non-boss call must forward call events"
+        assert (
+            mgr._boss_notification_task is None
+        ), "Non-boss call must NOT start notification rendering task"
 
     async def test_unify_meet_boss_gets_full_channels(
         self,
         call_manager_with_broker,
         boss_contact,
     ):
-        """Boss Unify Meet should get the same full channels as a boss phone call."""
+        """Boss Unify Meet should start notification rendering like a boss phone call."""
         mgr = call_manager_with_broker
         with patch(
             "unity.conversation_manager.domains.call_manager.run_script",
@@ -1423,4 +1425,5 @@ class TestChannelForwardingTiers:
 
         channels = mgr._socket_server._forward_channels
         assert "app:comms:*" in channels
-        assert "app:actor:*" in channels
+        assert "app:call:*" in channels
+        assert mgr._boss_notification_task is not None

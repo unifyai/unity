@@ -459,7 +459,7 @@ class TestBidirectionalCommunication:
 
         # Send guidance event
         await real_event_broker.publish(
-            "app:call:call_guidance",
+            "app:call:notification",
             '{"content": "Ask about their schedule"}',
         )
 
@@ -553,7 +553,7 @@ class TestBidirectionalCommunication:
 
         # INBOUND: Parent → Child (guidance)
         await real_event_broker.publish(
-            "app:call:call_guidance",
+            "app:call:notification",
             '{"content": "Guidance from parent"}',
         )
 
@@ -566,7 +566,7 @@ class TestBidirectionalCommunication:
 
         # Verify INBOUND: Child received parent's guidance
         assert len(child_received) == 1
-        assert child_received[0][0] == "app:call:call_guidance"
+        assert child_received[0][0] == "app:call:notification"
         assert "Guidance from parent" in child_received[0][1]
 
         await client.close()
@@ -601,7 +601,7 @@ class TestBidirectionalCommunication:
 
         # Parent publishes event
         await real_event_broker.publish(
-            "app:call:call_guidance",
+            "app:call:notification",
             '{"content": "Broadcast message"}',
         )
 
@@ -703,7 +703,7 @@ class TestBidirectionalCommunication:
     ):
         """Server buffers forwarded events that arrive before any client connects.
 
-        When the parent publishes a CallGuidance event right after spawning
+        When the parent publishes a FastBrainNotification event right after spawning
         the subprocess, the subprocess hasn't connected to the socket yet.
         The server must buffer the message and flush it once the client connects.
         """
@@ -721,7 +721,7 @@ class TestBidirectionalCommunication:
 
         # Parent publishes guidance BEFORE any client connects
         await real_event_broker.publish(
-            "app:call:call_guidance",
+            "app:call:notification",
             '{"content": "Confirm the Thursday 3pm meeting"}',
         )
 
@@ -742,7 +742,7 @@ class TestBidirectionalCommunication:
         await _wait_for_condition(lambda: len(received_events) >= 1, timeout=2.0)
 
         assert len(received_events) == 1
-        assert received_events[0][0] == "app:call:call_guidance"
+        assert received_events[0][0] == "app:call:notification"
         assert "Thursday 3pm" in received_events[0][1]
 
         # Buffer should be cleared after flush
@@ -770,7 +770,7 @@ class TestBidirectionalCommunication:
 
         # Publish multiple events before any client connects
         await real_event_broker.publish(
-            "app:call:call_guidance",
+            "app:call:notification",
             '{"content": "First guidance"}',
         )
         await real_event_broker.publish(
@@ -900,7 +900,7 @@ class TestSocketAwareEventBroker:
             def on_guidance(data):
                 received_events.append(data)
 
-            wrapper.register_callback("app:call:call_guidance", on_guidance)
+            wrapper.register_callback("app:call:notification", on_guidance)
 
             # Start receiving
             result = await wrapper.start_receiving()
@@ -911,7 +911,7 @@ class TestSocketAwareEventBroker:
 
             # Parent publishes event
             await parent_broker.publish(
-                "app:call:call_guidance",
+                "app:call:notification",
                 '{"content": "Test guidance"}',
             )
 

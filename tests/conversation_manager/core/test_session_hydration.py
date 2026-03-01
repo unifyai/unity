@@ -24,7 +24,7 @@ from unity.conversation_manager.domains.contact_index import (
 )
 from unity.conversation_manager.domains.managers_utils import hydrate_global_thread
 from unity.conversation_manager.events import (
-    CallGuidance,
+    FastBrainNotification,
     EmailReceived,
     EmailSent,
     InboundPhoneUtterance,
@@ -253,10 +253,10 @@ class TestVoiceHydration:
 
     @pytest.mark.asyncio
     async def test_call_guidance_restored(self):
-        """CallGuidance events restore as guidance-role messages."""
+        """FastBrainNotification events restore as guidance-role messages."""
         cm = _make_mock_cm()
         events = [
-            CallGuidance(
+            FastBrainNotification(
                 contact=ALICE,
                 content="Mention the 3pm meeting",
                 timestamp=BASE_TIME,

@@ -81,9 +81,9 @@ class UnifyMessage(CommsMessage):
 class GuidanceMessage:
     """Internal orchestration message (not an actual communication).
 
-    Used for internal guidance between components (e.g., CallGuidance from the
-    main ConversationManager brain to the voice agent). These should NOT appear
-    in transcripts shown to external systems or used for communication context.
+    Used for internal notifications between components (e.g., FastBrainNotification
+    from the ConversationManager to the voice agent). These should NOT appear in
+    transcripts shown to external systems or used for communication context.
     """
 
     name: str

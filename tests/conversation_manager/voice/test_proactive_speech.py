@@ -379,7 +379,7 @@ class TestProactiveSpeechLoop:
         mock_cm.schedule_proactive_speech.assert_not_called()
 
     async def test_loop_publishes_guidance_when_should_speak(self, mock_cm):
-        """The loop publishes a CallGuidance event with should_speak=True and
+        """The loop publishes a FastBrainNotification event with should_speak=True and
         response_text so the fast brain speaks it via session.say()."""
         from unity.conversation_manager.conversation_manager import ConversationManager
 
@@ -410,15 +410,15 @@ class TestProactiveSpeechLoop:
         # Find the call_guidance publish
         guidance_call = None
         for call in call_args:
-            if "app:call:call_guidance" in str(call):
+            if "app:call:notification" in str(call):
                 guidance_call = call
                 break
 
         assert guidance_call is not None
         channel, message = guidance_call.args
-        assert channel == "app:call:call_guidance"
+        assert channel == "app:call:notification"
 
-        # Proactive speech publishes a CallGuidance event (not raw JSON)
+        # Proactive speech publishes a FastBrainNotification event (not raw JSON)
         data = json.loads(message)
         payload = data["payload"]
         assert payload["content"] == "Still with you!"
@@ -550,7 +550,7 @@ class TestEventHandlerProactiveSpeechIntegration:
     """Tests verifying event handlers properly reset/cancel proactive speech."""
 
     async def test_call_guidance_should_speak_resets_proactive(self, mock_cm):
-        """CallGuidance with should_speak=True resets (reschedules) proactive speech.
+        """FastBrainNotification with should_speak=True resets (reschedules) proactive speech.
 
         Regression test for a coordination gap: when slow-brain guidance is
         dispatched with should_speak=True, it will be spoken via session.say()
@@ -559,16 +559,16 @@ class TestEventHandlerProactiveSpeechIntegration:
         fire and produce stale filler that contradicts the just-delivered
         content.
 
-        The fix: the CallGuidance handler must reset the proactive timer when
+        The fix: the FastBrainNotification handler must reset the proactive timer when
         should_speak=True, preventing stale proactive speech from queueing
         during TTS playback of substantive guidance.
         """
-        from unity.conversation_manager.events import CallGuidance
+        from unity.conversation_manager.events import FastBrainNotification
         from unity.conversation_manager.domains.event_handlers import EventHandler
 
         mock_cm.schedule_proactive_speech = AsyncMock()
 
-        event = CallGuidance(
+        event = FastBrainNotification(
             contact={"contact_id": 1, "first_name": "Boss", "surname": "User"},
             content="I found several backend engineer openings at OpenAI.",
             response_text="I found several backend engineer openings at OpenAI.",
@@ -581,17 +581,17 @@ class TestEventHandlerProactiveSpeechIntegration:
         mock_cm.schedule_proactive_speech.assert_called_once()
 
     async def test_call_guidance_notify_only_does_not_reset_proactive(self, mock_cm):
-        """CallGuidance with should_speak=False does NOT reset proactive speech.
+        """FastBrainNotification with should_speak=False does NOT reset proactive speech.
 
         Notify-only guidance is silently injected into the fast brain's context.
         The user is still in silence, so proactive speech may still be warranted.
         """
-        from unity.conversation_manager.events import CallGuidance
+        from unity.conversation_manager.events import FastBrainNotification
         from unity.conversation_manager.domains.event_handlers import EventHandler
 
         mock_cm.schedule_proactive_speech = AsyncMock()
 
-        event = CallGuidance(
+        event = FastBrainNotification(
             contact={"contact_id": 1, "first_name": "Boss", "surname": "User"},
             content="Checking your contacts for Bob.",
             should_speak=False,
@@ -1169,7 +1169,7 @@ class TestProactiveSpeechConcurrentScheduling:
         guidance_publishes = [
             c
             for c in mock_cm.event_broker.publish.call_args_list
-            if c.args[0] == "app:call:call_guidance"
+            if c.args[0] == "app:call:notification"
         ]
 
         assert len(guidance_publishes) == 1, (
@@ -1184,14 +1184,14 @@ class TestProactiveSpeechMediumScriptIntegration:
     """Tests verifying medium scripts properly handle proactive speech."""
 
     def test_tts_call_subscribes_to_call_guidance(self):
-        """call.py should subscribe to app:call:call_guidance."""
+        """call.py should subscribe to app:call:notification."""
         import inspect
         from unity.conversation_manager.medium_scripts import call
 
         source = inspect.getsource(call)
         assert (
-            "app:call:call_guidance" in source
-        ), "call.py should subscribe to app:call:call_guidance"
+            "app:call:notification" in source
+        ), "call.py should subscribe to app:call:notification"
         assert "on_guidance" in source, "call.py should have an on_guidance callback"
 
 

@@ -629,16 +629,16 @@ class TestGuidanceChannelSubscription:
     """Tests for guidance channel subscription patterns."""
 
     async def test_guidance_channel_receives_call_guidance(self, event_broker):
-        """Guidance channel receives CallGuidance events."""
-        from unity.conversation_manager.events import CallGuidance, Event
+        """Guidance channel receives FastBrainNotification events."""
+        from unity.conversation_manager.events import FastBrainNotification, Event
 
         contact = {"contact_id": 1, "first_name": "Test"}
 
         async with event_broker.pubsub() as pubsub:
-            await pubsub.subscribe("app:call:call_guidance")
+            await pubsub.subscribe("app:call:notification")
 
-            event = CallGuidance(contact=contact, content="Test guidance")
-            await event_broker.publish("app:call:call_guidance", event.to_json())
+            event = FastBrainNotification(contact=contact, content="Test guidance")
+            await event_broker.publish("app:call:notification", event.to_json())
 
             msg = await pubsub.get_message(
                 timeout=2.0,
@@ -646,7 +646,7 @@ class TestGuidanceChannelSubscription:
             )
             assert msg is not None
             received = Event.from_json(msg["data"])
-            assert isinstance(received, CallGuidance)
+            assert isinstance(received, FastBrainNotification)
             assert received.content == "Test guidance"
 
     async def test_status_channel_receives_stop_signal(self, event_broker):
@@ -957,7 +957,7 @@ class TestFastBrainGuidanceFlow:
         baseline_reply_calls = session.generate_reply_calls
 
         # Send notify-only guidance (should_speak=False, no response_text)
-        guidance_cb = fake_broker.callbacks["app:call:call_guidance"]
+        guidance_cb = fake_broker.callbacks["app:call:notification"]
         guidance_cb({"payload": {"content": "No, there is no contact named Bob."}})
 
         # Notification should be in both chat contexts
@@ -1152,7 +1152,7 @@ class TestFastBrainGuidanceFlow:
         state_cb(SimpleNamespace(new_state="speaking"))
 
         # Send should_speak=True guidance while user is speaking
-        guidance_cb = fake_broker.callbacks["app:call:call_guidance"]
+        guidance_cb = fake_broker.callbacks["app:call:notification"]
         guidance_cb(
             {
                 "payload": {
@@ -1422,7 +1422,7 @@ class TestFastBrainGuidanceFlow:
         await call_script.entrypoint(_FakeJobContext())
 
         session = fake_session_holder["session"]
-        guidance_cb = fake_broker.callbacks["app:call:call_guidance"]
+        guidance_cb = fake_broker.callbacks["app:call:notification"]
         agent_state_cb = session._events["agent_state_changed"]
 
         # User is speaking — guidance with should_speak=True arrives and is queued
@@ -1611,7 +1611,7 @@ class TestFastBrainGuidanceFlow:
         await call_script.entrypoint(_FakeJobContext())
 
         session = fake_session_holder["session"]
-        guidance_cb = fake_broker.callbacks["app:call:call_guidance"]
+        guidance_cb = fake_broker.callbacks["app:call:notification"]
         agent_state_cb = session._events["agent_state_changed"]
 
         # Simulate agent in "thinking" state (processing a user turn)

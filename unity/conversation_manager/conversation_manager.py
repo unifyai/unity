@@ -895,41 +895,41 @@ class ConversationManager(metaclass=SingletonABCMeta):
         # or SPEAK (should_speak=True + response_text) by calling
         # guide_voice_agent in parallel with its action tool.
         if self.mode.is_voice:
-            call_guidance = ""
+            notification_content = ""
             should_speak = False
             response_text = ""
             for tool_exec in result.tools:
                 if tool_exec.name == "guide_voice_agent":
                     args = tool_exec.args or {}
-                    call_guidance = args.get("content", "")
+                    notification_content = args.get("content", "")
                     should_speak = args.get("should_speak", False)
                     response_text = args.get("response_text", "")
                     break
 
-            if call_guidance:
-                guidance_id = content_trace_id("guid", call_guidance)
+            if notification_content:
+                notification_id = content_trace_id("guid", notification_content)
                 contact = self.get_active_contact()
-                event = CallGuidance(
+                event = FastBrainNotification(
                     contact=contact,
-                    content=call_guidance,
+                    content=notification_content,
                     response_text=response_text,
                     should_speak=should_speak,
                     source="slow_brain",
                 )
                 self._session_logger.info(
-                    "call_guidance",
+                    "call_notification",
                     (
-                        f"Publishing guidance guidance_id={guidance_id} "
+                        f"Publishing notification notification_id={notification_id} "
                         f"run_id={run_id} speak={should_speak}"
                     ),
                 )
                 event_json = event.to_json()
                 await self.event_broker.publish(
-                    "app:call:call_guidance",
+                    "app:call:notification",
                     event_json,
                 )
                 await self.event_broker.publish(
-                    "app:comms:assistant_call_guidance",
+                    "app:comms:assistant_notification",
                     event_json,
                 )
 
@@ -1369,8 +1369,8 @@ class ConversationManager(metaclass=SingletonABCMeta):
                     role="assistant",
                 )
 
-            guidance_id = content_trace_id("guid", decision.content)
-            event = CallGuidance(
+            notification_id = content_trace_id("guid", decision.content)
+            event = FastBrainNotification(
                 contact=contact or {},
                 content=decision.content,
                 response_text=decision.content,
@@ -1378,10 +1378,10 @@ class ConversationManager(metaclass=SingletonABCMeta):
                 source="proactive_speech",
             )
             await self.event_broker.publish(
-                "app:call:call_guidance",
+                "app:call:notification",
                 event.to_json(),
             )
-            _log.proactive_published(guidance_id, decision.content)
+            _log.proactive_published(notification_id, decision.content)
 
         except asyncio.CancelledError:
             _log.proactive_cancelled()

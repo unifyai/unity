@@ -1576,10 +1576,10 @@ if _TEXTUAL_AVAILABLE:
                 elif name == "VoiceInterrupt":
                     msg = "VoiceInterrupt"
                 # Call guidance
-                elif name == "CallGuidance":
+                elif name == "FastBrainNotification":
                     content = str(payload.get("content") or "").strip()
                     if content:
-                        msg = f"CallGuidance: {content}"
+                        msg = f"FastBrainNotification: {content}"
                 # Other useful events
                 elif name == "UnknownContactCreated":
                     medium = str(payload.get("medium") or "").strip()
@@ -1658,7 +1658,7 @@ if _TEXTUAL_AVAILABLE:
             # Best-effort TTS in call mode: the user should hear assistant-side
             # outputs (guidance to the voice agent and assistant utterances).
             try:
-                if name in {"OutboundPhoneUtterance", "CallGuidance"}:
+                if name in {"OutboundPhoneUtterance", "FastBrainNotification"}:
                     content = str(payload.get("content") or "").strip()
                     if content:
                         self._maybe_tts(content)

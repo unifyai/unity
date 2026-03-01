@@ -1067,10 +1067,10 @@ class ConversationManagerBrainActionTools:
         LOGGER.debug(
             f"{DEFAULT_ICON} [make_call] context: {context}, to_number: {to_number}",
         )
-        # Store initial guidance so CallManager can publish it to the fast brain
-        # after the subprocess spawns (before the recipient picks up).
+        # Store initial notification so CallManager can publish it to the fast
+        # brain after the subprocess spawns (before the recipient picks up).
         if context:
-            self._cm.call_manager.initial_call_guidance = context
+            self._cm.call_manager.initial_notification = context
         response = await comms_utils.start_call(to_number=to_number)
         if response["success"]:
             fresh_contact = (

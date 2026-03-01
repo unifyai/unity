@@ -47,11 +47,6 @@ _BASE_FORWARD_CHANNELS = [
     "app:call:*",
     "app:comms:*",
 ]
-_BOSS_EXTRA_CHANNELS = [
-    "app:actor:*",
-    "app:managers:output",
-    "app:logging:message_logged",
-]
 
 
 class LivekitCallManager:
@@ -73,9 +68,9 @@ class LivekitCallManager:
         self._socket_server: CallEventSocketServer | None = None
         # Track whether the current call is outbound (we initiated it)
         self.is_outbound: bool = False
-        # Initial guidance for outbound calls, set by make_call tool before the
-        # call is placed, published to the fast brain after the subprocess spawns.
-        self.initial_call_guidance: str = ""
+        # Initial notification for outbound calls, set by make_call tool before
+        # the call is placed, published to the fast brain after the subprocess spawns.
+        self.initial_notification: str = ""
         # Callback for screenshots (user or assistant) received via IPC.
         # Set by the ConversationManager to route screenshots to its buffer.
         self.on_screenshot: Callable[[str], None] | None = None
@@ -87,6 +82,9 @@ class LivekitCallManager:
         self._call_channel: str | None = None
         # Contact for the active call, used by the disconnect fallback.
         self._disconnect_contact: dict | None = None
+        # Async task that renders actor events into FastBrainNotification
+        # messages for boss calls.
+        self._boss_notification_task: asyncio.Task | None = None
 
     def set_config(self, config: CallConfig):
         self.assistant_id = config.assistant_id
@@ -143,15 +141,15 @@ class LivekitCallManager:
         # Start socket server and get path
         socket_path = await self._ensure_socket_server()
 
-        # All calls get comms events; boss calls additionally get actor/manager events.
         if self._socket_server:
-            is_boss = contact.get("contact_id") == 1
-            channels = (
-                _BASE_FORWARD_CHANNELS + _BOSS_EXTRA_CHANNELS
-                if is_boss
-                else list(_BASE_FORWARD_CHANNELS)
-            )
-            await self._socket_server.set_forward_channels(channels)
+            await self._socket_server.set_forward_channels(list(_BASE_FORWARD_CHANNELS))
+
+        # For boss calls, start a task that renders actor events into
+        # FastBrainNotification messages and publishes them on the
+        # notification channel (which is already forwarded via app:call:*).
+        is_boss = contact.get("contact_id") == 1
+        if is_boss:
+            self._start_boss_notification_rendering()
 
         # Set socket path in environment for subprocess
         if socket_path:
@@ -179,31 +177,31 @@ class LivekitCallManager:
         self._call_proc = run_script(str(target_path), "dev", *args)
         self._disconnect_contact = contact
 
-        # Deliver initial guidance to the fast brain (if any was stored by
+        # Deliver initial notification to the fast brain (if any was stored by
         # make_call).  We bypass the event-broker pub/sub roundtrip and push
         # directly into the socket server buffer so the message cannot be lost
         # due to the forward-subscription task not having subscribed yet.
-        if self.initial_call_guidance:
-            guidance_id = content_trace_id("guid", self.initial_call_guidance)
-            guidance_event = CallGuidance(
+        if self.initial_notification:
+            notification_id = content_trace_id("guid", self.initial_notification)
+            notification_event = FastBrainNotification(
                 contact=contact,
-                content=self.initial_call_guidance,
+                content=self.initial_notification,
                 source="initial_call",
             )
             # Direct socket delivery to the fast brain subprocess
             await self._socket_server.queue_for_clients(
-                "app:call:call_guidance",
-                guidance_event.to_json(),
+                "app:call:notification",
+                notification_event.to_json(),
             )
             # Also publish on the comms channel for the transcript / UI
             await self._event_broker.publish(
-                "app:comms:assistant_call_guidance",
-                guidance_event.to_json(),
+                "app:comms:assistant_notification",
+                notification_event.to_json(),
             )
             LOGGER.debug(
-                f"{ICONS['ipc']} {trace_kv('CALL_MANAGER_INITIAL_GUIDANCE', guidance_id=guidance_id, content_preview=self.initial_call_guidance[:80])}",
+                f"{ICONS['ipc']} {trace_kv('CALL_MANAGER_INITIAL_NOTIFICATION', notification_id=notification_id, content_preview=self.initial_notification[:80])}",
             )
-            self.initial_call_guidance = ""
+            self.initial_notification = ""
 
     async def start_unify_meet(
         self,
@@ -218,15 +216,12 @@ class LivekitCallManager:
         # Start socket server and get path
         socket_path = await self._ensure_socket_server()
 
-        # All calls get comms events; boss calls additionally get actor/manager events.
         if self._socket_server:
-            is_boss = contact.get("contact_id") == 1
-            channels = (
-                _BASE_FORWARD_CHANNELS + _BOSS_EXTRA_CHANNELS
-                if is_boss
-                else list(_BASE_FORWARD_CHANNELS)
-            )
-            await self._socket_server.set_forward_channels(channels)
+            await self._socket_server.set_forward_channels(list(_BASE_FORWARD_CHANNELS))
+
+        is_boss = contact.get("contact_id") == 1
+        if is_boss:
+            self._start_boss_notification_rendering()
 
         # Set socket path in environment for subprocess
         if socket_path:
@@ -299,9 +294,18 @@ class LivekitCallManager:
 
         # Reset outbound tracking
         self.is_outbound = False
-        self.initial_call_guidance = ""
+        self.initial_notification = ""
         self._call_channel = None
         self._disconnect_contact = None
+
+        # Cancel boss notification rendering task
+        if self._boss_notification_task and not self._boss_notification_task.done():
+            self._boss_notification_task.cancel()
+            try:
+                await self._boss_notification_task
+            except asyncio.CancelledError:
+                pass
+        self._boss_notification_task = None
 
         # Stop socket server
         if self._socket_server:
@@ -327,3 +331,55 @@ class LivekitCallManager:
         )
         await asyncio.to_thread(terminate_process, proc, 0)
         LOGGER.debug(f"{ICONS['ipc']} [LivekitCallManager] Voice agent process killed")
+
+    # ------------------------------------------------------------------
+    # Boss-call notification rendering
+    # ------------------------------------------------------------------
+
+    def _start_boss_notification_rendering(self) -> None:
+        """Start an async task that renders actor events into notifications."""
+        if self._boss_notification_task and not self._boss_notification_task.done():
+            return
+        self._boss_notification_task = asyncio.create_task(
+            self._render_boss_notifications(),
+        )
+
+    async def _render_boss_notifications(self) -> None:
+        """Subscribe to actor events and publish rendered notifications.
+
+        Runs for boss calls only. Converts raw actor lifecycle events
+        (ActorHandleStarted, ActorSessionResponse, etc.) into
+        FastBrainNotification messages on ``app:call:notification`` so the
+        fast brain receives them through the unified notification channel.
+        """
+        from unity.conversation_manager.medium_scripts.common import (
+            render_event_for_fast_brain,
+        )
+
+        try:
+            async with self._event_broker.pubsub() as pubsub:
+                await pubsub.psubscribe("app:actor:*")
+                while True:
+                    msg = await pubsub.get_message(
+                        timeout=1.0,
+                        ignore_subscribe_messages=True,
+                    )
+                    if msg is None:
+                        continue
+                    data = msg.get("data", "")
+                    if not data:
+                        continue
+                    text = render_event_for_fast_brain(data)
+                    if not text:
+                        continue
+                    notification = FastBrainNotification(
+                        content=text,
+                        source="system",
+                        contact={},
+                    )
+                    await self._event_broker.publish(
+                        "app:call:notification",
+                        notification.to_json(),
+                    )
+        except asyncio.CancelledError:
+            pass

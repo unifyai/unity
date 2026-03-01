@@ -899,12 +899,12 @@ class TestMakeCallTool:
         assert "phone" in result["error"].lower()
 
     @pytest.mark.asyncio
-    async def test_context_stores_initial_call_guidance(
+    async def test_context_stores_initial_notification(
         self,
         brain_action_tools,
         mock_cm,
     ):
-        """The context param stores initial_call_guidance on call_manager
+        """The context param stores initial_notification on call_manager
         before the call is placed, so CallManager can publish it to the
         fast brain after the subprocess spawns."""
         contact = {
@@ -923,7 +923,7 @@ class TestMakeCallTool:
         )
 
         assert result["status"] == "ok"
-        assert mock_cm.call_manager.initial_call_guidance == guidance_text
+        assert mock_cm.call_manager.initial_notification == guidance_text
 
     @pytest.mark.asyncio
     async def test_context_is_required(self, brain_action_tools):
