@@ -1629,51 +1629,6 @@ class ConversationManagerBrainActionTools:
             action_type="desktop_act",
         )
 
-    async def desktop_observe(
-        self,
-        *,
-        query: str,
-    ) -> dict[str, Any]:
-        """Observe or extract information from the current desktop screen.
-
-        This is a **direct shortcut** to the desktop agent's vision
-        capability, bypassing the general ``act`` pathway.  The observation
-        runs in the background and the answer is delivered asynchronously.
-
-        Use for quick visual queries about what is currently on screen:
-
-        - "What does the screen show right now?"
-        - "What is the value in the Total cell?"
-        - "Is the Save dialog open?"
-
-        **Route through ``act`` instead** when the observation is part of a
-        larger multi-step task.
-
-        Args:
-            query: A question about the current screen state
-                (e.g. "What text is in the search box?").
-        """
-        cp = self._cm.computer_primitives
-        return await self._invoke_desktop_action(
-            coro=cp.desktop.observe(query),
-            text=query,
-            action_type="desktop_observe",
-        )
-
-    async def desktop_get_screenshot(self) -> dict[str, Any]:
-        """Capture a screenshot of the current assistant desktop.
-
-        This is a **direct shortcut** to get the desktop screenshot,
-        bypassing the general ``act`` pathway.  The capture runs in the
-        background and the image is delivered asynchronously.
-        """
-        cp = self._cm.computer_primitives
-        return await self._invoke_desktop_action(
-            coro=cp.desktop.get_screenshot(),
-            text="capture desktop screenshot",
-            action_type="desktop_get_screenshot",
-        )
-
     async def set_boss_details(
         self,
         *,

@@ -614,32 +614,31 @@ Examples of requests that should use the direct tools:
 
         if desktop_fast_path:
             parts.add(
-                """Desktop fast-path tools
------------------------
-`desktop_act`, `desktop_observe`, and `desktop_get_screenshot` are **direct shortcuts** to the desktop agent for trivially atomic actions (click, type, scroll, observe). They bypass the general `act` pathway and return results immediately.
+                """Desktop fast-path tool
+----------------------
+`desktop_act` is a **direct shortcut** to the desktop agent for trivially atomic actions (click, type, scroll). It bypasses the general `act` pathway and returns results immediately.
 
-**NEVER use a desktop fast-path tool without an `act` session.** The fast-path tools can only execute trivial atomic actions — they have NO access to stored functions, guidance, compositional workflows, or skills. The full `act` pathway provides all of this, and these capabilities are often relevant even during interactive desktop sessions. Therefore:
+**NEVER use `desktop_act` without an `act` session.** The fast-path tool can only execute trivial atomic actions — it has NO access to stored functions, guidance, compositional workflows, or skills. The full `act` pathway provides all of this, and these capabilities are often relevant even during interactive desktop sessions. Therefore:
 
-- **If NO `act` session is currently in-flight** (check `in_flight_actions`): ALWAYS call `act(persist=True)` **in the same response** as the fast-path tool. The `act` query should describe the desktop session context (e.g. "Desktop session is active. The user requested: '<action>'. Establish context, load any relevant guidance or stored functions, and stay available for subsequent desktop interactions.").
-- **If an `act` session IS already in-flight:** Just use the fast-path tool directly. The in-flight session is automatically interjected with both the request and the result.
+- **If NO `act` session is currently in-flight** (check `in_flight_actions`): ALWAYS call `act(persist=True)` **in the same response** as `desktop_act`. The `act` query should describe the desktop session context (e.g. "Desktop session is active. The user requested: '<action>'. Establish context, load any relevant guidance or stored functions, and stay available for subsequent desktop interactions.").
+- **If an `act` session IS already in-flight:** Just use `desktop_act` directly. The in-flight session is automatically interjected with both the request and the result.
 
-**Priority over interject_*:** When these tools are available and the request is an atomic desktop action, ALWAYS prefer `desktop_act` / `desktop_observe` over interjecting a persistent `act` session — even if one is running. Interjecting routes through an extra LLM hop and is much slower. The in-flight `act` session is automatically interjected when the request is made and again with the result, so it stays fully in sync — just via a faster path.
+**Priority over interject_*:** When `desktop_act` is available and the request is an atomic desktop action, ALWAYS prefer `desktop_act` over interjecting a persistent `act` session — even if one is running. Interjecting routes through an extra LLM hop and is much slower. The in-flight `act` session is automatically interjected when the request is made and again with the result, so it stays fully in sync — just via a faster path.
 
-Use these for **single atomic desktop actions** where the user has explicitly described both the action and the target:
+Use `desktop_act` for **single atomic desktop actions** where the user has explicitly described both the action and the target:
 - "Click the blue Submit button" → `desktop_act` (NOT interject_*)
 - "Type 'hello world' into the search box" → `desktop_act` (NOT interject_*)
 - "Scroll down" → `desktop_act` (NOT interject_*)
-- "What does the screen show right now?" → `desktop_observe`
-- "What is the value in the Total cell?" → `desktop_observe`
-- "Take a screenshot" → `desktop_get_screenshot`
+- "Press Enter" → `desktop_act` (NOT interject_*)
 
 **Use `act` or `interject_*` instead when:**
 - The request requires reasoning about *what* to do (not just *where*)
+- The request is an observation or question about the screen ("what's on screen?", "take a screenshot")
 - Multiple steps are needed ("copy the sales data to a Word template")
 - The request involves non-desktop work alongside desktop actions
 - The request benefits from guidance, compositional functions, or planning
 
-These tools are only available while the desktop is being actively shared.""",
+This tool is only available while the desktop is being actively shared.""",
             )
 
         parts.add(
@@ -676,16 +675,15 @@ Examples of questions that should trigger `act`:
         )
 
         persistent_desktop_note = (
-            "\n\n**Exception — desktop fast-path tools:** When `desktop_act` / "
-            "`desktop_observe` / `desktop_get_screenshot` are available, use them "
-            "for atomic desktop actions instead of ``interject_*``. They are "
-            "significantly faster, and the in-flight ``act`` session is "
-            "automatically interjected with both the request and the result, "
-            "so it stays fully in sync — just via a faster path. If no "
-            "persistent ``act`` session is running yet and the first user "
-            "request is atomic, call both the fast-path tool AND "
-            "``act(persist=True)`` in the same response to establish the "
-            "full-capability session."
+            "\n\n**Exception — desktop fast-path tool:** When `desktop_act` "
+            "is available, use it for atomic desktop actions (click, type, "
+            "scroll) instead of ``interject_*``. It is significantly faster, "
+            "and the in-flight ``act`` session is automatically interjected "
+            "with both the request and the result, so it stays fully in "
+            "sync — just via a faster path. If no persistent ``act`` session "
+            "is running yet and the first user request is atomic, call both "
+            "``desktop_act`` AND ``act(persist=True)`` in the same response "
+            "to establish the full-capability session."
             if desktop_fast_path
             else ""
         )

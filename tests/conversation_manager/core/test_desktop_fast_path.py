@@ -2,14 +2,13 @@
 tests/conversation_manager/core/test_desktop_fast_path.py
 ============================================================
 
-Symbolic tests for the desktop fast-path tools on the ConversationManager.
+Symbolic tests for the desktop fast-path tool on the ConversationManager.
 
 Verifies:
-- Tool surface: desktop_act, desktop_observe, desktop_get_screenshot appear/disappear
-  based on screen share state (active → tools visible, inactive → tools hidden).
+- Tool surface: desktop_act appears/disappears based on screen share state.
 - EventBus signal: DesktopPrimitiveInvoked is a registered event type.
-- Async lifecycle: fast-path tools return immediately, register in in_flight_actions,
-  publish ActorHandleStarted, and silently interject Actor sessions on completion.
+- Async lifecycle: desktop_act returns immediately, registers in in_flight_actions,
+  publishes ActorHandleStarted, and silently interjects Actor sessions on completion.
 - Interjection targeting: _act_handles_with_desktop_usage tracks which act sessions
   to interject, but does not gate tool exposure.
 """
@@ -22,7 +21,7 @@ import pytest
 
 from tests.helpers import _handle_project
 
-DESKTOP_TOOL_NAMES = {"desktop_act", "desktop_observe", "desktop_get_screenshot"}
+DESKTOP_TOOL_NAMES = {"desktop_act"}
 
 
 # =============================================================================
@@ -33,7 +32,7 @@ DESKTOP_TOOL_NAMES = {"desktop_act", "desktop_observe", "desktop_get_screenshot"
 @pytest.mark.asyncio
 @_handle_project
 async def test_desktop_tools_absent_when_screen_share_inactive(initialized_cm):
-    """Desktop fast paths must NOT appear when screen share is off."""
+    """Desktop fast path must NOT appear when screen share is off."""
     from unity.conversation_manager.domains.brain_action_tools import (
         ConversationManagerBrainActionTools,
     )
@@ -54,7 +53,7 @@ async def test_desktop_tools_absent_when_screen_share_inactive(initialized_cm):
 @pytest.mark.asyncio
 @_handle_project
 async def test_desktop_tools_present_when_screen_share_active_no_act(initialized_cm):
-    """Desktop fast paths appear when screen share is active, even without any
+    """Desktop fast path appears when screen share is active, even without any
     in-flight act session that has used desktop primitives."""
     cm = initialized_cm.cm
     cm.assistant_screen_share_active = True
@@ -66,7 +65,7 @@ async def test_desktop_tools_present_when_screen_share_active_no_act(initialized
 @pytest.mark.asyncio
 @_handle_project
 async def test_desktop_tools_present_when_screen_share_active_with_act(initialized_cm):
-    """Desktop fast paths appear when screen share is active and an in-flight
+    """Desktop fast path appears when screen share is active and an in-flight
     act session has used desktop primitives (interjection targets exist)."""
     cm = initialized_cm.cm
     cm.assistant_screen_share_active = True
@@ -91,7 +90,7 @@ async def test_desktop_tools_present_when_screen_share_active_with_act(initializ
 @pytest.mark.asyncio
 @_handle_project
 async def test_desktop_tools_remain_after_act_completion(initialized_cm):
-    """Desktop fast paths remain available after the act session completes,
+    """Desktop fast path remains available after the act session completes,
     as long as screen share is still active.  The _act_handles_with_desktop_usage
     set is cleaned up (for interjection targeting) but tool exposure persists."""
     from unity.conversation_manager.domains.event_handlers import EventHandler
@@ -124,7 +123,7 @@ async def test_desktop_tools_remain_after_act_completion(initialized_cm):
 @pytest.mark.asyncio
 @_handle_project
 async def test_desktop_tools_disappear_on_screen_share_stop(initialized_cm):
-    """Desktop fast paths disappear when assistant screen share stops."""
+    """Desktop fast path disappears when assistant screen share stops."""
     from unity.conversation_manager.domains.event_handlers import EventHandler
     from unity.conversation_manager.events import AssistantScreenShareStopped
 
@@ -267,87 +266,6 @@ async def test_desktop_act_returns_acting_and_interjects_on_completion(initializ
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_desktop_observe_returns_acting_and_interjects_on_completion(
-    initialized_cm,
-):
-    """desktop_observe should return immediately with 'acting' status and silently
-    interject in-flight act sessions twice: once when the request is made, and
-    again when the background task completes with the result."""
-    from unity.conversation_manager.domains.brain_action_tools import (
-        ConversationManagerBrainActionTools,
-    )
-
-    cm = initialized_cm.cm
-
-    mock_actor_handle = MagicMock()
-    mock_actor_handle.done.return_value = False
-    mock_actor_handle.interject = AsyncMock()
-    cm.in_flight_actions[11] = {
-        "handle": mock_actor_handle,
-        "query": "guide through app",
-        "action_type": "act",
-        "handle_actions": [],
-    }
-    cm._act_handles_with_desktop_usage = {11}
-
-    mock_cp = MagicMock()
-    mock_cp.desktop = MagicMock()
-    mock_cp.desktop.observe = AsyncMock(return_value="Login page with username field")
-
-    action_tools = ConversationManagerBrainActionTools(cm)
-
-    with patch.object(
-        type(cm),
-        "computer_primitives",
-        new_callable=lambda: property(lambda self: mock_cp),
-    ):
-        result = await action_tools.desktop_observe(query="What is on screen?")
-
-    assert result["status"] == "acting"
-
-    # Request-time interjection should have already fired
-    assert mock_actor_handle.interject.call_count == 1
-    request_msg = mock_actor_handle.interject.call_args_list[0].args[0]
-    assert "being handled" in request_msg.lower()
-    assert "do not replicate" in request_msg.lower()
-    assert (
-        mock_actor_handle.interject.call_args_list[0].kwargs.get(
-            "trigger_immediate_llm_turn",
-        )
-        is False
-    )
-
-    # Wait for the background task
-    desktop_actions = {
-        hid: data
-        for hid, data in cm.in_flight_actions.items()
-        if data.get("action_type") == "desktop_observe"
-    }
-    assert len(desktop_actions) == 1
-    desktop_hid = next(iter(desktop_actions))
-    await desktop_actions[desktop_hid]["handle"].result()
-
-    # After completion, a second interjection should have fired with the result
-    assert mock_actor_handle.interject.call_count == 2
-    result_msg = mock_actor_handle.interject.call_args_list[1].args[0]
-    assert "already done" in result_msg.lower()
-    assert "Login page with username field" in result_msg
-    assert "no action needed" in result_msg.lower()
-    assert (
-        mock_actor_handle.interject.call_args_list[1].kwargs.get(
-            "trigger_immediate_llm_turn",
-        )
-        is False
-    )
-
-    # Clean up
-    cm.in_flight_actions.pop(11, None)
-    cm.in_flight_actions.pop(desktop_hid, None)
-    cm._act_handles_with_desktop_usage.clear()
-
-
-@pytest.mark.asyncio
-@_handle_project
 async def test_desktop_act_without_act_session_no_interjection_errors(initialized_cm):
     """desktop_act works cleanly when no act session is in-flight (the
     interjection calls are no-ops, not errors)."""
@@ -381,48 +299,6 @@ async def test_desktop_act_without_act_session_no_interjection_errors(initialize
     }
     assert len(desktop_actions) == 1
 
-    desktop_hid = next(iter(desktop_actions))
-    await desktop_actions[desktop_hid]["handle"].result()
-
-    # Clean up
-    cm.in_flight_actions.pop(desktop_hid, None)
-
-
-@pytest.mark.asyncio
-@_handle_project
-async def test_desktop_get_screenshot_returns_acting(initialized_cm):
-    """desktop_get_screenshot should return immediately with 'acting' status
-    and register as an in-flight action."""
-    from unity.conversation_manager.domains.brain_action_tools import (
-        ConversationManagerBrainActionTools,
-    )
-
-    cm = initialized_cm.cm
-
-    mock_image = MagicMock()
-    mock_cp = MagicMock()
-    mock_cp.desktop = MagicMock()
-    mock_cp.desktop.get_screenshot = AsyncMock(return_value=mock_image)
-
-    action_tools = ConversationManagerBrainActionTools(cm)
-
-    with patch.object(
-        type(cm),
-        "computer_primitives",
-        new_callable=lambda: property(lambda self: mock_cp),
-    ):
-        result = await action_tools.desktop_get_screenshot()
-
-    assert result["status"] == "acting"
-
-    desktop_actions = {
-        hid: data
-        for hid, data in cm.in_flight_actions.items()
-        if data.get("action_type") == "desktop_get_screenshot"
-    }
-    assert len(desktop_actions) == 1
-
-    # Wait for completion and verify
     desktop_hid = next(iter(desktop_actions))
     await desktop_actions[desktop_hid]["handle"].result()
 
