@@ -1287,8 +1287,7 @@ async def _(
 ):
     event_name = event.__class__.__name__
     log_type = _MEET_LOG_TYPES.get(event.__class__, "meet_interaction")
-    reason_part = f" ({event.reason})" if event.reason else ""
-    log_msg = f"Event: {event_name}{reason_part}"
+    log_msg = f"Event: {event_name}"
     if event.reason == "LiveKit track auto-detected":
         cm._session_logger.debug(log_type, log_msg)
     else:
