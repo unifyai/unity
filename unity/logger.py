@@ -7,8 +7,10 @@ Unity's runtime logging and OpenTelemetry tracing configuration.
 File-based logging:
     When UNITY_LOG_DIR is set (via env var or configure_log_dir()),
     Unity's LOGGER output is written to two files:
-      - {UNITY_LOG_DIR}/unity.log           (DEBUG + INFO)
-      - {UNITY_LOG_DIR}/unity_info_only.log (INFO only)
+      - {UNITY_LOG_DIR}/unity.log           (everything: Unity DEBUG+, plus
+                                              third-party file-only loggers)
+      - {UNITY_LOG_DIR}/unity_info_only.log (Unity INFO+ only — mirrors the
+                                              terminal exactly)
     This captures async tool loop events, manager operations, etc.
 
 OpenTelemetry tracing:
@@ -435,8 +437,9 @@ logging.getLogger("RapidOCR").addFilter(
 )
 
 # File-only loggers: cut propagation so nothing reaches the root/terminal
-# handlers, and attach file handlers in configure_log_dir() so the output
-# still lands in unity.log / unity_info_only.log.
+# handlers, and attach the DEBUG file handler in configure_log_dir() so the
+# output still lands in unity.log.  NOT wired to unity_info_only.log — that
+# file mirrors the terminal exactly (Unity INFO+ only).
 _FILE_ONLY_LOGGERS = [
     logging.getLogger(name)
     for name in (
@@ -486,8 +489,6 @@ def configure_log_dir(log_dir: Optional[str] = None) -> Optional[Path]:
         _FILE_HANDLER = None
     if _INFO_FILE_HANDLER is not None:
         LOGGER.removeHandler(_INFO_FILE_HANDLER)
-        for _fo in _FILE_ONLY_LOGGERS:
-            _fo.removeHandler(_INFO_FILE_HANDLER)
         _INFO_FILE_HANDLER.close()
         _INFO_FILE_HANDLER = None
     _LOG_DIR = None
@@ -524,8 +525,6 @@ def configure_log_dir(log_dir: Optional[str] = None) -> Optional[Path]:
         info_handler.setLevel(logging.INFO)
         info_handler._unity_file_handler = True  # type: ignore[attr-defined]
         LOGGER.addHandler(info_handler)
-        for _fo in _FILE_ONLY_LOGGERS:
-            _fo.addHandler(info_handler)
         _INFO_FILE_HANDLER = info_handler
 
         _LOG_DIR = log_path
