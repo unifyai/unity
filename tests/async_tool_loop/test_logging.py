@@ -225,7 +225,7 @@ async def test_inline_log_file_paths(llm_config, capfd, tmp_path):
     The test:
     1. Configures a temporary UNILLM_LOG_DIR
     2. Runs a single-tool loop with loop_id="LogFileTest"
-    3. Asserts that stdout contains a 🔄 line with "LLM thinking…", the
+    3. Asserts that stdout contains a 🧠 line with "LLM thinking…", the
        lineage label, and a "→ …/path.txt" reference — all on one line
     4. Asserts the referenced file actually exists on disk
     5. Asserts no separate 📝 filepath lines exist (they are combined now)
@@ -262,7 +262,7 @@ async def test_inline_log_file_paths(llm_config, capfd, tmp_path):
         combined_lines = [
             line
             for line in stdout_lines
-            if "🔄" in line
+            if "🧠" in line
             and "LLM thinking" in line
             and "→" in line
             and "LogFileTest" in line
@@ -317,7 +317,7 @@ async def test_inline_log_file_paths(llm_config, capfd, tmp_path):
 async def test_thinking_log_fallback_without_log_dir(llm_config, capfd):
     """
     When UNILLM_LOG_DIR is NOT set, the async tool loop should still emit
-    plain "🔄 LLM thinking…" lines (without a filepath) as a fallback.
+    plain "🧠 LLM thinking…" lines (without a filepath) as a fallback.
     """
     import unillm.logger as unillm_logger
 
@@ -350,7 +350,7 @@ async def test_thinking_log_fallback_without_log_dir(llm_config, capfd):
         thinking_lines = [
             line
             for line in stdout_lines
-            if "🔄" in line and "LLM thinking" in line and "FallbackTest" in line
+            if "🧠" in line and "LLM thinking" in line and "FallbackTest" in line
         ]
 
         assert thinking_lines, (
@@ -377,7 +377,7 @@ class TestPendingThinkingLog:
 
     def test_combined_line_with_context(self, capfd):
         """When a pending path arrives and thinking context is set,
-        a single combined '🔄 ... LLM thinking…(suffix) → /path' line is emitted."""
+        a single combined '🧠 ... LLM thinking…(suffix) → /path' line is emitted."""
         from pathlib import Path
 
         log = PendingThinkingLog("FastBrain")
@@ -385,7 +385,7 @@ class TestPendingThinkingLog:
         log.on_pending_path(Path("/tmp/fake.cache_pending.txt"))
 
         out = capfd.readouterr().out
-        assert "🔄" in out
+        assert "🧠" in out
         assert "[FastBrain]" in out
         assert "LLM thinking…" in out
         assert "(test)" in out
@@ -402,7 +402,7 @@ class TestPendingThinkingLog:
         log.emit_fallback()
 
         out = capfd.readouterr().out
-        assert "🔄" in out
+        assert "🧠" in out
         assert "[ConversationManager]" in out
         assert "LLM thinking…" in out
         assert "(UserWebcamStarted)" in out
