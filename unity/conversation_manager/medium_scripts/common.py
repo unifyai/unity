@@ -110,7 +110,7 @@ class FastBrainLogger:
         self._emit("llm_error", f"Generation error: {error}{extra}")
 
     def user_speech(self, text: str) -> None:
-        self._emit("user_speech", _trunc(text))
+        self._emit("user_speech", text)
 
     def user_state(self, new_state: str, **kv: object) -> None:
         extra = _kv_suffix(kv)
@@ -118,7 +118,7 @@ class FastBrainLogger:
 
     def assistant_speech(self, text: str, **kv: object) -> None:
         extra = _kv_suffix(kv)
-        self._emit("assistant_speech", f"{_trunc(text)}{extra}")
+        self._emit("assistant_speech", f"{text}{extra}")
 
     def notification(
         self,
@@ -133,7 +133,7 @@ class FastBrainLogger:
             "notification_received",
             f"Notification from {source}"
             f" (notification_id={notification_id}, speak={speak}, turn={turn})"
-            f": {_trunc(content)}",
+            f": {content}",
         )
 
     def notification_buffered(self, notification_id: str, count: int) -> None:
@@ -146,7 +146,7 @@ class FastBrainLogger:
         extra = _kv_suffix(kv)
         self._emit_debug(
             "notification_say",
-            f"Speaking notification {notification_id}: {_trunc(text)}{extra}",
+            f"Speaking notification {notification_id}: {text}{extra}",
         )
 
     # ── proactive speech helpers ─────────────────────────────────────────
@@ -163,7 +163,7 @@ class FastBrainLogger:
         delay: float,
         content: str = "",
     ) -> None:
-        suffix = f": {_trunc(content)}" if content else ""
+        suffix = f": {content}" if content else ""
         self._emit(
             "proactive_decision",
             f"Proactive decision{_kv_suffix(dict(should_speak=should_speak, delay=f'{delay}s'))}{suffix}",
@@ -181,13 +181,13 @@ class FastBrainLogger:
     def proactive_speaking(self, delay: float, content: str) -> None:
         self._emit_debug(
             "proactive_speaking",
-            f"Proactive speaking in {delay}s: {_trunc(content)}",
+            f"Proactive speaking in {delay}s: {content}",
         )
 
     def proactive_published(self, notification_id: str, content: str) -> None:
         self._emit_debug(
             "proactive_published",
-            f"Proactive spoke: {_trunc(content)}{_kv_suffix(dict(notification_id=notification_id))}",
+            f"Proactive spoke: {content}{_kv_suffix(dict(notification_id=notification_id))}",
         )
 
     def proactive_cancelled(self) -> None:
@@ -211,7 +211,7 @@ class FastBrainLogger:
         self._emit_debug("session_ready", msg)
 
     def participant_comms(self, text: str) -> None:
-        self._emit("participant_comms", _trunc(text))
+        self._emit("participant_comms", text)
 
     def ipc_inbound(self, channel: str, **kv: object) -> None:
         extra = _kv_suffix(kv)
@@ -259,12 +259,6 @@ def _kv_suffix(kv: dict[str, object]) -> str:
 
 def _id(val: str) -> str:
     return f" {val}" if val else ""
-
-
-def _trunc(text: str, limit: int = 120) -> str:
-    if len(text) <= limit:
-        return text
-    return text[:limit] + "…"
 
 
 class SocketAwareEventBroker:
