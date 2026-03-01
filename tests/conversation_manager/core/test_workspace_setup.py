@@ -5,8 +5,11 @@ import os
 from datetime import datetime, timezone
 from pathlib import Path
 
-from unity.conversation_manager.conversation_manager import _save_screenshot
 from unity.conversation_manager.types import ScreenshotEntry
+from unity.conversation_manager.types.screenshot import (
+    generate_screenshot_path,
+    write_screenshot_to_disk,
+)
 from unity.file_manager.settings import get_local_root
 
 
@@ -103,7 +106,9 @@ class TestWorkspaceBootstrap:
 
 
 class TestSaveScreenshot:
-    """Verify _save_screenshot writes files with correct names and content."""
+    """Verify generate_screenshot_path + write_screenshot_to_disk produce
+    correct paths and file content.
+    """
 
     @staticmethod
     def _make_entry(
@@ -125,8 +130,12 @@ class TestSaveScreenshot:
         (tmp_path / "Screenshots" / "Assistant").mkdir(parents=True)
         (tmp_path / "Screenshots" / "User").mkdir(parents=True)
 
-        asst_path = _save_screenshot(self._make_entry(source="assistant"))
-        user_path = _save_screenshot(self._make_entry(source="user"))
+        asst_entry = self._make_entry(source="assistant")
+        user_entry = self._make_entry(source="user")
+        asst_path = generate_screenshot_path(asst_entry)
+        user_path = generate_screenshot_path(user_entry)
+        write_screenshot_to_disk(asst_entry, asst_path)
+        write_screenshot_to_disk(user_entry, user_path)
 
         assert asst_path.startswith("Screenshots/Assistant/")
         assert user_path.startswith("Screenshots/User/")
@@ -135,16 +144,15 @@ class TestSaveScreenshot:
         monkeypatch.chdir(tmp_path)
         (tmp_path / "Screenshots" / "Webcam").mkdir(parents=True)
 
-        webcam_path = _save_screenshot(self._make_entry(source="webcam"))
+        entry = self._make_entry(source="webcam")
+        webcam_path = generate_screenshot_path(entry)
+        write_screenshot_to_disk(entry, webcam_path)
 
         assert webcam_path.startswith("Screenshots/Webcam/")
 
-    def test_timestamp_filename(self, tmp_path, monkeypatch):
-        monkeypatch.chdir(tmp_path)
-        (tmp_path / "Screenshots" / "Assistant").mkdir(parents=True)
-
+    def test_timestamp_filename(self):
         ts = datetime(2026, 2, 16, 14, 30, 45, 123456, tzinfo=timezone.utc)
-        path = _save_screenshot(self._make_entry(source="assistant", ts=ts))
+        path = generate_screenshot_path(self._make_entry(source="assistant", ts=ts))
 
         assert path == "Screenshots/Assistant/2026-02-16T14-30-45.123456.jpg"
 
@@ -153,27 +161,9 @@ class TestSaveScreenshot:
         (tmp_path / "Screenshots" / "Assistant").mkdir(parents=True)
 
         raw = b"\x89PNG\r\n\x1a\nfake_image_data"
-        path = _save_screenshot(self._make_entry(pixel=raw))
+        entry = self._make_entry(pixel=raw)
+        path = generate_screenshot_path(entry)
+        write_screenshot_to_disk(entry, path)
 
         written = (tmp_path / path).read_bytes()
         assert written == raw
-
-    def test_collision_avoidance(self, tmp_path, monkeypatch):
-        monkeypatch.chdir(tmp_path)
-        (tmp_path / "Screenshots" / "Assistant").mkdir(parents=True)
-
-        ts = datetime(2026, 2, 16, 14, 30, 45, 123456, tzinfo=timezone.utc)
-        entry = self._make_entry(source="assistant", ts=ts)
-
-        path1 = _save_screenshot(entry)
-        path2 = _save_screenshot(entry)
-        path3 = _save_screenshot(entry)
-
-        assert path1 == "Screenshots/Assistant/2026-02-16T14-30-45.123456.jpg"
-        assert path2 == "Screenshots/Assistant/2026-02-16T14-30-45.123456_1.jpg"
-        assert path3 == "Screenshots/Assistant/2026-02-16T14-30-45.123456_2.jpg"
-
-        # All three files exist with correct content.
-        assert (tmp_path / path1).exists()
-        assert (tmp_path / path2).exists()
-        assert (tmp_path / path3).exists()

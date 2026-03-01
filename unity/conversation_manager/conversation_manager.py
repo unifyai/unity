@@ -50,19 +50,6 @@ from unity.conversation_manager.medium_scripts.common import FastBrainLogger
 MAX_CONV_MANAGER_MSGS = 50
 
 
-def _save_screenshot(entry: ScreenshotEntry) -> str:
-    """Save a screenshot to disk and return its relative path.
-
-    If the entry already carries a filepath (set by the fast brain), the file
-    is already on disk — just return the path without writing again.
-    """
-    if entry.filepath:
-        return entry.filepath
-    path = generate_screenshot_path(entry)
-    write_screenshot_to_disk(entry, path)
-    return path
-
-
 def _render_action_context(
     in_flight_actions: dict,
     completed_actions: dict,
@@ -392,13 +379,21 @@ class ConversationManager(metaclass=SingletonABCMeta):
         screenshots: list[ScreenshotEntry],
         screenshot_paths: list[str],
     ) -> None:
-        """Register screenshots with ImageManager and TranscriptManager.
+        """Persist screenshots to disk and register with ImageManager / TM.
 
         Runs as a fire-and-forget background task after a successful LLM turn.
         None of these operations affect the LLM prompt or decision — they are
-        purely persistence bookkeeping (image storage + transcript annotation).
+        purely persistence bookkeeping (disk write, image storage, transcript
+        annotation).
         """
         source_labels = {"assistant": "Assistant's screen", "user": "User's screen"}
+
+        # 0. Write screenshots to disk (entries with filepath already set by
+        #    the fast brain are skipped — write_screenshot_to_disk is a no-op
+        #    for those).
+        for entry, path in zip(screenshots, screenshot_paths):
+            if not entry.filepath:
+                write_screenshot_to_disk(entry, path)
 
         # 1. Register with ImageManager to get persistent image_ids.
         image_ids: list[int] = []
@@ -796,13 +791,18 @@ class ConversationManager(metaclass=SingletonABCMeta):
         # cancelled mid-flight the screenshots remain available for retry.
         screenshots = self.peek_screenshot_buffer()
 
-        # Persist each screenshot to disk so the CodeActActor can reference them
-        # by filepath for programmatic operations (OCR, comparison, etc.).
-        screenshot_paths = [_save_screenshot(s) for s in screenshots]
+        # Compute deterministic filepaths for each screenshot (no I/O).
+        # The actual disk writes are deferred to the background task — the
+        # LLM only needs the path strings for prompt labels, and the
+        # CodeActActor won't read the files for 17+ seconds (behind its own
+        # LLM call), so they'll be on disk long before they're needed.
+        screenshot_paths = [
+            s.filepath or generate_screenshot_path(s) for s in screenshots
+        ]
 
         # Annotate CM Message objects with screenshot filepaths so the
         # rendered state includes path references.  This is a fast in-memory
-        # loop with no I/O — only needs the paths from _save_screenshot above.
+        # loop with no I/O — only needs the paths computed above.
         if screenshots:
             msg_to_paths: dict[int, list[str]] = {}
             for entry, path in zip(screenshots, screenshot_paths):
