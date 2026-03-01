@@ -27,6 +27,7 @@ class Debouncer:
         kwargs: dict = None,
         delay=0,
         cancel_running=False,
+        label: str = "",
     ):
         args, kwargs = args or (), kwargs or {}
 
@@ -36,13 +37,18 @@ class Debouncer:
         await self._cancel_tasks(running=cancel_running)
 
         if self._name and not cancel_running:
+            req_type = f" {label}" if label else ""
             if had_pending and has_running:
                 LOGGER.info(
-                    f"🔄 [{self._name}] Pending run replaced (newer request)",
+                    f"🔄 [{self._name}] Pending run replaced (newer{req_type} request)",
                 )
             elif has_running:
                 LOGGER.info(
-                    f"⏳ [{self._name}] Run queued behind in-flight thinking",
+                    (
+                        f"⏳ [{self._name}] Run queued behind in-flight thinking ({label})"
+                        if label
+                        else f"⏳ [{self._name}] Run queued behind in-flight thinking"
+                    ),
                 )
 
         async def wait_for_running_task():
