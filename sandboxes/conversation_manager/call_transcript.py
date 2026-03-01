@@ -600,11 +600,11 @@ def parse_voice_log(path: Path) -> VoiceLogData:
             elif _ASSISTANT_SPEECH_ICON in line:
                 source = "generate_reply"
                 gid = ""
-                # Format: "speech text (source_value)"
-                m = re.match(r"^(.*?)\s+\((\w+)\)\s*$", body)
+                # Format: "Source Label: speech text"
+                m = re.match(r"^([\w ]+):\s+(.+)$", body)
                 if m:
-                    text = m.group(1).strip()
-                    source = m.group(2)
+                    source = m.group(1).strip().lower().replace(" ", "_")
+                    text = m.group(2).strip()
                 else:
                     text = body.strip()
                 if text.endswith("\u2026"):
