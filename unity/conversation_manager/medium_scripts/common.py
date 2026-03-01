@@ -111,8 +111,11 @@ class FastBrainLogger:
         self._emit_debug("user_state", f"User state: {new_state}{extra}")
 
     def assistant_speech(self, text: str, source: str = "") -> None:
-        suffix = f" ({source})" if source else ""
-        self._emit("assistant_speech", f"{text}{suffix}")
+        if source:
+            label = source.replace("_", " ").title()
+            self._emit("assistant_speech", f"{label}: {text}")
+        else:
+            self._emit("assistant_speech", text)
 
     def notification(
         self,
