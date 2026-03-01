@@ -120,6 +120,7 @@ class LoopLogger:
         self._log_steps = log_steps
         self._first_llm_logged = False
         self._defer_after_first_llm: list[tuple[str, str]] = []
+        self._thinking_emitted = False
 
     @property
     def log_steps(self):
@@ -137,12 +138,22 @@ class LoopLogger:
         txt = f"{prefix} [{self._label}] {msg}"
         LOGGER.error(txt)
 
-    def mark_llm_thinking(self) -> None:
+    def begin_thinking(self) -> None:
+        self._thinking_emitted = False
         if not self._first_llm_logged:
             self._first_llm_logged = True
             for p, m in self._defer_after_first_llm:
                 self.info(m, prefix=p)
             self._defer_after_first_llm.clear()
+
+    def emit_thinking_with_path(self, path) -> None:
+        self._thinking_emitted = True
+        self.info(f"LLM thinking… → {path}", prefix=ICONS["llm_thinking"])
+
+    def emit_thinking_fallback(self) -> None:
+        if not self._thinking_emitted:
+            self._thinking_emitted = True
+            self.info("LLM thinking…", prefix=ICONS["llm_thinking"])
 
     def defer_after_first_llm(self, msg: str, prefix: str = "") -> None:
         if self._first_llm_logged:
@@ -377,12 +388,12 @@ async def async_tool_loop_inner(
     logger = LoopLogger(cfg, log_steps)
 
     # Wire inline log-file pointers: when UNILLM_LOG_DIR is set, each LLM call
-    # writes a request+response file.  The callback prints the finalized path
-    # in the terminal with the full parent lineage so the developer can click
-    # through to the exact I/O for each step.
+    # writes a request+response file.  The pending callback fires at the START
+    # of each generate() call (before inference), letting us combine the
+    # "LLM thinking…" message with the log file path into a single line.
     if log_steps:
-        client.set_on_log_file(
-            lambda path: logger.info(f"→ {path}", prefix=ICONS["llm_log_file"]),
+        client.set_on_log_file_pending(
+            lambda path: logger.emit_thinking_with_path(path),
         )
 
     # ── Time context for time-awareness ──────────────────────────────────────
@@ -2132,8 +2143,7 @@ async def async_tool_loop_inner(
 
             # ── D.  Ask the LLM what to do next  ────────────────────────────
             if log_steps:
-                logger.info(f"LLM thinking…", prefix=ICONS["llm_thinking"])
-                logger.mark_llm_thinking()
+                logger.begin_thinking()
 
             if interrupt_llm_with_interjections:
                 # ––––– new *pre-emptive* mode ––––––––––––––––––––––––––––
@@ -2198,6 +2208,9 @@ async def async_tool_loop_inner(
                     | {llm_task, interject_w, cancel_waiter},
                     return_when=asyncio.FIRST_COMPLETED,
                 )
+
+                if log_steps:
+                    logger.emit_thinking_fallback()
 
                 # Helper cleanup: cancel auxiliary waiters only.
                 # NOTE: llm_task is deliberately NOT cancelled here. Each branch
@@ -2361,6 +2374,8 @@ async def async_tool_loop_inner(
                         _apply_reasoning_model_compat(_gen_kwargs, tool_choice_mode),
                         **_gen_kwargs,
                     )
+                    if log_steps:
+                        logger.emit_thinking_fallback()
                 except Exception as e:
                     raise Exception(
                         f"LLM call failed: {type(e).__name__}: {e}",

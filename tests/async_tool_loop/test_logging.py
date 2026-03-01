@@ -218,16 +218,17 @@ async def test_litellm_logs_are_suppressed(llm_config, caplog):
 @pytest.mark.asyncio
 async def test_inline_log_file_paths(llm_config, capfd, tmp_path):
     """
-    Verify that when UNILLM_LOG_DIR is set, each LLM call in the async tool
-    loop emits an inline log line with the finalized log file path and the
-    full parent lineage label.
+    Verify that when UNILLM_LOG_DIR is set, the async tool loop emits a
+    combined "LLM thinking… → /path" line that merges the thinking indicator
+    with the log file path into a single line per LLM call.
 
     The test:
     1. Configures a temporary UNILLM_LOG_DIR
     2. Runs a single-tool loop with loop_id="LogFileTest"
-    3. Asserts that stdout contains a 📝 line with the lineage label and
-       a path ending in .txt
+    3. Asserts that stdout contains a 🔄 line with "LLM thinking…", the
+       lineage label, and a "→ …/path.txt" reference — all on one line
     4. Asserts the referenced file actually exists on disk
+    5. Asserts no separate 📝 filepath lines exist (they are combined now)
     """
     import unillm.logger as unillm_logger
 
@@ -258,28 +259,112 @@ async def test_inline_log_file_paths(llm_config, capfd, tmp_path):
         captured = capfd.readouterr()
         stdout_lines = captured.out.splitlines()
 
-        log_file_lines = [
-            line for line in stdout_lines if "📝" in line and "LogFileTest" in line
+        combined_lines = [
+            line
+            for line in stdout_lines
+            if "🔄" in line
+            and "LLM thinking" in line
+            and "→" in line
+            and "LogFileTest" in line
         ]
 
-        assert log_file_lines, (
-            "No stdout lines found with 📝 icon and 'LogFileTest' lineage. "
+        assert combined_lines, (
+            "No combined 'LLM thinking… → /path' lines found. "
             f"Stdout lines containing LogFileTest: "
             f"{[l for l in stdout_lines if 'LogFileTest' in l]}"
         )
 
-        for line in log_file_lines:
+        for line in combined_lines:
             match = re.search(r"→ (.+\.txt)", line)
             assert match, f"Could not extract .txt path from log line: {line}"
             path_str = match.group(1)
-            assert os.path.isfile(path_str), f"Log file does not exist: {path_str}"
             assert (
                 str(log_dir) in path_str
             ), f"Log file {path_str} is not under expected dir {log_dir}"
+
+            # The pending path (.cache_pending.txt) gets renamed after the LLM
+            # call completes. Verify a finalized file with the same base exists.
+            base = os.path.basename(path_str).split(".cache_pending.")[0]
+            finalized = [
+                f
+                for f in os.listdir(log_dir)
+                if f.startswith(base) and f != os.path.basename(path_str)
+            ]
+            assert finalized, (
+                f"No finalized log file found for base '{base}' in {log_dir}. "
+                f"Files: {os.listdir(log_dir)}"
+            )
+
+        separate_filepath_lines = [
+            line
+            for line in stdout_lines
+            if "📝" in line and "LogFileTest" in line and "→" in line
+        ]
+        assert not separate_filepath_lines, (
+            "Found separate 📝 filepath lines — these should be combined with "
+            f"the thinking line now: {separate_filepath_lines}"
+        )
 
     finally:
         if old_env is not None:
             os.environ["UNILLM_LOG_DIR"] = old_env
         else:
             os.environ.pop("UNILLM_LOG_DIR", None)
+        unillm_logger.configure_log_dir(old_env)
+
+
+@pytest.mark.asyncio
+async def test_thinking_log_fallback_without_log_dir(llm_config, capfd):
+    """
+    When UNILLM_LOG_DIR is NOT set, the async tool loop should still emit
+    plain "🔄 LLM thinking…" lines (without a filepath) as a fallback.
+    """
+    import unillm.logger as unillm_logger
+
+    old_env = os.environ.get("UNILLM_LOG_DIR")
+    os.environ.pop("UNILLM_LOG_DIR", None)
+    unillm_logger.configure_log_dir(None)
+
+    try:
+
+        def noop_tool() -> str:
+            return "ok"
+
+        client = new_llm_client(**llm_config)
+        client.set_system_message("Call noop_tool, then reply 'done'.")
+
+        handle = start_async_tool_loop(
+            client=client,
+            message="start",
+            tools={"noop_tool": noop_tool},
+            loop_id="FallbackTest",
+            max_steps=5,
+            timeout=60,
+        )
+
+        await handle.result()
+
+        captured = capfd.readouterr()
+        stdout_lines = captured.out.splitlines()
+
+        thinking_lines = [
+            line
+            for line in stdout_lines
+            if "🔄" in line and "LLM thinking" in line and "FallbackTest" in line
+        ]
+
+        assert thinking_lines, (
+            "No 'LLM thinking…' lines found when UNILLM_LOG_DIR is unset. "
+            f"Stdout lines containing FallbackTest: "
+            f"{[l for l in stdout_lines if 'FallbackTest' in l]}"
+        )
+
+        for line in thinking_lines:
+            assert (
+                "→" not in line
+            ), f"Fallback thinking line should NOT contain '→' filepath: {line}"
+
+    finally:
+        if old_env is not None:
+            os.environ["UNILLM_LOG_DIR"] = old_env
         unillm_logger.configure_log_dir(old_env)
