@@ -115,6 +115,7 @@ class Assistant(Agent):
             OutboundPhoneUtterance if channel == "phone" else OutboundUnifyMeetUtterance
         )
         self.call_received = not outbound
+        self._user_speech_logged = False
 
         super().__init__(instructions=instructions)
 
@@ -126,12 +127,11 @@ class Assistant(Agent):
         turn_ctx: ChatContext,
         new_message: ChatMessage,
     ) -> None:
-        """
-        Hook called when user finishes speaking.
-
-        Note: User utterance publishing is handled by _on_chat_item_added
-        to keep all transcript logging in one place alongside assistant utterances.
-        """
+        """Hook called when user finishes speaking — before LLM generation starts."""
+        text = new_message.text_content or ""
+        if text:
+            _log.user_speech(text)
+            self._user_speech_logged = True
 
     async def llm_node(
         self,
@@ -436,7 +436,9 @@ async def entrypoint(ctx: agents.JobContext):
         if say_meta:
             _last_say_meta = None
         if role == "user":
-            _log.user_speech(text)
+            if not assistant._user_speech_logged:
+                _log.user_speech(text)
+            assistant._user_speech_logged = False
         else:
             source = (say_meta or {}).get("source", "reply")
             if say_meta and say_meta.get("llm_log_path"):
