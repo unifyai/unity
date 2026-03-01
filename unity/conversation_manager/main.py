@@ -309,6 +309,11 @@ async def main(project_name: str = "Assistants"):
     await _conversation_manager.cleanup()
     LOGGER.debug(f"{ICONS['lifecycle']} Cleanup finished")
 
+    # Flush buffered EventBus writes to the backend before exit.
+    from unity.events.event_bus import EVENT_BUS
+
+    EVENT_BUS.flush()
+
     # Shut down the metrics exporter (flushes remaining data internally).
     shutdown_metrics()
 
