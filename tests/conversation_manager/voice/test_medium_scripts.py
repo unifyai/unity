@@ -439,9 +439,11 @@ class TestEndCallHelper:
         event_broker,
         boss_contact,
         monkeypatch,
-        capsys,
+        caplog,
     ):
         """create_end_call continues even if callback raises."""
+        import logging
+
         from unity.conversation_manager.medium_scripts import common
 
         monkeypatch.setattr(common, "event_broker", event_broker)
@@ -455,11 +457,15 @@ class TestEndCallHelper:
             pre_shutdown_callback=failing_callback,
         )
 
-        # Should not raise
-        await end_call()
+        unity_logger = logging.getLogger("unity")
+        unity_logger.addHandler(caplog.handler)
+        caplog.handler.setLevel(logging.DEBUG)
+        try:
+            await end_call()
+        finally:
+            unity_logger.removeHandler(caplog.handler)
 
-        captured = capsys.readouterr()
-        assert "Error in pre-shutdown callback" in captured.out
+        assert "Error in pre-shutdown callback" in caplog.text
 
 
 # =============================================================================
@@ -1262,11 +1268,11 @@ class TestFastBrainGuidanceFlow:
         )
         await stream._run()
 
-        sent_system_message = captured["generate_kwargs"]["system_message"]
-        assert "BASE_PROMPT" in sent_system_message
-        assert (
-            "[notification] No, there is no contact named Bob." in sent_system_message
-        )
+        messages = captured["generate_kwargs"]["messages"]
+        system_texts = [m["content"] for m in messages if m["role"] == "system"]
+        all_system_text = "\n".join(system_texts)
+        assert "BASE_PROMPT" in all_system_text
+        assert "[notification] No, there is no contact named Bob." in all_system_text
 
     async def test_tts_guidance_received_while_user_speaking_is_replied_after_speech_ends(
         self,

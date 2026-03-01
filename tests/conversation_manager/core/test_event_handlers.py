@@ -308,11 +308,21 @@ class TestHandleEventCore:
 
     @pytest.mark.asyncio
     async def test_handle_event_logs_event(self, mock_cm):
-        """Verify handle_event logs the event via session logger."""
-        event = Ping(kind="keepalive")
+        """Verify handle_event logs loggable+prominent events via session logger."""
+        from dataclasses import dataclass
+
+        @dataclass
+        class StubLoggableEvent(Event):
+            prominent: ClassVar[bool] = True
+
+        mock_cm._current_event_trace = {"event_id": "evt-test"}
+        event = StubLoggableEvent()
         await EventHandler.handle_event(event, mock_cm)
 
-        mock_cm._session_logger.info.assert_called_with("ping", "Event: Ping")
+        mock_cm._session_logger.info.assert_called_with(
+            "stub_loggable_event",
+            "Event: StubLoggableEvent (event_id=evt-test)",
+        )
 
     @pytest.mark.asyncio
     async def test_handle_event_publishes_loggable_events(self, mock_cm):
@@ -1221,17 +1231,16 @@ class TestMeetInteractionEventHandlers:
     # User screenshot buffer (IPC path)
     # --------------------------------------------------------------------- #
 
-    def test_buffer_user_screenshot_parses_ipc_json(self, mock_cm):
-        """_buffer_user_screenshot parses IPC JSON and buffers a ScreenshotEntry."""
+    def test_buffer_screenshot_parses_ipc_json(self, mock_cm):
+        """_buffer_screenshot parses IPC JSON and buffers a ScreenshotEntry."""
         import json
         from datetime import datetime
 
         from unity.conversation_manager.conversation_manager import ConversationManager
 
-        # Use the real method on the mock CM by binding it
         mock_cm._screenshot_buffer = []
         mock_cm._session_logger = MagicMock()
-        method = ConversationManager._buffer_user_screenshot.__get__(mock_cm)
+        method = ConversationManager._buffer_screenshot.__get__(mock_cm)
 
         payload = json.dumps(
             {
@@ -2029,8 +2038,10 @@ class TestAssistantUpdateEventHandler:
         assert call_1.kwargs["surname"] == "Boss"
 
     @pytest.mark.asyncio
-    async def test_update_session_contacts_handles_failure(self, mock_cm, capsys):
+    async def test_update_session_contacts_handles_failure(self, mock_cm, caplog):
         """update_session_contacts logs errors when update_contact fails."""
+        import logging
+
         from unity.conversation_manager.domains.managers_utils import (
             update_session_contacts,
         )
@@ -2039,53 +2050,61 @@ class TestAssistantUpdateEventHandler:
             side_effect=Exception("Update failed"),
         )
 
-        # Should not raise - errors are caught and logged
-        await update_session_contacts(
-            mock_cm,
-            assistant_first_name="Updated",
-            assistant_surname="Assistant",
-            assistant_number="+15555550001",
-            assistant_email="assistant@updated.com",
-            user_first_name="Updated",
-            user_surname="Boss",
-            user_number="+15555550002",
-            user_email="boss@updated.com",
-        )
+        unity_logger = logging.getLogger("unity")
+        unity_logger.addHandler(caplog.handler)
+        caplog.handler.setLevel(logging.DEBUG)
+        try:
+            await update_session_contacts(
+                mock_cm,
+                assistant_first_name="Updated",
+                assistant_surname="Assistant",
+                assistant_number="+15555550001",
+                assistant_email="assistant@updated.com",
+                user_first_name="Updated",
+                user_surname="Boss",
+                user_number="+15555550002",
+                user_email="boss@updated.com",
+            )
+        finally:
+            unity_logger.removeHandler(caplog.handler)
 
-        # Errors should be printed
-        captured = capsys.readouterr()
-        assert "Failed to update contact 0" in captured.out
-        assert "Failed to update contact 1" in captured.out
+        assert "Failed to update contact 0" in caplog.text
+        assert "Failed to update contact 1" in caplog.text
 
     @pytest.mark.asyncio
     async def test_update_session_contacts_handles_no_contact_manager(
         self,
         mock_cm,
-        capsys,
+        caplog,
     ):
         """update_session_contacts handles None contact_manager gracefully."""
+        import logging
+
         from unity.conversation_manager.domains.managers_utils import (
             update_session_contacts,
         )
 
         mock_cm.contact_manager = None
 
-        # Should not raise
-        await update_session_contacts(
-            mock_cm,
-            assistant_first_name="Test",
-            assistant_surname="",
-            assistant_number="+1555",
-            assistant_email="test@test.com",
-            user_first_name="Boss",
-            user_surname="",
-            user_number="+1666",
-            user_email="boss@test.com",
-        )
+        unity_logger = logging.getLogger("unity")
+        unity_logger.addHandler(caplog.handler)
+        caplog.handler.setLevel(logging.DEBUG)
+        try:
+            await update_session_contacts(
+                mock_cm,
+                assistant_first_name="Test",
+                assistant_surname="",
+                assistant_number="+1555",
+                assistant_email="test@test.com",
+                user_first_name="Boss",
+                user_surname="",
+                user_number="+1666",
+                user_email="boss@test.com",
+            )
+        finally:
+            unity_logger.removeHandler(caplog.handler)
 
-        # Should print a message about missing contact_manager
-        captured = capsys.readouterr()
-        assert "contact_manager is None" in captured.out
+        assert "contact_manager is None" in caplog.text
 
 
 # =============================================================================
