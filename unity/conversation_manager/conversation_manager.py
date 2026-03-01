@@ -764,8 +764,8 @@ class ConversationManager(metaclass=SingletonABCMeta):
             trace_meta=selected_meta,
         )
 
-    async def _run_llm(self, trace_meta: dict[str, str] | None = None) -> str | None:
-        """Run a single LLM decision and return the tool name that was called."""
+    async def _run_llm(self, trace_meta: dict[str, str] | None = None) -> list[str]:
+        """Run a single LLM decision and return all tool names that were called."""
         # Capture when slow brain starts thinking (for guidance staleness detection)
         from datetime import datetime, timezone
 
@@ -923,9 +923,10 @@ class ConversationManager(metaclass=SingletonABCMeta):
             if hasattr(client, "_pending_thinking_log"):
                 client._pending_thinking_log.emit_fallback()
             _EVENT_SOURCE.reset(_source_token)
+        tool_names = [t.name for t in result.tools]
         self._session_logger.debug(
             "perf",
-            f"[_run_llm +{_rl_ms()}] single_shot returned tool={result.tool_name}",
+            f"[_run_llm +{_rl_ms()}] single_shot returned tools={tool_names}",
         )
 
         # Extract structured output (thoughts)
@@ -985,7 +986,7 @@ class ConversationManager(metaclass=SingletonABCMeta):
                 if len(thoughts) > 100
                 else f"run_id={run_id} thoughts: {thoughts}"
             )
-            + (f" | action: {result.tool_name}" if result.tool_name else ""),
+            + (f" | actions: {tool_names}" if tool_names else ""),
         )
 
         self._session_logger.debug(
@@ -1020,16 +1021,18 @@ class ConversationManager(metaclass=SingletonABCMeta):
         self.chat_history.append({"role": "assistant", "content": assistant_content})
 
         # If the LLM called wait(delay=N), schedule a delayed follow-up turn.
-        if result.tool_name == "wait":
-            delay = (result.tool_args or {}).get("delay")
-            msg = (
-                f"Decided to wait {delay} seconds"
-                if delay is not None
-                else "Decided to wait"
-            )
-            self._session_logger.info("wait", msg)
-            if delay is not None:
-                await self.request_llm_run(delay=delay)
+        for tool_exec in result.tools:
+            if tool_exec.name == "wait":
+                delay = (tool_exec.args or {}).get("delay")
+                msg = (
+                    f"Decided to wait {delay} seconds"
+                    if delay is not None
+                    else "Decided to wait"
+                )
+                self._session_logger.info("wait", msg)
+                if delay is not None:
+                    await self.request_llm_run(delay=delay)
+                break
 
         self._session_logger.debug(
             "perf",
@@ -1037,13 +1040,10 @@ class ConversationManager(metaclass=SingletonABCMeta):
         )
         self._session_logger.debug(
             "llm_response",
-            (
-                f"Slow-brain run completed run_id={run_id} "
-                f"tool={result.tool_name or '-'}"
-            ),
+            (f"Slow-brain run completed run_id={run_id} " f"tools={tool_names or '-'}"),
         )
 
-        return result.tool_name
+        return tool_names
 
     async def wait_for_events(self):
         async with self.event_broker.pubsub() as pubsub:
