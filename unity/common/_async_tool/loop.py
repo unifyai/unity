@@ -491,6 +491,13 @@ async def async_tool_loop_inner(
         if not isinstance(message, list):
             logger.info(f"Request: {message}", prefix=ICONS["request"])
 
+    import time as _setup_time
+
+    _setup_t0 = _setup_time.perf_counter()
+
+    def _setup_elapsed() -> str:
+        return f"{(_setup_time.perf_counter() - _setup_t0) * 1000:.0f}ms"
+
     # ── 0-a. Inject **system** header with runtime context ─────────────────────
     #
     # Consolidate caller context and parent chat context into a single system
@@ -595,7 +602,11 @@ async def async_tool_loop_inner(
             },
         )
 
+    logger.debug(
+        f"[setup +{_setup_elapsed()}] context built, appending system msgs ({len(msgs_to_append)} msgs)",
+    )
     await _msg_dispatcher.append_msgs(msgs_to_append)
+    logger.debug(f"[setup +{_setup_elapsed()}] system msgs appended")
 
     # ── 0-a++. Initialize context state for incremental propagation ──────────
     # Tracks initial parent context and any continued updates received via interjections.
@@ -620,7 +631,11 @@ async def async_tool_loop_inner(
                 for m in message
             ]
 
+        logger.debug(
+            f"[setup +{_setup_elapsed()}] appending seeded batch ({len(seeded_batch)} msgs)",
+        )
         await _msg_dispatcher.append_msgs(seeded_batch)
+        logger.debug(f"[setup +{_setup_elapsed()}] seeded batch appended")
 
     # ── initial prompt ───────────────────────────────────────────────────────
     # ── 0-b. Coerce tools → ToolSpec & helper lambdas ───────────────────────
@@ -632,12 +647,16 @@ async def async_tool_loop_inner(
     # -----------------------------------------------------------------------
 
     # Initialise loop state early so preflight backfill can schedule tasks
+    logger.debug(f"[setup +{_setup_elapsed()}] initialising ToolsData")
     tools_data: ToolsData = ToolsData(
         tools,
         client=client,
         logger=logger,
         time_ctx=time_ctx,
         extra_ask_tools=extra_ask_tools,
+    )
+    logger.debug(
+        f"[setup +{_setup_elapsed()}] ToolsData ready ({len(tools_data.normalized)} tools)",
     )
 
     consecutive_failures = _LoopToolFailureTracker(max_consecutive_failures)
@@ -678,6 +697,7 @@ async def async_tool_loop_inner(
             setattr(_self_task, "get_completed_tool_metadata", lambda: dict(tools_data._completed_askable_tools))  # type: ignore[attr-defined]
 
     # Preflight repair: backfill any pre-existing assistant tool_calls without replies
+    logger.debug(f"[setup +{_setup_elapsed()}] preflight repair start")
     with suppress(Exception):
         unreplied = find_unreplied_assistant_entries(client)
         if unreplied:
@@ -1283,6 +1303,7 @@ async def async_tool_loop_inner(
     deferred_llm_turn = False
 
     # Loop returns immediately upon the final assistant message (no persist mode)
+    logger.debug(f"[setup +{_setup_elapsed()}] entering main loop")
 
     try:
         while True:
@@ -1894,6 +1915,9 @@ async def async_tool_loop_inner(
             # ------------------------------------------------------------------
 
             # 0.  Decide policy & tool-subset for this turn  ───────────────
+            logger.debug(
+                f"[setup +{_setup_elapsed()}] tool policy eval (step={step_index})",
+            )
             if tool_policy is not None:
                 _tools_snapshot = {n: s.fn for n, s in tools_data.normalized.items()}
                 try:
@@ -1932,6 +1956,9 @@ async def async_tool_loop_inner(
             if _has_pending_tools and tool_choice_mode != "required":
                 tool_choice_mode = "required"
 
+            logger.debug(
+                f"[setup +{_setup_elapsed()}] building tool schemas ({len(policy_tools_norm)} tools)",
+            )
             visible_base_tools_schema = [
                 method_to_schema(
                     spec.fn,
@@ -2061,7 +2088,9 @@ async def async_tool_loop_inner(
             # Yield to allow just-scheduled tool tasks to complete (especially
             # those that immediately return a SteerableToolHandle). This ensures
             # dynamic helpers are generated with the handle's docstrings.
+            logger.debug(f"[setup +{_setup_elapsed()}] yielding (asyncio.sleep(0))")
             await asyncio.sleep(0)
+            logger.debug(f"[setup +{_setup_elapsed()}] resumed after yield")
 
             # Process any tools that completed during the yield
             for task in list(tools_data.pending):
@@ -2105,6 +2134,7 @@ async def async_tool_loop_inner(
 
             # make sure every pending call already has a *tool* reply ──
             #  (a placeholder) before we let the assistant speak again.
+            logger.debug(f"[setup +{_setup_elapsed()}] ensure_placeholders start")
             await ensure_placeholders_for_pending(
                 tools_data=tools_data,
                 assistant_meta=assistant_meta,
@@ -2112,6 +2142,7 @@ async def async_tool_loop_inner(
                 msg_dispatcher=_msg_dispatcher,
                 time_ctx=time_ctx,
             )
+            logger.debug(f"[setup +{_setup_elapsed()}] ensure_placeholders done")
 
             # Merge helpers into the visible toolkit for the upcoming LLM step
             # For steering methods (ask/interject) on tools that opted into context,
@@ -2142,6 +2173,9 @@ async def async_tool_loop_inner(
             ]
 
             # ── D.  Ask the LLM what to do next  ────────────────────────────
+            logger.debug(
+                f"[setup +{_setup_elapsed()}] ready for LLM call (step={step_index}, {len(tmp_tools)} tools)",
+            )
             if log_steps:
                 logger.begin_thinking()
 

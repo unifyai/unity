@@ -150,6 +150,14 @@ async def single_shot_tool_decision(
     """
     import asyncio
     import inspect
+    import time as _ss_time
+    import logging as _ss_logging
+
+    _ss_logger = _ss_logging.getLogger("unity")
+    _ss_t0 = _ss_time.perf_counter()
+
+    def _ss_ms() -> str:
+        return f"{(_ss_time.perf_counter() - _ss_t0) * 1000:.0f}ms"
 
     # Normalise tools to ToolSpec for consistent handling
     normalised = normalise_tools(tools)
@@ -186,7 +194,11 @@ async def single_shot_tool_decision(
         )
 
     # Single LLM call
+    _ss_logger.debug(
+        f"⏱️ [single_shot +{_ss_ms()}] calling generate ({len(schemas)} tools)",
+    )
     await client.generate(**gen_kwargs)
+    _ss_logger.debug(f"⏱️ [single_shot +{_ss_ms()}] generate returned")
 
     # The client appends the assistant response to client.messages
     # Extract it from there (this is how async_tool_loop does it)
@@ -351,9 +363,14 @@ async def single_shot_tool_decision(
     for c in tool_calls_list:
         expanded_calls.extend(_unwrap_json_tool_call(c))
 
+    _tool_names = [(c.get("function") or {}).get("name", "?") for c in expanded_calls]
+    _ss_logger.debug(
+        f"⏱️ [single_shot +{_ss_ms()}] executing {len(expanded_calls)} tools: {_tool_names}",
+    )
     tool_executions = await asyncio.gather(
         *[execute_tool_call(call) for call in expanded_calls],
     )
+    _ss_logger.debug(f"⏱️ [single_shot +{_ss_ms()}] all tools completed")
 
     return SingleShotResult(
         tools=list(tool_executions),

@@ -1181,6 +1181,18 @@ class ConversationManagerBrainActionTools:
         """
         global _next_handle_id
 
+        import time as _bat_time
+
+        _bat_t0 = _bat_time.perf_counter()
+
+        def _bat_ms() -> str:
+            return f"{(_bat_time.perf_counter() - _bat_t0) * 1000:.0f}ms"
+
+        import logging as _bat_logging
+
+        _bat_log = _bat_logging.getLogger("unity")
+        _bat_log.debug(f"⏱️ [CM.act tool +{_bat_ms()}] entered")
+
         # Pass the fresh rendered state snapshot as context for the Actor,
         # unless the LLM opted out.
         parent_context = None
@@ -1190,6 +1202,7 @@ class ConversationManagerBrainActionTools:
                 if self._cm._current_state_snapshot
                 else None
             )
+        _bat_log.debug(f"⏱️ [CM.act tool +{_bat_ms()}] parent context built")
 
         # Convert the LLM-provided schema dict into a Pydantic model that the
         # Actor's async tool loop uses for structured output validation.
@@ -1204,11 +1217,15 @@ class ConversationManagerBrainActionTools:
         cm = self._cm
 
         async def _invoke_actor():
+            _bat_log.debug(f"⏱️ [CM.act tool +{_bat_ms()}] calling cm.actor.act()")
             handle = await cm.actor.act(
                 query,
                 _parent_chat_context=parent_context,
                 response_format=pydantic_response_format,
                 persist=persist,
+            )
+            _bat_log.debug(
+                f"⏱️ [CM.act tool +{_bat_ms()}] cm.actor.act() returned handle",
             )
 
             # Capture the snapshot state for incremental diff computation.
@@ -1239,6 +1256,7 @@ class ConversationManagerBrainActionTools:
             asyncio.create_task(
                 managers_utils.actor_watch_clarifications(handle_id, handle),
             )
+            _bat_log.debug(f"⏱️ [CM.act tool +{_bat_ms()}] watchers started")
 
         handle_id = _next_handle_id
         _next_handle_id += 1
@@ -1248,6 +1266,7 @@ class ConversationManagerBrainActionTools:
         else:
             await managers_utils.queue_operation(_invoke_actor)
 
+        _bat_log.debug(f"⏱️ [CM.act tool +{_bat_ms()}] publishing ActorHandleStarted")
         await self._event_broker.publish(
             f"app:actor:actor_started_handle_{handle_id}",
             ActorHandleStarted(
@@ -1257,6 +1276,7 @@ class ConversationManagerBrainActionTools:
                 response_format=response_format,
             ).to_json(),
         )
+        _bat_log.debug(f"⏱️ [CM.act tool +{_bat_ms()}] done, returning")
 
         return {"status": "acting", "query": query}
 

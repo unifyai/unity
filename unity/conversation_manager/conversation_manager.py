@@ -882,6 +882,17 @@ class ConversationManager(metaclass=SingletonABCMeta):
         client.set_prompt_caching(["system"])
         messages = self._preprocess_messages(self.chat_history + [input_message])
         _source_token = _EVENT_SOURCE.set("ConversationManager")
+        import time as _rl_time
+
+        _rl_t0 = _rl_time.perf_counter()
+
+        def _rl_ms() -> str:
+            return f"{(_rl_time.perf_counter() - _rl_t0) * 1000:.0f}ms"
+
+        self._session_logger.debug(
+            "perf",
+            f"[_run_llm +{_rl_ms()}] calling single_shot_tool_decision ({len(tools)} tools, {len(messages)} msgs)",
+        )
         try:
             result = await single_shot_tool_decision(
                 client,
@@ -894,6 +905,10 @@ class ConversationManager(metaclass=SingletonABCMeta):
             if hasattr(client, "_pending_thinking_log"):
                 client._pending_thinking_log.emit_fallback()
             _EVENT_SOURCE.reset(_source_token)
+        self._session_logger.debug(
+            "perf",
+            f"[_run_llm +{_rl_ms()}] single_shot returned tool={result.tool_name}",
+        )
 
         # Extract structured output (thoughts)
         structured = result.structured_output
@@ -955,6 +970,10 @@ class ConversationManager(metaclass=SingletonABCMeta):
             + (f" | action: {result.tool_name}" if result.tool_name else ""),
         )
 
+        self._session_logger.debug(
+            "perf",
+            f"[_run_llm +{_rl_ms()}] voice notification done, committing",
+        )
         self.commit()
         self._session_logger.debug("state_update", "Committing state")
 
@@ -988,6 +1007,10 @@ class ConversationManager(metaclass=SingletonABCMeta):
             if delay is not None:
                 await self.request_llm_run(delay=delay)
 
+        self._session_logger.debug(
+            "perf",
+            f"[_run_llm +{_rl_ms()}] post-processing done",
+        )
         self._session_logger.debug(
             "llm_response",
             (

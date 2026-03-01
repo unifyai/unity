@@ -3003,6 +3003,15 @@ class CodeActActor(BaseCodeActActor):
         if not self._main_event_loop:
             self._main_event_loop = asyncio.get_running_loop()
 
+        import time as _act_time
+
+        _act_t0 = _act_time.perf_counter()
+
+        def _act_ms() -> str:
+            return f"{(_act_time.perf_counter() - _act_t0) * 1000:.0f}ms"
+
+        logger.debug(f"⏱️ [CodeActActor.act +{_act_ms()}] entered")
+
         effective_can_compose = (
             self.can_compose if can_compose is None else bool(can_compose)
         )
@@ -3035,6 +3044,7 @@ class CodeActActor(BaseCodeActActor):
             clarification_down_q = None
 
         # Create per-call environments so clarification queues are not stored on shared actor environments.
+        logger.debug(f"⏱️ [CodeActActor.act +{_act_ms()}] copying environments")
         sandbox_envs: Dict[str, "BaseEnvironment"] = {}
         try:
             from unity.actor.environments.base import (
@@ -3094,6 +3104,9 @@ class CodeActActor(BaseCodeActActor):
                 sandbox_envs[ns] = env
 
         # Concurrency/backpressure guard. If we can't acquire within 30s, treat as resource exhaustion.
+        logger.debug(
+            f"⏱️ [CodeActActor.act +{_act_ms()}] envs copied, acquiring semaphore",
+        )
         try:
             await asyncio.wait_for(
                 self._act_semaphore.acquire(),
@@ -3104,6 +3117,9 @@ class CodeActActor(BaseCodeActActor):
                 "CodeActActor is at capacity (too many concurrent sessions). "
                 "Try again later or reduce concurrency.",
             )
+        logger.debug(
+            f"⏱️ [CodeActActor.act +{_act_ms()}] semaphore acquired, creating sandbox",
+        )
         sandbox = PythonExecutionSession(
             computer_primitives=self._computer_primitives,
             environments=sandbox_envs,
@@ -3305,6 +3321,7 @@ class CodeActActor(BaseCodeActActor):
             "\n\n".join(filter(None, [self._base_guidelines, guidelines])) or None
         )
 
+        logger.debug(f"⏱️ [CodeActActor.act +{_act_ms()}] building system prompt")
         system_prompt = build_code_act_prompt(
             environments=sandbox_envs,
             tools=base_tools,
@@ -3312,6 +3329,10 @@ class CodeActActor(BaseCodeActActor):
             guidelines=effective_guidelines,
             discovery_first_policy=self.tool_policy is _USE_DEFAULT,
             has_computer_tools=self._computer_primitives is not None,
+        )
+        logger.debug(
+            f"⏱️ [CodeActActor.act +{_act_ms()}] prompt built "
+            f"({len(system_prompt)} chars, {len(base_tools)} tools)",
         )
 
         # Tool policy controls which tools are visible per turn, and whether a
@@ -3372,6 +3393,7 @@ class CodeActActor(BaseCodeActActor):
                 call_id=_call_id,
             )
 
+        logger.debug(f"⏱️ [CodeActActor.act +{_act_ms()}] starting async tool loop")
         handle = start_async_tool_loop(
             client,
             request or initial_prompt,
@@ -3388,6 +3410,9 @@ class CodeActActor(BaseCodeActActor):
             preprocess_msgs=self._preprocess_msgs,
             prompt_caching=self._prompt_caching,
             extra_ask_tools=self._get_extra_ask_tools(),
+        )
+        logger.debug(
+            f"⏱️ [CodeActActor.act +{_act_ms()}] loop started, returning handle",
         )
 
         # Wrap result() to run cleanup when the loop finishes
