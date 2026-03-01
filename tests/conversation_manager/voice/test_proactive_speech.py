@@ -310,7 +310,10 @@ class TestProactiveSpeechLoop:
         async def mock_decide(*args, **kwargs):
             nonlocal decide_called
             decide_called = True
-            return ProactiveDecision(should_speak=True, delay=0, content="Stale filler")
+            return (
+                ProactiveDecision(should_speak=True, delay=0, content="Stale filler"),
+                "",
+            )
 
         mock_cm.proactive_speech.decide = mock_decide
 
@@ -342,7 +345,7 @@ class TestProactiveSpeechLoop:
         async def mock_decide(*args, **kwargs):
             nonlocal decide_called
             decide_called = True
-            return ProactiveDecision(should_speak=False)
+            return ProactiveDecision(should_speak=False), ""
 
         mock_cm.proactive_speech.decide = mock_decide
 
@@ -370,7 +373,7 @@ class TestProactiveSpeechLoop:
         mock_cm.mode = Mode.CALL
 
         async def mock_decide(*args, **kwargs):
-            return ProactiveDecision(should_speak=False)
+            return ProactiveDecision(should_speak=False), ""
 
         mock_cm.proactive_speech.decide = mock_decide
 
@@ -393,7 +396,7 @@ class TestProactiveSpeechLoop:
         mock_cm.mode = Mode.CALL
 
         async def mock_decide(*args, **kwargs):
-            return ProactiveDecision(should_speak=False)
+            return ProactiveDecision(should_speak=False), ""
 
         mock_cm.proactive_speech.decide = mock_decide
         mock_cm.schedule_proactive_speech = AsyncMock()
@@ -420,10 +423,13 @@ class TestProactiveSpeechLoop:
         mock_cm.mode = Mode.CALL
 
         async def mock_decide(*args, **kwargs):
-            return ProactiveDecision(
-                should_speak=True,
-                delay=0,
-                content="Still with you!",
+            return (
+                ProactiveDecision(
+                    should_speak=True,
+                    delay=0,
+                    content="Still with you!",
+                ),
+                "",
             )
 
         mock_cm.proactive_speech.decide = mock_decide
@@ -466,10 +472,13 @@ class TestProactiveSpeechLoop:
         mock_cm.mode = Mode.CALL
 
         async def mock_decide(*args, **kwargs):
-            return ProactiveDecision(
-                should_speak=True,
-                delay=0,
-                content="Are you still there?",
+            return (
+                ProactiveDecision(
+                    should_speak=True,
+                    delay=0,
+                    content="Are you still there?",
+                ),
+                "",
             )
 
         mock_cm.proactive_speech.decide = mock_decide
@@ -868,10 +877,13 @@ class TestProactiveSpeechBlindSpots:
         mock_cm.mode = Mode.MEET  # Key: test MEET mode specifically
 
         async def mock_decide(*args, **kwargs):
-            return ProactiveDecision(
-                should_speak=True,
-                delay=0,
-                content="Still here for the meeting!",
+            return (
+                ProactiveDecision(
+                    should_speak=True,
+                    delay=0,
+                    content="Still here for the meeting!",
+                ),
+                "",
             )
 
         mock_cm.proactive_speech.decide = mock_decide
@@ -1008,10 +1020,13 @@ class TestProactiveSpeechBlindSpots:
         mock_cm.mode = Mode.CALL
 
         async def mock_decide(*args, **kwargs):
-            return ProactiveDecision(
-                should_speak=True,
-                delay=0,
-                content="Still with you!",
+            return (
+                ProactiveDecision(
+                    should_speak=True,
+                    delay=0,
+                    content="Still with you!",
+                ),
+                "",
             )
 
         mock_cm.proactive_speech.decide = mock_decide
@@ -1132,10 +1147,13 @@ class TestProactiveSpeechConcurrentScheduling:
         mock_cm.mode = Mode.CALL
 
         async def mock_decide(*args, **kwargs):
-            return ProactiveDecision(
-                should_speak=True,
-                delay=0,
-                content="Still with you!",
+            return (
+                ProactiveDecision(
+                    should_speak=True,
+                    delay=0,
+                    content="Still with you!",
+                ),
+                "",
             )
 
         mock_cm.proactive_speech.decide = mock_decide
@@ -1203,7 +1221,9 @@ class TestProactiveSpeechMediumScriptIntegration:
         assert (
             "app:call:notification" in source
         ), "call.py should subscribe to app:call:notification"
-        assert "on_guidance" in source, "call.py should have an on_guidance callback"
+        assert (
+            "on_notification" in source
+        ), "call.py should have an on_notification callback"
 
 
 # =============================================================================
@@ -1257,7 +1277,7 @@ class TestProactiveSpeechActionAwareness:
             captured_inputs["chat_history"] = chat_history
             captured_inputs["system_prompt"] = system_prompt
             captured_inputs["kwargs"] = kwargs
-            return ProactiveDecision(should_speak=False)
+            return ProactiveDecision(should_speak=False), ""
 
         mock_cm.proactive_speech.decide = spy_decide
         mock_cm.get_recent_voice_transcript = MagicMock(
@@ -1435,7 +1455,7 @@ class TestProactiveSpeechVisualContext:
             captured["chat_history"] = chat_history
             captured["system_prompt"] = system_prompt
             captured["kwargs"] = kwargs
-            return ProactiveDecision(should_speak=False)
+            return ProactiveDecision(should_speak=False), ""
 
         mock_cm.proactive_speech.decide = spy_decide
 
@@ -1481,7 +1501,7 @@ class TestProactiveSpeechVisualContext:
         async def spy_decide(chat_history, system_prompt, **kwargs):
             captured["chat_history"] = chat_history
             captured["kwargs"] = kwargs
-            return ProactiveDecision(should_speak=False)
+            return ProactiveDecision(should_speak=False), ""
 
         mock_cm.proactive_speech.decide = spy_decide
 
@@ -1537,7 +1557,7 @@ class TestProactiveSpeechVisualContext:
         async def spy_decide(chat_history, system_prompt, **kwargs):
             captured["chat_history"] = chat_history
             captured["kwargs"] = kwargs
-            return ProactiveDecision(should_speak=False)
+            return ProactiveDecision(should_speak=False), ""
 
         mock_cm.proactive_speech.decide = spy_decide
 
@@ -1589,7 +1609,7 @@ class TestProactiveSpeechVisualContext:
         async def spy_decide(chat_history, system_prompt, **kwargs):
             captured["chat_history"] = chat_history
             captured["kwargs"] = kwargs
-            return ProactiveDecision(should_speak=False)
+            return ProactiveDecision(should_speak=False), ""
 
         mock_cm.proactive_speech.decide = spy_decide
 
@@ -1654,7 +1674,7 @@ class TestProactiveSpeechVisualContext:
         async def spy_decide(chat_history, system_prompt, **kwargs):
             captured["chat_history"] = chat_history
             captured["kwargs"] = kwargs
-            return ProactiveDecision(should_speak=False)
+            return ProactiveDecision(should_speak=False), ""
 
         mock_cm.proactive_speech.decide = spy_decide
 
