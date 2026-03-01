@@ -1151,13 +1151,30 @@ def _init_managers(
     )
     manager_init_total.record(_total_dur)
 
-    # 12. Pre-warm embedding columns for all managers (best-effort, avoids
+    # 12. Eager primitive sync (avoids ~7s cold-start on first execute_function).
+    #     Must run after all managers are initialised so the primitive registry
+    #     contains every manager's methods (actor, files, contacts, …).
+    LOGGER.debug(
+        f"{ICONS['managers_worker']} [ManagersWorker] Syncing primitives...",
+    )
+    local_start_time = perf_counter()
+    _init_fm = ManagerRegistry.get_function_manager()
+    _init_fm.sync_primitives()
+    _prim_dur = perf_counter() - local_start_time
+    LOGGER.info(
+        f"{ICONS['managers_worker']} [ManagersWorker] Primitives synced in {_prim_dur:.2f} seconds",
+    )
+
+    # 13. Pre-warm embedding columns for all managers (best-effort, avoids
     #     cold-start latency on the first vector search after a fresh hire).
+    #     Also explicitly warm the FunctionManager (not in the singleton cache
+    #     due to _force_new=True) so Primitives embeddings are ready.
     LOGGER.debug(
         f"{ICONS['managers_worker']} [ManagersWorker] Warming embedding columns...",
     )
     local_start_time = perf_counter()
     ManagerRegistry.warm_all_embeddings()
+    _init_fm.warm_embeddings()
     _warm_dur = perf_counter() - local_start_time
     LOGGER.info(
         f"{ICONS['managers_worker']} [ManagersWorker] Embedding columns warmed in {_warm_dur:.2f} seconds",
