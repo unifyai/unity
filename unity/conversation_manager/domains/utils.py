@@ -18,6 +18,7 @@ class Debouncer:
         self.running_task: asyncio.Task = None
         self.pending_task: asyncio.Task = None
         self._name = name
+        self._pending_label: str = ""
         self.was_queued: bool = False
 
     async def submit(
@@ -33,22 +34,20 @@ class Debouncer:
 
         had_pending = self.pending_task is not None and not self.pending_task.done()
         has_running = self.running_task is not None and not self.running_task.done()
+        old_label = self._pending_label
 
         await self._cancel_tasks(running=cancel_running)
 
         if self._name and not cancel_running:
-            req_type = f" {label}" if label else ""
+            new_type = f" {label}" if label else ""
             if had_pending and has_running:
+                old_type = f" (replacing {old_label})" if old_label else ""
                 LOGGER.info(
-                    f"🔄 [{self._name}] Pending run replaced (newer{req_type} request)",
+                    f"🚦 [{self._name}] New{new_type} request queued{old_type}",
                 )
             elif has_running:
                 LOGGER.info(
-                    (
-                        f"⏳ [{self._name}] Run queued behind in-flight thinking ({label})"
-                        if label
-                        else f"⏳ [{self._name}] Run queued behind in-flight thinking"
-                    ),
+                    f"🚦 [{self._name}] New{new_type} request queued",
                 )
 
         async def wait_for_running_task():
@@ -80,8 +79,10 @@ class Debouncer:
             self.running_task = asyncio.create_task(async_fn(*args, **kwargs))
             self.running_task.add_done_callback(log_task_exc)
             self.pending_task = None
+            self._pending_label = ""
 
         self.pending_task = asyncio.create_task(wait_for_running_task())
+        self._pending_label = label
 
     async def _cancel_tasks(self, pending=True, running=False):
         if running:
