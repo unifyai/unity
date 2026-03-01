@@ -20,6 +20,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from tests.helpers import _handle_project
+from unity.function_manager.computer_backends import ActResult
 
 DESKTOP_TOOL_NAMES = {"desktop_act"}
 
@@ -202,7 +203,9 @@ async def test_desktop_act_returns_acting_and_interjects_on_completion(initializ
 
     mock_cp = MagicMock()
     mock_cp.desktop = MagicMock()
-    mock_cp.desktop.act = AsyncMock(return_value="Clicked Submit")
+    mock_cp.desktop.act = AsyncMock(
+        return_value=ActResult(summary="Clicked Submit", screenshot="base64png"),
+    )
 
     action_tools = ConversationManagerBrainActionTools(cm)
 
@@ -278,7 +281,9 @@ async def test_desktop_act_without_act_session_no_interjection_errors(initialize
 
     mock_cp = MagicMock()
     mock_cp.desktop = MagicMock()
-    mock_cp.desktop.act = AsyncMock(return_value="Clicked Submit")
+    mock_cp.desktop.act = AsyncMock(
+        return_value=ActResult(summary="Clicked Submit", screenshot="base64png"),
+    )
 
     action_tools = ConversationManagerBrainActionTools(cm)
 

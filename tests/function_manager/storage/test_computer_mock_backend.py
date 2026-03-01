@@ -179,13 +179,15 @@ class TestComputerPrimitivesWithMockMode:
     @pytest.mark.asyncio
     async def test_mock_mode_act(self):
         """ComputerPrimitives with mock mode should delegate act to MockComputerBackend."""
+        from unity.function_manager.computer_backends import ActResult
         from unity.function_manager.primitives.runtime import ComputerPrimitives
         from unity.manager_registry import ManagerRegistry
 
         ManagerRegistry.clear()
         prims = ComputerPrimitives(computer_mode="mock")
         result = await prims.backend.act("Click button")
-        assert result == "done"
+        assert isinstance(result, ActResult)
+        assert str(result) == "done"
         ManagerRegistry.clear()
 
     @pytest.mark.asyncio
