@@ -39,15 +39,15 @@ class Debouncer:
         await self._cancel_tasks(running=cancel_running)
 
         if self._name and not cancel_running:
-            new_type = f" {label}" if label else ""
+            new_type = f"{label} " if label else ""
             if had_pending and has_running:
                 old_type = f" (replacing {old_label})" if old_label else ""
                 LOGGER.info(
-                    f"🚦 [{self._name}] New{new_type} request queued{old_type}",
+                    f"🚦 [{self._name}] {new_type}request queued{old_type}",
                 )
             elif has_running:
                 LOGGER.info(
-                    f"🚦 [{self._name}] New{new_type} request queued",
+                    f"🚦 [{self._name}] {new_type}request queued",
                 )
 
         async def wait_for_running_task():
