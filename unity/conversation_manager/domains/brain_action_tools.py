@@ -22,7 +22,7 @@ from pydantic import create_model as _create_model
 
 from unity.common.prompt_helpers import now as prompt_now
 from unity.logger import LOGGER
-from unity.common.hierarchical_logger import DEFAULT_ICON
+from unity.common.hierarchical_logger import DEFAULT_ICON, ICONS
 
 from unity.conversation_manager.domains import comms_utils
 from unity.conversation_manager.domains import managers_utils
@@ -1276,6 +1276,9 @@ class ConversationManagerBrainActionTools:
         ``in_flight_actions``, spawn watcher tasks, publish started event.
         """
         global _next_handle_id
+        LOGGER.info(
+            f"{ICONS['fast_path']} [FastPath] {action_type}: {text}",
+        )
 
         parent_context = None
         if include_conversation_context:
@@ -1512,6 +1515,9 @@ class ConversationManagerBrainActionTools:
         2. After the primitive completes with the result
         """
         global _next_handle_id
+        LOGGER.info(
+            f"{ICONS['fast_path']} [FastPath] {action_type}: {text}",
+        )
 
         cm = self._cm
         handle_id = _next_handle_id
