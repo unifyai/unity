@@ -204,23 +204,6 @@ def mock_aiohttp_session(monkeypatch):
     yield mock_session
 
 
-@pytest.fixture
-def skip_vm_wait(monkeypatch):
-    """Skip the VM readiness wait by returning desktop_url directly."""
-    from unity.function_manager.function_manager import FunctionManager
-
-    async def mock_wait_for_vm_ready(self):
-        from unity.session_details import SESSION_DETAILS
-
-        return SESSION_DETAILS.assistant.desktop_url
-
-    monkeypatch.setattr(
-        FunctionManager,
-        "_wait_for_remote_windows_vm_ready",
-        mock_wait_for_vm_ready,
-    )
-
-
 # ────────────────────────────────────────────────────────────────────────────
 # 1. Routing Logic Tests
 # ────────────────────────────────────────────────────────────────────────────
@@ -277,46 +260,6 @@ class TestRemoteWindowsRoutingLogic:
 # ────────────────────────────────────────────────────────────────────────────
 # 2. Wait Time Calculation Tests
 # ────────────────────────────────────────────────────────────────────────────
-
-
-class TestCalculateWaitTime:
-    """Tests for _calculate_wait_time_from_vm_ready_at."""
-
-    @_handle_project
-    def test_returns_default_when_vm_ready_at_is_none(self, function_manager_factory):
-        """None timestamp returns default wait time."""
-        fm = function_manager_factory()
-        result = fm._calculate_wait_time_from_vm_ready_at(None)
-        assert result == 10
-
-    @_handle_project
-    def test_returns_default_on_invalid_timestamp(self, function_manager_factory):
-        """Invalid timestamp returns default wait time."""
-        fm = function_manager_factory()
-        result = fm._calculate_wait_time_from_vm_ready_at("not-a-timestamp")
-        assert result == 10
-
-    @_handle_project
-    def test_returns_minimum_five_for_past_timestamp(self, function_manager_factory):
-        """Past timestamps return minimum 5 seconds."""
-        fm = function_manager_factory()
-        # A timestamp far in the past
-        result = fm._calculate_wait_time_from_vm_ready_at("2020-01-01T00:00:00Z")
-        assert result == 5
-
-    @_handle_project
-    def test_calculates_future_delta(self, function_manager_factory):
-        """Future timestamp calculates correct delta."""
-        from datetime import datetime, timezone, timedelta
-
-        fm = function_manager_factory()
-        # Timestamp 30 seconds in the future
-        future = datetime.now(timezone.utc) + timedelta(seconds=30)
-        future_str = future.isoformat()
-
-        result = fm._calculate_wait_time_from_vm_ready_at(future_str)
-        # Should be approximately 30 (allow some tolerance for execution time)
-        assert 25 <= result <= 35
 
 
 # ────────────────────────────────────────────────────────────────────────────
@@ -403,7 +346,6 @@ class TestExecutePythonFunctionOnRemoteWindows:
         function_manager_factory,
         mock_session_details_windows,
         mock_aiohttp_session,
-        skip_vm_wait,
     ):
         """Basic execution with result capture."""
         fm = function_manager_factory()
@@ -456,7 +398,6 @@ class TestExecutePythonFunctionOnRemoteWindows:
         function_manager_factory,
         mock_session_details_windows,
         mock_aiohttp_session,
-        skip_vm_wait,
     ):
         """Execution uses PowerShell shell mode."""
         fm = function_manager_factory()
@@ -498,7 +439,6 @@ class TestExecuteFunctionRemoteRouting:
         function_manager_factory,
         mock_session_details_windows,
         mock_aiohttp_session,
-        skip_vm_wait,
         monkeypatch,
     ):
         """execute_function dispatches to remote execution when conditions met."""
@@ -575,7 +515,6 @@ class TestSyncIntegration:
         function_manager_factory,
         mock_session_details_windows,
         mock_aiohttp_session,
-        skip_vm_wait,
         monkeypatch,
     ):
         """Verify sync_to_remote and sync_from_remote are called."""
@@ -619,7 +558,6 @@ class TestSyncIntegration:
         function_manager_factory,
         mock_session_details_windows,
         mock_aiohttp_session,
-        skip_vm_wait,
         monkeypatch,
     ):
         """Execution proceeds if no SyncManager available."""
