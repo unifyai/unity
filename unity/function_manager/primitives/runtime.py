@@ -242,6 +242,11 @@ class WebSessionHandle:
             setattr(self, name, _make_session_method(name, owner, _resolve))
 
     @property
+    def session_id(self) -> str:
+        """The agent-service session identifier."""
+        return self._session._session_id
+
+    @property
     def visible(self) -> bool:
         """Whether this session renders on the VM desktop (``web-vm`` mode)."""
         return self._session._mode == "web-vm"

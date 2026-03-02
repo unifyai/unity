@@ -823,6 +823,16 @@ class ConversationManager(metaclass=SingletonABCMeta):
                         break
 
         self.snapshot()
+
+        web_sessions = None
+        if self.assistant_screen_share_active:
+            cp = self.computer_primitives
+            if cp is not None:
+                web_sessions = cp.web.list_sessions(
+                    visible_only=True,
+                    active_only=True,
+                )
+
         snapshot_state = self.prompt_renderer.render_state(
             self.contact_index,
             self.notifications_bar,
@@ -833,6 +843,7 @@ class ConversationManager(metaclass=SingletonABCMeta):
             user_screen_share_active=self.user_screen_share_active,
             user_webcam_active=self.user_webcam_active,
             user_remote_control_active=self.user_remote_control_active,
+            active_web_sessions=web_sessions,
         )
         brain_spec = build_brain_spec(
             self,
@@ -879,6 +890,8 @@ class ConversationManager(metaclass=SingletonABCMeta):
 
         if self.desktop_fast_path_eligible:
             tools["desktop_act"] = action_tools.desktop_act
+            tools["web_act"] = action_tools.web_act
+            tools["close_web_session"] = action_tools.close_web_session
 
         # Single-shot LLM call: one decision, one action
         client = new_llm_client(
