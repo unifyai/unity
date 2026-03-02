@@ -419,6 +419,22 @@ sum by (endpoint) (rate(http_request_duration_seconds_sum{service="comms", servi
 sum by (endpoint) (rate(http_request_duration_seconds_count{service="comms", service_name="$SVC_COMMS"}[5m]))
 ```
 
+### Adapter Request Rate (requests/second)
+
+Per-route request throughput for the adapters service.
+
+```promql
+sum by (endpoint) (rate(http_requests_total{service="adapters", service_name="$SVC_ADAPTERS"}[5m]))
+```
+
+### Comms Request Rate (requests/second)
+
+Per-route request throughput for the comms service.
+
+```promql
+sum by (endpoint) (rate(http_requests_total{service="comms", service_name="$SVC_COMMS"}[5m]))
+```
+
 ### Notes
 
 - Replace `$NS` with `staging` or `production` for Unity (GKE) metrics.
