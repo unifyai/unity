@@ -100,22 +100,32 @@ class ComputerEnvironment(BaseEnvironment):
                 function_context="primitive",
             )
 
-        # Web factory -- new_session() only
+        # Web factory -- new_session() and list_sessions()
         web_factory = self._computer_primitives.web
-        fq_name = f"{self.NAMESPACE}.{self.MANAGER_ALIAS}.web.new_session"
-        if self._allowed_methods is None or fq_name in self._allowed_methods:
-            fn = web_factory.new_session
+        for factory_method_name in ("new_session", "list_sessions"):
+            fq_name = f"{self.NAMESPACE}.{self.MANAGER_ALIAS}.web.{factory_method_name}"
+            if (
+                self._allowed_methods is not None
+                and fq_name not in self._allowed_methods
+            ):
+                continue
+            fn = getattr(web_factory, factory_method_name, None)
+            if fn is None or not callable(fn):
+                continue
             try:
                 signature = str(inspect.signature(fn))
             except Exception:
                 signature = None
             tools[fq_name] = ToolMetadata(
                 name=fq_name,
-                is_impure=True,
+                is_impure=factory_method_name == "new_session",
                 is_steerable=False,
                 docstring=getattr(fn, "__doc__", None),
                 signature=signature,
-                function_id=registry.get_function_id(self.MANAGER_ALIAS, "new_session"),
+                function_id=registry.get_function_id(
+                    self.MANAGER_ALIAS,
+                    factory_method_name,
+                ),
                 function_context="primitive",
             )
 
