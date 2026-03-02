@@ -776,6 +776,51 @@ jobs:
       run: |
         uv run playwright install --with-deps
 
+    # =========================================================================
+    # Agent-service setup (only for tests/agent_service/ matrix entries)
+    # Installs Node.js, clones magnitude, builds magnitude-core, and installs
+    # agent-service npm deps + Patchright browser binaries.
+    # =========================================================================
+    - name: Setup Node.js (agent-service tests)
+      if: contains(matrix.test_path, 'agent_service')
+      uses: actions/setup-node@v4
+      with:
+        node-version: '22'
+
+    - name: Clone magnitude repo (agent-service tests)
+      if: contains(matrix.test_path, 'agent_service')
+      uses: actions/checkout@v4
+      with:
+        repository: unifyai/magnitude
+        ref: unity-modifications
+        path: magnitude
+        token: ${{ secrets.CLONE_TOKEN }}
+        fetch-depth: 1
+
+    - name: Build magnitude packages and install agent-service (agent-service tests)
+      if: contains(matrix.test_path, 'agent_service')
+      run: |
+        # Build magnitude-core (agent-service depends on it via file: reference)
+        cd magnitude/packages/magnitude-core
+        npm install
+        npm run build
+        echo "✓ magnitude-core built"
+
+        # Build magnitude-extract
+        cd ../magnitude-extract
+        npm install
+        npm run build
+        echo "✓ magnitude-extract built"
+
+        # Install agent-service dependencies
+        cd ${{ github.workspace }}/agent-service
+        npm install
+        echo "✓ agent-service dependencies installed"
+
+        # Install Patchright browser (Chromium) for Level 2 round-trip tests
+        npx patchright install chromium
+        echo "✓ Patchright Chromium installed"
+
     - name: Restore .cache.ndjson
       id: cache-read
       uses: actions/cache/restore@v4
