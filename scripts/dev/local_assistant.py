@@ -14,8 +14,8 @@ Usage:
     # Fetch an existing local assistant by ID:
     python scripts/dev/local_assistant.py --id 42
 
-    # Target staging:
-    python scripts/dev/local_assistant.py --name "Dev" --staging
+    # Target production:
+    python scripts/dev/local_assistant.py --name "Dev" --production
 
     # Source directly into your shell:
     source <(python scripts/dev/local_assistant.py --name "Dev")
@@ -113,13 +113,13 @@ def _v(val):
     return str(val)
 
 
-def _print_env(assistant: dict, user: dict, api_key: str, staging: bool):
+def _print_env(assistant: dict, user: dict, api_key: str, production: bool):
     """Print a .env file matching the unity .env structure.
 
     Assistant and user fields are populated from the API response.
     Secrets and service keys are left blank for the developer to fill in.
     """
-    env = "staging" if staging else "prod"
+    env = "prod" if production else "staging"
     first = _v(assistant.get("first_name"))
     surname = _v(assistant.get("surname"))
     name = f"{first} {surname}".strip() if first else ""
@@ -153,7 +153,7 @@ def _print_env(assistant: dict, user: dict, api_key: str, staging: bool):
         f"USER_NUMBER={_v(user.get('phone_number'))}",
         f"USER_EMAIL={_v(user.get('email'))}",
         "ORCHESTRA_ADMIN_KEY=",
-        "STAGING=true" if staging else "",
+        "STAGING=true" if not production else "",
         "SHARED_UNIFY_KEY=",
         f"VOICE_PROVIDER={_v(assistant.get('voice_provider'))}",
         f"VOICE_ID={_v(assistant.get('voice_id'))}",
@@ -163,7 +163,7 @@ def _print_env(assistant: dict, user: dict, api_key: str, staging: bool):
     print("\n".join(lines))
     print(
         "The env variables left empty are secrets that you can configure "
-        "through the GCP secret manager..."
+        "through the GCP secret manager...",
     )
 
 
@@ -178,12 +178,15 @@ def main():
     )
     group.add_argument("--id", type=int, help="Existing assistant agent_id")
     parser.add_argument(
-        "--staging",
+        "--production",
         action="store_true",
-        help="Target the staging environment (default: prod)",
+        help="Target the production environment (default: staging)",
     )
     parser.add_argument(
-        "--age", type=int, default=25, help="Age of the assistant (default: 25)"
+        "--age",
+        type=int,
+        default=25,
+        help="Age of the assistant (default: 25)",
     )
     parser.add_argument("--nationality", default="US", help="Nationality (default: US)")
     parser.add_argument(
@@ -209,7 +212,7 @@ def main():
     )
     args = parser.parse_args()
 
-    env = "staging" if args.staging else "prod"
+    env = "prod" if args.production else "staging"
     orchestra_url = ORCHESTRA_URLS[env]
     api_key = os.getenv("UNIFY_KEY")
     if not api_key:
@@ -257,7 +260,7 @@ def main():
             )
 
     user = _get_user_info(orchestra_url, api_key)
-    _print_env(assistant, user, api_key, staging=args.staging)
+    _print_env(assistant, user, api_key, production=args.production)
 
 
 if __name__ == "__main__":

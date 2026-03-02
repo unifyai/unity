@@ -17,11 +17,7 @@ def _get_assistant_id() -> int | None:
 
     if not SESSION_DETAILS.is_initialized:
         return None
-
-    try:
-        return int(SESSION_DETAILS.assistant.id)
-    except (ValueError, TypeError):
-        return None
+    return SESSION_DETAILS.assistant.agent_id
 
 
 def _maybe_sync_timezone_to_backend(

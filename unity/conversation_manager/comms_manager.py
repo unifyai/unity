@@ -41,7 +41,7 @@ from unity.conversation_manager.domains.comms_utils import (
     add_unify_message_attachments,
 )
 from unity.conversation_manager.events import *
-from unity.session_details import UNASSIGNED_ASSISTANT_ID, SESSION_DETAILS
+from unity.session_details import SESSION_DETAILS
 from unity.contact_manager.types.contact import UNASSIGNED
 from unity.conversation_manager.types import Medium
 
@@ -66,13 +66,9 @@ startup_subscription_id = (
 
 def _get_subscription_id() -> str:
     """Build subscription ID from current assistant context."""
-    assistant_id = SESSION_DETAILS.assistant.id
-    staging_suffix = (
-        "-staging"
-        if SETTINGS.STAGING and UNASSIGNED_ASSISTANT_ID not in assistant_id
-        else ""
-    )
-    return f"unity-{assistant_id}{staging_suffix}-sub"
+    agent_id = SESSION_DETAILS.assistant.agent_id
+    staging_suffix = "-staging" if SETTINGS.STAGING and agent_id is not None else ""
+    return f"unity-{agent_id}{staging_suffix}-sub"
 
 
 def _get_local_contact() -> dict:
@@ -276,7 +272,7 @@ class CommsManager:
                     # Update assistant context and subscribe to the assistant's subscription
                     # Note: Full context is populated by ConversationManager.set_details()
                     # Here we just need to set assistant_id early for subscription
-                    SESSION_DETAILS.assistant.id = event["assistant_id"]
+                    SESSION_DETAILS.assistant.agent_id = int(event["assistant_id"])
                     self.subscribe_to_topic(_get_subscription_id())
 
                 # publish
@@ -307,6 +303,9 @@ class CommsManager:
                         False,
                     ),
                     "user_desktop_url": event.get("user_desktop_url"),
+                    "org_id": event.get("org_id"),
+                    "org_name": event.get("org_name", ""),
+                    "team_ids": event.get("team_ids") or [],
                     "demo_id": event.get("demo_id"),
                 }
                 self._publish_from_callback(
@@ -317,6 +316,12 @@ class CommsManager:
                         else AssistantUpdateEvent(**details)
                     ).to_json(),
                 )
+            elif thread == "ping":
+                self._publish_from_callback(
+                    "app:comms:ping",
+                    Ping(kind="keepalive").to_json(),
+                )
+                message.ack()
             elif thread == "unity_system_event":
                 system_event_type = event.get("event_type")
                 system_message = event.get("message")
@@ -339,12 +344,8 @@ class CommsManager:
                     "user_screen_share_stopped": lambda r: UserScreenShareStopped(
                         reason=r or "User stopped sharing their screen.",
                     ),
-                    "user_webcam_started": lambda r: UserWebcamStarted(
-                        reason=r or "User enabled their webcam.",
-                    ),
-                    "user_webcam_stopped": lambda r: UserWebcamStopped(
-                        reason=r or "User disabled their webcam.",
-                    ),
+                    "user_webcam_started": lambda r: UserWebcamStarted(),
+                    "user_webcam_stopped": lambda r: UserWebcamStopped(),
                     "user_remote_control_started": lambda r: UserRemoteControlStarted(
                         reason=r or "User took remote control of assistant desktop.",
                     ),
@@ -772,9 +773,15 @@ class CommsManager:
 
     async def start(self):
         """Start all subscriptions and maintain connection to event manager."""
-        if SESSION_DETAILS.assistant.id == UNASSIGNED_ASSISTANT_ID:
+        if SESSION_DETAILS.assistant.agent_id is None:
             # Start the startup subscription
             self.subscribe_to_topic(startup_subscription_id)
+            # Label this container as idle so cleanup endpoints can find it
+            threading.Thread(
+                target=mark_job_label,
+                args=(SETTINGS.conversation.JOB_NAME, "idle"),
+                daemon=True,
+            ).start()
             # Start ping mechanism for idle containers
             asyncio.create_task(self.send_pings())
         else:
@@ -808,7 +815,7 @@ class CommsManager:
                 await asyncio.sleep(30)
 
                 # Check if we've received a startup message (indicated by assistant_id changed)
-                if SESSION_DETAILS.assistant.id != UNASSIGNED_ASSISTANT_ID:
+                if SESSION_DETAILS.assistant.agent_id is not None:
                     LOGGER.debug(
                         f"{ICONS['subscription']} Startup received, stopping ping mechanism",
                     )

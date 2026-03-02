@@ -41,7 +41,7 @@ from unity.conversation_manager.events import (
     InboundPhoneUtterance,
     InboundUnifyMeetUtterance,
     OutboundPhoneUtterance,
-    CallGuidance,
+    FastBrainNotification,
     GetChatHistory,
     ActorHandleStarted,
     ActorHandleResponse,
@@ -167,6 +167,10 @@ def mock_cm(mock_session_logger, mock_event_broker, mock_call_manager, sample_co
 
     # Set up notifications bar
     cm.notifications_bar = NotificationBar()
+
+    # Generation-scoped outbound suppression (wait() sets suppress_gen = llm_gen)
+    cm._llm_gen = 0
+    cm._outbound_suppress_gen = -1
 
     # Mock async methods
     cm.request_llm_run = AsyncMock()
@@ -308,11 +312,21 @@ class TestHandleEventCore:
 
     @pytest.mark.asyncio
     async def test_handle_event_logs_event(self, mock_cm):
-        """Verify handle_event logs the event via session logger."""
-        event = Ping(kind="keepalive")
+        """Verify handle_event logs loggable+prominent events via session logger."""
+        from dataclasses import dataclass
+
+        @dataclass
+        class StubLoggableEvent(Event):
+            prominent: ClassVar[bool] = True
+
+        mock_cm._current_event_trace = {"event_id": "evt-test"}
+        event = StubLoggableEvent()
         await EventHandler.handle_event(event, mock_cm)
 
-        mock_cm._session_logger.info.assert_called_with("ping", "Event: Ping")
+        mock_cm._session_logger.info.assert_called_with(
+            "stub_loggable_event",
+            "Event: StubLoggableEvent",
+        )
 
     @pytest.mark.asyncio
     async def test_handle_event_publishes_loggable_events(self, mock_cm):
@@ -830,8 +844,8 @@ class TestVoiceUtteranceHandlers:
 
     @pytest.mark.asyncio
     async def test_call_guidance_updates_contact_index(self, mock_cm):
-        """CallGuidance adds guidance message to voice thread."""
-        event = CallGuidance(
+        """FastBrainNotification adds guidance message to voice thread."""
+        event = FastBrainNotification(
             contact={"contact_id": 2},
             content="Please mention the meeting at 3pm",
         )
@@ -1092,7 +1106,7 @@ class TestMeetInteractionEventHandlers:
         """UserWebcamStarted sets user_webcam_active to True."""
         mock_cm.user_webcam_active = False
 
-        event = UserWebcamStarted(reason="User enabled their webcam")
+        event = UserWebcamStarted()
         await EventHandler.handle_event(event, mock_cm)
 
         assert mock_cm.user_webcam_active is True
@@ -1102,10 +1116,39 @@ class TestMeetInteractionEventHandlers:
         """UserWebcamStopped sets user_webcam_active to False."""
         mock_cm.user_webcam_active = True
 
-        event = UserWebcamStopped(reason="User disabled their webcam")
+        event = UserWebcamStopped()
         await EventHandler.handle_event(event, mock_cm)
 
         assert mock_cm.user_webcam_active is False
+
+    @pytest.mark.asyncio
+    async def test_webcam_events_skip_brain_step_before_meet_started(self, mock_cm):
+        """Webcam events before UnifyMeetStarted should track state but not
+        wake the slow brain.  The meeting hasn't started yet, so there is
+        nothing useful for the LLM to reason about."""
+        mock_cm.mode = Mode.TEXT
+        mock_cm.user_webcam_active = False
+
+        event = UserWebcamStarted()
+        await EventHandler.handle_event(event, mock_cm)
+
+        assert mock_cm.user_webcam_active is True
+        mock_cm.request_llm_run.assert_not_called()
+        mock_cm.schedule_proactive_speech.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_webcam_events_trigger_brain_step_after_meet_started(self, mock_cm):
+        """Once the meeting is live (Mode.MEET), webcam events should wake
+        the slow brain as usual."""
+        mock_cm.mode = Mode.MEET
+        mock_cm.user_webcam_active = False
+
+        event = UserWebcamStarted()
+        await EventHandler.handle_event(event, mock_cm)
+
+        assert mock_cm.user_webcam_active is True
+        mock_cm.request_llm_run.assert_called()
+        mock_cm.schedule_proactive_speech.assert_called()
 
     @pytest.mark.asyncio
     async def test_meet_interaction_pushes_notification(self, mock_cm):
@@ -1192,17 +1235,16 @@ class TestMeetInteractionEventHandlers:
     # User screenshot buffer (IPC path)
     # --------------------------------------------------------------------- #
 
-    def test_buffer_user_screenshot_parses_ipc_json(self, mock_cm):
-        """_buffer_user_screenshot parses IPC JSON and buffers a ScreenshotEntry."""
+    def test_buffer_screenshot_parses_ipc_json(self, mock_cm):
+        """_buffer_screenshot parses IPC JSON and buffers a ScreenshotEntry."""
         import json
         from datetime import datetime
 
         from unity.conversation_manager.conversation_manager import ConversationManager
 
-        # Use the real method on the mock CM by binding it
         mock_cm._screenshot_buffer = []
         mock_cm._session_logger = MagicMock()
-        method = ConversationManager._buffer_user_screenshot.__get__(mock_cm)
+        method = ConversationManager._buffer_screenshot.__get__(mock_cm)
 
         payload = json.dumps(
             {
@@ -1305,7 +1347,7 @@ class TestMeetInteractionEventHandlers:
         self,
         mock_cm,
     ):
-        """Screen share events publish direct CallGuidance to the fast brain
+        """Screen share events publish direct FastBrainNotification to the fast brain
         when in voice mode, bypassing the slow brain for instant delivery."""
         mock_cm.assistant_screen_share_active = False
         mock_cm.user_screen_share_active = False
@@ -1317,9 +1359,9 @@ class TestMeetInteractionEventHandlers:
         )
         await EventHandler.handle_event(event, mock_cm)
 
-        # Verify CallGuidance was published to the fast brain channel
+        # Verify FastBrainNotification was published to the fast brain channel
         calls = mock_cm.event_broker.publish.call_args_list
-        guidance_calls = [c for c in calls if c.args[0] == "app:call:call_guidance"]
+        guidance_calls = [c for c in calls if c.args[0] == "app:call:notification"]
         assert len(guidance_calls) == 1
         # The guidance text should contain behavioral instructions
         import json as _json
@@ -1345,9 +1387,9 @@ class TestMeetInteractionEventHandlers:
         )
         await EventHandler.handle_event(event, mock_cm)
 
-        # No CallGuidance should be published
+        # No FastBrainNotification should be published
         calls = mock_cm.event_broker.publish.call_args_list
-        guidance_calls = [c for c in calls if c.args[0] == "app:call:call_guidance"]
+        guidance_calls = [c for c in calls if c.args[0] == "app:call:notification"]
         assert len(guidance_calls) == 0
 
     @pytest.mark.asyncio
@@ -1394,7 +1436,7 @@ class TestMeetInteractionEventHandlers:
 
         mock_socket.queue_for_clients.assert_called_once()
         channel, event_json = mock_socket.queue_for_clients.call_args.args
-        assert channel == "app:call:call_guidance"
+        assert channel == "app:call:notification"
         import json
 
         event_data = json.loads(event_json)
@@ -1449,7 +1491,7 @@ class TestMeetInteractionEventHandlers:
 
         mock_socket.queue_for_clients.assert_called_once()
         channel, _ = mock_socket.queue_for_clients.call_args.args
-        assert channel == "app:call:call_guidance"
+        assert channel == "app:call:notification"
 
     # --------------------------------------------------------------------- #
     # Renderer tests
@@ -1721,7 +1763,7 @@ class TestDirectMessageEventHandler:
 
         mock_cm.event_broker.publish.assert_called()
         call_args = mock_cm.event_broker.publish.call_args
-        assert call_args[0][0] == "app:call:call_guidance"
+        assert call_args[0][0] == "app:call:notification"
 
     @pytest.mark.asyncio
     async def test_direct_message_records_in_contact_index(self, mock_cm):
@@ -2000,8 +2042,10 @@ class TestAssistantUpdateEventHandler:
         assert call_1.kwargs["surname"] == "Boss"
 
     @pytest.mark.asyncio
-    async def test_update_session_contacts_handles_failure(self, mock_cm, capsys):
+    async def test_update_session_contacts_handles_failure(self, mock_cm, caplog):
         """update_session_contacts logs errors when update_contact fails."""
+        import logging
+
         from unity.conversation_manager.domains.managers_utils import (
             update_session_contacts,
         )
@@ -2010,53 +2054,61 @@ class TestAssistantUpdateEventHandler:
             side_effect=Exception("Update failed"),
         )
 
-        # Should not raise - errors are caught and logged
-        await update_session_contacts(
-            mock_cm,
-            assistant_first_name="Updated",
-            assistant_surname="Assistant",
-            assistant_number="+15555550001",
-            assistant_email="assistant@updated.com",
-            user_first_name="Updated",
-            user_surname="Boss",
-            user_number="+15555550002",
-            user_email="boss@updated.com",
-        )
+        unity_logger = logging.getLogger("unity")
+        unity_logger.addHandler(caplog.handler)
+        caplog.handler.setLevel(logging.DEBUG)
+        try:
+            await update_session_contacts(
+                mock_cm,
+                assistant_first_name="Updated",
+                assistant_surname="Assistant",
+                assistant_number="+15555550001",
+                assistant_email="assistant@updated.com",
+                user_first_name="Updated",
+                user_surname="Boss",
+                user_number="+15555550002",
+                user_email="boss@updated.com",
+            )
+        finally:
+            unity_logger.removeHandler(caplog.handler)
 
-        # Errors should be printed
-        captured = capsys.readouterr()
-        assert "Failed to update contact 0" in captured.out
-        assert "Failed to update contact 1" in captured.out
+        assert "Failed to update contact 0" in caplog.text
+        assert "Failed to update contact 1" in caplog.text
 
     @pytest.mark.asyncio
     async def test_update_session_contacts_handles_no_contact_manager(
         self,
         mock_cm,
-        capsys,
+        caplog,
     ):
         """update_session_contacts handles None contact_manager gracefully."""
+        import logging
+
         from unity.conversation_manager.domains.managers_utils import (
             update_session_contacts,
         )
 
         mock_cm.contact_manager = None
 
-        # Should not raise
-        await update_session_contacts(
-            mock_cm,
-            assistant_first_name="Test",
-            assistant_surname="",
-            assistant_number="+1555",
-            assistant_email="test@test.com",
-            user_first_name="Boss",
-            user_surname="",
-            user_number="+1666",
-            user_email="boss@test.com",
-        )
+        unity_logger = logging.getLogger("unity")
+        unity_logger.addHandler(caplog.handler)
+        caplog.handler.setLevel(logging.DEBUG)
+        try:
+            await update_session_contacts(
+                mock_cm,
+                assistant_first_name="Test",
+                assistant_surname="",
+                assistant_number="+1555",
+                assistant_email="test@test.com",
+                user_first_name="Boss",
+                user_surname="",
+                user_number="+1666",
+                user_email="boss@test.com",
+            )
+        finally:
+            unity_logger.removeHandler(caplog.handler)
 
-        # Should print a message about missing contact_manager
-        captured = capsys.readouterr()
-        assert "contact_manager is None" in captured.out
+        assert "contact_manager is None" in caplog.text
 
 
 # =============================================================================

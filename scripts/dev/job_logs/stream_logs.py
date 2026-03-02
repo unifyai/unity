@@ -5,7 +5,7 @@ stream_logs.py — View logs for a Unity GKE job.
 Usage:
     python stream_logs.py                       # auto-detect latest staging job
     python stream_logs.py --job <job_name>      # explicit job, staging namespace
-    python stream_logs.py --namespace production # auto-detect latest production job
+    python stream_logs.py --production          # auto-detect latest production job
 
 Behaviour:
     1. If --job is omitted, resolves the caller's email from UNIFY_KEY and finds
@@ -22,26 +22,38 @@ Environment:
 import os
 import re
 import sys
+from pathlib import Path
+
+# Add scripts/dev/ to path for shared job_utils import.
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from job_utils import (
+    ORCHESTRA_URLS,
+    BOLD,
+    CYAN,
+    DIM,
+    GREEN,
+    NC,
+    YELLOW,
+    error,
+    info,
+    resolve_latest_job,
+    success,
+    warn,
+)
 
 # The unify SDK reads ORCHESTRA_URL at import time, and .env sets it to
 # localhost for local development. This script needs the real backend, so
-# derive the URL from --namespace before importing anything else.
-_ORCHESTRA_URLS = {
-    "staging": "https://orchestra-staging-lz5fmz6i7q-ew.a.run.app/v0",
-    "production": "https://api.unify.ai/v0",
-}
+# derive the URL from --production before importing anything else.
 
 
 def _parse_namespace_early() -> str:
-    for i, arg in enumerate(sys.argv):
-        if arg == "--namespace" and i + 1 < len(sys.argv):
-            return sys.argv[i + 1]
-        if arg.startswith("--namespace="):
-            return arg.split("=", 1)[1]
+    if "--production" in sys.argv:
+        return "production"
     return "staging"
 
 
-os.environ["ORCHESTRA_URL"] = _ORCHESTRA_URLS[_parse_namespace_early()]
+os.environ["ORCHESTRA_URL"] = ORCHESTRA_URLS[_parse_namespace_early()]
 
 from dotenv import load_dotenv
 
@@ -49,10 +61,12 @@ load_dotenv()
 import argparse
 import shutil
 import subprocess
+import threading
 from concurrent.futures import ThreadPoolExecutor
-from pathlib import Path
 
 import unify
+
+from unity.syntax_highlight import highlight_code_blocks
 
 # ─── Configuration ───────────────────────────────────────────────────────────
 
@@ -66,31 +80,51 @@ GCLOUD = shutil.which("gcloud") or "gcloud"
 KUBECTL = shutil.which("kubectl") or "kubectl"
 
 
-# ─── Colours ─────────────────────────────────────────────────────────────────
+# ─── Keepalive ────────────────────────────────────────────────────────────────
 
-RED = "\033[0;31m"
-GREEN = "\033[0;32m"
-YELLOW = "\033[1;33m"
-CYAN = "\033[0;36m"
-BOLD = "\033[1m"
-DIM = "\033[2m"
-NC = "\033[0m"
+KEEPALIVE_INTERVAL = 30
+KEEPALIVE_MESSAGE = '{"thread":"ping","event":{}}'
 
 
-def info(msg):
-    print(f"{CYAN}[INFO]{NC} {msg}")
+class Keepalive:
+    """Background thread that publishes Pub/Sub pings to prevent pod eviction."""
 
+    def __init__(self, assistant_id: str, namespace: str):
+        topic = f"unity-{assistant_id}"
+        if namespace == "staging":
+            topic += "-staging"
+        self._topic = topic
+        self._stop = threading.Event()
+        self._thread: threading.Thread | None = None
 
-def warn(msg):
-    print(f"{YELLOW}[WARN]{NC} {msg}")
+    def start(self) -> None:
+        info(f"Keepalive enabled (topic={self._topic}, interval={KEEPALIVE_INTERVAL}s)")
+        self._thread = threading.Thread(target=self._loop, daemon=True)
+        self._thread.start()
 
+    def stop(self) -> None:
+        self._stop.set()
+        if self._thread:
+            self._thread.join(timeout=5)
 
-def error(msg):
-    print(f"{RED}[ERROR]{NC} {msg}", file=sys.stderr)
-
-
-def success(msg):
-    print(f"{GREEN}[OK]{NC} {msg}")
+    def _loop(self) -> None:
+        while not self._stop.wait(KEEPALIVE_INTERVAL):
+            try:
+                subprocess.run(
+                    [
+                        GCLOUD,
+                        "pubsub",
+                        "topics",
+                        "publish",
+                        self._topic,
+                        f"--project={GCP_PROJECT}",
+                        f"--message={KEEPALIVE_MESSAGE}",
+                        "--quiet",
+                    ],
+                    capture_output=True,
+                )
+            except Exception:
+                pass
 
 
 # ─── Prerequisite checks ────────────────────────────────────────────────────
@@ -141,48 +175,6 @@ def ensure_gke_credentials():
         error("Failed to get GKE cluster credentials.")
         print("  Run ./setup_auth.sh to configure GCP authentication.")
         sys.exit(1)
-
-
-# ─── Job auto-detection ──────────────────────────────────────────────────────
-
-
-def resolve_latest_job(namespace: str) -> str:
-    """Resolve the most recent job for the current user in the given namespace.
-
-    Uses UNIFY_KEY to identify the caller, then queries AssistantJobs for
-    their most recent job whose name ends with ``-{namespace}``.
-    """
-    unify_key = os.environ.get("UNIFY_KEY")
-    if not unify_key:
-        error("UNIFY_KEY is required to auto-detect jobs.")
-        print("  Set it in .env or pass --job explicitly.")
-        sys.exit(1)
-
-    info("Resolving identity from UNIFY_KEY...")
-    user_info = unify.get_user_basic_info(api_key=unify_key)
-    email = user_info["email"]
-    info(f"Authenticated as {user_info['first']} {user_info['last']} ({email})")
-
-    info(f"Searching for latest '{namespace}' job...")
-    logs = unify.get_logs(
-        project="AssistantJobs",
-        context="startup_events",
-        filter=f"user_email == '{email}'",
-        api_key=SHARED_UNIFY_KEY,
-        limit=20,
-    )
-
-    suffix = f"-{namespace}"
-    for log in logs:
-        job_name = log.entries.get("job_name")
-        if job_name and job_name.endswith(suffix):
-            running = str(log.entries.get("running", "false")).lower() == "true"
-            status = f"{GREEN}running{NC}" if running else f"{YELLOW}completed{NC}"
-            success(f"Found job: {job_name} ({status})")
-            return job_name
-
-    error(f"No jobs found for {email} in namespace '{namespace}'.")
-    sys.exit(1)
 
 
 # ─── AssistantJobs query ─────────────────────────────────────────────────────
@@ -269,7 +261,7 @@ def resolve_pod_name(job_name: str, namespace: str) -> str | None:
 
 # ─── Log mirroring ────────────────────────────────────────────────────────────
 
-_CONTAINER_LOG_PATH_RE = re.compile(r"/var/log/(unillm|unify|unity)/\S+")
+_CONTAINER_LOG_PATH_RE = re.compile(r"/var/log/(unillm|unify|unity|magnitude)/\S+")
 
 WORKSPACE_ROOT = Path(__file__).resolve().parents[3]
 MIRROR_BASE = WORKSPACE_ROOT / "logs" / "prod_logs"
@@ -300,7 +292,12 @@ def _fetch_file(
         pass
 
 
-_CONTAINER_LOG_DIRS = ("/var/log/unillm", "/var/log/unify", "/var/log/unity")
+_CONTAINER_LOG_DIRS = (
+    "/var/log/unillm",
+    "/var/log/unify",
+    "/var/log/unity",
+    "/var/log/magnitude",
+)
 
 
 def _sync_all_logs(pod_name: str, namespace: str, mirror_root: Path) -> None:
@@ -363,6 +360,71 @@ def _rewrite_line(
 
 # ─── Log output ──────────────────────────────────────────────────────────────
 
+_IS_TTY = hasattr(sys.stdout, "isatty") and sys.stdout.isatty()
+
+
+_FENCE_OPEN = re.compile(r"^\s*```\w+")
+_FENCE_CLOSE = re.compile(r"^\s*```(?!\w)")
+_MAX_CODE_BLOCK_LINES = 150
+
+
+def _emit_lines(
+    proc: subprocess.Popen,
+    *,
+    rewrite_fn=None,
+) -> None:
+    """Read lines from *proc* stdout, apply code-block highlighting, and emit.
+
+    When the output stream is a TTY, markdown-fenced code blocks are
+    buffered and syntax-highlighted via Pygments before being written.
+
+    *rewrite_fn*, if provided, is called on each decoded line before
+    highlight processing (used for log-file hyperlink rewriting).
+
+    Code-fence detection is anchored to the start of the line so that
+    backticks embedded mid-line (e.g. inside JSON string values in tool
+    call results) don't trigger buffering and freeze the stream.  As a
+    safety valve, the buffer is force-flushed (without highlighting) if
+    it exceeds ``_MAX_CODE_BLOCK_LINES`` without encountering a closing
+    fence — preventing indefinite buffering regardless of cause.
+    """
+    code_buf: list[str] = []
+    in_code_block = False
+
+    def _flush_code_block(*, highlight: bool = True) -> None:
+        nonlocal in_code_block
+        block = "".join(code_buf)
+        if highlight and _IS_TTY:
+            block = highlight_code_blocks(block)
+        sys.stdout.write(block)
+        sys.stdout.flush()
+        code_buf.clear()
+        in_code_block = False
+
+    for raw_line in proc.stdout:
+        line = raw_line.decode("utf-8", errors="replace")
+        if rewrite_fn:
+            line = rewrite_fn(line)
+
+        if in_code_block:
+            code_buf.append(line)
+            if _FENCE_CLOSE.match(line):
+                _flush_code_block()
+            elif len(code_buf) >= _MAX_CODE_BLOCK_LINES:
+                _flush_code_block(highlight=False)
+            continue
+
+        if _FENCE_OPEN.match(line):
+            in_code_block = True
+            code_buf.append(line)
+            continue
+
+        sys.stdout.write(line)
+        sys.stdout.flush()
+
+    if code_buf:
+        _flush_code_block()
+
 
 def stream_logs(
     job_name: str,
@@ -411,20 +473,19 @@ def stream_logs(
 
     def _run_stream(cmd: list[str]) -> None:
         with ThreadPoolExecutor(max_workers=4) as executor:
+            rewrite_fn = None
+            if mirror and mirror_root and pod_name:
+                rewrite_fn = lambda line: _rewrite_line(
+                    line,
+                    mirror_root,
+                    pod_name,
+                    namespace,
+                    executor,
+                )
+
             proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
             try:
-                for raw_line in proc.stdout:
-                    line = raw_line.decode("utf-8", errors="replace")
-                    if mirror and mirror_root and pod_name:
-                        line = _rewrite_line(
-                            line,
-                            mirror_root,
-                            pod_name,
-                            namespace,
-                            executor,
-                        )
-                    sys.stdout.write(line)
-                    sys.stdout.flush()
+                _emit_lines(proc, rewrite_fn=rewrite_fn)
                 proc.wait()
                 if proc.returncode != 0:
                     stderr = proc.stderr.read().decode("utf-8", errors="replace")
@@ -451,8 +512,8 @@ def stream_logs(
 
 
 def _gcloud_logging_read(log_filter: str):
-    """Run gcloud logging read with the given filter."""
-    subprocess.run(
+    """Run gcloud logging read with the given filter, applying highlighting."""
+    proc = subprocess.Popen(
         [
             GCLOUD,
             "logging",
@@ -463,7 +524,11 @@ def _gcloud_logging_read(log_filter: str):
             "--format=value(textPayload)",
             "--order=asc",
         ],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
     )
+    _emit_lines(proc)
+    proc.wait()
 
 
 def fetch_historical_logs(job_name: str, namespace: str):
@@ -473,6 +538,12 @@ def fetch_historical_logs(job_name: str, namespace: str):
     Goes straight to gcloud — no kubectl attempt needed.
     """
     info(f"Fetching historical logs from Cloud Logging for '{job_name}'...")
+    gcs_path = f"gs://unity-pod-logs/{namespace}/{job_name}/"
+    print(
+        f"\n  {DIM}Cloud Logging only has INFO+ (terminal output).{NC}"
+        f"\n  {DIM}Full DEBUG logs (if uploaded on shutdown): {CYAN}{gcs_path}{NC}"
+        f"\n  {DIM}Download: gcloud storage cp --recursive {gcs_path} ./pod-logs/{NC}\n",
+    )
     print()
 
     log_filter = (
@@ -497,7 +568,7 @@ def main():
             "\n"
             "Examples:\n"
             "  python stream_logs.py                        # latest staging job\n"
-            "  python stream_logs.py --namespace production  # latest production job\n"
+            "  python stream_logs.py --production            # latest production job\n"
             "  python stream_logs.py --job unity-2026-02-10-17-30-53-staging"
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -508,9 +579,9 @@ def main():
         help="Name of the GKE job. If omitted, auto-detects the latest job for your account.",
     )
     parser.add_argument(
-        "--namespace",
-        default="staging",
-        help="Kubernetes namespace (default: staging)",
+        "--production",
+        action="store_true",
+        help="Target the production environment (default: staging)",
     )
     parser.add_argument(
         "--no-mirror",
@@ -526,14 +597,26 @@ def main():
     parser.add_argument(
         "--sync-all-logs",
         action="store_true",
+        default=True,
+        help="Bulk-copy all container log directories on stream exit (Ctrl+C). On by default.",
+    )
+    parser.add_argument(
+        "--no-sync",
+        action="store_true",
         default=False,
-        help="Bulk-copy all container log directories on stream exit (Ctrl+C).",
+        help="Disable automatic log sync on stream exit.",
+    )
+    parser.add_argument(
+        "--no-keepalive",
+        action="store_true",
+        default=False,
+        help="Disable automatic keepalive pings (by default, pings are sent to prevent pod eviction while streaming).",
     )
     args = parser.parse_args()
 
-    namespace = args.namespace
+    namespace = "production" if args.production else "staging"
     mirror = not args.no_mirror
-    sync_all = args.sync_all_logs
+    sync_all = args.sync_all_logs and not args.no_sync
     mirror_base = Path(args.mirror_dir).resolve() if args.mirror_dir else MIRROR_BASE
     job_name = args.job or resolve_latest_job(namespace)
 
@@ -548,33 +631,45 @@ def main():
     print(f"{BOLD}{'═' * 56}{NC}")
     print()
 
-    running, _ = query_job_status(job_name)
+    running, metadata = query_job_status(job_name)
+
+    keepalive: Keepalive | None = None
+    if not args.no_keepalive and metadata:
+        assistant_id = metadata.get("assistant_id")
+        if assistant_id:
+            keepalive = Keepalive(str(assistant_id), namespace)
 
     print()
-    if running is True:
-        # AssistantJobs says running → pod exists, stream live.
-        stream_logs(
-            job_name,
-            namespace,
-            mirror=mirror,
-            mirror_base=mirror_base,
-            sync_all=sync_all,
-        )
-    elif running is False:
-        # AssistantJobs says not running → pod is gone, use gcloud.
-        fetch_historical_logs(job_name, namespace)
-    else:
-        # No AssistantJobs record. Try streaming; if kubectl fails, fall
-        # back to gcloud historical logs.
-        warn("Unknown job status. Trying kubectl stream first...")
-        print()
-        stream_logs(
-            job_name,
-            namespace,
-            mirror=mirror,
-            mirror_base=mirror_base,
-            sync_all=sync_all,
-        )
+    try:
+        if running is True:
+            if keepalive:
+                keepalive.start()
+            stream_logs(
+                job_name,
+                namespace,
+                mirror=mirror,
+                mirror_base=mirror_base,
+                sync_all=sync_all,
+            )
+        elif running is False:
+            fetch_historical_logs(job_name, namespace)
+        else:
+            # No AssistantJobs record. Try streaming; if kubectl fails, fall
+            # back to gcloud historical logs.
+            warn("Unknown job status. Trying kubectl stream first...")
+            print()
+            if keepalive:
+                keepalive.start()
+            stream_logs(
+                job_name,
+                namespace,
+                mirror=mirror,
+                mirror_base=mirror_base,
+                sync_all=sync_all,
+            )
+    finally:
+        if keepalive:
+            keepalive.stop()
 
 
 if __name__ == "__main__":

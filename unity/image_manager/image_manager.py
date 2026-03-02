@@ -17,6 +17,7 @@ import unify
 
 
 from ..common.model_to_fields import model_to_fields
+from ..common.embed_utils import ensure_vector_column
 from ..common.semantic_search import backfill_rows, fetch_top_k_by_references
 from .base import BaseImageManager
 from .prompt_builders import build_image_ask_prompt
@@ -1290,6 +1291,16 @@ class ImageManager(BaseImageManager):
                 f"Backend rejected upload for filepath '{filepath}'",
             )
         return image_id
+
+    def warm_embeddings(self) -> None:
+        try:
+            ensure_vector_column(
+                self._ctx,
+                embed_column="_caption_emb",
+                source_column="caption",
+            )
+        except Exception:
+            pass
 
     # ------------------------------ Maintenance ---------------------------
     @functools.wraps(BaseImageManager.clear, updated=())

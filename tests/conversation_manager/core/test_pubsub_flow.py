@@ -129,11 +129,11 @@ class TestSubscriptionSwitching:
         This is the core flow for going from idle → live container.
         """
         from unity.conversation_manager.comms_manager import CommsManager
-        from unity.session_details import SESSION_DETAILS, UNASSIGNED_ASSISTANT_ID
+        from unity.session_details import SESSION_DETAILS
 
         # Start with default assistant (idle container state)
-        original_id = SESSION_DETAILS.assistant.id
-        SESSION_DETAILS.assistant.id = UNASSIGNED_ASSISTANT_ID
+        original_id = SESSION_DETAILS.assistant.agent_id
+        SESSION_DETAILS.assistant.agent_id = None
 
         try:
             cm = CommsManager(event_broker)
@@ -156,7 +156,7 @@ class TestSubscriptionSwitching:
             # Create startup message
             startup_event = {
                 "api_key": "test_key",
-                "assistant_id": "test_assistant_42",
+                "assistant_id": "42",
                 "user_id": "123",
                 "assistant_first_name": "Test",
                 "assistant_surname": "Assistant",
@@ -187,13 +187,13 @@ class TestSubscriptionSwitching:
 
             # Verify we subscribed to the assistant's topic
             assert len(subscribed_topics) == 1
-            assert "test_assistant_42" in subscribed_topics[0]
+            assert "42" in subscribed_topics[0]
 
             # Verify SESSION_DETAILS was updated
-            assert SESSION_DETAILS.assistant.id == "test_assistant_42"
+            assert SESSION_DETAILS.assistant.agent_id == 42
 
         finally:
-            SESSION_DETAILS.assistant.id = original_id
+            SESSION_DETAILS.assistant.agent_id = original_id
 
     @pytest.mark.asyncio
     async def test_startup_removed_from_subscribers_after_cancel(self, event_broker):
@@ -203,10 +203,10 @@ class TestSubscriptionSwitching:
         This prevents attempts to cancel it again if another startup arrives.
         """
         from unity.conversation_manager.comms_manager import CommsManager
-        from unity.session_details import SESSION_DETAILS, UNASSIGNED_ASSISTANT_ID
+        from unity.session_details import SESSION_DETAILS
 
-        original_id = SESSION_DETAILS.assistant.id
-        SESSION_DETAILS.assistant.id = UNASSIGNED_ASSISTANT_ID
+        original_id = SESSION_DETAILS.assistant.agent_id
+        SESSION_DETAILS.assistant.agent_id = None
 
         try:
             cm = CommsManager(event_broker)
@@ -247,7 +247,7 @@ class TestSubscriptionSwitching:
             )
 
         finally:
-            SESSION_DETAILS.assistant.id = original_id
+            SESSION_DETAILS.assistant.agent_id = original_id
 
 
 class TestMessageAcknowledgment:
@@ -509,10 +509,10 @@ class TestStartupInboundRace:
         """
         from unity.conversation_manager.comms_manager import CommsManager
         from unity.conversation_manager.events import StartupEvent, Event
-        from unity.session_details import SESSION_DETAILS, UNASSIGNED_ASSISTANT_ID
+        from unity.session_details import SESSION_DETAILS
 
-        original_id = SESSION_DETAILS.assistant.id
-        SESSION_DETAILS.assistant.id = UNASSIGNED_ASSISTANT_ID
+        original_id = SESSION_DETAILS.assistant.agent_id
+        SESSION_DETAILS.assistant.agent_id = None
 
         try:
             cm = CommsManager(event_broker)
@@ -567,7 +567,7 @@ class TestStartupInboundRace:
             )
 
         finally:
-            SESSION_DETAILS.assistant.id = original_id
+            SESSION_DETAILS.assistant.agent_id = original_id
 
     @pytest.mark.asyncio
     async def test_backup_contacts_published_with_inbound(
@@ -640,8 +640,8 @@ class TestSubscriptionIdGeneration:
         from unity.conversation_manager.comms_manager import _get_subscription_id
         from unity.session_details import SESSION_DETAILS
 
-        original_id = SESSION_DETAILS.assistant.id
-        SESSION_DETAILS.assistant.id = "42"
+        original_id = SESSION_DETAILS.assistant.agent_id
+        SESSION_DETAILS.assistant.agent_id = 42
 
         try:
             with patch(
@@ -652,7 +652,7 @@ class TestSubscriptionIdGeneration:
                 sub_id = _get_subscription_id()
                 assert sub_id == "unity-42-sub", f"Wrong production sub ID: {sub_id}"
         finally:
-            SESSION_DETAILS.assistant.id = original_id
+            SESSION_DETAILS.assistant.agent_id = original_id
 
     @pytest.mark.asyncio
     async def test_staging_subscription_id(self):
@@ -660,8 +660,8 @@ class TestSubscriptionIdGeneration:
         from unity.conversation_manager.comms_manager import _get_subscription_id
         from unity.session_details import SESSION_DETAILS
 
-        original_id = SESSION_DETAILS.assistant.id
-        SESSION_DETAILS.assistant.id = "25"
+        original_id = SESSION_DETAILS.assistant.agent_id
+        SESSION_DETAILS.assistant.agent_id = 25
 
         try:
             with patch(
@@ -674,7 +674,7 @@ class TestSubscriptionIdGeneration:
                     sub_id == "unity-25-staging-sub"
                 ), f"Wrong staging sub ID: {sub_id}"
         finally:
-            SESSION_DETAILS.assistant.id = original_id
+            SESSION_DETAILS.assistant.agent_id = original_id
 
     @pytest.mark.asyncio
     async def test_startup_subscription_id_constants(self):
@@ -849,10 +849,10 @@ class TestPingMechanismForIdleContainers:
         """Test that pings are published to app:comms:ping channel."""
         from unity.conversation_manager.comms_manager import CommsManager
         from unity.conversation_manager.events import Ping, Event
-        from unity.session_details import SESSION_DETAILS, UNASSIGNED_ASSISTANT_ID
+        from unity.session_details import SESSION_DETAILS
 
-        original_id = SESSION_DETAILS.assistant.id
-        SESSION_DETAILS.assistant.id = UNASSIGNED_ASSISTANT_ID
+        original_id = SESSION_DETAILS.assistant.agent_id
+        SESSION_DETAILS.assistant.agent_id = None
 
         try:
             cm = CommsManager(event_broker)
@@ -884,7 +884,7 @@ class TestPingMechanismForIdleContainers:
             assert received_ping, "Ping not received on expected channel"
 
         finally:
-            SESSION_DETAILS.assistant.id = original_id
+            SESSION_DETAILS.assistant.agent_id = original_id
 
     @pytest.mark.asyncio
     async def test_ping_has_keepalive_kind(self, event_broker):
@@ -927,10 +927,10 @@ class TestDemoIdPropagation:
         """
         from unity.conversation_manager.comms_manager import CommsManager
         from unity.conversation_manager.events import StartupEvent, Event
-        from unity.session_details import SESSION_DETAILS, UNASSIGNED_ASSISTANT_ID
+        from unity.session_details import SESSION_DETAILS
 
-        original_id = SESSION_DETAILS.assistant.id
-        SESSION_DETAILS.assistant.id = UNASSIGNED_ASSISTANT_ID
+        original_id = SESSION_DETAILS.assistant.agent_id
+        SESSION_DETAILS.assistant.agent_id = None
 
         try:
             cm = CommsManager(event_broker)
@@ -984,7 +984,7 @@ class TestDemoIdPropagation:
             )
 
         finally:
-            SESSION_DETAILS.assistant.id = original_id
+            SESSION_DETAILS.assistant.agent_id = original_id
 
     @pytest.mark.asyncio
     async def test_startup_event_demo_id_none_by_default(self, event_broker):
@@ -995,10 +995,10 @@ class TestDemoIdPropagation:
         """
         from unity.conversation_manager.comms_manager import CommsManager
         from unity.conversation_manager.events import StartupEvent, Event
-        from unity.session_details import SESSION_DETAILS, UNASSIGNED_ASSISTANT_ID
+        from unity.session_details import SESSION_DETAILS
 
-        original_id = SESSION_DETAILS.assistant.id
-        SESSION_DETAILS.assistant.id = UNASSIGNED_ASSISTANT_ID
+        original_id = SESSION_DETAILS.assistant.agent_id
+        SESSION_DETAILS.assistant.agent_id = None
 
         try:
             cm = CommsManager(event_broker)
@@ -1051,7 +1051,7 @@ class TestDemoIdPropagation:
             ), "demo_id should be None for regular assistants."
 
         finally:
-            SESSION_DETAILS.assistant.id = original_id
+            SESSION_DETAILS.assistant.agent_id = original_id
 
     @pytest.mark.asyncio
     async def test_demo_id_sets_settings_on_startup_handler(self, event_broker):

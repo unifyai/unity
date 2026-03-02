@@ -7,17 +7,22 @@ Unit tests for utility functions in unity.common._async_tool.
 
 import asyncio
 import json
+import logging
 from unittest.mock import MagicMock
 
 import pytest
 from pydantic import BaseModel, Field
 
 from unity.common._async_tool.utils import (
+    format_json_for_log,
+    format_llm_response_for_log,
     get_handle_paused_state,
     maybe_await,
     try_parse_json,
 )
 from unity.common._async_tool.formatting import serialize_tool_content
+from unity.logger import _MillisFormatter
+from unity.syntax_highlight import highlight_code_blocks
 
 # =============================================================================
 # get_handle_paused_state tests
@@ -200,6 +205,253 @@ class TestTryParseJson:
         """Returns None unchanged."""
         result = try_parse_json(None)
         assert result is None
+
+
+# =============================================================================
+# format_json_for_log / format_llm_response_for_log tests
+# =============================================================================
+
+
+class TestFormatJsonForLog:
+    """Tests for format_json_for_log — newline expansion in terminal logs."""
+
+    def test_expands_newlines_in_string_values(self):
+        """Escaped newlines in string values become real newlines."""
+        body = {"content": "Line one\nLine two\nLine three"}
+        result = format_json_for_log(body)
+        lines = result.split("\n")
+
+        content_line = next(l for l in lines if "Line one" in l)
+        idx = lines.index(content_line)
+        assert "Line two" in lines[idx + 1]
+        assert "Line three" in lines[idx + 2]
+
+    def test_preserves_json_structure(self):
+        """Keys, brackets, and non-newline content are unchanged."""
+        body = {"key": "value", "nested": {"inner": "data"}}
+        result = format_json_for_log(body)
+        assert '"key"' in result
+        assert '"nested"' in result
+        assert '"inner"' in result
+        assert '"data"' in result
+
+    def test_markdown_content_renders_naturally(self):
+        """Markdown with headers and bullets renders across lines."""
+        body = {
+            "content": "### Title\n- Item one\n- Item two\n\nParagraph.",
+            "role": "assistant",
+        }
+        result = format_json_for_log(body)
+        lines = result.split("\n")
+
+        title_line = next(l for l in lines if "### Title" in l)
+        idx = lines.index(title_line)
+        assert "- Item one" in lines[idx + 1]
+        assert "- Item two" in lines[idx + 2]
+
+
+class TestFormatLlmResponseForLog:
+    """Tests for format_llm_response_for_log — bespoke execute_code rendering."""
+
+    def test_execute_code_gets_markdown_fences(self):
+        """execute_code tool calls have markdown fenced code blocks."""
+        msg = {
+            "content": "Running the code.",
+            "role": "assistant",
+            "tool_calls": [
+                {
+                    "function": {
+                        "name": "execute_code",
+                        "arguments": json.dumps(
+                            {
+                                "thought": "Render the PDF",
+                                "language": "python",
+                                "code": "\nimport os\nprint(os.getcwd())\n",
+                            },
+                        ),
+                    },
+                },
+            ],
+        }
+        result = format_llm_response_for_log(msg)
+
+        assert "```python" in result
+        lines = result.split("\n")
+        open_idx = next(i for i, l in enumerate(lines) if "```python" in l)
+        close_indices = [
+            i
+            for i, l in enumerate(lines)
+            if i > open_idx and l.strip() == '```"' or l.strip() == "```"
+        ]
+        assert len(close_indices) >= 1
+        code_lines = lines[open_idx + 1 : close_indices[0]]
+        code_text = "\n".join(l.strip() for l in code_lines)
+        assert "import os" in code_text
+        assert "print(os.getcwd())" in code_text
+
+    def test_non_execute_code_tool_calls_unaffected(self):
+        """Tool calls other than execute_code don't get fenced delimiters."""
+        msg = {
+            "content": "",
+            "role": "assistant",
+            "tool_calls": [
+                {
+                    "function": {
+                        "name": "some_other_tool",
+                        "arguments": json.dumps({"query": "hello\nworld"}),
+                    },
+                },
+            ],
+        }
+        result = format_llm_response_for_log(msg)
+
+        assert "```" not in result
+        lines = result.split("\n")
+        hello_line = next(l for l in lines if "hello" in l)
+        idx = lines.index(hello_line)
+        assert "world" in lines[idx + 1]
+
+    def test_does_not_mutate_original_message(self):
+        """The original message dict is not modified."""
+        original_args = json.dumps({"code": "x = 1\ny = 2\n", "language": "python"})
+        msg = {
+            "role": "assistant",
+            "tool_calls": [
+                {"function": {"name": "execute_code", "arguments": original_args}},
+            ],
+        }
+        format_llm_response_for_log(msg)
+        assert msg["tool_calls"][0]["function"]["arguments"] == original_args
+
+
+# =============================================================================
+# highlight_code_blocks / _MillisFormatter TTY-aware highlighting
+# =============================================================================
+
+
+class TestHighlightCodeBlocks:
+    """Tests for Pygments-based syntax highlighting of markdown-fenced code blocks."""
+
+    def test_highlights_python_code_block(self):
+        """Code between ```lang and ``` receives ANSI escape codes."""
+        text = "some prefix\n" "```python\n" "x = 42\n" "```\n" "some suffix"
+        result = highlight_code_blocks(text)
+        assert "\033[" in result
+        assert "42" in result
+        assert "some prefix" in result
+        assert "some suffix" in result
+
+    def test_preserves_text_outside_delimiters(self):
+        """Text outside code blocks is unchanged."""
+        text = "before\n" "```python\n" "pass\n" "```\n" "after"
+        result = highlight_code_blocks(text)
+        assert result.startswith("before\n")
+        assert result.endswith("after")
+
+    def test_no_delimiters_returns_unchanged(self):
+        """Text without code block delimiters passes through unchanged."""
+        text = "just a regular log message with no code"
+        assert highlight_code_blocks(text) == text
+
+    def test_unknown_language_falls_back_to_plain(self):
+        """Unrecognised language leaves the code block unchanged."""
+        text = "```nonexistent_lang_xyz\n" "some code\n" "```"
+        result = highlight_code_blocks(text)
+        assert "some code" in result
+
+    def test_multiple_code_blocks(self):
+        """Multiple code blocks in the same message are each highlighted."""
+        text = (
+            "```python\n"
+            "x = 1\n"
+            "```\n"
+            "middle text\n"
+            "```python\n"
+            "y = 2\n"
+            "```"
+        )
+        result = highlight_code_blocks(text)
+        assert "middle text" in result
+        ansi_count = result.count("\033[")
+        assert ansi_count > 2
+
+    def test_with_indentation(self):
+        """Indented blocks (from JSON expansion) are highlighted."""
+        text = (
+            "                ```python\n"
+            "                img = render(page=0)\n"
+            "                ```"
+        )
+        result = highlight_code_blocks(text)
+        assert "\033[" in result
+        assert "render" in result
+
+    def test_closing_not_confused_with_opening(self):
+        """Closing ``` is not confused with an opening ```lang."""
+        text = "```python\n" "x = 1\n" "```\n" "```python\n" "y = 2\n" "```"
+        result = highlight_code_blocks(text)
+        ansi_count = result.count("\033[")
+        assert ansi_count > 2
+
+
+class TestMillisFormatterTtyHighlighting:
+    """Tests for _MillisFormatter conditional TTY highlighting."""
+
+    def _make_record(self, msg: str) -> logging.LogRecord:
+        return logging.LogRecord(
+            name="unity",
+            level=logging.INFO,
+            pathname="",
+            lineno=0,
+            msg=msg,
+            args=(),
+            exc_info=None,
+        )
+
+    def test_tty_formatter_highlights_code_blocks(self):
+        """When stream.isatty() is True, code blocks get ANSI highlighting."""
+
+        class FakeTTY:
+            def isatty(self):
+                return True
+
+        fmt = _MillisFormatter(stream=FakeTTY())
+        msg = (
+            "🤖 [CodeActActor.act(abcd)] {\n"
+            "    ```python\n"
+            "    x = 42\n"
+            "    ```\n"
+            "}"
+        )
+        result = fmt.format(self._make_record(msg))
+        assert "\033[" in result
+        assert "42" in result
+
+    def test_non_tty_formatter_does_not_highlight(self):
+        """When stream.isatty() is False, code blocks are plain text."""
+
+        class FakeFile:
+            def isatty(self):
+                return False
+
+        fmt = _MillisFormatter(stream=FakeFile())
+        msg = (
+            "🤖 [CodeActActor.act(abcd)] {\n"
+            "    ```python\n"
+            "    x = 42\n"
+            "    ```\n"
+            "}"
+        )
+        result = fmt.format(self._make_record(msg))
+        assert "\033[" not in result
+        assert "x = 42" in result
+
+    def test_no_stream_defaults_to_no_highlighting(self):
+        """When no stream is provided, highlighting is off."""
+        fmt = _MillisFormatter()
+        msg = "```python\n" "x = 42\n" "```"
+        result = fmt.format(self._make_record(msg))
+        assert "\033[" not in result
 
 
 # =============================================================================

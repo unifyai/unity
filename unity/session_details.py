@@ -28,7 +28,6 @@ from dataclasses import dataclass, field
 # Unassigned Identity Sentinels
 # Used by idle containers that haven't been assigned a real assistant/user yet.
 # ─────────────────────────────────────────────────────────────────────────────
-UNASSIGNED_ASSISTANT_ID = "default-assistant"
 UNASSIGNED_USER_ID = "default"
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -46,10 +45,10 @@ PLACEHOLDER_USER_EMAIL = "user@example.com"
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Context Path Defaults (for Unify context hierarchy)
-# Format: {user_id}/{assistant_id}/... e.g., "default/default-assistant/Contacts"
+# Format: {user_id}/{agent_id}/... e.g., "default/0/Contacts"
 # ─────────────────────────────────────────────────────────────────────────────
 UNASSIGNED_USER_CONTEXT = UNASSIGNED_USER_ID
-UNASSIGNED_ASSISTANT_CONTEXT = UNASSIGNED_ASSISTANT_ID
+UNASSIGNED_ASSISTANT_CONTEXT = "0"
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Voice Defaults
@@ -62,7 +61,7 @@ DEFAULT_VOICE_MODE = "tts"
 class AssistantDetails:
     """Details about the assistant."""
 
-    id: str = UNASSIGNED_ASSISTANT_ID
+    agent_id: int | None = None
     first_name: str = ""
     surname: str = ""
     age: str = ""
@@ -115,6 +114,17 @@ class OrgDetails:
 
 
 @dataclass
+class TeamDetails:
+    """Details about team memberships within the current org.
+
+    A user can belong to multiple teams.  ``ids`` contains all team IDs
+    the user is a member of (empty list for personal / no-team context).
+    """
+
+    ids: list[int] = field(default_factory=list)
+
+
+@dataclass
 class VoiceConfig:
     """Voice configuration for the session."""
 
@@ -160,15 +170,20 @@ class SessionDetails:
     # Organization context (None id for personal/non-org context)
     org: OrgDetails = field(default_factory=OrgDetails)
 
+    # Team memberships within the org
+    team: TeamDetails = field(default_factory=TeamDetails)
+
     _initialized: bool = field(default=False, repr=False)
 
     @property
     def assistant_context(self) -> str:
-        """The assistant's ID used as the context path component.
+        """The assistant's agent_id as the context path component.
 
-        Used for Unify context paths like '{user_id}/{assistant_id}/...'.
+        Used for Unify context paths like '{user_id}/{agent_id}/...'.
         """
-        return self.assistant.id or UNASSIGNED_ASSISTANT_CONTEXT
+        if self.assistant.agent_id is not None:
+            return str(self.assistant.agent_id)
+        return UNASSIGNED_ASSISTANT_CONTEXT
 
     @property
     def user_context(self) -> str:
@@ -207,6 +222,15 @@ class SessionDetails:
         self.org.name = value
 
     @property
+    def team_ids(self) -> list[int]:
+        """Shortcut to team.ids for convenient access."""
+        return self.team.ids
+
+    @team_ids.setter
+    def team_ids(self, value: list[int]) -> None:
+        self.team.ids = value
+
+    @property
     def unify_key(self) -> str:
         """API key for Unify services.
 
@@ -238,7 +262,7 @@ class SessionDetails:
     def populate(
         self,
         *,
-        assistant_id: str = "",
+        agent_id: int | None = None,
         assistant_first_name: str = "",
         assistant_surname: str = "",
         assistant_age: str = "",
@@ -255,6 +279,7 @@ class SessionDetails:
         user_email: str = "",
         org_id: int | None = None,
         org_name: str = "",
+        team_ids: list[int] | None = None,
         voice_provider: str = "",
         voice_id: str = "",
         desktop_mode: str = "ubuntu",
@@ -267,7 +292,7 @@ class SessionDetails:
 
         Called by ConversationManager when a StartupEvent is received.
         """
-        self.assistant.id = assistant_id
+        self.assistant.agent_id = agent_id
         self.assistant.first_name = assistant_first_name
         self.assistant.surname = assistant_surname
         self.assistant.age = assistant_age
@@ -289,6 +314,7 @@ class SessionDetails:
         self.user.email = user_email
         self.org.id = org_id
         self.org.name = org_name
+        self.team.ids = team_ids or []
         self.voice.provider = voice_provider
         self.voice.id = voice_id
         self._initialized = True
@@ -298,6 +324,7 @@ class SessionDetails:
         self.assistant = AssistantDetails()
         self.user = UserDetails()
         self.org = OrgDetails()
+        self.team = TeamDetails()
         self.voice = VoiceConfig()
         self.voice_call = VoiceCallConfig()
         self._unify_key = ""
@@ -309,7 +336,9 @@ class SessionDetails:
 
         Called after populate() to ensure subprocesses can inherit values.
         """
-        os.environ["ASSISTANT_ID"] = self.assistant.id
+        os.environ["ASSISTANT_ID"] = (
+            str(self.assistant.agent_id) if self.assistant.agent_id is not None else ""
+        )
         os.environ["ASSISTANT_FIRST_NAME"] = self.assistant.first_name
         os.environ["ASSISTANT_SURNAME"] = self.assistant.surname
         os.environ["ASSISTANT_NAME"] = self.assistant.name
@@ -336,6 +365,9 @@ class SessionDetails:
         os.environ["USER_EMAIL"] = self.user.email
         os.environ["ORG_ID"] = str(self.org.id) if self.org.id is not None else ""
         os.environ["ORG_NAME"] = self.org.name
+        os.environ["TEAM_IDS"] = (
+            ",".join(str(t) for t in self.team.ids) if self.team.ids else ""
+        )
         os.environ["VOICE_PROVIDER"] = self.voice.provider
         os.environ["VOICE_ID"] = self.voice.id
         os.environ["VOICE_MODE"] = self.voice.mode
@@ -353,7 +385,10 @@ class SessionDetails:
         Only sets fields if the corresponding env var is non-empty.
         """
         if val := os.environ.get("ASSISTANT_ID"):
-            self.assistant.id = val
+            try:
+                self.assistant.agent_id = int(val)
+            except (ValueError, TypeError):
+                pass
         if val := os.environ.get("ASSISTANT_FIRST_NAME"):
             self.assistant.first_name = val
         if val := os.environ.get("ASSISTANT_SURNAME"):
@@ -402,6 +437,11 @@ class SessionDetails:
                 pass
         if val := os.environ.get("ORG_NAME"):
             self.org.name = val
+        if val := os.environ.get("TEAM_IDS"):
+            try:
+                self.team.ids = [int(t) for t in val.split(",") if t.strip()]
+            except (ValueError, TypeError):
+                pass
         if val := os.environ.get("VOICE_PROVIDER"):
             self.voice.provider = val
         if val := os.environ.get("VOICE_ID"):

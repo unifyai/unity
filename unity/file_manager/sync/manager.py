@@ -196,12 +196,12 @@ class SyncManager:
         from unity.session_details import SESSION_DETAILS
         from unity.settings import SETTINGS
 
-        assistant_id = SESSION_DETAILS.assistant.id
+        assistant_id = SESSION_DETAILS.assistant.agent_id
         user_id = SESSION_DETAILS.user_id
         base_url = SETTINGS.ORCHESTRA_URL
         admin_key = SETTINGS.ORCHESTRA_ADMIN_KEY.get_secret_value()
 
-        if not assistant_id:
+        if assistant_id is None:
             LOGGER.debug(f"{ICONS['file_sync']} [FileSync] No assistant_id configured")
             return None
 

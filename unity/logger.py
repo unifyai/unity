@@ -6,7 +6,9 @@ Unity's runtime logging and OpenTelemetry tracing configuration.
 
 File-based logging:
     When UNITY_LOG_DIR is set (via env var or configure_log_dir()),
-    Unity's LOGGER output is written to {UNITY_LOG_DIR}/unity.log.
+    Unity's LOGGER output is written to two files:
+      - {UNITY_LOG_DIR}/unity.log           (DEBUG + INFO)
+      - {UNITY_LOG_DIR}/unity_info_only.log (INFO only)
     This captures async tool loop events, manager operations, etc.
 
 OpenTelemetry tracing:
@@ -53,6 +55,7 @@ SESSION_ID = datetime.now(timezone.utc).isoformat()
 
 # File handler state (managed by configure_log_dir)
 _FILE_HANDLER: Optional[logging.FileHandler] = None
+_INFO_FILE_HANDLER: Optional[logging.FileHandler] = None
 _LOG_DIR: Optional[Path] = None
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -365,15 +368,25 @@ def get_otel_log_dir() -> Optional[Path]:
 LOGGER.propagate = False
 
 
+from unity.syntax_highlight import highlight_code_blocks  # noqa: E402
+
+
 class _MillisFormatter(logging.Formatter):
     """Formatter that prepends ``HH:MM:SS.mmm`` to each log line.
 
     Messages that don't already start with a non-ASCII character (i.e. an
     emoji icon from the hierarchical logger) are auto-prefixed with ``⬥``
     so every terminal line has a consistent visual anchor.
+
+    When *stream* is a TTY, markdown-fenced code blocks are syntax-
+    highlighted via Pygments.
     """
 
     _DEFAULT_ICON = "⬥"
+
+    def __init__(self, *args, stream=None, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._is_tty = getattr(stream, "isatty", lambda: False)()
 
     def format(self, record: logging.LogRecord) -> str:
         dt = datetime.fromtimestamp(record.created, tz=timezone.utc).astimezone()
@@ -381,14 +394,19 @@ class _MillisFormatter(logging.Formatter):
         msg = record.getMessage()
         if msg and ord(msg[0]) < 128:
             msg = f"{self._DEFAULT_ICON} {msg}"
+        if self._is_tty:
+            msg = highlight_code_blocks(msg)
         return f"{ts} {msg}"
 
+
+LOGGER.setLevel(logging.DEBUG)
 
 if SETTINGS.UNITY_TERMINAL_LOG:
     import sys
 
     _handler = logging.StreamHandler(sys.stdout)
-    _handler.setFormatter(_MillisFormatter())
+    _handler.setFormatter(_MillisFormatter(stream=sys.stdout))
+    _handler.setLevel(getattr(logging, SETTINGS.UNITY_TERMINAL_LOG_LEVEL, logging.INFO))
 
     _already_configured = any(
         isinstance(h, logging.StreamHandler) and getattr(h, "_unity_terminal", False)
@@ -396,7 +414,6 @@ if SETTINGS.UNITY_TERMINAL_LOG:
     )
 
     if not _already_configured:
-        LOGGER.setLevel(logging.INFO)
         _handler._unity_terminal = True  # type: ignore[attr-defined]
         LOGGER.addHandler(_handler)
 
@@ -408,11 +425,31 @@ for _lib in (
     "LiteLLM",
     "LiteLLM Proxy",
     "LiteLLM Router",
-    "livekit",
-    "livekit.agents",
-    "livekit.plugins",
 ):
     logging.getLogger(_lib).setLevel(logging.WARNING)
+
+# RapidOCR reconfigures its own logger on import (unconditionally calling
+# setLevel(INFO)), so setLevel here would be clobbered.  A filter survives.
+logging.getLogger("RapidOCR").addFilter(
+    lambda record: record.levelno >= logging.WARNING,
+)
+
+# File-only loggers: cut propagation so nothing reaches the root/terminal
+# handlers, and attach the DEBUG file handler in configure_log_dir() so the
+# output still lands in unity.log.  NOT wired to unity_info_only.log — that
+# file mirrors the terminal exactly (Unity INFO+ only).
+_FILE_ONLY_LOGGERS = [
+    logging.getLogger(name)
+    for name in (
+        "livekit",
+        "livekit.agents",
+        "livekit.plugins",
+        "PIL",
+    )
+]
+for _fo in _FILE_ONLY_LOGGERS:
+    _fo.setLevel(logging.DEBUG)
+    _fo.propagate = False
 
 # ─────────────────────────────────────────────────────────────────────────────
 # File-based Logging Configuration
@@ -422,7 +459,12 @@ for _lib in (
 def configure_log_dir(log_dir: Optional[str] = None) -> Optional[Path]:
     """Configure or reconfigure the Unity LOGGER file output directory.
 
-    When configured, LOGGER output is written to {log_dir}/unity.log.
+    When configured, LOGGER output is written to two files:
+      - {log_dir}/unity.log           (everything: Unity DEBUG+, plus
+                                        third-party file-only loggers)
+      - {log_dir}/unity_info_only.log (Unity INFO+ only — mirrors the
+                                        terminal exactly)
+
     This captures async tool loop events, manager operations, hierarchical
     session logs, and any other code using LOGGER.
 
@@ -436,14 +478,20 @@ def configure_log_dir(log_dir: Optional[str] = None) -> Optional[Path]:
     Returns:
         The configured log directory Path, or None if disabled.
     """
-    global _FILE_HANDLER, _LOG_DIR
+    global _FILE_HANDLER, _INFO_FILE_HANDLER, _LOG_DIR
 
-    # Remove existing file handler if any
+    # Remove existing file handlers if any
     if _FILE_HANDLER is not None:
         LOGGER.removeHandler(_FILE_HANDLER)
+        for _fo in _FILE_ONLY_LOGGERS:
+            _fo.removeHandler(_FILE_HANDLER)
         _FILE_HANDLER.close()
         _FILE_HANDLER = None
-        _LOG_DIR = None
+    if _INFO_FILE_HANDLER is not None:
+        LOGGER.removeHandler(_INFO_FILE_HANDLER)
+        _INFO_FILE_HANDLER.close()
+        _INFO_FILE_HANDLER = None
+    _LOG_DIR = None
 
     # Determine log directory
     if log_dir is not None:
@@ -459,20 +507,26 @@ def configure_log_dir(log_dir: Optional[str] = None) -> Optional[Path]:
         log_path = Path(dir_path)
         log_path.mkdir(parents=True, exist_ok=True)
 
+        fmt = "%(asctime)s %(levelname)7s %(message)s"
+
         log_file = log_path / "unity.log"
         handler = logging.FileHandler(log_file, mode="a", encoding="utf-8")
-
-        fmt = "%(asctime)s %(levelname)7s %(message)s"
         handler.setFormatter(logging.Formatter(fmt))
         handler.setLevel(logging.DEBUG)
-
-        # Mark handler for identification
         handler._unity_file_handler = True  # type: ignore[attr-defined]
-
         LOGGER.addHandler(handler)
-        LOGGER.setLevel(logging.INFO)
-
+        for _fo in _FILE_ONLY_LOGGERS:
+            _fo.addHandler(handler)
         _FILE_HANDLER = handler
+
+        info_log_file = log_path / "unity_info_only.log"
+        info_handler = logging.FileHandler(info_log_file, mode="a", encoding="utf-8")
+        info_handler.setFormatter(logging.Formatter(fmt))
+        info_handler.setLevel(logging.INFO)
+        info_handler._unity_file_handler = True  # type: ignore[attr-defined]
+        LOGGER.addHandler(info_handler)
+        _INFO_FILE_HANDLER = info_handler
+
         _LOG_DIR = log_path
 
         LOGGER.debug(f"Unity file logging enabled: {log_file}")

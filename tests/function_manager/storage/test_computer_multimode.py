@@ -58,9 +58,14 @@ class TestDesktopNamespace:
 
     @pytest.mark.asyncio
     async def test_desktop_act(self):
+        from unity.function_manager.computer_backends import ActResult
+
         cp = _make_primitives()
         result = await cp.desktop.act("Click the Start menu")
-        assert result == "done"
+        assert isinstance(result, ActResult)
+        assert result.summary == "done"
+        assert result.screenshot  # non-empty base64 screenshot
+        assert str(result) == "done"  # backward compat
 
     @pytest.mark.asyncio
     async def test_desktop_navigate(self):
@@ -156,7 +161,7 @@ class TestWebSessionHandle:
         cp = _make_primitives()
         session = await cp.web.new_session()
         result = await session.act("Click the button")
-        assert result == "done"
+        assert str(result) == "done"
 
     @pytest.mark.asyncio
     async def test_handle_navigate(self):
@@ -258,7 +263,7 @@ class TestConcurrentSessions:
         session = await cp.web.new_session()
         web_result = await session.navigate("https://example.com")
 
-        assert desktop_result == "done"
+        assert str(desktop_result) == "done"
         assert web_result == "success"
         await session.stop()
 

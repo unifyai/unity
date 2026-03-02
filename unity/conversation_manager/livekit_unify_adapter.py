@@ -57,6 +57,7 @@ class UnifyLLM(llm.LLM):
         self._temperature = temperature
         self._extra_kwargs = kwargs
         self._pending_trace_contexts: deque[dict[str, Any]] = deque()
+        self.last_log_path: str = ""
 
     @property
     def model(self) -> str:
@@ -129,9 +130,10 @@ class UnifyLLMStream(llm.LLMStream):
         """Stream responses from Unify and emit ChatChunk events."""
         from livekit.agents.llm import ImageContent
 
-        # Convert LiveKit ChatContext to Unify message format
+        # Convert LiveKit ChatContext to Unify message format.
+        # All messages (including system) go into the messages array to
+        # preserve temporal positioning of mid-conversation notifications.
         messages: list[dict] = []
-        system_messages: list[str] = []
 
         for item in self._chat_ctx.items:
             role = getattr(item, "role", None)
@@ -141,7 +143,6 @@ class UnifyLLMStream(llm.LLMStream):
             if not raw_content:
                 continue
 
-            # Check for multimodal content (ImageContent alongside text).
             has_images = isinstance(raw_content, list) and any(
                 isinstance(c, ImageContent) for c in raw_content
             )
@@ -163,10 +164,7 @@ class UnifyLLMStream(llm.LLMStream):
                 text = getattr(item, "text_content", None)
                 if not text:
                     continue
-                if role == "system":
-                    system_messages.append(text)
-                else:
-                    messages.append({"role": role, "content": text})
+                messages.append({"role": role, "content": text})
 
         # Build client kwargs
         client_kwargs = dict(self._extra_kwargs)
@@ -178,28 +176,32 @@ class UnifyLLMStream(llm.LLMStream):
         # Create Unify client
         client = new_llm_client(
             self._model,
-            origin="ConversationManager.livekit",
+            origin="FastBrain",
             **client_kwargs,
         )
         client.set_stream(True)
 
+        # Set thinking context from trace metadata so the pending callback
+        # emits a combined "LLM thinking… (reason) → /path" line.
+        # Defaults to "reply" for user-speech-triggered generations (no trace context).
+        reason = self._trace_context.get("reason", "reply")
+        if reason and hasattr(client, "_pending_thinking_log"):
+            client._pending_thinking_log.set_thinking_context(f" ({reason})")
+
         # Stream the response
         generate_kwargs: dict[str, Any] = {}
-        if system_messages:
-            generate_kwargs["system_message"] = "\n\n".join(system_messages)
         if messages:
             generate_kwargs["messages"] = messages
         if self._temperature is not None:
             generate_kwargs["temperature"] = self._temperature
 
-        LOGGER.info(
+        LOGGER.debug(
             f"{DEFAULT_ICON} "
             + trace_kv(
                 "FAST_BRAIN_REQUEST_START",
                 request_id=self._request_id,
                 model=self._model,
                 message_count=len(messages),
-                system_message_count=len(system_messages),
                 trigger=self._trace_context,
                 ts_utc=now_utc_iso(),
                 monotonic_ms=monotonic_ms(),
@@ -223,7 +225,11 @@ class UnifyLLMStream(llm.LLMStream):
                     )
                     self._event_ch.send_nowait(chat_chunk)
         finally:
-            LOGGER.info(
+            pending = getattr(client, "_pending_thinking_log", None)
+            if pending is not None:
+                pending.emit_fallback()
+                self._llm.last_log_path = pending.last_path or ""
+            LOGGER.debug(
                 f"{DEFAULT_ICON} "
                 + trace_kv(
                     "FAST_BRAIN_REQUEST_END",

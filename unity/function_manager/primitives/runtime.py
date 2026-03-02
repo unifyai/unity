@@ -65,10 +65,46 @@ _COMPUTER_METHODS = (
 )
 
 
+def _publish_desktop_invoked(method_name: str) -> None:
+    """Fire-and-forget EventBus publish for desktop primitive invocations."""
+    try:
+        from unity.events.event_bus import EVENT_BUS, Event
+
+        asyncio.get_running_loop().create_task(
+            EVENT_BUS.publish(
+                Event(type="DesktopPrimitiveInvoked", payload={"method": method_name}),
+            ),
+        )
+    except Exception:
+        pass
+
+
+def _publish_desktop_act_completed(instruction: str, result: "ActResult") -> None:
+    """Fire-and-forget EventBus publish when desktop.act() completes."""
+    try:
+        from unity.events.event_bus import EVENT_BUS, Event
+
+        asyncio.get_running_loop().create_task(
+            EVENT_BUS.publish(
+                Event(
+                    type="DesktopActCompleted",
+                    payload={
+                        "instruction": instruction,
+                        "summary": result.summary,
+                    },
+                ),
+            ),
+        )
+    except Exception:
+        pass
+
+
 def _make_session_method(
     method_name: str,
     owner: "ComputerPrimitives",
     session_resolver,
+    *,
+    mode: str = "",
 ):
     """Build a wrapped async method that routes through a session.
 
@@ -77,6 +113,8 @@ def _make_session_method(
     (bound instance).
     """
     from unity.function_manager.computer_backends import ComputerSession
+
+    is_desktop = mode == "desktop"
 
     if method_name == "get_screenshot":
 
@@ -94,6 +132,8 @@ def _make_session_method(
 
             session = await session_resolver()
             b64 = await session.get_screenshot()
+            if is_desktop:
+                _publish_desktop_invoked(method_name)
             return _Image.open(io.BytesIO(base64.b64decode(b64)))
 
         screenshot_wrapper.__name__ = method_name
@@ -106,17 +146,52 @@ def _make_session_method(
         return screenshot_wrapper
 
     async def wrapper(*args, **kwargs):
+        import time as _w_time
+        import logging as _w_logging
+
+        _w_t0 = _w_time.perf_counter()
+        _w_log = _w_logging.getLogger("unity")
+
+        def _w_ms():
+            return f"{(_w_time.perf_counter() - _w_t0) * 1000:.0f}ms"
+
+        _w_log.debug(
+            f"⏱️ [desktop.{method_name} +{_w_ms()}] entered",
+        )
         kwargs.pop("_clarification_up_q", None)
         kwargs.pop("_clarification_down_q", None)
         if not _vm_ready.is_set():
+            _w_log.debug(f"⏱️ [desktop.{method_name} +{_w_ms()}] waiting for _vm_ready")
             ready = await asyncio.to_thread(_vm_ready.wait, 300)
+            _w_log.debug(
+                f"⏱️ [desktop.{method_name} +{_w_ms()}] _vm_ready resolved (ready={ready})",
+            )
             if not ready:
                 raise RuntimeError("Managed VM did not become ready within 5 minutes")
+        else:
+            _w_log.debug(f"⏱️ [desktop.{method_name} +{_w_ms()}] _vm_ready already set")
         if method_name in owner._SECRET_INJECTED_METHODS and args:
+            _w_log.debug(f"⏱️ [desktop.{method_name} +{_w_ms()}] resolving secrets")
             resolved = await owner.secret_manager.from_placeholder(args[0])
             args = (resolved,) + args[1:]
+            _w_log.debug(f"⏱️ [desktop.{method_name} +{_w_ms()}] secrets resolved")
+        _w_log.debug(f"⏱️ [desktop.{method_name} +{_w_ms()}] session_resolver start")
         session = await session_resolver()
-        return await getattr(session, method_name)(*args, **kwargs)
+        _w_log.debug(
+            f"⏱️ [desktop.{method_name} +{_w_ms()}] session resolved (id={getattr(session, '_session_id', '?')})",
+        )
+        _w_log.debug(
+            f"⏱️ [desktop.{method_name} +{_w_ms()}] calling session.{method_name}",
+        )
+        result = await getattr(session, method_name)(*args, **kwargs)
+        _w_log.debug(
+            f"⏱️ [desktop.{method_name} +{_w_ms()}] session.{method_name} returned",
+        )
+        if is_desktop:
+            _publish_desktop_invoked(method_name)
+            if method_name == "act":
+                _publish_desktop_act_completed(args[0] if args else "", result)
+        return result
 
     wrapper.__name__ = method_name
     # Prefer the rich docstrings from ComputerBackend ABC over ComputerSession's terse ones
@@ -143,7 +218,7 @@ class _ComputerNamespace:
             return await owner.backend.get_session(mode)
 
         for name in _COMPUTER_METHODS:
-            setattr(self, name, _make_session_method(name, owner, _resolve))
+            setattr(self, name, _make_session_method(name, owner, _resolve, mode=mode))
 
 
 class WebSessionHandle:

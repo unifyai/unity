@@ -27,7 +27,7 @@ import asyncio
 from unity.logger import LOGGER
 from unity.common.hierarchical_logger import ICONS
 from unity.settings import SETTINGS
-from unity.session_details import UNASSIGNED_ASSISTANT_ID, SESSION_DETAILS
+from unity.session_details import SESSION_DETAILS
 from unity.conversation_manager import assistant_jobs
 from unity.conversation_manager.comms_manager import CommsManager
 from unity.conversation_manager.metrics import container_spinup
@@ -115,7 +115,7 @@ def create_conversation_manager(
         event_broker,
         SETTINGS.conversation.JOB_NAME,
         SESSION_DETAILS.user.id,
-        SESSION_DETAILS.assistant.id,
+        SESSION_DETAILS.assistant.agent_id,
         SESSION_DETAILS.user.first_name,
         SESSION_DETAILS.user.surname,
         SESSION_DETAILS.assistant.first_name,
@@ -183,7 +183,7 @@ async def run_conversation_manager(
     # StartupEvent.  Pre-specified assistants (local dev / default) have no
     # startup job or assistant-job logging, so metrics are skipped — all
     # metric instruments remain harmless no-ops.
-    if SESSION_DETAILS.assistant.id == UNASSIGNED_ASSISTANT_ID:
+    if SESSION_DETAILS.assistant.agent_id is None:
         init_metrics()
 
     # Set the process working directory to the local file root so that relative
@@ -248,10 +248,7 @@ async def run_conversation_manager(
     # In cloud deployment, initialization is triggered by StartupEvent from CommsManager.
     # But for local dev, the assistant ID is already set from .env, so no StartupEvent arrives.
     # Skip this in test mode - tests initialize managers explicitly with custom actors.
-    if (
-        SESSION_DETAILS.assistant.id != UNASSIGNED_ASSISTANT_ID
-        and not should_apply_mocks
-    ):
+    if SESSION_DETAILS.assistant.agent_id is not None and not should_apply_mocks:
         # No _startup_sequence in local dev, so unblock the VM readiness gate
         # directly (the VM is assumed reachable if configured via .env).
         from unity.function_manager.primitives.runtime import _vm_ready
@@ -267,7 +264,7 @@ async def run_conversation_manager(
     if should_enable_comms:
         # U1: Record container spin-up time for idle containers
         # (entrypoint.sh → CommsManager start)
-        if SESSION_DETAILS.assistant.id == UNASSIGNED_ASSISTANT_ID:
+        if SESSION_DETAILS.assistant.agent_id is None:
             _container_start_ms = os.environ.get("CONTAINER_START_TIME_MS")
             if _container_start_ms:
                 _spinup_s = (time.time() * 1000 - int(_container_start_ms)) / 1000.0
@@ -312,6 +309,11 @@ async def main(project_name: str = "Assistants"):
     await _conversation_manager.cleanup()
     LOGGER.debug(f"{ICONS['lifecycle']} Cleanup finished")
 
+    # Flush buffered EventBus writes to the backend before exit.
+    from unity.events.event_bus import EVENT_BUS
+
+    EVENT_BUS.flush()
+
     # Shut down the metrics exporter (flushes remaining data internally).
     shutdown_metrics()
 
@@ -322,10 +324,7 @@ async def main(project_name: str = "Assistants"):
     # - AND assistant_id is the default (i.e. it's an idle container)
     # This signals to start.py to exit immediately to trigger restart
     # within the backoff limit
-    if (
-        _signal_shutdown
-        and _conversation_manager.assistant_id == UNASSIGNED_ASSISTANT_ID
-    ):
+    if _signal_shutdown and _conversation_manager.assistant_id is None:
         sys.exit(42)
 
 

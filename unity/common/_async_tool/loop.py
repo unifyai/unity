@@ -120,6 +120,7 @@ class LoopLogger:
         self._log_steps = log_steps
         self._first_llm_logged = False
         self._defer_after_first_llm: list[tuple[str, str]] = []
+        self._thinking_emitted = False
 
     @property
     def log_steps(self):
@@ -133,16 +134,30 @@ class LoopLogger:
         txt = f"{prefix} [{self._label}] {msg}"
         LOGGER.info(txt)
 
+    def debug(self, msg, prefix=""):
+        txt = f"{prefix} [{self._label}] {msg}"
+        LOGGER.debug(txt)
+
     def error(self, msg, prefix=""):
         txt = f"{prefix} [{self._label}] {msg}"
         LOGGER.error(txt)
 
-    def mark_llm_thinking(self) -> None:
+    def begin_thinking(self) -> None:
+        self._thinking_emitted = False
         if not self._first_llm_logged:
             self._first_llm_logged = True
             for p, m in self._defer_after_first_llm:
                 self.info(m, prefix=p)
             self._defer_after_first_llm.clear()
+
+    def emit_thinking_with_path(self, path) -> None:
+        self._thinking_emitted = True
+        self.info(f"LLM thinking… → {path}", prefix=ICONS["llm_thinking"])
+
+    def emit_thinking_fallback(self) -> None:
+        if not self._thinking_emitted:
+            self._thinking_emitted = True
+            self.info("LLM thinking…", prefix=ICONS["llm_thinking"])
 
     def defer_after_first_llm(self, msg: str, prefix: str = "") -> None:
         if self._first_llm_logged:
@@ -377,12 +392,12 @@ async def async_tool_loop_inner(
     logger = LoopLogger(cfg, log_steps)
 
     # Wire inline log-file pointers: when UNILLM_LOG_DIR is set, each LLM call
-    # writes a request+response file.  The callback prints the finalized path
-    # in the terminal with the full parent lineage so the developer can click
-    # through to the exact I/O for each step.
+    # writes a request+response file.  The pending callback fires at the START
+    # of each generate() call (before inference), letting us combine the
+    # "LLM thinking…" message with the log file path into a single line.
     if log_steps:
-        client.set_on_log_file(
-            lambda path: logger.info(f"→ {path}", prefix=ICONS["llm_log_file"]),
+        client.set_on_log_file_pending(
+            lambda path: logger.emit_thinking_with_path(path),
         )
 
     # ── Time context for time-awareness ──────────────────────────────────────
@@ -466,17 +481,26 @@ async def async_tool_loop_inner(
     if log_steps:
         if log_steps == "full":
             if parent_chat_context_safe:
+                from .utils import format_json_for_log
+
                 logger.info(
-                    f"Parent Context: {json.dumps(parent_chat_context_safe, indent=4)}",
+                    f"Parent Context: {format_json_for_log(parent_chat_context_safe)}",
                     prefix=ICONS["tool_seeding"],
                 )
             logger.info(
                 f"System Message: {client.system_message}",
                 prefix=ICONS["system_message"],
             )
-        # Log user message (skip if seeding with a batch - per-item logs are emitted below)
+        # Log request (skip if seeding with a batch - per-item logs are emitted below)
         if not isinstance(message, list):
-            logger.info(f"User Message: {message}", prefix=ICONS["user_message"])
+            logger.info(f"Request: {message}", prefix=ICONS["request"])
+
+    import time as _setup_time
+
+    _setup_t0 = _setup_time.perf_counter()
+
+    def _setup_elapsed() -> str:
+        return f"{(_setup_time.perf_counter() - _setup_t0) * 1000:.0f}ms"
 
     # ── 0-a. Inject **system** header with runtime context ─────────────────────
     #
@@ -582,7 +606,11 @@ async def async_tool_loop_inner(
             },
         )
 
+    logger.debug(
+        f"[setup +{_setup_elapsed()}] context built, appending system msgs ({len(msgs_to_append)} msgs)",
+    )
     await _msg_dispatcher.append_msgs(msgs_to_append)
+    logger.debug(f"[setup +{_setup_elapsed()}] system msgs appended")
 
     # ── 0-a++. Initialize context state for incremental propagation ──────────
     # Tracks initial parent context and any continued updates received via interjections.
@@ -607,7 +635,11 @@ async def async_tool_loop_inner(
                 for m in message
             ]
 
+        logger.debug(
+            f"[setup +{_setup_elapsed()}] appending seeded batch ({len(seeded_batch)} msgs)",
+        )
         await _msg_dispatcher.append_msgs(seeded_batch)
+        logger.debug(f"[setup +{_setup_elapsed()}] seeded batch appended")
 
     # ── initial prompt ───────────────────────────────────────────────────────
     # ── 0-b. Coerce tools → ToolSpec & helper lambdas ───────────────────────
@@ -619,12 +651,16 @@ async def async_tool_loop_inner(
     # -----------------------------------------------------------------------
 
     # Initialise loop state early so preflight backfill can schedule tasks
+    logger.debug(f"[setup +{_setup_elapsed()}] initialising ToolsData")
     tools_data: ToolsData = ToolsData(
         tools,
         client=client,
         logger=logger,
         time_ctx=time_ctx,
         extra_ask_tools=extra_ask_tools,
+    )
+    logger.debug(
+        f"[setup +{_setup_elapsed()}] ToolsData ready ({len(tools_data.normalized)} tools)",
     )
 
     consecutive_failures = _LoopToolFailureTracker(max_consecutive_failures)
@@ -665,6 +701,7 @@ async def async_tool_loop_inner(
             setattr(_self_task, "get_completed_tool_metadata", lambda: dict(tools_data._completed_askable_tools))  # type: ignore[attr-defined]
 
     # Preflight repair: backfill any pre-existing assistant tool_calls without replies
+    logger.debug(f"[setup +{_setup_elapsed()}] preflight repair start")
     with suppress(Exception):
         unreplied = find_unreplied_assistant_entries(client)
         if unreplied:
@@ -1270,6 +1307,7 @@ async def async_tool_loop_inner(
     deferred_llm_turn = False
 
     # Loop returns immediately upon the final assistant message (no persist mode)
+    logger.debug(f"[setup +{_setup_elapsed()}] entering main loop")
 
     try:
         while True:
@@ -1829,8 +1867,14 @@ async def async_tool_loop_inner(
 
                 needs_turn = False
                 # Only process completion for actual tool tasks; exclude helper waiters
+                _completed_tools = done & tools_data.pending
+                if _completed_tools:
+                    logger.debug(
+                        f"⏱️ [ToolLoop] {len(_completed_tools)} tool task(s) completed, "
+                        f"{len(tools_data.pending) - len(_completed_tools)} still pending",
+                    )
                 for task in _sort_completed_tasks_by_call_id(
-                    done & tools_data.pending,
+                    _completed_tools,
                     tools_data,
                 ):
                     if await tools_data.process_completed_task(
@@ -1881,6 +1925,9 @@ async def async_tool_loop_inner(
             # ------------------------------------------------------------------
 
             # 0.  Decide policy & tool-subset for this turn  ───────────────
+            logger.debug(
+                f"[setup +{_setup_elapsed()}] tool policy eval (step={step_index})",
+            )
             if tool_policy is not None:
                 _tools_snapshot = {n: s.fn for n, s in tools_data.normalized.items()}
                 try:
@@ -1919,6 +1966,9 @@ async def async_tool_loop_inner(
             if _has_pending_tools and tool_choice_mode != "required":
                 tool_choice_mode = "required"
 
+            logger.debug(
+                f"[setup +{_setup_elapsed()}] building tool schemas ({len(policy_tools_norm)} tools)",
+            )
             visible_base_tools_schema = [
                 method_to_schema(
                     spec.fn,
@@ -2048,7 +2098,9 @@ async def async_tool_loop_inner(
             # Yield to allow just-scheduled tool tasks to complete (especially
             # those that immediately return a SteerableToolHandle). This ensures
             # dynamic helpers are generated with the handle's docstrings.
+            logger.debug(f"[setup +{_setup_elapsed()}] yielding (asyncio.sleep(0))")
             await asyncio.sleep(0)
+            logger.debug(f"[setup +{_setup_elapsed()}] resumed after yield")
 
             # Process any tools that completed during the yield
             for task in list(tools_data.pending):
@@ -2092,6 +2144,7 @@ async def async_tool_loop_inner(
 
             # make sure every pending call already has a *tool* reply ──
             #  (a placeholder) before we let the assistant speak again.
+            logger.debug(f"[setup +{_setup_elapsed()}] ensure_placeholders start")
             await ensure_placeholders_for_pending(
                 tools_data=tools_data,
                 assistant_meta=assistant_meta,
@@ -2099,6 +2152,7 @@ async def async_tool_loop_inner(
                 msg_dispatcher=_msg_dispatcher,
                 time_ctx=time_ctx,
             )
+            logger.debug(f"[setup +{_setup_elapsed()}] ensure_placeholders done")
 
             # Merge helpers into the visible toolkit for the upcoming LLM step
             # For steering methods (ask/interject) on tools that opted into context,
@@ -2129,9 +2183,11 @@ async def async_tool_loop_inner(
             ]
 
             # ── D.  Ask the LLM what to do next  ────────────────────────────
+            logger.debug(
+                f"[setup +{_setup_elapsed()}] ready for LLM call (step={step_index}, {len(tmp_tools)} tools)",
+            )
             if log_steps:
-                logger.info(f"LLM thinking…", prefix=ICONS["llm_thinking"])
-                logger.mark_llm_thinking()
+                logger.begin_thinking()
 
             if interrupt_llm_with_interjections:
                 # ––––– new *pre-emptive* mode ––––––––––––––––––––––––––––
@@ -2197,6 +2253,9 @@ async def async_tool_loop_inner(
                     return_when=asyncio.FIRST_COMPLETED,
                 )
 
+                if log_steps:
+                    logger.emit_thinking_fallback()
+
                 # Helper cleanup: cancel auxiliary waiters only.
                 # NOTE: llm_task is deliberately NOT cancelled here. Each branch
                 # below decides whether to cancel the LLM based on context:
@@ -2222,7 +2281,11 @@ async def async_tool_loop_inner(
                 )
 
                 # 0️⃣ A *different* tool finished before the LLM answered -----
-                if done & pending_snapshot:  # ← NEW
+                if done & pending_snapshot:
+                    logger.debug(
+                        f"⏱️ [ToolLoop] tool(s) finished during LLM race: "
+                        f"{len(done & pending_snapshot)} completed",
+                    )
                     # — cancel the half-finished reasoning step
                     if not llm_task.done():
                         llm_task.cancel()
@@ -2359,6 +2422,8 @@ async def async_tool_loop_inner(
                         _apply_reasoning_model_compat(_gen_kwargs, tool_choice_mode),
                         **_gen_kwargs,
                     )
+                    if log_steps:
+                        logger.emit_thinking_fallback()
                 except Exception as e:
                     raise Exception(
                         f"LLM call failed: {type(e).__name__}: {e}",
@@ -2375,18 +2440,10 @@ async def async_tool_loop_inner(
 
             if log_steps:
                 with suppress(Exception):
-                    # Pretty-print tool_call arguments in assistant messages for readability
-                    from .utils import (
-                        try_parse_json as _try_parse_json,
-                    )  # local import to avoid cycles
+                    from .utils import format_llm_response_for_log
 
-                    _msg_for_logging = copy.deepcopy(msg)
-                    _tcs = _msg_for_logging.get("tool_calls") or []
-                    for _tc in _tcs:
-                        _fn = _tc.get("function", {})
-                        _fn["arguments"] = _try_parse_json(_fn.get("arguments"))
                     logger.info(
-                        f"{json.dumps(_msg_for_logging, indent=4)}",
+                        format_llm_response_for_log(msg),
                         prefix=ICONS["llm_response"],
                     )
 

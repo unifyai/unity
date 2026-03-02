@@ -6,12 +6,15 @@ from pydantic import BaseModel, Field
 
 
 class ActorConfig(BaseModel):
-    """Serializable configuration for the top-level CodeActActor.
+    """Configuration for the top-level CodeActActor.
 
-    All fields are Optional. ``None`` means "not configured — use the
-    constructor default".  Only explicitly set fields are persisted to
-    the DB, so partial overrides are natural (e.g. store only
+    All fields are Optional.  ``None`` means "not configured — use the
+    constructor default".  Partial overrides are natural (e.g. set only
     ``can_compose=False`` and leave everything else at defaults).
+
+    Defined in code under ``unity/customization/clients/`` per client,
+    resolved at Actor construction time via the cascading
+    org -> user -> assistant merge.
     """
 
     can_compose: Optional[bool] = Field(

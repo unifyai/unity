@@ -244,7 +244,9 @@ def stream_logs(job_name: str | None):
         "job_logs",
         "stream_logs.py",
     )
-    argv = [sys.executable, script, "--namespace", ENV]
+    argv = [sys.executable, script]
+    if ENV == "production":
+        argv.append("--production")
     if job_name:
         argv += ["--job", job_name]
     info(f"Handing off to stream_logs.py...")

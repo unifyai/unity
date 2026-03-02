@@ -71,12 +71,10 @@ import json
 import pytest
 
 from unity.conversation_manager.events import (
-    ActorHandleStarted,
-    ActorResult,
     PhoneCallStarted,
     PhoneCallSent,
     InboundPhoneUtterance,
-    CallGuidance,
+    FastBrainNotification,
 )
 from unity.conversation_manager.types import Medium, Mode
 
@@ -140,7 +138,7 @@ class TestSlowBrainDecisionBoundaries:
         original_publish = initialized_cm.cm.event_broker.publish
 
         async def capture_guidance(channel: str, message: str) -> int:
-            if channel == "app:call:call_guidance":
+            if channel == "app:call:notification":
                 try:
                     data = json.loads(message)
                     # Handle both Event format and plain dict format
@@ -208,10 +206,10 @@ class TestSlowBrainDecisionBoundaries:
 
         Flow for outbound calls:
         1. Slow brain decides to call → calls make_call(context="...")
-        2. make_call stores context on call_manager.initial_call_guidance
+        2. make_call stores context on call_manager.initial_notification
         3. comms_utils.start_call() places the call
         4. PhoneCallSent arrives → event handler spawns subprocess
-        5. CallManager.start_call() publishes stored guidance as CallGuidance
+        5. CallManager.start_call() publishes stored guidance as FastBrainNotification
         6. Fast brain receives guidance via on_guidance / pending_guidance buffer
         7. PhoneCallStarted arrives → mode set to CALL
         8. Ongoing guidance flows via the guide_voice_agent tool (called in parallel)
@@ -341,7 +339,7 @@ class TestSlowBrainAppropriateGuidance:
         await initialized_cm.step(started_event)
 
         # Manually publish a data-provision guidance (this is appropriate)
-        guidance = CallGuidance(
+        guidance = FastBrainNotification(
             contact=boss_contact,
             content="The meeting time mentioned in the earlier SMS was 3pm on Thursday",
         )
@@ -376,7 +374,7 @@ class TestSlowBrainAppropriateGuidance:
         await initialized_cm.step(started_event)
 
         # Manually publish a notification guidance (this is appropriate)
-        guidance = CallGuidance(
+        guidance = FastBrainNotification(
             contact=boss_contact,
             content="SMS just received from Alice: 'Running 10 minutes late'",
         )
@@ -608,219 +606,9 @@ class TestRapidUtteranceHandling:
 # the GuidanceArticulator has been deleted.)
 
 
-# =============================================================================
-# Test: In-flight action orchestration during voice calls
-# =============================================================================
-
-
-def _get_guidance_messages(cm, contact_id: int) -> list:
-    """Extract guidance messages from the voice thread for a contact."""
-    voice_thread = cm.contact_index.get_messages_for_contact(
-        contact_id,
-        Medium.PHONE_CALL,
-    )
-    return [msg for msg in voice_thread if getattr(msg, "name", None) == "guidance"]
-
-
-@pytest.mark.asyncio
-class TestInFlightActionOrchestration:
-    """
-    Tests that the slow brain correctly orchestrates long-running actions
-    during voice calls, relaying results to the fast brain via guide_voice_agent.
-
-    This validates the full deterministic event-driven coordination loop:
-
-        User utterance
-            → slow brain calls `act` (starts action)
-            → action completes (ActorResult arrives)
-            → slow brain calls `guide_voice_agent` with the result
-            → fast brain receives guidance and shares info naturally
-
-    All steps are trigger-based via CMStepDriver — no sleeps or timing.
-    The real slow brain LLM runs at each step.
-    """
-
-    @pytest.mark.eval
-    async def test_act_result_relayed_via_call_guidance(self, initialized_cm):
-        """
-        Full coordination flow: user requests task → act → result → guidance.
-
-        Phase 1: Enter voice call mode
-        Phase 2: User asks for research → slow brain calls `act`
-        Phase 3: Action completes → slow brain calls `guide_voice_agent` with result
-        Phase 4: Verify fast brain can use the guidance to answer directly
-
-        NOTE: With boss-on-call, the slow brain may correctly decide NOT to send
-        guidance (the fast brain has direct event visibility). This is eval-dependent.
-        """
-        cm = initialized_cm
-        boss = BOSS
-
-        # ─── Phase 1: Enter voice call mode ───────────────────────────────
-        await cm.step(PhoneCallStarted(contact=boss))
-        assert cm.cm.mode == Mode.CALL, "Should be in CALL mode"
-
-        # ─── Phase 2: User asks for research → slow brain calls `act` ─────
-        cm.all_tool_calls.clear()
-        guidance_before_request = _get_guidance_messages(cm.cm, boss["contact_id"])
-
-        result = await cm.step_until_wait(
-            InboundPhoneUtterance(
-                contact=boss,
-                content="Can you search for information about the Henderson project?",
-            ),
-            max_steps=5,
-        )
-
-        # Slow brain should have called `act` to start the research
-        assert "act" in cm.all_tool_calls, (
-            f"Slow brain should call `act` to start the research!\n"
-            f"Tool calls: {cm.all_tool_calls}\n"
-            f"The user asked to search for info — this requires `act`."
-        )
-
-        # An ActorHandleStarted event should have been published
-        actor_started = [
-            e for e in result.output_events if isinstance(e, ActorHandleStarted)
-        ]
-        assert len(actor_started) >= 1, (
-            f"Expected ActorHandleStarted event but got: "
-            f"{[type(e).__name__ for e in result.output_events]}"
-        )
-
-        # Get the handle_id from the event (resilient to the action having
-        # already completed and moved to completed_actions).
-        handle_id = actor_started[0].handle_id
-
-        # ─── Phase 3: Action completes → slow brain relays via guidance ───
-        # Inject ActorResult deterministically (no background task dependency).
-        # Capture guidance count BEFORE stepping the result, so we can detect
-        # new guidance produced in response to the completion.
-        cm.all_tool_calls.clear()
-        guidance_before_result = _get_guidance_messages(cm.cm, boss["contact_id"])
-
-        result = await cm.step_until_wait(
-            ActorResult(
-                handle_id=handle_id,
-                success=True,
-                result=(
-                    "Found 3 relevant documents about the Henderson project: "
-                    "a contract signed in January 2025, meeting notes from last "
-                    "week discussing timeline changes, and a budget proposal "
-                    "totalling $85,000."
-                ),
-            ),
-            max_steps=5,
-        )
-
-        # Collect ALL guidance produced across the entire flow
-        all_guidance = _get_guidance_messages(cm.cm, boss["contact_id"])
-        guidance_after_result = all_guidance[len(guidance_before_result) :]
-
-        # The slow brain should have produced call_guidance at some point
-        # during this flow — either eagerly in Phase 2 (acknowledging the
-        # request) or in Phase 3 (relaying the action result), or both.
-        # What matters is that the result information reaches the fast brain.
-        all_guidance_text = " ".join(
-            getattr(g, "content", "") for g in all_guidance
-        ).lower()
-
-        assert any(
-            term in all_guidance_text
-            for term in ["henderson", "contract", "budget", "85,000", "document"]
-        ), (
-            f"guide_voice_agent should contain Henderson project findings!\n"
-            f"All guidance texts: {[getattr(g, 'content', '') for g in all_guidance]}\n"
-            f"Tool calls across phases: {cm.all_tool_calls}\n"
-            f"Guidance before request: {len(guidance_before_request)}\n"
-            f"Guidance before result: {len(guidance_before_result)}\n"
-            f"Guidance after result: {len(guidance_after_result)}\n"
-            f"\n"
-            f"The slow brain should relay action results to the fast brain\n"
-            f"via guide_voice_agent so the user gets the information."
-        )
-
-        # ─── Phase 4: Verify fast brain can use the guidance ──────────────
-        # Build fast brain prompt and inject the guidance as a notification
-        from unity.common.llm_client import new_llm_client
-        from unity.conversation_manager.prompt_builders import (
-            build_voice_agent_prompt,
-        )
-        from unity.settings import SETTINGS
-
-        fast_prompt = build_voice_agent_prompt(
-            bio="I am a virtual assistant.",
-            assistant_name="Alex",
-            boss_first_name=boss["first_name"],
-            boss_surname=boss["surname"],
-            boss_phone_number=boss.get("phone_number"),
-            boss_email_address=boss.get("email_address"),
-            is_boss_user=True,
-        ).flatten()
-        client = new_llm_client(
-            model=SETTINGS.conversation.FAST_BRAIN_MODEL,
-            reasoning_effort="minimal",
-        )
-        # Use the actual guidance content that was produced, or a fallback
-        result_guidance = [
-            getattr(g, "content", "")
-            for g in all_guidance
-            if any(
-                t in getattr(g, "content", "").lower()
-                for t in ["henderson", "contract", "budget", "document"]
-            )
-        ]
-        notification_content = (
-            result_guidance[-1]
-            if result_guidance
-            else "Found 3 documents about Henderson: contract, meeting notes, budget."
-        )
-        messages = [
-            {"role": "system", "content": fast_prompt},
-            {
-                "role": "user",
-                "content": (
-                    "Can you search for information about the Henderson project?"
-                ),
-            },
-            {"role": "assistant", "content": "Sure, let me look into that."},
-            {
-                "role": "system",
-                "content": f"[notification] {notification_content}",
-            },
-            {"role": "user", "content": "So what did you find?"},
-        ]
-        fast_response = await client.generate(messages=messages)
-        fast_response_lower = fast_response.lower()
-
-        # Fast brain should answer directly using the notification data
-        deferral_phrases = ["let me check", "i'll check", "looking into"]
-        deferred = any(p in fast_response_lower for p in deferral_phrases)
-        assert not deferred, (
-            f"Fast brain deferred instead of using the notification data!\n"
-            f"Response: {fast_response}\n"
-            f"The notification contained the Henderson project results — "
-            f"the fast brain should share them directly."
-        )
-
-        # Fast brain should reference something from the result
-        assert any(
-            term in fast_response_lower
-            for term in [
-                "henderson",
-                "contract",
-                "budget",
-                "document",
-                "meeting",
-                "85,000",
-                "three",
-                "3",
-            ]
-        ), (
-            f"Fast brain should reference the action results!\n"
-            f"Response: {fast_response}\n"
-            f"Expected mention of Henderson project findings from the notification."
-        )
+# (TestInFlightActionOrchestration removed — its premise that the slow brain
+# must relay actor results via guide_voice_agent was invalidated when the fast
+# brain gained direct event visibility via boss notification rendering.)
 
 
 # =============================================================================
@@ -829,9 +617,9 @@ class TestInFlightActionOrchestration:
 
 
 @pytest.mark.asyncio
-class TestCallGuidanceSpeakMode:
+class TestFastBrainNotificationSpeakMode:
     """Verify that guide_voice_agent's should_speak and response_text
-    parameters propagate correctly through the CallGuidance event to the
+    parameters propagate correctly through the FastBrainNotification event to the
     fast brain."""
 
     async def test_should_speak_params_carried_through_to_event(
@@ -839,7 +627,7 @@ class TestCallGuidanceSpeakMode:
         initialized_cm,
     ):
         """When the slow brain calls guide_voice_agent with should_speak=True
-        and response_text, the published CallGuidance event must carry both
+        and response_text, the published FastBrainNotification event must carry both
         fields so the fast brain can speak via TTS."""
         import json
 
@@ -855,7 +643,7 @@ class TestCallGuidanceSpeakMode:
         original_publish = cm.event_broker.publish
 
         async def capture_publish(channel: str, message: str) -> int:
-            if channel == "app:call:call_guidance":
+            if channel == "app:call:notification":
                 published.append(json.loads(message))
             return await original_publish(channel, message)
 
@@ -894,10 +682,10 @@ class TestCallGuidanceSpeakMode:
                 payload = event_data.get("payload", event_data)
                 assert (
                     "should_speak" in payload
-                ), f"CallGuidance event missing should_speak field: {payload}"
+                ), f"FastBrainNotification event missing should_speak field: {payload}"
                 assert (
                     "response_text" in payload
-                ), f"CallGuidance event missing response_text field: {payload}"
+                ), f"FastBrainNotification event missing response_text field: {payload}"
 
         finally:
             cm.event_broker.publish = original_publish

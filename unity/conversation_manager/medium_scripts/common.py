@@ -6,7 +6,6 @@ import asyncio
 import fnmatch
 import json
 import sys
-from secrets import token_hex
 from typing import TYPE_CHECKING, Awaitable, Callable, Iterable, Optional
 
 if TYPE_CHECKING:
@@ -36,8 +35,8 @@ from unity.conversation_manager.events import (
     ActorResult,
     ActorHandleStarted,
     ActorSessionResponse,
+    DesktopActCompleted,
     NotificationInjectedEvent,
-    CallGuidance,
     UserScreenShareStarted,
     UserScreenShareStopped,
     UserWebcamStarted,
@@ -67,12 +66,13 @@ class FastBrainLogger:
     """Lightweight logger using the same ``{emoji} [{label}] {message}`` format
     as the async tool loop's ``LoopLogger``.
 
-    *label* is ``FastBrain({suffix})``, matching the ``LoopConfig`` label convention.
+    Unlike async tool loops (which may have many concurrent instances and need
+    unique suffixes for disambiguation), there is exactly one FastBrain and one
+    ProactiveSpeech module per session — so the label is a fixed string.
     """
 
-    def __init__(self) -> None:
-        suffix = token_hex(2)
-        self._label = f"FastBrain({suffix})"
+    def __init__(self, label: str = "FastBrain") -> None:
+        self._label = label
 
     @property
     def label(self) -> str:
@@ -87,92 +87,98 @@ class FastBrainLogger:
     # ── typed helpers ────────────────────────────────────────────────────
 
     def llm_thinking(self, reason: str, **kv: object) -> None:
-        extra = _kv_suffix(kv)
-        self._emit("llm_thinking", f"LLM thinking… reason={reason}{extra}")
-
-    def llm_completed(self, generation_id: str = "", **kv: object) -> None:
-        extra = _kv_suffix(kv)
-        self._emit(
-            "llm_completed",
-            f"Generation completed{_id(generation_id)}{extra}",
+        self._emit_debug(
+            "llm_thinking",
+            f"LLM thinking…{_kv_suffix(dict(reason=reason, **kv))}",
         )
 
-    def llm_cancelled(self, generation_id: str = "", **kv: object) -> None:
+    def llm_completed(self, **kv: object) -> None:
         extra = _kv_suffix(kv)
-        self._emit(
-            "llm_cancelled",
-            f"Generation cancelled{_id(generation_id)}{extra}",
-        )
+        self._emit("llm_completed", f"Generation completed{extra}")
+
+    def llm_cancelled(self, **kv: object) -> None:
+        extra = _kv_suffix(kv)
+        self._emit("llm_cancelled", f"Generation cancelled{extra}")
 
     def llm_error(self, error: str, **kv: object) -> None:
         extra = _kv_suffix(kv)
         self._emit("llm_error", f"Generation error: {error}{extra}")
 
     def user_speech(self, text: str) -> None:
-        self._emit("user_speech", _trunc(text))
+        self._emit("user_speech", text)
 
     def user_state(self, new_state: str, **kv: object) -> None:
         extra = _kv_suffix(kv)
-        self._emit("user_state", f"User state: {new_state}{extra}")
+        self._emit_debug("user_state", f"User state: {new_state}{extra}")
 
-    def assistant_speech(self, text: str, **kv: object) -> None:
-        extra = _kv_suffix(kv)
-        self._emit("assistant_speech", f"{_trunc(text)}{extra}")
+    def assistant_speech(
+        self,
+        text: str,
+        source: str = "",
+        llm_log_path: str = "",
+    ) -> None:
+        suffix = f" → {llm_log_path}" if llm_log_path else ""
+        if source:
+            label = source.replace("_", " ").title()
+            self._emit("assistant_speech", f"{label}: {text}{suffix}")
+        else:
+            self._emit("assistant_speech", f"{text}{suffix}")
 
-    def guidance_received(
+    def notification(
         self,
         source: str,
-        should_speak: bool,
         content: str,
-        **kv: object,
+        *,
+        speak: bool = False,
+        turn: bool = False,
     ) -> None:
-        extra = _kv_suffix(kv)
+        flag = f"speak={speak}" if speak else f"turn={turn}"
         self._emit(
-            "guidance_received",
-            f"Guidance from {source}: speak={should_speak} {_trunc(content)}{extra}",
+            "notification_received",
+            f"Notification ({flag}, src={source}): {content}",
         )
 
-    def guidance_applied(
-        self,
-        guidance_id: str,
-        source: str = "",
-        **kv: object,
-    ) -> None:
-        extra = _kv_suffix(kv)
+    def notification_buffered(self, count: int) -> None:
         self._emit(
-            "guidance_applied",
-            f"Applied guidance {guidance_id} source={source}{extra}",
+            "notification_buffered",
+            f"Buffered notification (total={count})",
         )
 
-    def guidance_buffered(self, guidance_id: str, count: int) -> None:
-        self._emit(
-            "guidance_buffered",
-            f"Buffered guidance {guidance_id} (total={count})",
-        )
-
-    def guidance_say(self, guidance_id: str, text: str, **kv: object) -> None:
+    def notification_say(self, text: str, **kv: object) -> None:
         extra = _kv_suffix(kv)
-        self._emit(
-            "guidance_say",
-            f"Speaking guidance {guidance_id}: {_trunc(text)}{extra}",
+        self._emit_debug(
+            "notification_say",
+            f"Speaking notification: {text}{extra}",
         )
 
     # ── proactive speech helpers ─────────────────────────────────────────
 
+    def proactive_waiting_for_quiescence(self) -> None:
+        self._emit_debug(
+            "proactive_waiting",
+            "Proactive speech waiting for pipeline quiescence",
+        )
+
     def proactive_debounce(self, seconds: float) -> None:
-        self._emit(
+        self._emit_debug(
             "proactive_debounce",
             f"Proactive speech debounce {seconds}s",
         )
 
-    def proactive_decision(self, should_speak: bool, delay: float) -> None:
+    def proactive_decision(
+        self,
+        should_speak: bool,
+        delay: float,
+        content: str = "",
+    ) -> None:
+        suffix = f": {content}" if content else ""
         self._emit(
             "proactive_decision",
-            f"Proactive decision: should_speak={should_speak}, delay={delay}s",
+            f"should_speak={should_speak}, delay={delay}s{suffix}",
         )
 
     def proactive_deferred(self, reason: str) -> None:
-        self._emit("proactive_deferred", f"Proactive deferred: {reason}")
+        self._emit_debug("proactive_deferred", f"Proactive deferred: {reason}")
 
     def proactive_dormant(self) -> None:
         self._emit(
@@ -181,15 +187,15 @@ class FastBrainLogger:
         )
 
     def proactive_speaking(self, delay: float, content: str) -> None:
-        self._emit(
+        self._emit_debug(
             "proactive_speaking",
-            f"Proactive speaking in {delay}s: {_trunc(content)}",
+            f"Proactive speaking in {delay}s: {content}",
         )
 
-    def proactive_published(self, guidance_id: str, content: str) -> None:
-        self._emit(
+    def proactive_published(self, content: str) -> None:
+        self._emit_debug(
             "proactive_published",
-            f"Proactive spoke guidance_id={guidance_id}: {_trunc(content)}",
+            f"Proactive spoke: {content}",
         )
 
     def proactive_cancelled(self) -> None:
@@ -213,10 +219,7 @@ class FastBrainLogger:
         self._emit_debug("session_ready", msg)
 
     def participant_comms(self, text: str) -> None:
-        self._emit("participant_comms", _trunc(text))
-
-    def boss_event(self, text: str) -> None:
-        self._emit("boss_event", _trunc(text))
+        self._emit("participant_comms", text)
 
     def ipc_inbound(self, channel: str, **kv: object) -> None:
         extra = _kv_suffix(kv)
@@ -232,6 +235,9 @@ class FastBrainLogger:
     def screenshot(self, msg: str) -> None:
         self._emit("screenshot", msg)
 
+    def screenshot_debug(self, msg: str) -> None:
+        self._emit_debug("screenshot", msg)
+
     def config(self, msg: str) -> None:
         self._emit_debug("config", msg)
 
@@ -239,7 +245,7 @@ class FastBrainLogger:
         self._emit_debug("dispatch", msg)
 
     def info(self, msg: str) -> None:
-        self._emit("info", msg)
+        self._emit_debug("info", msg)
 
     def warning(self, msg: str) -> None:
         self._emit("warning", msg)
@@ -252,21 +258,11 @@ class FastBrainLogger:
 
 
 def _kv_suffix(kv: dict[str, object]) -> str:
-    """Render extra key=value pairs as a compact suffix string."""
+    """Render extra key=value pairs as a parenthesised, comma-separated suffix."""
     if not kv:
         return ""
-    parts = [f" {k}={v}" for k, v in kv.items() if v is not None and v != ""]
-    return "".join(parts)
-
-
-def _id(val: str) -> str:
-    return f" {val}" if val else ""
-
-
-def _trunc(text: str, limit: int = 120) -> str:
-    if len(text) <= limit:
-        return text
-    return text[:limit] + "…"
+    parts = [f"{k}={v}" for k, v in kv.items() if v is not None and v != ""]
+    return f" ({', '.join(parts)})" if parts else ""
 
 
 class SocketAwareEventBroker:
@@ -389,7 +385,7 @@ async def start_event_broker_receive() -> bool:
     Start receiving events from parent process.
 
     Call this at the start of call scripts to enable receiving
-    inbound events (call_guidance, call_status, etc.) from the parent.
+    inbound events (notification, call_status, etc.) from the parent.
     """
     return await event_broker.start_receiving()
 
@@ -626,7 +622,10 @@ def configure_from_cli(
             elif env_name == "ASSISTANT_BIO":
                 SESSION_DETAILS.assistant.about = value
             elif env_name == "ASSISTANT_ID":
-                SESSION_DETAILS.assistant.id = value
+                try:
+                    SESSION_DETAILS.assistant.agent_id = int(value)
+                except (ValueError, TypeError):
+                    pass
             elif env_name == "USER_ID":
                 SESSION_DETAILS.user.id = value
 
@@ -728,7 +727,7 @@ class UserTrackCaptureManager:
             and publication.source == self._rtc_source
         ):
             if self._log:
-                self._log.screenshot(
+                self._log.screenshot_debug(
                     f"{self._label} track subscribed, starting capture",
                 )
             stream = rtc.VideoStream(track, format=rtc.VideoBufferType.RGBA)
@@ -740,7 +739,7 @@ class UserTrackCaptureManager:
     def _handle_track_unsubscribed(self, publication) -> None:
         if publication.source == self._rtc_source:
             if self._log:
-                self._log.screenshot(
+                self._log.screenshot_debug(
                     f"{self._label} track unsubscribed, stopping capture",
                 )
             self._latest_frame_data = None
@@ -961,11 +960,13 @@ async def _screenshot_post(
     Returns the status code, raw body text (on error), and parsed JSON (on
     success) so callers can handle retries without duplicating HTTP plumbing.
     """
+    use_ssl = False if "vm.unify.ai" in url else None
     async with session.post(
         url,
         json={},
         headers=headers,
         timeout=timeout,
+        ssl=use_ssl,
     ) as resp:
         if resp.status >= 400:
             return resp.status, await resp.text(), None
@@ -1007,6 +1008,12 @@ async def capture_assistant_screenshot(
         else:
             LOGGER.warning(msg)
 
+    def _log_debug(msg: str) -> None:
+        if fb_logger:
+            fb_logger.screenshot_debug(msg)
+        else:
+            LOGGER.debug(msg)
+
     t_start = _time.monotonic()
 
     def _make_entry(b64: str) -> ScreenshotEntry:
@@ -1031,7 +1038,7 @@ async def capture_assistant_screenshot(
                 if err_body and "no_desktop_session" in err_body:
                     _log(
                         f"Assistant screenshot: no desktop session yet, "
-                        f"retrying in 2s (url={url} total={total_ms:.0f}ms)",
+                        f"retrying in 2s (url={url}, total={total_ms:.0f}ms)",
                     )
                     await asyncio.sleep(2)
                     status, err_body, data = await _screenshot_post(
@@ -1044,30 +1051,30 @@ async def capture_assistant_screenshot(
                     if status >= 400:
                         _log(
                             f"Assistant screenshot failed after retry: "
-                            f"HTTP {status} url={url} total={total_ms:.0f}ms "
-                            f"body={(err_body or '')[:200]}",
+                            f"HTTP {status} (url={url}, total={total_ms:.0f}ms, "
+                            f"body={(err_body or '')[:200]})",
                         )
                         return None
                 else:
                     _log(
                         f"Assistant screenshot failed: HTTP {status} "
-                        f"url={url} total={total_ms:.0f}ms "
-                        f"body={(err_body or '')[:200]}",
+                        f"(url={url}, total={total_ms:.0f}ms, "
+                        f"body={(err_body or '')[:200]})",
                     )
                     return None
             if data:
                 b64 = data.get("screenshot")
                 if b64:
-                    _log(
-                        f"Assistant screenshot OK: url={url} "
-                        f"total={total_ms:.0f}ms b64_len={len(b64)}",
+                    _log_debug(
+                        f"Assistant screenshot OK"
+                        f" (url={url}, total={total_ms:.0f}ms, b64_len={len(b64)})",
                     )
                     return _make_entry(b64)
         except Exception as e:
             total_ms = (_time.monotonic() - t_start) * 1000
             _log(
                 f"Assistant screenshot error: {type(e).__name__}: {e} "
-                f"url={url} total={total_ms:.0f}ms",
+                f"(url={url}, total={total_ms:.0f}ms)",
             )
         return None
 
@@ -1106,8 +1113,8 @@ async def capture_assistant_screenshot(
 
     def _phase_str() -> str:
         return (
-            f"dns={phases.get('dns_ms', 0):.0f}ms "
-            f"conn={phases.get('conn_ms', 0):.0f}ms "
+            f"dns={phases.get('dns_ms', 0):.0f}ms, "
+            f"conn={phases.get('conn_ms', 0):.0f}ms, "
             f"first_byte={phases.get('first_byte_ms', 0):.0f}ms"
         )
 
@@ -1124,7 +1131,7 @@ async def capture_assistant_screenshot(
                 if err_body and "no_desktop_session" in err_body:
                     _log(
                         f"Assistant screenshot: no desktop session yet, "
-                        f"retrying in 2s (url={url} total={total_ms:.0f}ms)",
+                        f"retrying in 2s (url={url}, total={total_ms:.0f}ms)",
                     )
                     await asyncio.sleep(2)
                     status, err_body, data = await _screenshot_post(
@@ -1137,31 +1144,31 @@ async def capture_assistant_screenshot(
                     if status >= 400:
                         _log(
                             f"Assistant screenshot failed after retry: "
-                            f"HTTP {status} url={url} total={total_ms:.0f}ms "
-                            f"body={(err_body or '')[:200]}",
+                            f"HTTP {status} (url={url}, total={total_ms:.0f}ms, "
+                            f"body={(err_body or '')[:200]})",
                         )
                         return None
                 else:
                     _log(
                         f"Assistant screenshot failed: HTTP {status} "
-                        f"url={url} total={total_ms:.0f}ms {_phase_str()} "
-                        f"body={(err_body or '')[:200]}",
+                        f"(url={url}, total={total_ms:.0f}ms, {_phase_str()}, "
+                        f"body={(err_body or '')[:200]})",
                     )
                     return None
             if data:
                 b64 = data.get("screenshot")
                 if b64:
-                    _log(
-                        f"Assistant screenshot OK: url={url} "
-                        f"total={total_ms:.0f}ms {_phase_str()} "
-                        f"b64_len={len(b64)}",
+                    _log_debug(
+                        f"Assistant screenshot OK"
+                        f" (url={url}, total={total_ms:.0f}ms, {_phase_str()}, "
+                        f"b64_len={len(b64)})",
                     )
                     return _make_entry(b64)
     except Exception as e:
         total_ms = (_time.monotonic() - t_start) * 1000
         _log(
             f"Assistant screenshot error: {type(e).__name__}: {e} "
-            f"url={url} total={total_ms:.0f}ms {_phase_str()}",
+            f"(url={url}, total={total_ms:.0f}ms, {_phase_str()})",
         )
     return None
 
@@ -1219,28 +1226,19 @@ def render_participant_comms(event_json: str, participant_ids: set[int]) -> str 
 
 
 def render_event_for_fast_brain(event_json: str) -> str | None:
-    """Render a CM event as a ``[notification]``-style string for the fast brain.
+    """Render an actor lifecycle event as a human-readable string.
 
-    Used for boss-on-call mode where the fast brain sees all system events.
-    Returns None for events that should be silently ignored (e.g. own
-    utterances, call guidance which is handled by a dedicated callback, or
-    events with no user-meaningful content).
+    Called from the CM side (``LivekitCallManager._render_boss_notifications``)
+    to convert raw actor events into notification content before publishing
+    them to the fast brain via ``app:call:notification``.
+
+    Returns None for event types that should not be surfaced.
     """
     try:
         event = Event.from_json(event_json)
     except Exception:
         return None
 
-    if isinstance(event, CallGuidance):
-        return None
-
-    if isinstance(event, SMSReceived):
-        return f"SMS from {_contact_name(event.contact)}: {event.content}"
-    if isinstance(event, EmailReceived):
-        subj = event.subject or "(no subject)"
-        return f"Email from {_contact_name(event.contact)}: {subj}"
-    if isinstance(event, UnifyMessageReceived):
-        return f"Unify message from {_contact_name(event.contact)}: {event.content}"
     if isinstance(event, ActorNotification):
         return f"Action progress: {event.response}"
     if isinstance(event, ActorResult):
@@ -1256,6 +1254,9 @@ def render_event_for_fast_brain(event_json: str) -> str | None:
         return f"Action update: {event.content}"
     if isinstance(event, NotificationInjectedEvent):
         return event.content
+    if isinstance(event, DesktopActCompleted):
+        snippet = event.summary[:200] if event.summary else event.instruction[:200]
+        return f"Desktop action completed: {snippet}"
 
     return None
 

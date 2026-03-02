@@ -74,7 +74,7 @@ class SyncConfig:
         from unity.session_details import SESSION_DETAILS
 
         desktop_url = SESSION_DETAILS.assistant.desktop_url
-        assistant_id = SESSION_DETAILS.assistant.id
+        assistant_id = SESSION_DETAILS.assistant.agent_id
 
         if not desktop_url:
             LOGGER.debug(
@@ -89,7 +89,7 @@ class SyncConfig:
             )
             return cls(enabled=False)
 
-        ssh_user = str(SESSION_DETAILS.assistant.id)
+        ssh_user = str(SESSION_DETAILS.assistant.agent_id)
         if not ssh_user:
             LOGGER.error(
                 f"{ICONS['file_sync']} [FileSync] No assistant name configured for SSH user",

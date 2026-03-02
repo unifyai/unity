@@ -64,7 +64,7 @@ async def _update_cumulative_spend(billed_cost: float) -> None:
 
     user_ctx = SESSION_DETAILS.user_context
     assistant_ctx = SESSION_DETAILS.assistant_context
-    assistant_id = SESSION_DETAILS.assistant.id or None
+    assistant_id = SESSION_DETAILS.assistant.agent_id
 
     if not user_ctx or not assistant_ctx or not assistant_id:
         return

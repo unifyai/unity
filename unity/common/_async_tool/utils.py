@@ -1,5 +1,9 @@
+import copy
 import inspect
 import json
+import textwrap
+
+from unillm.logger import _expand_string_newlines
 
 
 async def maybe_await(obj):
@@ -18,6 +22,43 @@ def try_parse_json(value):
     except Exception:
         pass
     return value
+
+
+def _add_code_delimiters(args: dict) -> None:
+    """Add markdown fenced code block delimiters around the code field."""
+    code = args.get("code", "")
+    lang = args.get("language", "")
+    if not code:
+        return
+    opening = f"```{lang}" if lang else "```"
+    args["code"] = f"\n{opening}\n{textwrap.dedent(code).strip()}\n```"
+
+
+def format_json_for_log(body: dict) -> str:
+    """Format a dict as human-readable JSON for terminal logging.
+
+    Expands escaped newlines in string values so that multi-line content
+    (prompts, markdown, code) renders naturally. For execute_code tool calls,
+    adds visual delimiters around the code block.
+    """
+    return _expand_string_newlines(
+        json.dumps(body, indent=4, default=str, ensure_ascii=False),
+    )
+
+
+def format_llm_response_for_log(msg: dict) -> str:
+    """Format an LLM assistant message for terminal logging.
+
+    Parses stringified tool-call arguments into dicts for pretty-printing
+    and adds visual delimiters around execute_code code blocks.
+    """
+    msg = copy.deepcopy(msg)
+    for tc in msg.get("tool_calls") or []:
+        fn = tc.get("function", {})
+        fn["arguments"] = try_parse_json(fn.get("arguments"))
+        if fn.get("name") == "execute_code" and isinstance(fn.get("arguments"), dict):
+            _add_code_delimiters(fn["arguments"])
+    return format_json_for_log(msg)
 
 
 def get_handle_paused_state(handle) -> bool | None:

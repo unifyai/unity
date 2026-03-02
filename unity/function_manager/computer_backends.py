@@ -1,7 +1,11 @@
 import inspect
+import json
+import os
 import subprocess
 from abc import ABC, abstractmethod
 from collections import defaultdict
+from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 from typing import Optional, List, Dict
 import logging
@@ -12,8 +16,74 @@ import asyncio
 import websockets
 from unity.session_details import SESSION_DETAILS
 from unity.image_manager.utils import make_solid_png_base64
+from unity.logger import LOGGER as _UNITY_LOGGER
+from unity.common._async_tool.loop_config import TOOL_LOOP_LINEAGE
 
 logger = logging.getLogger("websockets")
+
+_MAG_DEBUG_PREFIX = "__MAG_DEBUG__ "
+_MAGNITUDE_LOG_DIR = os.environ.get("MAGNITUDE_LOG_DIR", "")
+
+
+def _handle_magnitude_debug_payload(raw: str) -> None:
+    """Parse and persist a TEXT debug payload from agent-service.
+
+    Screenshots and traces are saved directly to the filesystem by
+    agent-service (same or VM container) — they never flow over the
+    WebSocket.  Only lightweight TEXT payloads are handled here.
+
+    Payload format: ``"TEXT JSON_BODY"``.
+    """
+    if not _MAGNITUDE_LOG_DIR:
+        return
+
+    log_dir = Path(_MAGNITUDE_LOG_DIR)
+
+    space_idx = raw.find(" ")
+    if space_idx == -1:
+        return
+    ptype = raw[:space_idx]
+    body_str = raw[space_idx + 1 :]
+
+    if ptype != "TEXT":
+        return
+
+    try:
+        body = json.loads(body_str)
+    except json.JSONDecodeError:
+        return
+
+    log_dir.mkdir(parents=True, exist_ok=True)
+    with open(log_dir / "magnitude.log", "a") as f:
+        f.write(body.get("line", "") + "\n")
+
+
+def _get_current_lineage() -> list[str]:
+    """Read the current TOOL_LOOP_LINEAGE for propagation to agent-service."""
+    try:
+        val = TOOL_LOOP_LINEAGE.get([])
+        return list(val) if isinstance(val, list) else []
+    except LookupError:
+        return []
+
+
+@dataclass
+class ActResult:
+    """Result of a ``desktop.act()`` call with post-completion context."""
+
+    summary: str
+    screenshot: str  # base64 PNG
+
+    def __str__(self) -> str:
+        return self.summary
+
+    def __repr__(self) -> str:
+        screenshot_preview = (
+            f"{self.screenshot[:20]}..."
+            if len(self.screenshot) > 20
+            else self.screenshot
+        )
+        return f"ActResult(summary={self.summary!r}, screenshot={screenshot_preview!r})"
 
 
 class ComputerAgentError(Exception):
@@ -34,7 +104,7 @@ class ComputerBackend(ABC):
     """
 
     @abstractmethod
-    async def act(self, instruction: str) -> str:
+    async def act(self, instruction: str) -> "ActResult":
         """
         Perform an autonomous action on the current page or screen.
 
@@ -70,9 +140,10 @@ class ComputerBackend(ABC):
 
         Returns
         -------
-        str
-            Confirmation message describing what action was performed, or an
-            error message if the action could not be completed.
+        ActResult
+            Contains ``summary`` (the agent's description of what was done)
+            and ``screenshot`` (base64 PNG of the screen after completion).
+            ``str(result)`` returns the summary for backward compatibility.
         """
 
     @abstractmethod
@@ -365,7 +436,7 @@ class MockComputerBackend(ComputerBackend):
         *,
         url: str = "https://google.com",
         screenshot: str = VALID_MOCK_SCREENSHOT_PNG,
-        act_response: str = "done",
+        act_response: ActResult | None = None,
         observe_response: str = "Mock observation",
         query_response: str = "Mock query response",
         **kwargs,
@@ -383,7 +454,10 @@ class MockComputerBackend(ComputerBackend):
         """
         self._url = url
         self._screenshot = screenshot
-        self._act_response = act_response
+        self._act_response = act_response or ActResult(
+            summary="done",
+            screenshot=VALID_MOCK_SCREENSHOT_PNG,
+        )
         self._observe_response = observe_response
         self._query_response = query_response
 
@@ -590,7 +664,7 @@ class _MockSession:
         self._mode = mode
         self._backend = backend
 
-    async def act(self, instruction: str) -> str:
+    async def act(self, instruction: str) -> ActResult:
         return self._backend._act_response
 
     async def observe(self, query: str, response_format: Any = str) -> Any:
@@ -659,10 +733,11 @@ class ComputerSession:
     the VM display through noVNC inside the agent-service).
     """
 
-    def __init__(self, session_id: str, mode: str, agent_base_url: str):
+    def __init__(self, session_id: str, mode: str, agent_base_url: str, ssl=None):
         self._session_id = session_id
         self._mode = mode
         self._agent_base_url = agent_base_url
+        self._ssl = ssl
 
     async def _request(
         self,
@@ -670,10 +745,18 @@ class ComputerSession:
         endpoint: str,
         payload: dict | None = None,
     ) -> Any:
+        import time as _rq_time
+
+        _rq_t0 = _rq_time.perf_counter()
         url = f"{self._agent_base_url}{endpoint}"
         if payload is None:
             payload = {}
         payload["sessionId"] = self._session_id
+
+        logger.debug(
+            f"⏱️ [ComputerSession._request] {method} {endpoint} start "
+            f"(session={self._session_id})",
+        )
 
         auth_key = SESSION_DETAILS.unify_key
         headers = {"authorization": f"Bearer {auth_key}"}
@@ -687,8 +770,14 @@ class ComputerSession:
                         json=payload,
                         headers=headers,
                         timeout=1000,
+                        ssl=self._ssl,
                     ) as resp:
+                        _rq_ms = (_rq_time.perf_counter() - _rq_t0) * 1000
                         if resp.status >= 400:
+                            logger.debug(
+                                f"⏱️ [ComputerSession._request] {method} {endpoint} "
+                                f"HTTP {resp.status} ({_rq_ms:.0f}ms, attempt={attempt})",
+                            )
                             try:
                                 error_data = await resp.json()
                                 raise ComputerAgentError(
@@ -702,7 +791,13 @@ class ComputerSession:
                                     "http_error",
                                     f"HTTP {resp.status}: {await resp.text()}",
                                 )
-                        return await resp.json()
+                        result = await resp.json()
+                        _rq_ms = (_rq_time.perf_counter() - _rq_t0) * 1000
+                        logger.debug(
+                            f"⏱️ [ComputerSession._request] {method} {endpoint} "
+                            f"OK ({_rq_ms:.0f}ms, attempt={attempt})",
+                        )
+                        return result
             except aiohttp.ClientConnectorError:
                 if attempt < retries - 1:
                     await asyncio.sleep(1.5 * (attempt + 1))
@@ -740,10 +835,18 @@ class ComputerSession:
                 return {}
         return result
 
-    async def act(self, instruction: str) -> str:
+    async def act(self, instruction: str) -> ActResult:
         """Perform an autonomous action on the current page or screen."""
-        response = await self._request("POST", "/act", {"task": instruction})
-        return response.get("status", "success")
+        lineage = _get_current_lineage()
+        response = await self._request(
+            "POST",
+            "/act",
+            {"task": instruction, "lineage": lineage},
+        )
+        return ActResult(
+            summary=response.get("summary", ""),
+            screenshot=response.get("screenshot", ""),
+        )
 
     async def observe(self, query: str, response_format: Any = str) -> Any:
         """Observe and extract information from the current page/screen."""
@@ -880,6 +983,12 @@ class MagnitudeBackend(ComputerBackend):
 
         self._container_url = container_url
         self._local_url = local_url
+        # Skip TLS verification for VM connections only.  Caddy may serve a
+        # temporary self-signed cert during ACME; the connection is within
+        # GCP's VPC where infrastructure-level encryption already applies.
+        self._vm_ssl = (
+            False if container_url and container_url.startswith("https://") else None
+        )
 
         # Primary sessions: one per mode, created lazily
         self._sessions: dict[str, ComputerSession] = {}
@@ -927,36 +1036,58 @@ class MagnitudeBackend(ComputerBackend):
 
     async def _create_session_async(self, mode: str) -> ComputerSession:
         """Create a session asynchronously."""
+        import time as _cs_time
+
+        _cs_t0 = _cs_time.perf_counter()
         url = self._url_for_mode(mode)
         params = dict(self._MODE_START_PARAMS[mode])
         auth_key = SESSION_DETAILS.unify_key
         headers = {"authorization": f"Bearer {auth_key}"}
+        use_ssl = self._vm_ssl if mode in ("desktop", "web-vm") else None
+        logger.debug(
+            f"⏱️ [MagnitudeBackend._create_session] POST /start ({mode}) begin",
+        )
         async with aiohttp.ClientSession() as s:
             async with s.post(
                 f"{url}/start",
                 json=params,
                 headers=headers,
                 timeout=300,
+                ssl=use_ssl,
             ) as resp:
+                _cs_ms = (_cs_time.perf_counter() - _cs_t0) * 1000
                 if resp.status >= 400:
+                    logger.debug(
+                        f"⏱️ [MagnitudeBackend._create_session] POST /start FAILED "
+                        f"({_cs_ms:.0f}ms, status={resp.status})",
+                    )
                     raise RuntimeError(
                         f"Failed to create {mode} session: {resp.status}",
                     )
                 data = await resp.json()
+        _cs_ms = (_cs_time.perf_counter() - _cs_t0) * 1000
         session_id = data.get("sessionId")
         if not session_id:
             raise RuntimeError(f"Failed to get sessionId for {mode} session")
-        session = ComputerSession(session_id, mode, url)
-        logger.info(f"✅ Created {mode} session {session_id}")
+        session = ComputerSession(session_id, mode, url, ssl=use_ssl)
+        logger.info(f"✅ Created {mode} session {session_id} ({_cs_ms:.0f}ms)")
         return session
 
     async def get_session(self, mode: str) -> ComputerSession:
         """Get or lazily create the primary session for the given mode."""
         if mode in self._sessions:
+            logger.debug(f"⏱️ [MagnitudeBackend.get_session] cache hit for {mode}")
             return self._sessions[mode]
+        logger.debug(
+            f"⏱️ [MagnitudeBackend.get_session] cache miss for {mode}, creating",
+        )
         session = await self._create_session_async(mode)
         self._sessions[mode] = session
         return session
+
+    def clear_session(self, mode: str) -> None:
+        """Remove a cached session so the next get_session re-creates it."""
+        self._sessions.pop(mode, None)
 
     async def create_session(self, mode: str) -> ComputerSession:
         """Spawn an additional parallel session (web/web-vm only).
@@ -1054,7 +1185,15 @@ class MagnitudeBackend(ComputerBackend):
     async def _log_consumer(self):
         """
         Consumes logs from the internal network queue and directs them either
-        to the actor's temporary capture queue or to stdout.
+        to the actor's temporary capture queue or to Unity's LOGGER.
+
+        Log lines arriving from the agent-service are pre-formatted with
+        lineage labels (e.g. ``[CodeActActor.act(ab12)->desktop.act] 🛠️ ...``)
+        so they integrate with Unity's hierarchical log output.
+
+        Lines with the ``__MAG_DEBUG__`` prefix are structured debug payloads
+        (screenshots, act traces) that get persisted to ``MAGNITUDE_LOG_DIR``
+        and are **not** forwarded to the text log.
         """
         while True:
             try:
@@ -1064,26 +1203,33 @@ class MagnitudeBackend(ComputerBackend):
 
                 log_line = await self._network_log_queue.get()
 
-                # If the actor is currently capturing, put it in its queue
+                if log_line.startswith(_MAG_DEBUG_PREFIX):
+                    try:
+                        _handle_magnitude_debug_payload(
+                            log_line[len(_MAG_DEBUG_PREFIX) :],
+                        )
+                    except Exception as e:
+                        _UNITY_LOGGER.warning(
+                            f"[MagnitudeDebug] Failed to handle payload: {e}",
+                        )
+                    self._network_log_queue.task_done()
+                    continue
+
                 if self._current_capture_queue is not None:
-                    logger.debug(f"📥 Capturing magnitude log: {log_line[:100]}...")
                     self._current_capture_queue.put_nowait(log_line)
 
-                # Buffer logs if we are processing a command
                 if self._current_processing_seq is not None:
                     self._log_buffer[self._current_processing_seq].append(log_line)
 
                 if self._current_capture_queue is None:
-                    # Otherwise, log to console (this will show up as regular logs)
-                    logger.info(f"🔍 Magnitude: {log_line}")
+                    _UNITY_LOGGER.info(log_line)
 
                 self._network_log_queue.task_done()
             except asyncio.CancelledError:
-                logger.info("Log consumer task cancelled.")
                 break
             except Exception as e:
-                logger.error(f"[MagnitudeLogConsumerError] {e}")
-                await asyncio.sleep(1)  # Prevent rapid-fire error loops
+                _UNITY_LOGGER.error(f"[MagnitudeLogConsumerError] {e}")
+                await asyncio.sleep(1)
 
     async def _process_commands(self):
         """A background worker that pulls commands, executes them in order, and handles barriers."""
@@ -1171,6 +1317,7 @@ class MagnitudeBackend(ComputerBackend):
         url = f"{self.agent_base_url}{endpoint}"
         if payload is None:
             payload = {}
+        use_ssl = self._vm_ssl
         retries = 3
         for attempt in range(retries):
             try:
@@ -1183,6 +1330,7 @@ class MagnitudeBackend(ComputerBackend):
                         json=payload,
                         headers=headers,
                         timeout=1000,
+                        ssl=use_ssl,
                     ) as resp:
                         if resp.status >= 400:
                             try:
@@ -1216,7 +1364,7 @@ class MagnitudeBackend(ComputerBackend):
             "No sessions created yet. Use get_session(mode) to create one.",
         )
 
-    async def act(self, instruction: str, **kwargs) -> str:
+    async def act(self, instruction: str, **kwargs) -> ActResult:
         s = await self._default_session()
         return await s.act(instruction)
 

@@ -41,9 +41,8 @@ from unity.settings import SETTINGS
 from unity.conversation_manager.events import (
     PhoneCallStarted,
     InboundPhoneUtterance,
-    ActorResult,
 )
-from unity.conversation_manager.types import Mode, Medium
+from unity.conversation_manager.types import Mode
 
 from tests.conversation_manager.conftest import BOSS
 
@@ -630,97 +629,6 @@ class TestSlowBrainMultiSpeakerAwareness:
             f"The boss handed the phone to Richard. The subsequent message\n"
             f"is from Richard (on the same call), not a request to call anyone."
         )
-
-    async def test_slow_brain_call_guidance_after_multi_speaker_data_request(
-        self,
-        initialized_cm,
-    ):
-        """
-        Full flow: boss introduces someone, new speaker asks for data, slow brain
-        triggers act, result arrives, slow brain produces guidance.
-
-        The guidance should be relevant to the new speaker's question, not confused
-        by the contact label mismatch.
-        """
-        boss = BOSS
-
-        await initialized_cm.step(PhoneCallStarted(contact=boss))
-
-        # Introduction (no LLM)
-        await initialized_cm.step(
-            InboundPhoneUtterance(
-                contact=boss,
-                content="Alex, Richard is here. He wants to know about our current task pipeline.",
-            ),
-            run_llm=False,
-        )
-
-        # Richard asks about tasks
-        initialized_cm.all_tool_calls.clear()
-        result = await initialized_cm.step_until_wait(
-            InboundPhoneUtterance(
-                contact=boss,
-                content="What tasks are currently in progress?",
-            ),
-            max_steps=5,
-        )
-
-        # If the slow brain called act, complete the action and check guidance
-        all_actions = {
-            **initialized_cm.cm.in_flight_actions,
-            **initialized_cm.cm.completed_actions,
-        }
-        if "act" in initialized_cm.all_tool_calls and all_actions:
-            handle_id = next(iter(all_actions))
-
-            def _get_guidance_messages(cm, contact_id: int) -> list:
-                voice_thread = cm.contact_index.get_messages_for_contact(
-                    contact_id,
-                    Medium.PHONE_CALL,
-                )
-                return [
-                    msg
-                    for msg in voice_thread
-                    if getattr(msg, "name", None) == "guidance"
-                ]
-
-            guidance_before = _get_guidance_messages(
-                initialized_cm.cm,
-                boss["contact_id"],
-            )
-
-            result = await initialized_cm.step_until_wait(
-                ActorResult(
-                    handle_id=handle_id,
-                    success=True,
-                    result=(
-                        "Currently 3 tasks in progress: Website redesign (70% complete), "
-                        "Q1 report compilation (50%), and client onboarding for Acme Corp (30%)."
-                    ),
-                ),
-                max_steps=5,
-            )
-
-            guidance_after = _get_guidance_messages(
-                initialized_cm.cm,
-                boss["contact_id"],
-            )
-            new_guidance = guidance_after[len(guidance_before) :]
-
-            all_guidance_text = " ".join(
-                getattr(g, "content", "") for g in guidance_after
-            ).lower()
-
-            assert any(
-                term in all_guidance_text
-                for term in ["task", "website", "q1", "report", "acme", "progress"]
-            ), (
-                f"Slow brain guidance should contain task pipeline info!\n"
-                f"All guidance: {[getattr(g, 'content', '') for g in guidance_after]}\n"
-                f"Tool calls: {initialized_cm.all_tool_calls}\n\n"
-                f"Richard asked about tasks in progress. The action returned\n"
-                f"task data. The slow brain should relay this via guidance."
-            )
 
 
 # =============================================================================

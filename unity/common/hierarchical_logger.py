@@ -16,7 +16,6 @@ from __future__ import annotations
 
 import logging
 from contextvars import ContextVar
-from secrets import token_hex
 from typing import Optional
 
 from unity.logger import LOGGER
@@ -57,19 +56,19 @@ ICONS = {
     # ── Voice / utterance ───────────────────────────────────────────────
     "inbound_utterance": "🎤",
     "outbound_utterance": "🔊",
-    "call_guidance": "🎙️",
+    "call_notification": "🎙️",
     "user_speech": "🧑‍💻",
     "user_state": "🎤",
     "assistant_speech": "🔊",
-    # ── Guidance pipeline ───────────────────────────────────────────────
-    "guidance_received": "📨",
-    "guidance_applied": "🎙️",
-    "guidance_buffered": "⏳",
-    "guidance_say": "🗣️",
+    # ── Notification pipeline ────────────────────────────────────────────
+    "notification_received": "📨",
+    "notification_buffered": "⏳",
+    "notification_say": "🗣️",
     # ── Proactive speech ────────────────────────────────────────────────
     "proactive_speech": "🗣️",
+    "proactive_waiting": "⏳",
     "proactive_debounce": "⏱️",
-    "proactive_decision": "🎯",
+    "proactive_decision": "🗣️",
     "proactive_deferred": "⏸️",
     "proactive_dormant": "💤",
     "proactive_speaking": "🗣️",
@@ -86,14 +85,14 @@ ICONS = {
     "call_status": "📞",
     # ── LLM brain ───────────────────────────────────────────────────────
     "llm_log_file": "📝",
-    "llm_thinking": "🔄",
+    "llm_thinking": "🧠",
     "llm_response": "🤖",
     "llm_completed": "✅",
     "llm_cancelled": "⏹️",
     "llm_error": "❌",
     # ── Async tool loop ─────────────────────────────────────────────────
     "system_message": "📋",
-    "user_message": "🧑‍💻",
+    "request": "➡️",
     "tool_seeding": "⬇️",
     "stop_requested": "🛑",
     "early_exit": "⏹️",
@@ -130,11 +129,24 @@ ICONS = {
     "ipc_inbound": "⬇️",
     "ipc_outbound": "⬆️",
     "ipc_error": "❌",
-    # ── Inbound comms & boss events ─────────────────────────────────────
+    # ── Inbound comms ────────────────────────────────────────────────────
     "participant_comms": "📱",
-    "boss_event": "📣",
     # ── Screenshots / media ─────────────────────────────────────────────
     "screenshot": "📸",
+    "screenshot_capture": "📸",
+    "webcam_on": "📸",
+    "webcam_off": "🚫",
+    "screen_share": "🖥️",
+    "screen_share_off": "🚫",
+    "user_screen_share": "📺",
+    "user_screen_share_off": "🚫",
+    "remote_control": "🕹️",
+    "remote_control_off": "🚫",
+    "desktop_session": "🖥️",
+    # ── Fast paths (direct manager / desktop shortcuts) ────────────────
+    "fast_path": "🏎️",
+    # ── Customization / seed data ────────────────────────────────────────
+    "customization": "🏷️",
     # ── Generic / misc ──────────────────────────────────────────────────
     "event": "📣",
     "ping": "🏓",
@@ -165,20 +177,20 @@ class SessionLogger:
     Provides consistent log formatting with the same `[label]` pattern as
     async tool loops, enabling unified log viewing across all components.
 
+    Unlike async tool loops (which may have many concurrent instances and need
+    unique suffixes), session-scoped components have exactly one instance per
+    session — so the label is a fixed string with no suffix.
+
     Usage:
         logger = SessionLogger("ConversationManager")
         logger.info("phone_call_received", "Incoming call from +1234567890")
-        # Output: 📞 [ConversationManager(a1b2)] Incoming call from +1234567890
-
-    When nested inside a tool loop:
-        # Output: 📞 [Actor.act->ConversationManager(a1b2)] Incoming call...
+        # Output: 📞 [ConversationManager] Incoming call from +1234567890
     """
 
     def __init__(
         self,
         component_name: str,
         *,
-        suffix: Optional[str] = None,
         parent_lineage: Optional[list[str]] = None,
     ):
         """
@@ -186,12 +198,10 @@ class SessionLogger:
 
         Args:
             component_name: The name of the component (e.g., "ConversationManager")
-            suffix: Optional 4-hex suffix. If None, generates a new one.
             parent_lineage: Optional explicit parent lineage. If None, reads from
                 TOOL_LOOP_LINEAGE or SESSION_LINEAGE context vars.
         """
         self._component_name = component_name
-        self._suffix = suffix or token_hex(2)
 
         # Determine parent lineage
         if parent_lineage is not None:
@@ -215,18 +225,13 @@ class SessionLogger:
 
     def _build_label(self) -> str:
         """Build the hierarchical label string."""
-        parts = self._parent_lineage + [f"{self._component_name}({self._suffix})"]
+        parts = self._parent_lineage + [self._component_name]
         return "->".join(parts)
 
     @property
     def label(self) -> str:
         """The full hierarchical label for this session."""
         return self._label
-
-    @property
-    def suffix(self) -> str:
-        """The 4-hex suffix for this session."""
-        return self._suffix
 
     @property
     def lineage(self) -> list[str]:
@@ -305,7 +310,7 @@ class SessionLogger:
 
     def log_llm_thinking(self, context: str = "") -> None:
         """Log that the LLM brain is processing."""
-        msg = "LLM thinking..." if not context else f"LLM thinking: {context}"
+        msg = "LLM thinking..." if not context else f"LLM thinking... ({context})"
         self.info("llm_thinking", msg)
 
     def log_llm_response(self, summary: str = "") -> None:

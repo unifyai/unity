@@ -289,10 +289,8 @@ class OutboundUnifyMeetUtterance(Event):
 
 
 @dataclass
-class CallGuidance(Event):
-    """
-    Guidance from the Main CM Brain sent to the Voice Agent during a call.
-
+class FastBrainNotification(Event):
+    """Notification delivered to the fast brain during a voice call.
 
     When should_speak is True, response_text contains the exact text the fast
     brain should utter via session.say(), bypassing its own LLM. When
@@ -300,7 +298,7 @@ class CallGuidance(Event):
     and must NOT speak in response.
     """
 
-    topic: ClassVar[str | None] = "app:comms:assistant_call_guidance"
+    topic: ClassVar[str | None] = "app:comms:assistant_notification"
 
     contact: dict
     content: str
@@ -308,6 +306,11 @@ class CallGuidance(Event):
     should_speak: bool = False
     source: str = ""
     agent_service_url: str = ""
+    llm_log_path: str = ""
+
+
+# Backward-compatible alias for deserialization of persisted events.
+CallGuidance = FastBrainNotification
 
 
 @dataclass
@@ -441,6 +444,9 @@ class _SessionConfigBase(Event):
     user_desktop_mode: str | None = None
     user_desktop_filesys_sync: bool = False
     user_desktop_url: str | None = None
+    org_id: int | None = None
+    org_name: str = ""
+    team_ids: list[int] = field(default_factory=list)
     # Demo assistant metadata ID. If set, this is a demo session.
     # Unity derives demo_mode from (demo_id is not None).
     demo_id: int | None = None
@@ -677,6 +683,16 @@ class ActorHandleStarted(Event):
     handle_id: id
     query: str
     response_format: dict | None = None
+
+
+@dataclass
+class DesktopActCompleted(_TruncatedReprMixin, Event):
+    """Fired when primitives.computer.desktop.act() completes anywhere in the
+    system (CM fast path, CodeActActor, sub-agents).  Carries the instruction
+    and the agent's summary."""
+
+    instruction: str = ""
+    summary: str = ""
 
 
 # --------------------------------------------------------------------------- #

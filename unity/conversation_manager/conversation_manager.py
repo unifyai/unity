@@ -4,7 +4,7 @@ import contextlib
 
 from unity.logger import LOGGER
 from unity.common.hierarchical_logger import DEFAULT_ICON
-from unity.session_details import UNASSIGNED_ASSISTANT_ID, SESSION_DETAILS
+from unity.session_details import SESSION_DETAILS
 from unity.settings import SETTINGS
 from unity.manager_registry import SingletonABCMeta
 from unity.common.async_tool_loop import SteerableToolHandle
@@ -45,23 +45,27 @@ from unity.conversation_manager.types.screenshot import (
 )
 from unity.actor.base import BaseActor
 from unity.conversation_manager.domains.proactive_speech import ProactiveSpeech
-from unity.conversation_manager.tracing import content_trace_id
 from unity.conversation_manager.medium_scripts.common import FastBrainLogger
 
 MAX_CONV_MANAGER_MSGS = 50
 
 
-def _save_screenshot(entry: ScreenshotEntry) -> str:
-    """Save a screenshot to disk and return its relative path.
-
-    If the entry already carries a filepath (set by the fast brain), the file
-    is already on disk — just return the path without writing again.
-    """
-    if entry.filepath:
-        return entry.filepath
-    path = generate_screenshot_path(entry)
-    write_screenshot_to_disk(entry, path)
-    return path
+def _render_action_context(
+    in_flight_actions: dict,
+    completed_actions: dict,
+) -> str | None:
+    """Build a concise action-status summary for proactive speech."""
+    lines: list[str] = []
+    for handle_data in in_flight_actions.values():
+        query = handle_data.get("query", "unknown")
+        lines.append(f"- EXECUTING (in-flight): {query}")
+    for handle_data in completed_actions.values():
+        query = handle_data.get("query", "unknown")
+        lines.append(f"- COMPLETED: {query}")
+    if not lines:
+        return None
+    header = "[action status] The following actions are currently in progress or recently completed:"
+    return f"{header}\n" + "\n".join(lines)
 
 
 class ConversationManager(metaclass=SingletonABCMeta):
@@ -70,7 +74,7 @@ class ConversationManager(metaclass=SingletonABCMeta):
         event_broker,
         job_name: str,
         user_id: str,
-        assistant_id: str,
+        assistant_id: int | None,
         user_first_name: str,
         user_surname: str,
         assistant_first_name: str,
@@ -131,13 +135,13 @@ class ConversationManager(metaclass=SingletonABCMeta):
         self.memory_manager: MemoryManager = None
         self.actor: BaseActor | None = None
 
-        # debouncer (used to debounce llm runs)
-        self.debouncer = Debouncer()
+        self.debouncer = Debouncer(name="ConversationManager")
 
         # call manager - pass event_broker for socket IPC with voice agent subprocess
         self.call_manager = LivekitCallManager(self.get_call_config(), event_broker)
         self.call_manager.on_screenshot = self._buffer_screenshot
         self.call_manager.on_fast_brain_generating = self._on_fast_brain_generating
+        self.call_manager.on_pipeline_quiescent = self._on_pipeline_quiescent
 
         # renderer
         self.prompt_renderer = Renderer()
@@ -173,6 +177,10 @@ class ConversationManager(metaclass=SingletonABCMeta):
         self.user_webcam_active: bool = False
         self.user_remote_control_active: bool = False
 
+        # desktop fast-path gating: handle_ids of in-flight `act` sessions
+        # that have invoked at least one primitives.computer.desktop.* method.
+        self._act_handles_with_desktop_usage: set[int] = set()
+
         # screenshot buffer for slow brain visual context
         self._screenshot_buffer: list[ScreenshotEntry] = []
         # mapping from local_message_id (ephemeral CM counter) to
@@ -188,8 +196,10 @@ class ConversationManager(metaclass=SingletonABCMeta):
         # proactive speech
         self.proactive_speech = ProactiveSpeech()
         self._proactive_speech_task: asyncio.Task | None = None
-        self._fast_brain_active: bool = False
-        self._proactive_logger = FastBrainLogger()
+        self._proactive_speech_gen: int = 0
+        self._voice_pipeline_quiescent = asyncio.Event()
+        self._voice_pipeline_quiescent.set()
+        self._proactive_logger = FastBrainLogger("ProactiveSpeech")
 
         # ask handles (for Actor actions)
         self.active_ask_handle: Optional["SteerableToolHandle"] = None
@@ -203,6 +213,8 @@ class ConversationManager(metaclass=SingletonABCMeta):
         self._has_non_forwarded_event: bool = False
         self._llm_request_seq: int = 0
         self._llm_run_seq: int = 0
+        self._llm_gen: int = 0
+        self._outbound_suppress_gen: int = -1
 
         # Hierarchical session logger for consistent nested logging
         self._session_logger = SessionLogger("ConversationManager")
@@ -237,6 +249,25 @@ class ConversationManager(metaclass=SingletonABCMeta):
     def session_logger(self) -> SessionLogger:
         """The hierarchical session logger for this ConversationManager instance."""
         return self._session_logger
+
+    @property
+    def computer_primitives(self):
+        """Lazily resolve the ``ComputerPrimitives`` singleton via ManagerRegistry."""
+        from unity.function_manager.primitives.runtime import ComputerPrimitives
+        from unity.manager_registry import ManagerRegistry
+
+        return ManagerRegistry.get_instance(ComputerPrimitives)
+
+    @property
+    def desktop_fast_path_eligible(self) -> bool:
+        """True when the CM should expose desktop fast-path tools.
+
+        Requires assistant screen share to be active.  The tools are available
+        regardless of whether an in-flight ``act`` session has already invoked
+        desktop primitives — the prompt guides the LLM to spin up a concurrent
+        ``act(persist=True)`` session when one isn't already running.
+        """
+        return self.assistant_screen_share_active
 
     def get_active_contact(self) -> dict | None:
         """Get the contact for the current active call, or fall back to the boss contact."""
@@ -344,6 +375,95 @@ class ConversationManager(metaclass=SingletonABCMeta):
         peek) are preserved for the next turn.
         """
         del self._screenshot_buffer[:count]
+
+    async def _register_screenshots_background(
+        self,
+        screenshots: list[ScreenshotEntry],
+        screenshot_paths: list[str],
+    ) -> None:
+        """Persist screenshots to disk and register with ImageManager / TM.
+
+        Runs as a fire-and-forget background task after a successful LLM turn.
+        None of these operations affect the LLM prompt or decision — they are
+        purely persistence bookkeeping (disk write, image storage, transcript
+        annotation).
+        """
+        source_labels = {"assistant": "Assistant's screen", "user": "User's screen"}
+
+        # 0. Write screenshots to disk (entries with filepath already set by
+        #    the fast brain are skipped — write_screenshot_to_disk is a no-op
+        #    for those).
+        for entry, path in zip(screenshots, screenshot_paths):
+            if not entry.filepath:
+                write_screenshot_to_disk(entry, path)
+
+        # 1. Register with ImageManager to get persistent image_ids.
+        image_ids: list[int] = []
+        try:
+            from unity.manager_registry import ManagerRegistry
+
+            image_manager = ManagerRegistry.get_image_manager()
+            items = [
+                {
+                    "data": entry.b64,
+                    "timestamp": entry.timestamp,
+                    "filepath": path,
+                }
+                for entry, path in zip(screenshots, screenshot_paths)
+            ]
+            image_ids = await asyncio.to_thread(
+                image_manager.add_images,
+                items,
+                synchronous=True,
+            )
+        except Exception as e:
+            self._session_logger.warning(
+                "screenshot_registration",
+                f"ImageManager registration failed, skipping: {e}",
+            )
+            return
+
+        # 2. Annotate CM Message objects with image_ids and build TM refs.
+        msg_to_image_refs: dict[int, list[dict]] = {}
+        for i, (entry, _path) in enumerate(zip(screenshots, screenshot_paths)):
+            if entry.local_message_id is None or i >= len(image_ids):
+                continue
+            mid = entry.local_message_id
+            img_id = image_ids[i]
+
+            # Attach image_id to the Message object.
+            for gte in self.contact_index.global_thread:
+                msg = gte.message
+                if isinstance(msg, Message) and msg.local_message_id == mid:
+                    if not hasattr(msg, "image_ids") or msg.image_ids is None:
+                        msg.image_ids = []
+                    msg.image_ids.append(img_id)
+                    break
+
+            label = source_labels.get(entry.source, "Screenshot")
+            msg_to_image_refs.setdefault(mid, []).append(
+                {
+                    "raw_image_ref": {"image_id": img_id},
+                    "annotation": f"{label} -- '{entry.utterance}'",
+                },
+            )
+
+        # 3. Post-hoc update TM messages with AnnotatedImageRefs.
+        if msg_to_image_refs and self.transcript_manager is not None:
+            for local_mid, refs in msg_to_image_refs.items():
+                tm_msg_id = self._local_to_global_message_ids.get(local_mid)
+                if tm_msg_id is not None:
+                    try:
+                        await asyncio.to_thread(
+                            self.transcript_manager.update_message_images,
+                            tm_msg_id,
+                            refs,
+                        )
+                    except Exception as e:
+                        self._session_logger.warning(
+                            "screenshot_tm_update",
+                            f"TM image update failed for msg {tm_msg_id}: {e}",
+                        )
 
     def _claim_pending_user_screenshot(self, local_message_id: int) -> None:
         """Stamp the most recent unclaimed user screenshot with the given local_message_id."""
@@ -557,20 +677,8 @@ class ConversationManager(metaclass=SingletonABCMeta):
     async def interject_or_run(self, content: str):
         """Interject the ask handle or run the LLM"""
         if self.active_ask_handle and not self.active_ask_handle.done():
-            self._session_logger.info(
-                "event",
-                "Routing to active ask handle",
-                icon_override="🔀",
-            )
             await self.active_ask_handle.interject(content)
         else:
-            # With single-shot LLM, there's no ongoing brain loop to interject.
-            # Just trigger a new LLM run.
-            self._session_logger.info(
-                "llm_thinking",
-                "Triggering main CM brain",
-                icon_override="🔀",
-            )
             # Voice mode: cancel_running=False so running LLM tasks complete
             # while only pending tasks are replaced ("queue of 2"). This
             # prevents rapid user speech from cancelling every LLM run.
@@ -592,6 +700,7 @@ class ConversationManager(metaclass=SingletonABCMeta):
             kwargs={"trace_meta": trace_meta or {}},
             delay=delay,
             cancel_running=cancel_running,
+            label=(trace_meta or {}).get("origin_event_name", ""),
         )
 
     async def request_llm_run(self, delay=0, cancel_running=False) -> None:
@@ -657,12 +766,13 @@ class ConversationManager(metaclass=SingletonABCMeta):
             trace_meta=selected_meta,
         )
 
-    async def _run_llm(self, trace_meta: dict[str, str] | None = None) -> str | None:
-        """Run a single LLM decision and return the tool name that was called."""
+    async def _run_llm(self, trace_meta: dict[str, str] | None = None) -> list[str]:
+        """Run a single LLM decision and return all tool names that were called."""
         # Capture when slow brain starts thinking (for guidance staleness detection)
         from datetime import datetime, timezone
 
         trace_meta = trace_meta or {}
+        self._llm_gen += 1
         run_id = trace_meta.get("run_id", "llmrun-unknown")
         request_id = trace_meta.get("request_id", "")
         origin_event_id = trace_meta.get("origin_event_id", "")
@@ -684,63 +794,23 @@ class ConversationManager(metaclass=SingletonABCMeta):
         # cancelled mid-flight the screenshots remain available for retry.
         screenshots = self.peek_screenshot_buffer()
 
-        # Persist each screenshot to disk so the CodeActActor can reference them
-        # by filepath for programmatic operations (OCR, comparison, etc.).
-        screenshot_paths = [_save_screenshot(s) for s in screenshots]
+        # Compute deterministic filepaths for each screenshot (no I/O).
+        # The actual disk writes are deferred to the background task — the
+        # LLM only needs the path strings for prompt labels, and the
+        # CodeActActor won't read the files for 17+ seconds (behind its own
+        # LLM call), so they'll be on disk long before they're needed.
+        screenshot_paths = [
+            s.filepath or generate_screenshot_path(s) for s in screenshots
+        ]
 
-        # Register screenshots with ImageManager and attach filepaths + image_ids
-        # to the corresponding Message objects in the global thread.
-        image_ids: list[int] = []
+        # Annotate CM Message objects with screenshot filepaths so the
+        # rendered state includes path references.  This is a fast in-memory
+        # loop with no I/O — only needs the paths computed above.
         if screenshots:
-            # Register with backend to get persistent image_ids (auto-caption enabled).
-            try:
-                from unity.manager_registry import ManagerRegistry
-
-                image_manager = ManagerRegistry.get_image_manager()
-                items = [
-                    {
-                        "data": entry.b64,
-                        "timestamp": entry.timestamp,
-                        "filepath": path,
-                    }
-                    for entry, path in zip(screenshots, screenshot_paths)
-                ]
-                image_ids = await asyncio.to_thread(
-                    image_manager.add_images,
-                    items,
-                    synchronous=True,
-                )
-            except Exception as e:
-                self._session_logger.warning(
-                    "screenshot_registration",
-                    f"ImageManager registration failed, skipping: {e}",
-                )
-                image_ids = []
-
-            # Build per-message groupings for filepaths, image_ids, and TM refs.
             msg_to_paths: dict[int, list[str]] = {}
-            msg_to_image_ids: dict[int, list[int]] = {}
-            msg_to_image_refs: dict[int, list[dict]] = {}
-            source_labels = {"assistant": "Assistant's screen", "user": "User's screen"}
-            for i, (entry, path) in enumerate(zip(screenshots, screenshot_paths)):
-                if entry.local_message_id is None:
-                    continue
-                mid = entry.local_message_id
-                msg_to_paths.setdefault(mid, []).append(path)
-                if i < len(image_ids):
-                    img_id = image_ids[i]
-                    msg_to_image_ids.setdefault(mid, []).append(img_id)
-                    label = source_labels.get(entry.source, "Screenshot")
-                    msg_to_image_refs.setdefault(mid, []).append(
-                        {
-                            "raw_image_ref": {"image_id": img_id},
-                            "annotation": f"{label} -- '{entry.utterance}'",
-                        },
-                    )
-
-            # Annotate CM Message objects with filepaths and image_ids.
-            # Uses assignment (not extend) so that re-processing the same
-            # screenshots on a retried turn is idempotent.
+            for entry, path in zip(screenshots, screenshot_paths):
+                if entry.local_message_id is not None:
+                    msg_to_paths.setdefault(entry.local_message_id, []).append(path)
             if msg_to_paths:
                 for gte in self.contact_index.global_thread:
                     msg = gte.message
@@ -749,33 +819,24 @@ class ConversationManager(metaclass=SingletonABCMeta):
                         and msg.local_message_id in msg_to_paths
                     ):
                         msg.screenshots = msg_to_paths.pop(msg.local_message_id)
-                        if msg.local_message_id in msg_to_image_ids:
-                            msg.image_ids = msg_to_image_ids.pop(
-                                msg.local_message_id,
-                            )
                     if not msg_to_paths:
                         break
 
-            # Post-hoc update TM messages with AnnotatedImageRefs.
-            if msg_to_image_refs and self.transcript_manager is not None:
-                for local_mid, refs in msg_to_image_refs.items():
-                    tm_msg_id = self._local_to_global_message_ids.get(local_mid)
-                    if tm_msg_id is not None:
-                        try:
-                            await asyncio.to_thread(
-                                self.transcript_manager.update_message_images,
-                                tm_msg_id,
-                                refs,
-                            )
-                        except Exception as e:
-                            self._session_logger.warning(
-                                "screenshot_tm_update",
-                                f"TM image update failed for msg {tm_msg_id}: {e}",
-                            )
-
         self.snapshot()
+        snapshot_state = self.prompt_renderer.render_state(
+            self.contact_index,
+            self.notifications_bar,
+            self.in_flight_actions,
+            self.completed_actions,
+            self.last_snapshot,
+            assistant_screen_share_active=self.assistant_screen_share_active,
+            user_screen_share_active=self.user_screen_share_active,
+            user_webcam_active=self.user_webcam_active,
+            user_remote_control_active=self.user_remote_control_active,
+        )
         brain_spec = build_brain_spec(
             self,
+            snapshot_state=snapshot_state,
             screenshots=screenshots,
             screenshot_paths=screenshot_paths,
         )
@@ -791,22 +852,15 @@ class ConversationManager(metaclass=SingletonABCMeta):
         # Tools (act, steering) need the fresh rendered state, not the stale chat_history.
         self._current_state_snapshot = input_message
 
-        # Also capture the structured snapshot state for incremental diff computation.
+        # Reuse the same SnapshotState for incremental diff computation.
         # This enables interject operations to send only changes since the initial act().
-        self._current_snapshot_state = self.prompt_renderer.render_state(
-            self.contact_index,
-            self.notifications_bar,
-            self.in_flight_actions,
-            self.completed_actions,
-            self.last_snapshot,
-            assistant_screen_share_active=self.assistant_screen_share_active,
-            user_screen_share_active=self.user_screen_share_active,
-            user_webcam_active=self.user_webcam_active,
-            user_remote_control_active=self.user_remote_control_active,
-        )
+        self._current_snapshot_state = snapshot_state
 
-        # Log LLM thinking start
-        self._session_logger.log_llm_thinking()
+        reason = (trace_meta or {}).get("origin_event_name", "")
+        self._session_logger.debug(
+            "llm_thinking",
+            f"LLM thinking... ({reason})" if reason else "LLM thinking...",
+        )
 
         # Build response model dynamically with current in-flight actions
         response_model = brain_spec.response_model
@@ -829,15 +883,37 @@ class ConversationManager(metaclass=SingletonABCMeta):
                 tools.pop("guide_voice_agent")
         self._has_non_forwarded_event = False
 
+        if self.desktop_fast_path_eligible:
+            tools["desktop_act"] = action_tools.desktop_act
+
         # Single-shot LLM call: one decision, one action
         client = new_llm_client(
             SETTINGS.UNIFY_MODEL,
-            origin="ConversationManager.decide",
+            origin="ConversationManager",
         )
+        if hasattr(client, "_pending_thinking_log"):
+            parts = [
+                p
+                for p in [reason, "from queue" if self.debouncer.was_queued else ""]
+                if p
+            ]
+            suffix = f" ({', '.join(parts)})" if parts else ""
+            client._pending_thinking_log.set_thinking_context(suffix)
         client.set_system_message(system_prompt.to_list())
         client.set_prompt_caching(["system"])
         messages = self._preprocess_messages(self.chat_history + [input_message])
         _source_token = _EVENT_SOURCE.set("ConversationManager")
+        import time as _rl_time
+
+        _rl_t0 = _rl_time.perf_counter()
+
+        def _rl_ms() -> str:
+            return f"{(_rl_time.perf_counter() - _rl_t0) * 1000:.0f}ms"
+
+        self._session_logger.debug(
+            "perf",
+            f"[_run_llm +{_rl_ms()}] calling single_shot_tool_decision ({len(tools)} tools, {len(messages)} msgs)",
+        )
         try:
             result = await single_shot_tool_decision(
                 client,
@@ -847,7 +923,14 @@ class ConversationManager(metaclass=SingletonABCMeta):
                 response_format=response_model,
             )
         finally:
+            if hasattr(client, "_pending_thinking_log"):
+                client._pending_thinking_log.emit_fallback()
             _EVENT_SOURCE.reset(_source_token)
+        tool_names = [t.name for t in result.tools]
+        self._session_logger.debug(
+            "perf",
+            f"[_run_llm +{_rl_ms()}] single_shot returned tools={tool_names}",
+        )
 
         # Extract structured output (thoughts)
         structured = result.structured_output
@@ -860,41 +943,42 @@ class ConversationManager(metaclass=SingletonABCMeta):
         # or SPEAK (should_speak=True + response_text) by calling
         # guide_voice_agent in parallel with its action tool.
         if self.mode.is_voice:
-            call_guidance = ""
+            notification_content = ""
             should_speak = False
             response_text = ""
             for tool_exec in result.tools:
                 if tool_exec.name == "guide_voice_agent":
                     args = tool_exec.args or {}
-                    call_guidance = args.get("content", "")
+                    notification_content = args.get("content", "")
                     should_speak = args.get("should_speak", False)
                     response_text = args.get("response_text", "")
                     break
 
-            if call_guidance:
-                guidance_id = content_trace_id("guid", call_guidance)
+            if notification_content:
+                pending = getattr(client, "_pending_thinking_log", None)
+                slow_brain_log_path = (
+                    pending.last_path or "" if pending is not None else ""
+                )
                 contact = self.get_active_contact()
-                event = CallGuidance(
+                event = FastBrainNotification(
                     contact=contact,
-                    content=call_guidance,
+                    content=notification_content,
                     response_text=response_text,
                     should_speak=should_speak,
                     source="slow_brain",
+                    llm_log_path=slow_brain_log_path,
                 )
                 self._session_logger.info(
-                    "call_guidance",
-                    (
-                        f"Publishing guidance guidance_id={guidance_id} "
-                        f"run_id={run_id} speak={should_speak}"
-                    ),
+                    "call_notification",
+                    f"Publishing notification run_id={run_id} speak={should_speak}",
                 )
                 event_json = event.to_json()
                 await self.event_broker.publish(
-                    "app:call:call_guidance",
+                    "app:call:notification",
                     event_json,
                 )
                 await self.event_broker.publish(
-                    "app:comms:assistant_call_guidance",
+                    "app:comms:assistant_notification",
                     event_json,
                 )
 
@@ -905,9 +989,13 @@ class ConversationManager(metaclass=SingletonABCMeta):
                 if len(thoughts) > 100
                 else f"run_id={run_id} thoughts: {thoughts}"
             )
-            + (f" | action: {result.tool_name}" if result.tool_name else ""),
+            + (f" | actions: {tool_names}" if tool_names else ""),
         )
 
+        self._session_logger.debug(
+            "perf",
+            f"[_run_llm +{_rl_ms()}] voice notification done, committing",
+        )
         self.commit()
         self._session_logger.debug("state_update", "Committing state")
 
@@ -921,6 +1009,12 @@ class ConversationManager(metaclass=SingletonABCMeta):
         # are preserved.
         if screenshots:
             self.commit_screenshot_buffer(len(screenshots))
+            asyncio.create_task(
+                self._register_screenshots_background(
+                    screenshots,
+                    screenshot_paths,
+                ),
+            )
 
         # Build assistant message for chat history
         assistant_content = (
@@ -930,21 +1024,29 @@ class ConversationManager(metaclass=SingletonABCMeta):
         self.chat_history.append({"role": "assistant", "content": assistant_content})
 
         # If the LLM called wait(delay=N), schedule a delayed follow-up turn.
-        if result.tool_name == "wait":
-            delay = (result.tool_args or {}).get("delay")
-            self._session_logger.info("wait", "Waiting...")
-            if delay is not None:
-                await self.request_llm_run(delay=delay)
+        for tool_exec in result.tools:
+            if tool_exec.name == "wait":
+                delay = (tool_exec.args or {}).get("delay")
+                msg = (
+                    f"Decided to wait {delay} seconds"
+                    if delay is not None
+                    else "Decided to wait"
+                )
+                self._session_logger.info("wait", msg)
+                if delay is not None:
+                    await self.run_llm(delay=delay)
+                break
 
         self._session_logger.debug(
+            "perf",
+            f"[_run_llm +{_rl_ms()}] post-processing done",
+        )
+        self._session_logger.debug(
             "llm_response",
-            (
-                f"Slow-brain run completed run_id={run_id} "
-                f"tool={result.tool_name or '-'}"
-            ),
+            (f"Slow-brain run completed run_id={run_id} " f"tools={tool_names or '-'}"),
         )
 
-        return result.tool_name
+        return tool_names
 
     async def wait_for_events(self):
         async with self.event_broker.pubsub() as pubsub:
@@ -993,15 +1095,34 @@ class ConversationManager(metaclass=SingletonABCMeta):
                         self,
                     )
                     await self.flush_llm_requests()
+                except Exception as exc:
+                    LOGGER.error(
+                        f"⚠️ [EventLoop] Unhandled error processing "
+                        f"event_id={event_id} event={event_name} "
+                        f"channel={channel or '-'}: {exc}",
+                        exc_info=True,
+                    )
                 finally:
                     self._current_event_trace = None
 
     async def check_inactivity(self):
-        """Monitor for inactivity and shut down gracefully after timeout"""
+        """Monitor for inactivity and shut down gracefully after timeout.
+
+        Activity is detected from two sources:
+        - External pubsub messages (updated by wait_for_events via last_activity_time)
+        - Internal EventBus publishes (LLM calls, tool-loop turns, manager methods)
+        """
+        import time as _time
+
+        from unity.events.event_bus import EventBus
+
         while True:
             await asyncio.sleep(self.inactivity_check_interval)
             current_time = self.loop.time()
-            if current_time - self.last_activity_time > self.inactivity_timeout:
+            pubsub_idle = current_time - self.last_activity_time
+            eventbus_idle = _time.monotonic() - EventBus.last_publish_monotonic
+            idle_seconds = min(pubsub_idle, eventbus_idle)
+            if idle_seconds > self.inactivity_timeout:
                 log_str = f"Inactivity timeout reached ({self.inactivity_timeout}s), requesting shutdown"
                 LOGGER.debug(f"{DEFAULT_ICON} {log_str}")
                 self._session_logger.debug("session_end", log_str)
@@ -1012,7 +1133,7 @@ class ConversationManager(metaclass=SingletonABCMeta):
     def set_details(self, payload: dict):
         """Populate assistant/user/voice details into SESSION_DETAILS."""
         self.user_id = payload["user_id"]
-        self.assistant_id = payload["assistant_id"]
+        self.assistant_id = int(payload["assistant_id"])
         self.assistant_first_name = payload["assistant_first_name"]
         self.assistant_surname = payload["assistant_surname"]
         self.assistant_age = payload["assistant_age"]
@@ -1032,12 +1153,15 @@ class ConversationManager(metaclass=SingletonABCMeta):
         self.user_desktop_mode = payload.get("user_desktop_mode")
         self.user_desktop_filesys_sync = payload.get("user_desktop_filesys_sync", False)
         self.user_desktop_url = payload.get("user_desktop_url")
+        self.org_id: int | None = payload.get("org_id")
+        self.org_name: str = payload.get("org_name", "")
+        self.team_ids: list[int] = payload.get("team_ids") or []
         # Set API key on SESSION_DETAILS for runtime access
         if payload.get("api_key"):
             SESSION_DETAILS.unify_key = payload["api_key"]
         # Populate the global SessionDetails singleton
         SESSION_DETAILS.populate(
-            assistant_id=self.assistant_id,
+            agent_id=self.assistant_id,
             assistant_first_name=self.assistant_first_name,
             assistant_surname=self.assistant_surname,
             assistant_age=self.assistant_age,
@@ -1051,6 +1175,9 @@ class ConversationManager(metaclass=SingletonABCMeta):
             user_surname=self.user_surname,
             user_number=self.user_number,
             user_email=self.user_email,
+            org_id=self.org_id,
+            org_name=self.org_name,
+            team_ids=self.team_ids,
             voice_provider=self.voice_provider,
             voice_id=self.voice_id,
             desktop_mode=self.desktop_mode,
@@ -1103,7 +1230,7 @@ class ConversationManager(metaclass=SingletonABCMeta):
         # Stop file sync to ensure final sync to VM
         await self._stop_file_sync()
 
-        if self.job_name and self.assistant_id != UNASSIGNED_ASSISTANT_ID:
+        if self.job_name and self.assistant_id is not None:
             self._session_logger.debug(
                 "session_end",
                 f"Marking job {self.job_name} done",
@@ -1141,14 +1268,18 @@ class ConversationManager(metaclass=SingletonABCMeta):
     def _on_fast_brain_generating(self) -> None:
         """Called via IPC when the fast brain starts generating a reply.
 
-        Sets ``_fast_brain_active`` so the proactive speech loop knows the
-        user is about to hear (or is already hearing) the assistant speak.
-        The flag is cleared when the corresponding ``OutboundUtterance``
-        arrives, and ``schedule_proactive_speech`` restarts the cycle from
-        the correct baseline.
+        Restarts the proactive speech cycle so any in-flight decision is
+        cancelled.  The quiescence gate in ``_proactive_speech_loop`` will
+        prevent the countdown from starting until the pipeline is idle again.
         """
-        self._fast_brain_active = True
         asyncio.ensure_future(self.schedule_proactive_speech())
+
+    def _on_pipeline_quiescent(self, quiescent: bool) -> None:
+        """Called via IPC when the voice pipeline quiescence state changes."""
+        if quiescent:
+            self._voice_pipeline_quiescent.set()
+        else:
+            self._voice_pipeline_quiescent.clear()
 
     async def schedule_proactive_speech(self):
         """Cancel any pending proactive speech and start a fresh cycle.
@@ -1156,13 +1287,18 @@ class ConversationManager(metaclass=SingletonABCMeta):
         Called on every user/assistant utterance event to reset the silence
         timer.  Only operates in voice modes (call / meet).
         """
+        self._proactive_speech_gen += 1
+        my_gen = self._proactive_speech_gen
         await self.cancel_proactive_speech()
 
         if not self.mode.is_voice:
             return
 
+        if self._proactive_speech_gen != my_gen:
+            return
+
         self._proactive_speech_task = asyncio.create_task(
-            self._proactive_speech_loop(),
+            self._proactive_speech_loop(my_gen),
         )
         self._proactive_speech_task.add_done_callback(log_task_exc)
 
@@ -1176,41 +1312,118 @@ class ConversationManager(metaclass=SingletonABCMeta):
                 await self._proactive_speech_task
             self._proactive_speech_task = None
 
-    async def _proactive_speech_loop(self):
+    async def _proactive_speech_loop(self, gen: int = 0):
         _log = self._proactive_logger
+
+        def _superseded() -> bool:
+            return self._proactive_speech_gen != gen
+
         try:
+            if not self._voice_pipeline_quiescent.is_set():
+                _log.proactive_waiting_for_quiescence()
+                await self._voice_pipeline_quiescent.wait()
+                if _superseded():
+                    return
+
             _log.proactive_debounce(self.PROACTIVE_DEBOUNCE_SECONDS)
             await asyncio.sleep(self.PROACTIVE_DEBOUNCE_SECONDS)
 
-            if self._fast_brain_active:
-                _log.proactive_deferred("fast brain is active")
+            if _superseded():
+                return
+
+            if not self._voice_pipeline_quiescent.is_set():
+                _log.proactive_deferred("pipeline not quiescent")
                 return
 
             # Gather context for the decision.
             conversation_turns, _ = self.get_recent_voice_transcript()
 
-            active_visuals = []
-            if self.user_screen_share_active:
-                active_visuals.append("the user is sharing their screen")
-            if self.user_webcam_active:
-                active_visuals.append("the user's webcam is on")
-            if self.assistant_screen_share_active:
-                active_visuals.append("the assistant's desktop is being shared")
-            if active_visuals:
+            # Attach the latest screenshot from each active visual source
+            # so the proactive LLM can visually verify screen state.
+            screenshots = self.peek_screenshot_buffer()
+            latest_by_source: dict[str, ScreenshotEntry] = {}
+            for entry in screenshots:
+                latest_by_source[entry.source] = entry
+
+            if latest_by_source:
+                source_labels = {
+                    "assistant": "Assistant's Screen",
+                    "user": "User's Screen",
+                    "webcam": "User's Webcam",
+                }
+                content_parts: list[dict] = []
+                for source, entry in latest_by_source.items():
+                    label = source_labels.get(source, "Screenshot")
+                    content_parts.append(
+                        {
+                            "type": "text",
+                            "text": (f'[{label}] User said: "{entry.utterance}"'),
+                        },
+                    )
+                    content_parts.append(
+                        {
+                            "type": "image_url",
+                            "image_url": {
+                                "url": f"data:image/jpeg;base64,{entry.b64}",
+                            },
+                        },
+                    )
                 conversation_turns.append(
-                    {
-                        "role": "system",
-                        "content": f"[context] {', '.join(active_visuals).capitalize()}.",
-                    },
+                    {"role": "user", "content": content_parts},
                 )
+            else:
+                active_visuals = []
+                if self.user_screen_share_active:
+                    active_visuals.append("the user is sharing their screen")
+                if self.user_webcam_active:
+                    active_visuals.append("the user's webcam is on")
+                if self.assistant_screen_share_active:
+                    active_visuals.append(
+                        "the assistant's desktop is being shared",
+                    )
+                if active_visuals:
+                    conversation_turns.append(
+                        {
+                            "role": "system",
+                            "content": (
+                                f"[context] "
+                                f"{', '.join(active_visuals).capitalize()}."
+                            ),
+                        },
+                    )
 
-            brain_spec = build_brain_spec(self)
+            snapshot_state = self.prompt_renderer.render_state(
+                self.contact_index,
+                self.notifications_bar,
+                self.in_flight_actions,
+                self.completed_actions,
+                self.last_snapshot,
+                assistant_screen_share_active=self.assistant_screen_share_active,
+                user_screen_share_active=self.user_screen_share_active,
+                user_webcam_active=self.user_webcam_active,
+                user_remote_control_active=self.user_remote_control_active,
+            )
+            brain_spec = build_brain_spec(self, snapshot_state=snapshot_state)
 
-            decision = await self.proactive_speech.decide(
+            action_context = _render_action_context(
+                self.in_flight_actions,
+                self.completed_actions,
+            )
+
+            decision, llm_log_path = await self.proactive_speech.decide(
                 conversation_turns,
                 brain_spec.system_prompt.flatten(),
+                action_context=action_context,
             )
-            _log.proactive_decision(decision.should_speak, decision.delay)
+
+            if _superseded():
+                return
+
+            _log.proactive_decision(
+                decision.should_speak,
+                decision.delay,
+                decision.content,
+            )
 
             if not decision.should_speak:
                 _log.proactive_dormant()
@@ -1220,6 +1433,9 @@ class ConversationManager(metaclass=SingletonABCMeta):
             if decision.delay > 0:
                 _log.proactive_speaking(decision.delay, decision.content)
                 await asyncio.sleep(decision.delay)
+
+            if _superseded():
+                return
 
             # Record in contact_index.
             contact = self.get_active_contact()
@@ -1236,19 +1452,19 @@ class ConversationManager(metaclass=SingletonABCMeta):
                     role="assistant",
                 )
 
-            guidance_id = content_trace_id("guid", decision.content)
-            event = CallGuidance(
+            event = FastBrainNotification(
                 contact=contact or {},
                 content=decision.content,
                 response_text=decision.content,
                 should_speak=True,
                 source="proactive_speech",
+                llm_log_path=llm_log_path,
             )
             await self.event_broker.publish(
-                "app:call:call_guidance",
+                "app:call:notification",
                 event.to_json(),
             )
-            _log.proactive_published(guidance_id, decision.content)
+            _log.proactive_published(decision.content)
 
         except asyncio.CancelledError:
             _log.proactive_cancelled()
