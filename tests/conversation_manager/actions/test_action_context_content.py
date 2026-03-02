@@ -712,7 +712,14 @@ class TestContextContent:
         # Create a snapshot via the normal rendering path
         from unity.conversation_manager.domains.brain import build_brain_spec
 
-        brain_spec = build_brain_spec(cm)
+        snapshot_state = cm.prompt_renderer.render_state(
+            cm.contact_index,
+            cm.notifications_bar,
+            cm.in_flight_actions,
+            cm.completed_actions,
+            cm.last_snapshot,
+        )
+        brain_spec = build_brain_spec(cm, snapshot_state=snapshot_state)
         state_content = brain_spec.state_prompt
 
         # Verify expected sections exist
