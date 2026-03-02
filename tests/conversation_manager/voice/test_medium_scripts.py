@@ -38,7 +38,6 @@ conversation while the Main CM Brain (slow brain) handles orchestration.
    - build_voice_agent_prompt output structure
 """
 
-import asyncio
 import json
 from types import SimpleNamespace
 
@@ -805,13 +804,15 @@ class TestInactivityTimeout:
 class TestFastBrainGuidanceFlow:
     """Coverage for guidance delivery in the TTS fast brain path."""
 
-    async def test_notify_only_guidance_triggers_reply_but_not_speech(
+    async def test_notify_only_guidance_injects_context_without_direct_speech(
         self,
         monkeypatch,
     ):
-        """Guidance with should_speak=False injects into chat context and
-        triggers generate_reply() (so the LLM can decide whether to respond)
-        but does NOT trigger session.say()."""
+        """Guidance with should_speak=False injects into both chat contexts
+        without calling session.say() directly.  The structured notification
+        evaluator (_schedule_notification_eval) handles the speak/wait
+        decision asynchronously — that path is covered by
+        test_structured_notification_reply.py."""
         from livekit.agents import llm
         from unity.conversation_manager.medium_scripts import call as call_script
 
@@ -967,7 +968,6 @@ class TestFastBrainGuidanceFlow:
         await call_script.entrypoint(_FakeJobContext())
 
         session = fake_session_holder["session"]
-        baseline_reply_calls = session.generate_reply_calls
 
         # Send notify-only guidance (should_speak=False, no response_text)
         guidance_cb = fake_broker.callbacks["app:call:notification"]
@@ -988,16 +988,11 @@ class TestFastBrainGuidanceFlow:
         ]
         assert any("No, there is no contact named Bob." in txt for txt in agent_texts)
 
-        # say() must NOT fire (the articulator decided not to speak), but
-        # generate_reply() SHOULD fire so the LLM gets a chance to react.
-        # Wait for the notification coalesce timer to fire.
-        await asyncio.sleep(0.1)
+        # say() must NOT fire directly — the structured notification evaluator
+        # decides asynchronously whether to speak.
         assert (
             len(session.say_calls) == 0
-        ), "Notify-only guidance must NOT trigger session.say()."
-        assert (
-            session.generate_reply_calls > baseline_reply_calls
-        ), "Notify-only guidance must trigger generate_reply()."
+        ), "Notify-only guidance must NOT trigger session.say() directly."
 
     async def test_should_speak_guidance_not_injected_into_chat_ctx(
         self,
