@@ -489,6 +489,8 @@ class MockComputerBackend(ComputerBackend):
         # Sequence tracking (for barrier compatibility)
         self._seq = 0
 
+        self._on_session_closed = None
+
     @property
     def backend(self) -> "MockComputerBackend":
         """
@@ -1045,6 +1047,8 @@ class MagnitudeBackend(ComputerBackend):
         # The primary base URL for websocket log streaming
         self.agent_base_url = container_url or local_url or "http://localhost:3000"
 
+        self._on_session_closed = None
+
         logger.info(
             f"🔗 MagnitudeBackend initialized (container={self._container_url}, local={self._local_url})",
         )
@@ -1244,6 +1248,22 @@ class MagnitudeBackend(ComputerBackend):
                         )
                     self._network_log_queue.task_done()
                     continue
+
+                if log_line.startswith('{"__type":'):
+                    try:
+                        event = json.loads(log_line)
+                        if event.get("__type") == "session:closed":
+                            sid = event.get("sessionId", "")
+                            reason = event.get("reason", "unknown")
+                            _UNITY_LOGGER.info(
+                                f"[SessionClosed] id={sid} reason={reason}",
+                            )
+                            if self._on_session_closed:
+                                self._on_session_closed(sid)
+                            self._network_log_queue.task_done()
+                            continue
+                    except (json.JSONDecodeError, KeyError):
+                        pass
 
                 if self._current_capture_queue is not None:
                     self._current_capture_queue.put_nowait(log_line)

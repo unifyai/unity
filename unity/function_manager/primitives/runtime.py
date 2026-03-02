@@ -99,18 +99,41 @@ def _publish_desktop_act_completed(instruction: str, result: "ActResult") -> Non
         pass
 
 
+def _is_dead_session_error(e) -> bool:
+    """Return True if the error indicates the session/browser is permanently gone."""
+    from unity.function_manager.computer_backends import ComputerAgentError
+
+    if not isinstance(e, ComputerAgentError):
+        return False
+    if e.error_type == "session_not_found":
+        return True
+    msg = (e.message or "").lower()
+    return any(
+        pattern in msg
+        for pattern in (
+            "browser has been closed",
+            "context has been closed",
+            "page has been closed",
+        )
+    )
+
+
 def _make_session_method(
     method_name: str,
     owner: "ComputerPrimitives",
     session_resolver,
     *,
     mode: str = "",
+    on_session_dead=None,
 ):
     """Build a wrapped async method that routes through a session.
 
     ``session_resolver`` is an async callable returning a ``ComputerSession``.
     Shared by ``_ComputerNamespace`` (lazy singleton) and ``WebSessionHandle``
     (bound instance).
+
+    ``on_session_dead`` is an optional callback invoked when a request fails
+    with a terminal session error (session removed, browser closed).
     """
     from unity.function_manager.computer_backends import ComputerSession
 
@@ -131,7 +154,12 @@ def _make_session_method(
             from PIL import Image as _Image
 
             session = await session_resolver()
-            b64 = await session.get_screenshot()
+            try:
+                b64 = await session.get_screenshot()
+            except Exception as e:
+                if on_session_dead and _is_dead_session_error(e):
+                    on_session_dead()
+                raise
             if is_desktop:
                 _publish_desktop_invoked(method_name)
             return _Image.open(io.BytesIO(base64.b64decode(b64)))
@@ -183,7 +211,12 @@ def _make_session_method(
         _w_log.debug(
             f"⏱️ [desktop.{method_name} +{_w_ms()}] calling session.{method_name}",
         )
-        result = await getattr(session, method_name)(*args, **kwargs)
+        try:
+            result = await getattr(session, method_name)(*args, **kwargs)
+        except Exception as e:
+            if on_session_dead and _is_dead_session_error(e):
+                on_session_dead()
+            raise
         _w_log.debug(
             f"⏱️ [desktop.{method_name} +{_w_ms()}] session.{method_name} returned",
         )
@@ -235,11 +268,23 @@ class WebSessionHandle:
         self._owner = owner
         self._active = True
 
+        def _mark_inactive():
+            self._active = False
+
         async def _resolve():
             return self._session
 
         for name in _COMPUTER_METHODS:
-            setattr(self, name, _make_session_method(name, owner, _resolve))
+            setattr(
+                self,
+                name,
+                _make_session_method(
+                    name,
+                    owner,
+                    _resolve,
+                    on_session_dead=_mark_inactive,
+                ),
+            )
 
     @property
     def session_id(self) -> str:
@@ -450,7 +495,16 @@ class ComputerPrimitives(metaclass=SingletonABCMeta):
                 )
             else:
                 raise ValueError(f"Unknown computer_mode: '{self._computer_mode}'.")
+            self._backend._on_session_closed = self._invalidate_web_session
         return self._backend
+
+    def _invalidate_web_session(self, session_id: str) -> None:
+        """Mark the WebSessionHandle with the given session_id as inactive."""
+        if self._web_factory is None:
+            return
+        for h in self._web_factory._handles:
+            if h.session_id == session_id:
+                h._active = False
 
     # ── Sub-namespace properties ─────────────────────────────────────────
 

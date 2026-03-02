@@ -439,3 +439,129 @@ class TestListSessions:
         assert session.active is True
         await session.stop()
         assert session.active is False
+
+
+# ── Lazy session invalidation (Option A) ──────────────────────────────
+
+
+class TestLazySessionInvalidation:
+    """When a session method raises a terminal error, the handle is auto-invalidated."""
+
+    @pytest.mark.asyncio
+    async def test_session_not_found_marks_handle_inactive(self):
+        from unittest.mock import AsyncMock
+        from unity.function_manager.computer_backends import ComputerAgentError
+
+        cp = _make_primitives()
+        session = await cp.web.new_session()
+        assert session.active is True
+
+        session._session.act = AsyncMock(
+            side_effect=ComputerAgentError("session_not_found", "Session gone"),
+        )
+        with pytest.raises(ComputerAgentError):
+            await session.act("click something")
+        assert session.active is False
+
+    @pytest.mark.asyncio
+    async def test_browser_closed_marks_handle_inactive(self):
+        from unittest.mock import AsyncMock
+        from unity.function_manager.computer_backends import ComputerAgentError
+
+        cp = _make_primitives()
+        session = await cp.web.new_session()
+
+        session._session.act = AsyncMock(
+            side_effect=ComputerAgentError(
+                "service_error",
+                "Target page, context or browser has been closed",
+            ),
+        )
+        with pytest.raises(ComputerAgentError):
+            await session.act("click something")
+        assert session.active is False
+
+    @pytest.mark.asyncio
+    async def test_transient_error_does_not_invalidate(self):
+        from unittest.mock import AsyncMock
+        from unity.function_manager.computer_backends import ComputerAgentError
+
+        cp = _make_primitives()
+        session = await cp.web.new_session()
+
+        session._session.act = AsyncMock(
+            side_effect=ComputerAgentError("timeout", "Request timed out"),
+        )
+        with pytest.raises(ComputerAgentError):
+            await session.act("click something")
+        assert session.active is True
+
+    @pytest.mark.asyncio
+    async def test_list_sessions_excludes_lazily_invalidated(self):
+        from unittest.mock import AsyncMock
+        from unity.function_manager.computer_backends import ComputerAgentError
+
+        cp = _make_primitives()
+        s1 = await cp.web.new_session()
+        s2 = await cp.web.new_session()
+
+        s1._session.act = AsyncMock(
+            side_effect=ComputerAgentError("session_not_found", "Gone"),
+        )
+        with pytest.raises(ComputerAgentError):
+            await s1.act("click")
+
+        active = cp.web.list_sessions(active_only=True)
+        assert s1 not in active
+        assert s2 in active
+
+    def test_desktop_namespace_not_affected(self):
+        """Desktop namespace methods do NOT get the on_session_dead callback."""
+        cp = _make_primitives()
+        ns = cp.desktop
+        assert not hasattr(ns, "_active")
+
+
+# ── Push session invalidation (Option B) ──────────────────────────────
+
+
+class TestPushSessionInvalidation:
+    """The _on_session_closed callback (wired from ComputerPrimitives to the
+    backend) marks handles inactive by session_id."""
+
+    @pytest.mark.asyncio
+    async def test_on_session_closed_callback_marks_handle_inactive(self):
+        cp = _make_primitives()
+        session = await cp.web.new_session(visible=True)
+        sid = session.session_id
+        assert session.active is True
+
+        cp._invalidate_web_session(sid)
+        assert session.active is False
+
+    @pytest.mark.asyncio
+    async def test_on_session_closed_unknown_id_is_noop(self):
+        cp = _make_primitives()
+        session = await cp.web.new_session(visible=True)
+        cp._invalidate_web_session("nonexistent-id")
+        assert session.active is True
+
+    @pytest.mark.asyncio
+    async def test_list_sessions_reflects_push_invalidation(self):
+        cp = _make_primitives()
+        s1 = await cp.web.new_session(visible=True)
+        s2 = await cp.web.new_session(visible=True)
+
+        cp._invalidate_web_session(s1.session_id)
+
+        active = cp.web.list_sessions(active_only=True)
+        assert s1 not in active
+        assert s2 in active
+
+    @pytest.mark.asyncio
+    async def test_backend_callback_is_wired(self):
+        """The backend's _on_session_closed is set to the primitives callback."""
+        cp = _make_primitives()
+        _ = cp.backend  # trigger lazy init
+        assert cp.backend._on_session_closed is not None
+        assert cp.backend._on_session_closed == cp._invalidate_web_session
