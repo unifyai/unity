@@ -112,6 +112,45 @@ async def send_unify_message(
         return {"success": False, "error": str(e)}
 
 
+async def publish_assistant_desktop_ready(
+    desktop_url: str,
+    liveview_url: str,
+    vm_type: str,
+) -> None:
+    """Publish desktop-ready notification to the assistant's Pub/Sub topic.
+
+    The Console subscribes to this thread to update the liveview iframe.
+    """
+    agent_id = SESSION_DETAILS.assistant.agent_id
+    staging_suffix = "-staging" if SETTINGS.STAGING and agent_id is not None else ""
+    topic_name = f"unity-{agent_id}{staging_suffix}"
+    publisher = _get_publisher()
+    topic_path = publisher.topic_path("responsive-city-458413-a2", topic_name)
+
+    message_data = {
+        "thread": "assistant_desktop_ready",
+        "event": {
+            "desktop_url": desktop_url,
+            "liveview_url": liveview_url,
+            "vm_type": vm_type,
+        },
+    }
+    try:
+        future = publisher.publish(
+            topic_path,
+            json.dumps(message_data).encode("utf-8"),
+            thread="assistant_desktop_ready",
+        )
+        future.result()
+        LOGGER.debug(
+            f"{ICONS['comms_outbound']} Published assistant_desktop_ready to {topic_name}",
+        )
+    except Exception as e:
+        LOGGER.error(
+            f"{ICONS['comms_outbound']} Error publishing assistant_desktop_ready: {e}",
+        )
+
+
 async def upload_unify_attachment(
     file_content: bytes,
     filename: str,

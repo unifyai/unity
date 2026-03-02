@@ -5042,122 +5042,6 @@ class FunctionManager(BaseFunctionManager):
 
         return SESSION_DETAILS.assistant.desktop_mode == "windows"
 
-    def _calculate_wait_time_from_vm_ready_at(
-        self,
-        vm_ready_at: Optional[str],
-    ) -> int:
-        """
-        Calculate seconds to wait based on vm_ready_at timestamp.
-
-        Uses the same logic as debug_logger._calc_wait_from_ready_at().
-
-        Args:
-            vm_ready_at: ISO timestamp string (e.g., "2025-01-16T14:02:00.000-08:00")
-
-        Returns:
-            Wait time in seconds, minimum 5 (no maximum).
-        """
-        if not vm_ready_at:
-            return 10  # Default if no timestamp
-
-        try:
-            from datetime import datetime, timezone
-
-            ready_dt = datetime.fromisoformat(vm_ready_at.replace("Z", "+00:00"))
-            now = datetime.now(timezone.utc)
-            delta = (ready_dt - now).total_seconds()
-            return max(5, int(delta))
-        except Exception:
-            return 10  # Fallback on parse error
-
-    async def _wait_for_remote_windows_vm_ready(
-        self,
-        timeout: float = 300.0,
-    ) -> str:
-        """
-        Wait for the remote Windows VM to be ready before execution.
-
-        Polls the /infra/vm/status/{assistant_id}?vm_type=windows endpoint until
-        vm_ready=True. Uses the same endpoint pattern as debug_logger._resolve_vm_liveview().
-
-        Args:
-            timeout: Maximum time to wait in seconds (default 5 minutes).
-
-        Returns:
-            The desktop_url when VM is ready.
-
-        Raises:
-            TimeoutError: If VM not ready within timeout.
-            RuntimeError: If configuration is missing.
-        """
-        import aiohttp
-
-        from unity.session_details import SESSION_DETAILS
-        from unity.settings import SETTINGS
-
-        comms_url = SETTINGS.conversation.COMMS_URL.rstrip("/")
-        admin_key = SETTINGS.ORCHESTRA_ADMIN_KEY.get_secret_value()
-        assistant_id = SESSION_DETAILS.assistant.agent_id
-
-        if not comms_url or not admin_key:
-            raise RuntimeError(
-                "Cannot check Windows VM status: COMMS_URL or ORCHESTRA_ADMIN_KEY "
-                "not configured",
-            )
-
-        start_time = asyncio.get_event_loop().time()
-        LOGGER.info(
-            f"{ICONS['windows_exec']} [windows exec] Waiting for VM ready (timeout={timeout}s)",
-        )
-
-        async with aiohttp.ClientSession() as session:
-            while True:
-                elapsed = asyncio.get_event_loop().time() - start_time
-                if elapsed > timeout:
-                    raise TimeoutError(
-                        f"Windows VM not ready after {timeout}s for assistant "
-                        f"{assistant_id}",
-                    )
-
-                try:
-                    async with session.get(
-                        f"{comms_url}/infra/vm/status/{assistant_id}",
-                        params={"vm_type": "windows"},
-                        headers={"Authorization": f"Bearer {admin_key}"},
-                        timeout=aiohttp.ClientTimeout(total=30),
-                    ) as resp:
-                        if resp.ok:
-                            data = await resp.json()
-                            vm_ready = data.get("vm_ready", False)
-                            desktop_url = data.get("desktop_url")
-
-                            if vm_ready and desktop_url:
-                                LOGGER.info(
-                                    f"{ICONS['windows_exec']} [windows exec] VM ready",
-                                )
-                                logger.info(
-                                    f"Windows VM ready for {assistant_id}: "
-                                    f"{desktop_url}",
-                                )
-                                return desktop_url.rstrip("/")
-
-                            vm_ready_at = data.get("vm_ready_at")
-                            wait_secs = self._calculate_wait_time_from_vm_ready_at(
-                                vm_ready_at,
-                            )
-                            remaining = timeout - elapsed
-                            await asyncio.sleep(min(wait_secs, remaining))
-                        else:
-                            resp_text = await resp.text()
-                            logger.warning(
-                                f"VM status check failed: {resp.status} "
-                                f"{resp_text}",
-                            )
-                            await asyncio.sleep(10)
-                except aiohttp.ClientError as e:
-                    logger.warning(f"VM status check error: {e}")
-                    await asyncio.sleep(10)
-
     async def _prepare_venv_on_remote_windows(
         self,
         desktop_url: str,
@@ -5300,8 +5184,22 @@ class FunctionManager(BaseFunctionManager):
             f"{ICONS['windows_exec']} [windows exec] Executing '{func_name_meta}' on remote Windows",
         )
 
-        # Step 1: Get desktop URL
-        desktop_url = await self._wait_for_remote_windows_vm_ready()
+        from unity.function_manager.primitives.runtime import _vm_ready
+
+        if not _vm_ready.is_set():
+            ready = await asyncio.to_thread(_vm_ready.wait, 300)
+            if not ready:
+                raise RuntimeError(
+                    "Managed VM did not become ready within 5 minutes",
+                )
+
+        desktop_url = SESSION_DETAILS.assistant.desktop_url
+        if not desktop_url:
+            raise RuntimeError(
+                "Cannot execute on remote Windows: desktop_url not set "
+                "(AssistantDesktopReady event may not have arrived yet)",
+            )
+        desktop_url = desktop_url.rstrip("/")
         headers = {"Authorization": f"Bearer {SESSION_DETAILS.unify_key}"}
 
         # Step 2: Sync files to remote before execution
