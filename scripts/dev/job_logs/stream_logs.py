@@ -359,7 +359,7 @@ _IS_TTY = hasattr(sys.stdout, "isatty") and sys.stdout.isatty()
 
 
 _FENCE_OPEN = re.compile(r"^\s*```\w+")
-_FENCE_CLOSE = re.compile(r"^\s*```\s*$")
+_FENCE_CLOSE = re.compile(r"^\s*```(?!\w)")
 _MAX_CODE_BLOCK_LINES = 150
 
 
