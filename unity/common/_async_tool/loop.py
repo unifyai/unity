@@ -2200,7 +2200,9 @@ async def async_tool_loop_inner(
                     "prompt_caching": prompt_caching,
                 }
                 if max_parallel_tool_calls is not None:
-                    _gen_kwargs["max_tool_calls"] = max_parallel_tool_calls
+                    _gen_kwargs["parallel_tool_calls"] = (
+                        max_parallel_tool_calls > 1
+                    )
 
                 llm_task = asyncio.create_task(
                     generate_with_preprocess(
@@ -2415,7 +2417,9 @@ async def async_tool_loop_inner(
                         "prompt_caching": prompt_caching,
                     }
                     if max_parallel_tool_calls is not None:
-                        _gen_kwargs["max_tool_calls"] = max_parallel_tool_calls
+                        _gen_kwargs["parallel_tool_calls"] = (
+                            max_parallel_tool_calls > 1
+                        )
 
                     _result = await generate_with_preprocess(
                         client,
