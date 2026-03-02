@@ -38,6 +38,7 @@ conversation while the Main CM Brain (slow brain) handles orchestration.
    - build_voice_agent_prompt output structure
 """
 
+import asyncio
 import json
 from types import SimpleNamespace
 
@@ -983,6 +984,8 @@ class TestFastBrainGuidanceFlow:
 
         # say() must NOT fire (the articulator decided not to speak), but
         # generate_reply() SHOULD fire so the LLM gets a chance to react.
+        # Wait for the notification coalesce timer to fire.
+        await asyncio.sleep(0.1)
         assert (
             len(session.say_calls) == 0
         ), "Notify-only guidance must NOT trigger session.say()."

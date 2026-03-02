@@ -271,6 +271,8 @@ async def entrypoint(ctx: agents.JobContext):
     generation_seq = 0
     user_state_seq = 0
     _was_quiescent = True
+    _pending_reply_timer: asyncio.TimerHandle | None = None
+    _NOTIFY_COALESCE_S = 0.05
 
     def _log_reply_task(task: asyncio.Task) -> None:
         try:
@@ -281,15 +283,14 @@ async def entrypoint(ctx: agents.JobContext):
         except Exception as exc:  # noqa: BLE001
             _log.llm_error(str(exc))
 
-    def trigger_generate_reply(
+    def _fire_generate_reply(
         reason: str,
         source_id: str,
-        *,
         allow_interruptions: bool = True,
-        wait_for_completion: bool = False,
         user_input: str | None = None,
     ):
-        nonlocal generation_seq
+        nonlocal generation_seq, _pending_reply_timer
+        _pending_reply_timer = None
         generation_seq += 1
         generation_id = f"gen-{generation_seq:06d}"
         last_role = (
@@ -317,9 +318,38 @@ async def entrypoint(ctx: agents.JobContext):
         maybe_result = session.generate_reply(**reply_kwargs)
         if isinstance(maybe_result, asyncio.Task):
             maybe_result.add_done_callback(_log_reply_task)
-        if wait_for_completion:
-            return maybe_result
         return maybe_result
+
+    def trigger_generate_reply(
+        reason: str,
+        source_id: str,
+        *,
+        allow_interruptions: bool = True,
+        wait_for_completion: bool = False,
+        user_input: str | None = None,
+    ):
+        nonlocal _pending_reply_timer
+        if _pending_reply_timer is not None:
+            _pending_reply_timer.cancel()
+            _pending_reply_timer = None
+
+        if wait_for_completion:
+            return _fire_generate_reply(
+                reason,
+                source_id,
+                allow_interruptions,
+                user_input,
+            )
+
+        loop = asyncio.get_event_loop()
+        _pending_reply_timer = loop.call_later(
+            _NOTIFY_COALESCE_S,
+            _fire_generate_reply,
+            reason,
+            source_id,
+            allow_interruptions,
+            user_input,
+        )
 
     if channel == "phone":
         user_utterance_event = InboundPhoneUtterance
