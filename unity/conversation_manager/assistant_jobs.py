@@ -248,7 +248,7 @@ def _stop_vm(assistant_id: str, vm_type: str) -> None:
         traceback.print_exc()
 
 
-def mark_job_done(job_name: str):
+def mark_job_done(job_name: str, inactivity_timeout: float = 0.0):
     """Mark a job as done and record session-end metrics."""
     mark_job_label(job_name, "done")
 
@@ -276,12 +276,14 @@ def mark_job_done(job_name: str):
         LOGGER.error(f"{DEFAULT_ICON} Error finding job: {e}")
         traceback.print_exc()
 
-    # U9: session duration (log_job_startup → mark_job_done)
+    # U9: session duration (log_job_startup → mark_job_done), excluding idle tail
     if _session_start_perf is not None:
-        dur = time.perf_counter() - _session_start_perf
-        _m_session_dur.record(dur)
+        total_dur = time.perf_counter() - _session_start_perf
+        active_dur = max(0.0, total_dur - inactivity_timeout)
+        _m_session_dur.record(active_dur)
         LOGGER.debug(
-            f"{ICONS['assistant_jobs']} [assistant_jobs] Session duration: {dur:.1f}s",
+            f"{ICONS['assistant_jobs']} [assistant_jobs] Session duration: "
+            f"{total_dur:.1f}s total, {inactivity_timeout:.1f}s idle, {active_dur:.1f}s active",
         )
 
     # Stop VM if applicable (managed VM, not user's own desktop)

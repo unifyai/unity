@@ -1235,7 +1235,7 @@ class ConversationManager(metaclass=SingletonABCMeta):
                 "session_end",
                 f"Marking job {self.job_name} done",
             )
-            assistant_jobs.mark_job_done(self.job_name)
+            assistant_jobs.mark_job_done(self.job_name, self.inactivity_timeout)
         self.stop.set()
 
     async def _stop_file_sync(self) -> None:
