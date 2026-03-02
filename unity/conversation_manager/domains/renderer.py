@@ -611,14 +611,25 @@ class Renderer:
     def render_active_web_sessions(web_sessions: list) -> str:
         """Render active visible web sessions for the slow brain snapshot.
 
+        Accepts either a list of ``WebSessionHandle`` objects (backward compat)
+        or a list of metadata dicts from ``list_sessions_with_metadata``.
         Only produces output when there are active sessions to show.
         """
         if not web_sessions:
             return ""
         lines = ["<active_web_sessions>"]
-        for h in web_sessions:
-            sid = getattr(h, "session_id", "?")
-            lines.append(f'  <session id="{sid}" />')
+        for entry in web_sessions:
+            if isinstance(entry, dict):
+                sid = entry.get("session_id", "?")
+                label = entry.get("label", "")
+                url = entry.get("url", "")
+                lines.append(
+                    f'  <session id="{sid}" label="{label}" url="{url}" />',
+                )
+            else:
+                sid = getattr(entry, "session_id", "?")
+                label = getattr(entry, "label", "")
+                lines.append(f'  <session id="{sid}" label="{label}" />')
         lines.append("</active_web_sessions>")
         return "\n".join(lines)
 

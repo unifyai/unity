@@ -828,10 +828,16 @@ class ConversationManager(metaclass=SingletonABCMeta):
         if self.assistant_screen_share_active:
             cp = self.computer_primitives
             if cp is not None:
-                web_sessions = cp.web.list_sessions(
-                    visible_only=True,
-                    active_only=True,
-                )
+                try:
+                    web_sessions = await cp.web.list_sessions_with_metadata(
+                        visible_only=True,
+                        active_only=True,
+                    )
+                except Exception:
+                    web_sessions = cp.web.list_sessions(
+                        visible_only=True,
+                        active_only=True,
+                    )
 
         snapshot_state = self.prompt_renderer.render_state(
             self.contact_index,

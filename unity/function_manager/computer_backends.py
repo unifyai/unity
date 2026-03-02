@@ -679,7 +679,11 @@ class MockComputerBackend(ComputerBackend):
         """Return a mock session for the given mode."""
         return _MockSession(mode, self)
 
-    async def create_session(self, mode: str) -> "ComputerSession":
+    async def create_session(
+        self,
+        mode: str,
+        label: str | None = None,
+    ) -> "ComputerSession":
         """Return a new mock session for the given mode."""
         if mode == "desktop":
             raise RuntimeError("Desktop mode is singleton")
@@ -1068,13 +1072,19 @@ class MagnitudeBackend(ComputerBackend):
             return self._local_url
         raise ValueError(f"Unknown mode: {mode!r}")
 
-    async def _create_session_async(self, mode: str) -> ComputerSession:
+    async def _create_session_async(
+        self,
+        mode: str,
+        label: str | None = None,
+    ) -> ComputerSession:
         """Create a session asynchronously."""
         import time as _cs_time
 
         _cs_t0 = _cs_time.perf_counter()
         url = self._url_for_mode(mode)
         params = dict(self._MODE_START_PARAMS[mode])
+        if label is not None:
+            params["label"] = label
         auth_key = SESSION_DETAILS.unify_key
         headers = {"authorization": f"Bearer {auth_key}"}
         use_ssl = self._vm_ssl if mode in ("desktop", "web-vm") else None
@@ -1123,7 +1133,11 @@ class MagnitudeBackend(ComputerBackend):
         """Remove a cached session so the next get_session re-creates it."""
         self._sessions.pop(mode, None)
 
-    async def create_session(self, mode: str) -> ComputerSession:
+    async def create_session(
+        self,
+        mode: str,
+        label: str | None = None,
+    ) -> ComputerSession:
         """Spawn an additional parallel session (web/web-vm only).
 
         Desktop mode is singleton (one mouse, one keyboard) and cannot be
@@ -1133,7 +1147,7 @@ class MagnitudeBackend(ComputerBackend):
             raise RuntimeError(
                 "Desktop mode is singleton -- cannot create additional sessions",
             )
-        session = await self._create_session_async(mode)
+        session = await self._create_session_async(mode, label=label)
         self._extra_sessions.append(session)
         return session
 
