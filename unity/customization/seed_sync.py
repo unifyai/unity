@@ -16,10 +16,13 @@ from typing import Any, Callable, TYPE_CHECKING
 
 import unify
 
+from unity.common.hierarchical_logger import ICONS
+
 if TYPE_CHECKING:
     from unity.customization.clients import ResolvedCustomization
 
 logger = logging.getLogger(__name__)
+_ICON = ICONS["customization"]
 
 
 # ---------------------------------------------------------------------------
@@ -126,11 +129,12 @@ def sync_seed_data(
     current_hash = meta_store.get_hash(manager_key)
 
     if current_hash == expected_hash:
-        logger.debug("Seed data for %s unchanged, skipping sync", manager_key)
+        logger.debug("%s Seed data for %s unchanged, skipping sync", _ICON, manager_key)
         return False
 
     logger.info(
-        "Seed data for %s changed (current=%s, expected=%s), syncing...",
+        "%s Seed data for %s changed (current=%s, expected=%s), syncing...",
+        _ICON,
         manager_key,
         current_hash,
         expected_hash,
@@ -159,10 +163,10 @@ def sync_seed_data(
             if src_hash != db_hash and update_fn is not None:
                 db_id = db_rec.get(id_field)
                 if db_id is not None:
-                    logger.info("Updating %s record: %s", manager_key, key)
+                    logger.info("%s Updating %s record: %s", _ICON, manager_key, key)
                     update_fn(db_id, src)
         else:
-            logger.info("Creating %s record: %s", manager_key, key)
+            logger.info("%s Creating %s record: %s", _ICON, manager_key, key)
             create_fn(src)
 
     if delete_fn is not None:
@@ -170,7 +174,7 @@ def sync_seed_data(
             if key not in processed_keys:
                 db_id = db_rec.get(id_field)
                 if db_id is not None:
-                    logger.info("Deleting %s record: %s", manager_key, key)
+                    logger.info("%s Deleting %s record: %s", _ICON, manager_key, key)
                     delete_fn(db_id)
 
     meta_store.set_hash(manager_key, expected_hash)
@@ -388,7 +392,11 @@ def _sync_knowledge(tables: dict[str, dict], meta: SeedMetaStore) -> bool:
             continue
         seed_key = table_spec.get("seed_key")
         if not seed_key:
-            logger.warning("Knowledge table %s has no seed_key, skipping", table_name)
+            logger.warning(
+                "%s Knowledge table %s has no seed_key, skipping",
+                _ICON,
+                table_name,
+            )
             continue
 
         existing_tables = km._tables_overview()

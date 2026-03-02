@@ -34,7 +34,10 @@ import logging
 from pathlib import Path
 from typing import Any
 
+from unity.common.hierarchical_logger import ICONS
+
 logger = logging.getLogger(__name__)
+_ICON = ICONS["customization"]
 
 _DEFAULT_PATH = Path(__file__).resolve().parents[2] / ".secrets.json"
 
@@ -61,7 +64,7 @@ def load_secrets(
     try:
         data = json.loads(secrets_path.read_text(encoding="utf-8"))
     except Exception:
-        logger.warning("Failed to parse %s", secrets_path, exc_info=True)
+        logger.warning("%s Failed to parse %s", _ICON, secrets_path, exc_info=True)
         return []
 
     merged: dict[str, dict[str, Any]] = {}

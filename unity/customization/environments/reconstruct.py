@@ -13,12 +13,15 @@ import sys
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, TYPE_CHECKING
 
+from unity.common.hierarchical_logger import ICONS
+
 from .types.environment import Environment
 
 if TYPE_CHECKING:
     from ...actor.environments.base import BaseEnvironment
 
 logger = logging.getLogger(__name__)
+_ICON = ICONS["customization"]
 
 _DEFAULT_ENV_ROOT = Path.home() / ".unity" / "environments"
 
@@ -60,7 +63,7 @@ def ensure_dependencies(dependencies: List[str]) -> None:
     if not missing:
         return
 
-    logger.info(f"Installing missing environment dependencies: {missing}")
+    logger.info(f"{_ICON} Installing missing environment dependencies: {missing}")
     subprocess.check_call(
         [sys.executable, "-m", "pip", "install", *missing],
         stdout=subprocess.DEVNULL,
