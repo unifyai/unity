@@ -572,11 +572,15 @@ app.post('/nav', isAgentReady, async (req: Request, res: Response) => {
 });
 
 app.post('/act', isAgentReady, async (req: Request, res: Response) => {
-  const { task, sessionId } = req.body;
+  const { task, sessionId, lineage } = req.body;
   if (!task) return res.status(400).json({ error: 'bad_request', message: 'Task description is required.' });
   try {
     const session = activeSessions.get(sessionId)!;
     const agent = session.agent;
+
+    const lineageLabel = Array.isArray(lineage) && lineage.length > 0
+      ? `[${lineage.join('->')}->desktop.act] `
+      : '[desktop.act] ';
 
     const memory = new AgentMemory({ promptCaching: true });
 
@@ -594,23 +598,41 @@ app.post('/act', isAgentReady, async (req: Request, res: Response) => {
           injectedCount++;
         }
       }
-      console.log(`[memory-carryover] Injecting history from ${session.actHistory.length} previous acts (${injectedCount} observations total)`);
+      console.log(`${lineageLabel}📋 Injecting history from ${session.actHistory.length} previous acts (${injectedCount} observations)`);
     } else {
-      console.log(`[memory-carryover] No prior act history in session`);
+      console.log(`${lineageLabel}📋 No prior act history in session`);
     }
 
     const boundary = memory.observationCount;
 
-    // 0-shot: single LLM call, blind execution, no verification loop.
+    const actT0 = Date.now();
+    console.log(`${lineageLabel}🧠 Planning actions for: "${task}"`);
+
     await agent.recordConnectorObservations(memory);
     const context = await agent.buildContext(memory);
     const actActions = agent.actions.filter(a => !a.name.startsWith('task:'));
     const { reasoning, actions } = await agent.models.partialAct(context, task, [], actActions);
-    console.log(`[act-0shot] reasoning=${reasoning}`);
-    console.log(`[act-0shot] planned ${actions.length} action(s): ${actions.map(a => a.variant).join(', ')}`);
-    for (const action of actions) {
+
+    const planMs = Date.now() - actT0;
+    console.log(`${lineageLabel}💭 Reasoning [${planMs}ms]: ${reasoning}`);
+    console.log(`${lineageLabel}📋 Planned ${actions.length} action(s): ${actions.map(a => a.variant).join(', ')}`);
+
+    for (let i = 0; i < actions.length; i++) {
+      const action = actions[i];
+      const actionDef = agent.identifyAction(action);
+      const rendered = actionDef.render(action);
+      const detail = JSON.stringify(action);
+      console.log(`${lineageLabel}🛠️ Action ${i + 1}/${actions.length}: ${rendered} ${detail}`);
+
+      const actionT0 = Date.now();
       await agent.exec(action, memory);
+      const actionMs = Date.now() - actionT0;
+
+      console.log(`${lineageLabel}✅ Completed ${action.variant} [${actionMs}ms]`);
     }
+
+    const totalMs = Date.now() - actT0;
+    console.log(`${lineageLabel}🏁 All ${actions.length} action(s) executed [${totalMs}ms]`);
 
     const newObservations = memory.getObservationsSlice(boundary);
     const filtered = newObservations.filter(obs => {
