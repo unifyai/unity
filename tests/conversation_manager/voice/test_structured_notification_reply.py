@@ -47,6 +47,12 @@ class _FakeJobContext:
     async def connect(self):
         return None
 
+    def add_shutdown_callback(self, cb):
+        pass
+
+    def shutdown(self, reason=""):
+        pass
+
 
 class _FakeEventBroker:
     def __init__(self):
