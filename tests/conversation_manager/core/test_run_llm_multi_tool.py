@@ -20,7 +20,7 @@ LLM turns where multiple tools are called concurrently:
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -155,12 +155,56 @@ async def test_wait_delay_scheduled_when_not_first_tool(initialized_cm):
             "unity.conversation_manager.conversation_manager.single_shot_tool_decision",
             AsyncMock(return_value=fake_result),
         ),
-        patch.object(cm, "request_llm_run", new_callable=AsyncMock) as mock_request,
+        patch.object(cm, "run_llm", new_callable=AsyncMock) as mock_run,
     ):
         await cm._run_llm()
 
-    mock_request.assert_called_once_with(delay=5), (
-        f"request_llm_run(delay=5) should have been called for the wait tool, "
+    mock_run.assert_called_once_with(delay=5), (
+        f"run_llm(delay=5) should have been called for the wait tool, "
         f"but it was not.  The wait(delay=N) scheduling was missed because "
         f"wait was not the first tool in the multi-tool response."
     )
+
+
+# =============================================================================
+# wait() sets outbound-suppress generation flag
+# =============================================================================
+
+
+@pytest.mark.asyncio
+async def test_wait_sets_outbound_suppress_generation():
+    """wait() should stamp _outbound_suppress_gen with the current _llm_gen.
+
+    When the LLM calls wait() alongside an outbound tool (send_unify_message,
+    send_sms, etc.), the sent-message event handler should NOT trigger a
+    redundant follow-up LLM turn.  The suppression uses a generation counter:
+    wait() stamps _outbound_suppress_gen = _llm_gen, and the event handler
+    skips request_llm_run when the two match.
+    """
+    from unity.conversation_manager.domains.brain_action_tools import (
+        ConversationManagerBrainActionTools,
+    )
+
+    cm = MagicMock()
+    cm._llm_gen = 7
+    cm._outbound_suppress_gen = -1
+
+    with patch(
+        "unity.conversation_manager.domains.brain_action_tools.get_event_broker",
+    ) as mock_broker:
+        mock_broker.return_value = MagicMock()
+        mock_broker.return_value.publish = AsyncMock()
+        tools = ConversationManagerBrainActionTools(cm)
+
+    result = await tools.wait()
+    assert result == {"status": "waiting", "delay": None}
+    assert cm._outbound_suppress_gen == 7, (
+        "wait() should set _outbound_suppress_gen to the current _llm_gen "
+        "so outbound-comms event handlers skip the reflexive follow-up turn"
+    )
+
+    result = await tools.wait(delay=30)
+    assert result == {"status": "waiting", "delay": 30}
+    assert (
+        cm._outbound_suppress_gen == 7
+    ), "wait(delay=N) should also set the suppression flag"

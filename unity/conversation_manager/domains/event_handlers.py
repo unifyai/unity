@@ -702,7 +702,8 @@ async def _(event, cm: "ConversationManager", *args, **kwargs):
             )
             notif_content = f"Email sent to {', '.join(email_to[:2])}{'...' if len(email_to) > 2 else ''}"
             cm.notifications_bar.push_notif("comms", notif_content, event.timestamp)
-            await cm.request_llm_run(delay=2)
+            if cm._outbound_suppress_gen != cm._llm_gen:
+                await cm.request_llm_run(delay=2)
             return  # Early return - email handling is complete
 
         case EmailReceived():
@@ -779,7 +780,8 @@ async def _(event, cm: "ConversationManager", *args, **kwargs):
     if role == "user":
         await cm.cancel_proactive_speech()
 
-    await cm.request_llm_run(delay=2)
+    if role == "user" or cm._outbound_suppress_gen != cm._llm_gen:
+        await cm.request_llm_run(delay=2)
 
 
 @EventHandler.register(Error)

@@ -1700,6 +1700,7 @@ class ConversationManagerBrainActionTools:
             that many seconds — useful for probing a long-running action or
             revisiting a situation after a reasonable interval.
         """
+        self._cm._outbound_suppress_gen = self._cm._llm_gen
         return {"status": "waiting", "delay": delay}
 
     async def guide_voice_agent(
