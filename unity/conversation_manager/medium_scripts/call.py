@@ -42,11 +42,13 @@ from unity.session_details import SESSION_DETAILS
 # Shared helpers
 from unity.conversation_manager.medium_scripts.common import (
     event_broker,
-    create_end_call,
+    create_end_call,  # kept for test monkeypatch compatibility
     match_say_meta,
     setup_inactivity_timeout,
-    setup_participant_disconnect_handler,
+    setup_participant_disconnect_handler,  # kept for test monkeypatch compatibility
     publish_call_started,
+    publish_call_ended,
+    delete_livekit_room,
     configure_from_cli,
     should_dispatch_livekit_agent,
     start_event_broker_receive,
@@ -359,10 +361,20 @@ async def entrypoint(ctx: agents.JobContext):
         user_utterance_event = InboundUnifyMeetUtterance
         assistant_utterance_event = OutboundUnifyMeetUtterance
 
-    # Shared end_call + inactivity + participant disconnect handler
-    end_call = create_end_call(contact, channel, room_name=ctx.room.name)
-    touch_activity = setup_inactivity_timeout(end_call)
-    setup_participant_disconnect_handler(ctx.room, end_call)
+    # Register cleanup as a LiveKit shutdown callback so it runs on any
+    # exit path: participant disconnect (close_on_disconnect), inactivity,
+    # or explicit stop.  LiveKit manages task lifecycle — no manual
+    # cancellation needed.
+    async def _on_job_shutdown():
+        await delete_livekit_room(ctx.room.name)
+        await publish_call_ended(contact, channel)
+
+    ctx.add_shutdown_callback(_on_job_shutdown)
+
+    async def _shutdown_inactivity():
+        ctx.shutdown(reason="inactivity")
+
+    touch_activity = setup_inactivity_timeout(_shutdown_inactivity)
 
     def _check_quiescence_transition() -> None:
         nonlocal _was_quiescent
@@ -643,7 +655,7 @@ async def entrypoint(ctx: agents.JobContext):
             call_answered_flag.set()
             assistant.set_call_received()
         elif event_type == "stop":
-            asyncio.create_task(end_call())
+            ctx.shutdown(reason="stopped")
 
     def _is_pipeline_quiescent() -> bool:
         """True when the voice pipeline is completely idle (no speech in flight)."""
