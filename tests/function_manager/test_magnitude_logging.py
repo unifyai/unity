@@ -5,15 +5,20 @@ Verifies that:
 1. _get_current_lineage() reads TOOL_LOOP_LINEAGE correctly
 2. ComputerSession.act() passes lineage in the HTTP payload
 3. MagnitudeBackend._log_consumer routes logs through Unity's LOGGER
+4. _handle_magnitude_debug_payload persists TEXT/IMG/TRACE payloads
+5. _log_consumer routes __MAG_DEBUG__ lines to the debug handler
 """
 
 import asyncio
+import json
 import logging
 import pytest
+from unittest import mock
 
 from unity.common._async_tool.loop_config import TOOL_LOOP_LINEAGE
 from unity.function_manager.computer_backends import (
     _get_current_lineage,
+    _handle_magnitude_debug_payload,
     ComputerSession,
     MagnitudeBackend,
 )
@@ -201,3 +206,138 @@ class TestLogConsumerUsesUnityLogger:
         assert not backend._current_capture_queue.empty()
         msg = backend._current_capture_queue.get_nowait()
         assert "Reasoning: click button" in msg
+
+
+class TestHandleMagnitudeDebugPayload:
+    """_handle_magnitude_debug_payload handles TEXT payloads on the Unity side.
+
+    IMG and TRACE payloads are saved locally by agent-service (not streamed
+    over WebSocket), so the Unity-side handler only processes TEXT.
+    """
+
+    def test_text_payload_appends_to_log(self, tmp_path):
+        with mock.patch(
+            "unity.function_manager.computer_backends._MAGNITUDE_LOG_DIR",
+            str(tmp_path),
+        ):
+            payload = json.dumps({"line": "debug coordinate transform x=100 y=200"})
+            _handle_magnitude_debug_payload(f"TEXT {payload}")
+
+            log_file = tmp_path / "magnitude.log"
+            assert log_file.exists()
+            contents = log_file.read_text()
+            assert "debug coordinate transform x=100 y=200" in contents
+
+    def test_text_payload_appends_multiple_lines(self, tmp_path):
+        with mock.patch(
+            "unity.function_manager.computer_backends._MAGNITUDE_LOG_DIR",
+            str(tmp_path),
+        ):
+            _handle_magnitude_debug_payload(
+                f'TEXT {json.dumps({"line": "line one"})}',
+            )
+            _handle_magnitude_debug_payload(
+                f'TEXT {json.dumps({"line": "line two"})}',
+            )
+
+            lines = (tmp_path / "magnitude.log").read_text().strip().splitlines()
+            assert len(lines) == 2
+            assert "line one" in lines[0]
+            assert "line two" in lines[1]
+
+    def test_img_payload_ignored_by_unity_consumer(self, tmp_path):
+        """IMG payloads are saved locally by agent-service, not handled here."""
+        with mock.patch(
+            "unity.function_manager.computer_backends._MAGNITUDE_LOG_DIR",
+            str(tmp_path),
+        ):
+            payload = json.dumps(
+                {
+                    "actId": "act123",
+                    "label": "planning_screenshot",
+                    "base64": "iVBORw0KGgo=",
+                },
+            )
+            _handle_magnitude_debug_payload(f"IMG {payload}")
+            assert not (tmp_path / "acts").exists()
+
+    def test_trace_payload_ignored_by_unity_consumer(self, tmp_path):
+        """TRACE payloads are saved locally by agent-service, not handled here."""
+        with mock.patch(
+            "unity.function_manager.computer_backends._MAGNITUDE_LOG_DIR",
+            str(tmp_path),
+        ):
+            payload = json.dumps({"actId": "act456", "task": "click"})
+            _handle_magnitude_debug_payload(f"TRACE {payload}")
+            assert not (tmp_path / "acts").exists()
+
+    def test_noop_when_log_dir_unset(self, tmp_path):
+        with mock.patch(
+            "unity.function_manager.computer_backends._MAGNITUDE_LOG_DIR",
+            "",
+        ):
+            _handle_magnitude_debug_payload(
+                f'TEXT {json.dumps({"line": "should be dropped"})}',
+            )
+            assert not (tmp_path / "magnitude.log").exists()
+
+    def test_malformed_json_ignored(self, tmp_path):
+        with mock.patch(
+            "unity.function_manager.computer_backends._MAGNITUDE_LOG_DIR",
+            str(tmp_path),
+        ):
+            _handle_magnitude_debug_payload("TEXT {not valid json}")
+            assert not (tmp_path / "magnitude.log").exists()
+
+
+class TestLogConsumerDebugRouting:
+    """_log_consumer routes __MAG_DEBUG__ lines to the debug handler."""
+
+    @pytest.mark.asyncio
+    async def test_debug_payloads_not_forwarded_to_logger(self, tmp_path):
+        backend = MagnitudeBackend.__new__(MagnitudeBackend)
+        backend._network_log_queue = asyncio.Queue()
+        backend._current_capture_queue = None
+        backend._current_processing_seq = None
+        backend._log_buffer = {}
+
+        captured_by_logger: list[str] = []
+        unity_logger = logging.getLogger("unity")
+        original_level = unity_logger.level
+
+        class _Capture(logging.Handler):
+            def emit(self, record):
+                captured_by_logger.append(record.getMessage())
+
+        handler = _Capture()
+        handler.setLevel(logging.INFO)
+        unity_logger.addHandler(handler)
+
+        try:
+            with mock.patch(
+                "unity.function_manager.computer_backends._MAGNITUDE_LOG_DIR",
+                str(tmp_path),
+            ):
+                debug_line = "__MAG_DEBUG__ TEXT " + json.dumps({"line": "debug info"})
+                normal_line = "[desktop.act] 🛠️ Action 1/1: ⊙ click (100, 200)"
+
+                await backend._network_log_queue.put(debug_line)
+                await backend._network_log_queue.put(normal_line)
+
+                consumer = asyncio.create_task(backend._log_consumer())
+                await asyncio.sleep(0.1)
+                consumer.cancel()
+                try:
+                    await consumer
+                except asyncio.CancelledError:
+                    pass
+
+                assert len(captured_by_logger) == 1
+                assert "⊙ click (100, 200)" in captured_by_logger[0]
+
+                log_file = tmp_path / "magnitude.log"
+                assert log_file.exists()
+                assert "debug info" in log_file.read_text()
+        finally:
+            unity_logger.removeHandler(handler)
+            unity_logger.setLevel(original_level)

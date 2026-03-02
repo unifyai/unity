@@ -90,8 +90,8 @@ RUN mkdir -p /root/.config/xfce4/xfconf/xfce-perchannel-xml && \
 
 WORKDIR /app
 
-# Prepare supervisor log directory
-RUN mkdir -p /var/log/supervisor
+# Prepare supervisor and magnitude log directories
+RUN mkdir -p /var/log/supervisor /var/log/magnitude
 
 # Install helper tools
 COPY scripts/sandbox-dpkg .

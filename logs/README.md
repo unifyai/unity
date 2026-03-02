@@ -107,6 +107,7 @@ All logs are organized under `logs/` with seven main subdirectories:
 | `logs/unillm/` | Raw LLM request/response traces | `.txt` files per request | `UNILLM_LOG_DIR` (+ `UNILLM_TERMINAL_LOG` for console) |
 | `logs/unify/` | Unify SDK HTTP traces | JSON files per request | `UNIFY_LOG_DIR` (+ `UNIFY_TERMINAL_LOG` for console) |
 | `logs/orchestra/` | Orchestra API traces | Per-request JSON with OpenTelemetry spans | `ORCHESTRA_LOG_DIR` |
+| `logs/magnitude/` | **Magnitude agent debug** (screenshots, act traces, coordinates) | Per-act bundles with PNGs | `MAGNITUDE_LOG_DIR` + `MAGNITUDE_DEBUG` |
 | `logs/all/` | **Cross-repo OTEL traces** | `{trace_id}.jsonl` per test | `*_OTEL` + `*_OTEL_LOG_DIR` |
 
 **Cross-correlation:** When running tests via `parallel_run.sh`, OTEL tracing is enabled by default across all four repos (unity, unify, unillm, orchestra). All spans are written to `logs/all/`, enabling full-stack trace analysis. See [Cross-Repo OTEL Traces](#cross-repo-otel-traces-logsall).
@@ -414,6 +415,78 @@ parallel_run --env UNIFY_TESTS_DELETE_PROJ_ON_START=true tests
 # Or delete entire project after session
 parallel_run --env UNIFY_TESTS_DELETE_PROJ_ON_EXIT=true tests
 ```
+
+---
+
+## Magnitude Logs (`logs/magnitude/`)
+
+Magnitude logs capture exhaustive debug data from the browser/desktop automation agent (magnitude-core + agent-service). Controlled by two environment variables:
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `MAGNITUDE_DEBUG` | `false` | Enables debug payload emission from agent-service. When `false`, zero overhead. |
+| `MAGNITUDE_LOG_DIR` | `""` | Directory for persisting magnitude logs. If unset, debug payloads are silently dropped. |
+
+In production: `MAGNITUDE_DEBUG=false` by default (zero overhead). Set `MAGNITUDE_DEBUG=true` on a specific job when investigating an issue. `MAGNITUDE_LOG_DIR=/var/log/magnitude` is pre-configured in both the main container and the desktop VM.
+
+### Directory Structure
+
+Each `desktop.act()` or `session.act()` call creates a timestamped bundle:
+
+```
+/var/log/magnitude/
+├── magnitude.log                          # Text debug lines from magnitude-core (pino)
+└── acts/
+    └── 2026-03-02T01-25-58_drag_the_Jack_of_Spades/
+        ├── act_trace.json                 # Full structured trace
+        ├── planning_screenshot.png        # What the magnitude LLM saw (Playwright screenshot)
+        ├── native_screenshot.png          # Actual desktop state (native OS capture, desktop mode only)
+        └── post_action/
+            ├── 001_mouse_click_512_384.png
+            ├── 002_keyboard_type.png
+            └── ...
+```
+
+### act_trace.json
+
+Contains the complete act trajectory:
+
+- `task`: the natural language instruction
+- `lineage`: Unity call chain (e.g. `["CodeActActor.act(ab12)", "execute_code(9693)"]`)
+- `sessionMode`: `desktop`, `web`, or `web-vm`
+- `reasoning`: LLM's reasoning text
+- `plannedActions`: full action list with coordinates/params
+- `actionTraces`: per-action execution timing and errors
+- `planningMs`, `totalMs`: timing breakdown
+
+### Debugging with Magnitude Logs
+
+The most common debugging scenario: desktop actions not registering.
+
+1. Open the `acts/` directory for the failing act
+2. Compare `planning_screenshot.png` (what the LLM saw) vs `native_screenshot.png` (actual desktop)
+3. If they differ: noVNC rendering issue (stale frame, disconnected WebSocket, scaling mismatch)
+4. If they match: check `act_trace.json` for coordinate precision (raw vs transformed coords)
+5. Check `post_action/` screenshots to see whether each action had visible effect
+
+### Where Logs Are Saved
+
+Screenshots and traces are saved **locally by the agent-service process** — they never
+travel over the WebSocket.  This avoids serializing large base64 images on the critical
+path of `act()` calls.
+
+| Mode | Agent-service runs in | Logs saved to | Synced by |
+|------|----------------------|---------------|-----------|
+| **web** | Main Unity pod | `/var/log/magnitude/` (same container) | `stream_logs.py` and `upload_pod_logs.py` |
+| **desktop** | Desktop VM container | `/var/log/magnitude/` (VM container) | Access via VM supervisor logs or SSH |
+
+### Production Streaming
+
+For the main pod, magnitude logs are automatically included in:
+- `stream_logs.py`: mirrored to `logs/prod_logs/<job>/magnitude/`
+- `upload_pod_logs.py`: uploaded to GCS on pod shutdown
+
+For the desktop VM, logs are on the VM filesystem at `/var/log/magnitude/`.
 
 ---
 
