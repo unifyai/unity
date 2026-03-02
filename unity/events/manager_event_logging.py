@@ -264,10 +264,13 @@ def wrap_handle_with_logging(
                         pass
                     result = await target(*args, **kwargs)
                     try:
-                        await self._publish(
-                            phase="outgoing",
-                            answer=_coerce_text_value(result),
-                        )
+                        outgoing_kw: dict[str, Any] = {"phase": "outgoing"}
+                        # Methods like ask() return sub-handles — omit answer
+                        # so the frontend receives answer=null (JSON null) and
+                        # doesn't overwrite real node content with a repr string.
+                        if not isinstance(result, SteerableToolHandle):
+                            outgoing_kw["answer"] = _coerce_text_value(result)
+                        await self._publish(**outgoing_kw)
                     except Exception:
                         pass
                     return result
@@ -282,12 +285,11 @@ def wrap_handle_with_logging(
                         pass
                     result = target(*args, **kwargs)
                     try:
-                        asyncio.create_task(
-                            self._publish(
-                                phase="outgoing",
-                                answer=_coerce_text_value(result),
-                            ),
-                        )
+                        outgoing_kw: dict[str, Any] = {"phase": "outgoing"}
+                        # See async branch comment above.
+                        if not isinstance(result, SteerableToolHandle):
+                            outgoing_kw["answer"] = _coerce_text_value(result)
+                        asyncio.create_task(self._publish(**outgoing_kw))
                     except Exception:
                         pass
                     return result
