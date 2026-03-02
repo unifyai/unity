@@ -1,8 +1,11 @@
 import inspect
+import json
+import os
 import subprocess
 from abc import ABC, abstractmethod
 from collections import defaultdict
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 from typing import Optional, List, Dict
 import logging
@@ -17,6 +20,42 @@ from unity.logger import LOGGER as _UNITY_LOGGER
 from unity.common._async_tool.loop_config import TOOL_LOOP_LINEAGE
 
 logger = logging.getLogger("websockets")
+
+_MAG_DEBUG_PREFIX = "__MAG_DEBUG__ "
+_MAGNITUDE_LOG_DIR = os.environ.get("MAGNITUDE_LOG_DIR", "")
+
+
+def _handle_magnitude_debug_payload(raw: str) -> None:
+    """Parse and persist a TEXT debug payload from agent-service.
+
+    Screenshots and traces are saved directly to the filesystem by
+    agent-service (same or VM container) — they never flow over the
+    WebSocket.  Only lightweight TEXT payloads are handled here.
+
+    Payload format: ``"TEXT JSON_BODY"``.
+    """
+    if not _MAGNITUDE_LOG_DIR:
+        return
+
+    log_dir = Path(_MAGNITUDE_LOG_DIR)
+
+    space_idx = raw.find(" ")
+    if space_idx == -1:
+        return
+    ptype = raw[:space_idx]
+    body_str = raw[space_idx + 1 :]
+
+    if ptype != "TEXT":
+        return
+
+    try:
+        body = json.loads(body_str)
+    except json.JSONDecodeError:
+        return
+
+    log_dir.mkdir(parents=True, exist_ok=True)
+    with open(log_dir / "magnitude.log", "a") as f:
+        f.write(body.get("line", "") + "\n")
 
 
 def _get_current_lineage() -> list[str]:
@@ -1151,6 +1190,10 @@ class MagnitudeBackend(ComputerBackend):
         Log lines arriving from the agent-service are pre-formatted with
         lineage labels (e.g. ``[CodeActActor.act(ab12)->desktop.act] 🛠️ ...``)
         so they integrate with Unity's hierarchical log output.
+
+        Lines with the ``__MAG_DEBUG__`` prefix are structured debug payloads
+        (screenshots, act traces) that get persisted to ``MAGNITUDE_LOG_DIR``
+        and are **not** forwarded to the text log.
         """
         while True:
             try:
@@ -1159,6 +1202,18 @@ class MagnitudeBackend(ComputerBackend):
                     continue
 
                 log_line = await self._network_log_queue.get()
+
+                if log_line.startswith(_MAG_DEBUG_PREFIX):
+                    try:
+                        _handle_magnitude_debug_payload(
+                            log_line[len(_MAG_DEBUG_PREFIX) :],
+                        )
+                    except Exception as e:
+                        _UNITY_LOGGER.warning(
+                            f"[MagnitudeDebug] Failed to handle payload: {e}",
+                        )
+                    self._network_log_queue.task_done()
+                    continue
 
                 if self._current_capture_queue is not None:
                     self._current_capture_queue.put_nowait(log_line)

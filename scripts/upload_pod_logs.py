@@ -24,7 +24,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 BUCKET_NAME = os.environ.get("GCS_LOG_BUCKET", "unity-pod-logs")
-LOG_DIRS = ["/var/log/unity", "/var/log/unify", "/var/log/unillm"]
+LOG_DIRS = ["/var/log/unity", "/var/log/unify", "/var/log/unillm", "/var/log/magnitude"]
 JOB_NAME = os.environ.get("UNITY_CONVERSATION_JOB_NAME", "")
 
 

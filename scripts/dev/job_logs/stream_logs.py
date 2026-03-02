@@ -261,7 +261,7 @@ def resolve_pod_name(job_name: str, namespace: str) -> str | None:
 
 # ─── Log mirroring ────────────────────────────────────────────────────────────
 
-_CONTAINER_LOG_PATH_RE = re.compile(r"/var/log/(unillm|unify|unity)/\S+")
+_CONTAINER_LOG_PATH_RE = re.compile(r"/var/log/(unillm|unify|unity|magnitude)/\S+")
 
 WORKSPACE_ROOT = Path(__file__).resolve().parents[3]
 MIRROR_BASE = WORKSPACE_ROOT / "logs" / "prod_logs"
@@ -292,7 +292,12 @@ def _fetch_file(
         pass
 
 
-_CONTAINER_LOG_DIRS = ("/var/log/unillm", "/var/log/unify", "/var/log/unity")
+_CONTAINER_LOG_DIRS = (
+    "/var/log/unillm",
+    "/var/log/unify",
+    "/var/log/unity",
+    "/var/log/magnitude",
+)
 
 
 def _sync_all_logs(pod_name: str, namespace: str, mirror_root: Path) -> None:

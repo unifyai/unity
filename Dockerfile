@@ -100,11 +100,13 @@ ENV UNILLM_TERMINAL_LOG=false
 ENV UNITY_LOG_DIR=/var/log/unity
 ENV UNIFY_LOG_DIR=/var/log/unify
 ENV UNILLM_LOG_DIR=/var/log/unillm
+ENV MAGNITUDE_LOG_DIR=/var/log/magnitude
+ENV MAGNITUDE_DEBUG=true
 
 # Create non-root user for runtime
 RUN useradd -m -u 1000 unity && \
-    mkdir -p /var/log/unity /var/log/unify /var/log/unillm /home/unity/.cache && \
-    chown -R unity:unity /app /var/log/unity /var/log/unify /var/log/unillm && \
+    mkdir -p /var/log/unity /var/log/unify /var/log/unillm /var/log/magnitude /home/unity/.cache && \
+    chown -R unity:unity /app /var/log/unity /var/log/unify /var/log/unillm /var/log/magnitude && \
     cp -r /root/.cache/ms-playwright /home/unity/.cache/ms-playwright && \
     chown -R unity:unity /home/unity/.cache
 
