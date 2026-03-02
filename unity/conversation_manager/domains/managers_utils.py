@@ -1279,7 +1279,6 @@ async def _register_desktop_act_completed_callback(cm: "ConversationManager") ->
             cm_event = DesktopActCompleted(
                 instruction=payload.get("instruction", ""),
                 summary=payload.get("summary", ""),
-                screenshot=payload.get("screenshot", ""),
             )
             await cm.event_broker.publish(
                 "app:actor:desktop_act_completed",

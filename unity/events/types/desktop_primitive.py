@@ -19,13 +19,11 @@ class DesktopPrimitivePayload(BaseModel):
 class DesktopActCompletedPayload(BaseModel):
     """Fired when primitives.computer.desktop.act() completes.
 
-    Carries the instruction, the agent's summary of what was done, and a
-    post-completion screenshot so the CM can notify both the slow brain
-    and fast brain during interactive screen-sharing sessions.
+    Carries the instruction and the agent's summary of what was done so the CM
+    can notify both the slow brain and fast brain during interactive
+    screen-sharing sessions. The actual visual state is already captured by
+    the regular screen-share screenshot pipeline on the next brain turn.
     """
 
     instruction: str = Field(description="The instruction that was executed.")
     summary: str = Field(description="Agent's description of what was done.")
-    screenshot: str = Field(
-        description="Base64-encoded PNG screenshot after completion.",
-    )

@@ -688,12 +688,11 @@ class ActorHandleStarted(Event):
 @dataclass
 class DesktopActCompleted(_TruncatedReprMixin, Event):
     """Fired when primitives.computer.desktop.act() completes anywhere in the
-    system (CM fast path, CodeActActor, sub-agents).  Carries the instruction,
-    the agent's summary, and a post-completion screenshot."""
+    system (CM fast path, CodeActActor, sub-agents).  Carries the instruction
+    and the agent's summary."""
 
     instruction: str = ""
     summary: str = ""
-    screenshot: str = ""  # base64 PNG
 
 
 # --------------------------------------------------------------------------- #
