@@ -902,3 +902,46 @@ async def test_result_suffix_consistent_across_incoming_outgoing():
     assert (
         incoming_suffix == outgoing_suffix
     ), f"Suffix mismatch: incoming=({incoming_suffix}), outgoing=({outgoing_suffix})"
+
+
+# ============================================================================
+#  Handle repr leak tests
+# ============================================================================
+# The _LoggedHandle proxy publishes an outgoing event for every wrapped method.
+# When ask() returns a sub-handle (SteerableToolHandle), the answer field must
+# be None — not a garbage repr string like
+# "<unity.common.async_tool_loop.AsyncToolLoopHandle object at 0x...>".
+# The frontend interprets any non-trivial answer as displayable content, so a
+# leaked repr overwrites the real answer on the node.
+
+
+@pytest.mark.asyncio
+@_handle_project
+async def test_ask_does_not_publish_handle_repr_as_answer():
+    """When ask() returns a sub-handle, the outgoing event's answer field must
+    be None — not the handle's __repr__ string."""
+    inner = _TupleAnswerHandle()
+    call_id = new_call_id()
+    logged = wrap_handle_with_logging(inner, call_id, "UnitTestManager", "ask")
+
+    async with capture_events("ManagerMethod") as captured_events:
+        sub_handle = await logged.ask("test question")
+
+    EVENT_BUS.join_published()
+
+    assert hasattr(sub_handle, "done"), "ask() should return a handle-like object"
+
+    outgoing = [
+        e
+        for e in captured_events
+        if e.payload.get("manager") == "UnitTestManager"
+        and e.payload.get("method") == "ask"
+        and e.payload.get("phase") == "outgoing"
+    ]
+
+    assert len(outgoing) == 1, f"Expected 1 outgoing event, got {len(outgoing)}"
+    answer = outgoing[0].payload.get("answer")
+    assert answer is None, (
+        f"Expected answer=None for a handle return, got {answer!r}. "
+        "Handle reprs must not leak into the answer field."
+    )
