@@ -696,6 +696,26 @@ class DesktopActCompleted(_TruncatedReprMixin, Event):
 
 
 # --------------------------------------------------------------------------- #
+# Desktop Lifecycle Events
+# --------------------------------------------------------------------------- #
+
+
+@dataclass
+class AssistantDesktopReady(Event):
+    """The assistant's managed VM desktop is reachable and ready for use.
+
+    Published by the Communication service as a ``unity_system_event`` once
+    the VM passes health checks.  Replaces the previous polling of
+    ``/infra/vm/status``.
+    """
+
+    topic: ClassVar[str | None] = "app:comms:assistant_desktop_ready"
+
+    desktop_url: str = ""
+    vm_type: str = ""
+
+
+# --------------------------------------------------------------------------- #
 # Meet Interaction Events (screen share / remote control)
 # --------------------------------------------------------------------------- #
 

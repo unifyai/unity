@@ -353,6 +353,13 @@ class CommsManager:
                         reason=r
                         or "User released remote control of assistant desktop.",
                     ),
+                    "assistant_desktop_ready": lambda r: AssistantDesktopReady(
+                        desktop_url=event.get("desktop_url")
+                        or SESSION_DETAILS.assistant.desktop_url
+                        or "",
+                        vm_type=event.get("vm_type")
+                        or SESSION_DETAILS.assistant.desktop_mode,
+                    ),
                 }
 
                 factory = _SYSTEM_EVENT_MAP.get(system_event_type)
