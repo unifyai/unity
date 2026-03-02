@@ -274,9 +274,6 @@ async def entrypoint(ctx: agents.JobContext):
     _pending_reply_timer: asyncio.TimerHandle | None = None
     _pending_notification_eval_task: asyncio.Task | None = None
     _NOTIFY_COALESCE_S = 0.05
-    _use_structured_notification_reply = (
-        SETTINGS.conversation.FAST_BRAIN_STRUCTURED_NOTIFICATION_REPLY
-    )
 
     def _log_reply_task(task: asyncio.Task) -> None:
         try:
@@ -813,13 +810,7 @@ async def entrypoint(ctx: agents.JobContext):
                 content=[notification_message],
             )
             if notification_source != "meet_interaction":
-                if _use_structured_notification_reply:
-                    _schedule_notification_eval()
-                else:
-                    trigger_generate_reply(
-                        reason="notification",
-                        source_id=notification_id or "notification",
-                    )
+                _schedule_notification_eval()
 
     def maybe_speak_queued() -> None:
         """Speak the next queued response when user is silent and assistant is idle.

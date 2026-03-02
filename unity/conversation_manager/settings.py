@@ -31,7 +31,6 @@ class ConversationSettings(BaseSettings):
 
     FAST_BRAIN_MODEL: str = "gpt-5-mini@openai"
     FAST_BRAIN_CONTEXT_WINDOW: int = 50
-    FAST_BRAIN_STRUCTURED_NOTIFICATION_REPLY: bool = False
     IMPL: str = "real"
     COMMS_URL: str = Field(default="", validation_alias="UNITY_COMMS_URL")
     ADAPTERS_URL: str = Field(default="", validation_alias="UNITY_ADAPTERS_URL")
