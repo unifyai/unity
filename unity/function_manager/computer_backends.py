@@ -104,7 +104,7 @@ class ComputerBackend(ABC):
     """
 
     @abstractmethod
-    async def act(self, instruction: str) -> "ActResult":
+    async def act(self, instruction: str, verify: bool = False) -> "ActResult":
         """
         Perform an autonomous action on the current page or screen.
 
@@ -137,6 +137,12 @@ class ComputerBackend(ABC):
         instruction : str
             High-level, natural language description of the desired outcome.
             The agent autonomously determines the steps needed.
+        verify : bool, optional
+            When True, the agent re-observes the screen after executing its
+            planned actions and re-plans in a loop until it confirms the task
+            is complete (up to an internal iteration cap). Useful for complex
+            multi-step tasks where a single planning pass may not suffice.
+            Defaults to False (single-pass execution).
 
         Returns
         -------
@@ -478,6 +484,7 @@ class MockComputerBackend(ComputerBackend):
     async def act(
         self,
         instruction: str,
+        verify: bool = False,
         wait: bool = True,
         context: dict = None,
         override_cache: bool = False,
@@ -489,12 +496,13 @@ class MockComputerBackend(ComputerBackend):
 
         Notes:
         - The mock completes instantly; `wait` is accepted for signature compatibility.
-        - We ignore `context`/`override_cache` but accept them to match MagnitudeBackend.
+        - We ignore `context`/`override_cache`/`verify` but accept them to match MagnitudeBackend.
         - For `wait=False`, we mimic MagnitudeBackend semantics by returning "Command queued."
         """
 
         _ = context
         _ = override_cache
+        _ = verify
         _ = _clarification_up_q
         _ = _clarification_down_q
         _ = _kwargs
@@ -664,7 +672,7 @@ class _MockSession:
         self._mode = mode
         self._backend = backend
 
-    async def act(self, instruction: str) -> ActResult:
+    async def act(self, instruction: str, verify: bool = False) -> ActResult:
         return self._backend._act_response
 
     async def observe(self, query: str, response_format: Any = str) -> Any:
@@ -835,14 +843,13 @@ class ComputerSession:
                 return {}
         return result
 
-    async def act(self, instruction: str) -> ActResult:
+    async def act(self, instruction: str, verify: bool = False) -> ActResult:
         """Perform an autonomous action on the current page or screen."""
         lineage = _get_current_lineage()
-        response = await self._request(
-            "POST",
-            "/act",
-            {"task": instruction, "lineage": lineage},
-        )
+        payload: dict = {"task": instruction, "lineage": lineage}
+        if verify:
+            payload["verify"] = True
+        response = await self._request("POST", "/act", payload)
         return ActResult(
             summary=response.get("summary", ""),
             screenshot=response.get("screenshot", ""),
@@ -1364,9 +1371,9 @@ class MagnitudeBackend(ComputerBackend):
             "No sessions created yet. Use get_session(mode) to create one.",
         )
 
-    async def act(self, instruction: str, **kwargs) -> ActResult:
+    async def act(self, instruction: str, verify: bool = False, **kwargs) -> ActResult:
         s = await self._default_session()
-        return await s.act(instruction)
+        return await s.act(instruction, verify=verify)
 
     async def observe(self, query: str, response_format: Any = str, **kwargs) -> Any:
         s = await self._default_session()

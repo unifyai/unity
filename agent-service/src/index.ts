@@ -612,7 +612,7 @@ app.post('/nav', isAgentReady, async (req: Request, res: Response) => {
 });
 
 app.post('/act', isAgentReady, async (req: Request, res: Response) => {
-  const { task, sessionId, lineage } = req.body;
+  const { task, sessionId, lineage, verify } = req.body;
   if (!task) return res.status(400).json({ error: 'bad_request', message: 'Task description is required.' });
   try {
     const session = activeSessions.get(sessionId)!;
@@ -647,101 +647,121 @@ app.post('/act', isAgentReady, async (req: Request, res: Response) => {
     const boundary = memory.observationCount;
 
     const actT0 = Date.now();
-    console.log(`${lineageLabel}🧠 Planning actions for: "${task}"`);
+    console.log(`${lineageLabel}🧠 Planning actions for: "${task}"${verify ? ' (verify=true)' : ''}`);
 
-    await agent.recordConnectorObservations(memory);
-
-    // DEBUG: Capture the planning screenshot (what the LLM will see)
-    if (MAGNITUDE_DEBUG) {
-      try {
-        const harness = agent.require(BrowserConnector).getHarness();
-        const planImg = await harness.screenshot();
-        debugSaveImage(actId, 'planning_screenshot', await planImg.toBase64());
-
-        if (session.mode === 'desktop') {
-          debugSaveImage(actId, 'native_screenshot', nativeScreenshot());
-        }
-      } catch (debugErr) {
-        console.warn(`[debug] Pre-plan screenshot capture failed: ${debugErr}`);
-      }
-    }
-
-    const context = await agent.buildContext(memory);
-    const actActions = agent.actions.filter(a => !a.name.startsWith('task:'));
-    const { reasoning, actions } = await agent.models.partialAct(context, task, [], actActions);
-
-    const planMs = Date.now() - actT0;
-    console.log(`${lineageLabel}💭 Reasoning [${planMs}ms]: ${reasoning}`);
-    console.log(`${lineageLabel}📋 Planned ${actions.length} action(s): ${actions.map(a => a.variant).join(', ')}`);
-
+    const actActions = verify
+      ? agent.actions
+      : agent.actions.filter(a => !a.name.startsWith('task:'));
+    const MAX_VERIFY_ITERATIONS = 5;
     const actionTraces: any[] = [];
+    const iterationReasonings: string[] = [];
+    const iterationPlannedActions: any[][] = [];
+    let totalActionsExecuted = 0;
 
-    for (let i = 0; i < actions.length; i++) {
-      const action = actions[i];
-      const actionDef = agent.identifyAction(action);
-      const rendered = actionDef.render(action);
-      const detail = JSON.stringify(action);
-      console.log(`${lineageLabel}🛠️ Action ${i + 1}/${actions.length}: ${rendered} ${detail}`);
-
-      const actionT0 = Date.now();
-      let actionError: string | undefined;
-      try {
-        await agent.exec(action, memory);
-      } catch (err) {
-        actionError = err instanceof Error ? err.message : String(err);
-        throw err;
-      } finally {
-        const actionMs = Date.now() - actionT0;
-        console.log(`${lineageLabel}✅ Completed ${action.variant} [${actionMs}ms]`);
-
-        const actionTrace: any = {
-          index: i,
-          variant: action.variant,
-          params: action,
-          rendered,
-          executionMs: actionMs,
-        };
-        if (actionError) actionTrace.error = actionError;
-
-        // DEBUG: Post-action screenshot saved directly to MAGNITUDE_LOG_DIR
-        if (MAGNITUDE_DEBUG) {
-          try {
-            const harness = agent.require(BrowserConnector).getHarness();
-            const postImg = await harness.screenshot();
-            const coordLabel = ('x' in action && 'y' in action)
-              ? `_${action.x}_${action.y}`
-              : ('from' in action && typeof action.from === 'object')
-                ? `_${action.from.x}_${action.from.y}`
-                : '';
-            const padIdx = String(i + 1).padStart(3, '0');
-            debugSaveImage(
-              actId,
-              `post_action/${padIdx}_${action.variant.replace(/:/g, '_')}${coordLabel}`,
-              await postImg.toBase64(),
-            );
-          } catch (debugErr) {
-            console.warn(`[debug] Post-action screenshot failed: ${debugErr}`);
-          }
-        }
-
-        actionTraces.push(actionTrace);
+    for (let iteration = 0; iteration < (verify ? MAX_VERIFY_ITERATIONS : 1); iteration++) {
+      if (iteration > 0) {
+        console.log(`${lineageLabel}🔄 Verify pass ${iteration + 1}: re-observing and re-planning...`);
       }
+
+      await agent.recordConnectorObservations(memory);
+
+      if (MAGNITUDE_DEBUG) {
+        try {
+          const harness = agent.require(BrowserConnector).getHarness();
+          const planImg = await harness.screenshot();
+          debugSaveImage(actId, iteration === 0 ? 'planning_screenshot' : `verify_${iteration}_screenshot`, await planImg.toBase64());
+
+          if (session.mode === 'desktop') {
+            debugSaveImage(actId, iteration === 0 ? 'native_screenshot' : `verify_${iteration}_native`, nativeScreenshot());
+          }
+        } catch (debugErr) {
+          console.warn(`[debug] Pre-plan screenshot capture failed: ${debugErr}`);
+        }
+      }
+
+      const context = await agent.buildContext(memory);
+      const { reasoning, actions } = await agent.models.partialAct(context, task, [], actActions);
+
+      const planMs = Date.now() - actT0;
+      console.log(`${lineageLabel}💭 Reasoning [${planMs}ms]: ${reasoning}`);
+      console.log(`${lineageLabel}📋 Planned ${actions.length} action(s): ${actions.map(a => a.variant).join(', ')}`);
+
+      iterationReasonings.push(reasoning);
+      iterationPlannedActions.push(actions);
+      memory.recordThought(reasoning);
+
+      for (let i = 0; i < actions.length; i++) {
+        const action = actions[i];
+        const actionDef = agent.identifyAction(action);
+        const rendered = actionDef.render(action);
+        const detail = JSON.stringify(action);
+        console.log(`${lineageLabel}🛠️ Action ${totalActionsExecuted + i + 1}: ${rendered} ${detail}`);
+
+        const actionT0 = Date.now();
+        let actionError: string | undefined;
+        try {
+          await agent.exec(action, memory);
+        } catch (err) {
+          actionError = err instanceof Error ? err.message : String(err);
+          throw err;
+        } finally {
+          const actionMs = Date.now() - actionT0;
+          console.log(`${lineageLabel}✅ Completed ${action.variant} [${actionMs}ms]`);
+
+          const actionTrace: any = {
+            index: totalActionsExecuted + i,
+            iteration,
+            variant: action.variant,
+            params: action,
+            rendered,
+            executionMs: actionMs,
+          };
+          if (actionError) actionTrace.error = actionError;
+
+          if (MAGNITUDE_DEBUG) {
+            try {
+              const harness = agent.require(BrowserConnector).getHarness();
+              const postImg = await harness.screenshot();
+              const coordLabel = ('x' in action && 'y' in action)
+                ? `_${action.x}_${action.y}`
+                : ('from' in action && typeof action.from === 'object')
+                  ? `_${action.from.x}_${action.from.y}`
+                  : '';
+              const padIdx = String(totalActionsExecuted + i + 1).padStart(3, '0');
+              debugSaveImage(
+                actId,
+                `post_action/${padIdx}_${action.variant.replace(/:/g, '_')}${coordLabel}`,
+                await postImg.toBase64(),
+              );
+            } catch (debugErr) {
+              console.warn(`[debug] Post-action screenshot failed: ${debugErr}`);
+            }
+          }
+
+          actionTraces.push(actionTrace);
+        }
+      }
+
+      totalActionsExecuted += actions.length;
+
+      const taskDone = actions.some(a => a.variant === 'task:done');
+      if (!verify || taskDone) break;
     }
 
     const totalMs = Date.now() - actT0;
-    console.log(`${lineageLabel}🏁 All ${actions.length} action(s) executed [${totalMs}ms]`);
+    console.log(`${lineageLabel}🏁 ${totalActionsExecuted} action(s) executed across ${iterationReasonings.length} iteration(s) [${totalMs}ms]`);
 
-    // DEBUG: Save full act trace to local filesystem
     debugSaveTrace(actId, {
       actId,
       task,
+      verify: !!verify,
       lineage: lineage ?? [],
       sessionMode: session.mode,
       sessionId,
-      reasoning,
-      plannedActions: actions,
+      reasoning: iterationReasonings.join('\n---\n'),
+      plannedActions: iterationPlannedActions,
       actionTraces,
-      planningMs: planMs,
+      iterations: iterationReasonings.length,
       totalMs,
       historyDepth: session.actHistory.length,
       observationCountBefore: boundary,
