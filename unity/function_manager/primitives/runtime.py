@@ -91,7 +91,6 @@ def _publish_desktop_act_completed(instruction: str, result: "ActResult") -> Non
                     payload={
                         "instruction": instruction,
                         "summary": result.summary,
-                        "screenshot": result.screenshot,
                     },
                 ),
             ),

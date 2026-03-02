@@ -332,7 +332,6 @@ async def test_desktop_act_completed_event_type_registered(initialized_cm):
         payload={
             "instruction": "Click Submit",
             "summary": "Clicked the Submit button",
-            "screenshot": "base64png",
         },
     )
     assert event.type == "DesktopActCompleted"
@@ -370,7 +369,6 @@ async def test_desktop_act_completed_bridge_publishes_when_screen_share_active(
         fake_evt.payload = {
             "instruction": "Click Submit",
             "summary": "Clicked the Submit button",
-            "screenshot": "base64png",
         }
 
         # Directly invoke the bridge callback logic
@@ -379,7 +377,6 @@ async def test_desktop_act_completed_bridge_publishes_when_screen_share_active(
         cm_event = DesktopActCompleted(
             instruction=fake_evt.payload["instruction"],
             summary=fake_evt.payload["summary"],
-            screenshot=fake_evt.payload["screenshot"],
         )
         await cm.event_broker.publish(
             "app:actor:desktop_act_completed",
@@ -430,7 +427,6 @@ async def test_desktop_act_completed_bridge_skipped_when_screen_share_inactive(
             cm_event = DesktopActCompleted(
                 instruction="Click Submit",
                 summary="Clicked",
-                screenshot="base64png",
             )
             await cm.event_broker.publish(
                 "app:actor:desktop_act_completed",
@@ -471,7 +467,6 @@ async def test_desktop_act_completed_event_handler_wakes_slow_brain(initialized_
         event = DesktopActCompleted(
             instruction="Click Submit",
             summary="Clicked the Submit button",
-            screenshot="base64png",
         )
         await EventHandler.handle_event(event, cm)
 
@@ -491,7 +486,6 @@ def test_render_event_for_fast_brain_desktop_act_completed():
     event = DesktopActCompleted(
         instruction="Click Submit",
         summary="Clicked the Submit button",
-        screenshot="base64png",
     )
     result = render_event_for_fast_brain(event.to_json())
 
