@@ -233,6 +233,7 @@ class WebSessionHandle:
     def __init__(self, session: "ComputerSession", owner: "ComputerPrimitives"):
         self._session = session
         self._owner = owner
+        self._active = True
 
         async def _resolve():
             return self._session
@@ -240,8 +241,19 @@ class WebSessionHandle:
         for name in _COMPUTER_METHODS:
             setattr(self, name, _make_session_method(name, owner, _resolve))
 
+    @property
+    def visible(self) -> bool:
+        """Whether this session renders on the VM desktop (``web-vm`` mode)."""
+        return self._session._mode == "web-vm"
+
+    @property
+    def active(self) -> bool:
+        """Whether this session is still running (``stop()`` has not been called)."""
+        return self._active
+
     async def stop(self):
         """Stop the browser session and release resources."""
+        self._active = False
         await self._session.stop()
 
 
@@ -255,6 +267,7 @@ class _WebSessionFactory:
 
     def __init__(self, owner: "ComputerPrimitives"):
         self._owner = owner
+        self._handles: list[WebSessionHandle] = []
 
     async def new_session(self, visible: bool = True) -> WebSessionHandle:
         """Create a new independent browser session.
@@ -283,7 +296,45 @@ class _WebSessionFactory:
         """
         mode = "web-vm" if visible else "web"
         session = await self._owner.backend.create_session(mode)
-        return WebSessionHandle(session, self._owner)
+        handle = WebSessionHandle(session, self._owner)
+        self._handles.append(handle)
+        return handle
+
+    def list_sessions(
+        self,
+        visible_only: bool = False,
+        active_only: bool = False,
+    ) -> list[WebSessionHandle]:
+        """List web sessions created across the entire system.
+
+        Returns the actual ``WebSessionHandle`` objects from a global
+        registry shared by all actors (``ComputerPrimitives`` is a
+        singleton).  Use this for cross-actor coordination — e.g. to
+        check how many browser sessions are currently active before
+        creating new ones.
+
+        Parameters
+        ----------
+        visible_only : bool, default False
+            When True, only return sessions running on the VM desktop
+            (``visible=True`` at creation time).  Excludes headless
+            background sessions.
+        active_only : bool, default False
+            When True, only return sessions where ``stop()`` has not
+            been called.
+
+        Returns
+        -------
+        list[WebSessionHandle]
+            Matching session handles.  Each handle can be used to call
+            ``act``, ``observe``, ``navigate``, ``stop``, etc.
+        """
+        result = self._handles
+        if visible_only:
+            result = [h for h in result if h.visible]
+        if active_only:
+            result = [h for h in result if h.active]
+        return list(result)
 
 
 class ComputerPrimitives(metaclass=SingletonABCMeta):

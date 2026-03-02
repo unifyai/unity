@@ -332,6 +332,25 @@ class TestEnvironmentToolDiscovery:
         assert meta.signature is not None
         assert "visible" in meta.signature
 
+    def test_get_tools_includes_list_sessions(self):
+        from unity.actor.environments.computer import ComputerEnvironment
+
+        cp = _make_primitives()
+        env = ComputerEnvironment(cp)
+        tools = env.get_tools()
+        assert "primitives.computer.web.list_sessions" in tools
+
+    def test_list_sessions_tool_has_docstring(self):
+        from unity.actor.environments.computer import ComputerEnvironment
+
+        cp = _make_primitives()
+        env = ComputerEnvironment(cp)
+        tools = env.get_tools()
+        meta = tools["primitives.computer.web.list_sessions"]
+        assert meta.docstring is not None
+        assert "visible_only" in meta.docstring
+        assert "active_only" in meta.docstring
+
     def test_prompt_context_mentions_both_interfaces(self):
         from unity.actor.environments.computer import ComputerEnvironment
 
@@ -342,3 +361,81 @@ class TestEnvironmentToolDiscovery:
         assert "primitives.computer.web.new_session" in ctx
         assert "visible" in ctx
         assert "stop()" in ctx
+
+
+# ── list_sessions ─────────────────────────────────────────────────────
+
+
+class TestListSessions:
+    """primitives.computer.web.list_sessions() returns handles from the global registry."""
+
+    def test_list_sessions_empty_initially(self):
+        cp = _make_primitives()
+        assert cp.web.list_sessions() == []
+
+    @pytest.mark.asyncio
+    async def test_list_sessions_returns_created_sessions(self):
+        cp = _make_primitives()
+        s1 = await cp.web.new_session()
+        s2 = await cp.web.new_session()
+        sessions = cp.web.list_sessions()
+        assert len(sessions) == 2
+        assert s1 in sessions
+        assert s2 in sessions
+
+    @pytest.mark.asyncio
+    async def test_list_sessions_active_only_filters_stopped(self):
+        cp = _make_primitives()
+        s1 = await cp.web.new_session()
+        s2 = await cp.web.new_session()
+        await s1.stop()
+        active = cp.web.list_sessions(active_only=True)
+        assert len(active) == 1
+        assert s2 in active
+        assert s1 not in active
+
+    @pytest.mark.asyncio
+    async def test_list_sessions_visible_only_filters_headless(self):
+        cp = _make_primitives()
+        visible = await cp.web.new_session(visible=True)
+        headless = await cp.web.new_session(visible=False)
+        result = cp.web.list_sessions(visible_only=True)
+        assert len(result) == 1
+        assert visible in result
+        assert headless not in result
+
+    @pytest.mark.asyncio
+    async def test_list_sessions_combined_filters(self):
+        cp = _make_primitives()
+        v_active = await cp.web.new_session(visible=True)
+        v_stopped = await cp.web.new_session(visible=True)
+        h_active = await cp.web.new_session(visible=False)
+        await v_stopped.stop()
+        result = cp.web.list_sessions(visible_only=True, active_only=True)
+        assert result == [v_active]
+        assert h_active not in result
+
+    @pytest.mark.asyncio
+    async def test_list_sessions_returns_same_handle_objects(self):
+        cp = _make_primitives()
+        s1 = await cp.web.new_session()
+        s2 = await cp.web.new_session()
+        sessions = cp.web.list_sessions()
+        assert sessions[0] is s1
+        assert sessions[1] is s2
+
+    @pytest.mark.asyncio
+    async def test_handle_visible_property(self):
+        cp = _make_primitives()
+        visible = await cp.web.new_session(visible=True)
+        headless = await cp.web.new_session(visible=False)
+        assert visible.visible is True
+        assert headless.visible is False
+
+    @pytest.mark.asyncio
+    async def test_handle_active_property(self):
+        cp = _make_primitives()
+        session = await cp.web.new_session()
+        assert session.active is True
+        await session.stop()
+        assert session.active is False
