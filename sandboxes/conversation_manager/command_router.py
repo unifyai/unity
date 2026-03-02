@@ -296,12 +296,15 @@ class CommandRouter:
                 from sandboxes.conversation_manager.call_transcript import (
                     build_timeline,
                     format_timeline,
+                    parse_cm_log,
                     parse_voice_log,
                 )
 
                 voice_data = parse_voice_log(voice_log)
+                cm_log = _voice_root / ".logs_conversation_sandbox.txt"
+                cm_data = parse_cm_log(cm_log) if cm_log.exists() else None
                 if voice_data.utterances:
-                    timeline = build_timeline(voice_data)
+                    timeline = build_timeline(voice_data, cm_data)
                     transcript_path = json_path.with_name(
                         json_path.stem + "_transcript.txt",
                     )
@@ -745,7 +748,8 @@ class CommandRouter:
         prompt_text: Optional[PromptFn],
     ) -> RouterResult:
         # Idle guard: this is also enforced in parse_command, but re-check for safety.
-        if is_active(self.cm, self.state):
+        h = getattr(self.cm, "active_ask_handle", None)
+        if (h is not None and not h.done()) or getattr(self.state, "in_call", False):
             return RouterResult(
                 lines=[
                     "⚠️ Scenario seeding is disabled while a conversation/action is active.",

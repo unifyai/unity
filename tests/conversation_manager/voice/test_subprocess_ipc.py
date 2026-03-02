@@ -136,7 +136,7 @@ class TestRealSubprocessIPC:
             # Clear and send guidance (using production channel name)
             received_from_child.clear()
             await event_broker.publish(
-                "app:call:call_guidance",
+                "app:call:notification",
                 json.dumps({"content": "Ask about their day"}),
             )
 

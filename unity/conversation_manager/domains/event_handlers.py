@@ -2,14 +2,11 @@ import asyncio
 import traceback
 from typing import TYPE_CHECKING, Union
 
-import unity
 from unity.contact_manager.types.contact import UNASSIGNED
-from unity.logger import LOGGER
 from unity.common.hierarchical_logger import DEFAULT_ICON
 from unity.conversation_manager import assistant_jobs
 from unity.conversation_manager.events import *
 from unity.conversation_manager.domains import managers_utils
-from unity.conversation_manager.tracing import content_trace_id
 from unity.conversation_manager.types import Medium, Mode
 
 if TYPE_CHECKING:
@@ -58,7 +55,6 @@ class EventHandler:
             and not event.__class__.content_logged
             and event.__class__.loggable
         ):
-            event_trace = getattr(cm, "_current_event_trace", None) or {}
             log_fn = (
                 cm._session_logger.info
                 if event.__class__.prominent
@@ -66,10 +62,7 @@ class EventHandler:
             )
             log_fn(
                 event_key,
-                (
-                    f"Event: {event.__class__.__name__} "
-                    f"(event_id={event_trace.get('event_id', '-')})"
-                ),
+                f"Event: {event.__class__.__name__}",
             )
 
         if event.__class__.loggable:
@@ -222,15 +215,15 @@ async def _(
         )
 
         guidance_text = _MEET_FAST_BRAIN_GUIDANCE[AssistantScreenShareStarted]
-        guidance_event = CallGuidance(
+        notification_event = FastBrainNotification(
             contact=contact,
             content=guidance_text,
             source="meet_interaction",
             agent_service_url=_resolve_agent_service_url(),
         )
         await cm.call_manager._socket_server.queue_for_clients(
-            "app:call:call_guidance",
-            guidance_event.to_json(),
+            "app:call:notification",
+            notification_event.to_json(),
         )
 
     # No LLM run here — call guidance is pre-computed via make_call(context=...).
@@ -354,11 +347,6 @@ async def _(event: Event, cm: "ConversationManager", *args, **kwargs):
         local_message_id=message_id,
     )
 
-    # Outbound utterances signal that the fast brain's generation+TTS cycle
-    # completed — clear the suppression flag so proactive speech can resume.
-    if role == "assistant":
-        cm._fast_brain_active = False
-
     # Reset proactive speech on any utterance (user or assistant).
     await cm.schedule_proactive_speech()
 
@@ -373,17 +361,16 @@ async def _(event: Event, cm: "ConversationManager", *args, **kwargs):
         await cm.interject_or_run(event.content)
 
 
-@EventHandler.register(CallGuidance)
+@EventHandler.register(FastBrainNotification)
 async def _(
-    event: CallGuidance,
+    event: FastBrainNotification,
     cm: "ConversationManager",
     *args,
     **kwargs,
 ):
-    guidance_id = content_trace_id("guid", event.content or "")
     cm._session_logger.info(
-        "call_guidance",
-        f"Received guidance guidance_id={guidance_id}: {event.content[:50]}...",
+        "call_notification",
+        f"Received notification: {event.content[:50]}...",
     )
     contact_id = event.contact["contact_id"]
     contact = cm.contact_index.get_contact(contact_id=contact_id)
@@ -478,12 +465,16 @@ async def _(
             exchange_id,
             {"recording_url": event.recording_url},
         )
-        LOGGER.debug(
+        cm._session_logger.debug(
+            "recording",
             f"{DEFAULT_ICON} [RecordingReady] Stored recording_url on exchange "
             f"{exchange_id} for {name}",
         )
     else:
-        LOGGER.debug(f"{DEFAULT_ICON} [RecordingReady] No exchange_id found for {name}")
+        cm._session_logger.debug(
+            "recording",
+            f"{DEFAULT_ICON} [RecordingReady] No exchange_id found for {name}",
+        )
 
 
 @EventHandler.register(
@@ -711,7 +702,8 @@ async def _(event, cm: "ConversationManager", *args, **kwargs):
             )
             notif_content = f"Email sent to {', '.join(email_to[:2])}{'...' if len(email_to) > 2 else ''}"
             cm.notifications_bar.push_notif("comms", notif_content, event.timestamp)
-            await cm.request_llm_run(delay=2)
+            if cm._outbound_suppress_gen != cm._llm_gen:
+                await cm.request_llm_run(delay=2)
             return  # Early return - email handling is complete
 
         case EmailReceived():
@@ -788,7 +780,8 @@ async def _(event, cm: "ConversationManager", *args, **kwargs):
     if role == "user":
         await cm.cancel_proactive_speech()
 
-    await cm.request_llm_run(delay=2)
+    if role == "user" or cm._outbound_suppress_gen != cm._llm_gen:
+        await cm.request_llm_run(delay=2)
 
 
 @EventHandler.register(Error)
@@ -901,7 +894,7 @@ async def _startup_sequence(cm: "ConversationManager"):
 @EventHandler.register((StartupEvent))
 async def _(event: StartupEvent, cm: "ConversationManager", *args, **kwargs):
     try:
-        cm._session_logger.debug("startup", "Received startup event")
+        cm._session_logger.info("startup", "Received startup event")
 
         # Set demo mode from startup event before initializing managers
         # Demo mode is derived from the presence of a demo_id
@@ -918,12 +911,6 @@ async def _(event: StartupEvent, cm: "ConversationManager", *args, **kwargs):
         payload = event.to_dict()["payload"]
         cm.set_details(payload)
         cm.call_manager.set_config(cm.get_call_config())
-
-        # Initialize unity BEFORE spawning concurrent tasks. SESSION_DETAILS
-        # is already populated by set_details() above, so unity.init() just
-        # reads assistant.id for the context path. This prevents races where
-        # _startup_sequence triggers ensure_initialised() first.
-        await asyncio.to_thread(unity.init)
 
         # Job logging + file sync run in sequence (file sync needs VM details from job startup)
         asyncio.create_task(_startup_sequence(cm))
@@ -1034,6 +1021,7 @@ async def _(event: ActorResult, cm: "ConversationManager", *args, **kwargs):
     completed = cm.in_flight_actions.pop(event.handle_id, None)
     if completed:
         cm.completed_actions[event.handle_id] = completed
+    cm._act_handles_with_desktop_usage.discard(event.handle_id)
     await cm.request_llm_run()
 
 
@@ -1070,8 +1058,8 @@ async def _(event: ActorNotification, cm: "ConversationManager", *args, **kwargs
     working.  Progress is recorded in the action's history.
 
     The slow brain is woken to decide whether to relay progress via
-    ``guide_voice_agent``.  On boss-on-call, the fast brain receives the
-    raw event directly via channel forwarding (so guidance is not needed).
+    ``guide_voice_agent``.  On boss-on-call, the call manager renders
+    actor events into FastBrainNotification messages for the fast brain.
     """
     cm._has_non_forwarded_event = True
     if event.handle_id in cm.in_flight_actions:
@@ -1084,6 +1072,25 @@ async def _(event: ActorNotification, cm: "ConversationManager", *args, **kwargs
                 "timestamp": prompt_now(),
             },
         )
+    await cm.request_llm_run()
+
+
+@EventHandler.register(DesktopActCompleted)
+async def _(
+    event: DesktopActCompleted,
+    cm: "ConversationManager",
+    *args,
+    **kwargs,
+):
+    """A ``primitives.computer.desktop.act()`` call completed somewhere in the
+    system. Push a notification and wake the slow brain so it can react."""
+    cm._has_non_forwarded_event = True
+    snippet = event.summary[:120] if event.summary else event.instruction[:120]
+    cm.notifications_bar.push_notif(
+        "Desktop",
+        f"Desktop action completed: {snippet}",
+        event.timestamp,
+    )
     await cm.request_llm_run()
 
 
@@ -1147,23 +1154,47 @@ async def _ensure_desktop_session(cm: "ConversationManager") -> None:
     called explicitly to guarantee the ``/screenshot`` endpoint has an active
     session to fall back to.  ``get_session`` is idempotent — calling it when a
     session already exists returns the cached instance.
-    """
-    try:
-        from unity.function_manager.primitives.runtime import ComputerPrimitives
-        from unity.manager_registry import ManagerRegistry
 
-        cp = ManagerRegistry.get_instance(ComputerPrimitives)
-        if cp is not None:
+    Retries with exponential backoff because the VM's Caddy reverse proxy may
+    still be starting up or obtaining its TLS certificate from Let's Encrypt
+    even after the Communication service reports the VM as "ready".
+    """
+    from unity.function_manager.primitives.runtime import ComputerPrimitives
+    from unity.manager_registry import ManagerRegistry
+
+    cp = ManagerRegistry.get_instance(ComputerPrimitives)
+    if cp is None:
+        return
+
+    max_attempts = 12
+    base_delay = 5.0
+    max_delay = 30.0
+    delay = base_delay
+
+    for attempt in range(1, max_attempts + 1):
+        try:
             session = await cp.backend.get_session("desktop")
             cm._session_logger.info(
-                "screenshot_capture",
+                "desktop_session",
                 f"Desktop session ready: {session._session_id}",
             )
-    except Exception as e:
-        cm._session_logger.warning(
-            "screenshot_capture",
-            f"Failed to create desktop session: {type(e).__name__}: {e}",
-        )
+            return
+        except Exception as e:
+            if attempt == max_attempts:
+                cm._session_logger.warning(
+                    "desktop_session",
+                    f"Failed to create desktop session after {max_attempts} attempts: "
+                    f"{type(e).__name__}: {e}",
+                )
+                return
+            cm._session_logger.debug(
+                "desktop_session",
+                f"Attempt {attempt}/{max_attempts} failed ({type(e).__name__}), "
+                f"retrying in {delay:.0f}s",
+            )
+            await asyncio.sleep(delay)
+            delay = min(delay * 1.5, max_delay)
+            cp.backend.clear_session("desktop")
 
 
 # --------------------------------------------------------------------------- #
@@ -1171,6 +1202,17 @@ async def _ensure_desktop_session(cm: "ConversationManager") -> None:
 # --------------------------------------------------------------------------- #
 
 # Mapping from event class to a human-readable notification for the slow brain.
+_MEET_LOG_TYPES: dict[type, str] = {
+    AssistantScreenShareStarted: "screen_share",
+    AssistantScreenShareStopped: "screen_share_off",
+    UserScreenShareStarted: "user_screen_share",
+    UserScreenShareStopped: "user_screen_share_off",
+    UserWebcamStarted: "webcam_on",
+    UserWebcamStopped: "webcam_off",
+    UserRemoteControlStarted: "remote_control",
+    UserRemoteControlStopped: "remote_control_off",
+}
+
 _MEET_INTERACTION_NOTIFICATIONS: dict[type, str] = {
     AssistantScreenShareStarted: "The user enabled assistant screen sharing — they can now see your desktop.",
     AssistantScreenShareStopped: "The user disabled assistant screen sharing — they can no longer see your desktop.",
@@ -1260,11 +1302,22 @@ async def _(
     **kwargs,
 ):
     event_name = event.__class__.__name__
-    cm._session_logger.info("meet_interaction", f"{event_name}: {event.reason}")
+    log_type = _MEET_LOG_TYPES.get(event.__class__, "meet_interaction")
+    log_msg = f"Event: {event_name}"
+    if event.reason == "LiveKit track auto-detected":
+        cm._session_logger.debug(log_type, log_msg)
+    else:
+        cm._session_logger.info(log_type, log_msg)
 
     # Update state flag on the CM.
     attr, value = _MEET_STATE_FLAGS[event.__class__]
     setattr(cm, attr, value)
+
+    if (
+        isinstance(event, (UserWebcamStarted, UserWebcamStopped))
+        and not cm.mode.is_voice
+    ):
+        return
 
     # Push a notification so the slow brain sees the state change.
     notification_text = _MEET_INTERACTION_NOTIFICATIONS[event.__class__]
@@ -1277,33 +1330,32 @@ async def _(
     if fast_brain_text and cm.mode.is_voice:
         contact = cm.get_active_contact()
         if contact:
-            guidance_id = content_trace_id("guid", fast_brain_text)
-            cm._session_logger.info(
-                "call_guidance",
-                (
-                    f"Publishing meet interaction guidance_id={guidance_id} "
-                    f"reason={event_name}"
-                ),
+            cm._session_logger.debug(
+                "call_notification",
+                f"Publishing meet interaction reason={event_name}",
             )
             from unity.conversation_manager.medium_scripts.common import (
                 _resolve_agent_service_url,
             )
 
-            guidance_event = CallGuidance(
+            notification_event = FastBrainNotification(
                 contact=contact,
                 content=fast_brain_text,
                 source="meet_interaction",
                 agent_service_url=_resolve_agent_service_url(),
             )
             await cm.event_broker.publish(
-                "app:call:call_guidance",
-                guidance_event.to_json(),
+                "app:call:notification",
+                notification_event.to_json(),
             )
 
     await cm.schedule_proactive_speech()
 
     if isinstance(event, AssistantScreenShareStarted):
         asyncio.ensure_future(_ensure_desktop_session(cm))
+
+    if isinstance(event, AssistantScreenShareStopped):
+        cm._act_handles_with_desktop_usage.clear()
 
     # Broadcast remote-control state change to all active CodeActActor loops
     # via the ComputerPrimitives singleton interject queue registry.
@@ -1351,13 +1403,12 @@ async def _(event: DirectMessageEvent, cm: "ConversationManager", *args, **kwarg
     )
 
     if cm.mode.is_voice:
-        guidance_id = content_trace_id("guid", event.content or "")
         cm._session_logger.info(
-            "call_guidance",
-            f"Publishing direct-message guidance guidance_id={guidance_id}",
+            "call_notification",
+            "Publishing direct-message notification",
         )
         await cm.event_broker.publish(
-            "app:call:call_guidance",
+            "app:call:notification",
             json.dumps({"content": event.content}),
         )
 

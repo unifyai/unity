@@ -19,6 +19,15 @@ LLM I/O logging is now handled directly in the unillm package. Enable it via:
 Logging is configured centrally in unity.logger (imported below).
 """
 
+try:
+    import onnxruntime as _ort
+
+    _ort.set_default_logger_severity(
+        4,
+    )  # FATAL — suppress thread affinity noise in containers
+except Exception:
+    pass
+
 from unity.common.context_registry import ContextRegistry
 
 # Attempt to import the external 'unify' SDK. If unavailable, provide a minimal
@@ -63,8 +72,8 @@ def init(
 ) -> None:  # noqa: D401 – imperative name
     """Initialise the *unity* runtime.
 
-    Reads SESSION_DETAILS.assistant.id (set by the startup event) for the
-    context path. All assistant identity and profile data lives on
+    Reads SESSION_DETAILS.assistant.agent_id (set by the startup event) for
+    the context path. All assistant identity and profile data lives on
     SESSION_DETAILS — this function only handles project activation,
     context setup, EventBus, and hooks.
     """

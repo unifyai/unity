@@ -758,6 +758,20 @@ class SessionExecutor:
         primitives: Any = None,
         computer_primitives: Any = None,
     ) -> Dict[str, Any]:
+        import time as _se_time
+        import logging as _se_logging
+
+        _se_t0 = _se_time.perf_counter()
+        _se_log = _se_logging.getLogger("unity")
+
+        def _se_ms():
+            return f"{(_se_time.perf_counter() - _se_t0) * 1000:.0f}ms"
+
+        _se_log.debug(
+            f"⏱️ [SessionExecutor.execute +{_se_ms()}] entered "
+            f"(lang={language}, state_mode={state_mode}, session_id={session_id})",
+        )
+
         started = datetime.now(timezone.utc)
         t0 = started.timestamp()
 
@@ -768,13 +782,17 @@ class SessionExecutor:
         # ─── Python ────────────────────────────────────────────────────────
         if language == "python":
             # Special-case: session 0 is the *current bound sandbox* when present.
-            # This preserves legacy CodeAct behavior (one sandbox per act() handle)
-            # while enabling state sharing for execute_code(..., session_id=0) when a sandbox is bound.
             if state_mode == "stateful" and venv_id is None and session_id == 0:
                 try:
                     sb0 = _CURRENT_SANDBOX.get()
                     self._inject_fm_globals(sb0)
+                    _se_log.debug(
+                        f"⏱️ [SessionExecutor.execute +{_se_ms()}] bound sandbox (session 0), executing",
+                    )
                     res = await sb0.execute(code)
+                    _se_log.debug(
+                        f"⏱️ [SessionExecutor.execute +{_se_ms()}] bound sandbox done",
+                    )
                     return {
                         **res,
                         "language": language,
@@ -791,15 +809,27 @@ class SessionExecutor:
                     pass
             # Stateless: fresh in-process sandbox per call.
             if state_mode == "stateless":
+                _se_log.debug(
+                    f"⏱️ [SessionExecutor.execute +{_se_ms()}] creating stateless sandbox",
+                )
                 sb = PythonExecutionSession(
                     computer_primitives=computer_primitives,
                     environments=self._environments,
                     venv_pool=self._venv_pool,
                     shell_pool=self._shell_pool,
                 )
+                _se_log.debug(
+                    f"⏱️ [SessionExecutor.execute +{_se_ms()}] sandbox created, injecting globals",
+                )
                 self._inject_fm_globals(sb)
+                _se_log.debug(
+                    f"⏱️ [SessionExecutor.execute +{_se_ms()}] globals injected, executing code",
+                )
                 try:
                     res = await sb.execute(code)
+                    _se_log.debug(
+                        f"⏱️ [SessionExecutor.execute +{_se_ms()}] code execution done",
+                    )
                 finally:
                     try:
                         await sb.close()

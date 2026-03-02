@@ -190,7 +190,7 @@ print_summary() {
         echo -e "  ${GREEN}${BOLD}All checks passed!${NC} You're ready to use stream_logs.py."
         echo ""
         echo "  Example:"
-        echo "    uv run scripts/dev/job_logs/stream_logs.py --job unity-2026-02-10-17-30-53-staging --namespace staging"
+        echo "    uv run scripts/dev/job_logs/stream_logs.py --job unity-2026-02-10-17-30-53-staging"
     else
         echo -e "  ${YELLOW}${BOLD}Remaining items (${#ISSUES[@]}):${NC}"
         for issue in "${ISSUES[@]}"; do

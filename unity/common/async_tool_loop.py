@@ -149,21 +149,11 @@ class SteerableToolHandle(ABC):
         *,
         _parent_chat_context: list[dict] | None = None,
     ) -> "SteerableToolHandle":
-        """
-        Query the status or progress of this running task (async - result arrives on next turn).
+        """Ask about status/progress if the task is still running, or the retrospective process/method if it has completed.
 
-        Use this to check on updates, get a summary of what has happened so far,
-        or ask clarifying questions about the task's state without modifying it.
-
-        This operation is asynchronous: it returns immediately with "Query submitted",
-        and the actual response appears in the task's history when ready (status
-        changes from 'pending' to 'completed'). You will automatically receive
-        another turn to see and act on the result.
-
-        Parameters
-        ----------
-        question : str
-            The follow-up user question.
+        Read-only — does not modify the task. This operation is asynchronous:
+        it returns immediately and the answer appears in the task's history on
+        the next turn.
         """
 
     @abstractmethod
@@ -177,11 +167,6 @@ class SteerableToolHandle(ABC):
 
         Use this to give the task new context, correct its approach, or add
         requirements mid-flight without stopping or restarting it.
-
-        Parameters
-        ----------
-        message : str
-            The user interjection to inject into the loop.
         """
 
     @abstractmethod
@@ -193,43 +178,22 @@ class SteerableToolHandle(ABC):
 
         While any tools are still running you cannot end the conversation;
         stop or wait for all in-flight tools to complete, then respond.
-
-        Parameters
-        ----------
-        reason : str | None
-            Optional human-readable reason for stopping.
         """
 
     @abstractmethod
     async def pause(self) -> Optional[str]:
         """Pause this task temporarily without cancelling it.
 
-        Use this when the user needs to step away or wants to hold the task.
-        In-flight operations continue, but no new actions are taken until resumed.
-
-        Behaviour
-        ---------
-        - Freezes the assistant's next LLM turn until :pyfunc:`resume` is called.
-        - Any in‑flight tool calls continue executing; the pause only affects the
-          assistant's ability to speak/advance turns.
-        - Nested handles (if any) should receive a corresponding pause signal
-          before the outer loop transitions into the paused state.
+        In-flight operations continue executing, but no new actions are taken
+        until resumed.
         """
 
     @abstractmethod
     async def resume(self) -> Optional[str]:
         """Resume a task that was previously paused.
 
-        Use this to continue a paused task. Any work that completed while
-        paused will be processed before the task continues.
-
-        Behaviour
-        ---------
-        - Allows the assistant to proceed with the next LLM turn.
-        - If tools completed while paused, their results are processed first and
-          then the assistant replies.
-        - Nested handles (if any) should receive a corresponding resume signal
-          before unfreezing the outer loop.
+        Any work that completed while paused will be processed before the
+        task continues.
         """
 
     @abstractmethod
@@ -253,26 +217,8 @@ class SteerableToolHandle(ABC):
     async def answer_clarification(self, call_id: str, answer: str) -> None:
         """Answer a clarification question that the task is waiting on.
 
-        Use this when the task has asked for more information and is blocked
-        waiting for a response. Provide the call_id from the clarification
-        request and the answer text.
-
-        Parameters
-        ----------
-        call_id : str
-            Identifier of the original assistant tool call that requested the
-            clarification.
-        answer : str
-            The clarification answer text to provide to the waiting tool.
-
-        Behaviour
-        ---------
-        - Looks up the queued clarification channel for ``call_id`` and delivers
-          the provided ``answer`` to the waiting tool.
-        - If the mapping is missing (e.g., the tool already finished or the loop
-          resumed on its own), the call is a no‑op.
-        - Implementations should not raise in the absence of a matching channel;
-          best‑effort delivery is sufficient.
+        Provide the call_id from the clarification request and the answer text.
+        No-op if the tool already finished.
         """
 
     def get_history(self) -> list[dict]:
@@ -400,14 +346,6 @@ class AsyncToolLoopHandle(SteerableToolHandle):
         _return_reasoning_steps: bool = False,
         **kwargs,
     ) -> "SteerableToolHandle":
-        """
-        Answers *question* about this *pending* tool, associated with this handle.
-        The question is read-only (the tool state is not modified whatsoever).
-        The calling parent loop is left completely untouched.
-        When ``_parent_chat_context`` is provided, the context is included in the
-        inspection loop's system message to provide additional context about the
-        broader conversation that led to this question.
-        """
         _label = getattr(self, "_log_label", None) or self._loop_id
         LOGGER.info(f"{ICONS['clarification']} [{_label}] Ask requested: {question}")
 
@@ -871,11 +809,6 @@ class AsyncToolLoopHandle(SteerableToolHandle):
 
     @functools.wraps(SteerableToolHandle.answer_clarification, updated=())
     async def answer_clarification(self, call_id: str, answer: str) -> None:
-        """Programmatically answer a clarification for a pending tool call.
-
-        This looks up the down-queue for the given call and pushes the answer.
-        Falls through silently if the mapping is missing (tool may have finished).
-        """
         # Mirror as synthetic helper tool_call (no LLM step)
         try:
             await self._queue.put(

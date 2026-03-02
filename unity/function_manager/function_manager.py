@@ -34,7 +34,7 @@ import unify
 from .shell_pool import ShellPool
 from unify.utils.http import RequestError as _UnifyRequestError
 from ..common.log_utils import create_logs as unity_create_logs
-from ..common.embed_utils import list_private_fields
+from ..common.embed_utils import ensure_vector_column, list_private_fields
 from ..common.search_utils import table_search_top_k
 from .execution_env import create_base_globals
 from .dependency_analysis import collect_dependencies_from_function_node
@@ -51,9 +51,7 @@ from ..common.context_registry import ContextRegistry, TableContext
 from unity.function_manager.primitives.scope import PrimitiveScope
 from unity.function_manager.primitives.registry import get_registry
 from .custom_functions import (
-    collect_custom_functions,
     compute_custom_functions_hash,
-    collect_custom_venvs,
     compute_custom_venvs_hash,
 )
 
@@ -1888,6 +1886,17 @@ class FunctionManager(BaseFunctionManager):
     #  Public API                                                        #
     # ------------------------------------------------------------------ #
 
+    def warm_embeddings(self) -> None:
+        for ctx in (self._compositional_ctx, self._primitives_ctx):
+            try:
+                ensure_vector_column(
+                    ctx,
+                    embed_column="_embedding_text_emb",
+                    source_column="embedding_text",
+                )
+            except Exception:
+                pass
+
     @functools.wraps(BaseFunctionManager.clear, updated=())
     def clear(self) -> None:
         unify.delete_context(self._compositional_ctx)
@@ -2054,7 +2063,7 @@ class FunctionManager(BaseFunctionManager):
                 batched=True,
                 add_to_all_context=self.include_in_multi_assistant_table,
             )
-            logger.info(f"Inserted {len(entries)} primitives")
+            logger.debug(f"Inserted {len(entries)} primitives")
         except Exception as e:
             logger.error(f"Failed to insert primitives: {e}")
 
@@ -2075,13 +2084,27 @@ class FunctionManager(BaseFunctionManager):
         Returns:
             True if sync was performed, False if already up-to-date.
         """
+        import time as _sp_time
+
+        _sp_t0 = _sp_time.perf_counter()
+
+        def _sp_ms():
+            return f"{(_sp_time.perf_counter() - _sp_t0) * 1000:.0f}ms"
+
+        logger.debug(f"⏱️ [FM.sync_primitives +{_sp_ms()}] entered")
+
         if self._primitives_synced:
+            logger.debug(
+                f"⏱️ [FM.sync_primitives +{_sp_ms()}] already synced, skipping",
+            )
             return False
 
         target_managers = sorted(self._primitive_scope.scoped_managers)
 
         # Step 1: Read current hashes (one backend call)
+        logger.debug(f"⏱️ [FM.sync_primitives +{_sp_ms()}] reading stored hashes")
         current_hashes = self._get_stored_primitives_hash_by_manager()
+        logger.debug(f"⏱️ [FM.sync_primitives +{_sp_ms()}] hashes read")
 
         # Step 2: Compute expected hashes and collect pending updates if they differ
         pending_updates: List[Tuple[str, List[Dict[str, Any]], str]] = []
@@ -2099,28 +2122,35 @@ class FunctionManager(BaseFunctionManager):
         # Step 3: If nothing changed, mark synced and return
         if not pending_updates:
             logger.debug(
-                "Primitives hashes match for all scoped managers, skipping sync",
+                f"⏱️ [FM.sync_primitives +{_sp_ms()}] hashes match, skipping sync",
             )
             self._primitives_synced = True
             return False
 
         changed_managers = [alias for alias, _, _ in pending_updates]
-        logger.info(f"Primitives changed for managers: {changed_managers}, syncing...")
+        logger.debug(
+            f"⏱️ [FM.sync_primitives +{_sp_ms()}] changed: {changed_managers}, syncing...",
+        )
 
         # Step 4: Batched delete for all changed managers (one backend call)
         self._delete_primitives_for_managers(changed_managers)
+        logger.debug(f"⏱️ [FM.sync_primitives +{_sp_ms()}] delete done")
 
         # Step 5: Batched insert all new primitives (one backend call)
         all_rows = []
         for _, rows, _ in pending_updates:
             all_rows.extend(rows)
         self._insert_primitives(all_rows)
+        logger.debug(
+            f"⏱️ [FM.sync_primitives +{_sp_ms()}] insert done ({len(all_rows)} rows)",
+        )
 
         # Step 6: Update Meta with new hashes (one backend call)
         new_hashes = dict(current_hashes)
         for alias, _, hash_val in pending_updates:
             new_hashes[alias] = hash_val
         self._store_primitives_hash_by_manager(new_hashes)
+        logger.debug(f"⏱️ [FM.sync_primitives +{_sp_ms()}] hashes stored, done")
 
         self._primitives_synced = True
         return True
@@ -2349,29 +2379,30 @@ class FunctionManager(BaseFunctionManager):
                     return logs[0].entries.get("venv_id")
         return -1
 
-    def sync_custom_venvs(self) -> Dict[str, int]:
+    def sync_custom_venvs(
+        self,
+        *,
+        source_venvs: Optional[Dict[str, Dict[str, Any]]] = None,
+    ) -> Dict[str, int]:
         """
         Ensure custom venvs in the database match source definitions.
 
-        Scans the custom/venvs/ folder for .toml files and syncs them
-        to Functions/VirtualEnvs. Uses hash comparison to minimize writes.
-
-        Behavior:
-        - New venvs: inserted with auto-assigned venv_id
-        - Changed venvs: updated in place (preserves venv_id)
-        - Deleted venvs (in source): deleted from database
-        - User-added venvs with same name: overwritten by source version
+        Args:
+            source_venvs: Pre-collected venvs (from
+                :func:`collect_custom_venvs` or
+                :func:`collect_venvs_from_directories`).  If *None*,
+                an empty set is assumed (no custom venvs).
 
         Returns:
-            Dict mapping venv name to venv_id (for use by sync_custom_functions).
+            Dict mapping venv name to venv_id.
         """
         if self._custom_venvs_synced:
-            # Return existing name→id mapping
             db_venvs = self._get_custom_venvs_from_db()
             return {name: v["venv_id"] for name, v in db_venvs.items()}
 
-        source_venvs = collect_custom_venvs()
-        expected_hash = compute_custom_venvs_hash()
+        if source_venvs is None:
+            source_venvs = {}
+        expected_hash = compute_custom_venvs_hash(source_venvs=source_venvs)
         current_hash = self._get_stored_custom_venvs_hash()
 
         # Quick check: if aggregate hash matches, skip detailed sync
@@ -2436,25 +2467,19 @@ class FunctionManager(BaseFunctionManager):
     def sync_custom_functions(
         self,
         venv_name_to_id: Optional[Dict[str, int]] = None,
+        *,
+        source_functions: Optional[Dict[str, Dict[str, Any]]] = None,
     ) -> bool:
         """
         Ensure custom functions in the database match source definitions.
 
-        Scans the custom/functions/ folder for functions decorated with
-        @custom_function and syncs them to Functions/Compositional. Uses
-        per-function hash comparison to minimize database writes.
-
         Args:
             venv_name_to_id: Optional mapping from venv name to venv_id.
-                             Used to resolve venv_name in decorators.
-                             If not provided, venv_name resolution is skipped.
-
-        Behavior:
-        - New functions: inserted with auto-assigned function_id
-        - Changed functions: updated in place (preserves function_id)
-        - Deleted functions (in source): deleted from database
-        - User-added functions with same name: overwritten by source version
-        - venv_name: resolved to venv_id using venv_name_to_id mapping
+                Used to resolve ``venv_name`` in decorators.
+            source_functions: Pre-collected functions (from
+                :func:`collect_custom_functions` or
+                :func:`collect_functions_from_directories`).  If *None*,
+                an empty set is assumed (no custom functions).
 
         Returns:
             True if sync was performed, False if already up-to-date.
@@ -2462,9 +2487,11 @@ class FunctionManager(BaseFunctionManager):
         if self._custom_functions_synced:
             return False
 
-        # Collect source-defined custom functions
-        source_functions = collect_custom_functions()
-        expected_hash = compute_custom_functions_hash()
+        if source_functions is None:
+            source_functions = {}
+        expected_hash = compute_custom_functions_hash(
+            source_functions=source_functions,
+        )
         current_hash = self._get_stored_custom_functions_hash()
 
         # Quick check: if aggregate hash matches, skip detailed sync
@@ -2545,27 +2572,34 @@ class FunctionManager(BaseFunctionManager):
         self._custom_functions_synced = True
         return True
 
-    def sync_custom(self) -> bool:
+    def sync_custom(
+        self,
+        *,
+        source_functions: Optional[Dict[str, Dict[str, Any]]] = None,
+        source_venvs: Optional[Dict[str, Dict[str, Any]]] = None,
+    ) -> bool:
         """
-        Sync all custom venvs and functions from source.
+        Sync custom venvs and functions from pre-collected sources.
 
-        This is the recommended method for syncing custom definitions.
-        It ensures venvs are synced first (so venv_name can be resolved),
+        Ensures venvs are synced first (so venv_name can be resolved),
         then syncs functions.
+
+        Args:
+            source_functions: Pre-collected functions dict.
+            source_venvs: Pre-collected venvs dict.
 
         Returns:
             True if any sync was performed, False if everything up-to-date.
         """
-        # Sync venvs first to get name→id mapping
-        venv_name_to_id = self.sync_custom_venvs()
+        venv_name_to_id = self.sync_custom_venvs(source_venvs=source_venvs)
+        functions_changed = self.sync_custom_functions(
+            venv_name_to_id,
+            source_functions=source_functions,
+        )
 
-        # Then sync functions with the mapping
-        functions_changed = self.sync_custom_functions(venv_name_to_id)
-
-        # Return True if venvs were newly synced OR functions changed
-        # (venv sync always returns a dict, not a bool, so check if hash changed)
         venvs_hash_changed = (
-            self._get_stored_custom_venvs_hash() != compute_custom_venvs_hash()
+            self._get_stored_custom_venvs_hash()
+            != compute_custom_venvs_hash(source_venvs=source_venvs)
             if not self._custom_venvs_synced
             else False
         )
@@ -3001,6 +3035,11 @@ class FunctionManager(BaseFunctionManager):
 
         Returns the full stored record (as a dict) or ``None`` if not found.
         """
+        import time as _time
+
+        _gfdn_t0 = _time.perf_counter()
+        logger.debug(f"⏱️ [FM._get_function_data_by_name] start: {name}")
+
         # Normalize to the Unify filter grammar (and avoid quote-escaping issues).
         try:
             normalized = normalize_filter_expr(f"name == {json.dumps(name)}")
@@ -3008,21 +3047,30 @@ class FunctionManager(BaseFunctionManager):
             normalized = f"name == {json.dumps(name)}"
 
         last_exc: Exception | None = None
-        import time as _time
 
         # The backend can return 404 for missing contexts in fresh projects/tests.
-        for delay in (0.0, 0.05, 0.15):
+        for attempt, delay in enumerate((0.0, 0.05, 0.15)):
             if delay:
                 _time.sleep(delay)
             try:
+                _q_t0 = _time.perf_counter()
                 logs = unify.get_logs(
                     context=self._compositional_ctx,
                     filter=normalized,
                     limit=1,
                     exclude_fields=list_private_fields(self._compositional_ctx),
                 )
+                _q_ms = (_time.perf_counter() - _q_t0) * 1000
                 if logs:
+                    logger.debug(
+                        f"⏱️ [FM._get_function_data_by_name] found (attempt={attempt}, "
+                        f"query={_q_ms:.0f}ms, total={(_time.perf_counter() - _gfdn_t0) * 1000:.0f}ms)",
+                    )
                     return logs[0].entries
+                logger.debug(
+                    f"⏱️ [FM._get_function_data_by_name] miss (attempt={attempt}, "
+                    f"query={_q_ms:.0f}ms, total={(_time.perf_counter() - _gfdn_t0) * 1000:.0f}ms)",
+                )
                 return None
             except _UnifyRequestError as e:
                 status = getattr(getattr(e, "response", None), "status_code", None)
@@ -3035,6 +3083,10 @@ class FunctionManager(BaseFunctionManager):
                 break
 
         # Treat missing context as empty library.
+        logger.debug(
+            f"⏱️ [FM._get_function_data_by_name] exhausted retries "
+            f"(total={(_time.perf_counter() - _gfdn_t0) * 1000:.0f}ms)",
+        )
         if isinstance(last_exc, _UnifyRequestError):
             status = getattr(getattr(last_exc, "response", None), "status_code", None)
             if status == 404:
@@ -5045,7 +5097,7 @@ class FunctionManager(BaseFunctionManager):
 
         comms_url = SETTINGS.conversation.COMMS_URL.rstrip("/")
         admin_key = SETTINGS.ORCHESTRA_ADMIN_KEY.get_secret_value()
-        assistant_id = SESSION_DETAILS.assistant.id
+        assistant_id = SESSION_DETAILS.assistant.agent_id
 
         if not comms_url or not admin_key:
             raise RuntimeError(

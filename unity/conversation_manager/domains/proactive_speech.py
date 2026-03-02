@@ -33,6 +33,14 @@ assistant). You have the full conversation history above.
 - The conversation is wrapping up (goodbyes were exchanged).
 - The user explicitly asked to wait or said they need a moment.
 
+## Action awareness
+
+You may be given an `[action status]` block listing actions that are currently \
+executing or recently completed. This is the ground truth for what has and hasn't \
+happened. NEVER claim an in-flight action is finished. If the assistant said "one \
+moment" and the action is still executing, a brief reassurance like "still working \
+on it" is fine, but do NOT say it is done.
+
 ## If you decide to speak
 
 - `delay`: additional seconds to wait before speaking (0 = now, higher = more patient). \
@@ -50,21 +58,35 @@ class ProactiveSpeech:
         self,
         chat_history: list[dict],
         system_prompt: str,
-    ) -> ProactiveDecision:
-        """Decides whether to speak proactively based on the conversation history."""
+        action_context: str | None = None,
+    ) -> tuple[ProactiveDecision, str]:
+        """Decides whether to speak proactively based on the conversation history.
+
+        Returns (decision, llm_log_path) where llm_log_path is the unillm
+        request+response file for the LLM call that produced this decision.
+        """
         try:
             client = new_llm_client(
-                origin="ConversationManager.proactive_speech",
+                origin="ProactiveSpeech",
             )
             client.set_response_format(ProactiveDecision)
-            response = await client.generate(
-                system_message=f"{system_prompt}\n\n{PROACTIVE_PROMPT}",
-                messages=chat_history,
-            )
-            return ProactiveDecision.model_validate_json(response)
+            messages = [
+                {"role": "system", "content": f"{system_prompt}\n\n{PROACTIVE_PROMPT}"},
+                *chat_history,
+            ]
+            if action_context:
+                messages.append(
+                    {"role": "system", "content": action_context},
+                )
+            response = await client.generate(messages=messages)
+            log_path = ""
+            pending = getattr(client, "_pending_thinking_log", None)
+            if pending is not None:
+                log_path = pending.last_path or ""
+            return ProactiveDecision.model_validate_json(response), log_path
         except Exception as e:
             LOGGER.error(f"{DEFAULT_ICON} Error in ProactiveSpeech decision: {e}")
             import traceback
 
             traceback.print_exc()
-            return ProactiveDecision(should_speak=False)
+            return ProactiveDecision(should_speak=False), ""

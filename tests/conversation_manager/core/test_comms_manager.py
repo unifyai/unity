@@ -152,7 +152,7 @@ def broker():
 def mock_session_details():
     """Mock SESSION_DETAILS for testing."""
     with patch("unity.conversation_manager.comms_manager.SESSION_DETAILS") as mock:
-        mock.assistant.id = "test_assistant"
+        mock.assistant.agent_id = 42
         mock.assistant.email = "assistant@test.com"
         mock.user.first_name = "Test User"
         mock.user.surname = ""
@@ -243,21 +243,21 @@ class TestHelperFunctions:
         """Test subscription ID generation for non-staging environment."""
         from unity.conversation_manager.comms_manager import _get_subscription_id
 
-        mock_session_details.assistant.id = "my_assistant_123"
+        mock_session_details.assistant.agent_id = 123
         mock_settings.STAGING = False
 
         result = _get_subscription_id()
-        assert result == "unity-my_assistant_123-sub"
+        assert result == "unity-123-sub"
 
     def test_get_subscription_id_staging(self, mock_session_details, mock_settings):
         """Test subscription ID generation for staging environment."""
         from unity.conversation_manager.comms_manager import _get_subscription_id
 
-        mock_session_details.assistant.id = "my_assistant_123"
+        mock_session_details.assistant.agent_id = 123
         mock_settings.STAGING = True
 
         result = _get_subscription_id()
-        assert result == "unity-my_assistant_123-staging-sub"
+        assert result == "unity-123-staging-sub"
 
     def test_get_local_contact(self, mock_session_details):
         """Test local contact generation from session details."""
@@ -1031,12 +1031,12 @@ class TestMeetInteractionSystemEvents:
         (
             "user_webcam_started",
             UserWebcamStarted,
-            "User enabled their webcam",
+            "",
         ),
         (
             "user_webcam_stopped",
             UserWebcamStopped,
-            "User disabled their webcam",
+            "",
         ),
         (
             "user_remote_control_started",
@@ -1429,12 +1429,11 @@ class TestPingMechanism:
     ):
         """Test that send_pings publishes keepalive ping events."""
         from unity.conversation_manager.comms_manager import CommsManager
-        from unity.conversation_manager.comms_manager import UNASSIGNED_ASSISTANT_ID
 
         cm = CommsManager(broker)
 
-        # Set assistant to default (triggers ping loop)
-        mock_session_details.assistant.id = UNASSIGNED_ASSISTANT_ID
+        # Set assistant to unassigned (triggers ping loop)
+        mock_session_details.assistant.agent_id = None
 
         async with broker.pubsub() as pubsub:
             await pubsub.subscribe("app:comms:ping")
@@ -1450,7 +1449,7 @@ class TestPingMechanism:
                     call_count += 1
                     if call_count >= 1:
                         # Change assistant ID to break the loop
-                        mock_session_details.assistant.id = "new_assistant"
+                        mock_session_details.assistant.agent_id = 99
                     await original_sleep(0.01)  # Minimal sleep using original
 
                 with patch("asyncio.sleep", mock_sleep):

@@ -5,6 +5,7 @@ import functools
 import re
 from .prompt_builders import build_ask_prompt, build_update_prompt
 from ..knowledge_manager.types import ColumnType
+from ..common.embed_utils import ensure_vector_column
 from ..common.tool_outcome import ToolOutcome
 from ..common.tool_spec import read_only, manager_tool
 from ..common.metrics_utils import reduce_logs
@@ -1072,6 +1073,16 @@ class ContactManager(BaseContactManager):
     #  Internal helpers (not exposed as tools)
     # ──────────────────────────────────────────────────────────────────────
     # Storage / provisioning
+    def warm_embeddings(self) -> None:
+        try:
+            ensure_vector_column(
+                self._ctx,
+                embed_column="_bio_emb",
+                source_column="bio",
+            )
+        except Exception:
+            pass
+
     def _provision_storage(self) -> None:
         """Ensure Contacts context, schema, and local view exist (delegated)."""
         _storage_provision(self)

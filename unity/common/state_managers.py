@@ -53,6 +53,13 @@ class BaseStateManager(ABC):
     def __init__(self):
         self._tools = {}
 
+    def warm_embeddings(self) -> None:
+        """Pre-create embedding columns for commonly searched fields.
+
+        Called after initialization to avoid cold-start latency on first
+        search.  Override in concrete implementations that use vector search.
+        """
+
     def add_tools(self, method: str, tools: Dict[str, Callable]):
         """
         Store tools for a given manager method. must be called in manager's __init__ method.

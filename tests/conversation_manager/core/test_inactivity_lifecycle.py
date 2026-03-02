@@ -25,7 +25,7 @@ Production Context (from INFRA.md):
 -----------------------------------
 - Inactivity timeout: 6 minutes (360 seconds)
 - Ping interval: 30 seconds (half the timeout)
-- Idle containers use UNASSIGNED_ASSISTANT_ID ("0")
+- Idle containers use assistant_id=None
 - Live containers have a real assistant_id
 - On shutdown: cleanup() → mark_job_done() → stop.set()
 """
@@ -33,6 +33,7 @@ Production Context (from INFRA.md):
 from __future__ import annotations
 
 import asyncio
+import contextlib
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -41,7 +42,6 @@ import pytest_asyncio
 from unity.conversation_manager.events import (
     Ping,
 )
-from unity.session_details import UNASSIGNED_ASSISTANT_ID
 
 # =============================================================================
 # Fixtures
@@ -252,6 +252,120 @@ class TestInactivityDetectionBasics:
 
 
 # =============================================================================
+# Test: EventBus Activity Keep-Alive
+# =============================================================================
+
+
+class TestEventBusKeepAlive:
+    """Tests that internal EventBus publishes prevent inactivity shutdown.
+
+    When the assistant is actively working (LLM calls, tool-loop turns, manager
+    methods) the EventBus fires events even though no external pubsub messages
+    arrive.  check_inactivity() must treat these as activity.
+    """
+
+    @pytest.mark.asyncio
+    async def test_eventbus_publish_prevents_shutdown(self, event_broker):
+        """EventBus.publish() keeps the container alive even without pubsub events."""
+        import time as _time
+
+        from unity.conversation_manager.conversation_manager import ConversationManager
+        from unity.events.event_bus import EventBus
+
+        stop_event = asyncio.Event()
+        cm = ConversationManager(
+            event_broker=event_broker,
+            job_name="test-job",
+            user_id="user_1",
+            assistant_id="assistant_1",
+            user_first_name="Test",
+            user_surname="User",
+            assistant_first_name="Test",
+            assistant_surname="Assistant",
+            assistant_age="25",
+            assistant_nationality="American",
+            assistant_about="Test bio",
+            assistant_number="+15555550000",
+            assistant_email="assistant@test.com",
+            user_number="+15555551111",
+            user_email="user@test.com",
+            stop=stop_event,
+        )
+
+        cm.inactivity_timeout = 0.3
+        cm.inactivity_check_interval = 0.05
+
+        # Simulate stale pubsub — no external events for a long time
+        cm.last_activity_time = cm.loop.time() - 10.0
+
+        # But the EventBus was active very recently
+        EventBus.last_publish_monotonic = _time.monotonic()
+
+        check_task = asyncio.create_task(cm.check_inactivity())
+
+        # Keep bumping the EventBus timestamp faster than the timeout
+        for _ in range(8):
+            EventBus.last_publish_monotonic = _time.monotonic()
+            await asyncio.sleep(0.05)
+
+        assert (
+            not stop_event.is_set()
+        ), "Container should stay alive when EventBus is active"
+
+        check_task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await check_task
+
+    @pytest.mark.asyncio
+    async def test_shutdown_when_both_sources_idle(self, event_broker):
+        """Container shuts down when both pubsub and EventBus are idle."""
+        import time as _time
+
+        from unity.conversation_manager.conversation_manager import ConversationManager
+        from unity.events.event_bus import EventBus
+
+        stop_event = asyncio.Event()
+        cm = ConversationManager(
+            event_broker=event_broker,
+            job_name="test-job",
+            user_id="user_1",
+            assistant_id="assistant_1",
+            user_first_name="Test",
+            user_surname="User",
+            assistant_first_name="Test",
+            assistant_surname="Assistant",
+            assistant_age="25",
+            assistant_nationality="American",
+            assistant_about="Test bio",
+            assistant_number="+15555550000",
+            assistant_email="assistant@test.com",
+            user_number="+15555551111",
+            user_email="user@test.com",
+            stop=stop_event,
+        )
+
+        cm.inactivity_timeout = 0.1
+        cm.inactivity_check_interval = 0.05
+
+        # Both sources are stale
+        cm.last_activity_time = cm.loop.time() - 10.0
+        EventBus.last_publish_monotonic = _time.monotonic() - 10.0
+
+        check_task = asyncio.create_task(cm.check_inactivity())
+
+        try:
+            await asyncio.wait_for(stop_event.wait(), timeout=1.0)
+        except asyncio.TimeoutError:
+            pytest.fail("Inactivity timeout should have triggered shutdown")
+        finally:
+            check_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await check_task
+
+        assert stop_event.is_set()
+
+
+# =============================================================================
 # Test: Ping Keep-Alive Mechanism
 # =============================================================================
 
@@ -275,7 +389,7 @@ class TestPingKeepAlive:
             event_broker=event_broker,
             job_name="test-job",
             user_id="user_1",
-            assistant_id=UNASSIGNED_ASSISTANT_ID,  # Idle container
+            assistant_id=None,  # Idle container
             user_first_name="Test",
             user_surname="User",
             assistant_first_name="Test",
@@ -354,7 +468,7 @@ class TestCleanupSequence:
         """
         Verify that cleanup() skips mark_job_done() for idle containers.
 
-        Idle containers (with UNASSIGNED_ASSISTANT_ID) were never "live" in the
+        Idle containers (with assistant_id=None) were never "live" in the
         AssistantJobs sense, so we don't need to mark them as done.
         """
         from unity.conversation_manager.conversation_manager import ConversationManager
@@ -364,7 +478,7 @@ class TestCleanupSequence:
             event_broker=event_broker,
             job_name="test-job-idle",
             user_id="user_1",
-            assistant_id=UNASSIGNED_ASSISTANT_ID,  # Idle container
+            assistant_id=None,  # Idle container
             user_first_name="Test",
             user_surname="User",
             assistant_first_name="Test",
@@ -562,7 +676,7 @@ class TestFullLifecycleIntegration:
             event_broker=event_broker,
             job_name="test-lifecycle-job",
             user_id="user_1",
-            assistant_id=UNASSIGNED_ASSISTANT_ID,  # Start as idle
+            assistant_id=None,  # Start as idle
             user_first_name="Test",
             user_surname="User",
             assistant_first_name="Test",
@@ -578,12 +692,12 @@ class TestFullLifecycleIntegration:
         )
 
         # Verify idle state
-        assert cm.assistant_id == UNASSIGNED_ASSISTANT_ID
+        assert cm.assistant_id is None
 
         # Simulate startup (transition to live)
         startup_payload = {
             "api_key": "test_key",
-            "assistant_id": "live_assistant_456",
+            "assistant_id": 456,
             "user_id": "user_1",
             "assistant_first_name": "Live",
             "assistant_surname": "Assistant",
@@ -602,7 +716,7 @@ class TestFullLifecycleIntegration:
         cm.set_details(startup_payload)
 
         # Verify live state
-        assert cm.assistant_id == "live_assistant_456"
+        assert cm.assistant_id == 456
 
         # Set short timeout for testing
         cm.inactivity_timeout = 0.1

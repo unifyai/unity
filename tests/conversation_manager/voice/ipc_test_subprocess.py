@@ -50,7 +50,7 @@ async def full_roundtrip():
     async def on_event(channel: str, event_json: str):
         nonlocal received_guidance
         print(f"RECEIVED: {channel} = {event_json}")
-        if channel == "app:call:call_guidance":
+        if channel == "app:call:notification":
             data = json.loads(event_json)
             payload = data.get("payload", data)
             received_guidance = {"content": payload.get("content", "")}

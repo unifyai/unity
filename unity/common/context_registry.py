@@ -99,10 +99,6 @@ class ContextRegistry:
         from unity.blacklist_manager.blacklist_manager import BlackListManager
         from unity.data_manager.data_manager import DataManager
         from unity.file_manager.managers.file_manager import FileManager
-        from unity.customization.environments.environment_manager import (
-            EnvironmentManager,
-        )
-        from unity.customization.configs.config_manager import ConfigManager
 
         return [
             ContactManager,
@@ -117,8 +113,6 @@ class ContextRegistry:
             BlackListManager,
             DataManager,
             FileManager,
-            EnvironmentManager,
-            ConfigManager,
         ]
 
     @classmethod

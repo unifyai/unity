@@ -13,6 +13,10 @@ Limit hierarchy:
 - Organization context (org API key): assistant + member + org limits
 
 All checks run in parallel for minimal latency impact.
+
+Uses a shared httpx.AsyncClient for connection pooling — TCP+TLS connections
+are reused across limit checks, avoiding ConnectTimeout under event loop
+congestion (e.g., during video calls with heavy IPC/screenshot traffic).
 """
 
 from __future__ import annotations
@@ -34,6 +38,18 @@ logger = logging.getLogger(__name__)
 
 # Default timeout for limit check requests (should be fast)
 LIMIT_CHECK_TIMEOUT = 5.0
+
+# Shared HTTP client for limit checks. Lazily initialized, reuses TCP+TLS
+# connections across calls to avoid ConnectTimeout under event loop congestion.
+_http_client: Optional[httpx.AsyncClient] = None
+
+
+def _get_http_client() -> httpx.AsyncClient:
+    """Get or create the shared httpx.AsyncClient for limit checks."""
+    global _http_client
+    if _http_client is None or _http_client.is_closed:
+        _http_client = httpx.AsyncClient(timeout=LIMIT_CHECK_TIMEOUT)
+    return _http_client
 
 
 @dataclass
@@ -75,7 +91,6 @@ async def _check_assistant_limit(
     month: str,
     base_url: str,
     api_key: str,
-    timeout: float,
 ) -> _LimitCheckResult:
     """Check if assistant spending limit is exceeded."""
     url = f"{base_url}/admin/assistant/{agent_id}/spend"
@@ -83,10 +98,10 @@ async def _check_assistant_limit(
     params = {"month": month}
 
     try:
-        async with httpx.AsyncClient(timeout=timeout) as client:
-            response = await client.get(url, headers=headers, params=params)
-            response.raise_for_status()
-            data = response.json()
+        client = _get_http_client()
+        response = await client.get(url, headers=headers, params=params)
+        response.raise_for_status()
+        data = response.json()
 
         limit = data.get("limit")
         spend = data.get("cumulative_spend", 0)
@@ -113,12 +128,11 @@ async def _check_assistant_limit(
         )
     except httpx.HTTPStatusError as e:
         if e.response.status_code == 404:
-            # Assistant not found or no spend data - allow
             return _LimitCheckResult(exceeded=False)
-        logger.warning(f"Failed to check assistant limit: {e}")
+        logger.warning(f"Failed to check assistant limit: {type(e).__name__}: {e}")
         return _LimitCheckResult(exceeded=False)  # Fail open
     except Exception as e:
-        logger.warning(f"Failed to check assistant limit: {e}")
+        logger.warning(f"Failed to check assistant limit: {type(e).__name__}: {e}")
         return _LimitCheckResult(exceeded=False)  # Fail open
 
 
@@ -127,7 +141,6 @@ async def _check_user_limit(
     month: str,
     base_url: str,
     api_key: str,
-    timeout: float,
 ) -> _LimitCheckResult:
     """Check if user's personal spending limit is exceeded."""
     url = f"{base_url}/admin/user/{user_id}/spend"
@@ -135,10 +148,10 @@ async def _check_user_limit(
     params = {"month": month}
 
     try:
-        async with httpx.AsyncClient(timeout=timeout) as client:
-            response = await client.get(url, headers=headers, params=params)
-            response.raise_for_status()
-            data = response.json()
+        client = _get_http_client()
+        response = await client.get(url, headers=headers, params=params)
+        response.raise_for_status()
+        data = response.json()
 
         limit = data.get("limit")
         spend = data.get("cumulative_spend", 0)
@@ -164,10 +177,10 @@ async def _check_user_limit(
     except httpx.HTTPStatusError as e:
         if e.response.status_code == 404:
             return _LimitCheckResult(exceeded=False)
-        logger.warning(f"Failed to check user limit: {e}")
+        logger.warning(f"Failed to check user limit: {type(e).__name__}: {e}")
         return _LimitCheckResult(exceeded=False)
     except Exception as e:
-        logger.warning(f"Failed to check user limit: {e}")
+        logger.warning(f"Failed to check user limit: {type(e).__name__}: {e}")
         return _LimitCheckResult(exceeded=False)
 
 
@@ -177,7 +190,6 @@ async def _check_member_limit(
     month: str,
     base_url: str,
     api_key: str,
-    timeout: float,
 ) -> _LimitCheckResult:
     """Check if organization member's spending limit is exceeded."""
     url = f"{base_url}/admin/organization/{org_id}/members/{user_id}/spend"
@@ -185,10 +197,10 @@ async def _check_member_limit(
     params = {"month": month}
 
     try:
-        async with httpx.AsyncClient(timeout=timeout) as client:
-            response = await client.get(url, headers=headers, params=params)
-            response.raise_for_status()
-            data = response.json()
+        client = _get_http_client()
+        response = await client.get(url, headers=headers, params=params)
+        response.raise_for_status()
+        data = response.json()
 
         limit = data.get("limit")
         spend = data.get("cumulative_spend", 0)
@@ -215,10 +227,10 @@ async def _check_member_limit(
     except httpx.HTTPStatusError as e:
         if e.response.status_code == 404:
             return _LimitCheckResult(exceeded=False)
-        logger.warning(f"Failed to check member limit: {e}")
+        logger.warning(f"Failed to check member limit: {type(e).__name__}: {e}")
         return _LimitCheckResult(exceeded=False)
     except Exception as e:
-        logger.warning(f"Failed to check member limit: {e}")
+        logger.warning(f"Failed to check member limit: {type(e).__name__}: {e}")
         return _LimitCheckResult(exceeded=False)
 
 
@@ -227,7 +239,6 @@ async def _check_org_limit(
     month: str,
     base_url: str,
     api_key: str,
-    timeout: float,
 ) -> _LimitCheckResult:
     """Check if organization spending limit is exceeded."""
     url = f"{base_url}/admin/organization/{org_id}/spend"
@@ -235,10 +246,10 @@ async def _check_org_limit(
     params = {"month": month}
 
     try:
-        async with httpx.AsyncClient(timeout=timeout) as client:
-            response = await client.get(url, headers=headers, params=params)
-            response.raise_for_status()
-            data = response.json()
+        client = _get_http_client()
+        response = await client.get(url, headers=headers, params=params)
+        response.raise_for_status()
+        data = response.json()
 
         limit = data.get("limit")
         spend = data.get("cumulative_spend", 0)
@@ -265,10 +276,10 @@ async def _check_org_limit(
     except httpx.HTTPStatusError as e:
         if e.response.status_code == 404:
             return _LimitCheckResult(exceeded=False)
-        logger.warning(f"Failed to check org limit: {e}")
+        logger.warning(f"Failed to check org limit: {type(e).__name__}: {e}")
         return _LimitCheckResult(exceeded=False)
     except Exception as e:
-        logger.warning(f"Failed to check org limit: {e}")
+        logger.warning(f"Failed to check org limit: {type(e).__name__}: {e}")
         return _LimitCheckResult(exceeded=False)
 
 
@@ -309,23 +320,23 @@ async def _notify_limit_reached(
         payload["organization_id"] = result.organization_id
 
     try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            response = await client.post(url, headers=headers, json=payload)
-            if response.status_code == 200:
-                data = response.json()
-                if data.get("notified"):
-                    logger.info(
-                        f"Spending limit notification sent for {result.limit_type} "
-                        f"limit (entity_id={result.entity_id}, limit=${result.limit_value})",
-                    )
-                else:
-                    logger.debug(
-                        f"Spending limit notification skipped: {data.get('reason', 'unknown')}",
-                    )
-            else:
-                logger.warning(
-                    f"Spending limit notification failed: {response.status_code}",
+        client = _get_http_client()
+        response = await client.post(url, headers=headers, json=payload)
+        if response.status_code == 200:
+            data = response.json()
+            if data.get("notified"):
+                logger.info(
+                    f"Spending limit notification sent for {result.limit_type} "
+                    f"limit (entity_id={result.entity_id}, limit=${result.limit_value})",
                 )
+            else:
+                logger.debug(
+                    f"Spending limit notification skipped: {data.get('reason', 'unknown')}",
+                )
+        else:
+            logger.warning(
+                f"Spending limit notification failed: {response.status_code}",
+            )
     except Exception as e:
         # Fire-and-forget: log error but don't propagate
         logger.warning(f"Failed to send spending limit notification: {e}")
@@ -357,9 +368,8 @@ async def check_spending_limits_callback(
         return LimitCheckResponse(allowed=True)
 
     base_url = _get_base_url()
-    timeout = LIMIT_CHECK_TIMEOUT
 
-    agent_id = SESSION_DETAILS.assistant.id or None
+    agent_id = SESSION_DETAILS.assistant.agent_id
 
     user_id = SESSION_DETAILS.user_id
     org_id = SESSION_DETAILS.org_id  # None for personal context
@@ -382,7 +392,7 @@ async def check_spending_limits_callback(
     # Always check assistant limit
     checks.append(
         asyncio.create_task(
-            _check_assistant_limit(agent_id, month, base_url, api_key, timeout),
+            _check_assistant_limit(agent_id, month, base_url, api_key),
         ),
     )
 
@@ -391,19 +401,19 @@ async def check_spending_limits_callback(
         # Org context: check member + org limits
         checks.append(
             asyncio.create_task(
-                _check_member_limit(user_id, org_id, month, base_url, api_key, timeout),
+                _check_member_limit(user_id, org_id, month, base_url, api_key),
             ),
         )
         checks.append(
             asyncio.create_task(
-                _check_org_limit(org_id, month, base_url, api_key, timeout),
+                _check_org_limit(org_id, month, base_url, api_key),
             ),
         )
     else:
         # Personal context: check user personal limit
         checks.append(
             asyncio.create_task(
-                _check_user_limit(user_id, month, base_url, api_key, timeout),
+                _check_user_limit(user_id, month, base_url, api_key),
             ),
         )
 

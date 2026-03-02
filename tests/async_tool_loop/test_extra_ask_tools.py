@@ -136,3 +136,40 @@ async def test_extra_ask_tools_precedence():
     assert snapshot["ask_extra_only"] is sentinel_extra
     assert snapshot["ask_completed_only"] is sentinel_completed
     assert snapshot["ask_dynamic_only"] is sentinel_dynamic
+
+
+# ---------------------------------------------------------------------------
+# 4. ask_about_completed_tool meta-dispatcher excluded from get_ask_tools()
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+@pytest.mark.timeout(5)
+async def test_get_ask_tools_excludes_ask_about_completed_tool():
+    """The ``ask_about_completed_tool`` meta-dispatcher created by
+    DynamicToolFactory must not leak into get_ask_tools().
+
+    It routes by call_id into _completed_askable_tools, so including it
+    alongside genuine per-tool ask functions (keyed by function name) causes
+    signature mismatches when downstream code calls fn(question=...).
+    """
+
+    async def ask_real_tool() -> str:
+        return "real"
+
+    async def ask_about_completed_tool(tool_id: str, question: str) -> str:
+        return "meta-dispatcher"
+
+    td = _make_tools_data()
+    td._dynamic_tools_ref = {
+        "ask_real_tool": ask_real_tool,
+        "ask_about_completed_tool": ask_about_completed_tool,
+    }
+
+    snapshot = td.get_ask_tools()
+
+    assert "ask_real_tool" in snapshot, "Genuine ask tool should be included"
+    assert "ask_about_completed_tool" not in snapshot, (
+        "Meta-dispatcher ask_about_completed_tool must be excluded from "
+        "get_ask_tools() to prevent signature mismatches in downstream consumers"
+    )

@@ -3,6 +3,7 @@ import asyncio
 import pytest
 from unittest.mock import AsyncMock, MagicMock
 
+from unity.function_manager.computer_backends import ActResult
 from unity.function_manager.primitives import ComputerPrimitives
 
 
@@ -14,7 +15,9 @@ def mock_computer_primitives():
     """
     desktop_ns = MagicMock()
     desktop_ns.navigate = AsyncMock(return_value="navigated")
-    desktop_ns.act = AsyncMock(return_value="acted")
+    desktop_ns.act = AsyncMock(
+        return_value=ActResult(summary="acted", screenshot=""),
+    )
     desktop_ns.observe = AsyncMock(return_value={"data": "observed_data"})
     desktop_ns.get_screenshot = AsyncMock(return_value=MagicMock())
 

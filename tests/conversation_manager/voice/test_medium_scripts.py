@@ -38,6 +38,7 @@ conversation while the Main CM Brain (slow brain) handles orchestration.
    - build_voice_agent_prompt output structure
 """
 
+import asyncio
 import json
 from types import SimpleNamespace
 
@@ -439,9 +440,11 @@ class TestEndCallHelper:
         event_broker,
         boss_contact,
         monkeypatch,
-        capsys,
+        caplog,
     ):
         """create_end_call continues even if callback raises."""
+        import logging
+
         from unity.conversation_manager.medium_scripts import common
 
         monkeypatch.setattr(common, "event_broker", event_broker)
@@ -455,11 +458,15 @@ class TestEndCallHelper:
             pre_shutdown_callback=failing_callback,
         )
 
-        # Should not raise
-        await end_call()
+        unity_logger = logging.getLogger("unity")
+        unity_logger.addHandler(caplog.handler)
+        caplog.handler.setLevel(logging.DEBUG)
+        try:
+            await end_call()
+        finally:
+            unity_logger.removeHandler(caplog.handler)
 
-        captured = capsys.readouterr()
-        assert "Error in pre-shutdown callback" in captured.out
+        assert "Error in pre-shutdown callback" in caplog.text
 
 
 # =============================================================================
@@ -629,16 +636,16 @@ class TestGuidanceChannelSubscription:
     """Tests for guidance channel subscription patterns."""
 
     async def test_guidance_channel_receives_call_guidance(self, event_broker):
-        """Guidance channel receives CallGuidance events."""
-        from unity.conversation_manager.events import CallGuidance, Event
+        """Guidance channel receives FastBrainNotification events."""
+        from unity.conversation_manager.events import FastBrainNotification, Event
 
         contact = {"contact_id": 1, "first_name": "Test"}
 
         async with event_broker.pubsub() as pubsub:
-            await pubsub.subscribe("app:call:call_guidance")
+            await pubsub.subscribe("app:call:notification")
 
-            event = CallGuidance(contact=contact, content="Test guidance")
-            await event_broker.publish("app:call:call_guidance", event.to_json())
+            event = FastBrainNotification(contact=contact, content="Test guidance")
+            await event_broker.publish("app:call:notification", event.to_json())
 
             msg = await pubsub.get_message(
                 timeout=2.0,
@@ -646,7 +653,7 @@ class TestGuidanceChannelSubscription:
             )
             assert msg is not None
             received = Event.from_json(msg["data"])
-            assert isinstance(received, CallGuidance)
+            assert isinstance(received, FastBrainNotification)
             assert received.content == "Test guidance"
 
     async def test_status_channel_receives_stop_signal(self, event_broker):
@@ -957,7 +964,7 @@ class TestFastBrainGuidanceFlow:
         baseline_reply_calls = session.generate_reply_calls
 
         # Send notify-only guidance (should_speak=False, no response_text)
-        guidance_cb = fake_broker.callbacks["app:call:call_guidance"]
+        guidance_cb = fake_broker.callbacks["app:call:notification"]
         guidance_cb({"payload": {"content": "No, there is no contact named Bob."}})
 
         # Notification should be in both chat contexts
@@ -977,6 +984,8 @@ class TestFastBrainGuidanceFlow:
 
         # say() must NOT fire (the articulator decided not to speak), but
         # generate_reply() SHOULD fire so the LLM gets a chance to react.
+        # Wait for the notification coalesce timer to fire.
+        await asyncio.sleep(0.1)
         assert (
             len(session.say_calls) == 0
         ), "Notify-only guidance must NOT trigger session.say()."
@@ -1152,7 +1161,7 @@ class TestFastBrainGuidanceFlow:
         state_cb(SimpleNamespace(new_state="speaking"))
 
         # Send should_speak=True guidance while user is speaking
-        guidance_cb = fake_broker.callbacks["app:call:call_guidance"]
+        guidance_cb = fake_broker.callbacks["app:call:notification"]
         guidance_cb(
             {
                 "payload": {
@@ -1262,11 +1271,11 @@ class TestFastBrainGuidanceFlow:
         )
         await stream._run()
 
-        sent_system_message = captured["generate_kwargs"]["system_message"]
-        assert "BASE_PROMPT" in sent_system_message
-        assert (
-            "[notification] No, there is no contact named Bob." in sent_system_message
-        )
+        messages = captured["generate_kwargs"]["messages"]
+        system_texts = [m["content"] for m in messages if m["role"] == "system"]
+        all_system_text = "\n".join(system_texts)
+        assert "BASE_PROMPT" in all_system_text
+        assert "[notification] No, there is no contact named Bob." in all_system_text
 
     async def test_tts_guidance_received_while_user_speaking_is_replied_after_speech_ends(
         self,
@@ -1422,7 +1431,7 @@ class TestFastBrainGuidanceFlow:
         await call_script.entrypoint(_FakeJobContext())
 
         session = fake_session_holder["session"]
-        guidance_cb = fake_broker.callbacks["app:call:call_guidance"]
+        guidance_cb = fake_broker.callbacks["app:call:notification"]
         agent_state_cb = session._events["agent_state_changed"]
 
         # User is speaking — guidance with should_speak=True arrives and is queued
@@ -1611,7 +1620,7 @@ class TestFastBrainGuidanceFlow:
         await call_script.entrypoint(_FakeJobContext())
 
         session = fake_session_holder["session"]
-        guidance_cb = fake_broker.callbacks["app:call:call_guidance"]
+        guidance_cb = fake_broker.callbacks["app:call:notification"]
         agent_state_cb = session._events["agent_state_changed"]
 
         # Simulate agent in "thinking" state (processing a user turn)
@@ -1651,13 +1660,13 @@ class TestFastBrainGuidanceFlow:
 @pytest.mark.eval
 @pytest.mark.asyncio
 class TestFastBrainOpeningGreeting:
-    """The fast brain's first turn (session_start, zero user messages) should
+    """The fast brain's first turn (session_start with no user message) should
     produce a short, natural greeting — not an acknowledgment of the system
     prompt, not a capability list, and not a tutorial."""
 
     async def test_session_start_produces_natural_greeting(self):
-        """With only the system prompt and no user messages, the fast brain
-        should greet briefly and naturally.
+        """With only the system prompt (no user message), the fast brain should
+        greet briefly and naturally.
 
         Uses reasoning_effort='low' to match the production voice pipeline
         (call.py UnifyLLM configuration)."""
