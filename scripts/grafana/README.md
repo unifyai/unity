@@ -430,6 +430,54 @@ sum by (channel) (rate(build_webhook_context_duration_seconds_sum[5m]))
 sum by (channel) (rate(build_webhook_context_duration_seconds_count[5m]))
 ```
 
+#### Average Orchestra Get Assistant Duration (seconds)
+
+Time spent calling the Orchestra `/admin/assistant` endpoint to resolve
+assistant details from a phone number, email, or ID.
+
+```promql
+sum(rate(orchestra_get_assistant_duration_seconds_sum{status="success"}[5m]))
+/
+sum(rate(orchestra_get_assistant_duration_seconds_count{status="success"}[5m]))
+```
+
+By lookup type (email, phone, id):
+
+```promql
+sum by (lookup_type) (rate(orchestra_get_assistant_duration_seconds_sum{status="success"}[5m]))
+/
+sum by (lookup_type) (rate(orchestra_get_assistant_duration_seconds_count{status="success"}[5m]))
+```
+
+#### Average Mark Job Running Duration (seconds)
+
+Time spent marking an AssistantJob as running via Orchestra `/logs`.
+
+```promql
+sum(rate(mark_job_running_duration_seconds_sum{status="success"}[5m]))
+/
+sum(rate(mark_job_running_duration_seconds_count{status="success"}[5m]))
+```
+
+#### HTTP Request Latency by Endpoint (seconds)
+
+Per-route request latency for the adapters service. Useful for identifying
+slow endpoints.
+
+```promql
+sum by (endpoint) (rate(http_request_duration_seconds_sum{service="adapters"}[5m]))
+/
+sum by (endpoint) (rate(http_request_duration_seconds_count{service="adapters"}[5m]))
+```
+
+For the **comms** service:
+
+```promql
+sum by (endpoint) (rate(http_request_duration_seconds_sum{service="comms"}[5m]))
+/
+sum by (endpoint) (rate(http_request_duration_seconds_count{service="comms"}[5m]))
+```
+
 #### Job Demand (count per window)
 
 Number of inbound requests that required starting a new container (i.e., no
