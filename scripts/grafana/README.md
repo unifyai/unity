@@ -359,6 +359,106 @@ associated HTTP(S) Load Balancer.
 
 ---
 
+## Dashboard Queries
+
+Since dashboards are lost on pod restart (`emptyDir` storage), this section
+documents the PromQL queries used so they can be recreated. All queries below
+use the **Google Managed Prometheus** data source.
+
+### Unity Metrics (GKE)
+
+#### Live Assistants (Supply)
+
+Snapshot of how many assistant jobs have `running==True` at any point in time.
+This is a gauge — no `rate()` needed. Use `max()` because each container
+independently reports the same global count; `sum()` would multiply it by the
+number of reporting containers.
+
+```promql
+max({__name__="workload.googleapis.com/unity_running_job_count", monitored_resource="k8s_container"})
+```
+
+#### Average Session Duration (minutes)
+
+How long assistant sessions last, averaged over a 5-minute window.
+
+```promql
+sum(rate({__name__="workload.googleapis.com/unity_session_duration_seconds_sum", monitored_resource="k8s_container"}[5m]))
+/
+sum(rate({__name__="workload.googleapis.com/unity_session_duration_seconds_count", monitored_resource="k8s_container"}[5m]))
+/ 60
+```
+
+#### Average Container Spinup Time (seconds)
+
+Time from container start to ConversationManager `main()` being called.
+
+```promql
+sum(rate({__name__="workload.googleapis.com/unity_container_spinup_seconds_sum", monitored_resource="k8s_container"}[5m]))
+/
+sum(rate({__name__="workload.googleapis.com/unity_container_spinup_seconds_count", monitored_resource="k8s_container"}[5m]))
+```
+
+#### Average Manager Init Duration (seconds)
+
+Total duration of `init_conv_manager()` — the full manager initialization
+sequence when a container goes live.
+
+```promql
+sum(rate({__name__="workload.googleapis.com/unity_manager_init_seconds_sum", monitored_resource="k8s_container"}[5m]))
+/
+sum(rate({__name__="workload.googleapis.com/unity_manager_init_seconds_count", monitored_resource="k8s_container"}[5m]))
+```
+
+### Adapter Metrics (Cloud Run)
+
+#### Average Build Webhook Context Duration (seconds)
+
+End-to-end time from inbound adapter request to webhook context built.
+
+```promql
+sum(rate(build_webhook_context_duration_seconds_sum[5m]))
+/
+sum(rate(build_webhook_context_duration_seconds_count[5m]))
+```
+
+By channel:
+
+```promql
+sum by (channel) (rate(build_webhook_context_duration_seconds_sum[5m]))
+/
+sum by (channel) (rate(build_webhook_context_duration_seconds_count[5m]))
+```
+
+#### Job Demand (count per window)
+
+Number of inbound requests that required starting a new container (i.e., no
+container was already running for that assistant).
+
+```promql
+sum(increase(adapter_job_demand_total[5m]))
+```
+
+By channel:
+
+```promql
+sum by (channel) (increase(adapter_job_demand_total[5m]))
+```
+
+### Notes
+
+- Replace `5m` with a different window size as needed, or create a dashboard
+  variable named `interval` (type: Custom, values: `1m,2m,5m,10m,15m,30m,1h`)
+  and use `[$interval]` in queries.
+- Adapter metrics may not have the `workload.googleapis.com/` prefix when
+  queried through the Prometheus data source — use the bare metric name.
+- Unity metrics (pushed via Pushgateway to GKE) use the
+  `workload.googleapis.com/` prefix with `monitored_resource="k8s_container"`.
+- If `$__rate_interval` doesn't resolve (parse error on `$`), use a fixed
+  duration or the dashboard variable approach above.
+
+---
+
 ## Persistent Storage
 
 The current deployment uses `emptyDir` for `/var/lib/grafana`, meaning
