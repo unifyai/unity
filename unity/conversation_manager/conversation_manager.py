@@ -975,9 +975,10 @@ class ConversationManager(metaclass=SingletonABCMeta):
                     source="slow_brain",
                     llm_log_path=slow_brain_log_path,
                 )
+                mode = "speak" if should_speak else "notify"
                 self._session_logger.info(
                     "call_notification",
-                    f"Publishing notification run_id={run_id} speak={should_speak}",
+                    f"Voice guidance ({mode}): {notification_content}",
                 )
                 event_json = event.to_json()
                 await self.event_broker.publish(
