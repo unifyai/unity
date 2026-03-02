@@ -132,6 +132,26 @@ class ComputerBackend(ABC):
         - "Move the mouse to coordinate 250, 400, then click."
           (Avoid pixel-level commands — let the agent handle element targeting.)
 
+        When to use verify
+        ------------------
+        **Default to verify=False.** Single-pass execution is ~2x faster and
+        is correct for the vast majority of tasks: clicking a button, typing
+        into a field, opening an application, navigating to a page, filling
+        a short form, etc.
+
+        **Use verify=True only** for complex, multi-step tasks where a single
+        planning pass is unlikely to achieve the full goal in one shot —
+        e.g. completing a long multi-page wizard, filling an extensive form
+        across multiple sections, or a task with conditional branches the
+        agent cannot predict ahead of time.
+
+        **During live demos / interactive sessions** where the user is
+        watching in real time, strongly prefer verify=False. The latency
+        cost of verification (extra screenshot + LLM round-trip per
+        iteration) is directly felt by the user. Only use verify=True
+        interactively when the task is genuinely complex enough that
+        retrying from scratch would be worse than the verification overhead.
+
         Parameters
         ----------
         instruction : str
@@ -140,9 +160,8 @@ class ComputerBackend(ABC):
         verify : bool, optional
             When True, the agent re-observes the screen after executing its
             planned actions and re-plans in a loop until it confirms the task
-            is complete (up to an internal iteration cap). Useful for complex
-            multi-step tasks where a single planning pass may not suffice.
-            Defaults to False (single-pass execution).
+            is complete (up to an internal iteration cap). Defaults to False
+            (single-pass execution). See the guidance above for when to enable.
 
         Returns
         -------
