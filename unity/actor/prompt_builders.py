@@ -85,34 +85,6 @@ _DISCOVERY_FIRST_POLICY = textwrap.dedent("""
     guidance libraries before attempting to solve a task from scratch.
 """).strip()
 
-_DISCOVERY_FIRST_POLICY_COMPUTER = textwrap.dedent("""
-    ### Discovery-First Policy (Active — Computer Session)
-
-    A tool policy is enforced that **requires** you to call both
-    `FunctionManager_search_functions` and `GuidanceManager_search`
-    before the full tool set becomes available. Until both have been called
-    at least once, only discovery tools and `execute_function` are visible.
-
-    **Computer actions must not wait for discovery.** `execute_function` is
-    available from turn one specifically so you can dispatch
-    `primitives.computer.*` calls immediately. On your very first turn,
-    issue all three in parallel:
-
-    1. `FunctionManager_search_functions` — discover relevant stored functions
-    2. `GuidanceManager_search` — discover relevant guidance/procedures
-    3. `execute_function` — fire the computer action right away
-       (e.g. `execute_function(function_name="primitives.computer.desktop.act",
-       call_kwargs={"instruction": "..."})`)
-
-    Once both discovery calls complete the full tool set unlocks — including
-    `execute_code`, session tools, and GuidanceManager write tools. If the
-    discovery results reveal a better stored function or procedure for the
-    task, reconcile on subsequent turns.
-
-    The goal is **zero wasted latency**: the computer action starts executing
-    at the same time as discovery, not after it.
-""").strip()
-
 _EXECUTION_RULES = textwrap.dedent("""
     ### Tool Selection: `execute_function` vs `execute_code`
 
@@ -382,7 +354,6 @@ def build_code_act_prompt(
     can_store: bool = False,
     guidelines: Optional[str] = None,
     discovery_first_policy: bool = False,
-    has_computer_tools: bool = False,
 ) -> str:
     """Build the system prompt for the CodeActActor.
 
@@ -395,11 +366,6 @@ def build_code_act_prompt(
     discovery_first_policy:
         When ``True``, appends guidance explaining the discovery-first tool
         policy (both FM and GM must be called before other tools unlock).
-    has_computer_tools:
-        When ``True`` (and *discovery_first_policy* is also ``True``), uses
-        the computer-session variant of the policy prompt that encourages
-        dispatching ``primitives.computer.*`` actions on the first turn
-        alongside discovery searches.
     """
     from unity.common.prompt_helpers import render_tools_block
 
@@ -466,10 +432,7 @@ def build_code_act_prompt(
         if has_fm_tools or has_gm_tools:
             parts.append(_FUNCTION_AND_GUIDANCE_LIBRARY)
             if discovery_first_policy:
-                if has_computer_tools:
-                    parts.append(_DISCOVERY_FIRST_POLICY_COMPUTER)
-                else:
-                    parts.append(_DISCOVERY_FIRST_POLICY)
+                parts.append(_DISCOVERY_FIRST_POLICY)
 
         if can_store:
             parts.append(_STORAGE_DEFERRED_NOTICE)
