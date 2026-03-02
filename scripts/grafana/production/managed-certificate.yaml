@@ -1,0 +1,8 @@
+apiVersion: networking.gke.io/v1
+kind: ManagedCertificate
+metadata:
+  name: grafana-cert
+  namespace: production
+spec:
+  domains:
+  - grafana.internal.saas.unify.ai

@@ -1,13 +1,16 @@
-# Grafana on GKE — Staging Deployment
+# Grafana on GKE
 
-**THIS IS A ONE-TIME DEPLOYMENT. DO NOT RE-DEPLOY.**
+**THESE ARE ONE-TIME DEPLOYMENTS. DO NOT RE-DEPLOY.**
 
-Deploys a Grafana instance to the `staging` namespace on the `unity` GKE cluster
-(project `responsive-city-458413-a2`). The instance is pre-configured with a
-Google Cloud Monitoring data source for viewing built-in metrics from Cloud Run,
-GKE, and Pub/Sub.
+Deploys Grafana instances to the `staging` and `production` namespaces on the
+`unity` GKE cluster (project `responsive-city-458413-a2`). Each instance is
+pre-configured with a Google Cloud Monitoring data source for viewing built-in
+metrics from Cloud Run, GKE, and Pub/Sub.
 
-**Live URL:** `https://grafana.staging.internal.saas.unify.ai`
+| Environment | URL | Namespace | Manifests |
+|-------------|-----|-----------|-----------|
+| Staging | `https://grafana.staging.internal.saas.unify.ai` | `staging` | `staging/` |
+| Production | `https://grafana.internal.saas.unify.ai` | `production` | `production/` |
 
 ---
 
@@ -49,7 +52,28 @@ and we add an A record in the other project's Cloud DNS pointing to that IP.
 
 ---
 
-## Files
+## Directory Structure
+
+```
+scripts/grafana/
+├── README.md                        # this file
+├── staging/                         # staging namespace manifests
+│   ├── deploy.sh
+│   ├── deployment.yaml
+│   ├── service.yaml
+│   ├── ingress.yaml
+│   ├── managed-certificate.yaml
+│   └── datasource-configmap.yaml
+└── production/                      # production namespace manifests
+    ├── deploy.sh
+    ├── deployment.yaml
+    ├── service.yaml
+    ├── ingress.yaml
+    ├── managed-certificate.yaml
+    └── datasource-configmap.yaml
+```
+
+Each environment folder contains the same set of files:
 
 | File | Description |
 |------|-------------|
@@ -62,9 +86,10 @@ and we add an A record in the other project's Cloud DNS pointing to that IP.
 
 ---
 
-## Quick Start (deploy.sh)
+## Deployment
 
-The script handles everything except DNS and the data source key upload.
+Both environments follow the same process. Replace `<env>` with `staging` or
+`production` below.
 
 ### Prerequisites
 
@@ -75,12 +100,14 @@ The script handles everything except DNS and the data source key upload.
      --project responsive-city-458413-a2
    ```
 
-2. **`comm-sa-key` secret exists in the `staging` namespace** (contains the GCP
+2. **`comm-sa-key` secret exists in the target namespace** (contains the GCP
    service account key used by Grafana to authenticate with Cloud Monitoring).
 
-### Run
+### Quick Start (deploy.sh)
 
 ```bash
+cd scripts/grafana/<env>
+
 # Random admin password (printed once — save it)
 ./deploy.sh
 
@@ -89,7 +116,7 @@ The script handles everything except DNS and the data source key upload.
 ```
 
 The script will:
-1. Create the `grafana-staging-secrets` Kubernetes Secret (admin password)
+1. Create the admin password Kubernetes Secret
 2. Apply the datasource ConfigMap
 3. Apply the Deployment
 4. Apply the Service
@@ -102,7 +129,7 @@ The script will:
 
 1. **Add the DNS A record** (the script prints the exact command):
    ```bash
-   gcloud dns record-sets create grafana.staging.internal.saas.unify.ai \
+   gcloud dns record-sets create <DOMAIN> \
      --zone=internal-saas \
      --type=A \
      --ttl=300 \
@@ -110,139 +137,23 @@ The script will:
      --project=saas-368716
    ```
 
-2. **Apply the ManagedCertificate for HTTPS** (not included in deploy.sh):
+2. **Apply the ManagedCertificate for HTTPS:**
    ```bash
    kubectl apply -f managed-certificate.yaml
-   ```
-   Then re-apply the Ingress so it picks up the annotation:
-   ```bash
    kubectl apply -f ingress.yaml
    ```
    The certificate takes 10-15 minutes to provision. Monitor with:
    ```bash
-   kubectl get managedcertificate grafana-staging-cert -n staging --watch
+   kubectl get managedcertificate <CERT_NAME> -n <env> --watch
    ```
    Once status shows `Active`, HTTPS is live.
 
 3. **Verify the data source in Grafana:**
-   - Log in at `https://grafana.staging.internal.saas.unify.ai`
+   - Log in at the environment URL
    - Go to **Connections > Data Sources > Google Cloud Monitoring**
    - Click **Save & Test** — it should succeed immediately (the data source
      uses `gce` authentication, which picks up the SA key mounted from the
      `comm-sa-key` secret at `/secrets/key.json` via `GOOGLE_APPLICATION_CREDENTIALS`)
-
----
-
-## Manual Step-by-Step Deployment
-
-If you prefer to apply manifests individually rather than using `deploy.sh`:
-
-### 1. Point kubectl at the cluster
-
-```bash
-gcloud container clusters get-credentials unity \
-  --region us-central1 \
-  --project responsive-city-458413-a2
-```
-
-### 2. Create the admin password secret
-
-```bash
-kubectl create secret generic grafana-staging-secrets \
-  --namespace=staging \
-  --from-literal=admin-password="<YOUR_PASSWORD>" \
-  --dry-run=client -o yaml | kubectl apply -f -
-```
-
-### 3. Apply the ConfigMap
-
-```bash
-kubectl apply -f datasource-configmap.yaml
-```
-
-This provisions the Google Cloud Monitoring data source automatically on Grafana
-startup. The data source uses `gce` authentication, which picks up the service
-account key mounted at `/secrets/key.json` via the `GOOGLE_APPLICATION_CREDENTIALS`
-env var (handled by the Deployment). No manual key upload is needed.
-
-### 4. Apply the Deployment
-
-```bash
-kubectl apply -f deployment.yaml
-```
-
-Key configuration:
-- **Image:** `grafana/grafana:11.5.1`
-- **Service account:** `comm-sa` (Kubernetes SA)
-- **SA key mount:** `/secrets/key.json` from the `comm-sa-key` Secret
-- **Resources:** 250m-500m CPU, 256Mi-512Mi memory
-- **Storage:** `emptyDir` (dashboards/settings are lost on pod restart — see
-  [Persistent Storage](#persistent-storage) below)
-
-Wait for the pod:
-```bash
-kubectl rollout status deployment/grafana-staging -n staging --timeout=120s
-```
-
-### 5. Apply the Service
-
-```bash
-kubectl apply -f service.yaml
-```
-
-ClusterIP service on port 80, forwarding to the pod's port 3000.
-
-### 6. Apply the Ingress
-
-```bash
-kubectl apply -f ingress.yaml
-```
-
-This triggers GKE to create an HTTP(S) Load Balancer. Wait for the external IP:
-```bash
-kubectl get ingress grafana-staging -n staging --watch
-```
-
-The IP typically appears in 2-5 minutes. Check backend health:
-```bash
-kubectl describe ingress grafana-staging -n staging
-```
-
-Look for `ingress.kubernetes.io/backends` — all backends should show `HEALTHY`
-(this can take an additional 2-3 minutes after the IP is assigned).
-
-### 7. Add the DNS record
-
-```bash
-gcloud dns record-sets create grafana.staging.internal.saas.unify.ai \
-  --zone=internal-saas \
-  --type=A \
-  --ttl=300 \
-  --rrdatas=<EXTERNAL_IP> \
-  --project=saas-368716
-```
-
-Verify DNS resolution:
-```bash
-dig grafana.staging.internal.saas.unify.ai +short
-```
-
-### 8. Enable HTTPS with ManagedCertificate
-
-```bash
-kubectl apply -f managed-certificate.yaml
-kubectl apply -f ingress.yaml   # picks up the annotation
-```
-
-Monitor certificate provisioning (10-15 minutes):
-```bash
-kubectl get managedcertificate grafana-staging-cert -n staging --watch
-```
-
-Once `Active`, HTTPS is live. Verify:
-```bash
-curl -s https://grafana.staging.internal.saas.unify.ai/api/health
-```
 
 ---
 
@@ -280,26 +191,26 @@ Error syncing to GCP: error initializing translator env: secrets "grafana-tls" n
 
 The GCE load balancer health checks haven't passed yet. Check backend status:
 ```bash
-kubectl describe ingress grafana-staging -n staging | grep backends
+kubectl describe ingress <INGRESS_NAME> -n <NAMESPACE> | grep backends
 ```
 
 Wait until all backends show `HEALTHY` (can take 3-5 minutes after IP
 assignment). If a backend stays `Unknown` or `UNHEALTHY`, check the pod:
 ```bash
-kubectl logs -n staging -l app=grafana-staging
-kubectl get pods -n staging -l app=grafana-staging
+kubectl logs -n <NAMESPACE> -l app=<APP_LABEL>
+kubectl get pods -n <NAMESPACE> -l app=<APP_LABEL>
 ```
 
 ### ManagedCertificate stuck in Provisioning
 
 Google needs to verify domain ownership via the DNS A record. Ensure:
-1. The A record exists and resolves: `dig grafana.staging.internal.saas.unify.ai +short`
-2. The resolved IP matches the Ingress IP: `kubectl get ingress grafana-staging -n staging`
+1. The A record exists and resolves: `dig <DOMAIN> +short`
+2. The resolved IP matches the Ingress IP: `kubectl get ingress <INGRESS_NAME> -n <NAMESPACE>`
 
 If DNS is correct, just wait — provisioning can take up to 15 minutes. Check
 status:
 ```bash
-kubectl describe managedcertificate grafana-staging-cert -n staging
+kubectl describe managedcertificate <CERT_NAME> -n <NAMESPACE>
 ```
 
 ### cert-manager webhook errors
@@ -320,13 +231,13 @@ If the Ingress IP changes (e.g. after deleting and recreating the Ingress):
 
 ```bash
 # Delete old record
-gcloud dns record-sets delete grafana.staging.internal.saas.unify.ai \
+gcloud dns record-sets delete <DOMAIN> \
   --zone=internal-saas \
   --type=A \
   --project=saas-368716
 
 # Create new record
-gcloud dns record-sets create grafana.staging.internal.saas.unify.ai \
+gcloud dns record-sets create <DOMAIN> \
   --zone=internal-saas \
   --type=A \
   --ttl=300 \
@@ -338,17 +249,18 @@ gcloud dns record-sets create grafana.staging.internal.saas.unify.ai \
 
 ## Tearing Down
 
-```bash
-# Delete all Grafana resources
-kubectl delete ingress grafana-staging -n staging
-kubectl delete svc grafana-staging -n staging
-kubectl delete deployment grafana-staging -n staging
-kubectl delete configmap grafana-staging-datasource-provisioning -n staging
-kubectl delete secret grafana-staging-secrets -n staging
-kubectl delete managedcertificate grafana-staging-cert -n staging
+Replace resource names and namespace for the target environment (see the
+[Kubernetes Resources Summary](#kubernetes-resources-summary) table).
 
-# Delete the DNS record
-gcloud dns record-sets delete grafana.staging.internal.saas.unify.ai \
+```bash
+kubectl delete ingress <INGRESS_NAME> -n <NAMESPACE>
+kubectl delete svc <SERVICE_NAME> -n <NAMESPACE>
+kubectl delete deployment <DEPLOYMENT_NAME> -n <NAMESPACE>
+kubectl delete configmap <CONFIGMAP_NAME> -n <NAMESPACE>
+kubectl delete secret <SECRET_NAME> -n <NAMESPACE>
+kubectl delete managedcertificate <CERT_NAME> -n <NAMESPACE>
+
+gcloud dns record-sets delete <DOMAIN> \
   --zone=internal-saas \
   --type=A \
   --project=saas-368716
@@ -365,9 +277,7 @@ Since dashboards are lost on pod restart (`emptyDir` storage), this section
 documents the PromQL queries used so they can be recreated. All queries below
 use the **Google Managed Prometheus** data source.
 
-### Unity Metrics (GKE)
-
-#### Live Assistants (Supply)
+### Live Assistants (Supply)
 
 Snapshot of how many assistant jobs have `running==True` at any point in time.
 This is a gauge — no `rate()` needed. Use `max()` because each container
@@ -378,7 +288,22 @@ number of reporting containers.
 max({__name__="workload.googleapis.com/unity_running_job_count", monitored_resource="k8s_container"})
 ```
 
-#### Average Session Duration (minutes)
+### Live Assistants (Demand)
+
+Number of inbound requests that required starting a new container (i.e., no
+container was already running for that assistant).
+
+```promql
+sum(increase(adapter_job_demand_total[5m]))
+```
+
+By channel:
+
+```promql
+sum by (channel) (increase(adapter_job_demand_total[5m]))
+```
+
+### Average Session Duration (minutes)
 
 How long assistant sessions last, averaged over a 5-minute window.
 
@@ -389,7 +314,7 @@ sum(rate({__name__="workload.googleapis.com/unity_session_duration_seconds_count
 / 60
 ```
 
-#### Average Container Spinup Time (seconds)
+### Average Container Spinup Time (seconds)
 
 Time from container start to ConversationManager `main()` being called.
 
@@ -399,20 +324,7 @@ sum(rate({__name__="workload.googleapis.com/unity_container_spinup_seconds_sum",
 sum(rate({__name__="workload.googleapis.com/unity_container_spinup_seconds_count", monitored_resource="k8s_container"}[5m]))
 ```
 
-#### Average Manager Init Duration (seconds)
-
-Total duration of `init_conv_manager()` — the full manager initialization
-sequence when a container goes live.
-
-```promql
-sum(rate({__name__="workload.googleapis.com/unity_manager_init_seconds_sum", monitored_resource="k8s_container"}[5m]))
-/
-sum(rate({__name__="workload.googleapis.com/unity_manager_init_seconds_count", monitored_resource="k8s_container"}[5m]))
-```
-
-### Adapter Metrics (Cloud Run)
-
-#### Average Build Webhook Context Duration (seconds)
+### Average Build Context Duration (seconds)
 
 End-to-end time from inbound adapter request to webhook context built.
 
@@ -430,7 +342,7 @@ sum by (channel) (rate(build_webhook_context_duration_seconds_sum[5m]))
 sum by (channel) (rate(build_webhook_context_duration_seconds_count[5m]))
 ```
 
-#### Average Orchestra Get Assistant Duration (seconds)
+### Average Get Assistant Duration (seconds)
 
 Time spent calling the Orchestra `/admin/assistant` endpoint to resolve
 assistant details from a phone number, email, or ID.
@@ -449,7 +361,18 @@ sum by (lookup_type) (rate(orchestra_get_assistant_duration_seconds_sum{status="
 sum by (lookup_type) (rate(orchestra_get_assistant_duration_seconds_count{status="success"}[5m]))
 ```
 
-#### Average Mark Job Running Duration (seconds)
+### Average Manager Init Duration (seconds)
+
+Total duration of `init_conv_manager()` — the full manager initialization
+sequence when a container goes live.
+
+```promql
+sum(rate({__name__="workload.googleapis.com/unity_manager_init_seconds_sum", monitored_resource="k8s_container"}[5m]))
+/
+sum(rate({__name__="workload.googleapis.com/unity_manager_init_seconds_count", monitored_resource="k8s_container"}[5m]))
+```
+
+### Average Mark Job Running Duration (seconds)
 
 Time spent marking an AssistantJob as running via Orchestra `/logs`.
 
@@ -459,7 +382,7 @@ sum(rate(mark_job_running_duration_seconds_sum{status="success"}[5m]))
 sum(rate(mark_job_running_duration_seconds_count{status="success"}[5m]))
 ```
 
-#### HTTP Request Latency by Endpoint (seconds)
+### Adapter Request Latency (seconds)
 
 Per-route request latency for the adapters service. Useful for identifying
 slow endpoints.
@@ -470,27 +393,14 @@ sum by (endpoint) (rate(http_request_duration_seconds_sum{service="adapters"}[5m
 sum by (endpoint) (rate(http_request_duration_seconds_count{service="adapters"}[5m]))
 ```
 
+### Comms Request Latency (seconds)
+
 For the **comms** service:
 
 ```promql
 sum by (endpoint) (rate(http_request_duration_seconds_sum{service="comms"}[5m]))
 /
 sum by (endpoint) (rate(http_request_duration_seconds_count{service="comms"}[5m]))
-```
-
-#### Job Demand (count per window)
-
-Number of inbound requests that required starting a new container (i.e., no
-container was already running for that assistant).
-
-```promql
-sum(increase(adapter_job_demand_total[5m]))
-```
-
-By channel:
-
-```promql
-sum by (channel) (increase(adapter_job_demand_total[5m]))
 ```
 
 ### Notes
@@ -537,6 +447,8 @@ spec:
 
 ## Kubernetes Resources Summary
 
+### Staging
+
 | Resource | Name | Namespace |
 |----------|------|-----------|
 | Deployment | `grafana-staging` | `staging` |
@@ -546,3 +458,16 @@ spec:
 | Secret | `grafana-staging-secrets` | `staging` |
 | ManagedCertificate | `grafana-staging-cert` | `staging` |
 | Secret (pre-existing) | `comm-sa-key` | `staging` |
+
+### Production
+
+| Resource | Name | Namespace |
+|----------|------|-----------|
+| Deployment | `grafana` | `production` |
+| Service (ClusterIP) | `grafana` | `production` |
+| Ingress | `grafana` | `production` |
+| ConfigMap | `grafana-datasource-provisioning` | `production` |
+| Secret | `grafana-secrets` | `production` |
+| ManagedCertificate | `grafana-cert` | `production` |
+| Secret (pre-existing) | `comm-sa-key` | `production` |
+

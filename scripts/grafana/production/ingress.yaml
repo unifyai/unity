@@ -1,0 +1,19 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: grafana
+  namespace: production
+  annotations:
+    networking.gke.io/managed-certificates: grafana-cert
+spec:
+  rules:
+  - host: grafana.internal.saas.unify.ai
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: grafana
+            port:
+              number: 80
