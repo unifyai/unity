@@ -14,6 +14,8 @@ spec:
     metadata:
       labels:
         app: grafana-staging
+      annotations:
+        cluster-autoscaler.kubernetes.io/safe-to-evict: "false"
     spec:
       serviceAccountName: comm-sa
       containers:
