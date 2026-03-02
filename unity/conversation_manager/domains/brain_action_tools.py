@@ -1636,12 +1636,8 @@ class ConversationManagerBrainActionTools:
 
     # ── Web fast-path tools ────────────────────────────────────────────
 
-    def _resolve_or_create_web_session(self, session_id: str | None):
-        """Return (handle, is_new) for an existing or freshly-created session.
-
-        Returns the coroutine's awaitable result and a boolean indicating
-        whether a brand-new session was created.
-        """
+    def _resolve_or_create_web_session(self, session_id: int | None):
+        """Return (handle, is_new) for an existing or freshly-created session."""
         cp = self._cm.computer_primitives
 
         async def _resolve():
@@ -1650,7 +1646,7 @@ class ConversationManagerBrainActionTools:
                     if h.session_id == session_id and h.active:
                         return h, False
                 raise ValueError(
-                    f"No active web session with id '{session_id}'. "
+                    f"No active web session with id {session_id}. "
                     f"Check <active_web_sessions> for valid IDs.",
                 )
             handle = await cp.web.new_session(visible=True)
@@ -1662,7 +1658,7 @@ class ConversationManagerBrainActionTools:
         self,
         *,
         request: str,
-        session_id: str | None = None,
+        session_id: int | None = None,
     ) -> dict[str, Any]:
         """Execute a request in a visible web browser session.
 
@@ -1673,8 +1669,8 @@ class ConversationManagerBrainActionTools:
         desktop.
 
         A new browser session is created automatically when ``session_id``
-        is omitted.  Pass a ``session_id`` from ``<active_web_sessions>``
-        to continue working in an existing session.
+        is omitted.  Pass a numeric ``session_id`` from
+        ``<active_web_sessions>`` to continue working in an existing session.
 
         **Use ``desktop_act`` instead** for native desktop actions that
         cannot be done inside a browser (clicking desktop UI, opening native
@@ -1686,8 +1682,8 @@ class ConversationManagerBrainActionTools:
         Args:
             request: Natural language description of the browser task
                 (e.g. "Search Google for 'best CRM software 2025'").
-            session_id: Optional ID of an existing active web session to
-                reuse.  When omitted a new visible session is created.
+            session_id: Optional numeric ID of an existing active web session
+                to reuse.  When omitted a new visible session is created.
         """
         handle, is_new = await self._resolve_or_create_web_session(session_id)
         used_id = handle.session_id
@@ -1701,7 +1697,7 @@ class ConversationManagerBrainActionTools:
     async def close_web_session(
         self,
         *,
-        session_id: str,
+        session_id: int,
     ) -> dict[str, Any]:
         """Close a visible web browser session to free resources.
 
@@ -1709,7 +1705,7 @@ class ConversationManagerBrainActionTools:
         ``<active_web_sessions>`` in the current state for valid IDs.
 
         Args:
-            session_id: The ID of the web session to close.
+            session_id: The numeric ID of the web session to close.
         """
         cp = self._cm.computer_primitives
         for h in cp.web.list_sessions():

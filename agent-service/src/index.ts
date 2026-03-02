@@ -566,7 +566,7 @@ const startBrowserOnVm = async (): Promise<BrowserAgent> => {
 
 // --- API Endpoints ---
 app.post('/start', async (req: Request, res: Response) => {
-  const { headless, mode } = req.body;
+  const { headless, mode, label } = req.body;
   if (!mode || !['desktop', 'web', 'web-vm'].includes(mode)) {
     return res.status(400).json({
       error: 'bad_request',
@@ -603,6 +603,30 @@ app.post('/start', async (req: Request, res: Response) => {
       agent = await startBrowser(headless ?? false);
     }
     console.log(`[start] agent_created=${Date.now() - t0}ms mode=${mode}`);
+
+    if (label && mode === 'web-vm') {
+      try {
+        await agent.context.addInitScript(`
+          (function() {
+            function _injectBadge() {
+              if (document.getElementById('__mag_session_badge')) return;
+              var b = document.createElement('div');
+              b.id = '__mag_session_badge';
+              b.textContent = ${JSON.stringify(String(label))};
+              b.style.cssText = 'position:fixed;top:4px;right:4px;z-index:2147483647;'
+                + 'background:rgba(30,30,30,0.85);color:#fff;padding:2px 8px;'
+                + 'font:bold 12px/16px system-ui,sans-serif;border-radius:4px;'
+                + 'pointer-events:none;user-select:none;';
+              (document.body || document.documentElement).appendChild(b);
+            }
+            if (document.body) _injectBadge();
+            else document.addEventListener('DOMContentLoaded', _injectBadge);
+          })();
+        `);
+      } catch (badgeErr) {
+        console.warn(`[start] Badge injection failed: ${badgeErr}`);
+      }
+    }
 
     activeSessions.set(sessionId, {
       agent,

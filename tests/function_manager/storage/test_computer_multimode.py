@@ -527,23 +527,23 @@ class TestLazySessionInvalidation:
 
 class TestPushSessionInvalidation:
     """The _on_session_closed callback (wired from ComputerPrimitives to the
-    backend) marks handles inactive by session_id."""
+    backend) marks handles inactive by agent-service UUID."""
 
     @pytest.mark.asyncio
     async def test_on_session_closed_callback_marks_handle_inactive(self):
         cp = _make_primitives()
         session = await cp.web.new_session(visible=True)
-        sid = session.session_id
+        agent_sid = session._agent_session_id
         assert session.active is True
 
-        cp._invalidate_web_session(sid)
+        cp._invalidate_web_session(agent_sid)
         assert session.active is False
 
     @pytest.mark.asyncio
     async def test_on_session_closed_unknown_id_is_noop(self):
         cp = _make_primitives()
         session = await cp.web.new_session(visible=True)
-        cp._invalidate_web_session("nonexistent-id")
+        cp._invalidate_web_session("nonexistent-uuid")
         assert session.active is True
 
     @pytest.mark.asyncio
@@ -552,7 +552,7 @@ class TestPushSessionInvalidation:
         s1 = await cp.web.new_session(visible=True)
         s2 = await cp.web.new_session(visible=True)
 
-        cp._invalidate_web_session(s1.session_id)
+        cp._invalidate_web_session(s1._agent_session_id)
 
         active = cp.web.list_sessions(active_only=True)
         assert s1 not in active
@@ -565,3 +565,77 @@ class TestPushSessionInvalidation:
         _ = cp.backend  # trigger lazy init
         assert cp.backend._on_session_closed is not None
         assert cp.backend._on_session_closed == cp._invalidate_web_session
+
+
+# ── Numeric IDs, labels, and metadata ─────────────────────────────────
+
+
+class TestNumericSessionIds:
+    """Session IDs are sequential integers; labels are human-readable."""
+
+    @pytest.mark.asyncio
+    async def test_session_ids_are_sequential(self):
+        cp = _make_primitives()
+        s0 = await cp.web.new_session()
+        s1 = await cp.web.new_session()
+        s2 = await cp.web.new_session()
+        assert s0.session_id == 0
+        assert s1.session_id == 1
+        assert s2.session_id == 2
+
+    @pytest.mark.asyncio
+    async def test_session_id_is_int(self):
+        cp = _make_primitives()
+        s = await cp.web.new_session()
+        assert isinstance(s.session_id, int)
+
+    @pytest.mark.asyncio
+    async def test_label_property(self):
+        cp = _make_primitives()
+        s0 = await cp.web.new_session()
+        s1 = await cp.web.new_session()
+        assert s0.label == "Web 0"
+        assert s1.label == "Web 1"
+
+    @pytest.mark.asyncio
+    async def test_agent_session_id_is_str(self):
+        cp = _make_primitives()
+        s = await cp.web.new_session()
+        assert isinstance(s._agent_session_id, str)
+        assert s._agent_session_id != str(s.session_id)
+
+    @pytest.mark.asyncio
+    async def test_list_sessions_with_metadata(self):
+        cp = _make_primitives()
+        s0 = await cp.web.new_session(visible=True)
+        s1 = await cp.web.new_session(visible=True)
+        meta = await cp.web.list_sessions_with_metadata(
+            visible_only=True,
+            active_only=True,
+        )
+        assert len(meta) == 2
+        assert meta[0]["session_id"] == 0
+        assert meta[0]["label"] == "Web 0"
+        assert "url" in meta[0]
+        assert meta[1]["session_id"] == 1
+        assert meta[1]["label"] == "Web 1"
+
+
+class TestRendererMetadata:
+    """Renderer includes label and URL in <active_web_sessions>."""
+
+    def test_render_with_metadata_dicts(self):
+        from unity.conversation_manager.domains.renderer import Renderer
+
+        sessions = [
+            {"session_id": 0, "label": "Web 0", "url": "https://google.com"},
+            {"session_id": 1, "label": "Web 1", "url": "https://amazon.com"},
+        ]
+        rendered = Renderer.render_active_web_sessions(sessions)
+        assert "<active_web_sessions>" in rendered
+        assert 'id="0"' in rendered
+        assert 'label="Web 0"' in rendered
+        assert 'url="https://google.com"' in rendered
+        assert 'id="1"' in rendered
+        assert 'label="Web 1"' in rendered
+        assert 'url="https://amazon.com"' in rendered

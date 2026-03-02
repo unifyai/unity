@@ -263,9 +263,17 @@ class WebSessionHandle:
     lifecycle management.
     """
 
-    def __init__(self, session: "ComputerSession", owner: "ComputerPrimitives"):
+    def __init__(
+        self,
+        session: "ComputerSession",
+        owner: "ComputerPrimitives",
+        session_id: int,
+    ):
         self._session = session
         self._owner = owner
+        self._session_id = session_id
+        self._agent_session_id: str = session._session_id
+        self._label = f"Web {session_id}"
         self._active = True
 
         def _mark_inactive():
@@ -287,9 +295,14 @@ class WebSessionHandle:
             )
 
     @property
-    def session_id(self) -> str:
-        """The agent-service session identifier."""
-        return self._session._session_id
+    def session_id(self) -> int:
+        """Numeric session identifier (0, 1, 2, ...)."""
+        return self._session_id
+
+    @property
+    def label(self) -> str:
+        """Human-readable label shown as a visual badge in the browser."""
+        return self._label
 
     @property
     def visible(self) -> bool:
@@ -318,6 +331,7 @@ class _WebSessionFactory:
     def __init__(self, owner: "ComputerPrimitives"):
         self._owner = owner
         self._handles: list[WebSessionHandle] = []
+        self._next_id: int = 0
 
     async def new_session(self, visible: bool = True) -> WebSessionHandle:
         """Create a new independent browser session.
@@ -344,9 +358,12 @@ class _WebSessionFactory:
             ``navigate``, ``get_links``, ``get_content``, ``get_screenshot``,
             and ``stop``.  Call ``stop()`` when done to release resources.
         """
+        sid = self._next_id
+        self._next_id += 1
+        label = f"Web {sid}"
         mode = "web-vm" if visible else "web"
-        session = await self._owner.backend.create_session(mode)
-        handle = WebSessionHandle(session, self._owner)
+        session = await self._owner.backend.create_session(mode, label=label)
+        handle = WebSessionHandle(session, self._owner, session_id=sid)
         self._handles.append(handle)
         return handle
 
@@ -385,6 +402,37 @@ class _WebSessionFactory:
         if active_only:
             result = [h for h in result if h.active]
         return list(result)
+
+    async def list_sessions_with_metadata(
+        self,
+        visible_only: bool = False,
+        active_only: bool = False,
+    ) -> list[dict]:
+        """Like ``list_sessions`` but includes URL metadata for each session.
+
+        Returns a list of dicts with keys ``handle``, ``url``, ``label``,
+        and ``session_id``.
+        """
+        sessions = self.list_sessions(
+            visible_only=visible_only,
+            active_only=active_only,
+        )
+        result = []
+        for h in sessions:
+            url = ""
+            try:
+                url = await h._session.get_current_url()
+            except Exception:
+                pass
+            result.append(
+                {
+                    "handle": h,
+                    "session_id": h.session_id,
+                    "label": h.label,
+                    "url": url,
+                },
+            )
+        return result
 
 
 class ComputerPrimitives(metaclass=SingletonABCMeta):
@@ -498,12 +546,12 @@ class ComputerPrimitives(metaclass=SingletonABCMeta):
             self._backend._on_session_closed = self._invalidate_web_session
         return self._backend
 
-    def _invalidate_web_session(self, session_id: str) -> None:
-        """Mark the WebSessionHandle with the given session_id as inactive."""
+    def _invalidate_web_session(self, agent_session_id: str) -> None:
+        """Mark the WebSessionHandle matching the agent-service UUID as inactive."""
         if self._web_factory is None:
             return
         for h in self._web_factory._handles:
-            if h.session_id == session_id:
+            if h._agent_session_id == agent_session_id:
                 h._active = False
 
     # ── Sub-namespace properties ─────────────────────────────────────────

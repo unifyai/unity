@@ -229,7 +229,7 @@ async def test_close_web_session_not_found(initialized_cm):
         "computer_primitives",
         new_callable=lambda: property(lambda self: cp),
     ):
-        result = await action_tools.close_web_session(session_id="nonexistent")
+        result = await action_tools.close_web_session(session_id=999)
 
     assert result["status"] == "not_found"
     ManagerRegistry.clear()
@@ -258,8 +258,10 @@ async def test_active_web_sessions_in_snapshot(initialized_cm):
     rendered = Renderer.render_active_web_sessions(sessions)
 
     assert "<active_web_sessions>" in rendered
-    assert s1.session_id in rendered
-    assert s2.session_id in rendered
+    assert str(s1.session_id) in rendered
+    assert str(s2.session_id) in rendered
+    assert s1.label in rendered
+    assert s2.label in rendered
     assert "</active_web_sessions>" in rendered
     ManagerRegistry.clear()
 
