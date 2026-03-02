@@ -641,6 +641,30 @@ Use `desktop_act` for **single atomic desktop actions** where the user has expli
 This tool is only available while the desktop is being actively shared.""",
             )
 
+            parts.add(
+                """Web fast-path tool
+------------------
+`web_act` is a **direct shortcut** for ALL browser-only work — searching the web, navigating sites, filling web forms, reading web pages, extracting web content. It creates a visible browser session on the desktop and executes the request inside it.
+
+**When to use `web_act` vs `desktop_act`:**
+- `web_act` — ALL browser-only work: web search, navigating URLs, reading pages, filling web forms, extracting content from websites.
+- `desktop_act` — native desktop actions that CANNOT be done in a browser: clicking desktop UI elements outside browser windows, opening native apps, terminal commands, file manager operations, interacting with non-browser windows.
+- `act` — complex multi-step work, cross-domain reasoning, or anything requiring guidance/functions/knowledge.
+
+**Session lifecycle:**
+- `web_act` without `session_id` always creates a new visible browser session.
+- Pass `session_id` to reuse a session listed in `<active_web_sessions>`.
+- Call `close_web_session(session_id)` when done with a browser session to free resources.
+
+**Like `desktop_act`, NEVER use `web_act` without an `act` session.** Follow the same rules: if no `act` session is currently in-flight, call `act(persist=True)` in the same response as `web_act`.
+
+`close_web_session` tool
+------------------------
+Closes a browser session by ID. Use when browser work is complete to free resources. Check `<active_web_sessions>` for valid session IDs.
+
+These tools are only available while the desktop is being actively shared.""",
+            )
+
         parts.add(
             """Act capabilities
 ----------------

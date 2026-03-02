@@ -687,7 +687,11 @@ class MockComputerBackend(ComputerBackend):
 class _MockSession:
     """Lightweight mock that satisfies the ``ComputerSession`` interface."""
 
+    _mock_id_counter = 0
+
     def __init__(self, mode: str, backend: MockComputerBackend):
+        _MockSession._mock_id_counter += 1
+        self._session_id = f"mock-{_MockSession._mock_id_counter}"
         self._mode = mode
         self._backend = backend
 

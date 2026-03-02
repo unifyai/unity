@@ -1634,6 +1634,94 @@ class ConversationManagerBrainActionTools:
             action_type="desktop_act",
         )
 
+    # ── Web fast-path tools ────────────────────────────────────────────
+
+    def _resolve_or_create_web_session(self, session_id: str | None):
+        """Return (handle, is_new) for an existing or freshly-created session.
+
+        Returns the coroutine's awaitable result and a boolean indicating
+        whether a brand-new session was created.
+        """
+        cp = self._cm.computer_primitives
+
+        async def _resolve():
+            if session_id is not None:
+                for h in cp.web.list_sessions():
+                    if h.session_id == session_id and h.active:
+                        return h, False
+                raise ValueError(
+                    f"No active web session with id '{session_id}'. "
+                    f"Check <active_web_sessions> for valid IDs.",
+                )
+            handle = await cp.web.new_session(visible=True)
+            return handle, True
+
+        return _resolve()
+
+    async def web_act(
+        self,
+        *,
+        request: str,
+        session_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Execute a request in a visible web browser session.
+
+        This is a **direct shortcut** for browser-only work — searching the
+        web, navigating sites, filling web forms, reading web pages, or
+        extracting web content.  It bypasses the general ``act`` pathway and
+        runs directly against a Chromium browser session visible on the
+        desktop.
+
+        A new browser session is created automatically when ``session_id``
+        is omitted.  Pass a ``session_id`` from ``<active_web_sessions>``
+        to continue working in an existing session.
+
+        **Use ``desktop_act`` instead** for native desktop actions that
+        cannot be done inside a browser (clicking desktop UI, opening native
+        apps, terminal commands, file manager operations).
+
+        **Use ``act`` instead** for complex multi-step work, cross-domain
+        reasoning, or anything requiring guidance / functions / knowledge.
+
+        Args:
+            request: Natural language description of the browser task
+                (e.g. "Search Google for 'best CRM software 2025'").
+            session_id: Optional ID of an existing active web session to
+                reuse.  When omitted a new visible session is created.
+        """
+        handle, is_new = await self._resolve_or_create_web_session(session_id)
+        used_id = handle.session_id
+        label = f"[session={used_id}, new={is_new}]"
+        return await self._invoke_desktop_action(
+            coro=handle.act(request),
+            text=f"{request} {label}",
+            action_type="web_act",
+        )
+
+    async def close_web_session(
+        self,
+        *,
+        session_id: str,
+    ) -> dict[str, Any]:
+        """Close a visible web browser session to free resources.
+
+        Use after completing browser work to clean up.  Check
+        ``<active_web_sessions>`` in the current state for valid IDs.
+
+        Args:
+            session_id: The ID of the web session to close.
+        """
+        cp = self._cm.computer_primitives
+        for h in cp.web.list_sessions():
+            if h.session_id == session_id and h.active:
+                await h.stop()
+                return {"status": "closed", "session_id": session_id}
+        return {
+            "status": "not_found",
+            "session_id": session_id,
+            "error": "No active web session with that ID.",
+        }
+
     async def set_boss_details(
         self,
         *,
