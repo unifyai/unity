@@ -168,6 +168,15 @@ def _coerce_text_value(value: Any) -> str:
 #  2.  Generic SteerableToolHandle wrapper
 # ---------------------------------------------------------------------------
 
+# Steering methods whose first positional arg is user-facing text.
+# Maps method_name -> (param_name, payload_field) so the action event
+# carries the content in the semantically correct ManagerMethodPayload field.
+_ACTION_CONTENT_FIELDS: dict[str, tuple[str, str]] = {
+    "ask": ("question", "question"),
+    "interject": ("message", "instructions"),
+    "stop": ("reason", "instructions"),
+}
+
 
 def wrap_handle_with_logging(
     inner: SteerableToolHandle,
@@ -259,7 +268,14 @@ def wrap_handle_with_logging(
                 @_functools.wraps(target)
                 async def _wrapped(*args, **kwargs):
                     try:
-                        await self._publish(action=name)
+                        action_kw: dict[str, Any] = {"action": name}
+                        field_spec = _ACTION_CONTENT_FIELDS.get(name)
+                        if field_spec:
+                            param_name, payload_field = field_spec
+                            text = args[0] if args else kwargs.get(param_name)
+                            if isinstance(text, str):
+                                action_kw[payload_field] = text
+                        await self._publish(**action_kw)
                     except Exception:
                         pass
                     result = await target(*args, **kwargs)
@@ -280,7 +296,14 @@ def wrap_handle_with_logging(
                 @_functools.wraps(target)
                 def _wrapped(*args, **kwargs):
                     try:
-                        asyncio.create_task(self._publish(action=name))
+                        action_kw: dict[str, Any] = {"action": name}
+                        field_spec = _ACTION_CONTENT_FIELDS.get(name)
+                        if field_spec:
+                            param_name, payload_field = field_spec
+                            text = args[0] if args else kwargs.get(param_name)
+                            if isinstance(text, str):
+                                action_kw[payload_field] = text
+                        asyncio.create_task(self._publish(**action_kw))
                     except Exception:
                         pass
                     result = target(*args, **kwargs)

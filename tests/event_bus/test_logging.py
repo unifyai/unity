@@ -945,3 +945,101 @@ async def test_ask_does_not_publish_handle_repr_as_answer():
         f"Expected answer=None for a handle return, got {answer!r}. "
         "Handle reprs must not leak into the answer field."
     )
+
+
+# ============================================================================
+#  Steering content forwarding tests
+# ============================================================================
+# User-facing steering methods (interject, ask, stop) should forward their
+# first positional argument to the ManagerMethod action event so the frontend
+# can display the text inline (e.g. next to the "interjected" label).
+# Each method writes to the semantically correct payload field:
+#   ask      -> question
+#   interject -> instructions
+#   stop     -> instructions
+
+
+@pytest.mark.asyncio
+@_handle_project
+async def test_interject_action_event_carries_message():
+    """The action event for interject() must include the message in the
+    'instructions' payload field."""
+    inner = _TupleAnswerHandle()
+    logged = wrap_handle_with_logging(inner, new_call_id(), "UnitTestManager", "ask")
+
+    async with capture_events("ManagerMethod") as captured_events:
+        await logged.interject("new requirements from the boss")
+
+    EVENT_BUS.join_published()
+
+    action_events = [
+        e
+        for e in captured_events
+        if e.payload.get("manager") == "UnitTestManager"
+        and e.payload.get("method") == "ask"
+        and e.payload.get("action") == "interject"
+    ]
+
+    assert len(action_events) == 1, f"Expected 1 action event, got {len(action_events)}"
+    assert (
+        action_events[0].payload.get("instructions") == "new requirements from the boss"
+    ), (
+        f"Expected instructions='new requirements from the boss', "
+        f"got {action_events[0].payload.get('instructions')!r}"
+    )
+
+
+@pytest.mark.asyncio
+@_handle_project
+async def test_ask_action_event_carries_question():
+    """The action event for ask() must include the question in the
+    'question' payload field."""
+    inner = _TupleAnswerHandle()
+    logged = wrap_handle_with_logging(inner, new_call_id(), "UnitTestManager", "ask")
+
+    async with capture_events("ManagerMethod") as captured_events:
+        await logged.ask("what is the current status?")
+
+    EVENT_BUS.join_published()
+
+    action_events = [
+        e
+        for e in captured_events
+        if e.payload.get("manager") == "UnitTestManager"
+        and e.payload.get("method") == "ask"
+        and e.payload.get("action") == "ask"
+    ]
+
+    assert len(action_events) == 1, f"Expected 1 action event, got {len(action_events)}"
+    assert action_events[0].payload.get("question") == "what is the current status?", (
+        f"Expected question='what is the current status?', "
+        f"got {action_events[0].payload.get('question')!r}"
+    )
+
+
+@pytest.mark.asyncio
+@_handle_project
+async def test_stop_action_event_carries_reason():
+    """The action event for stop() must include the reason in the
+    'instructions' payload field."""
+    inner = _TupleAnswerHandle()
+    logged = wrap_handle_with_logging(inner, new_call_id(), "UnitTestManager", "ask")
+
+    async with capture_events("ManagerMethod") as captured_events:
+        await logged.stop(reason="user changed their mind")
+
+    EVENT_BUS.join_published()
+
+    action_events = [
+        e
+        for e in captured_events
+        if e.payload.get("manager") == "UnitTestManager"
+        and e.payload.get("method") == "ask"
+        and e.payload.get("action") == "stop"
+    ]
+
+    assert len(action_events) == 1, f"Expected 1 action event, got {len(action_events)}"
+    assert action_events[0].payload.get("instructions") == "user changed their mind", (
+        f"Expected instructions='user changed their mind', "
+        f"got {action_events[0].payload.get('instructions')!r}"
+    )
