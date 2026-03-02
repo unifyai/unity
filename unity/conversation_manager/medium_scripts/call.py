@@ -272,7 +272,11 @@ async def entrypoint(ctx: agents.JobContext):
     user_state_seq = 0
     _was_quiescent = True
     _pending_reply_timer: asyncio.TimerHandle | None = None
+    _pending_notification_eval_task: asyncio.Task | None = None
     _NOTIFY_COALESCE_S = 0.05
+    _use_structured_notification_reply = (
+        SETTINGS.conversation.FAST_BRAIN_STRUCTURED_NOTIFICATION_REPLY
+    )
 
     def _log_reply_task(task: asyncio.Task) -> None:
         try:
@@ -681,6 +685,88 @@ async def entrypoint(ctx: agents.JobContext):
         _log.notification_say(text, notification_source=notification_source)
         session.say(text, allow_interruptions=True, add_to_chat_ctx=True)
 
+    def _extract_chat_messages(ctx) -> list[dict]:
+        """Convert a LiveKit ChatContext into a list of message dicts for direct LLM calls."""
+        from livekit.agents.llm import ImageContent
+
+        messages: list[dict] = []
+        for item in ctx.items:
+            role = getattr(item, "role", None)
+            if role is None:
+                continue
+            raw_content = getattr(item, "content", None)
+            if not raw_content:
+                continue
+            has_images = isinstance(raw_content, list) and any(
+                isinstance(c, ImageContent) for c in raw_content
+            )
+            if has_images:
+                parts: list[dict] = []
+                for c in raw_content:
+                    if isinstance(c, str):
+                        parts.append({"type": "text", "text": c})
+                    elif isinstance(c, ImageContent) and isinstance(c.image, str):
+                        parts.append(
+                            {"type": "image_url", "image_url": {"url": c.image}},
+                        )
+                if parts:
+                    messages.append({"role": role, "content": parts})
+            else:
+                text = getattr(item, "text_content", None)
+                if not text:
+                    continue
+                messages.append({"role": role, "content": text})
+        return messages
+
+    async def _evaluate_notification_reply() -> None:
+        """Structured-output sidecar: decide whether to speak for pending notification(s)."""
+        nonlocal _pending_notification_eval_task, _last_say_meta
+        from unity.conversation_manager.domains.notification_reply import (
+            NotificationReplyEvaluator,
+        )
+
+        evaluator = NotificationReplyEvaluator(
+            model=SETTINGS.conversation.FAST_BRAIN_MODEL,
+        )
+        chat_messages = _extract_chat_messages(session._chat_ctx)
+        decision, log_path = await evaluator.evaluate(
+            chat_history=chat_messages,
+            system_prompt=system_prompt,
+        )
+        _pending_notification_eval_task = None
+
+        if decision.speak and decision.content:
+            _last_say_meta = {
+                "notification_id": "",
+                "source": "notification_reply",
+                "text": decision.content,
+                "llm_log_path": log_path,
+            }
+            _log.notification_say(
+                decision.content,
+                notification_source="notification_reply",
+            )
+            session.say(
+                decision.content,
+                allow_interruptions=True,
+                add_to_chat_ctx=True,
+            )
+        else:
+            _log._emit("wait", "Decided to wait")
+
+    def _schedule_notification_eval() -> None:
+        """Schedule a structured notification evaluation with the same coalesce window."""
+        nonlocal _pending_notification_eval_task
+        if _pending_notification_eval_task is not None:
+            _pending_notification_eval_task.cancel()
+            _pending_notification_eval_task = None
+
+        async def _debounced_eval():
+            await asyncio.sleep(_NOTIFY_COALESCE_S)
+            await _evaluate_notification_reply()
+
+        _pending_notification_eval_task = asyncio.ensure_future(_debounced_eval())
+
     def apply_notification(
         content: str,
         response_text: str = "",
@@ -727,10 +813,13 @@ async def entrypoint(ctx: agents.JobContext):
                 content=[notification_message],
             )
             if notification_source != "meet_interaction":
-                trigger_generate_reply(
-                    reason="notification",
-                    source_id=notification_id or "notification",
-                )
+                if _use_structured_notification_reply:
+                    _schedule_notification_eval()
+                else:
+                    trigger_generate_reply(
+                        reason="notification",
+                        source_id=notification_id or "notification",
+                    )
 
     def maybe_speak_queued() -> None:
         """Speak the next queued response when user is silent and assistant is idle.
