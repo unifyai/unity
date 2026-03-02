@@ -120,6 +120,7 @@ ICONS = {
     "file_sync": "🔀",
     "ipc": "🔌",
     "liveview": "🖥️",
+    "desktop_ready": "🖥️",
     "assistant_jobs": "📋",
     "metrics": "📊",
     "windows_exec": "💻",
