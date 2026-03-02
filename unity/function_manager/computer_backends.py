@@ -13,8 +13,19 @@ import asyncio
 import websockets
 from unity.session_details import SESSION_DETAILS
 from unity.image_manager.utils import make_solid_png_base64
+from unity.logger import LOGGER as _UNITY_LOGGER
+from unity.common._async_tool.loop_config import TOOL_LOOP_LINEAGE
 
 logger = logging.getLogger("websockets")
+
+
+def _get_current_lineage() -> list[str]:
+    """Read the current TOOL_LOOP_LINEAGE for propagation to agent-service."""
+    try:
+        val = TOOL_LOOP_LINEAGE.get([])
+        return list(val) if isinstance(val, list) else []
+    except LookupError:
+        return []
 
 
 @dataclass
@@ -787,7 +798,12 @@ class ComputerSession:
 
     async def act(self, instruction: str) -> ActResult:
         """Perform an autonomous action on the current page or screen."""
-        response = await self._request("POST", "/act", {"task": instruction})
+        lineage = _get_current_lineage()
+        response = await self._request(
+            "POST",
+            "/act",
+            {"task": instruction, "lineage": lineage},
+        )
         return ActResult(
             summary=response.get("summary", ""),
             screenshot=response.get("screenshot", ""),
@@ -1130,7 +1146,11 @@ class MagnitudeBackend(ComputerBackend):
     async def _log_consumer(self):
         """
         Consumes logs from the internal network queue and directs them either
-        to the actor's temporary capture queue or to stdout.
+        to the actor's temporary capture queue or to Unity's LOGGER.
+
+        Log lines arriving from the agent-service are pre-formatted with
+        lineage labels (e.g. ``[CodeActActor.act(ab12)->desktop.act] 🛠️ ...``)
+        so they integrate with Unity's hierarchical log output.
         """
         while True:
             try:
@@ -1140,26 +1160,21 @@ class MagnitudeBackend(ComputerBackend):
 
                 log_line = await self._network_log_queue.get()
 
-                # If the actor is currently capturing, put it in its queue
                 if self._current_capture_queue is not None:
-                    logger.debug(f"📥 Capturing magnitude log: {log_line[:100]}...")
                     self._current_capture_queue.put_nowait(log_line)
 
-                # Buffer logs if we are processing a command
                 if self._current_processing_seq is not None:
                     self._log_buffer[self._current_processing_seq].append(log_line)
 
                 if self._current_capture_queue is None:
-                    # Otherwise, log to console (this will show up as regular logs)
-                    logger.info(f"🔍 Magnitude: {log_line}")
+                    _UNITY_LOGGER.info(log_line)
 
                 self._network_log_queue.task_done()
             except asyncio.CancelledError:
-                logger.info("Log consumer task cancelled.")
                 break
             except Exception as e:
-                logger.error(f"[MagnitudeLogConsumerError] {e}")
-                await asyncio.sleep(1)  # Prevent rapid-fire error loops
+                _UNITY_LOGGER.error(f"[MagnitudeLogConsumerError] {e}")
+                await asyncio.sleep(1)
 
     async def _process_commands(self):
         """A background worker that pulls commands, executes them in order, and handles barriers."""
