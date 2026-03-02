@@ -660,7 +660,6 @@ async def _(event, cm: "ConversationManager", *args, **kwargs):
             event_trace = getattr(cm, "_current_event_trace", None) or {}
             cm._session_logger.info(
                 "sms_sent",
-                f"({event_trace.get('event_id', '-')}) "
                 f"SMS to {sender_name}: {event.content}",
             )
         case SMSReceived():
@@ -671,7 +670,6 @@ async def _(event, cm: "ConversationManager", *args, **kwargs):
             event_trace = getattr(cm, "_current_event_trace", None) or {}
             cm._session_logger.info(
                 "sms_received",
-                f"({event_trace.get('event_id', '-')}) "
                 f"SMS from {sender_name}: {event.content}",
             )
         case EmailSent():
@@ -681,7 +679,6 @@ async def _(event, cm: "ConversationManager", *args, **kwargs):
                 recipients += "..."
             cm._session_logger.info(
                 "email_sent",
-                f"({event_trace.get('event_id', '-')}) "
                 f"Email to {recipients}\n"
                 f"Subject: {event.subject}\n\n"
                 f"{event.body}",
@@ -715,7 +712,6 @@ async def _(event, cm: "ConversationManager", *args, **kwargs):
             event_trace = getattr(cm, "_current_event_trace", None) or {}
             cm._session_logger.info(
                 "email_received",
-                f"({event_trace.get('event_id', '-')}) "
                 f"Email from {sender_name}\n"
                 f"Subject: {event.subject}\n\n"
                 f"{event.body}",
@@ -753,7 +749,6 @@ async def _(event, cm: "ConversationManager", *args, **kwargs):
             event_trace = getattr(cm, "_current_event_trace", None) or {}
             cm._session_logger.info(
                 "unify_message_sent",
-                f"({event_trace.get('event_id', '-')}) "
                 f"Message to {sender_name}: {event.content}",
             )
         case UnifyMessageReceived():
@@ -765,7 +760,6 @@ async def _(event, cm: "ConversationManager", *args, **kwargs):
             event_trace = getattr(cm, "_current_event_trace", None) or {}
             cm._session_logger.info(
                 "unify_message_received",
-                f"({event_trace.get('event_id', '-')}) "
                 f"Message from {sender_name}: {event.content}",
             )
 
