@@ -213,6 +213,8 @@ class ConversationManager(metaclass=SingletonABCMeta):
         self._has_non_forwarded_event: bool = False
         self._llm_request_seq: int = 0
         self._llm_run_seq: int = 0
+        self._llm_gen: int = 0
+        self._outbound_suppress_gen: int = -1
 
         # Hierarchical session logger for consistent nested logging
         self._session_logger = SessionLogger("ConversationManager")
@@ -770,6 +772,7 @@ class ConversationManager(metaclass=SingletonABCMeta):
         from datetime import datetime, timezone
 
         trace_meta = trace_meta or {}
+        self._llm_gen += 1
         run_id = trace_meta.get("run_id", "llmrun-unknown")
         request_id = trace_meta.get("request_id", "")
         origin_event_id = trace_meta.get("origin_event_id", "")
@@ -1029,7 +1032,7 @@ class ConversationManager(metaclass=SingletonABCMeta):
                 )
                 self._session_logger.info("wait", msg)
                 if delay is not None:
-                    await self.request_llm_run(delay=delay)
+                    await self.run_llm(delay=delay)
                 break
 
         self._session_logger.debug(

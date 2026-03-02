@@ -168,6 +168,10 @@ def mock_cm(mock_session_logger, mock_event_broker, mock_call_manager, sample_co
     # Set up notifications bar
     cm.notifications_bar = NotificationBar()
 
+    # Generation-scoped outbound suppression (wait() sets suppress_gen = llm_gen)
+    cm._llm_gen = 0
+    cm._outbound_suppress_gen = -1
+
     # Mock async methods
     cm.request_llm_run = AsyncMock()
     cm.cancel_proactive_speech = AsyncMock()
