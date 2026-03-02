@@ -145,6 +145,8 @@ ICONS = {
     "desktop_session": "🖥️",
     # ── Fast paths (direct manager / desktop shortcuts) ────────────────
     "fast_path": "🏎️",
+    # ── Customization / seed data ────────────────────────────────────────
+    "customization": "🏷️",
     # ── Generic / misc ──────────────────────────────────────────────────
     "event": "📣",
     "ping": "🏓",

@@ -1040,7 +1040,7 @@ def _init_managers(
 
     # 7. Resolve client customization (org -> team -> user -> assistant cascade)
     LOGGER.debug(
-        f"{ICONS['managers_worker']} [ManagersWorker] Resolving customization...",
+        f"{ICONS['customization']} [ManagersWorker] Resolving customization...",
     )
     local_start_time = perf_counter()
     from unity.customization.clients import resolve as _resolve_customization
@@ -1053,12 +1053,12 @@ def _init_managers(
     )
     _resolve_dur = perf_counter() - local_start_time
     LOGGER.info(
-        f"{ICONS['managers_worker']} [ManagersWorker] Customization resolved in {_resolve_dur:.2f} seconds",
+        f"{ICONS['customization']} [ManagersWorker] Customization resolved in {_resolve_dur:.2f} seconds",
     )
 
     # 8. Sync cross-cutting seed data (contacts, guidance, knowledge, secrets, blacklist)
     LOGGER.debug(
-        f"{ICONS['managers_worker']} [ManagersWorker] Syncing seed data...",
+        f"{ICONS['customization']} [ManagersWorker] Syncing seed data...",
     )
     local_start_time = perf_counter()
     from unity.customization.seed_sync import sync_all_seed_data
@@ -1066,13 +1066,13 @@ def _init_managers(
     sync_all_seed_data(resolved)
     _seed_dur = perf_counter() - local_start_time
     LOGGER.info(
-        f"{ICONS['managers_worker']} [ManagersWorker] Seed data synced in {_seed_dur:.2f} seconds",
+        f"{ICONS['customization']} [ManagersWorker] Seed data synced in {_seed_dur:.2f} seconds",
     )
 
     # 9. Sync custom functions/venvs from client customization
     if resolved.function_dirs or resolved.venv_dirs:
         LOGGER.debug(
-            f"{ICONS['managers_worker']} [ManagersWorker] Syncing custom functions...",
+            f"{ICONS['customization']} [ManagersWorker] Syncing custom functions...",
         )
         local_start_time = perf_counter()
         from unity.function_manager.custom_functions import (
@@ -1090,7 +1090,7 @@ def _init_managers(
             )
         _func_dur = perf_counter() - local_start_time
         LOGGER.info(
-            f"{ICONS['managers_worker']} [ManagersWorker] Custom functions synced in {_func_dur:.2f} seconds",
+            f"{ICONS['customization']} [ManagersWorker] Custom functions synced in {_func_dur:.2f} seconds",
         )
 
     # 10. Initialize Actor (use provided actor or create via ManagerRegistry)
