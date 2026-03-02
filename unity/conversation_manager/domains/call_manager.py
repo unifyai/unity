@@ -335,10 +335,12 @@ class LivekitCallManager:
             return
 
         LOGGER.debug(
-            f"{ICONS['ipc']} [LivekitCallManager] Killing voice agent process {proc.pid}...",
+            f"{ICONS['ipc']} [LivekitCallManager] Terminating voice agent process {proc.pid}...",
         )
-        await asyncio.to_thread(terminate_process, proc, 0)
-        LOGGER.debug(f"{ICONS['ipc']} [LivekitCallManager] Voice agent process killed")
+        await asyncio.to_thread(terminate_process, proc, 5)
+        LOGGER.debug(
+            f"{ICONS['ipc']} [LivekitCallManager] Voice agent process terminated",
+        )
 
     # ------------------------------------------------------------------
     # Boss-call notification rendering
