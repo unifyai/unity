@@ -4,7 +4,7 @@ import http from 'http';
 import expressWs from 'express-ws';
 import WebSocket from 'ws';
 import util from 'util';
-import { startBrowserAgent, BrowserAgent, BrowserConnector, AgentError, BrowserOptions, AgentMemory, Observation } from 'magnitude-core';
+import { startBrowserAgent, BrowserAgent, BrowserConnector, BrowserProvider, AgentError, BrowserOptions, AgentMemory, Observation } from 'magnitude-core';
 import { z, ZodTypeAny, ZodAny, ZodType } from 'zod';
 import { partitionHtml, serializeToMarkdown, PartitionOptions, MarkdownSerializerOptions } from 'magnitude-extract';
 import dotenv from 'dotenv';
@@ -309,6 +309,7 @@ setInterval(() => {
       console.log(`Cleaning up inactive session: ${sessionId}`);
       session.agent.stop().catch((err: unknown) => console.error(`Error stopping session ${sessionId}:`, err));
       activeSessions.delete(sessionId);
+      broadcastSessionEvent(sessionId, 'timeout');
     }
   }
 }, 5 * 60 * 1000); // Check every 5 minutes
@@ -325,6 +326,25 @@ function broadcastLog(message: string) {
     }
   });
 }
+
+function broadcastSessionEvent(sessionId: string, reason: string) {
+  broadcastLog(JSON.stringify({ __type: 'session:closed', sessionId, reason }));
+}
+
+BrowserProvider.getInstance().events.on('browserDisconnected', ({ browser }) => {
+  for (const [sessionId, session] of activeSessions.entries()) {
+    try {
+      const harness = session.agent.require(BrowserConnector).getHarness();
+      if ((harness as any).browser === browser) {
+        console.log(`Browser disconnected for session ${sessionId}, cleaning up`);
+        activeSessions.delete(sessionId);
+        broadcastSessionEvent(sessionId, 'browser_disconnected');
+      }
+    } catch {
+      // Session may not have a harness yet
+    }
+  }
+});
 
 // Monkey-patch console methods to capture and broadcast logs
 const originalLog = console.log;
@@ -565,6 +585,7 @@ app.post('/start', async (req: Request, res: Response) => {
           console.error(`Error stopping old desktop session: ${err}`)
         );
         activeSessions.delete(existingId);
+        broadcastSessionEvent(existingId, 'replaced');
       }
     }
   }
@@ -1100,6 +1121,7 @@ app.post('/stop', async (req: Request, res: Response) => {
   try {
     await session.agent.stop();
     activeSessions.delete(sessionId);
+    broadcastSessionEvent(sessionId, 'stop');
     res.json({ status: 'stopped' });
     console.log(`BrowserAgent stopped for session ${sessionId}.`);
   } catch (err) {
