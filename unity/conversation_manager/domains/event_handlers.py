@@ -502,8 +502,13 @@ async def _(event, cm: "ConversationManager", *args, **kwargs):
             await cm.request_llm_run()
     elif isinstance(event, ActorHandleResponse):
         # Handle response from an action steering operation.
-        if event.handle_id in cm.in_flight_actions:
-            handle_data = cm.in_flight_actions[event.handle_id]
+        # Check both in-flight and completed actions — post-completion asks
+        # publish on the same channel after ActorResult has already moved
+        # the action to completed_actions.
+        handle_data = cm.in_flight_actions.get(
+            event.handle_id,
+        ) or cm.completed_actions.get(event.handle_id)
+        if handle_data:
             handle_actions = handle_data.get("handle_actions", [])
             action_name = event.action_name or "ask"
             expected_action_name = f"{action_name}_{event.handle_id}"
