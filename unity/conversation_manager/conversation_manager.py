@@ -823,8 +823,20 @@ class ConversationManager(metaclass=SingletonABCMeta):
                         break
 
         self.snapshot()
+        snapshot_state = self.prompt_renderer.render_state(
+            self.contact_index,
+            self.notifications_bar,
+            self.in_flight_actions,
+            self.completed_actions,
+            self.last_snapshot,
+            assistant_screen_share_active=self.assistant_screen_share_active,
+            user_screen_share_active=self.user_screen_share_active,
+            user_webcam_active=self.user_webcam_active,
+            user_remote_control_active=self.user_remote_control_active,
+        )
         brain_spec = build_brain_spec(
             self,
+            snapshot_state=snapshot_state,
             screenshots=screenshots,
             screenshot_paths=screenshot_paths,
         )
@@ -840,19 +852,9 @@ class ConversationManager(metaclass=SingletonABCMeta):
         # Tools (act, steering) need the fresh rendered state, not the stale chat_history.
         self._current_state_snapshot = input_message
 
-        # Also capture the structured snapshot state for incremental diff computation.
+        # Reuse the same SnapshotState for incremental diff computation.
         # This enables interject operations to send only changes since the initial act().
-        self._current_snapshot_state = self.prompt_renderer.render_state(
-            self.contact_index,
-            self.notifications_bar,
-            self.in_flight_actions,
-            self.completed_actions,
-            self.last_snapshot,
-            assistant_screen_share_active=self.assistant_screen_share_active,
-            user_screen_share_active=self.user_screen_share_active,
-            user_webcam_active=self.user_webcam_active,
-            user_remote_control_active=self.user_remote_control_active,
-        )
+        self._current_snapshot_state = snapshot_state
 
         reason = (trace_meta or {}).get("origin_event_name", "")
         self._session_logger.debug(
@@ -1390,7 +1392,18 @@ class ConversationManager(metaclass=SingletonABCMeta):
                         },
                     )
 
-            brain_spec = build_brain_spec(self)
+            snapshot_state = self.prompt_renderer.render_state(
+                self.contact_index,
+                self.notifications_bar,
+                self.in_flight_actions,
+                self.completed_actions,
+                self.last_snapshot,
+                assistant_screen_share_active=self.assistant_screen_share_active,
+                user_screen_share_active=self.user_screen_share_active,
+                user_webcam_active=self.user_webcam_active,
+                user_remote_control_active=self.user_remote_control_active,
+            )
+            brain_spec = build_brain_spec(self, snapshot_state=snapshot_state)
 
             action_context = _render_action_context(
                 self.in_flight_actions,

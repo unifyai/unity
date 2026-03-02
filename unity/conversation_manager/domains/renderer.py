@@ -64,14 +64,32 @@ def _get_current_time_in_timezone(tz_name: str) -> str:
         return "unknown"
 
 
+_assistant_tz_cache: tuple[float, str | None] | None = None
+_ASSISTANT_TZ_TTL = 300  # 5 minutes — timezone changes are very rare
+
+
 def _get_assistant_timezone() -> str | None:
     """Get the assistant's timezone from contact_id=0.
+
+    Uses a module-level TTL cache to avoid synchronous HTTP round-trips to
+    Orchestra on every render_state() call (which runs in the hot path of the
+    event loop).
 
     Returns:
         IANA timezone identifier or None if not available.
     """
+    global _assistant_tz_cache
+    import time
+
+    now = time.monotonic()
+    if _assistant_tz_cache is not None:
+        cached_at, cached_val = _assistant_tz_cache
+        if now - cached_at < _ASSISTANT_TZ_TTL:
+            return cached_val
+
     import unify as _unify
 
+    result: str | None = None
     try:
         _ctxs = _unify.get_active_context()
         _read_ctx = _ctxs.get("read")
@@ -89,10 +107,12 @@ def _get_assistant_timezone() -> str | None:
         if rows:
             val = rows[0].entries.get("timezone")
             if isinstance(val, str) and val.strip():
-                return val.strip()
+                result = val.strip()
     except Exception:
         pass
-    return None
+
+    _assistant_tz_cache = (now, result)
+    return result
 
 
 def _format_timezone_block(
