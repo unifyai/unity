@@ -742,7 +742,9 @@ class CommsManager:
                     traceback.print_exc()
                     message.ack()
             else:
-                LOGGER.error(f"{DEFAULT_ICON} Unknown event type: {thread}")
+                if thread != "assistant_desktop_ready":
+                    LOGGER.error(f"{DEFAULT_ICON} Unknown event type: {thread}")
+                message.ack()
         except Exception as e:
             LOGGER.error(f"{DEFAULT_ICON} Error processing message: {e}")
             message.ack()
