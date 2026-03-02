@@ -1545,6 +1545,11 @@ class ConversationManagerBrainActionTools:
 
         async def _run():
             result = await coro
+            summary = str(result) if result is not None else "done"
+            LOGGER.info(
+                f"{ICONS['fast_path']} [FastPath] {action_type} completed:\n"
+                f"{summary}",
+            )
             await self._silent_interject_desktop_act_sessions(
                 f"[FYI — already done] The outer process executed "
                 f'{action_type}("{text}") via a direct fast path. '
