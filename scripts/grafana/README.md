@@ -277,6 +277,20 @@ Since dashboards are lost on pod restart (`emptyDir` storage), this section
 documents the PromQL queries used so they can be recreated. All queries below
 use the **Google Managed Prometheus** data source.
 
+### Environment Filters
+
+Both staging and production metrics go to the same GCP project. To isolate
+metrics per environment, add these label filters to every query:
+
+| Metric source | Label | Staging value | Production value |
+|---------------|-------|---------------|------------------|
+| Unity (GKE) | `namespace_name` | `staging` | `production` |
+| Adapters (Cloud Run) | `service_name` | `unity-adapters-staging` | `unity-adapters` |
+| Comms (Cloud Run) | `service_name` | `unity-comms-app-staging` | `unity-comms-app` |
+
+The queries below use `$NS` and `$SVC_ADAPTERS` as placeholders. Substitute
+the values from the table above for your environment.
+
 ### Live Assistants (Supply)
 
 Snapshot of how many assistant jobs have `running==True` at any point in time.
@@ -285,7 +299,7 @@ independently reports the same global count; `sum()` would multiply it by the
 number of reporting containers.
 
 ```promql
-max({__name__="workload.googleapis.com/unity_running_job_count", monitored_resource="k8s_container"})
+max({__name__="workload.googleapis.com/unity_running_job_count", monitored_resource="k8s_container", namespace_name="$NS"})
 ```
 
 ### Live Assistants (Demand)
@@ -294,13 +308,13 @@ Number of inbound requests that required starting a new container (i.e., no
 container was already running for that assistant).
 
 ```promql
-sum(increase(adapter_job_demand_total[5m]))
+sum(increase(adapter_job_demand_total{service_name="$SVC_ADAPTERS"}[5m]))
 ```
 
 By channel:
 
 ```promql
-sum by (channel) (increase(adapter_job_demand_total[5m]))
+sum by (channel) (increase(adapter_job_demand_total{service_name="$SVC_ADAPTERS"}[5m]))
 ```
 
 ### Average Session Duration (minutes)
@@ -308,9 +322,9 @@ sum by (channel) (increase(adapter_job_demand_total[5m]))
 How long assistant sessions last, averaged over a 5-minute window.
 
 ```promql
-sum(rate({__name__="workload.googleapis.com/unity_session_duration_seconds_sum", monitored_resource="k8s_container"}[5m]))
+sum(rate({__name__="workload.googleapis.com/unity_session_duration_seconds_sum", monitored_resource="k8s_container", namespace_name="$NS"}[5m]))
 /
-sum(rate({__name__="workload.googleapis.com/unity_session_duration_seconds_count", monitored_resource="k8s_container"}[5m]))
+sum(rate({__name__="workload.googleapis.com/unity_session_duration_seconds_count", monitored_resource="k8s_container", namespace_name="$NS"}[5m]))
 / 60
 ```
 
@@ -319,9 +333,9 @@ sum(rate({__name__="workload.googleapis.com/unity_session_duration_seconds_count
 Time from container start to ConversationManager `main()` being called.
 
 ```promql
-sum(rate({__name__="workload.googleapis.com/unity_container_spinup_seconds_sum", monitored_resource="k8s_container"}[5m]))
+sum(rate({__name__="workload.googleapis.com/unity_container_spinup_seconds_sum", monitored_resource="k8s_container", namespace_name="$NS"}[5m]))
 /
-sum(rate({__name__="workload.googleapis.com/unity_container_spinup_seconds_count", monitored_resource="k8s_container"}[5m]))
+sum(rate({__name__="workload.googleapis.com/unity_container_spinup_seconds_count", monitored_resource="k8s_container", namespace_name="$NS"}[5m]))
 ```
 
 ### Average Build Context Duration (seconds)
@@ -329,17 +343,17 @@ sum(rate({__name__="workload.googleapis.com/unity_container_spinup_seconds_count
 End-to-end time from inbound adapter request to webhook context built.
 
 ```promql
-sum(rate(build_webhook_context_duration_seconds_sum[5m]))
+sum(rate(build_webhook_context_duration_seconds_sum{service_name="$SVC_ADAPTERS"}[5m]))
 /
-sum(rate(build_webhook_context_duration_seconds_count[5m]))
+sum(rate(build_webhook_context_duration_seconds_count{service_name="$SVC_ADAPTERS"}[5m]))
 ```
 
 By channel:
 
 ```promql
-sum by (channel) (rate(build_webhook_context_duration_seconds_sum[5m]))
+sum by (channel) (rate(build_webhook_context_duration_seconds_sum{service_name="$SVC_ADAPTERS"}[5m]))
 /
-sum by (channel) (rate(build_webhook_context_duration_seconds_count[5m]))
+sum by (channel) (rate(build_webhook_context_duration_seconds_count{service_name="$SVC_ADAPTERS"}[5m]))
 ```
 
 ### Average Get Assistant Duration (seconds)
@@ -348,17 +362,17 @@ Time spent calling the Orchestra `/admin/assistant` endpoint to resolve
 assistant details from a phone number, email, or ID.
 
 ```promql
-sum(rate(orchestra_get_assistant_duration_seconds_sum{status="success"}[5m]))
+sum(rate(orchestra_get_assistant_duration_seconds_sum{status="success", service_name="$SVC_ADAPTERS"}[5m]))
 /
-sum(rate(orchestra_get_assistant_duration_seconds_count{status="success"}[5m]))
+sum(rate(orchestra_get_assistant_duration_seconds_count{status="success", service_name="$SVC_ADAPTERS"}[5m]))
 ```
 
 By lookup type (email, phone, id):
 
 ```promql
-sum by (lookup_type) (rate(orchestra_get_assistant_duration_seconds_sum{status="success"}[5m]))
+sum by (lookup_type) (rate(orchestra_get_assistant_duration_seconds_sum{status="success", service_name="$SVC_ADAPTERS"}[5m]))
 /
-sum by (lookup_type) (rate(orchestra_get_assistant_duration_seconds_count{status="success"}[5m]))
+sum by (lookup_type) (rate(orchestra_get_assistant_duration_seconds_count{status="success", service_name="$SVC_ADAPTERS"}[5m]))
 ```
 
 ### Average Manager Init Duration (seconds)
@@ -367,9 +381,9 @@ Total duration of `init_conv_manager()` — the full manager initialization
 sequence when a container goes live.
 
 ```promql
-sum(rate({__name__="workload.googleapis.com/unity_manager_init_seconds_sum", monitored_resource="k8s_container"}[5m]))
+sum(rate({__name__="workload.googleapis.com/unity_manager_init_seconds_sum", monitored_resource="k8s_container", namespace_name="$NS"}[5m]))
 /
-sum(rate({__name__="workload.googleapis.com/unity_manager_init_seconds_count", monitored_resource="k8s_container"}[5m]))
+sum(rate({__name__="workload.googleapis.com/unity_manager_init_seconds_count", monitored_resource="k8s_container", namespace_name="$NS"}[5m]))
 ```
 
 ### Average Mark Job Running Duration (seconds)
@@ -377,9 +391,9 @@ sum(rate({__name__="workload.googleapis.com/unity_manager_init_seconds_count", m
 Time spent marking an AssistantJob as running via Orchestra `/logs`.
 
 ```promql
-sum(rate(mark_job_running_duration_seconds_sum{status="success"}[5m]))
+sum(rate(mark_job_running_duration_seconds_sum{status="success", service_name="$SVC_ADAPTERS"}[5m]))
 /
-sum(rate(mark_job_running_duration_seconds_count{status="success"}[5m]))
+sum(rate(mark_job_running_duration_seconds_count{status="success", service_name="$SVC_ADAPTERS"}[5m]))
 ```
 
 ### Adapter Request Latency (seconds)
@@ -388,30 +402,37 @@ Per-route request latency for the adapters service. Useful for identifying
 slow endpoints.
 
 ```promql
-sum by (endpoint) (rate(http_request_duration_seconds_sum{service="adapters"}[5m]))
+sum by (endpoint) (rate(http_request_duration_seconds_sum{service="adapters", service_name="$SVC_ADAPTERS"}[5m]))
 /
-sum by (endpoint) (rate(http_request_duration_seconds_count{service="adapters"}[5m]))
+sum by (endpoint) (rate(http_request_duration_seconds_count{service="adapters", service_name="$SVC_ADAPTERS"}[5m]))
 ```
 
 ### Comms Request Latency (seconds)
 
-For the **comms** service:
+Per-route request latency for the comms service. Use `service_name` value
+from the environment filters table (`unity-comms-app-staging` or
+`unity-comms-app`).
 
 ```promql
-sum by (endpoint) (rate(http_request_duration_seconds_sum{service="comms"}[5m]))
+sum by (endpoint) (rate(http_request_duration_seconds_sum{service="comms", service_name="$SVC_COMMS"}[5m]))
 /
-sum by (endpoint) (rate(http_request_duration_seconds_count{service="comms"}[5m]))
+sum by (endpoint) (rate(http_request_duration_seconds_count{service="comms", service_name="$SVC_COMMS"}[5m]))
 ```
 
 ### Notes
 
+- Replace `$NS` with `staging` or `production` for Unity (GKE) metrics.
+- Replace `$SVC_ADAPTERS` with `unity-adapters-staging` or `unity-adapters`
+  for adapter metrics.
+- Replace `$SVC_COMMS` with `unity-comms-app-staging` or `unity-comms-app`
+  for comms metrics.
 - Replace `5m` with a different window size as needed, or create a dashboard
   variable named `interval` (type: Custom, values: `1m,2m,5m,10m,15m,30m,1h`)
   and use `[$interval]` in queries.
-- Adapter metrics may not have the `workload.googleapis.com/` prefix when
-  queried through the Prometheus data source — use the bare metric name.
-- Unity metrics (pushed via Pushgateway to GKE) use the
-  `workload.googleapis.com/` prefix with `monitored_resource="k8s_container"`.
+- Adapter/comms metrics do not have the `workload.googleapis.com/` prefix —
+  use the bare metric name.
+- Unity metrics use the `workload.googleapis.com/` prefix with
+  `monitored_resource="k8s_container"`.
 - If `$__rate_interval` doesn't resolve (parse error on `$`), use a fixed
   duration or the dashboard variable approach above.
 
