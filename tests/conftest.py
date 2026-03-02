@@ -374,6 +374,9 @@ def get_test_log_format(config):
 
 
 def pytest_sessionstart(session):
+    if os.environ.get("SKIP_UNITY_TEST_INIT"):
+        return
+
     # ------------------------------------------------------------------
     #  Initialize Unity's OpenTelemetry TracerProvider FIRST
     #  This ensures Unity owns the provider (service: "unity") before
@@ -607,7 +610,8 @@ def pytest_configure(config):
 # Skip tests marked with requires_orchestra when Orchestra is not available
 def pytest_runtest_setup(item):
     test_name_log_filter.set_test_name(item.nodeid)
-    _set_unify_context_for_test(item)
+    if not os.environ.get("SKIP_UNITY_TEST_INIT"):
+        _set_unify_context_for_test(item)
 
     # Skip requires_orchestra tests if Orchestra is not running
     if item.get_closest_marker("requires_orchestra"):
@@ -691,7 +695,8 @@ def pytest_report_teststatus(report, config):
 
 
 def pytest_runtest_teardown(item, nextitem=None):
-    _unset_unify_context_for_test(item)
+    if not os.environ.get("SKIP_UNITY_TEST_INIT"):
+        _unset_unify_context_for_test(item)
     test_name_log_filter.reset_test_name()
 
 
