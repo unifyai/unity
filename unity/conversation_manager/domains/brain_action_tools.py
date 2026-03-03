@@ -1550,14 +1550,14 @@ class ConversationManagerBrainActionTools:
                 f"{summary}",
             )
             await self._silent_interject_desktop_act_sessions(
-                f"[FYI — already done] The outer process executed "
-                f'{action_type}("{text}") via a direct fast path. '
-                f"Result: {result}\n"
-                f"No action needed from you — this is for awareness only. "
-                f"If you have relevant context (e.g. a stored skill that "
-                f"should be used instead, or a reason to adjust your own "
-                f"desktop plan), you may act on it; otherwise treat as a "
-                f"no-op.",
+                f'[Fast-path result] {action_type}("{text}") completed. '
+                f"Result: {result}\n\n"
+                f"If this result looks wrong or incomplete — especially if "
+                f"the task falls within your loaded guidance or requires "
+                f"capabilities the fast path lacks (credentials, secrets, "
+                f"multi-step workflows) — escalate by calling "
+                f'notify({{"type": "escalation", "message": "<what you can '
+                f'do better>"}}).  Otherwise, no action needed.',
             )
             return str(result) if result is not None else "done"
 
@@ -1590,11 +1590,9 @@ class ConversationManagerBrainActionTools:
         )
 
         await self._silent_interject_desktop_act_sessions(
-            f"[FYI — being handled] The outer process is executing "
-            f'{action_type}("{text}") via a direct fast path. '
-            f"Do NOT replicate this action — it is already in progress. "
-            f"You will receive the result shortly. If this conflicts with "
-            f"your current plan, you may adjust accordingly.",
+            f"[Fast-path request] The outer process is executing "
+            f'{action_type}("{text}"). Do not replicate this action — it '
+            f"is already in progress. You will see the result shortly.",
         )
 
         return {"status": "acting", "query": text}
