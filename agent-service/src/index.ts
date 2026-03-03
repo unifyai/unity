@@ -517,16 +517,19 @@ const startBrowserOnVm = async (): Promise<BrowserAgent> => {
   try {
     const agent = await startBrowserAgent({
       url: "https://www.google.com/",
-      browser: { launchOptions: {
-        headless: false,
-        args: [
-          "--disable-blink-features=AutomationControlled",
-          "--disable-features=IsolateOrigins,site-per-process",
-          '--auto-select-desktop-capture-source="Entire screen"',
-        ],
-        downloadsPath: defaultBrowserPaths.downloadsPath || undefined,
-        tracesDir: defaultBrowserPaths.tracesDir || undefined,
-      }},
+      browser: {
+        launchOptions: {
+          headless: false,
+          args: [
+            "--disable-blink-features=AutomationControlled",
+            "--disable-features=IsolateOrigins,site-per-process",
+            '--auto-select-desktop-capture-source="Entire screen"',
+          ],
+          downloadsPath: defaultBrowserPaths.downloadsPath || undefined,
+          tracesDir: defaultBrowserPaths.tracesDir || undefined,
+        },
+        contextOptions: { viewport: null },
+      },
       narrate: true,
       llm: {
         provider: 'openai-generic',
