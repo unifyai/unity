@@ -1324,8 +1324,13 @@ class ComputerSession(_LowLevelActionsMixin):
         if verify:
             payload["verify"] = True
         response = await self._request("POST", "/act", payload)
+        summary = response.get("summary", "")
+        if not verify:
+            import json as _json
+
+            summary = _json.dumps({"thoughts": summary, "outcome": "completed"})
         return ActResult(
-            summary=response.get("summary", ""),
+            summary=summary,
             screenshot=response.get("screenshot", ""),
         )
 
