@@ -34,6 +34,7 @@ from unity.conversation_manager.events import (
     PhoneCallSent,
     ActorHandleStarted,
     ActorHandleResponse,
+    FastBrainNotification,
     Error,
 )
 from unity.common._async_tool.dynamic_tools_factory import DynamicToolFactory
@@ -1500,21 +1501,21 @@ class ConversationManagerBrainActionTools:
         self,
         message: str,
     ) -> None:
-        """Send a silent interjection to all in-flight act sessions that have
-        used desktop primitives, keeping the Actor informed without triggering
-        an immediate LLM turn."""
-        for hid in list(self._cm._act_handles_with_desktop_usage):
-            data = self._cm.in_flight_actions.get(hid)
-            if data:
-                handle = data.get("handle")
-                if handle and not handle.done():
-                    try:
-                        await handle.interject(
-                            message,
-                            trigger_immediate_llm_turn=False,
-                        )
-                    except TypeError:
-                        await handle.interject(message)
+        """Send a silent interjection to every in-flight ``act`` session,
+        keeping the Actor informed without triggering an immediate LLM turn."""
+        for hid, data in list(self._cm.in_flight_actions.items()):
+            if data.get("action_type") != "act":
+                continue
+            handle = data.get("handle")
+            if handle and not handle.done():
+                try:
+                    await handle.interject(
+                        message,
+                        trigger_immediate_llm_turn=False,
+                        suppress_response_notification=True,
+                    )
+                except TypeError:
+                    await handle.interject(message)
 
     async def _invoke_desktop_action(
         self,
@@ -1551,14 +1552,14 @@ class ConversationManagerBrainActionTools:
                 f"{summary}",
             )
             await self._silent_interject_desktop_act_sessions(
-                f"[FYI — already done] The outer process executed "
-                f'{action_type}("{text}") via a direct fast path. '
-                f"Result: {result}\n"
-                f"No action needed from you — this is for awareness only. "
-                f"If you have relevant context (e.g. a stored skill that "
-                f"should be used instead, or a reason to adjust your own "
-                f"desktop plan), you may act on it; otherwise treat as a "
-                f"no-op.",
+                f'[Fast-path result] {action_type}("{text}") completed. '
+                f"Result: {result}\n\n"
+                f"If this result looks wrong or incomplete — especially if "
+                f"the task falls within your loaded guidance or requires "
+                f"capabilities the fast path lacks (credentials, secrets, "
+                f"multi-step workflows) — escalate by calling "
+                f'notify({{"type": "escalation", "message": "<what you can '
+                f'do better>"}}).  Otherwise, no action needed.',
             )
             return str(result) if result is not None else "done"
 
@@ -1579,7 +1580,13 @@ class ConversationManagerBrainActionTools:
             "initial_snapshot_state": getattr(cm, "_current_snapshot_state", None),
             "context_opted_in": False,
         }
-        asyncio.create_task(managers_utils.actor_watch_result(handle_id, handle))
+        asyncio.create_task(
+            managers_utils.actor_watch_result(
+                handle_id,
+                handle,
+                action_type=action_type,
+            ),
+        )
 
         await self._event_broker.publish(
             f"app:actor:actor_started_handle_{handle_id}",
@@ -1591,11 +1598,9 @@ class ConversationManagerBrainActionTools:
         )
 
         await self._silent_interject_desktop_act_sessions(
-            f"[FYI — being handled] The outer process is executing "
-            f'{action_type}("{text}") via a direct fast path. '
-            f"Do NOT replicate this action — it is already in progress. "
-            f"You will receive the result shortly. If this conflicts with "
-            f"your current plan, you may adjust accordingly.",
+            f"[Fast-path request] The outer process is executing "
+            f'{action_type}("{text}"). Do not replicate this action — it '
+            f"is already in progress. You will see the result shortly.",
         )
 
         return {"status": "acting", "query": text}
@@ -1633,6 +1638,90 @@ class ConversationManagerBrainActionTools:
             text=instruction,
             action_type="desktop_act",
         )
+
+    # ── Web fast-path tools ────────────────────────────────────────────
+
+    def _resolve_or_create_web_session(self, session_id: int | None):
+        """Return (handle, is_new) for an existing or freshly-created session."""
+        cp = self._cm.computer_primitives
+
+        async def _resolve():
+            if session_id is not None:
+                for h in cp.web.list_sessions():
+                    if h.session_id == session_id and h.active:
+                        return h, False
+                raise ValueError(
+                    f"No active web session with id {session_id}. "
+                    f"Check <active_web_sessions> for valid IDs.",
+                )
+            handle = await cp.web.new_session(visible=True)
+            return handle, True
+
+        return _resolve()
+
+    async def web_act(
+        self,
+        *,
+        request: str,
+        session_id: int | None = None,
+    ) -> dict[str, Any]:
+        """Execute a request in a visible web browser session.
+
+        This is a **direct shortcut** for browser-only work — searching the
+        web, navigating sites, filling web forms, reading web pages, or
+        extracting web content.  It bypasses the general ``act`` pathway and
+        runs directly against a Chromium browser session visible on the
+        desktop.
+
+        A new browser session is created automatically when ``session_id``
+        is omitted.  Pass a numeric ``session_id`` from
+        ``<active_web_sessions>`` to continue working in an existing session.
+
+        **Use ``desktop_act`` instead** for native desktop actions that
+        cannot be done inside a browser (clicking desktop UI, opening native
+        apps, terminal commands, file manager operations).
+
+        **Use ``act`` instead** for complex multi-step work, cross-domain
+        reasoning, or anything requiring guidance / functions / knowledge.
+
+        Args:
+            request: Natural language description of the browser task
+                (e.g. "Search Google for 'best CRM software 2025'").
+            session_id: Optional numeric ID of an existing active web session
+                to reuse.  When omitted a new visible session is created.
+        """
+        handle, is_new = await self._resolve_or_create_web_session(session_id)
+        used_id = handle.session_id
+        label = f"[session={used_id}, new={is_new}]"
+        return await self._invoke_desktop_action(
+            coro=handle.act(request),
+            text=f"{request} {label}",
+            action_type="web_act",
+        )
+
+    async def close_web_session(
+        self,
+        *,
+        session_id: int,
+    ) -> dict[str, Any]:
+        """Close a visible web browser session to free resources.
+
+        Use after completing browser work to clean up.  Check
+        ``<active_web_sessions>`` in the current state for valid IDs.
+
+        Args:
+            session_id: The numeric ID of the web session to close.
+        """
+        cp = self._cm.computer_primitives
+        for h in cp.web.list_sessions():
+            if h.session_id == session_id and h.active:
+                await h.stop()
+                return {"status": "closed", "session_id": session_id}
+        return {
+            "status": "not_found",
+            "session_id": session_id,
+            "error": "No active web session with that ID.",
+        }
 
     async def set_boss_details(
         self,
@@ -1766,13 +1855,19 @@ class ConversationManagerBrainActionTools:
         """Return the static tools dict for start_async_tool_loop."""
         from unity.settings import SETTINGS
 
-        tools = {
-            "send_sms": self.send_sms,
+        tools: dict[str, Callable[..., Any]] = {
             "send_unify_message": self.send_unify_message,
-            "send_email": self.send_email,
-            "make_call": self.make_call,
             "wait": self.wait,
         }
+        if self._cm.assistant_number:
+            tools["send_sms"] = self.send_sms
+            call_in_progress = (
+                self._cm.mode.is_voice or self._cm.call_manager._call_proc is not None
+            )
+            if not call_in_progress:
+                tools["make_call"] = self.make_call
+        if self._cm.assistant_email:
+            tools["send_email"] = self.send_email
         if getattr(self._cm.mode, "is_voice", False):
             tools["guide_voice_agent"] = self.guide_voice_agent
         if SETTINGS.DEMO_MODE:
@@ -1942,6 +2037,14 @@ class ConversationManagerBrainActionTools:
             )
 
             async def _perform_ask_and_emit():
+                await event_broker.publish(
+                    "app:call:notification",
+                    FastBrainNotification(
+                        content=f"Ask dispatched on action: {_param_value[:200]}",
+                        source="system",
+                        contact={},
+                    ).to_json(),
+                )
                 try:
                     ask_handle = await _handle.ask(
                         _param_value,
@@ -2056,6 +2159,14 @@ class ConversationManagerBrainActionTools:
 
                         # Spawn background task to perform ask and emit result
                         async def _perform_ask_and_emit():
+                            await event_broker.publish(
+                                "app:call:notification",
+                                FastBrainNotification(
+                                    content=f"Ask dispatched on action: {_param_value[:200]}",
+                                    source="system",
+                                    contact={},
+                                ).to_json(),
+                            )
                             try:
                                 # Start the ask operation (does the LLM roundtrip)
                                 ask_handle = await _handle.ask(

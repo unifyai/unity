@@ -41,14 +41,22 @@ LIMIT_CHECK_TIMEOUT = 5.0
 
 # Shared HTTP client for limit checks. Lazily initialized, reuses TCP+TLS
 # connections across calls to avoid ConnectTimeout under event loop congestion.
+# Tracks the event loop it was created on to avoid cross-loop reuse.
 _http_client: Optional[httpx.AsyncClient] = None
+_http_client_loop: Optional[asyncio.AbstractEventLoop] = None
 
 
 def _get_http_client() -> httpx.AsyncClient:
     """Get or create the shared httpx.AsyncClient for limit checks."""
-    global _http_client
-    if _http_client is None or _http_client.is_closed:
+    global _http_client, _http_client_loop
+    current_loop = asyncio.get_running_loop()
+    if (
+        _http_client is None
+        or _http_client.is_closed
+        or _http_client_loop is not current_loop
+    ):
         _http_client = httpx.AsyncClient(timeout=LIMIT_CHECK_TIMEOUT)
+        _http_client_loop = current_loop
     return _http_client
 
 

@@ -42,11 +42,13 @@ from unity.session_details import SESSION_DETAILS
 # Shared helpers
 from unity.conversation_manager.medium_scripts.common import (
     event_broker,
-    create_end_call,
+    create_end_call,  # kept for test monkeypatch compatibility
     match_say_meta,
     setup_inactivity_timeout,
-    setup_participant_disconnect_handler,
+    setup_participant_disconnect_handler,  # kept for test monkeypatch compatibility
     publish_call_started,
+    publish_call_ended,
+    delete_livekit_room,
     configure_from_cli,
     should_dispatch_livekit_agent,
     start_event_broker_receive,
@@ -267,7 +269,7 @@ async def entrypoint(ctx: agents.JobContext):
 
     user_is_speaking = False
     _queued_speech: list[tuple[str, str, str]] = []  # (text, notification_id, source)
-    _last_say_meta: dict | None = None
+    _say_meta_queue: list[dict] = []
     generation_seq = 0
     user_state_seq = 0
     _was_quiescent = True
@@ -359,10 +361,20 @@ async def entrypoint(ctx: agents.JobContext):
         user_utterance_event = InboundUnifyMeetUtterance
         assistant_utterance_event = OutboundUnifyMeetUtterance
 
-    # Shared end_call + inactivity + participant disconnect handler
-    end_call = create_end_call(contact, channel, room_name=ctx.room.name)
-    touch_activity = setup_inactivity_timeout(end_call)
-    setup_participant_disconnect_handler(ctx.room, end_call)
+    # Register cleanup as a LiveKit shutdown callback so it runs on any
+    # exit path: participant disconnect (close_on_disconnect), inactivity,
+    # or explicit stop.  LiveKit manages task lifecycle — no manual
+    # cancellation needed.
+    async def _on_job_shutdown():
+        await delete_livekit_room(ctx.room.name)
+        await publish_call_ended(contact, channel)
+
+    ctx.add_shutdown_callback(_on_job_shutdown)
+
+    async def _shutdown_inactivity():
+        ctx.shutdown(reason="inactivity")
+
+    touch_activity = setup_inactivity_timeout(_shutdown_inactivity)
 
     def _check_quiescence_transition() -> None:
         nonlocal _was_quiescent
@@ -476,13 +488,15 @@ async def entrypoint(ctx: agents.JobContext):
     @session.on("conversation_item_added")
     def _on_chat_item_added(ev):
         """Publish both user and assistant utterances from a single location."""
-        nonlocal _last_say_meta
         role = ev.item.role  # "user" | "assistant"
         text = ev.item.text_content or ""
         utterance_id = content_trace_id("utt", f"{role}:{text}")
-        say_meta = match_say_meta(_last_say_meta, text) if role == "assistant" else None
-        if say_meta:
-            _last_say_meta = None
+        say_meta: dict | None = None
+        if role == "assistant" and _say_meta_queue:
+            for i, candidate in enumerate(_say_meta_queue):
+                if match_say_meta(candidate, text):
+                    say_meta = _say_meta_queue.pop(i)
+                    break
         if role == "user":
             if not assistant._user_speech_logged:
                 _log.user_speech(text)
@@ -643,7 +657,7 @@ async def entrypoint(ctx: agents.JobContext):
             call_answered_flag.set()
             assistant.set_call_received()
         elif event_type == "stop":
-            asyncio.create_task(end_call())
+            ctx.shutdown(reason="stopped")
 
     def _is_pipeline_quiescent() -> bool:
         """True when the voice pipeline is completely idle (no speech in flight)."""
@@ -663,13 +677,14 @@ async def entrypoint(ctx: agents.JobContext):
         notification_content: str,
         llm_log_path: str,
     ) -> None:
-        nonlocal _last_say_meta
-        _last_say_meta = {
-            "notification_id": notification_id,
-            "source": notification_source,
-            "text": text,
-            "llm_log_path": llm_log_path,
-        }
+        _say_meta_queue.append(
+            {
+                "notification_id": notification_id,
+                "source": notification_source,
+                "text": text,
+                "llm_log_path": llm_log_path,
+            },
+        )
         notification_message = f"[notification] {notification_content}"
         assistant._chat_ctx.add_message(
             role="system",
@@ -717,7 +732,7 @@ async def entrypoint(ctx: agents.JobContext):
 
     async def _evaluate_notification_reply() -> None:
         """Structured-output sidecar: decide whether to speak for pending notification(s)."""
-        nonlocal _pending_notification_eval_task, _last_say_meta
+        nonlocal _pending_notification_eval_task
         from unity.conversation_manager.domains.notification_reply import (
             NotificationReplyEvaluator,
         )
@@ -733,12 +748,14 @@ async def entrypoint(ctx: agents.JobContext):
         _pending_notification_eval_task = None
 
         if decision.speak and decision.content:
-            _last_say_meta = {
-                "notification_id": "",
-                "source": "notification_reply",
-                "text": decision.content,
-                "llm_log_path": log_path,
-            }
+            _say_meta_queue.append(
+                {
+                    "notification_id": "",
+                    "source": "notification_reply",
+                    "text": decision.content,
+                    "llm_log_path": log_path,
+                },
+            )
             _log.notification_say(
                 decision.content,
                 notification_source="notification_reply",

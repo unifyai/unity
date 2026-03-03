@@ -368,10 +368,6 @@ async def _(
     *args,
     **kwargs,
 ):
-    cm._session_logger.info(
-        "call_notification",
-        f"Received notification: {event.content[:50]}...",
-    )
     contact_id = event.contact["contact_id"]
     contact = cm.contact_index.get_contact(contact_id=contact_id)
     if contact is None:
@@ -502,8 +498,13 @@ async def _(event, cm: "ConversationManager", *args, **kwargs):
             await cm.request_llm_run()
     elif isinstance(event, ActorHandleResponse):
         # Handle response from an action steering operation.
-        if event.handle_id in cm.in_flight_actions:
-            handle_data = cm.in_flight_actions[event.handle_id]
+        # Check both in-flight and completed actions — post-completion asks
+        # publish on the same channel after ActorResult has already moved
+        # the action to completed_actions.
+        handle_data = cm.in_flight_actions.get(
+            event.handle_id,
+        ) or cm.completed_actions.get(event.handle_id)
+        if handle_data:
             handle_actions = handle_data.get("handle_actions", [])
             action_name = event.action_name or "ask"
             expected_action_name = f"{action_name}_{event.handle_id}"
@@ -655,7 +656,6 @@ async def _(event, cm: "ConversationManager", *args, **kwargs):
             event_trace = getattr(cm, "_current_event_trace", None) or {}
             cm._session_logger.info(
                 "sms_sent",
-                f"({event_trace.get('event_id', '-')}) "
                 f"SMS to {sender_name}: {event.content}",
             )
         case SMSReceived():
@@ -666,7 +666,6 @@ async def _(event, cm: "ConversationManager", *args, **kwargs):
             event_trace = getattr(cm, "_current_event_trace", None) or {}
             cm._session_logger.info(
                 "sms_received",
-                f"({event_trace.get('event_id', '-')}) "
                 f"SMS from {sender_name}: {event.content}",
             )
         case EmailSent():
@@ -676,7 +675,6 @@ async def _(event, cm: "ConversationManager", *args, **kwargs):
                 recipients += "..."
             cm._session_logger.info(
                 "email_sent",
-                f"({event_trace.get('event_id', '-')}) "
                 f"Email to {recipients}\n"
                 f"Subject: {event.subject}\n\n"
                 f"{event.body}",
@@ -710,7 +708,6 @@ async def _(event, cm: "ConversationManager", *args, **kwargs):
             event_trace = getattr(cm, "_current_event_trace", None) or {}
             cm._session_logger.info(
                 "email_received",
-                f"({event_trace.get('event_id', '-')}) "
                 f"Email from {sender_name}\n"
                 f"Subject: {event.subject}\n\n"
                 f"{event.body}",
@@ -748,7 +745,6 @@ async def _(event, cm: "ConversationManager", *args, **kwargs):
             event_trace = getattr(cm, "_current_event_trace", None) or {}
             cm._session_logger.info(
                 "unify_message_sent",
-                f"({event_trace.get('event_id', '-')}) "
                 f"Message to {sender_name}: {event.content}",
             )
         case UnifyMessageReceived():
@@ -760,7 +756,6 @@ async def _(event, cm: "ConversationManager", *args, **kwargs):
             event_trace = getattr(cm, "_current_event_trace", None) or {}
             cm._session_logger.info(
                 "unify_message_received",
-                f"({event_trace.get('event_id', '-')}) "
                 f"Message from {sender_name}: {event.content}",
             )
 
@@ -865,12 +860,10 @@ async def _(event: UnknownContactCreated, cm: "ConversationManager", *args, **kw
 
 
 async def _startup_sequence(cm: "ConversationManager"):
-    """Run job startup logging, signal VM readiness, then file sync.
+    """Run job startup logging.
 
-    File sync depends on VM connectivity details that log_job_startup resolves,
-    so we must wait for job startup to complete before starting file sync.
-    log_job_startup includes _resolve_vm_liveview polling for managed VMs,
-    so once it returns the VM is confirmed reachable (or retries exhausted).
+    VM readiness, desktop session warm-up, and file sync are now driven by
+    the ``AssistantDesktopReady`` event handler rather than polling.
     """
     await asyncio.to_thread(
         assistant_jobs.log_job_startup,
@@ -878,17 +871,6 @@ async def _startup_sequence(cm: "ConversationManager"):
         user_id=cm.user_id,
         assistant_id=cm.assistant_id,
     )
-    # Unblock any pending MagnitudeBackend lazy initialization.
-    from unity.function_manager.primitives.runtime import _vm_ready
-
-    _vm_ready.set()
-
-    # Pre-warm the desktop session so it is ready before screen sharing starts.
-    # get_session("desktop") is idempotent — the AssistantScreenShareStarted
-    # handler also calls it as a safety net.
-    asyncio.ensure_future(_ensure_desktop_session(cm))
-
-    await managers_utils._start_file_sync()
 
 
 @EventHandler.register((StartupEvent))
@@ -912,7 +894,6 @@ async def _(event: StartupEvent, cm: "ConversationManager", *args, **kwargs):
         cm.set_details(payload)
         cm.call_manager.set_config(cm.get_call_config())
 
-        # Job logging + file sync run in sequence (file sync needs VM details from job startup)
         asyncio.create_task(_startup_sequence(cm))
 
         # Manager initialization runs in parallel
@@ -1021,7 +1002,6 @@ async def _(event: ActorResult, cm: "ConversationManager", *args, **kwargs):
     completed = cm.in_flight_actions.pop(event.handle_id, None)
     if completed:
         cm.completed_actions[event.handle_id] = completed
-    cm._act_handles_with_desktop_usage.discard(event.handle_id)
     await cm.request_llm_run()
 
 
@@ -1075,20 +1055,20 @@ async def _(event: ActorNotification, cm: "ConversationManager", *args, **kwargs
     await cm.request_llm_run()
 
 
-@EventHandler.register(DesktopActCompleted)
+@EventHandler.register(ComputerActCompleted)
 async def _(
-    event: DesktopActCompleted,
+    event: ComputerActCompleted,
     cm: "ConversationManager",
     *args,
     **kwargs,
 ):
-    """A ``primitives.computer.desktop.act()`` call completed somewhere in the
+    """A visible computer session's act() call completed somewhere in the
     system. Push a notification and wake the slow brain so it can react."""
     cm._has_non_forwarded_event = True
     snippet = event.summary[:120] if event.summary else event.instruction[:120]
     cm.notifications_bar.push_notif(
-        "Desktop",
-        f"Desktop action completed: {snippet}",
+        "Computer",
+        f"Computer action completed: {snippet}",
         event.timestamp,
     )
     await cm.request_llm_run()
@@ -1195,6 +1175,52 @@ async def _ensure_desktop_session(cm: "ConversationManager") -> None:
             await asyncio.sleep(delay)
             delay = min(delay * 1.5, max_delay)
             cp.backend.clear_session("desktop")
+
+
+# --------------------------------------------------------------------------- #
+# Desktop Lifecycle Events
+# --------------------------------------------------------------------------- #
+
+
+@EventHandler.register((AssistantDesktopReady,))
+async def _(
+    event: AssistantDesktopReady,
+    cm: "ConversationManager",
+    *args,
+    **kwargs,
+):
+    from unity.conversation_manager.domains import comms_utils
+    from unity.function_manager.primitives.runtime import _vm_ready
+    from unity.session_details import SESSION_DETAILS
+
+    desktop_url = event.desktop_url or SESSION_DETAILS.assistant.desktop_url or ""
+
+    cm._session_logger.info(
+        "desktop_ready",
+        f"VM ready: {event.vm_type} at {desktop_url}",
+    )
+
+    _vm_ready.set()
+
+    if desktop_url:
+        SESSION_DETAILS.assistant.desktop_url = desktop_url
+
+    liveview_url = f"{desktop_url.rstrip('/')}/desktop/custom.html"
+    await asyncio.to_thread(
+        assistant_jobs.update_liveview_url,
+        cm.assistant_id,
+        cm.user_id,
+        liveview_url,
+    )
+
+    asyncio.ensure_future(_ensure_desktop_session(cm))
+    await managers_utils._start_file_sync()
+
+    await comms_utils.publish_assistant_desktop_ready(
+        desktop_url,
+        liveview_url,
+        event.vm_type,
+    )
 
 
 # --------------------------------------------------------------------------- #
@@ -1353,9 +1379,6 @@ async def _(
 
     if isinstance(event, AssistantScreenShareStarted):
         asyncio.ensure_future(_ensure_desktop_session(cm))
-
-    if isinstance(event, AssistantScreenShareStopped):
-        cm._act_handles_with_desktop_usage.clear()
 
     # Broadcast remote-control state change to all active CodeActActor loops
     # via the ComputerPrimitives singleton interject queue registry.

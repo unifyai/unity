@@ -57,18 +57,12 @@ def _enable_desktop_fast_path(cm_driver):
 
 
 def _setup_desktop_fast_path_from_real_act(cm_driver):
-    """Activate desktop fast-path gating and mark existing act sessions as
-    desktop-active (for interjection targeting).
+    """Activate desktop fast-path gating.
 
     Call this AFTER a ``step_until_wait`` that triggered ``act`` — the
     SimulatedActor handle will be sitting in ``in_flight_actions``.
     """
-    cm = cm_driver.cm
-    cm.assistant_screen_share_active = True
-
-    for hid, data in cm.in_flight_actions.items():
-        if data.get("action_type") == "act":
-            cm._act_handles_with_desktop_usage.add(hid)
+    cm_driver.cm.assistant_screen_share_active = True
 
 
 def _teardown_desktop_fast_path(cm_driver):
@@ -77,9 +71,7 @@ def _teardown_desktop_fast_path(cm_driver):
     NOTE: in_flight_actions cleanup is handled by the ``initialized_cm``
     fixture (``_complete_in_flight_actions``).  We only clear our additions.
     """
-    cm = cm_driver.cm
-    cm._act_handles_with_desktop_usage.clear()
-    cm.assistant_screen_share_active = False
+    cm_driver.cm.assistant_screen_share_active = False
 
 
 # ---------------------------------------------------------------------------

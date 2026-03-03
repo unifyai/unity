@@ -309,6 +309,7 @@ setInterval(() => {
       console.log(`Cleaning up inactive session: ${sessionId}`);
       session.agent.stop().catch((err: unknown) => console.error(`Error stopping session ${sessionId}:`, err));
       activeSessions.delete(sessionId);
+      broadcastSessionEvent(sessionId, 'timeout');
     }
   }
 }, 5 * 60 * 1000); // Check every 5 minutes
@@ -324,6 +325,10 @@ function broadcastLog(message: string) {
       client.send(message);
     }
   });
+}
+
+function broadcastSessionEvent(sessionId: string, reason: string) {
+  broadcastLog(JSON.stringify({ __type: 'session:closed', sessionId, reason }));
 }
 
 // Monkey-patch console methods to capture and broadcast logs
@@ -546,7 +551,7 @@ const startBrowserOnVm = async (): Promise<BrowserAgent> => {
 
 // --- API Endpoints ---
 app.post('/start', async (req: Request, res: Response) => {
-  const { headless, mode } = req.body;
+  const { headless, mode, label } = req.body;
   if (!mode || !['desktop', 'web', 'web-vm'].includes(mode)) {
     return res.status(400).json({
       error: 'bad_request',
@@ -565,6 +570,7 @@ app.post('/start', async (req: Request, res: Response) => {
           console.error(`Error stopping old desktop session: ${err}`)
         );
         activeSessions.delete(existingId);
+        broadcastSessionEvent(existingId, 'replaced');
       }
     }
   }
@@ -582,6 +588,30 @@ app.post('/start', async (req: Request, res: Response) => {
       agent = await startBrowser(headless ?? false);
     }
     console.log(`[start] agent_created=${Date.now() - t0}ms mode=${mode}`);
+
+    if (label && mode === 'web-vm') {
+      try {
+        await agent.context.addInitScript(`
+          (function() {
+            function _injectBadge() {
+              if (document.getElementById('__mag_session_badge')) return;
+              var b = document.createElement('div');
+              b.id = '__mag_session_badge';
+              b.textContent = ${JSON.stringify(String(label))};
+              b.style.cssText = 'position:fixed;top:4px;right:4px;z-index:2147483647;'
+                + 'background:rgba(30,30,30,0.85);color:#fff;padding:2px 8px;'
+                + 'font:bold 12px/16px system-ui,sans-serif;border-radius:4px;'
+                + 'pointer-events:none;user-select:none;';
+              (document.body || document.documentElement).appendChild(b);
+            }
+            if (document.body) _injectBadge();
+            else document.addEventListener('DOMContentLoaded', _injectBadge);
+          })();
+        `);
+      } catch (badgeErr) {
+        console.warn(`[start] Badge injection failed: ${badgeErr}`);
+      }
+    }
 
     activeSessions.set(sessionId, {
       agent,
@@ -612,7 +642,7 @@ app.post('/nav', isAgentReady, async (req: Request, res: Response) => {
 });
 
 app.post('/act', isAgentReady, async (req: Request, res: Response) => {
-  const { task, sessionId, lineage } = req.body;
+  const { task, sessionId, lineage, verify } = req.body;
   if (!task) return res.status(400).json({ error: 'bad_request', message: 'Task description is required.' });
   try {
     const session = activeSessions.get(sessionId)!;
@@ -647,101 +677,121 @@ app.post('/act', isAgentReady, async (req: Request, res: Response) => {
     const boundary = memory.observationCount;
 
     const actT0 = Date.now();
-    console.log(`${lineageLabel}🧠 Planning actions for: "${task}"`);
+    console.log(`${lineageLabel}🧠 Planning actions for: "${task}"${verify ? ' (verify=true)' : ''}`);
 
-    await agent.recordConnectorObservations(memory);
-
-    // DEBUG: Capture the planning screenshot (what the LLM will see)
-    if (MAGNITUDE_DEBUG) {
-      try {
-        const harness = agent.require(BrowserConnector).getHarness();
-        const planImg = await harness.screenshot();
-        debugSaveImage(actId, 'planning_screenshot', await planImg.toBase64());
-
-        if (session.mode === 'desktop') {
-          debugSaveImage(actId, 'native_screenshot', nativeScreenshot());
-        }
-      } catch (debugErr) {
-        console.warn(`[debug] Pre-plan screenshot capture failed: ${debugErr}`);
-      }
-    }
-
-    const context = await agent.buildContext(memory);
-    const actActions = agent.actions.filter(a => !a.name.startsWith('task:'));
-    const { reasoning, actions } = await agent.models.partialAct(context, task, [], actActions);
-
-    const planMs = Date.now() - actT0;
-    console.log(`${lineageLabel}💭 Reasoning [${planMs}ms]: ${reasoning}`);
-    console.log(`${lineageLabel}📋 Planned ${actions.length} action(s): ${actions.map(a => a.variant).join(', ')}`);
-
+    const actActions = verify
+      ? agent.actions
+      : agent.actions.filter(a => !a.name.startsWith('task:'));
+    const MAX_VERIFY_ITERATIONS = 5;
     const actionTraces: any[] = [];
+    const iterationReasonings: string[] = [];
+    const iterationPlannedActions: any[][] = [];
+    let totalActionsExecuted = 0;
 
-    for (let i = 0; i < actions.length; i++) {
-      const action = actions[i];
-      const actionDef = agent.identifyAction(action);
-      const rendered = actionDef.render(action);
-      const detail = JSON.stringify(action);
-      console.log(`${lineageLabel}🛠️ Action ${i + 1}/${actions.length}: ${rendered} ${detail}`);
-
-      const actionT0 = Date.now();
-      let actionError: string | undefined;
-      try {
-        await agent.exec(action, memory);
-      } catch (err) {
-        actionError = err instanceof Error ? err.message : String(err);
-        throw err;
-      } finally {
-        const actionMs = Date.now() - actionT0;
-        console.log(`${lineageLabel}✅ Completed ${action.variant} [${actionMs}ms]`);
-
-        const actionTrace: any = {
-          index: i,
-          variant: action.variant,
-          params: action,
-          rendered,
-          executionMs: actionMs,
-        };
-        if (actionError) actionTrace.error = actionError;
-
-        // DEBUG: Post-action screenshot saved directly to MAGNITUDE_LOG_DIR
-        if (MAGNITUDE_DEBUG) {
-          try {
-            const harness = agent.require(BrowserConnector).getHarness();
-            const postImg = await harness.screenshot();
-            const coordLabel = ('x' in action && 'y' in action)
-              ? `_${action.x}_${action.y}`
-              : ('from' in action && typeof action.from === 'object')
-                ? `_${action.from.x}_${action.from.y}`
-                : '';
-            const padIdx = String(i + 1).padStart(3, '0');
-            debugSaveImage(
-              actId,
-              `post_action/${padIdx}_${action.variant.replace(/:/g, '_')}${coordLabel}`,
-              await postImg.toBase64(),
-            );
-          } catch (debugErr) {
-            console.warn(`[debug] Post-action screenshot failed: ${debugErr}`);
-          }
-        }
-
-        actionTraces.push(actionTrace);
+    for (let iteration = 0; iteration < (verify ? MAX_VERIFY_ITERATIONS : 1); iteration++) {
+      if (iteration > 0) {
+        console.log(`${lineageLabel}🔄 Verify pass ${iteration + 1}: re-observing and re-planning...`);
       }
+
+      await agent.recordConnectorObservations(memory);
+
+      if (MAGNITUDE_DEBUG) {
+        try {
+          const harness = agent.require(BrowserConnector).getHarness();
+          const planImg = await harness.screenshot();
+          debugSaveImage(actId, iteration === 0 ? 'planning_screenshot' : `verify_${iteration}_screenshot`, await planImg.toBase64());
+
+          if (session.mode === 'desktop') {
+            debugSaveImage(actId, iteration === 0 ? 'native_screenshot' : `verify_${iteration}_native`, nativeScreenshot());
+          }
+        } catch (debugErr) {
+          console.warn(`[debug] Pre-plan screenshot capture failed: ${debugErr}`);
+        }
+      }
+
+      const context = await agent.buildContext(memory);
+      const { reasoning, actions } = await agent.models.partialAct(context, task, [], actActions);
+
+      const planMs = Date.now() - actT0;
+      console.log(`${lineageLabel}💭 Reasoning [${planMs}ms]: ${reasoning}`);
+      console.log(`${lineageLabel}📋 Planned ${actions.length} action(s): ${actions.map(a => a.variant).join(', ')}`);
+
+      iterationReasonings.push(reasoning);
+      iterationPlannedActions.push(actions);
+      memory.recordThought(reasoning);
+
+      for (let i = 0; i < actions.length; i++) {
+        const action = actions[i];
+        const actionDef = agent.identifyAction(action);
+        const rendered = actionDef.render(action);
+        const detail = JSON.stringify(action);
+        console.log(`${lineageLabel}🛠️ Action ${totalActionsExecuted + i + 1}: ${rendered} ${detail}`);
+
+        const actionT0 = Date.now();
+        let actionError: string | undefined;
+        try {
+          await agent.exec(action, memory);
+        } catch (err) {
+          actionError = err instanceof Error ? err.message : String(err);
+          throw err;
+        } finally {
+          const actionMs = Date.now() - actionT0;
+          console.log(`${lineageLabel}✅ Completed ${action.variant} [${actionMs}ms]`);
+
+          const actionTrace: any = {
+            index: totalActionsExecuted + i,
+            iteration,
+            variant: action.variant,
+            params: action,
+            rendered,
+            executionMs: actionMs,
+          };
+          if (actionError) actionTrace.error = actionError;
+
+          if (MAGNITUDE_DEBUG) {
+            try {
+              const harness = agent.require(BrowserConnector).getHarness();
+              const postImg = await harness.screenshot();
+              const coordLabel = ('x' in action && 'y' in action)
+                ? `_${action.x}_${action.y}`
+                : ('from' in action && typeof action.from === 'object')
+                  ? `_${action.from.x}_${action.from.y}`
+                  : '';
+              const padIdx = String(totalActionsExecuted + i + 1).padStart(3, '0');
+              debugSaveImage(
+                actId,
+                `post_action/${padIdx}_${action.variant.replace(/:/g, '_')}${coordLabel}`,
+                await postImg.toBase64(),
+              );
+            } catch (debugErr) {
+              console.warn(`[debug] Post-action screenshot failed: ${debugErr}`);
+            }
+          }
+
+          actionTraces.push(actionTrace);
+        }
+      }
+
+      totalActionsExecuted += actions.length;
+
+      const taskDone = actions.some(a => a.variant === 'task:done');
+      if (!verify || taskDone) break;
     }
 
     const totalMs = Date.now() - actT0;
-    console.log(`${lineageLabel}🏁 All ${actions.length} action(s) executed [${totalMs}ms]`);
+    console.log(`${lineageLabel}🏁 ${totalActionsExecuted} action(s) executed across ${iterationReasonings.length} iteration(s) [${totalMs}ms]`);
 
-    // DEBUG: Save full act trace to local filesystem
     debugSaveTrace(actId, {
       actId,
       task,
+      verify: !!verify,
       lineage: lineage ?? [],
       sessionMode: session.mode,
       sessionId,
-      reasoning,
-      plannedActions: actions,
+      reasoning: iterationReasonings.join('\n---\n'),
+      plannedActions: iterationPlannedActions,
       actionTraces,
-      planningMs: planMs,
+      iterations: iterationReasonings.length,
       totalMs,
       historyDepth: session.actHistory.length,
       observationCountBefore: boundary,
@@ -779,6 +829,44 @@ app.post('/act', isAgentReady, async (req: Request, res: Response) => {
     }
 
     res.json({ status: 'success', summary: thoughts, screenshot });
+  } catch (err) {
+    handleAgentError(err, res);
+  }
+});
+
+app.post('/execute-actions', isAgentReady, async (req: Request, res: Response) => {
+  const { sessionId, actions } = req.body;
+  if (!actions || !Array.isArray(actions) || actions.length === 0) {
+    return res.status(400).json({
+      error: 'bad_request',
+      message: 'actions is required and must be a non-empty array of action objects.',
+    });
+  }
+
+  try {
+    const session = activeSessions.get(sessionId)!;
+    const agent = session.agent;
+    const t0 = Date.now();
+
+    console.log(`[execute-actions] Executing ${actions.length} direct action(s) for session ${sessionId}`);
+
+    await agent.executeTrajectory(actions, { memory: agent.memory, recordObservations: false });
+
+    const execMs = Date.now() - t0;
+    console.log(`[execute-actions] ${actions.length} action(s) executed [${execMs}ms]`);
+
+    let screenshot = '';
+    let cursorPosition: { x: number; y: number } | null = null;
+    try {
+      const harness = agent.require(BrowserConnector).getHarness();
+      const image = await harness.screenshot();
+      screenshot = await image.toBase64();
+      cursorPosition = harness.getCursorPosition();
+    } catch (screenshotErr) {
+      console.warn(`[execute-actions] Post-execution screenshot failed: ${screenshotErr}`);
+    }
+
+    res.json({ status: 'success', screenshot, cursorPosition });
   } catch (err) {
     handleAgentError(err, res);
   }
@@ -891,6 +979,8 @@ app.post('/screenshot', isAgentReady, async (req: Request, res: Response) => {
   try {
     let base64Image: string;
 
+    let cursorPosition: { x: number; y: number } | null = null;
+
     if (session.mode === 'desktop') {
       // Native OS-level screenshot (works on Linux, macOS, Windows)
       base64Image = nativeScreenshot();
@@ -904,11 +994,12 @@ app.post('/screenshot', isAgentReady, async (req: Request, res: Response) => {
       const tCapture = Date.now();
       console.log(`[screenshot] playwright_capture=${tCapture - tHarness}ms`);
       base64Image = await image.toBase64();
+      cursorPosition = harness.getCursorPosition();
       const tEncode = Date.now();
       console.log(`[screenshot] base64_encode=${tEncode - tCapture}ms b64_len=${base64Image.length} total=${tEncode - t0}ms`);
     }
 
-    res.json({ screenshot: base64Image });
+    res.json({ screenshot: base64Image, cursorPosition });
     _screenshotInFlight--;
     console.log(`[screenshot] DONE total=${Date.now() - t0}ms in_flight=${_screenshotInFlight}`);
   } catch (err) {
@@ -1080,6 +1171,7 @@ app.post('/stop', async (req: Request, res: Response) => {
   try {
     await session.agent.stop();
     activeSessions.delete(sessionId);
+    broadcastSessionEvent(sessionId, 'stop');
     res.json({ status: 'stopped' });
     console.log(`BrowserAgent stopped for session ${sessionId}.`);
   } catch (err) {

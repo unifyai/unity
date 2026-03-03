@@ -252,16 +252,15 @@ def fetch_scores_for_ids(
     sum_hash = _hashlib.sha1(canonical.encode("utf-8")).hexdigest()[:12]
     sum_key = ensure_mean_cosine_column_piecewise_named(context, terms, sum_hash)
 
-    # Build a safe OR filter to avoid potential backend issues with list literals
-    or_clauses = [f"{id_field} == {int(v)}" for v in ids]
-    id_filter = " or ".join(or_clauses)
+    ids_expr = ", ".join(str(int(v)) for v in ids)
+    id_filter = f"{id_field} in [{ids_expr}]"
 
     # Exclude all private fields except the score key we need to read
     exclude_fields = [f for f in list_private_fields(context) if f != sum_key]
 
     rows = unify.get_logs(
         context=context,
-        filter=id_filter if id_filter else None,
+        filter=id_filter,
         limit=len(ids),
         exclude_fields=exclude_fields,
     )

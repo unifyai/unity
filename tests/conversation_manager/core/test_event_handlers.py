@@ -984,6 +984,52 @@ class TestActorEventHandlers:
         assert ask_event.get("response") == response_text
 
     @pytest.mark.asyncio
+    async def test_actor_handle_response_updates_completed_action(
+        self,
+        mock_cm,
+    ):
+        """ActorHandleResponse for a completed action should still update
+        the pending ask and wake the brain.
+
+        Regression: the handler only checked ``in_flight_actions``, so ask
+        responses on actions that had already moved to ``completed_actions``
+        were silently dropped.
+        """
+        response_text = "Detailed retrospective answer."
+
+        mock_cm.completed_actions = {
+            1: {
+                "query": "Process accounts into standard format",
+                "handle_actions": [
+                    {
+                        "action_name": "act_completed",
+                        "query": "Done",
+                        "status": "completed",
+                    },
+                    {
+                        "action_name": "ask_1",
+                        "query": "How did you break down the task?",
+                        "status": "pending",
+                    },
+                ],
+            },
+        }
+        event = ActorHandleResponse(
+            handle_id=1,
+            action_name="ask",
+            query="How did you break down the task?",
+            response=response_text,
+            call_id="",
+        )
+
+        await EventHandler.handle_event(event, mock_cm)
+
+        ask_event = mock_cm.completed_actions[1]["handle_actions"][1]
+        assert ask_event["status"] == "completed"
+        assert ask_event.get("response") == response_text
+        mock_cm.request_llm_run.assert_called()
+
+    @pytest.mark.asyncio
     async def test_actor_clarification_request_updates_handle_actions(self, mock_cm):
         """ActorClarificationRequest adds clarification to handle_actions."""
         mock_cm.in_flight_actions = {

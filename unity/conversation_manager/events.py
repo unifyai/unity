@@ -631,6 +631,7 @@ class ActorResult(Event):
     success: bool
     result: dict | str | None = None
     error: str | None = None
+    action_type: str = ""
 
 
 @dataclass
@@ -686,13 +687,33 @@ class ActorHandleStarted(Event):
 
 
 @dataclass
-class DesktopActCompleted(_TruncatedReprMixin, Event):
-    """Fired when primitives.computer.desktop.act() completes anywhere in the
-    system (CM fast path, CodeActActor, sub-agents).  Carries the instruction
-    and the agent's summary."""
+class ComputerActCompleted(_TruncatedReprMixin, Event):
+    """Fired when a visible computer session's act() completes anywhere in the
+    system (CM fast path, CodeActActor, sub-agents).  Covers both desktop and
+    web-vm sessions.  Carries the instruction and the agent's summary."""
 
     instruction: str = ""
     summary: str = ""
+
+
+# --------------------------------------------------------------------------- #
+# Desktop Lifecycle Events
+# --------------------------------------------------------------------------- #
+
+
+@dataclass
+class AssistantDesktopReady(Event):
+    """The assistant's managed VM desktop is reachable and ready for use.
+
+    Published by the Communication service as a ``unity_system_event`` once
+    the VM passes health checks.  Replaces the previous polling of
+    ``/infra/vm/status``.
+    """
+
+    topic: ClassVar[str | None] = "app:comms:assistant_desktop_ready"
+
+    desktop_url: str = ""
+    vm_type: str = ""
 
 
 # --------------------------------------------------------------------------- #
