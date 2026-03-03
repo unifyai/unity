@@ -368,10 +368,6 @@ async def _(
     *args,
     **kwargs,
 ):
-    cm._session_logger.info(
-        "call_notification",
-        f"Received notification: {event.content[:50]}...",
-    )
     contact_id = event.contact["contact_id"]
     contact = cm.contact_index.get_contact(contact_id=contact_id)
     if contact is None:
