@@ -26,7 +26,7 @@ def table_search_top_k(
     k: int = 10,
     allowed_fields: Optional[List[str]] = None,
     row_filter: Optional[str] = None,
-    unique_id_field: str = "id",
+    unique_id_field: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
     """
     Return up to k rows from a Unify context using semantic search with backfill.
@@ -46,8 +46,9 @@ def table_search_top_k(
     row_filter : str | None, default None
         Additional boolean expression to restrict candidate rows (e.g., exclude
         system rows). Applied both to the primary search and the backfill step.
-    unique_id_field : str, default "id"
-        Name of the unique identifier column for de-duplication in backfill.
+    unique_id_field : str | None, default None
+        Name of the unique identifier column for de-duplication in backfill. When None,
+        attempts to infer from the context's `unique_keys`.
 
     Returns
     -------
