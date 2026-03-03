@@ -177,13 +177,15 @@ class ComputerEnvironment(BaseEnvironment):
             "`act`, `observe`, `query`, `navigate`, `get_links`, `get_content`, "
             "`get_screenshot`, plus `stop()`.\n\n"
             "#### When to Use Each\n\n"
-            "- **Any web browsing** -- `web.new_session(visible=True)`.  This is "
-            "the only way to get a browser window visible on the desktop and in "
-            "screenshots.\n"
+            "- **Any task involving a web browser** -- "
+            "`web.new_session(visible=True)`.  This is the default for all "
+            "browser work and the only way to get a browser window visible on "
+            "the desktop and in screenshots.  If the task involves a browser "
+            "in any way, always use `web.new_session()`, not `desktop`.\n"
             "- **Background web lookup the user doesn't need to see** -- "
             "`web.new_session(visible=False)` for speed.\n"
             "- **Native desktop apps, terminal, file operations** -- "
-            "`primitives.computer.desktop`.",
+            "`primitives.computer.desktop`.  Only for non-browser interactions.",
         )
 
         parts.append(

@@ -204,7 +204,7 @@ def build_brain_spec(
         is_voice_call=cm.mode.is_voice,
         is_boss_on_call=is_boss_on_call,
         demo_mode=SETTINGS.DEMO_MODE,
-        desktop_fast_path=cm.desktop_fast_path_eligible,
+        computer_fast_path=cm.computer_fast_path_eligible,
         assistant_has_phone=bool(cm.assistant_number),
         assistant_has_email=bool(cm.assistant_email),
     )

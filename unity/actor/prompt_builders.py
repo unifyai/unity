@@ -186,9 +186,10 @@ _FAST_PATH_AWARENESS = textwrap.dedent("""
     ### Fast-Path Awareness
 
     During interactive screen-share sessions, the outer process may handle
-    simple desktop/browser actions via fast paths instead of routing them
-    through you.  You will see these as interjection messages tagged
-    `[Fast-path request]` and `[Fast-path result]`.
+    simple computer actions (browser navigation, clicks, scrolls) via fast
+    paths instead of routing them through you.  You will see these as
+    interjection messages tagged `[Fast-path request]` and
+    `[Fast-path result]`.
 
     **Your role:** Monitor these interjections and intervene when the fast
     path is out of its depth.  Specifically, escalate via `notify()` when:

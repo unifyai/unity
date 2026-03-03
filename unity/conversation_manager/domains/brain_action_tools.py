@@ -1495,9 +1495,9 @@ class ConversationManagerBrainActionTools:
             response_format=response_format,
         )
 
-    # ── Desktop fast-path tools ───────────────────────────────────────────
+    # ── Computer fast-path tools ──────────────────────────────────────────
 
-    async def _silent_interject_desktop_act_sessions(
+    async def _silent_interject_act_sessions(
         self,
         message: str,
     ) -> None:
@@ -1517,7 +1517,7 @@ class ConversationManagerBrainActionTools:
                 except TypeError:
                     await handle.interject(message)
 
-    async def _invoke_desktop_action(
+    async def _invoke_fast_path_action(
         self,
         *,
         coro,
@@ -1551,7 +1551,7 @@ class ConversationManagerBrainActionTools:
                 f"{ICONS['fast_path']} [FastPath] {action_type} completed:\n"
                 f"{summary}",
             )
-            await self._silent_interject_desktop_act_sessions(
+            await self._silent_interject_act_sessions(
                 f'[Fast-path result] {action_type}("{text}") completed. '
                 f"Result: {result}\n\n"
                 f"If this result looks wrong or incomplete — especially if "
@@ -1597,7 +1597,7 @@ class ConversationManagerBrainActionTools:
             ).to_json(),
         )
 
-        await self._silent_interject_desktop_act_sessions(
+        await self._silent_interject_act_sessions(
             f"[Fast-path request] The outer process is executing "
             f'{action_type}("{text}"). Do not replicate this action — it '
             f"is already in progress. You will see the result shortly.",
@@ -1610,30 +1610,33 @@ class ConversationManagerBrainActionTools:
         *,
         instruction: str,
     ) -> dict[str, Any]:
-        """Execute a single atomic action on the assistant's desktop.
+        """Execute a single atomic action on native desktop UI (non-browser).
 
-        This is a **direct shortcut** to the desktop agent, bypassing the
-        general ``act`` pathway.  The action runs in the background and its
-        result is delivered asynchronously (same lifecycle as ``act``).
+        **Only for interactions that cannot be done inside a web browser:**
+        native application windows, terminal commands, file manager operations,
+        system dialogs, or desktop UI elements outside any browser window.
 
-        Use for **single atomic actions** where the user has explicitly
-        described both the action and the target:
+        For any task involving a web browser — opening a browser, navigating,
+        clicking web page elements, typing into web forms — use ``web_act``
+        instead.
 
-        - "Click the blue Submit button"
-        - "Type 'hello world' into the search box"
-        - "Scroll down"
-        - "Press Enter"
+        Examples:
+
+        - "Open the Terminal application"
+        - "Switch to the File Manager window"
+        - "Right-click the desktop background"
+        - "Click the system tray notification"
 
         **Route through ``act`` instead** when the request requires reasoning
         about *what* to do, involves multiple steps, or benefits from guidance
         and compositional functions.
 
         Args:
-            instruction: A concrete desktop action to perform
-                (e.g. "Click the Submit button").
+            instruction: A concrete native desktop action to perform
+                (e.g. "Open the Terminal application").
         """
         cp = self._cm.computer_primitives
-        return await self._invoke_desktop_action(
+        return await self._invoke_fast_path_action(
             coro=cp.desktop.act(instruction),
             text=instruction,
             action_type="desktop_act",
@@ -1667,33 +1670,34 @@ class ConversationManagerBrainActionTools:
     ) -> dict[str, Any]:
         """Execute a request in a visible web browser session.
 
-        This is a **direct shortcut** for browser-only work — searching the
-        web, navigating sites, filling web forms, reading web pages, or
-        extracting web content.  It bypasses the general ``act`` pathway and
-        runs directly against a Chromium browser session visible on the
-        desktop.
+        **This is the default fast-path tool for any task involving a web
+        browser** — opening a browser, navigating to a URL, searching the
+        web, clicking elements on a web page, typing into web forms, scrolling
+        web content, or reading a web page.  It bypasses the general ``act``
+        pathway and runs directly against a Chromium browser session visible
+        on the desktop.
 
         A new browser session is created automatically when ``session_id``
         is omitted.  Pass a numeric ``session_id`` from
         ``<active_web_sessions>`` to continue working in an existing session.
 
-        **Use ``desktop_act`` instead** for native desktop actions that
-        cannot be done inside a browser (clicking desktop UI, opening native
-        apps, terminal commands, file manager operations).
+        **Use ``desktop_act`` instead** only for native desktop interactions
+        that cannot be done inside a browser (terminal, file manager, native
+        app windows, system dialogs).
 
         **Use ``act`` instead** for complex multi-step work, cross-domain
         reasoning, or anything requiring guidance / functions / knowledge.
 
         Args:
             request: Natural language description of the browser task
-                (e.g. "Search Google for 'best CRM software 2025'").
+                (e.g. "Navigate to example.com", "Search Google for 'topic'").
             session_id: Optional numeric ID of an existing active web session
                 to reuse.  When omitted a new visible session is created.
         """
         handle, is_new = await self._resolve_or_create_web_session(session_id)
         used_id = handle.session_id
         label = f"[session={used_id}, new={is_new}]"
-        return await self._invoke_desktop_action(
+        return await self._invoke_fast_path_action(
             coro=handle.act(request),
             text=f"{request} {label}",
             action_type="web_act",

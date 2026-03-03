@@ -255,12 +255,12 @@ class ConversationManager(metaclass=SingletonABCMeta):
         return ManagerRegistry.get_instance(ComputerPrimitives)
 
     @property
-    def desktop_fast_path_eligible(self) -> bool:
-        """True when the CM should expose desktop fast-path tools.
+    def computer_fast_path_eligible(self) -> bool:
+        """True when the CM should expose computer fast-path tools.
 
         Requires assistant screen share to be active.  The tools are available
         regardless of whether an in-flight ``act`` session has already invoked
-        desktop primitives — the prompt guides the LLM to spin up a concurrent
+        computer primitives — the prompt guides the LLM to spin up a concurrent
         ``act(persist=True)`` session when one isn't already running.
         """
         return self.assistant_screen_share_active
@@ -896,7 +896,7 @@ class ConversationManager(metaclass=SingletonABCMeta):
                 tools.pop("guide_voice_agent")
         self._has_non_forwarded_event = False
 
-        if self.desktop_fast_path_eligible:
+        if self.computer_fast_path_eligible:
             tools["desktop_act"] = action_tools.desktop_act
             tools["web_act"] = action_tools.web_act
             tools["close_web_session"] = action_tools.close_web_session

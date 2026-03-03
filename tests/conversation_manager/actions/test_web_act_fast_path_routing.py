@@ -8,7 +8,7 @@ Eval tests verifying the CM brain routes:
 - Complex cross-domain requests to ``act`` (not fast paths)
 - Browser close requests to ``close_web_session``
 
-Follows the same end-to-end pattern as test_desktop_fast_path_routing.py.
+Follows the same end-to-end pattern as test_desktop_fast_path_routing.py (computer fast-path routing).
 """
 
 from __future__ import annotations
@@ -46,20 +46,20 @@ def _ensure_mock_computer_primitives():
         ComputerPrimitives(computer_mode="mock")
 
 
-def _enable_fast_paths(cm_driver):
-    """Activate fast-path tools by turning on screen share."""
+def _enable_computer_fast_path(cm_driver):
+    """Activate computer fast-path tools by turning on screen share."""
     cm_driver.cm.assistant_screen_share_active = True
 
 
-def _setup_fast_paths_from_real_act(cm_driver):
-    """Activate fast-path gating.
+def _setup_computer_fast_path_from_real_act(cm_driver):
+    """Activate computer fast-path gating.
 
     Call this AFTER a ``step_until_wait`` that triggered ``act``.
     """
     cm_driver.cm.assistant_screen_share_active = True
 
 
-def _teardown_fast_paths(cm_driver):
+def _teardown_computer_fast_path(cm_driver):
     """Reset gating state so subsequent tests start clean."""
     cm_driver.cm.assistant_screen_share_active = False
 
@@ -84,7 +84,7 @@ async def test_web_search_routes_to_web_act(initialized_cm):
     )
     assert "act" in cm.all_tool_calls
 
-    _setup_fast_paths_from_real_act(cm)
+    _setup_computer_fast_path_from_real_act(cm)
     cm.all_tool_calls.clear()
 
     try:
@@ -100,7 +100,7 @@ async def test_web_search_routes_to_web_act(initialized_cm):
         )
         assert_efficient(result, 5)
     finally:
-        _teardown_fast_paths(cm)
+        _teardown_computer_fast_path(cm)
 
 
 # ---------------------------------------------------------------------------
@@ -122,7 +122,7 @@ async def test_web_navigation_routes_to_web_act(initialized_cm):
         ),
     )
 
-    _setup_fast_paths_from_real_act(cm)
+    _setup_computer_fast_path_from_real_act(cm)
     cm.all_tool_calls.clear()
 
     try:
@@ -138,7 +138,49 @@ async def test_web_navigation_routes_to_web_act(initialized_cm):
         )
         assert_efficient(result, 5)
     finally:
-        _teardown_fast_paths(cm)
+        _teardown_computer_fast_path(cm)
+
+
+# ---------------------------------------------------------------------------
+#  Web page interaction → web_act
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+@_handle_project
+async def test_web_page_scroll_routes_to_web_act(initialized_cm):
+    """Scrolling on a web page should route to web_act, not desktop_act."""
+    cm = initialized_cm
+    _ensure_mock_computer_primitives()
+
+    result = await cm.step_until_wait(
+        SMSReceived(
+            contact=BOSS,
+            content="Search the web for our main competitor's pricing strategy",
+        ),
+    )
+    assert "act" in cm.all_tool_calls
+
+    _setup_computer_fast_path_from_real_act(cm)
+    cm.all_tool_calls.clear()
+
+    try:
+        result = await cm.step_until_wait(
+            UnifyMessageReceived(
+                contact=BOSS,
+                content="Scroll down on the web page to see more content",
+            ),
+        )
+
+        assert "web_act" in cm.all_tool_calls, (
+            f"Expected 'web_act' for web page scroll, " f"got: {cm.all_tool_calls}"
+        )
+        assert "desktop_act" not in cm.all_tool_calls, (
+            f"Web page scroll should NOT use desktop_act, " f"got: {cm.all_tool_calls}"
+        )
+        assert_efficient(result, 5)
+    finally:
+        _teardown_computer_fast_path(cm)
 
 
 # ---------------------------------------------------------------------------
@@ -160,7 +202,7 @@ async def test_native_app_routes_to_desktop_act_not_web_act(initialized_cm):
         ),
     )
 
-    _setup_fast_paths_from_real_act(cm)
+    _setup_computer_fast_path_from_real_act(cm)
     cm.all_tool_calls.clear()
 
     try:
@@ -180,7 +222,7 @@ async def test_native_app_routes_to_desktop_act_not_web_act(initialized_cm):
         )
         assert_efficient(result, 5)
     finally:
-        _teardown_fast_paths(cm)
+        _teardown_computer_fast_path(cm)
 
 
 # ---------------------------------------------------------------------------
@@ -203,7 +245,7 @@ async def test_complex_cross_domain_routes_to_act(initialized_cm):
         ),
     )
 
-    _setup_fast_paths_from_real_act(cm)
+    _setup_computer_fast_path_from_real_act(cm)
     cm.all_tool_calls.clear()
 
     try:
@@ -227,7 +269,7 @@ async def test_complex_cross_domain_routes_to_act(initialized_cm):
             f"but got: {web_or_desktop_calls}"
         )
     finally:
-        _teardown_fast_paths(cm)
+        _teardown_computer_fast_path(cm)
 
 
 # ---------------------------------------------------------------------------
@@ -296,4 +338,47 @@ async def test_login_with_stored_credentials_routes_to_interject(initialized_cm)
             f"Got: {cm.all_tool_calls}"
         )
     finally:
-        _teardown_fast_paths(cm)
+        _teardown_computer_fast_path(cm)
+
+
+# ---------------------------------------------------------------------------
+#  Browser task (no act session) → web_act + act in same turn
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+@_handle_project
+async def test_browser_task_without_act_session_routes_to_web_act_and_act(
+    initialized_cm,
+):
+    """When no act session is in-flight and screen share is active, a browser
+    task should trigger both ``web_act`` (for the immediate action) AND ``act``
+    with ``persist=True`` (for the full-capability session) in the same turn.
+
+    This reproduces the production scenario where "open the browser" was
+    incorrectly routed through only ``act``, missing the fast-path entirely.
+    """
+    cm = initialized_cm
+    _ensure_mock_computer_primitives()
+
+    await cm.step(UnifyMeetStarted(contact=BOSS), run_llm=False)
+    await cm.step(AssistantScreenShareStarted(), run_llm=False)
+
+    try:
+        result = await cm.step_until_wait(
+            InboundUnifyMeetUtterance(
+                contact=BOSS,
+                content="Open the browser for me please.",
+            ),
+        )
+
+        assert "web_act" in cm.all_tool_calls, (
+            f"Expected 'web_act' for browser-related request, "
+            f"got: {cm.all_tool_calls}"
+        )
+        assert "act" in cm.all_tool_calls, (
+            f"Expected concurrent 'act' session alongside web_act when no "
+            f"act session is in-flight, got: {cm.all_tool_calls}"
+        )
+    finally:
+        _teardown_computer_fast_path(cm)
