@@ -1856,7 +1856,11 @@ class ConversationManagerBrainActionTools:
         }
         if self._cm.assistant_number:
             tools["send_sms"] = self.send_sms
-            tools["make_call"] = self.make_call
+            call_in_progress = (
+                self._cm.mode.is_voice or self._cm.call_manager._call_proc is not None
+            )
+            if not call_in_progress:
+                tools["make_call"] = self.make_call
         if self._cm.assistant_email:
             tools["send_email"] = self.send_email
         if getattr(self._cm.mode, "is_voice", False):
