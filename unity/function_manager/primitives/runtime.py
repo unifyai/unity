@@ -45,6 +45,7 @@ logger = logging.getLogger(__name__)
 # ComputerPrimitives - Computer Use (Web/Desktop) Control
 # =============================================================================
 
+
 # Default agent-service URL for local development
 DEFAULT_AGENT_SERVER_URL = "http://localhost:3000"
 
@@ -62,6 +63,24 @@ _COMPUTER_METHODS = (
     "get_links",
     "get_content",
     "get_screenshot",
+    # Low-level actions (bypass LLM planning)
+    "click",
+    "double_click",
+    "right_click",
+    "drag",
+    "scroll",
+    "type_text",
+    "press_enter",
+    "press_tab",
+    "press_backspace",
+    "select_all",
+    "switch_tab",
+    "close_tab",
+    "new_tab",
+    "go_back",
+    "wait_for",
+    "save_browser_state",
+    "execute_actions",
 )
 
 
@@ -460,8 +479,27 @@ class ComputerPrimitives(metaclass=SingletonABCMeta):
         "get_links",
         "get_content",
     )
-    _PRIMITIVE_METHODS = _DYNAMIC_METHODS + ("get_screenshot",)
-    _SECRET_INJECTED_METHODS = frozenset({"act", "observe"})
+    _LOW_LEVEL_METHODS = (
+        "click",
+        "double_click",
+        "right_click",
+        "drag",
+        "scroll",
+        "type_text",
+        "press_enter",
+        "press_tab",
+        "press_backspace",
+        "select_all",
+        "switch_tab",
+        "close_tab",
+        "new_tab",
+        "go_back",
+        "wait_for",
+        "save_browser_state",
+        "execute_actions",
+    )
+    _PRIMITIVE_METHODS = _DYNAMIC_METHODS + ("get_screenshot",) + _LOW_LEVEL_METHODS
+    _SECRET_INJECTED_METHODS = frozenset({"act", "observe", "type_text"})
 
     @staticmethod
     def _resolve_container_url(explicit_url: str | None) -> str:
