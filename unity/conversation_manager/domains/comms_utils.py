@@ -279,11 +279,20 @@ async def start_call(to_number: str) -> str:
     if not from_number:
         return {"success": False}
 
+    from unity.conversation_manager.domains.call_manager import make_room_name
+
+    assistant_id = str(SESSION_DETAILS.assistant.agent_id)
+    room_name = make_room_name(assistant_id, "phone")
+
     async with aiohttp.ClientSession() as session:
         async with session.post(
             f"{SETTINGS.conversation.COMMS_URL}/phone/send-call",
             headers=headers,
-            json={"From": from_number, "To": to_number, "NewCall": "true"},
+            json={
+                "From": from_number,
+                "To": to_number,
+                "room_name": room_name,
+            },
         ) as response:
             try:
                 response.raise_for_status()

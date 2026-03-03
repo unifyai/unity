@@ -546,7 +546,7 @@ def configure_from_cli(
     Layout (common to both scripts):
       argv[0] = script name
       argv[1] = "dev" | "connect" | "download-files"
-      argv[2] = assistant_number
+      argv[2] = room_name (from make_room_name)
       argv[3] = VOICE_PROVIDER
       argv[4] = VOICE_ID
       argv[5] = OUTBOUND
