@@ -24,6 +24,7 @@ from unity.knowledge_manager.knowledge_manager import KnowledgeManager
 from tests.helpers import _handle_project
 from tests.assertion_helpers import assertion_failed
 from tests.async_helpers import _wait_for_next_assistant_response_event
+
 # --------------------------------------------------------------------------- #
 # Helpers                                                                     #
 # --------------------------------------------------------------------------- #
