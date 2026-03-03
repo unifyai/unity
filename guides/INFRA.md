@@ -454,7 +454,7 @@ Secret Manager                  VM metadata                 Caddyfile
 4. The VM startup script (Ubuntu or Windows) reads the metadata, writes the cert files to disk, and injects an explicit `tls <cert> <key>` directive into the Caddyfile — Caddy serves the wildcard cert immediately without any ACME requests.
 5. If the secrets are absent (not yet provisioned, or Secret Manager unavailable), the startup scripts skip the `tls` directive and Caddy falls back to per-hostname ACME.
 
-**Renewal:** LE wildcard certs expire after 90 days. Before expiry, regenerate with `certbot renew` and update the Secret Manager secrets. All subsequently created VMs will pick up the new cert automatically; already-running VMs continue using their copy until stopped.
+**Renewal:** LE wildcard certs expire after 90 days. A Cloud Scheduler job (`cert-renewal` / `cert-renewal-staging`) runs at 3 AM UTC on the 1st of each month, hitting `POST /scheduled/cert-renewal` on the adapters. The endpoint checks the current cert's expiry via Secret Manager; if it's within 30 days, it performs a DNS-01 challenge (creating a TXT record in Cloud DNS, completing the ACME exchange, then cleaning up) and adds new versions to both secrets. All subsequently created VMs pick up the new cert automatically; already-running VMs continue using their copy until stopped.
 
 **Why not per-VM ACME:** With high assistant churn (each new `assistant_id` produces a never-before-seen hostname), per-VM ACME can exhaust the 50/week LE rate limit within days. The wildcard cert uses a single LE certificate slot regardless of how many VMs are created.
 
@@ -589,6 +589,7 @@ orchestra/
 | Idle job cleanup | 10 min after creation | Removes old idle containers |
 | Microsoft token refresh | Every 30-45 min | Keeps OAuth tokens fresh |
 | Teams subscriptions | Every 30-45 min | Renews before 60-min expiry |
+| Wildcard TLS cert renewal | 1st of month, 3 AM UTC | Renews *.vm.unify.ai if <30 days to expiry |
 
 ### GCP Project
 
