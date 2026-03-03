@@ -888,6 +888,12 @@ class ConversationManager(metaclass=SingletonABCMeta):
             **action_tools.build_completed_action_tools(),
         }
 
+        if "guide_voice_agent" in tools:
+            is_boss_on_call = (self.get_active_contact() or {}).get(
+                "contact_id",
+            ) == 1
+            if is_boss_on_call or not self._has_non_forwarded_event:
+                tools.pop("guide_voice_agent")
         self._has_non_forwarded_event = False
 
         if self.desktop_fast_path_eligible:

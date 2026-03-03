@@ -34,6 +34,7 @@ from unity.conversation_manager.events import (
     PhoneCallSent,
     ActorHandleStarted,
     ActorHandleResponse,
+    FastBrainNotification,
     Error,
 )
 from unity.common._async_tool.dynamic_tools_factory import DynamicToolFactory
@@ -2036,6 +2037,14 @@ class ConversationManagerBrainActionTools:
             )
 
             async def _perform_ask_and_emit():
+                await event_broker.publish(
+                    "app:call:notification",
+                    FastBrainNotification(
+                        content=f"Ask dispatched on action: {_param_value[:200]}",
+                        source="system",
+                        contact={},
+                    ).to_json(),
+                )
                 try:
                     ask_handle = await _handle.ask(
                         _param_value,
@@ -2150,6 +2159,14 @@ class ConversationManagerBrainActionTools:
 
                         # Spawn background task to perform ask and emit result
                         async def _perform_ask_and_emit():
+                            await event_broker.publish(
+                                "app:call:notification",
+                                FastBrainNotification(
+                                    content=f"Ask dispatched on action: {_param_value[:200]}",
+                                    source="system",
+                                    contact={},
+                                ).to_json(),
+                            )
                             try:
                                 # Start the ask operation (does the LLM roundtrip)
                                 ask_handle = await _handle.ask(
