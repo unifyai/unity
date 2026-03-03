@@ -664,7 +664,7 @@ app.post('/act', isAgentReady, async (req: Request, res: Response) => {
     if (session.actHistory.length === 0 && session.mode !== 'desktop') {
       memory.recordObservation(new Observation(
         'thought' as any,
-        'system',
+        'user',
         'This is a freshly created browser session — the browser is already open and loaded. '
         + 'If the task is simply asking to open a browser, open a new browser window, or launch a browser, '
         + 'this has already been accomplished. Return an empty actions list.'
