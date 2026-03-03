@@ -416,7 +416,7 @@ class TestCallSubprocessLifecycle:
         ) as mock_terminate:
             await call_manager.cleanup_call_proc()
 
-            mock_terminate.assert_called_once_with(mock_proc, 0)
+            mock_terminate.assert_called_once_with(mock_proc, 5)
 
     @pytest.mark.asyncio
     async def test_cleanup_call_proc_clears_process_reference(self, call_manager):
@@ -1214,7 +1214,7 @@ class TestConversationManagerInactivityCleanup:
         ) as mock_terminate:
             await cm.call_manager.cleanup_call_proc()
 
-            mock_terminate.assert_called_once_with(mock_proc, 0)
+            mock_terminate.assert_called_once_with(mock_proc, 5)
 
 
 # =============================================================================
