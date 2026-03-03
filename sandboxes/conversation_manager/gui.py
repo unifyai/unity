@@ -282,6 +282,8 @@ if _TEXTUAL_AVAILABLE:
             #left_controls { width: 35%; padding: 1; }
             #right_tabs { width: 65%; padding: 1; }
             #conversation { height: 1fr; border: round $surface; }
+            #attachment_indicator { height: auto; display: none; padding: 0 1; }
+            #attachment_indicator.has-files { display: block; }
             #cmd_row { height: auto; }
             #command_input { width: 1fr; }
             #logs { height: 18; }
@@ -322,11 +324,13 @@ if _TEXTUAL_AVAILABLE:
                         highlight=True,
                         max_lines=2000,
                     )
+                    yield Label("", id="attachment_indicator")
                     with Horizontal(id="cmd_row"):
                         yield Input(
                             placeholder="Type a command (e.g., sms Hello, trace 3, tree, /stop)",
                             id="command_input",
                         )
+                        yield Button("Attach", id="btn_attach")
                         yield Button("Mic", id="btn_mic")
                         yield Button("Send", id="submit_command")
                         yield Button("Quit", id="btn_quit_cmd")
@@ -827,6 +831,87 @@ if _TEXTUAL_AVAILABLE:
                 if event.button.id == "btn_quit_cmd":
                     app.exit()
                     return
+                if event.button.id == "btn_attach":
+
+                    async def _pick_and_attach() -> None:
+                        def _open_file_dialog() -> str | None:
+                            import shutil as _shutil
+                            import subprocess as _sp
+                            import sys as _sys
+
+                            if _sys.platform == "darwin":
+                                try:
+                                    r = _sp.run(
+                                        [
+                                            "osascript",
+                                            "-e",
+                                            'POSIX path of (choose file with prompt "Select file to attach")',
+                                        ],
+                                        capture_output=True,
+                                        text=True,
+                                        timeout=120,
+                                    )
+                                    return (r.stdout or "").strip() or None
+                                except Exception:
+                                    return None
+                            elif _sys.platform == "win32":
+                                try:
+                                    ps_script = (
+                                        "Add-Type -AssemblyName System.Windows.Forms;"
+                                        "$d = New-Object System.Windows.Forms.OpenFileDialog;"
+                                        '$d.Title = "Select file to attach";'
+                                        "if ($d.ShowDialog() -eq 'OK') { $d.FileName }"
+                                    )
+                                    r = _sp.run(
+                                        ["powershell", "-Command", ps_script],
+                                        capture_output=True,
+                                        text=True,
+                                        timeout=120,
+                                    )
+                                    return (r.stdout or "").strip() or None
+                                except Exception:
+                                    return None
+                            else:
+                                for cmd in ("zenity", "kdialog"):
+                                    if _shutil.which(cmd):
+                                        try:
+                                            if cmd == "zenity":
+                                                args = [
+                                                    "zenity",
+                                                    "--file-selection",
+                                                    "--title=Select file to attach",
+                                                ]
+                                            else:
+                                                args = [
+                                                    "kdialog",
+                                                    "--getopenfilename",
+                                                    "~",
+                                                ]
+                                            r = _sp.run(
+                                                args,
+                                                capture_output=True,
+                                                text=True,
+                                                timeout=120,
+                                            )
+                                            if r.returncode == 0:
+                                                return (r.stdout or "").strip() or None
+                                        except Exception:
+                                            continue
+                                return None
+
+                        chosen = await asyncio.to_thread(_open_file_dialog)
+                        if chosen:
+                            await app.route_command(f"attach {chosen}")  # type: ignore[attr-defined]
+                        else:
+                            try:
+                                inp = self.query_one("#command_input", Input)
+                                inp.value = "attach "
+                                inp.focus()
+                            except Exception:
+                                pass
+
+                    asyncio.create_task(_pick_and_attach())
+                    return
                 if event.button.id == "btn_sms":
                     try:
                         app.post_message(AppendLine("[ui] Compose SMS: type message, then press Enter"))  # type: ignore[attr-defined]
@@ -1000,6 +1085,7 @@ if _TEXTUAL_AVAILABLE:
                 active=False,
                 in_call=False,
                 pending_clarification=False,
+                pending_attachment_names=[],
             )
 
             worker_pid = None
@@ -1132,6 +1218,23 @@ if _TEXTUAL_AVAILABLE:
                     return
                 trimmed = f"say {text}"
                 self.post_message(AppendLine(f"▶️ {text}"))
+
+            # Track attachment state locally for the indicator label.
+            if cmd.kind == "attach" and cmd.args:
+                from pathlib import Path as _Path
+
+                rt.state.pending_attachment_names.append(_Path(cmd.args).name)
+                self._refresh_attachment_indicator()
+            elif cmd.kind == "detach":
+                rt.state.pending_attachment_names.clear()
+                self._refresh_attachment_indicator()
+            elif (
+                cmd.kind == "event"
+                and cmd.name == "message"
+                and rt.state.pending_attachment_names
+            ):
+                rt.state.pending_attachment_names.clear()
+                self._refresh_attachment_indicator()
 
             # Immediate steering acknowledgment.
             if cmd.kind == "steering":
@@ -1724,6 +1827,20 @@ if _TEXTUAL_AVAILABLE:
             try:
                 inp = self.screen.query_one("#command_input", Input)
                 inp.placeholder = placeholder
+            except Exception:
+                pass
+
+        def _refresh_attachment_indicator(self) -> None:
+            rt = self.runtime
+            names = getattr(rt.state, "pending_attachment_names", [])
+            try:
+                lbl = self.screen.query_one("#attachment_indicator", Label)
+                if names:
+                    lbl.update(f"📎 Pending: {', '.join(names)}")
+                    lbl.add_class("has-files")
+                else:
+                    lbl.update("")
+                    lbl.remove_class("has-files")
             except Exception:
                 pass
 
