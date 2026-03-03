@@ -488,7 +488,7 @@ const startDesktop = async (): Promise<BrowserAgent> => {
 const startBrowser = async (headless: boolean): Promise<BrowserAgent> => {
   try {
     const agent = await startBrowserAgent({
-      url: "https://www.duckduckgo.com/",
+      url: "https://www.google.com/",
       browser: getLaunchOptions(headless, defaultBrowserPaths.downloadsPath, defaultBrowserPaths.tracesDir),
       narrate: true,
       // Route LLM calls through Orchestra/UniLLM proxy for billing and caching
@@ -516,7 +516,7 @@ const startBrowser = async (headless: boolean): Promise<BrowserAgent> => {
 const startBrowserOnVm = async (): Promise<BrowserAgent> => {
   try {
     const agent = await startBrowserAgent({
-      url: "https://www.duckduckgo.com/",
+      url: "https://www.google.com/",
       browser: { launchOptions: {
         headless: false,
         args: [

@@ -372,7 +372,7 @@ class TestStructuredNotificationReply:
             notification_cb(
                 {
                     "payload": {
-                        "content": "Action update: browser is open, DuckDuckGo start page.",
+                        "content": "Action update: browser is open, Google start page.",
                         "source": "system",
                     },
                 },
