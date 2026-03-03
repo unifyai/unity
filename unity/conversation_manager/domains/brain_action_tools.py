@@ -1511,6 +1511,7 @@ class ConversationManagerBrainActionTools:
                     await handle.interject(
                         message,
                         trigger_immediate_llm_turn=False,
+                        suppress_response_notification=True,
                     )
                 except TypeError:
                     await handle.interject(message)
