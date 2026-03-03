@@ -23,6 +23,7 @@ pytestmark = pytest.mark.eval
 from unity.knowledge_manager.knowledge_manager import KnowledgeManager
 from tests.helpers import _handle_project
 from tests.assertion_helpers import assertion_failed
+from tests.async_helpers import _wait_for_next_assistant_response_event
 
 # --------------------------------------------------------------------------- #
 # Helpers                                                                     #
@@ -424,7 +425,7 @@ async def test_ask_stop():
 
     # Now retrieve with stop
     handle = await km.ask("List the capitals of the specified kingdoms.")
-    await asyncio.sleep(0.05)
+    _wait_for_next_assistant_response_event(handle._client)
     await handle.stop()
     await handle.result()
     assert handle.done()

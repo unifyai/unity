@@ -9,6 +9,7 @@ from unity.contact_manager.types.contact import Contact
 from unity.blacklist_manager.blacklist_manager import BlackListManager
 from unity.conversation_manager.types import Medium
 from tests.helpers import _handle_project
+from tests.async_helpers import _wait_for_next_assistant_response_event
 
 # All tests in this file exercise end-to-end LLM reasoning for contact mutations
 pytestmark = pytest.mark.eval
@@ -302,7 +303,7 @@ async def test_interjection(
     command = "Create a contact for Frank Castle, email frank@punisher.net."
 
     handle = await cm.update(command)
-    await asyncio.sleep(0.2)
+    await _wait_for_next_assistant_response_event(handle._client)
     await handle.interject("Actually, also add his phone as 555-54321.")
     await handle.result()
 

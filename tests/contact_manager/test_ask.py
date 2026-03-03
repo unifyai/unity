@@ -11,6 +11,7 @@ from unity.contact_manager.types.contact import Contact
 from unity.common.llm_client import new_llm_client
 from tests.assertion_helpers import assertion_failed, find_tool_calls_and_results
 from tests.helpers import _handle_project
+from tests.async_helpers import _wait_for_next_assistant_response_event
 
 # All tests in this file exercise end-to-end LLM reasoning for contact retrieval
 pytestmark = pytest.mark.eval
@@ -320,7 +321,7 @@ async def test_ask_interject(
     expected_fragment_bob = "4445556666"  # Bob's phone
 
     handle = await cm.ask(initial_question, _return_reasoning_steps=True)
-    await asyncio.sleep(0.1)  # Allow initial query to start
+    await _wait_for_next_assistant_response_event(handle._client)
     await handle.interject(interjected_question)
     candidate_answer, reasoning_steps = await handle.result()
 

@@ -9,6 +9,7 @@ import unify
 from unity.knowledge_manager.knowledge_manager import KnowledgeManager
 from unity.manager_registry import ManagerRegistry
 from unity.common.context_registry import ContextRegistry
+from tests.helpers import mutation_test_lock
 
 SCENARIO_COMMIT_HASHES: Dict[str, Any] = {}
 
@@ -242,6 +243,28 @@ async def knowledge_scenario(
     return builder.km, _KNOWLEDGE_IDS
 
 
+@pytest.fixture(autouse=True)
+def _serial_tool_calls(monkeypatch):
+    """Force serial tool calls so parallel completion order doesn't bust the cache.
+
+    When tools run in parallel, the non-deterministic completion order changes the
+    message structure between runs, producing different cache keys for the same
+    logical conversation. Serialising tool calls makes each turn's messages
+    identical across runs, so subsequent runs always hit the cache. This adds a
+    small per-turn latency cost on uncached runs but pays for itself through
+    reliable cache reuse on every future run.
+    """
+    import unity.knowledge_manager.knowledge_manager as km_mod
+
+    _original = km_mod.start_async_tool_loop
+
+    def _patched(*args, **kwargs):
+        kwargs.setdefault("max_parallel_tool_calls", 1)
+        return _original(*args, **kwargs)
+
+    monkeypatch.setattr(km_mod, "start_async_tool_loop", _patched)
+
+
 @pytest.fixture(scope="function")
 def knowledge_manager_scenario(knowledge_scenario):
     """
@@ -256,9 +279,9 @@ def knowledge_manager_scenario(knowledge_scenario):
             commit_hash=SCENARIO_COMMIT_HASHES[ctx],
         )
 
-    # Rollback to clean state before test
-    ctx_names = list(SCENARIO_COMMIT_HASHES.keys())
-    if ctx_names:
-        unify.map(rollback_context, ctx_names, mode="asyncio")
+    with mutation_test_lock("km_scenario"):
+        ctx_names = list(SCENARIO_COMMIT_HASHES.keys())
+        if ctx_names:
+            unify.map(rollback_context, ctx_names, mode="asyncio")
 
-    yield km, knowledge_map
+        yield km, knowledge_map
