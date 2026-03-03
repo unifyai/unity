@@ -177,7 +177,7 @@ def build_system_prompt(
     is_voice_call: bool = False,
     is_boss_on_call: bool = False,
     demo_mode: bool = False,
-    desktop_fast_path: bool = False,
+    computer_fast_path: bool = False,
     assistant_has_phone: bool = True,
     assistant_has_email: bool = True,
 ) -> PromptParts:
@@ -204,8 +204,9 @@ def build_system_prompt(
         When True, the voice calls guide shifts to supplementary-guidance mode.
     demo_mode : bool
         Whether the assistant is operating in demo mode (pre-signup).
-    desktop_fast_path : bool
-        Whether desktop fast-path tools are currently available.
+    computer_fast_path : bool
+        Whether computer fast-path tools (``web_act``, ``desktop_act``) are
+        currently available.
     assistant_has_phone : bool
         Whether the assistant has a phone number configured (gates SMS/call
         tool listing and adds a missing-capability notice when False).
@@ -399,22 +400,23 @@ For communication tools, provide the contact_id when the contact is in the activ
 
     # Action steering guidelines (not applicable in demo mode)
     if not demo_mode:
-        if desktop_fast_path:
-            desktop_click_example = (
-                "`desktop_act` (atomic desktop action — faster than interjecting)"
+        if computer_fast_path:
+            computer_click_example = (
+                "the appropriate computer fast-path tool (faster than interjecting)"
             )
-            desktop_interject_caveat = (
-                " **Exception:** For atomic desktop actions (click, type, scroll) "
-                "when desktop fast-path tools are available, prefer `desktop_act` "
-                "over `interject_*` — it is significantly faster. The in-flight "
-                "`act` session is automatically interjected with both the request "
-                "and the result, so it stays fully in sync."
+            computer_interject_caveat = (
+                " **Exception:** For single atomic computer actions (click, type, "
+                "scroll, navigate) when fast-path tools are available, prefer "
+                "`web_act` or `desktop_act` over `interject_*` — they are "
+                "significantly faster. The in-flight `act` session is automatically "
+                "interjected with both the request and the result, so it stays "
+                "fully in sync."
             )
         else:
-            desktop_click_example = (
+            computer_click_example = (
                 "`interject_*` (the session needs to continue executing)"
             )
-            desktop_interject_caveat = ""
+            computer_interject_caveat = ""
 
         parts.add(
             f"""Action steering guidelines
@@ -449,7 +451,7 @@ Critically, "remember this" / "save this workflow" / "I want you to do this on y
 
 Contrastive examples:
 - Boss says "remember this for next time" during a guided session → `stop_*` (teaching is done; storage happens automatically)
-- Boss says "now click the Submit button" during a guided session → {desktop_click_example}
+- Boss says "now click the Submit button" during a guided session → {computer_click_example}
 - Boss says "cancel this, start over" → `stop_*` (with reason indicating cancellation)
 
 **Pausing actions (pause_*):**
@@ -459,7 +461,7 @@ Use when my boss wants to temporarily halt an action but keep its state so it ca
 Use to continue a previously paused action from where it stopped.
 
 **Interjecting (interject_*):**
-Use to proactively provide new information or updated instructions to a running action. For example, if my boss says "actually, only include US contacts" while a contact-listing action runs, interject with that constraint.{desktop_interject_caveat}
+Use to proactively provide new information or updated instructions to a running action. For example, if my boss says "actually, only include US contacts" while a contact-listing action runs, interject with that constraint.{computer_interject_caveat}
 
 **Answering clarifications (answer_clarification_*):**
 Use when an action has asked a specific question (shown in its history as a clarification request). This responds directly to what the action asked.
@@ -699,11 +701,18 @@ Examples of requests that should use the direct tools:
 - GOOD: `act("check what tasks are due and update priorities on any overdue ones")`""",
         )
 
-        if desktop_fast_path:
+        if computer_fast_path:
             parts.add(
-                """Interactive screen-share session
---------------------------------
-The desktop is being shared in a live session. Fast-path tools (`desktop_act`, `web_act`) are available for **trivially atomic, single-action commands** — one click, one navigation, one scroll. They are a convenience shortcut, nothing more.
+                """Computer fast-path tools
+------------------------
+`web_act` and `desktop_act` give the user an **instant visible response** for single atomic actions during a screen-share session. They bypass the full `act` pathway and execute directly.
+
+**Always pair with `act(persist=True)` when no act session exists.** Fast-path tools handle single atomic actions only — they have no access to stored functions, guidance, secrets, or multi-step planning. The full `act` pathway provides all of this. Therefore:
+
+- **If NO `act` session is currently in-flight** (check `in_flight_actions`): call `act(persist=True)` **in the same response** as the fast-path tool. The fast path handles the immediate action; the `act` session loads guidance, functions, and skills for subsequent work. The `act` query should describe the session context (e.g. "Desktop session is active with screen sharing. The user is conducting an interactive tutorial. Establish context, load relevant guidance, and stay available for subsequent instructions.").
+- **If an `act` session IS already in-flight:** just use the fast-path tool directly. The in-flight session is automatically interjected with both the request and the result.
+
+**Priority over interject_*:** For single atomic actions, prefer the fast-path tool — it is faster. The in-flight `act` session stays in sync automatically.
 
 **Route to `interject_*` (not fast paths) when ANY of these apply:**
 - The request involves **credentials, secrets, or stored passwords** (fast paths have no access to Secret Manager or `${SECRET_NAME}` injection)
@@ -712,58 +721,22 @@ The desktop is being shared in a live session. Fast-path tools (`desktop_act`, `
 - The request requires **reasoning about what to do** rather than a single explicit action with a clear target
 - The request involves **extracting or processing data** from the page
 
-**Fast paths are ONLY for:**
-- "Click [specific element]"
-- "Type '[literal text]' into [specific field]"
-- "Scroll down / up"
-- "Press Enter / Tab"
-- "Navigate to [URL]"
-- "Search Google for '[query]'"
-
-If in doubt, `interject_*` is always the safer choice — it reaches the full Actor with access to secrets, guidance, functions, and multi-step planning. Fast paths are a speed optimisation for the simplest cases only.""",
+If in doubt, `interject_*` is always the safer choice — it reaches the full Actor with access to secrets, guidance, functions, and multi-step planning.""",
             )
 
             parts.add(
-                """Desktop fast-path tool
-----------------------
-`desktop_act` is a **direct shortcut** to the desktop agent for trivially atomic actions (click, type, scroll). It bypasses the general `act` pathway and returns results immediately.
+                """Choosing between `web_act` and `desktop_act`
+---------------------------------------------
+**`web_act` is the default for any task that involves a web browser.** This includes opening a browser, navigating to a URL, searching the web, clicking elements on a web page, typing into web forms, scrolling web content, or reading a web page.
 
-**NEVER use `desktop_act` without an `act` session.** The fast-path tool can only execute trivial atomic actions — it has NO access to stored functions, guidance, compositional workflows, or skills. The full `act` pathway provides all of this, and these capabilities are often relevant even during interactive desktop sessions. Therefore:
+**`desktop_act` is only for non-browser native desktop interactions** — terminal commands, file manager operations, native application windows (not browsers), system dialogs, or desktop UI elements outside any browser window.
 
-- **If NO `act` session is currently in-flight** (check `in_flight_actions`): ALWAYS call `act(persist=True)` **in the same response** as `desktop_act`. The `act` query should describe the desktop session context (e.g. "Desktop session is active. The user requested: '<action>'. Establish context, load any relevant guidance or stored functions, and stay available for subsequent desktop interactions.").
-- **If an `act` session IS already in-flight:** Just use `desktop_act` directly. The in-flight session is automatically interjected with both the request and the result.
+If uncertain whether the task is browser or desktop work, prefer `web_act`.
 
-**Priority over interject_*:** For single atomic actions (one click, one type, one scroll), prefer `desktop_act` — it is faster. For anything beyond a single atomic action, see "Interactive screen-share session" above.
-
-Use `desktop_act` for **single atomic desktop actions** where the user has explicitly described both the action and the target:
-- "Click the blue Submit button" → `desktop_act` (NOT interject_*)
-- "Type 'hello world' into the search box" → `desktop_act` (NOT interject_*)
-- "Scroll down" → `desktop_act` (NOT interject_*)
-- "Press Enter" → `desktop_act` (NOT interject_*)
-
-This tool is only available while the desktop is being actively shared.""",
-            )
-
-            parts.add(
-                """Web fast-path tool
-------------------
-`web_act` is a **direct shortcut** for single-action browser tasks — navigating to a URL, running a simple web search, or reading a page. See "Interactive screen-share session" above for when to use `interject_*` instead. It creates a visible browser session on the desktop and executes the request inside it.
-
-**When to use `web_act` vs `desktop_act`:**
-- `web_act` — single-action browser tasks: navigating to a URL, running a web search, reading a page.
-- `desktop_act` — native desktop actions that CANNOT be done in a browser: clicking desktop UI elements outside browser windows, opening native apps, terminal commands, file manager operations, interacting with non-browser windows.
-- `interject_*` / `act` — anything requiring credentials, multiple steps, reasoning, guidance, or data extraction. See "Interactive screen-share session" above.
-
-**Session lifecycle:**
+**Session lifecycle (`web_act`):**
 - `web_act` without `session_id` always creates a new visible browser session.
 - Pass `session_id` to reuse a session listed in `<active_web_sessions>`.
 - Call `close_web_session(session_id)` when done with a browser session to free resources.
-
-**Like `desktop_act`, NEVER use `web_act` without an `act` session.** Follow the same rules: if no `act` session is currently in-flight, call `act(persist=True)` in the same response as `web_act`.
-
-`close_web_session` tool
-------------------------
-Closes a browser session by ID. Use when browser work is complete to free resources. Check `<active_web_sessions>` for valid session IDs.
 
 These tools are only available while the desktop is being actively shared.""",
             )
@@ -802,9 +775,9 @@ Examples of questions that should trigger `act`:
         )
 
         persistent_desktop_note = (
-            "\n\nFor atomic desktop actions during screen share, "
-            'see "Interactive screen-share session" above.'
-            if desktop_fast_path
+            "\n\nFor atomic computer actions during screen share, "
+            'see "Computer fast-path tools" above.'
+            if computer_fast_path
             else ""
         )
 
