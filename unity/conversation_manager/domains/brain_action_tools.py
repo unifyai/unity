@@ -1850,13 +1850,15 @@ class ConversationManagerBrainActionTools:
         """Return the static tools dict for start_async_tool_loop."""
         from unity.settings import SETTINGS
 
-        tools = {
-            "send_sms": self.send_sms,
+        tools: dict[str, Callable[..., Any]] = {
             "send_unify_message": self.send_unify_message,
-            "send_email": self.send_email,
-            "make_call": self.make_call,
             "wait": self.wait,
         }
+        if self._cm.assistant_number:
+            tools["send_sms"] = self.send_sms
+            tools["make_call"] = self.make_call
+        if self._cm.assistant_email:
+            tools["send_email"] = self.send_email
         if getattr(self._cm.mode, "is_voice", False):
             tools["guide_voice_agent"] = self.guide_voice_agent
         if SETTINGS.DEMO_MODE:

@@ -104,6 +104,36 @@ def _build_phone_scenarios(phone_number: str | None) -> str:
 - If my boss asks me to call someone, I must inform them that I am about to call the person before actually calling them, something like "Sure, will call them now!"."""
 
 
+def _build_missing_phone_notice(assistant_has_phone: bool) -> str:
+    """Explain that the assistant cannot send SMS or make calls."""
+    if assistant_has_phone:
+        return ""
+    return """- I do not currently have a phone number configured, so I cannot send SMS messages or make phone calls. If my boss asks me to text or call someone, I should let them know I don't have a phone number set up yet and ask them to configure one for me through the platform."""
+
+
+def _build_missing_email_notice(assistant_has_email: bool) -> str:
+    """Explain that the assistant cannot send or receive emails."""
+    if assistant_has_email:
+        return ""
+    return """- I do not currently have an email address configured, so I cannot send or receive emails. If my boss asks me to email someone, I should let them know I don't have an email set up yet and ask them to configure one for me through the platform."""
+
+
+def _build_comms_tool_listing(
+    assistant_has_phone: bool,
+    assistant_has_email: bool,
+) -> str:
+    """Build the communication tools block for the output format section."""
+    lines: list[str] = []
+    if assistant_has_phone:
+        lines.append("- `send_sms`: Send an SMS message to a contact")
+    if assistant_has_email:
+        lines.append("- `send_email`: Send an email to a contact")
+    lines.append("- `send_unify_message`: Send a Unify platform message to a contact")
+    if assistant_has_phone:
+        lines.append("- `make_call`: Start an outbound phone call to a contact")
+    return "\n".join(lines)
+
+
 def _build_input_format_example() -> str:
     """Build the input format example block."""
     return """Example input structure:
@@ -148,6 +178,8 @@ def build_system_prompt(
     is_boss_on_call: bool = False,
     demo_mode: bool = False,
     desktop_fast_path: bool = False,
+    assistant_has_phone: bool = True,
+    assistant_has_email: bool = True,
 ) -> PromptParts:
     """Build the system prompt for the ConversationManager LLM.
 
@@ -174,6 +206,12 @@ def build_system_prompt(
         Whether the assistant is operating in demo mode (pre-signup).
     desktop_fast_path : bool
         Whether desktop fast-path tools are currently available.
+    assistant_has_phone : bool
+        Whether the assistant has a phone number configured (gates SMS/call
+        tool listing and adds a missing-capability notice when False).
+    assistant_has_email : bool
+        Whether the assistant has an email address configured (gates email
+        tool listing and adds a missing-capability notice when False).
 
     Returns
     -------
@@ -192,6 +230,18 @@ def build_system_prompt(
     voice_calls_guide = _build_voice_calls_guide(is_boss_on_call=is_boss_on_call)
     phone_guidelines = _build_phone_guidelines(phone_number)
     phone_scenarios = _build_phone_scenarios(phone_number)
+    missing_phone_notice = _build_missing_phone_notice(assistant_has_phone)
+    missing_email_notice = _build_missing_email_notice(assistant_has_email)
+    comms_tool_listing = _build_comms_tool_listing(
+        assistant_has_phone,
+        assistant_has_email,
+    )
+    sms_call_note = (
+        " I can send SMS while on a call, but I cannot make a new call"
+        " while already on one."
+        if assistant_has_phone
+        else ""
+    )
     input_format_example = _build_input_format_example()
 
     # Voice call note for role section
@@ -303,16 +353,13 @@ My output will be in the following format:
 All actions are performed by calling the available tools. The tools I have access to include:
 
 **Communication tools:**
-- `send_sms`: Send an SMS message to a contact
-- `send_email`: Send an email to a contact
-- `send_unify_message`: Send a Unify platform message to a contact
-- `make_call`: Start an outbound phone call to a contact
+{comms_tool_listing}
 
 **Contact management tools:**
 - `set_boss_details`: Update my boss's name, phone number, or email. Use whenever I learn these details during conversation.
 - `wait(delay=None)`: Wait for more input. Use this instead of sending another message - prefer silence over extra communication. Optionally pass `delay=<seconds>` to wake up after that many seconds for another thinking turn (e.g., to probe a long-running action). Omit `delay` to wait indefinitely until the next event.
 
-For communication tools, provide the contact_id when the contact is in the active conversations. I can send SMS while on a call, but I cannot make a new call while already on one.
+For communication tools, provide the contact_id when the contact is in the active conversations.{sms_call_note}
 
 Communication tools can also fill in missing contact details inline (e.g., `make_call(contact_id=1, phone_number="+1234")` saves the number and places the call in one step). Use this for phone numbers and email addresses. For names, use `set_boss_details`.""",
         )
@@ -330,10 +377,7 @@ My output will be in the following format:
 All actions are performed by calling the available tools. The tools I have access to include:
 
 **Communication tools:**
-- `send_sms`: Send an SMS message to a contact
-- `send_email`: Send an email to a contact
-- `send_unify_message`: Send a Unify platform message to a contact
-- `make_call`: Start an outbound phone call to a contact
+{comms_tool_listing}
 
 **Knowledge and action tools:**
 - `act`: Engage with knowledge, resources, and the world (web search, retrieve files, update records, run tasks, etc.). Call `act` freely for backend work — but NOT for visual observation the Voice Agent already handles (see Voice Agent visual perception above).
@@ -350,7 +394,7 @@ All actions are performed by calling the available tools. The tools I have acces
 - `resume_*`: Continue a paused action
 - `answer_clarification_*`: Respond to a question from an action
 
-For communication tools, provide the contact_id when the contact is in the active conversations. I can send SMS while on a call, but I cannot make a new call while already on one.""",
+For communication tools, provide the contact_id when the contact is in the active conversations.{sms_call_note}""",
         )
 
     # Action steering guidelines (not applicable in demo mode)
@@ -475,24 +519,62 @@ I do NOT need to poll or check on actions - the system will wake me when somethi
 
     # Communication guidelines
     phone_guidelines_section = f"\n{phone_guidelines}" if phone_guidelines else ""
+    missing_capabilities_section = (
+        f"\n{missing_phone_notice}" if missing_phone_notice else ""
+    ) + (f"\n{missing_email_notice}" if missing_email_notice else "")
+
+    available_tool_names = ["send_unify_message"]
+    if assistant_has_phone:
+        available_tool_names = ["send_sms"] + available_tool_names + ["make_call"]
+    if assistant_has_email:
+        available_tool_names.insert(
+            available_tool_names.index("send_unify_message"),
+            "send_email",
+        )
+    comms_tool_names = ", ".join(available_tool_names)
+
+    inline_detail_examples: list[str] = []
+    if assistant_has_phone:
+        inline_detail_examples.append(
+            '`send_sms(contact_id=5, content="Hi", phone_number="+15551234567")`',
+        )
+    if assistant_has_email:
+        inline_detail_examples.append(
+            '`send_email(to=[{{"contact_id": 5, "email_address": "alice@example.com"}}], ...)`',
+        )
+    inline_detail_line = ""
+    if inline_detail_examples:
+        examples_str = " or ".join(inline_detail_examples)
+        inline_detail_line = f"""
+- If a contact is in active_conversations but is **missing** the needed detail (e.g. phone number for SMS/call, email for email), you can provide it inline: {examples_str}. The detail will be saved to the contact automatically.
+- **Do not** use inline details to overwrite an existing value — the system will reject it. Use `act` to update the contact first if the stored detail is wrong."""
+
+    available_channels: list[str] = ["unify messages"]
+    if assistant_has_phone:
+        available_channels = ["SMS"] + available_channels + ["calls"]
+    if assistant_has_email:
+        available_channels.insert(
+            available_channels.index("unify messages"),
+            "emails",
+        )
+    channels_str = ", ".join(available_channels)
+
     parts.add(
         f"""Communication guidelines
 ------------------------
 Communicate naturally and casually. Keep responses short.
 - Acknowledge my boss when they give instructions, then execute.
 - Do NOT over-acknowledge or send multiple confirmations.
-- Use the thread my boss is using unless asked otherwise.{phone_guidelines_section}
+- Use the thread my boss is using unless asked otherwise.{phone_guidelines_section}{missing_capabilities_section}
 
 **Contact actions:**
-- All communication tools (send_sms, send_email, make_call, send_unify_message) require a contact_id. Use the contact_id visible in active_conversations when available.
-- If a contact is in active_conversations but is **missing** the needed detail (e.g. phone number for SMS/call, email for email), you can provide it inline: `send_sms(contact_id=5, content="Hi", phone_number="+15551234567")` or `send_email(to=[{{"contact_id": 5, "email_address": "alice@example.com"}}], ...)`. The detail will be saved to the contact automatically.
-- **Do not** use inline details to overwrite an existing value — the system will reject it. Use `act` to update the contact first if the stored detail is wrong.
+- All communication tools ({comms_tool_names}) require a contact_id. Use the contact_id visible in active_conversations when available.{inline_detail_line}
 - If the contact is NOT in active_conversations at all, use `act` to find or create the contact. For example: `act(query="Find Ved's contact_id. His phone number is +1234567890. If he doesn't exist in the contacts, create a new contact and return the id.")`. `act` handles searching, creation, deduplication, and merging flexibly.
 - **Nameless contacts:** Not every phone number or email belongs to a specific person. Some belong to organisations or services (support hotlines, help-desk emails, company switchboards). When saving such a contact, describe the *entity* — not the name of whoever happened to answer. For example: `act(query="Save +18005551234 as the Acme Corp billing support number.")` — not `act(query="Add Sarah with number +18005551234.")`. Individual names from a specific call or email thread are transient representatives and should not be treated as the contact's identity.
 
 **should_respond policy:**
 Each contact has a `should_respond` attribute (True/False) that determines whether I am permitted to send outbound messages to them:
-- If `should_respond="True"`: I can send SMS, emails, unify messages, or make calls to this contact.
+- If `should_respond="True"`: I can send {channels_str} to this contact.
 - If `should_respond="False"`: I CANNOT send any outbound communication to this contact. If I attempt to do so, the system will block it and return an error.
 
 When a contact has `should_respond="False"`:
@@ -537,7 +619,7 @@ I am currently in **demo mode** — my boss (contact_id=1) has not yet signed up
 6. Getting my boss's **email address** on file is especially valuable — once they sign up with that email, I will be automatically linked to their account.
 
 **What I CAN do in demo mode:**
-- Communicate via SMS, email, phone calls, and Unify messages
+- Communicate via {channels_str}
 - Update my boss's contact details (name, phone, email) via `set_boss_details`
 - Have natural, engaging conversations that showcase my personality and reliability
 
@@ -551,9 +633,14 @@ When asked what I can do, I paint an impressive and honest picture — I'm a cap
 **Handling the introduction flow:**
 The Unify colleague (contact_id=2) may call me first to introduce my future boss. During this call, I should:
 - Be personable and make a great first impression
-- Learn and remember my boss's name
+- Learn and remember my boss's name"""
+            + (
+                """
 - When asked to call my boss directly, I need their phone number — ask for it naturally
-- Use `make_call(contact_id=1, phone_number="...")` to call them, which saves the number automatically""",
+- Use `make_call(contact_id=1, phone_number="...")` to call them, which saves the number automatically"""
+                if assistant_has_phone
+                else ""
+            ),
         )
     else:
         # Normal mode: full act-related sections
@@ -733,14 +820,16 @@ A ``persist=False`` action completes on its own and is gone. If my boss sends a 
 Once a persistent action is running, all further instructions that belong to the same session go through ``interject_*`` — I do NOT start a new ``act`` for each step.{persistent_desktop_note}""",
         )
 
+        ack_tool = "send_sms" if assistant_has_phone else "send_unify_message"
+        ack_example = f'{ack_tool}(content="Let me check.", contact_id=1)'
         parts.add(
-            """Concurrent action and acknowledgment
+            f"""Concurrent action and acknowledgment
 ------------------------------------
 **CRITICAL: When calling `act`, `ask_about_contacts`, `update_contacts`, or `query_past_transcripts`, call it IN THE SAME RESPONSE as a brief acknowledgment message.**
 
 I can and should call multiple tools in a single response. When my boss asks me to do something that requires an action, return BOTH tool calls together:
 1. The action tool (`act`, `ask_about_contacts`, `update_contacts`, or `query_past_transcripts`) to start the work
-2. `send_sms` (or appropriate channel) with a brief acknowledgment
+2. `{ack_tool}` (or appropriate channel) with a brief acknowledgment
 
 **This is ONE action, not two steps.** Call both tools in my single response, then the next response should be `wait` or action monitoring.
 
@@ -749,10 +838,10 @@ My response should include BOTH tool calls:
 ```
 tool_calls: [
     ask_about_contacts(text="What is Sarah's phone number?"),
-    send_sms(content="Let me check.", contact_id=1)
+    {ack_example}
 ]
 ```
-NOT: first the action, then in a separate response send_sms. That's inefficient.
+NOT: first the action, then in a separate response {ack_tool}. That's inefficient.
 
 **Acknowledgments should be brief:**
 - "On it."
