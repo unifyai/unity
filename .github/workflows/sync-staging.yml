@@ -1,0 +1,35 @@
+name: Sync staging with main
+
+on:
+  push:
+    branches:
+    - main
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+    - name: Fast-forward staging to main
+      run: |
+        # Get the SHA that main now points to
+        main_sha=$(gh api repos/${{ github.repository }}/git/ref/heads/main --jq '.object.sha')
+        echo "main is at: $main_sha"
+
+        # Get current staging SHA
+        staging_sha=$(gh api repos/${{ github.repository }}/git/ref/heads/staging --jq '.object.sha')
+        echo "staging is at: $staging_sha"
+
+        if [ "$main_sha" = "$staging_sha" ]; then
+          echo "staging is already in sync with main"
+          exit 0
+        fi
+
+        # Fast-forward staging to main (no merge commit, exact sync)
+        gh api repos/${{ github.repository }}/git/refs/heads/staging \
+          -X PATCH \
+          -f sha="$main_sha" \
+          -F force=true
+
+        echo "Fast-forwarded staging to $main_sha"

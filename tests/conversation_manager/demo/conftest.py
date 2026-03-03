@@ -63,12 +63,12 @@ DEMO_OPERATOR = {
 # ─────────────────────────────────────────────────────────────────────────────
 
 
-def pytest_configure(config):
-    """Enable demo mode before any tests in this folder run.
+def _enable_demo_mode() -> None:
+    """Activate demo mode on the SETTINGS singleton and env var.
 
     Sets the env var for any future SETTINGS re-creation AND directly mutates
-    the existing unity.settings.SETTINGS singleton (which was already created
-    eagerly during root conftest imports, before this hook ran).
+    the existing singleton (which was already created eagerly during root
+    conftest imports).
 
     Also populates SESSION_DETAILS.user with the demoer's details so that
     init_conv_manager creates contact_id=2 with correct name/phone/email
@@ -88,8 +88,8 @@ def pytest_configure(config):
     SESSION_DETAILS.user.email = DEMO_OPERATOR["email_address"]
 
 
-def pytest_unconfigure(config):
-    """Clean up demo mode env var and restore SETTINGS."""
+def _disable_demo_mode() -> None:
+    """Restore SETTINGS and env after a demo-mode fixture tears down."""
     os.environ.pop("DEMO_MODE", None)
     from unity.settings import SETTINGS
 
@@ -113,7 +113,7 @@ async def conversation_manager(request) -> CMStepDriver:
     """Start ConversationManager in demo mode for the test module.
 
     Similar to the parent conftest fixture, but:
-    - DEMO_MODE is active (set via pytest_configure above)
+    - DEMO_MODE is activated at the start of this fixture (not pytest_configure)
     - Boss contact (contact_id=1) is left sparse (no name, no email, no phone)
     - Demo operator (contact_id=2) is seeded
     """
@@ -123,9 +123,9 @@ async def conversation_manager(request) -> CMStepDriver:
     from unity.conversation_manager.domains import managers_utils
     from unity.settings import SETTINGS
 
-    assert (
-        SETTINGS.DEMO_MODE
-    ), "DEMO_MODE should be True — check pytest_configure in demo/conftest.py"
+    _enable_demo_mode()
+
+    assert SETTINGS.DEMO_MODE, "DEMO_MODE should be True after _enable_demo_mode()"
 
     reset_event_broker()
 
@@ -168,7 +168,7 @@ async def conversation_manager(request) -> CMStepDriver:
             print("✅ Boss contact left sparse (demo mode)")
 
             # Demo operator (contact_id=2) is created by init_conv_manager
-            # from SESSION_DETAILS.user (populated in pytest_configure).
+            # from SESSION_DETAILS.user (populated by _enable_demo_mode).
             # Just apply response_policy which isn't part of SESSION_DETAILS.
             if DEMO_OPERATOR.get("response_policy"):
                 cm.contact_manager.update_contact(
@@ -183,6 +183,7 @@ async def conversation_manager(request) -> CMStepDriver:
     print("\n✓ Stopping ConversationManager (demo mode)...")
     await stop_async()
     reset_event_broker()
+    _disable_demo_mode()
 
 
 def _complete_in_flight_actions(cm: CMStepDriver) -> None:

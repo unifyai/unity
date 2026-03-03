@@ -343,6 +343,10 @@ class EventBus:
             except Exception:
                 # Fallback to disabled if settings can't be loaded
                 cls._publishing_enabled = False
+            LOGGER.info(
+                "EventBus publishing %s",
+                "enabled" if cls._publishing_enabled else "disabled",
+            )
 
     @classmethod
     def _init_pubsub_streaming(cls) -> None:
@@ -1017,7 +1021,14 @@ class EventBus:
         batches: dict[str, list[dict]] = defaultdict(list)
         for entries, context in self._pending_writes:
             batches[context].append(entries)
+        total_events = len(self._pending_writes)
         self._pending_writes.clear()
+
+        LOGGER.debug(
+            "EventBus flush: %d events across %d contexts",
+            total_events,
+            len(batches),
+        )
 
         for context, entries_list in batches.items():
             try:
@@ -1026,8 +1037,19 @@ class EventBus:
                     context=context,
                     entries=entries_list,
                 )
-            except Exception:
-                LOGGER.warning("EventBus flush failed for context %s", context)
+                LOGGER.debug(
+                    "EventBus flush: wrote %d logs to context=%s",
+                    len(entries_list),
+                    context,
+                )
+            except Exception as exc:
+                LOGGER.warning(
+                    "EventBus flush failed: context=%s events=%d error=%s",
+                    context,
+                    len(entries_list),
+                    exc,
+                    exc_info=True,
+                )
                 continue
 
             # Mirror to aggregation contexts in bulk
@@ -1042,8 +1064,14 @@ class EventBus:
                                 context=all_ctx,
                                 project=project,
                             )
-                        except Exception:
-                            pass
+                        except Exception as exc:
+                            LOGGER.debug(
+                                "EventBus flush: aggregation mirror failed: "
+                                "context=%s target=%s error=%s",
+                                context,
+                                all_ctx,
+                                exc,
+                            )
 
     def join_published(self):
         """Ensures all published events have been uploaded."""

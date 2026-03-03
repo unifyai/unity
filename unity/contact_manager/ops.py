@@ -230,9 +230,9 @@ def update_contact(
     if not updates_dict:
         raise ValueError("At least one contact detail must be provided for an update.")
 
-    # Validate against Pydantic model
+    # Validate and normalize via Pydantic model (e.g. "" → None for unique fields)
     try:
-        Contact(contact_id=contact_id, **updates_dict)
+        validated = Contact(contact_id=contact_id, **updates_dict)
     except ValidationError as e:
         msg = str(e)
         try:
@@ -245,6 +245,13 @@ def update_contact(
         except Exception:
             pass
         raise ValueError(msg) from e
+    updates_dict = {
+        k: getattr(validated, k)
+        for k in updates_dict
+        if getattr(validated, k) is not None
+    }
+    if not updates_dict:
+        return ToolOutcome(output="No effective changes after normalization.")
 
     if _log_id is None:
         target_ids = unify.get_logs(

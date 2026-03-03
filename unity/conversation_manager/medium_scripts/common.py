@@ -6,7 +6,7 @@ import asyncio
 import fnmatch
 import json
 import sys
-from typing import TYPE_CHECKING, Awaitable, Callable, Iterable, Optional
+from typing import TYPE_CHECKING, Awaitable, Callable, Optional
 
 if TYPE_CHECKING:
     from unity.conversation_manager.types.screenshot import ScreenshotEntry
@@ -34,8 +34,9 @@ from unity.conversation_manager.events import (
     ActorNotification,
     ActorResult,
     ActorHandleStarted,
+    ActorHandleResponse,
     ActorSessionResponse,
-    DesktopActCompleted,
+    ComputerActCompleted,
     NotificationInjectedEvent,
     UserScreenShareStarted,
     UserScreenShareStopped,
@@ -422,13 +423,13 @@ def create_end_call(
     pre_shutdown_callback: Optional[Callable[[], None]] = None,
 ) -> Callable[[], Awaitable[None]]:
     """
-    Returns an async function that:
+    Returns an async cleanup function that:
       - calls optional pre_shutdown_callback (e.g., for usage logging)
       - deletes the LiveKit room (evicting agents / cancelling dispatches)
       - publishes the call ended event
-      - cancels all other asyncio tasks
 
-    The process will be terminated by SIGTERM from the parent when cleanup is called.
+    Does NOT cancel asyncio tasks — LiveKit's own job lifecycle handles
+    process shutdown via ``close_on_disconnect`` / ``ctx.shutdown()``.
 
     Args:
         contact: Contact dictionary for the call.
@@ -439,45 +440,19 @@ def create_end_call(
     """
 
     async def end_call() -> None:
-        LOGGER.debug(f"{ICONS['lifecycle']} Initiating graceful shutdown...")
+        LOGGER.debug(f"{ICONS['lifecycle']} Running call cleanup...")
 
-        # Run pre-shutdown callback (e.g., usage logging) before cleanup
         if pre_shutdown_callback is not None:
             try:
                 pre_shutdown_callback()
             except Exception as e:  # noqa: BLE001
                 LOGGER.error(f"{DEFAULT_ICON} Error in pre-shutdown callback: {e}")
 
-        # Delete room before notifying the parent, since the parent will
-        # SIGKILL us immediately after receiving the call-ended event.
         if room_name:
             await delete_livekit_room(room_name)
 
-        # Send end call event before cleaning tasks and closing connection
         await publish_call_ended(contact, channel)
-        LOGGER.debug(f"{DEFAULT_ICON} End call event sent")
-
-        # Get all running tasks except current task
-        tasks: Iterable[asyncio.Task] = [
-            t for t in asyncio.all_tasks() if t is not asyncio.current_task()
-        ]
-
-        if tasks:
-            LOGGER.debug(f"{DEFAULT_ICON} Cancelling {len(tasks)} running tasks...")
-            # Cancel all tasks
-            for task in tasks:
-                task.cancel()
-
-            # Wait for tasks to be cancelled gracefully
-            try:
-                await asyncio.gather(*tasks, return_exceptions=True)
-                LOGGER.debug(f"{DEFAULT_ICON} All tasks cancelled successfully")
-            except asyncio.CancelledError:
-                pass
-            except Exception as e:  # noqa: BLE001
-                LOGGER.error(f"{DEFAULT_ICON} Error during task cancellation: {e}")
-
-        LOGGER.debug(f"{ICONS['lifecycle']} Graceful shutdown completed")
+        LOGGER.debug(f"{ICONS['lifecycle']} Call cleanup completed")
 
     return end_call
 
@@ -572,7 +547,7 @@ def configure_from_cli(
     Layout (common to both scripts):
       argv[0] = script name
       argv[1] = "dev" | "connect" | "download-files"
-      argv[2] = assistant_number
+      argv[2] = room_name (from make_room_name)
       argv[3] = VOICE_PROVIDER
       argv[4] = VOICE_ID
       argv[5] = OUTBOUND
@@ -1242,6 +1217,8 @@ def render_event_for_fast_brain(event_json: str) -> str | None:
     if isinstance(event, ActorNotification):
         return f"Action progress: {event.response}"
     if isinstance(event, ActorResult):
+        if getattr(event, "action_type", "") in ("desktop_act", "web_act"):
+            return None
         status = "completed successfully" if event.success else "failed"
         detail = event.result or event.error or ""
         if isinstance(detail, dict):
@@ -1250,13 +1227,16 @@ def render_event_for_fast_brain(event_json: str) -> str | None:
         return f"Action {status}: {snippet}" if snippet else f"Action {status}"
     if isinstance(event, ActorHandleStarted):
         return f"Action started: {event.action_name} — {event.query}"
+    if isinstance(event, ActorHandleResponse):
+        answer = event.response if event.response else "(no answer)"
+        return f"Ask answered ({event.query[:100]}): {answer}"
     if isinstance(event, ActorSessionResponse):
         return f"Action update: {event.content}"
     if isinstance(event, NotificationInjectedEvent):
         return event.content
-    if isinstance(event, DesktopActCompleted):
+    if isinstance(event, ComputerActCompleted):
         snippet = event.summary[:200] if event.summary else event.instruction[:200]
-        return f"Desktop action completed: {snippet}"
+        return f"Computer action completed: {snippet}"
 
     return None
 

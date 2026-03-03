@@ -352,6 +352,8 @@ async def publish_bus_events(event):
 async def actor_watch_result(
     handle_id: int,
     handle: SteerableToolHandle,
+    *,
+    action_type: str = "",
 ) -> None:
     """Await final result and publish completion (or failure), then cleanup."""
     # await result
@@ -366,6 +368,7 @@ async def actor_watch_result(
             handle_id=handle_id,
             success=False if "Error" in result else True,
             result=result,
+            action_type=action_type,
         ).to_json(),
     )
 
@@ -1240,55 +1243,32 @@ async def _start_file_sync() -> None:
         traceback.print_exc()
 
 
-async def _register_desktop_primitive_callback(cm: "ConversationManager") -> None:
-    """Register an EventBus callback that marks in-flight act sessions as desktop-active.
-
-    When a ``DesktopPrimitiveInvoked`` event fires, all currently in-flight ``act``
-    handle_ids are added to ``cm._act_handles_with_desktop_usage`` so the CM can
-    conditionally expose desktop fast-path tools.
-    """
-
-    async def _on_desktop_invoked(events):  # noqa: ANN001
-        for hid, data in cm.in_flight_actions.items():
-            if data.get("action_type") == "act":
-                cm._act_handles_with_desktop_usage.add(hid)
-
-    try:
-        await EVENT_BUS.register_callback(
-            event_type="DesktopPrimitiveInvoked",
-            callback=_on_desktop_invoked,
-            every_n=1,
-        )
-    except Exception:
-        pass
-
-
-async def _register_desktop_act_completed_callback(cm: "ConversationManager") -> None:
-    """Bridge ``DesktopActCompleted`` events from the in-process EventBUS to the
+async def _register_computer_act_completed_callback(cm: "ConversationManager") -> None:
+    """Bridge ``ComputerActCompleted`` events from the in-process EventBUS to the
     CM's ``event_broker`` so both the slow brain and fast brain see them.
 
     Only publishes when the assistant is actively screen-sharing on a meet.
     """
-    from unity.conversation_manager.events import DesktopActCompleted
+    from unity.conversation_manager.events import ComputerActCompleted
 
-    async def _on_desktop_act_completed(events):  # noqa: ANN001
+    async def _on_computer_act_completed(events):  # noqa: ANN001
         if not cm.assistant_screen_share_active:
             return
         for evt in events:
             payload = evt.payload if isinstance(evt.payload, dict) else {}
-            cm_event = DesktopActCompleted(
+            cm_event = ComputerActCompleted(
                 instruction=payload.get("instruction", ""),
                 summary=payload.get("summary", ""),
             )
             await cm.event_broker.publish(
-                "app:actor:desktop_act_completed",
+                "app:actor:computer_act_completed",
                 cm_event.to_json(),
             )
 
     try:
         await EVENT_BUS.register_callback(
-            event_type="DesktopActCompleted",
-            callback=_on_desktop_act_completed,
+            event_type="ComputerActCompleted",
+            callback=_on_computer_act_completed,
             every_n=1,
         )
     except Exception:
@@ -1354,8 +1334,7 @@ async def init_conv_manager(
             # are appended normally and stay in correct chronological order.
             cm.initialized = True
 
-            await _register_desktop_primitive_callback(cm)
-            await _register_desktop_act_completed_callback(cm)
+            await _register_computer_act_completed_callback(cm)
 
             # Publish initialization complete event for test synchronization
             await event_broker.publish(

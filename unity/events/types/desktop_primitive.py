@@ -16,8 +16,8 @@ class DesktopPrimitivePayload(BaseModel):
     )
 
 
-class DesktopActCompletedPayload(BaseModel):
-    """Fired when primitives.computer.desktop.act() completes.
+class ComputerActCompletedPayload(BaseModel):
+    """Fired when a visible computer session's act() completes (desktop or web-vm).
 
     Carries the instruction and the agent's summary of what was done so the CM
     can notify both the slow brain and fast brain during interactive

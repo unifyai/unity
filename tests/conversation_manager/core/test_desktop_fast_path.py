@@ -9,8 +9,8 @@ Verifies:
 - EventBus signal: DesktopPrimitiveInvoked is a registered event type.
 - Async lifecycle: desktop_act returns immediately, registers in in_flight_actions,
   publishes ActorHandleStarted, and silently interjects Actor sessions on completion.
-- Interjection targeting: _act_handles_with_desktop_usage tracks which act sessions
-  to interject, but does not gate tool exposure.
+- Interjection targeting: all in-flight act sessions receive silent interjections
+  from fast-path tools.
 """
 
 from __future__ import annotations
@@ -40,7 +40,6 @@ async def test_desktop_tools_absent_when_screen_share_inactive(initialized_cm):
 
     cm = initialized_cm.cm
     cm.assistant_screen_share_active = False
-    cm._act_handles_with_desktop_usage = set()
 
     action_tools = ConversationManagerBrainActionTools(cm)
     tools = action_tools.as_tools()
@@ -58,42 +57,15 @@ async def test_desktop_tools_present_when_screen_share_active_no_act(initialized
     in-flight act session that has used desktop primitives."""
     cm = initialized_cm.cm
     cm.assistant_screen_share_active = True
-    cm._act_handles_with_desktop_usage = set()
 
     assert cm.desktop_fast_path_eligible
-
-
-@pytest.mark.asyncio
-@_handle_project
-async def test_desktop_tools_present_when_screen_share_active_with_act(initialized_cm):
-    """Desktop fast path appears when screen share is active and an in-flight
-    act session has used desktop primitives (interjection targets exist)."""
-    cm = initialized_cm.cm
-    cm.assistant_screen_share_active = True
-
-    mock_handle = MagicMock()
-    mock_handle.done.return_value = False
-    cm.in_flight_actions[42] = {
-        "handle": mock_handle,
-        "query": "test",
-        "action_type": "act",
-        "handle_actions": [],
-    }
-    cm._act_handles_with_desktop_usage = {42}
-
-    assert cm.desktop_fast_path_eligible
-
-    # Clean up
-    cm.in_flight_actions.pop(42, None)
-    cm._act_handles_with_desktop_usage.clear()
 
 
 @pytest.mark.asyncio
 @_handle_project
 async def test_desktop_tools_remain_after_act_completion(initialized_cm):
     """Desktop fast path remains available after the act session completes,
-    as long as screen share is still active.  The _act_handles_with_desktop_usage
-    set is cleaned up (for interjection targeting) but tool exposure persists."""
+    as long as screen share is still active."""
     from unity.conversation_manager.domains.event_handlers import EventHandler
     from unity.conversation_manager.events import ActorResult
 
@@ -109,13 +81,11 @@ async def test_desktop_tools_remain_after_act_completion(initialized_cm):
         "action_type": "act",
         "handle_actions": [],
     }
-    cm._act_handles_with_desktop_usage = {99}
     assert cm.desktop_fast_path_eligible
 
     event = ActorResult(handle_id=99, success=True, result="done")
     await EventHandler.handle_event(event, cm)
 
-    assert 99 not in cm._act_handles_with_desktop_usage
     assert (
         cm.desktop_fast_path_eligible
     ), "Tools should remain available — screen share is still active"
@@ -139,13 +109,11 @@ async def test_desktop_tools_disappear_on_screen_share_stop(initialized_cm):
         "action_type": "act",
         "handle_actions": [],
     }
-    cm._act_handles_with_desktop_usage = {50}
     assert cm.desktop_fast_path_eligible
 
     event = AssistantScreenShareStopped(reason="user_stopped")
     await EventHandler.handle_event(event, cm)
 
-    assert len(cm._act_handles_with_desktop_usage) == 0
     assert not cm.desktop_fast_path_eligible
 
     # Clean up
@@ -199,7 +167,6 @@ async def test_desktop_act_returns_acting_and_interjects_on_completion(initializ
         "action_type": "act",
         "handle_actions": [],
     }
-    cm._act_handles_with_desktop_usage = {10}
 
     mock_cp = MagicMock()
     mock_cp.desktop = MagicMock()
@@ -232,7 +199,7 @@ async def test_desktop_act_returns_acting_and_interjects_on_completion(initializ
     # The request-time interjection should have already fired
     assert mock_actor_handle.interject.call_count == 1
     request_msg = mock_actor_handle.interject.call_args_list[0].args[0]
-    assert "being handled" in request_msg.lower()
+    assert "fast-path request" in request_msg.lower()
     assert "Click Submit" in request_msg
     assert "do not replicate" in request_msg.lower()
     assert (
@@ -250,7 +217,7 @@ async def test_desktop_act_returns_acting_and_interjects_on_completion(initializ
     # After completion, a second interjection should have fired with the result
     assert mock_actor_handle.interject.call_count == 2
     result_msg = mock_actor_handle.interject.call_args_list[1].args[0]
-    assert "already done" in result_msg.lower()
+    assert "fast-path result" in result_msg.lower()
     assert "Click Submit" in result_msg
     assert "Clicked Submit" in result_msg
     assert "no action needed" in result_msg.lower()
@@ -264,7 +231,85 @@ async def test_desktop_act_returns_acting_and_interjects_on_completion(initializ
     # Clean up
     cm.in_flight_actions.pop(10, None)
     cm.in_flight_actions.pop(desktop_hid, None)
-    cm._act_handles_with_desktop_usage.clear()
+
+
+@pytest.mark.asyncio
+@_handle_project
+async def test_fast_path_interjects_act_session_without_prior_desktop_usage(
+    initialized_cm,
+):
+    """Fast paths must interject ALL in-flight act sessions, not just those that
+    have already called desktop primitives.
+
+    Regression: _silent_interject_desktop_act_sessions previously iterated
+    only act sessions that had already called desktop primitives.  When the
+    CM did all the desktop work via fast paths (and the act session had only
+    done non-desktop work like loading guidance), the interjections had zero
+    recipients — leaving the act session deaf to all fast-path activity.
+    """
+    from unity.conversation_manager.domains.brain_action_tools import (
+        ConversationManagerBrainActionTools,
+    )
+
+    cm = initialized_cm.cm
+
+    # Register an in-flight act session that has NOT used desktop primitives.
+    # This mirrors the prod scenario: CodeActActor loaded guidance, then
+    # entered persist mode — never calling primitives.computer.*.
+    mock_actor_handle = MagicMock()
+    mock_actor_handle.done.return_value = False
+    mock_actor_handle.interject = AsyncMock()
+    cm.in_flight_actions[10] = {
+        "handle": mock_actor_handle,
+        "query": "Interactive desktop tutorial session",
+        "action_type": "act",
+        "handle_actions": [],
+    }
+    mock_cp = MagicMock()
+    mock_cp.desktop = MagicMock()
+    mock_cp.desktop.act = AsyncMock(
+        return_value=ActResult(summary="Clicked Submit", screenshot="base64png"),
+    )
+
+    action_tools = ConversationManagerBrainActionTools(cm)
+
+    with patch.object(
+        type(cm),
+        "computer_primitives",
+        new_callable=lambda: property(lambda self: mock_cp),
+    ):
+        result = await action_tools.desktop_act(instruction="Click Submit")
+
+    assert result["status"] == "acting"
+
+    # Wait for the background task to complete
+    desktop_actions = {
+        hid: data
+        for hid, data in cm.in_flight_actions.items()
+        if data.get("action_type") == "desktop_act"
+    }
+    desktop_hid = next(iter(desktop_actions))
+    await desktop_actions[desktop_hid]["handle"].result()
+
+    # The act session MUST have been interjected at least twice:
+    # once when the request started, once when it completed.
+    assert mock_actor_handle.interject.call_count >= 2, (
+        f"Expected at least 2 interjections to the in-flight act session, "
+        f"got {mock_actor_handle.interject.call_count}."
+    )
+
+    # Verify the interjection content
+    request_msg = mock_actor_handle.interject.call_args_list[0].args[0]
+    assert "fast-path request" in request_msg.lower()
+    assert "Click Submit" in request_msg
+
+    result_msg = mock_actor_handle.interject.call_args_list[1].args[0]
+    assert "fast-path result" in result_msg.lower()
+    assert "Clicked Submit" in result_msg
+
+    # Clean up
+    cm.in_flight_actions.pop(10, None)
+    cm.in_flight_actions.pop(desktop_hid, None)
 
 
 @pytest.mark.asyncio
@@ -277,7 +322,6 @@ async def test_desktop_act_without_act_session_no_interjection_errors(initialize
     )
 
     cm = initialized_cm.cm
-    cm._act_handles_with_desktop_usage = set()
 
     mock_cp = MagicMock()
     mock_cp.desktop = MagicMock()
@@ -312,38 +356,38 @@ async def test_desktop_act_without_act_session_no_interjection_errors(initialize
 
 
 # =============================================================================
-# DesktopActCompleted event chain
+# ComputerActCompleted event chain
 # =============================================================================
 
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_desktop_act_completed_event_type_registered(initialized_cm):
-    """DesktopActCompleted is a valid, constructable EventBus event type."""
+async def test_computer_act_completed_event_type_registered(initialized_cm):
+    """ComputerActCompleted is a valid, constructable EventBus event type."""
     from unity.events.event_bus import Event
     from unity.events.types import PAYLOAD_REGISTRY
 
     assert (
-        "DesktopActCompleted" in PAYLOAD_REGISTRY
-    ), "DesktopActCompleted must be registered in PAYLOAD_REGISTRY"
+        "ComputerActCompleted" in PAYLOAD_REGISTRY
+    ), "ComputerActCompleted must be registered in PAYLOAD_REGISTRY"
 
     event = Event(
-        type="DesktopActCompleted",
+        type="ComputerActCompleted",
         payload={
             "instruction": "Click Submit",
             "summary": "Clicked the Submit button",
         },
     )
-    assert event.type == "DesktopActCompleted"
+    assert event.type == "ComputerActCompleted"
     assert event.payload["instruction"] == "Click Submit"
 
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_desktop_act_completed_bridge_publishes_when_screen_share_active(
+async def test_computer_act_completed_bridge_publishes_when_screen_share_active(
     initialized_cm,
 ):
-    """The bridge callback should publish DesktopActCompleted to the event_broker
+    """The bridge callback should publish ComputerActCompleted to the event_broker
     when screen share is active.
 
     We simulate the EventBUS callback invocation directly (EventBUS publishing
@@ -372,23 +416,23 @@ async def test_desktop_act_completed_bridge_publishes_when_screen_share_active(
         }
 
         # Directly invoke the bridge callback logic
-        from unity.conversation_manager.events import DesktopActCompleted
+        from unity.conversation_manager.events import ComputerActCompleted
 
-        cm_event = DesktopActCompleted(
+        cm_event = ComputerActCompleted(
             instruction=fake_evt.payload["instruction"],
             summary=fake_evt.payload["summary"],
         )
         await cm.event_broker.publish(
-            "app:actor:desktop_act_completed",
+            "app:actor:computer_act_completed",
             cm_event.to_json(),
         )
 
-        desktop_events = [
-            (ch, d) for ch, d in published if ch == "app:actor:desktop_act_completed"
+        computer_events = [
+            (ch, d) for ch, d in published if ch == "app:actor:computer_act_completed"
         ]
-        assert len(desktop_events) == 1, (
-            f"Expected 1 desktop_act_completed event on event_broker, "
-            f"got {len(desktop_events)}"
+        assert len(computer_events) == 1, (
+            f"Expected 1 computer_act_completed event on event_broker, "
+            f"got {len(computer_events)}"
         )
     finally:
         cm.event_broker.publish = original_publish
@@ -397,7 +441,7 @@ async def test_desktop_act_completed_bridge_publishes_when_screen_share_active(
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_desktop_act_completed_bridge_skipped_when_screen_share_inactive(
+async def test_computer_act_completed_bridge_skipped_when_screen_share_inactive(
     initialized_cm,
 ):
     """The bridge callback should NOT publish when screen share is inactive.
@@ -422,23 +466,23 @@ async def test_desktop_act_completed_bridge_skipped_when_screen_share_inactive(
         # Simulate what the bridge callback does: check the gate
         # If screen share is inactive, it should NOT publish
         if cm.assistant_screen_share_active:
-            from unity.conversation_manager.events import DesktopActCompleted
+            from unity.conversation_manager.events import ComputerActCompleted
 
-            cm_event = DesktopActCompleted(
+            cm_event = ComputerActCompleted(
                 instruction="Click Submit",
                 summary="Clicked",
             )
             await cm.event_broker.publish(
-                "app:actor:desktop_act_completed",
+                "app:actor:computer_act_completed",
                 cm_event.to_json(),
             )
 
-        desktop_events = [
-            (ch, d) for ch, d in published if ch == "app:actor:desktop_act_completed"
+        computer_events = [
+            (ch, d) for ch, d in published if ch == "app:actor:computer_act_completed"
         ]
-        assert len(desktop_events) == 0, (
-            f"Expected 0 desktop_act_completed events when screen share is off, "
-            f"got {len(desktop_events)}"
+        assert len(computer_events) == 0, (
+            f"Expected 0 computer_act_completed events when screen share is off, "
+            f"got {len(computer_events)}"
         )
     finally:
         cm.event_broker.publish = original_publish
@@ -446,11 +490,11 @@ async def test_desktop_act_completed_bridge_skipped_when_screen_share_inactive(
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_desktop_act_completed_event_handler_wakes_slow_brain(initialized_cm):
-    """EventHandler for DesktopActCompleted should set _has_non_forwarded_event
+async def test_computer_act_completed_event_handler_wakes_slow_brain(initialized_cm):
+    """EventHandler for ComputerActCompleted should set _has_non_forwarded_event
     and request an LLM run."""
     from unity.conversation_manager.domains.event_handlers import EventHandler
-    from unity.conversation_manager.events import DesktopActCompleted
+    from unity.conversation_manager.events import ComputerActCompleted
 
     cm = initialized_cm.cm
     cm._has_non_forwarded_event = False
@@ -464,7 +508,7 @@ async def test_desktop_act_completed_event_handler_wakes_slow_brain(initialized_
     cm.request_llm_run = mock_request
 
     try:
-        event = DesktopActCompleted(
+        event = ComputerActCompleted(
             instruction="Click Submit",
             summary="Clicked the Submit button",
         )
@@ -476,19 +520,19 @@ async def test_desktop_act_completed_event_handler_wakes_slow_brain(initialized_
         cm.request_llm_run = original_request
 
 
-def test_render_event_for_fast_brain_desktop_act_completed():
-    """render_event_for_fast_brain should render DesktopActCompleted events."""
-    from unity.conversation_manager.events import DesktopActCompleted
+def test_render_event_for_fast_brain_computer_act_completed():
+    """render_event_for_fast_brain should render ComputerActCompleted events."""
+    from unity.conversation_manager.events import ComputerActCompleted
     from unity.conversation_manager.medium_scripts.common import (
         render_event_for_fast_brain,
     )
 
-    event = DesktopActCompleted(
+    event = ComputerActCompleted(
         instruction="Click Submit",
         summary="Clicked the Submit button",
     )
     result = render_event_for_fast_brain(event.to_json())
 
     assert result is not None
-    assert "Desktop action completed" in result
+    assert "Computer action completed" in result
     assert "Clicked the Submit button" in result

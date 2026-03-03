@@ -122,7 +122,7 @@ class ConversationManager(metaclass=SingletonABCMeta):
         self.project_name = project_name
 
         # inactivity & shutdown
-        self.inactivity_timeout = 540  # 9 minutes in seconds
+        self.inactivity_timeout = 900  # 15 minutes in seconds
         self.inactivity_check_interval = 30  # seconds
         self.last_activity_time = self.loop.time()
         self.stop = stop
@@ -176,10 +176,6 @@ class ConversationManager(metaclass=SingletonABCMeta):
         self.user_screen_share_active: bool = False
         self.user_webcam_active: bool = False
         self.user_remote_control_active: bool = False
-
-        # desktop fast-path gating: handle_ids of in-flight `act` sessions
-        # that have invoked at least one primitives.computer.desktop.* method.
-        self._act_handles_with_desktop_usage: set[int] = set()
 
         # screenshot buffer for slow brain visual context
         self._screenshot_buffer: list[ScreenshotEntry] = []
@@ -823,6 +819,22 @@ class ConversationManager(metaclass=SingletonABCMeta):
                         break
 
         self.snapshot()
+
+        web_sessions = None
+        if self.assistant_screen_share_active:
+            cp = self.computer_primitives
+            if cp is not None:
+                try:
+                    web_sessions = await cp.web.list_sessions_with_metadata(
+                        visible_only=True,
+                        active_only=True,
+                    )
+                except Exception:
+                    web_sessions = cp.web.list_sessions(
+                        visible_only=True,
+                        active_only=True,
+                    )
+
         snapshot_state = self.prompt_renderer.render_state(
             self.contact_index,
             self.notifications_bar,
@@ -833,6 +845,7 @@ class ConversationManager(metaclass=SingletonABCMeta):
             user_screen_share_active=self.user_screen_share_active,
             user_webcam_active=self.user_webcam_active,
             user_remote_control_active=self.user_remote_control_active,
+            active_web_sessions=web_sessions,
         )
         brain_spec = build_brain_spec(
             self,
@@ -875,16 +888,18 @@ class ConversationManager(metaclass=SingletonABCMeta):
             **action_tools.build_completed_action_tools(),
         }
 
-        # Strip guide_voice_agent when the fast brain already sees all
-        # events that triggered this turn (no guidance value to add).
         if "guide_voice_agent" in tools:
-            is_boss_on_call = (self.get_active_contact() or {}).get("contact_id") == 1
+            is_boss_on_call = (self.get_active_contact() or {}).get(
+                "contact_id",
+            ) == 1
             if is_boss_on_call or not self._has_non_forwarded_event:
                 tools.pop("guide_voice_agent")
         self._has_non_forwarded_event = False
 
         if self.desktop_fast_path_eligible:
             tools["desktop_act"] = action_tools.desktop_act
+            tools["web_act"] = action_tools.web_act
+            tools["close_web_session"] = action_tools.close_web_session
 
         # Single-shot LLM call: one decision, one action
         client = new_llm_client(
@@ -921,6 +936,7 @@ class ConversationManager(metaclass=SingletonABCMeta):
                 tools,
                 tool_choice="required" if tools else "auto",
                 response_format=response_model,
+                exclusive_tools={"make_call"},
             )
         finally:
             if hasattr(client, "_pending_thinking_log"):
@@ -970,7 +986,7 @@ class ConversationManager(metaclass=SingletonABCMeta):
                 )
                 self._session_logger.info(
                     "call_notification",
-                    f"Publishing notification run_id={run_id} speak={should_speak}",
+                    f"Guide FastBrain (speak={should_speak}): {notification_content}",
                 )
                 event_json = event.to_json()
                 await self.event_broker.publish(
@@ -1235,7 +1251,7 @@ class ConversationManager(metaclass=SingletonABCMeta):
                 "session_end",
                 f"Marking job {self.job_name} done",
             )
-            assistant_jobs.mark_job_done(self.job_name)
+            assistant_jobs.mark_job_done(self.job_name, self.inactivity_timeout)
         self.stop.set()
 
     async def _stop_file_sync(self) -> None:

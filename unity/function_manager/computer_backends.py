@@ -93,7 +93,439 @@ class ComputerAgentError(Exception):
         super().__init__(f"[{error_type}] {message}")
 
 
-class ComputerBackend(ABC):
+class _LowLevelActionsMixin:
+    """Mixin providing low-level browser action convenience methods.
+
+    Each method builds a single-action payload and delegates to
+    ``execute_actions``, which must be provided by the concrete class.
+    """
+
+    async def click(self, x: int, y: int) -> dict:
+        """
+        Click at exact pixel coordinates on the current page.
+
+        Performs a single left-click at the specified (x, y) viewport
+        coordinates.  This is a **direct, low-level action** -- it bypasses
+        the LLM planning layer entirely and executes immediately via
+        Playwright.
+
+        Guidance
+        --------
+        Use this when you already know the precise coordinates of the
+        element you want to click.  Determine coordinates beforehand by
+        calling ``get_screenshot()`` and visually inspecting the image, or
+        by using ``observe()`` to extract element positions.
+
+        Prefer ``act()`` when the target is best described in natural
+        language (e.g. "click the Submit button") and you don't know the
+        coordinates.
+
+        Parameters
+        ----------
+        x : int
+            Horizontal pixel coordinate (from the left edge of the viewport).
+        y : int
+            Vertical pixel coordinate (from the top edge of the viewport).
+
+        Returns
+        -------
+        dict
+            Execution result with ``status`` and ``screenshot`` (base64 PNG
+            of the page after the click).
+        """
+        return await self.execute_actions([{"variant": "mouse:click", "x": x, "y": y}])
+
+    async def double_click(self, x: int, y: int) -> dict:
+        """
+        Double-click at exact pixel coordinates on the current page.
+
+        Performs a double left-click at the specified (x, y) viewport
+        coordinates.  Useful for selecting words in text fields, opening
+        files in file-manager UIs, or any interaction that requires a
+        double-click.
+
+        Parameters
+        ----------
+        x : int
+            Horizontal pixel coordinate (from the left edge of the viewport).
+        y : int
+            Vertical pixel coordinate (from the top edge of the viewport).
+
+        Returns
+        -------
+        dict
+            Execution result with ``status`` and ``screenshot``.
+        """
+        return await self.execute_actions(
+            [{"variant": "mouse:double_click", "x": x, "y": y}],
+        )
+
+    async def right_click(self, x: int, y: int) -> dict:
+        """
+        Right-click at exact pixel coordinates to open a context menu.
+
+        Performs a single right-click at the specified (x, y) viewport
+        coordinates, which typically opens a context menu.
+
+        Parameters
+        ----------
+        x : int
+            Horizontal pixel coordinate (from the left edge of the viewport).
+        y : int
+            Vertical pixel coordinate (from the top edge of the viewport).
+
+        Returns
+        -------
+        dict
+            Execution result with ``status`` and ``screenshot``.
+        """
+        return await self.execute_actions(
+            [{"variant": "mouse:right_click", "x": x, "y": y}],
+        )
+
+    async def drag(self, from_x: int, from_y: int, to_x: int, to_y: int) -> dict:
+        """
+        Click and drag from one point to another.
+
+        Presses the mouse button at (from_x, from_y), moves to
+        (to_x, to_y), then releases.  Useful for drag-and-drop
+        interactions, slider adjustments, drawing, and resizing elements.
+
+        Parameters
+        ----------
+        from_x : int
+            Starting horizontal pixel coordinate.
+        from_y : int
+            Starting vertical pixel coordinate.
+        to_x : int
+            Ending horizontal pixel coordinate.
+        to_y : int
+            Ending vertical pixel coordinate.
+
+        Returns
+        -------
+        dict
+            Execution result with ``status`` and ``screenshot``.
+        """
+        return await self.execute_actions(
+            [
+                {
+                    "variant": "mouse:drag",
+                    "from": {"x": from_x, "y": from_y},
+                    "to": {"x": to_x, "y": to_y},
+                },
+            ],
+        )
+
+    async def scroll(
+        self,
+        x: int,
+        y: int,
+        delta_x: int = 0,
+        delta_y: int = -500,
+    ) -> dict:
+        """
+        Scroll the page at a specific position.
+
+        Moves the mouse to (x, y) and then scrolls by the specified pixel
+        deltas.  Positive ``delta_y`` scrolls **down**, negative scrolls
+        **up**.  Positive ``delta_x`` scrolls right, negative scrolls left.
+
+        Guidance
+        --------
+        Position the mouse over the scrollable element before scrolling.
+        For example, to scroll a sidebar, place (x, y) inside the sidebar
+        area.  A typical scroll increment is 300-500 pixels.
+
+        Parameters
+        ----------
+        x : int
+            Horizontal pixel coordinate to hover over before scrolling.
+        y : int
+            Vertical pixel coordinate to hover over before scrolling.
+        delta_x : int, default 0
+            Pixels to scroll horizontally (positive = right).
+        delta_y : int, default -500
+            Pixels to scroll vertically (positive = down, negative = up).
+
+        Returns
+        -------
+        dict
+            Execution result with ``status`` and ``screenshot``.
+        """
+        return await self.execute_actions(
+            [
+                {
+                    "variant": "mouse:scroll",
+                    "x": x,
+                    "y": y,
+                    "deltaX": delta_x,
+                    "deltaY": delta_y,
+                },
+            ],
+        )
+
+    async def type_text(self, content: str) -> dict:
+        """
+        Type text into the currently focused element.
+
+        Sends keyboard input character-by-character into whichever element
+        currently has focus.  This does **not** click before typing --
+        make sure you ``click()`` the target input field first.
+
+        Guidance
+        --------
+        Always click the target text field before calling ``type_text()``.
+        For example::
+
+            await session.click(300, 200)   # focus the input field
+            await session.type_text("hello world")
+
+        To clear existing text before typing, call ``select_all()`` then
+        ``type_text()`` with the new value.
+
+        Parameters
+        ----------
+        content : str
+            The text to type.  May include literal characters only --
+            use ``press_enter()``, ``press_tab()``, or ``press_backspace()``
+            for special keys.
+
+        Returns
+        -------
+        dict
+            Execution result with ``status`` and ``screenshot``.
+        """
+        return await self.execute_actions(
+            [{"variant": "keyboard:type", "content": content}],
+        )
+
+    async def press_enter(self) -> dict:
+        """
+        Press the Enter key.
+
+        Sends a single Enter/Return keypress to the currently focused
+        element.  Commonly used to submit forms, confirm dialogs, or
+        trigger search after typing a query.
+
+        Returns
+        -------
+        dict
+            Execution result with ``status`` and ``screenshot``.
+        """
+        return await self.execute_actions([{"variant": "keyboard:enter"}])
+
+    async def press_tab(self) -> dict:
+        """
+        Press the Tab key.
+
+        Sends a single Tab keypress, which typically moves focus to the
+        next form field or interactive element on the page.
+
+        Returns
+        -------
+        dict
+            Execution result with ``status`` and ``screenshot``.
+        """
+        return await self.execute_actions([{"variant": "keyboard:tab"}])
+
+    async def press_backspace(self) -> dict:
+        """
+        Press the Backspace key.
+
+        Deletes the character before the cursor in the currently focused
+        text field.  Call multiple times or combine with ``select_all()``
+        to delete larger amounts of text.
+
+        Returns
+        -------
+        dict
+            Execution result with ``status`` and ``screenshot``.
+        """
+        return await self.execute_actions([{"variant": "keyboard:backspace"}])
+
+    async def select_all(self) -> dict:
+        """
+        Select all content in the active text area (Ctrl+A).
+
+        Sends a Ctrl+A (or Cmd+A on macOS) keypress to select all text
+        in the currently focused element.  Useful before ``type_text()``
+        to replace existing content, or before ``press_backspace()`` to
+        clear a field.
+
+        Returns
+        -------
+        dict
+            Execution result with ``status`` and ``screenshot``.
+        """
+        return await self.execute_actions([{"variant": "keyboard:select_all"}])
+
+    async def switch_tab(self, index: int) -> dict:
+        """
+        Switch to a browser tab by its index.
+
+        Activates the tab at the given zero-based index.  Use
+        ``get_current_url()`` or ``observe()`` to discover which tabs
+        are open and their indices.
+
+        Parameters
+        ----------
+        index : int
+            Zero-based index of the tab to switch to.
+
+        Returns
+        -------
+        dict
+            Execution result with ``status`` and ``screenshot``.
+        """
+        return await self.execute_actions(
+            [{"variant": "browser:tab:switch", "index": index}],
+        )
+
+    async def close_tab(self, index: int) -> dict:
+        """
+        Close a browser tab by its index.
+
+        Closes the tab at the given zero-based index.  If the active tab
+        is closed, the browser will automatically switch to an adjacent
+        tab.
+
+        Parameters
+        ----------
+        index : int
+            Zero-based index of the tab to close.
+
+        Returns
+        -------
+        dict
+            Execution result with ``status`` and ``screenshot``.
+        """
+        return await self.execute_actions(
+            [{"variant": "browser:tab:close", "index": index}],
+        )
+
+    async def new_tab(self) -> dict:
+        """
+        Open a new empty browser tab and switch to it.
+
+        Creates a new blank tab and makes it the active tab.  Follow up
+        with ``navigate()`` to load a URL in the new tab.
+
+        Returns
+        -------
+        dict
+            Execution result with ``status`` and ``screenshot``.
+        """
+        return await self.execute_actions([{"variant": "browser:tab:new"}])
+
+    async def go_back(self) -> dict:
+        """
+        Navigate back in the browser history.
+
+        Equivalent to pressing the browser's back button.  Navigates to
+        the previous page in the current tab's history stack.
+
+        Returns
+        -------
+        dict
+            Execution result with ``status`` and ``screenshot``.
+        """
+        return await self.execute_actions([{"variant": "browser:nav:back"}])
+
+    async def wait_for(self, seconds: float) -> dict:
+        """
+        Wait for a specified number of seconds.
+
+        Pauses execution for the given duration.  Most actions include
+        smart waiting automatically, so only use this when a significant
+        additional wait is clearly required (e.g. waiting for an animation
+        to complete or a delayed network response).
+
+        Parameters
+        ----------
+        seconds : float
+            Number of seconds to wait.
+
+        Returns
+        -------
+        dict
+            Execution result with ``status`` and ``screenshot``.
+        """
+        return await self.execute_actions([{"variant": "wait", "seconds": seconds}])
+
+    async def save_browser_state(self, name: str) -> dict:
+        """
+        Save the current browser state to a named file.
+
+        Persists cookies, localStorage, and sessionStorage to disk so
+        they can be restored in future sessions.  Useful for preserving
+        authentication state across session restarts.
+
+        This is a single, instant operation with no visual changes to the
+        page.  Do not call it multiple times or wait for page changes.
+
+        Parameters
+        ----------
+        name : str
+            Name for the state file (e.g. ``'my_app_auth'``).  Used as
+            the filename when saving to disk.
+
+        Returns
+        -------
+        dict
+            Execution result with ``status`` and ``screenshot``.
+        """
+        return await self.execute_actions(
+            [{"variant": "browser:state:save", "name": name}],
+        )
+
+    async def execute_actions(self, actions: list[dict]) -> dict:
+        """
+        Execute one or more low-level browser actions directly.
+
+        Bypasses the LLM planning layer entirely -- actions are executed
+        immediately via the browser automation engine (Playwright) with
+        zero LLM calls.  This is the fastest path for performing known
+        UI interactions.
+
+        Each action is a dict with a ``variant`` key specifying the action
+        type, plus variant-specific parameters.  Multiple actions in a
+        single call are executed sequentially.
+
+        Supported variants and their parameters:
+
+        - ``{"variant": "mouse:click", "x": int, "y": int}``
+        - ``{"variant": "mouse:double_click", "x": int, "y": int}``
+        - ``{"variant": "mouse:right_click", "x": int, "y": int}``
+        - ``{"variant": "mouse:drag", "from": {"x": int, "y": int}, "to": {"x": int, "y": int}}``
+        - ``{"variant": "mouse:scroll", "x": int, "y": int, "deltaX": int, "deltaY": int}``
+        - ``{"variant": "keyboard:type", "content": str}``
+        - ``{"variant": "keyboard:enter"}``
+        - ``{"variant": "keyboard:tab"}``
+        - ``{"variant": "keyboard:backspace"}``
+        - ``{"variant": "keyboard:select_all"}``
+        - ``{"variant": "browser:tab:switch", "index": int}``
+        - ``{"variant": "browser:tab:close", "index": int}``
+        - ``{"variant": "browser:tab:new"}``
+        - ``{"variant": "browser:nav:back"}``
+        - ``{"variant": "wait", "seconds": float}``
+        - ``{"variant": "browser:state:save", "name": str}``
+
+        Parameters
+        ----------
+        actions : list[dict]
+            List of action dicts to execute in sequence.
+
+        Returns
+        -------
+        dict
+            Result dict with ``status`` and ``screenshot`` (base64 PNG
+            of the page after all actions have been executed).
+        """
+        raise NotImplementedError
+
+
+class ComputerBackend(_LowLevelActionsMixin, ABC):
     """
     Abstract Base Class defining the interface for any computer use backend.
 
@@ -104,7 +536,7 @@ class ComputerBackend(ABC):
     """
 
     @abstractmethod
-    async def act(self, instruction: str) -> "ActResult":
+    async def act(self, instruction: str, verify: bool = False) -> "ActResult":
         """
         Perform an autonomous action on the current page or screen.
 
@@ -132,11 +564,36 @@ class ComputerBackend(ABC):
         - "Move the mouse to coordinate 250, 400, then click."
           (Avoid pixel-level commands — let the agent handle element targeting.)
 
+        When to use verify
+        ------------------
+        **Default to verify=False.** Single-pass execution is ~2x faster and
+        is correct for the vast majority of tasks: clicking a button, typing
+        into a field, opening an application, navigating to a page, filling
+        a short form, etc.
+
+        **Use verify=True only** for complex, multi-step tasks where a single
+        planning pass is unlikely to achieve the full goal in one shot —
+        e.g. completing a long multi-page wizard, filling an extensive form
+        across multiple sections, or a task with conditional branches the
+        agent cannot predict ahead of time.
+
+        **During live demos / interactive sessions** where the user is
+        watching in real time, strongly prefer verify=False. The latency
+        cost of verification (extra screenshot + LLM round-trip per
+        iteration) is directly felt by the user. Only use verify=True
+        interactively when the task is genuinely complex enough that
+        retrying from scratch would be worse than the verification overhead.
+
         Parameters
         ----------
         instruction : str
             High-level, natural language description of the desired outcome.
             The agent autonomously determines the steps needed.
+        verify : bool, optional
+            When True, the agent re-observes the screen after executing its
+            planned actions and re-plans in a loop until it confirms the task
+            is complete (up to an internal iteration cap). Defaults to False
+            (single-pass execution). See the guidance above for when to enable.
 
         Returns
         -------
@@ -389,6 +846,10 @@ class ComputerBackend(ABC):
         """
 
     @abstractmethod
+    async def execute_actions(self, actions: list[dict]) -> dict:
+        """Execute low-level actions directly (see _LowLevelActionsMixin)."""
+
+    @abstractmethod
     def stop(self):
         """Cleanly shut down the backend."""
 
@@ -464,6 +925,8 @@ class MockComputerBackend(ComputerBackend):
         # Sequence tracking (for barrier compatibility)
         self._seq = 0
 
+        self._on_session_closed = None
+
     @property
     def backend(self) -> "MockComputerBackend":
         """
@@ -478,6 +941,7 @@ class MockComputerBackend(ComputerBackend):
     async def act(
         self,
         instruction: str,
+        verify: bool = False,
         wait: bool = True,
         context: dict = None,
         override_cache: bool = False,
@@ -489,12 +953,13 @@ class MockComputerBackend(ComputerBackend):
 
         Notes:
         - The mock completes instantly; `wait` is accepted for signature compatibility.
-        - We ignore `context`/`override_cache` but accept them to match MagnitudeBackend.
+        - We ignore `context`/`override_cache`/`verify` but accept them to match MagnitudeBackend.
         - For `wait=False`, we mimic MagnitudeBackend semantics by returning "Command queued."
         """
 
         _ = context
         _ = override_cache
+        _ = verify
         _ = _clarification_up_q
         _ = _clarification_down_q
         _ = _kwargs
@@ -646,25 +1111,38 @@ class MockComputerBackend(ComputerBackend):
         In the mock, there are no queued commands.
         """
 
+    async def execute_actions(self, actions: list[dict]) -> dict:
+        """No-op execute_actions for mock backend."""
+        self._seq += 1
+        return {"status": "ok", "screenshot": self._screenshot}
+
     async def get_session(self, mode: str) -> "ComputerSession":
         """Return a mock session for the given mode."""
         return _MockSession(mode, self)
 
-    async def create_session(self, mode: str) -> "ComputerSession":
+    async def create_session(
+        self,
+        mode: str,
+        label: str | None = None,
+    ) -> "ComputerSession":
         """Return a new mock session for the given mode."""
         if mode == "desktop":
             raise RuntimeError("Desktop mode is singleton")
         return _MockSession(mode, self)
 
 
-class _MockSession:
+class _MockSession(_LowLevelActionsMixin):
     """Lightweight mock that satisfies the ``ComputerSession`` interface."""
 
+    _mock_id_counter = 0
+
     def __init__(self, mode: str, backend: MockComputerBackend):
+        _MockSession._mock_id_counter += 1
+        self._session_id = f"mock-{_MockSession._mock_id_counter}"
         self._mode = mode
         self._backend = backend
 
-    async def act(self, instruction: str) -> ActResult:
+    async def act(self, instruction: str, verify: bool = False) -> ActResult:
         return self._backend._act_response
 
     async def observe(self, query: str, response_format: Any = str) -> Any:
@@ -714,6 +1192,9 @@ class _MockSession:
             "total": 0,
         }
 
+    async def execute_actions(self, actions: list[dict]) -> dict:
+        return {"status": "ok", "screenshot": self._backend._screenshot}
+
     async def stop(self) -> None:
         pass
 
@@ -721,7 +1202,7 @@ class _MockSession:
         pass
 
 
-class ComputerSession:
+class ComputerSession(_LowLevelActionsMixin):
     """Handle for a single agent-service session (any mode).
 
     Each instance wraps its own ``sessionId`` and ``agent_base_url``, making
@@ -738,6 +1219,7 @@ class ComputerSession:
         self._mode = mode
         self._agent_base_url = agent_base_url
         self._ssl = ssl
+        self._last_cursor_position: tuple[int, int] | None = None
 
     async def _request(
         self,
@@ -835,16 +1317,20 @@ class ComputerSession:
                 return {}
         return result
 
-    async def act(self, instruction: str) -> ActResult:
+    async def act(self, instruction: str, verify: bool = False) -> ActResult:
         """Perform an autonomous action on the current page or screen."""
         lineage = _get_current_lineage()
-        response = await self._request(
-            "POST",
-            "/act",
-            {"task": instruction, "lineage": lineage},
-        )
+        payload: dict = {"task": instruction, "lineage": lineage}
+        if verify:
+            payload["verify"] = True
+        response = await self._request("POST", "/act", payload)
+        summary = response.get("summary", "")
+        if not verify:
+            import json as _json
+
+            summary = _json.dumps({"thoughts": summary, "outcome": "completed"})
         return ActResult(
-            summary=response.get("summary", ""),
+            summary=summary,
             screenshot=response.get("screenshot", ""),
         )
 
@@ -903,6 +1389,9 @@ class ComputerSession:
     async def get_screenshot(self) -> str:
         """Capture a screenshot (base64-encoded PNG)."""
         response = await self._request("POST", "/screenshot", {})
+        cursor = response.get("cursorPosition")
+        if cursor and isinstance(cursor, dict):
+            self._last_cursor_position = (int(cursor["x"]), int(cursor["y"]))
         return response.get("screenshot", "")
 
     async def get_current_url(self) -> str:
@@ -928,6 +1417,10 @@ class ComputerSession:
         if selector:
             payload["selector"] = selector
         return await self._request("POST", "/links", payload)
+
+    async def execute_actions(self, actions: list[dict]) -> dict:
+        """Execute low-level actions directly via the agent-service."""
+        return await self._request("POST", "/execute-actions", {"actions": actions})
 
     async def stop(self) -> None:
         """Stop this session on the agent-service."""
@@ -1015,6 +1508,8 @@ class MagnitudeBackend(ComputerBackend):
         # The primary base URL for websocket log streaming
         self.agent_base_url = container_url or local_url or "http://localhost:3000"
 
+        self._on_session_closed = None
+
         logger.info(
             f"🔗 MagnitudeBackend initialized (container={self._container_url}, local={self._local_url})",
         )
@@ -1034,13 +1529,19 @@ class MagnitudeBackend(ComputerBackend):
             return self._local_url
         raise ValueError(f"Unknown mode: {mode!r}")
 
-    async def _create_session_async(self, mode: str) -> ComputerSession:
+    async def _create_session_async(
+        self,
+        mode: str,
+        label: str | None = None,
+    ) -> ComputerSession:
         """Create a session asynchronously."""
         import time as _cs_time
 
         _cs_t0 = _cs_time.perf_counter()
         url = self._url_for_mode(mode)
         params = dict(self._MODE_START_PARAMS[mode])
+        if label is not None:
+            params["label"] = label
         auth_key = SESSION_DETAILS.unify_key
         headers = {"authorization": f"Bearer {auth_key}"}
         use_ssl = self._vm_ssl if mode in ("desktop", "web-vm") else None
@@ -1089,7 +1590,11 @@ class MagnitudeBackend(ComputerBackend):
         """Remove a cached session so the next get_session re-creates it."""
         self._sessions.pop(mode, None)
 
-    async def create_session(self, mode: str) -> ComputerSession:
+    async def create_session(
+        self,
+        mode: str,
+        label: str | None = None,
+    ) -> ComputerSession:
         """Spawn an additional parallel session (web/web-vm only).
 
         Desktop mode is singleton (one mouse, one keyboard) and cannot be
@@ -1099,7 +1604,7 @@ class MagnitudeBackend(ComputerBackend):
             raise RuntimeError(
                 "Desktop mode is singleton -- cannot create additional sessions",
             )
-        session = await self._create_session_async(mode)
+        session = await self._create_session_async(mode, label=label)
         self._extra_sessions.append(session)
         return session
 
@@ -1214,6 +1719,22 @@ class MagnitudeBackend(ComputerBackend):
                         )
                     self._network_log_queue.task_done()
                     continue
+
+                if log_line.startswith('{"__type":'):
+                    try:
+                        event = json.loads(log_line)
+                        if event.get("__type") == "session:closed":
+                            sid = event.get("sessionId", "")
+                            reason = event.get("reason", "unknown")
+                            _UNITY_LOGGER.info(
+                                f"[SessionClosed] id={sid} reason={reason}",
+                            )
+                            if self._on_session_closed:
+                                self._on_session_closed(sid)
+                            self._network_log_queue.task_done()
+                            continue
+                    except (json.JSONDecodeError, KeyError):
+                        pass
 
                 if self._current_capture_queue is not None:
                     self._current_capture_queue.put_nowait(log_line)
@@ -1364,9 +1885,9 @@ class MagnitudeBackend(ComputerBackend):
             "No sessions created yet. Use get_session(mode) to create one.",
         )
 
-    async def act(self, instruction: str, **kwargs) -> ActResult:
+    async def act(self, instruction: str, verify: bool = False, **kwargs) -> ActResult:
         s = await self._default_session()
-        return await s.act(instruction)
+        return await s.act(instruction, verify=verify)
 
     async def observe(self, query: str, response_format: Any = str, **kwargs) -> Any:
         s = await self._default_session()
@@ -1400,6 +1921,10 @@ class MagnitudeBackend(ComputerBackend):
     async def get_content(self, format: str = "markdown", **kwargs) -> dict:
         s = await self._default_session()
         return await s.get_content(format)
+
+    async def execute_actions(self, actions: list[dict]) -> dict:
+        s = await self._default_session()
+        return await s.execute_actions(actions)
 
     async def interrupt_current_action(self):
         try:

@@ -98,6 +98,7 @@ async def single_shot_tool_decision(
     tool_choice: str = "auto",
     include_class_name: bool = False,
     response_format: Type[BaseModel] | None = None,
+    exclusive_tools: set[str] | None = None,
 ) -> SingleShotResult:
     """Make a single LLM call, execute all selected tools, return the results.
 
@@ -134,6 +135,10 @@ async def single_shot_tool_decision(
         response content will be parsed into this model and returned in
         `structured_output`. This can be combined with tools - the model can
         return structured JSON AND call tools in the same turn.
+    exclusive_tools : set[str] | None, default None
+        Tool names that must appear at most once per LLM turn. If the LLM calls
+        an exclusive tool more than once, ALL instances are rejected without
+        execution and replaced with error results.
 
     Returns
     -------
@@ -364,12 +369,45 @@ async def single_shot_tool_decision(
         expanded_calls.extend(_unwrap_json_tool_call(c))
 
     _tool_names = [(c.get("function") or {}).get("name", "?") for c in expanded_calls]
+
+    # Reject exclusive tools that appear more than once.
+    violated_tools: set[str] = set()
+    if exclusive_tools:
+        from collections import Counter
+
+        counts = Counter(_tool_names)
+        violated_tools = {name for name in exclusive_tools if counts.get(name, 0) > 1}
+
     _ss_logger.debug(
         f"⏱️ [single_shot +{_ss_ms()}] executing {len(expanded_calls)} tools: {_tool_names}",
     )
-    tool_executions = await asyncio.gather(
-        *[execute_tool_call(call) for call in expanded_calls],
-    )
+
+    if violated_tools:
+        error_msg = (
+            f"Rejected: multiple calls to exclusive tool(s) "
+            f"{violated_tools} in a single turn. None were executed."
+        )
+        _ss_logger.warning(f"⏱️ [single_shot] {error_msg}")
+
+        async def _execute_or_reject(call: dict) -> ToolExecution:
+            fn_info = call.get("function", {})
+            fn_name = fn_info.get("name")
+            fn_args = _parse_json_args(fn_info.get("arguments", "{}"))
+            if fn_name in violated_tools:
+                return ToolExecution(
+                    name=fn_name,
+                    args=fn_args,
+                    result={"error": error_msg},
+                )
+            return await execute_tool_call(call)
+
+        tool_executions = await asyncio.gather(
+            *[_execute_or_reject(call) for call in expanded_calls],
+        )
+    else:
+        tool_executions = await asyncio.gather(
+            *[execute_tool_call(call) for call in expanded_calls],
+        )
     _ss_logger.debug(f"⏱️ [single_shot +{_ss_ms()}] all tools completed")
 
     return SingleShotResult(

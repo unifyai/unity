@@ -119,7 +119,7 @@ def filter(
                 enabled=getattr(knowledge_manager, "_group_results", False),
             )
 
-    return results
+    return dict(sorted(results.items()))
 
 
 def search(
