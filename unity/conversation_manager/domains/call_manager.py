@@ -129,9 +129,11 @@ class LivekitCallManager:
             self._worker_watchdog_task = asyncio.create_task(self._worker_watchdog())
 
     async def _worker_watchdog(self) -> None:
-        """Restart the persistent worker if it exits unexpectedly."""
+        """Restart the persistent worker if it exits unexpectedly,
+        and emit an INFO log when the warm pool is ready."""
+        ready_logged = False
         while True:
-            await asyncio.sleep(10)
+            await asyncio.sleep(2)
             if self._worker_proc is None:
                 continue
             if self._worker_proc.poll() is not None:
@@ -140,7 +142,18 @@ class LivekitCallManager:
                     f"(code={self._worker_proc.returncode}), restarting…",
                 )
                 self._worker_proc = None
+                ready_logged = False
                 self.start_persistent_worker()
+            elif not ready_logged:
+                from unity.conversation_manager.medium_scripts.worker import (
+                    WORKER_READY_PATH,
+                )
+
+                if os.path.exists(WORKER_READY_PATH):
+                    LOGGER.info(
+                        "🎙️ [LivekitCallManager] Voice agent warm pool ready",
+                    )
+                    ready_logged = True
 
     async def _dispatch_job(
         self,
