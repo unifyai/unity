@@ -98,15 +98,15 @@ def _publish_desktop_invoked(method_name: str) -> None:
         pass
 
 
-def _publish_desktop_act_completed(instruction: str, result: "ActResult") -> None:
-    """Fire-and-forget EventBus publish when desktop.act() completes."""
+def _publish_computer_act_completed(instruction: str, result: "ActResult") -> None:
+    """Fire-and-forget EventBus publish when a visible session's act() completes."""
     try:
         from unity.events.event_bus import EVENT_BUS, Event
 
         asyncio.get_running_loop().create_task(
             EVENT_BUS.publish(
                 Event(
-                    type="DesktopActCompleted",
+                    type="ComputerActCompleted",
                     payload={
                         "instruction": instruction,
                         "summary": result.summary,
@@ -241,8 +241,9 @@ def _make_session_method(
         )
         if is_desktop:
             _publish_desktop_invoked(method_name)
-            if method_name == "act":
-                _publish_desktop_act_completed(args[0] if args else "", result)
+        is_visible = getattr(session, "_mode", "") in ("desktop", "web-vm")
+        if is_visible and method_name == "act":
+            _publish_computer_act_completed(args[0] if args else "", result)
         return result
 
     wrapper.__name__ = method_name

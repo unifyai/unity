@@ -1578,7 +1578,13 @@ class ConversationManagerBrainActionTools:
             "initial_snapshot_state": getattr(cm, "_current_snapshot_state", None),
             "context_opted_in": False,
         }
-        asyncio.create_task(managers_utils.actor_watch_result(handle_id, handle))
+        asyncio.create_task(
+            managers_utils.actor_watch_result(
+                handle_id,
+                handle,
+                action_type=action_type,
+            ),
+        )
 
         await self._event_broker.publish(
             f"app:actor:actor_started_handle_{handle_id}",

@@ -356,38 +356,38 @@ async def test_desktop_act_without_act_session_no_interjection_errors(initialize
 
 
 # =============================================================================
-# DesktopActCompleted event chain
+# ComputerActCompleted event chain
 # =============================================================================
 
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_desktop_act_completed_event_type_registered(initialized_cm):
-    """DesktopActCompleted is a valid, constructable EventBus event type."""
+async def test_computer_act_completed_event_type_registered(initialized_cm):
+    """ComputerActCompleted is a valid, constructable EventBus event type."""
     from unity.events.event_bus import Event
     from unity.events.types import PAYLOAD_REGISTRY
 
     assert (
-        "DesktopActCompleted" in PAYLOAD_REGISTRY
-    ), "DesktopActCompleted must be registered in PAYLOAD_REGISTRY"
+        "ComputerActCompleted" in PAYLOAD_REGISTRY
+    ), "ComputerActCompleted must be registered in PAYLOAD_REGISTRY"
 
     event = Event(
-        type="DesktopActCompleted",
+        type="ComputerActCompleted",
         payload={
             "instruction": "Click Submit",
             "summary": "Clicked the Submit button",
         },
     )
-    assert event.type == "DesktopActCompleted"
+    assert event.type == "ComputerActCompleted"
     assert event.payload["instruction"] == "Click Submit"
 
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_desktop_act_completed_bridge_publishes_when_screen_share_active(
+async def test_computer_act_completed_bridge_publishes_when_screen_share_active(
     initialized_cm,
 ):
-    """The bridge callback should publish DesktopActCompleted to the event_broker
+    """The bridge callback should publish ComputerActCompleted to the event_broker
     when screen share is active.
 
     We simulate the EventBUS callback invocation directly (EventBUS publishing
@@ -416,23 +416,23 @@ async def test_desktop_act_completed_bridge_publishes_when_screen_share_active(
         }
 
         # Directly invoke the bridge callback logic
-        from unity.conversation_manager.events import DesktopActCompleted
+        from unity.conversation_manager.events import ComputerActCompleted
 
-        cm_event = DesktopActCompleted(
+        cm_event = ComputerActCompleted(
             instruction=fake_evt.payload["instruction"],
             summary=fake_evt.payload["summary"],
         )
         await cm.event_broker.publish(
-            "app:actor:desktop_act_completed",
+            "app:actor:computer_act_completed",
             cm_event.to_json(),
         )
 
-        desktop_events = [
-            (ch, d) for ch, d in published if ch == "app:actor:desktop_act_completed"
+        computer_events = [
+            (ch, d) for ch, d in published if ch == "app:actor:computer_act_completed"
         ]
-        assert len(desktop_events) == 1, (
-            f"Expected 1 desktop_act_completed event on event_broker, "
-            f"got {len(desktop_events)}"
+        assert len(computer_events) == 1, (
+            f"Expected 1 computer_act_completed event on event_broker, "
+            f"got {len(computer_events)}"
         )
     finally:
         cm.event_broker.publish = original_publish
@@ -441,7 +441,7 @@ async def test_desktop_act_completed_bridge_publishes_when_screen_share_active(
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_desktop_act_completed_bridge_skipped_when_screen_share_inactive(
+async def test_computer_act_completed_bridge_skipped_when_screen_share_inactive(
     initialized_cm,
 ):
     """The bridge callback should NOT publish when screen share is inactive.
@@ -466,23 +466,23 @@ async def test_desktop_act_completed_bridge_skipped_when_screen_share_inactive(
         # Simulate what the bridge callback does: check the gate
         # If screen share is inactive, it should NOT publish
         if cm.assistant_screen_share_active:
-            from unity.conversation_manager.events import DesktopActCompleted
+            from unity.conversation_manager.events import ComputerActCompleted
 
-            cm_event = DesktopActCompleted(
+            cm_event = ComputerActCompleted(
                 instruction="Click Submit",
                 summary="Clicked",
             )
             await cm.event_broker.publish(
-                "app:actor:desktop_act_completed",
+                "app:actor:computer_act_completed",
                 cm_event.to_json(),
             )
 
-        desktop_events = [
-            (ch, d) for ch, d in published if ch == "app:actor:desktop_act_completed"
+        computer_events = [
+            (ch, d) for ch, d in published if ch == "app:actor:computer_act_completed"
         ]
-        assert len(desktop_events) == 0, (
-            f"Expected 0 desktop_act_completed events when screen share is off, "
-            f"got {len(desktop_events)}"
+        assert len(computer_events) == 0, (
+            f"Expected 0 computer_act_completed events when screen share is off, "
+            f"got {len(computer_events)}"
         )
     finally:
         cm.event_broker.publish = original_publish
@@ -490,11 +490,11 @@ async def test_desktop_act_completed_bridge_skipped_when_screen_share_inactive(
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_desktop_act_completed_event_handler_wakes_slow_brain(initialized_cm):
-    """EventHandler for DesktopActCompleted should set _has_non_forwarded_event
+async def test_computer_act_completed_event_handler_wakes_slow_brain(initialized_cm):
+    """EventHandler for ComputerActCompleted should set _has_non_forwarded_event
     and request an LLM run."""
     from unity.conversation_manager.domains.event_handlers import EventHandler
-    from unity.conversation_manager.events import DesktopActCompleted
+    from unity.conversation_manager.events import ComputerActCompleted
 
     cm = initialized_cm.cm
     cm._has_non_forwarded_event = False
@@ -508,7 +508,7 @@ async def test_desktop_act_completed_event_handler_wakes_slow_brain(initialized_
     cm.request_llm_run = mock_request
 
     try:
-        event = DesktopActCompleted(
+        event = ComputerActCompleted(
             instruction="Click Submit",
             summary="Clicked the Submit button",
         )
@@ -520,19 +520,19 @@ async def test_desktop_act_completed_event_handler_wakes_slow_brain(initialized_
         cm.request_llm_run = original_request
 
 
-def test_render_event_for_fast_brain_desktop_act_completed():
-    """render_event_for_fast_brain should render DesktopActCompleted events."""
-    from unity.conversation_manager.events import DesktopActCompleted
+def test_render_event_for_fast_brain_computer_act_completed():
+    """render_event_for_fast_brain should render ComputerActCompleted events."""
+    from unity.conversation_manager.events import ComputerActCompleted
     from unity.conversation_manager.medium_scripts.common import (
         render_event_for_fast_brain,
     )
 
-    event = DesktopActCompleted(
+    event = ComputerActCompleted(
         instruction="Click Submit",
         summary="Clicked the Submit button",
     )
     result = render_event_for_fast_brain(event.to_json())
 
     assert result is not None
-    assert "Desktop action completed" in result
+    assert "Computer action completed" in result
     assert "Clicked the Submit button" in result

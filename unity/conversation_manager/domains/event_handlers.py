@@ -1055,20 +1055,20 @@ async def _(event: ActorNotification, cm: "ConversationManager", *args, **kwargs
     await cm.request_llm_run()
 
 
-@EventHandler.register(DesktopActCompleted)
+@EventHandler.register(ComputerActCompleted)
 async def _(
-    event: DesktopActCompleted,
+    event: ComputerActCompleted,
     cm: "ConversationManager",
     *args,
     **kwargs,
 ):
-    """A ``primitives.computer.desktop.act()`` call completed somewhere in the
+    """A visible computer session's act() call completed somewhere in the
     system. Push a notification and wake the slow brain so it can react."""
     cm._has_non_forwarded_event = True
     snippet = event.summary[:120] if event.summary else event.instruction[:120]
     cm.notifications_bar.push_notif(
-        "Desktop",
-        f"Desktop action completed: {snippet}",
+        "Computer",
+        f"Computer action completed: {snippet}",
         event.timestamp,
     )
     await cm.request_llm_run()
