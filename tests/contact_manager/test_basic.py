@@ -221,3 +221,68 @@ def test_clear():
     remaining_2 = cm.filter_contacts(filter=f"contact_id == {id2}")["contacts"]
     assert len(remaining_1) == 0
     assert len(remaining_2) == 0
+
+
+@_handle_project
+def test_update_empty_string_unique_fields():
+    """Updating two contacts with empty-string unique fields must not raise.
+
+    Reproduces a production bug where update_contact sent phone_number="" to
+    Orchestra, violating the unique constraint when multiple contacts had no
+    phone number.  The fix normalizes "" → None via the Pydantic model before
+    persisting, so the empty value is dropped from the update payload.
+    """
+    cm = ContactManager()
+
+    out_a = cm._create_contact(first_name="Alpha", email_address="alpha@test.com")
+    out_b = cm._create_contact(first_name="Beta", email_address="beta@test.com")
+    id_a = out_a["details"]["contact_id"]
+    id_b = out_b["details"]["contact_id"]
+
+    # Both contacts have no phone_number. Updating each with phone_number=""
+    # must succeed (the empty string should be normalized away, not sent as a
+    # duplicate unique value).
+    cm.update_contact(contact_id=id_a, first_name="Alpha-Updated", phone_number="")
+    cm.update_contact(contact_id=id_b, first_name="Beta-Updated", phone_number="")
+
+    a = cm.filter_contacts(filter=f"contact_id == {id_a}")["contacts"][0]
+    b = cm.filter_contacts(filter=f"contact_id == {id_b}")["contacts"][0]
+    assert a.first_name == "Alpha-Updated"
+    assert b.first_name == "Beta-Updated"
+    assert a.phone_number is None
+    assert b.phone_number is None
+
+    # Same for email_address — both contacts already have distinct emails, so
+    # passing email_address="" should be a no-op for that field (normalized away),
+    # NOT clear the existing email.
+    cm.update_contact(contact_id=id_a, first_name="Alpha-Final", email_address="")
+    cm.update_contact(contact_id=id_b, first_name="Beta-Final", email_address="")
+
+    a = cm.filter_contacts(filter=f"contact_id == {id_a}")["contacts"][0]
+    b = cm.filter_contacts(filter=f"contact_id == {id_b}")["contacts"][0]
+    assert a.first_name == "Alpha-Final"
+    assert b.first_name == "Beta-Final"
+    assert a.email_address == "alpha@test.com"
+    assert b.email_address == "beta@test.com"
+
+    # Now test the actual duplicate scenario for email: remove both emails first,
+    # then confirm that updating both with email_address="" doesn't violate uniqueness.
+    cm.update_contact(contact_id=id_a, email_address="alpha-tmp@test.com")
+    cm.update_contact(contact_id=id_b, email_address="beta-tmp@test.com")
+    # Clear emails by overwriting with distinct values then removing via the backend
+    # isn't possible through update_contact (empty string = no-op), so instead
+    # create two fresh contacts with no email and verify the same pattern works.
+    out_c = cm._create_contact(first_name="Gamma")
+    out_d = cm._create_contact(first_name="Delta")
+    id_c = out_c["details"]["contact_id"]
+    id_d = out_d["details"]["contact_id"]
+
+    cm.update_contact(contact_id=id_c, first_name="Gamma-Updated", email_address="")
+    cm.update_contact(contact_id=id_d, first_name="Delta-Updated", email_address="")
+
+    c = cm.filter_contacts(filter=f"contact_id == {id_c}")["contacts"][0]
+    d = cm.filter_contacts(filter=f"contact_id == {id_d}")["contacts"][0]
+    assert c.first_name == "Gamma-Updated"
+    assert d.first_name == "Delta-Updated"
+    assert c.email_address is None
+    assert d.email_address is None
