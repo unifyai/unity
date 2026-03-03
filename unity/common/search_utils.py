@@ -46,8 +46,9 @@ def table_search_top_k(
     row_filter : str | None, default None
         Additional boolean expression to restrict candidate rows (e.g., exclude
         system rows). Applied both to the primary search and the backfill step.
-    unique_id_field : str, default "id"
-        Name of the unique identifier column for de-duplication in backfill.
+    unique_id_field : str | None, default None
+        Name of the unique identifier column for de-duplication in backfill. When None,
+        attempts to infer from the context's `unique_keys`.
 
     Returns
     -------

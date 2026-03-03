@@ -56,7 +56,7 @@ ICONS = {
     # ── Voice / utterance ───────────────────────────────────────────────
     "inbound_utterance": "🎤",
     "outbound_utterance": "🔊",
-    "call_notification": "🎙️",
+    "call_notification": "🔖",
     "user_speech": "🧑‍💻",
     "user_state": "🎤",
     "assistant_speech": "🔊",
