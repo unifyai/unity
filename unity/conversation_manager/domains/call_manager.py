@@ -151,7 +151,7 @@ class LivekitCallManager:
 
                 if os.path.exists(WORKER_READY_PATH):
                     LOGGER.info(
-                        "🎙️ [LivekitCallManager] Voice agent warm pool ready",
+                        "🎙️ [LivekitCallManager] Voice agent ready",
                     )
                     ready_logged = True
 
