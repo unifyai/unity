@@ -9,6 +9,7 @@ import unify
 from unity.knowledge_manager.knowledge_manager import KnowledgeManager
 from unity.manager_registry import ManagerRegistry
 from unity.common.context_registry import ContextRegistry
+from tests.helpers import mutation_test_lock
 
 SCENARIO_COMMIT_HASHES: Dict[str, Any] = {}
 
@@ -278,9 +279,9 @@ def knowledge_manager_scenario(knowledge_scenario):
             commit_hash=SCENARIO_COMMIT_HASHES[ctx],
         )
 
-    # Rollback to clean state before test
-    ctx_names = list(SCENARIO_COMMIT_HASHES.keys())
-    if ctx_names:
-        unify.map(rollback_context, ctx_names, mode="asyncio")
+    with mutation_test_lock("km_scenario"):
+        ctx_names = list(SCENARIO_COMMIT_HASHES.keys())
+        if ctx_names:
+            unify.map(rollback_context, ctx_names, mode="asyncio")
 
-    yield km, knowledge_map
+        yield km, knowledge_map
