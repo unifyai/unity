@@ -10,7 +10,7 @@ customizations are registered at three levels for internal testing:
 
 - **Team-level**: team_id=49 ("Colliers") in the Unify org — covers any
   assistant created with the Unify org API key.
-- **User-level**: dan@unify.ai and yasser@unify.ai personal user IDs —
+- **User-level**: yasser@unify.ai personal user ID —
   covers assistants created with personal (org-less) API keys.
 
 Secret *values* can be overridden per-environment via ``.secrets.json``
@@ -82,14 +82,12 @@ register_team(
 # User-level registration (personal / org-less API keys)
 # ---------------------------------------------------------------------------
 
-_DAN_USER_ID = "cli3t38uc0000s60k5zmgj8ez"  # dan@unify.ai on staging
 _YASSER_USER_ID = "40144b2a-722f-4f41-8d9e-384c316ee19f"  # yasser@unify.ai on staging
 
-for _uid in (_DAN_USER_ID, _YASSER_USER_ID):
-    register_user(
-        _uid,
-        config=_COLLIERS_CONFIG,
-        environments=_COLLIERS_ENVIRONMENTS,
-        guidance=_COLLIERS_GUIDANCE,
-        secrets=_COLLIERS_SECRETS,
-    )
+register_user(
+    _YASSER_USER_ID,
+    config=_COLLIERS_CONFIG,
+    environments=_COLLIERS_ENVIRONMENTS,
+    guidance=_COLLIERS_GUIDANCE,
+    secrets=_COLLIERS_SECRETS,
+)
