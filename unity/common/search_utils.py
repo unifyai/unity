@@ -26,7 +26,7 @@ def table_search_top_k(
     k: int = 10,
     allowed_fields: Optional[List[str]] = None,
     row_filter: Optional[str] = None,
-    unique_id_field: str = "id",
+    unique_id_field: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
     """
     Return up to k rows from a Unify context using semantic search with backfill.
