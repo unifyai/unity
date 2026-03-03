@@ -616,6 +616,10 @@ class AsyncToolLoopHandle(SteerableToolHandle):
             "message": message,
             "_parent_chat_context_continued": _parent_chat_context_cont,
             "trigger_immediate_llm_turn": trigger_immediate_llm_turn,
+            "suppress_response_notification": kwargs.get(
+                "suppress_response_notification",
+                False,
+            ),
         }
         # Use put_nowait to ensure the interjection is registered *synchronously* before
         # we yield control. This prevents a race where a fast-running loop completes

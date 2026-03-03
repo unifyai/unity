@@ -1527,11 +1527,25 @@ async def async_tool_loop_inner(
             # NOTE: We must do this *before* waiting on tool completion so a
             # fast typist can still sneak in a question while long-running
             # tools are in flight.  Doing it here keeps latency <1π loop.
+            _suppress_persist_response = False
+            _had_interjections = False
             while True:
                 try:
                     extra = interject_queue.get_nowait()
                 except asyncio.QueueEmpty:
                     break
+                _is_sentinel = isinstance(extra, dict) and (
+                    "_mirror" in extra or extra.get("_replay")
+                )
+                if not _is_sentinel:
+                    if not _had_interjections:
+                        _had_interjections = True
+                        _suppress_persist_response = True
+                    if not isinstance(extra, dict) or not extra.get(
+                        "suppress_response_notification",
+                        False,
+                    ):
+                        _suppress_persist_response = False
 
                 # NEW: Optional policy override for LLM turn scheduling
                 llm_policy = "immediate"
@@ -3504,6 +3518,7 @@ async def async_tool_loop_inner(
                     _outer is not None
                     and hasattr(_outer, "_notification_q")
                     and _response_to_surface
+                    and not _suppress_persist_response
                 ):
                     await _outer._notification_q.put(
                         {
