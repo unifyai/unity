@@ -1228,6 +1228,7 @@ class ConversationManager(metaclass=SingletonABCMeta):
             assistant_number=self.assistant_number,
             voice_provider=self.voice_provider,
             voice_id=self.voice_id,
+            assistant_name=f"{self.assistant_first_name} {self.assistant_surname}".strip(),
         )
 
     async def store_chat_history(self):

@@ -288,6 +288,11 @@ class SocketAwareEventBroker:
     def set_logger(self, fb_logger: FastBrainLogger) -> None:
         self._log = fb_logger
 
+    def reinit_socket(self) -> None:
+        """Re-read the socket client after the IPC path has been set."""
+        self._socket_client = get_socket_client()
+        self._receive_started = False
+
     def register_callback(self, channel: str, handler: Callable[[dict], None]) -> None:
         """
         Register a callback for events on a channel.
