@@ -32,7 +32,8 @@ def main() -> None:
         print(f"Usage: {sys.argv[0]} dev <agent_name>")
         sys.exit(1)
 
-    agent_name = sys.argv[2]
+    # Extract agent_name before LiveKit's Click CLI parses sys.argv.
+    agent_name = sys.argv.pop(2)
     _log.dispatch(f"Starting persistent worker: {agent_name}")
 
     agents.cli.run_app(
