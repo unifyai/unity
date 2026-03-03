@@ -33,6 +33,29 @@ steps:
     echo ${SHORT_SHA} | gsutil cp - gs://unity-image-hash/image_hash.txt
   waitFor: ['push-latest-tag']
 
+  # Refresh idle containers so they pick up the new image
+- name: 'gcr.io/cloud-builders/curl'
+  id: 'refresh-idle-jobs'
+  entrypoint: 'bash'
+  args:
+  - '-c'
+  - |
+    ADAPTERS=https://unity-adapters-1021024874437.us-central1.run.app
+    AUTH="Authorization: Bearer $$ORCHESTRA_ADMIN_KEY"
+
+    echo "Creating 2 fresh idle jobs..."
+    curl -sf -X POST -H "$${AUTH}" "$${ADAPTERS}/scheduled/jobs/create" && echo
+    curl -sf -X POST -H "$${AUTH}" "$${ADAPTERS}/scheduled/jobs/create" && echo
+
+    echo "Waiting 30s for jobs to register as idle..."
+    sleep 30
+
+    echo "Cleaning up stale idle jobs..."
+    curl -sf -X POST -H "$${AUTH}" "$${ADAPTERS}/scheduled/jobs/cleanup" && echo
+    echo "Idle job refresh complete."
+  secretEnv: ['ORCHESTRA_ADMIN_KEY']
+  waitFor: ['upload-sha']
+
 # Options
 options:
   substitutionOption: ALLOW_LOOSE
@@ -50,9 +73,11 @@ availableSecrets:
     env: 'ORCHESTRA_API_KEY'
   - versionName: projects/${PROJECT_ID}/secrets/DEVBOT_GITHUB_TOKEN/versions/latest
     env: 'GITHUB_TOKEN'
+  - versionName: projects/${PROJECT_ID}/secrets/ORCHESTRA_ADMIN_KEY/versions/latest
+    env: 'ORCHESTRA_ADMIN_KEY'
 
 # Timeout
-timeout: '1200s'  # 20 minutes
+timeout: '1800s'  # 30 minutes
 
 # Images to be pushed (for Cloud Build history)
 images:

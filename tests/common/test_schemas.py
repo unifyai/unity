@@ -862,3 +862,61 @@ def test_request_clarification_tool_has_docstring_and_schema_description():
     assert (
         isinstance(desc, str) and desc.strip()
     ), f"method_to_schema produced an empty description: {desc!r}"
+
+
+# --------------------------------------------------------------------------- #
+#  functools.wraps + get_type_hints: base class annotations must resolve       #
+# --------------------------------------------------------------------------- #
+
+
+def test_wrapped_methods_resolve_type_hints() -> None:
+    """Every concrete method decorated with ``@functools.wraps(Base*.method)``
+    must have resolvable type hints at runtime.
+
+    ``functools.wraps`` copies ``__module__`` from the base class method to the
+    wrapper.  ``get_type_hints()`` then resolves string annotations (from
+    ``from __future__ import annotations``) in the **base** module's namespace.
+    If a type referenced in the signature lives under ``TYPE_CHECKING`` in the
+    base module, ``get_type_hints()`` fails silently in ``method_to_schema``,
+    causing every parameter to degrade to ``{"type": "string"}`` in the JSON
+    tool schema the LLM sees.
+
+    Discovery is fully automatic via ``ManagerRegistry`` and
+    ``BaseStateManager._registry`` — no hardcoded class lists.
+    """
+    from typing import get_type_hints
+
+    from unity.manager_registry import ManagerRegistry
+    from unity.common.state_managers import BaseStateManager
+
+    ManagerRegistry._ensure_populated()
+
+    classes = set(ManagerRegistry._classes.values())
+    classes.update(
+        cls
+        for name, cls in BaseStateManager._registry.items()
+        if not name.startswith("Base")
+    )
+    assert classes, "Registry discovery found no classes — check imports"
+
+    failures: list[str] = []
+
+    for cls in sorted(classes, key=lambda c: c.__name__):
+        inst = cls.__new__(cls)
+
+        for name in sorted(dir(inst)):
+            if name.startswith("_"):
+                continue
+            attr = getattr(inst, name, None)
+            if not callable(attr) or not hasattr(attr, "__wrapped__"):
+                continue
+            try:
+                get_type_hints(attr)
+            except Exception as exc:
+                failures.append(f"{cls.__name__}.{name}: {exc}")
+
+    assert not failures, (
+        "functools.wraps methods with unresolvable type hints "
+        "(likely TYPE_CHECKING imports in the base module):\n"
+        + "\n".join(f"  - {f}" for f in failures)
+    )

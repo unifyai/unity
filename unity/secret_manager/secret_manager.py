@@ -54,22 +54,6 @@ class SecretManager(BaseSecretManager):
 
     def __init__(self) -> None:
         super().__init__()
-        # Resolve context and construct a single-table store
-        ctxs = unify.get_active_context()
-        read_ctx, write_ctx = ctxs.get("read"), ctxs.get("write")
-        if not read_ctx:
-            try:
-                from .. import ensure_initialised as _ensure_initialised
-
-                _ensure_initialised()
-                ctxs = unify.get_active_context()
-                read_ctx, write_ctx = ctxs.get("read"), ctxs.get("write")
-            except Exception:
-                pass
-        assert (
-            read_ctx == write_ctx
-        ), "read and write contexts must match for SecretManager."
-
         self.include_in_multi_assistant_table = True
         self._ctx = ContextRegistry.get_context(self, "Secrets")
 
@@ -116,6 +100,9 @@ class SecretManager(BaseSecretManager):
             description="Key-value secrets with descriptions and embeddings.",
             fields=model_to_fields(Secret),
         )
+
+    def warm_embeddings(self) -> None:
+        self._ensure_description_vector()
 
     @functools.cache
     def _ensure_description_vector(self) -> None:

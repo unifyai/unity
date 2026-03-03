@@ -17,6 +17,7 @@ import unify
 
 
 from ..common.model_to_fields import model_to_fields
+from ..common.embed_utils import ensure_vector_column
 from ..common.semantic_search import backfill_rows, fetch_top_k_by_references
 from .base import BaseImageManager
 from .prompt_builders import build_image_ask_prompt
@@ -586,22 +587,6 @@ class ImageManager(BaseImageManager):
         ]
 
     def __init__(self) -> None:
-        ctxs = unify.get_active_context()
-        read_ctx, write_ctx = ctxs.get("read"), ctxs.get("write")
-        if not read_ctx:
-            try:
-                from .. import ensure_initialised as _ensure_initialised  # local
-
-                _ensure_initialised()
-                ctxs = unify.get_active_context()
-                read_ctx, write_ctx = ctxs.get("read"), ctxs.get("write")
-            except Exception:
-                pass
-
-        assert (
-            read_ctx == write_ctx
-        ), "read and write contexts must be the same when instantiating an ImageManager."
-
         self.include_in_multi_assistant_table = True
         self._ctx = ContextRegistry.get_context(self, "Images")
 
@@ -1306,6 +1291,16 @@ class ImageManager(BaseImageManager):
                 f"Backend rejected upload for filepath '{filepath}'",
             )
         return image_id
+
+    def warm_embeddings(self) -> None:
+        try:
+            ensure_vector_column(
+                self._ctx,
+                embed_column="_caption_emb",
+                source_column="caption",
+            )
+        except Exception:
+            pass
 
     # ------------------------------ Maintenance ---------------------------
     @functools.wraps(BaseImageManager.clear, updated=())

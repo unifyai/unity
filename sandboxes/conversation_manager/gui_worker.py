@@ -70,7 +70,7 @@ def _enable_unillm_boundary_logging() -> Path:
     """Enable full UniLLM request/response file logging for the GUI worker."""
     log_dir = Path(__file__).resolve().parents[2] / "logs" / "unillm"
     log_dir.mkdir(parents=True, exist_ok=True)
-    os.environ["UNILLM_TERMINAL_LOG"] = "true"
+    os.environ["UNILLM_TERMINAL_LOG"] = "false"
     os.environ["UNILLM_LOG_DIR"] = str(log_dir)
     try:
         from unillm.logger import configure_log_dir as _configure_log_dir
@@ -793,6 +793,13 @@ async def _run_worker(*, ui_to_worker, worker_to_ui, config: dict) -> None:
             LG.info("[runtime] started")
     except Exception:
         pass
+
+    # Suppress SDK HTTP noise
+    for _noisy in ("unify", "unify_requests", "unillm", "UnifyAsyncLogger"):
+        try:
+            logging.getLogger(_noisy).setLevel(logging.WARNING)
+        except Exception:
+            pass
 
     args = _build_args_namespace(config=config, sender=sender)
     actor_cfg: ActorConfig = getattr(args, "_actor_config", ActorConfig())

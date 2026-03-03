@@ -25,10 +25,14 @@ def _make_actor_with_mock_computer(
 ) -> CodeActActor:
     """Construct a CodeActActor with a mock _computer_primitives for testing."""
     actor = CodeActActor(timeout=timeout)
+    from unity.function_manager.computer_backends import ActResult
+
     mock_desktop = MagicMock()
     mock_desktop.query = AsyncMock(return_value=query_return)
     mock_desktop.navigate = AsyncMock(return_value="navigated")
-    mock_desktop.act = AsyncMock(return_value="acted")
+    mock_desktop.act = AsyncMock(
+        return_value=ActResult(summary="acted", screenshot=""),
+    )
     mock_desktop.observe = AsyncMock(return_value="observed")
     mock_cp = MagicMock()
     mock_cp.desktop = mock_desktop

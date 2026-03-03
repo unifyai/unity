@@ -41,7 +41,7 @@ from unity.conversation_manager.domains.comms_utils import (
     add_unify_message_attachments,
 )
 from unity.conversation_manager.events import *
-from unity.session_details import DEFAULT_ASSISTANT_ID, SESSION_DETAILS
+from unity.session_details import SESSION_DETAILS
 from unity.contact_manager.types.contact import UNASSIGNED
 from unity.conversation_manager.types import Medium
 
@@ -66,21 +66,17 @@ startup_subscription_id = (
 
 def _get_subscription_id() -> str:
     """Build subscription ID from current assistant context."""
-    assistant_id = SESSION_DETAILS.assistant.id
-    staging_suffix = (
-        "-staging"
-        if SETTINGS.STAGING and DEFAULT_ASSISTANT_ID not in assistant_id
-        else ""
-    )
-    return f"unity-{assistant_id}{staging_suffix}-sub"
+    agent_id = SESSION_DETAILS.assistant.agent_id
+    staging_suffix = "-staging" if SETTINGS.STAGING and agent_id is not None else ""
+    return f"unity-{agent_id}{staging_suffix}-sub"
 
 
 def _get_local_contact() -> dict:
     """Build local contact dict from current assistant context."""
     return {
         "contact_id": -1,
-        "first_name": SESSION_DETAILS.user.name,
-        "surname": "",
+        "first_name": SESSION_DETAILS.user.first_name,
+        "surname": SESSION_DETAILS.user.surname,
         "phone_number": SESSION_DETAILS.user.number,
         "email_address": SESSION_DETAILS.user.email,
     }
@@ -276,7 +272,7 @@ class CommsManager:
                     # Update assistant context and subscribe to the assistant's subscription
                     # Note: Full context is populated by ConversationManager.set_details()
                     # Here we just need to set assistant_id early for subscription
-                    SESSION_DETAILS.assistant.id = event["assistant_id"]
+                    SESSION_DETAILS.assistant.agent_id = int(event["assistant_id"])
                     self.subscribe_to_topic(_get_subscription_id())
 
                 # publish
@@ -285,19 +281,20 @@ class CommsManager:
                     "medium": event.get("medium", "assistant_update"),
                     "assistant_id": event["assistant_id"],
                     "user_id": event["user_id"],
-                    "assistant_name": event["assistant_name"],
+                    "assistant_first_name": event["assistant_first_name"],
+                    "assistant_surname": event["assistant_surname"],
                     "assistant_age": event["assistant_age"],
                     "assistant_nationality": event["assistant_nationality"],
                     "assistant_timezone": event.get("assistant_timezone", ""),
                     "assistant_about": event["assistant_about"],
                     "assistant_number": event["assistant_number"],
                     "assistant_email": event["assistant_email"],
-                    "user_name": event["user_name"],
+                    "user_first_name": event["user_first_name"],
+                    "user_surname": event["user_surname"],
                     "user_number": event["user_number"],
                     "user_email": event["user_email"],
                     "voice_provider": event["voice_provider"],
                     "voice_id": event["voice_id"],
-                    "voice_mode": event["voice_mode"],
                     "desktop_mode": event.get("desktop_mode", "ubuntu"),
                     "desktop_url": event.get("desktop_url"),
                     "user_desktop_mode": event.get("user_desktop_mode"),
@@ -306,6 +303,9 @@ class CommsManager:
                         False,
                     ),
                     "user_desktop_url": event.get("user_desktop_url"),
+                    "org_id": event.get("org_id"),
+                    "org_name": event.get("org_name", ""),
+                    "team_ids": event.get("team_ids") or [],
                     "demo_id": event.get("demo_id"),
                 }
                 self._publish_from_callback(
@@ -316,6 +316,12 @@ class CommsManager:
                         else AssistantUpdateEvent(**details)
                     ).to_json(),
                 )
+            elif thread == "ping":
+                self._publish_from_callback(
+                    "app:comms:ping",
+                    Ping(kind="keepalive").to_json(),
+                )
+                message.ack()
             elif thread == "unity_system_event":
                 system_event_type = event.get("event_type")
                 system_message = event.get("message")
@@ -338,18 +344,21 @@ class CommsManager:
                     "user_screen_share_stopped": lambda r: UserScreenShareStopped(
                         reason=r or "User stopped sharing their screen.",
                     ),
-                    "user_webcam_started": lambda r: UserWebcamStarted(
-                        reason=r or "User enabled their webcam.",
-                    ),
-                    "user_webcam_stopped": lambda r: UserWebcamStopped(
-                        reason=r or "User disabled their webcam.",
-                    ),
+                    "user_webcam_started": lambda r: UserWebcamStarted(),
+                    "user_webcam_stopped": lambda r: UserWebcamStopped(),
                     "user_remote_control_started": lambda r: UserRemoteControlStarted(
                         reason=r or "User took remote control of assistant desktop.",
                     ),
                     "user_remote_control_stopped": lambda r: UserRemoteControlStopped(
                         reason=r
                         or "User released remote control of assistant desktop.",
+                    ),
+                    "assistant_desktop_ready": lambda r: AssistantDesktopReady(
+                        desktop_url=event.get("desktop_url")
+                        or SESSION_DETAILS.assistant.desktop_url
+                        or "",
+                        vm_type=event.get("vm_type")
+                        or SESSION_DETAILS.assistant.desktop_mode,
                     ),
                 }
 
@@ -733,7 +742,9 @@ class CommsManager:
                     traceback.print_exc()
                     message.ack()
             else:
-                LOGGER.error(f"{DEFAULT_ICON} Unknown event type: {thread}")
+                if thread != "assistant_desktop_ready":
+                    LOGGER.error(f"{DEFAULT_ICON} Unknown event type: {thread}")
+                message.ack()
         except Exception as e:
             LOGGER.error(f"{DEFAULT_ICON} Error processing message: {e}")
             message.ack()
@@ -771,9 +782,15 @@ class CommsManager:
 
     async def start(self):
         """Start all subscriptions and maintain connection to event manager."""
-        if SESSION_DETAILS.assistant.id == DEFAULT_ASSISTANT_ID:
+        if SESSION_DETAILS.assistant.agent_id is None:
             # Start the startup subscription
             self.subscribe_to_topic(startup_subscription_id)
+            # Label this container as idle so cleanup endpoints can find it
+            threading.Thread(
+                target=mark_job_label,
+                args=(SETTINGS.conversation.JOB_NAME, "idle"),
+                daemon=True,
+            ).start()
             # Start ping mechanism for idle containers
             asyncio.create_task(self.send_pings())
         else:
@@ -807,7 +824,7 @@ class CommsManager:
                 await asyncio.sleep(30)
 
                 # Check if we've received a startup message (indicated by assistant_id changed)
-                if SESSION_DETAILS.assistant.id != DEFAULT_ASSISTANT_ID:
+                if SESSION_DETAILS.assistant.agent_id is not None:
                     LOGGER.debug(
                         f"{ICONS['subscription']} Startup received, stopping ping mechanism",
                     )

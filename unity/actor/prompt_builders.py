@@ -37,7 +37,7 @@ _FUNCTION_AND_GUIDANCE_LIBRARY = textwrap.dedent("""
     1. `FunctionManager_search_functions` — find existing implementations
     2. `GuidanceManager_search` — find procedural instructions and
        compositional strategies
-    3. If a function exists, call it in `execute_code`; if guidance exists,
+    3. If a function exists, call it via `execute_function`; if guidance exists,
        follow its procedure
     4. Only fall back to raw `primitives.*` if neither library has relevant
        entries
@@ -86,10 +86,31 @@ _DISCOVERY_FIRST_POLICY = textwrap.dedent("""
 """).strip()
 
 _EXECUTION_RULES = textwrap.dedent("""
+    ### Tool Selection: `execute_function` vs `execute_code`
+
+    **This is the most important decision you make on every turn.**
+
+    | Scenario | Tool |
+    |----------|------|
+    | Single primitive call (e.g. `primitives.contacts.ask`, `primitives.web.ask`, `primitives.knowledge.update`) | **`execute_function`** |
+    | Single stored function call (discovered via FunctionManager) | **`execute_function`** |
+    | Multi-step composition, conditional logic, loops, or combining multiple calls with intermediate results | **`execute_code`** |
+    | Shell commands (`bash`, `zsh`, `sh`, `powershell`) | **`execute_code`** |
+
+    **Why this matters:** `execute_function` structurally guarantees that
+    the returned handle is exposed to the outer loop for steering (ask,
+    stop, pause, resume). With `execute_code`, the handle is only adopted
+    if it is the last expression — which is easy to break by adding
+    prints, notifications, or error handling around the call.
+
+    **Rule of thumb:** If you can express the task as
+    `execute_function(function_name="...", call_kwargs={...})`, always
+    do so. Only reach for `execute_code` when you genuinely need to
+    compose multiple steps or write conditional/iterative logic.
+
     ### Execution Rules
 
     1. **Session-Based Execution**:
-       - All code execution happens via the `execute_code` tool (JSON tool call).
        - **Default is `state_mode="stateless"`** (fresh run; no persistence).
        - Choose `state_mode="stateful"` when you need intermediate variables to persist across multiple calls.
        - Choose `state_mode="read_only"` when you need to use an existing session's state without persisting changes.
@@ -101,15 +122,15 @@ _EXECUTION_RULES = textwrap.dedent("""
 
     4. **Pydantic for Structured Data (When Supported)**: If a tool supports structured outputs via a `response_format` or schema, define Pydantic models inside the code and call `model_rebuild()` on the outermost model.
 
-    5. **Sandbox Helpers**: The following helpers are available in `execute_code` Python sessions:
+    5. **Sandbox Helpers** (available only inside `execute_code` Python sessions):
 
        **Progress Notifications (`notify`)**
        - `notify(payload)` sends a non-blocking progress event (dict) to the outer handle.
-       - Treat `primitives.*` calls as long-running by default because they run nested tool loops.
-       - For each `primitives.*` call, emit at least one kickoff notification before the call.
-       - If you await a primitive result and continue with more work, emit a completion notification with concrete outcome data.
-       - If you return a primitive handle directly as the last expression, still emit one kickoff notification before returning the handle.
-       - Use notifications at meaningful milestones only (start of a major step, completion of a major step, and measurable progress points).
+       - Notifications are only relevant inside **multi-step `execute_code` blocks**.
+         For single-primitive calls, use `execute_function` — the outer loop
+         handles progress automatically via the adopted handle.
+       - When composing multiple primitives in `execute_code`, emit notifications
+         at meaningful milestones (start of a major step, completion, measurable progress).
 
        **What makes a strong notification**
        - Concrete: include useful details like counts, batch indexes, item names, or completed step names.
@@ -119,10 +140,10 @@ _EXECUTION_RULES = textwrap.dedent("""
        - High-level: summarize outcomes and next steps, not internal implementation details.
 
        **Anti-patterns to avoid**
+       - Wrapping a single primitive call in `execute_code` just to add `notify()` around it — use `execute_function` instead.
        - Generic filler text with no signal (for example: "working on it", "still processing", "please wait").
        - Repeating the same update without new information.
        - Over-notifying for trivial operations that complete almost immediately.
-       - Skipping notifications around `primitives.*` calls unless there is a clear reason.
        - Dumping low-level internals (stack traces, call IDs, schema/debug metadata) into user progress updates.
 
        **Example payloads**
@@ -245,6 +266,7 @@ def _build_additional_tools_block(
         for k, v in tools.items()
         if k
         not in {
+            "execute_function",
             "execute_code",
             "list_sessions",
             "inspect_state",
@@ -385,6 +407,7 @@ def build_code_act_prompt(
         parts.append(_build_filesystem_context())
 
         primary_names = [
+            "execute_function",
             "execute_code",
             "list_sessions",
             "inspect_state",

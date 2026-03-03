@@ -1,9 +1,13 @@
 from __future__ import annotations
 
+import logging
+import time
 from typing import Any, Dict, List, Optional
 
 import unify
 from unify.utils.http import RequestError as _UnifyRequestError
+
+logger = logging.getLogger(__name__)
 
 # Private fields injected by log_utils wrappers
 _PRIVATE_FIELDS: Dict[str, str] = {
@@ -11,7 +15,71 @@ _PRIVATE_FIELDS: Dict[str, str] = {
     "_user_id": "str",
     "_assistant": "str",
     "_assistant_id": "str",
+    "_org": "str",
+    "_org_id": "int",
 }
+
+_CREATE_CONTEXT_MAX_ATTEMPTS = 3
+_CREATE_CONTEXT_BACKOFF_SECS = (0.5, 1.5)
+
+
+def _is_transient(exc: _UnifyRequestError) -> bool:
+    """Return True if the RequestError is likely transient and worth retrying."""
+    status = getattr(getattr(exc, "response", None), "status_code", None)
+    if status is None:
+        return True
+    return status == 429 or status >= 500
+
+
+def _create_context_with_retry(
+    name: str,
+    *,
+    unique_keys: Optional[Dict[str, str]] = None,
+    auto_counting: Optional[Dict[str, Optional[str]]] = None,
+    description: Optional[str] = None,
+    foreign_keys: Optional[list[Dict[str, Any]]] = None,
+) -> None:
+    """Call ``unify.create_context`` with retry on transient failures.
+
+    Retries up to ``_CREATE_CONTEXT_MAX_ATTEMPTS`` times with exponential
+    backoff for transient HTTP errors (5xx, 429, network).  Non-transient
+    errors (4xx) are raised immediately (except "already exists" which the
+    SDK handles via ``exist_ok=True``).
+    """
+    last_exc: Optional[Exception] = None
+    for attempt in range(_CREATE_CONTEXT_MAX_ATTEMPTS):
+        try:
+            unify.create_context(
+                name,
+                unique_keys=unique_keys,
+                auto_counting=auto_counting,
+                description=description,
+                foreign_keys=foreign_keys,
+            )
+            return
+        except _UnifyRequestError as exc:
+            if not _is_transient(exc):
+                raise
+            last_exc = exc
+            if attempt < _CREATE_CONTEXT_MAX_ATTEMPTS - 1:
+                delay = _CREATE_CONTEXT_BACKOFF_SECS[
+                    min(attempt, len(_CREATE_CONTEXT_BACKOFF_SECS) - 1)
+                ]
+                logger.warning(
+                    "create_context(%r) attempt %d/%d failed (status %s), "
+                    "retrying in %.1fs",
+                    name,
+                    attempt + 1,
+                    _CREATE_CONTEXT_MAX_ATTEMPTS,
+                    getattr(
+                        getattr(exc, "response", None),
+                        "status_code",
+                        "?",
+                    ),
+                    delay,
+                )
+                time.sleep(delay)
+    raise last_exc  # type: ignore[misc]
 
 
 class TableStore:
@@ -68,10 +136,10 @@ class TableStore:
         # Handle test contexts: tests/.../{default_user_id}/{default_assistant_id}/Suffix
         # Scope aggregations to the test root to avoid cross-test contamination.
         if parts[0] == "tests":
-            from unity.session_details import DEFAULT_USER_CONTEXT
+            from unity.session_details import UNASSIGNED_USER_CONTEXT
 
             try:
-                user_idx = parts.index(DEFAULT_USER_CONTEXT)
+                user_idx = parts.index(UNASSIGNED_USER_CONTEXT)
             except ValueError:
                 return []
 
@@ -96,35 +164,23 @@ class TableStore:
         ]
 
     def _ensure_all_contexts(self, all_ctxs: List[str]) -> None:
-        """
-        Ensure aggregation contexts exist for cross-assistant and cross-user queries.
+        """Ensure aggregation contexts exist for cross-assistant / cross-user queries.
 
-        These contexts:
-        - Have the same fields as the source context (for consistent querying)
-        - Include private fields (_user, _user_id, _assistant, _assistant_id)
-        - Have NO unique_keys or auto_counting (logs are added by reference)
+        These contexts mirror the source context's fields (plus private fields)
+        but have no unique_keys or auto_counting.
         """
         for all_ctx in all_ctxs:
             key = (self._project, all_ctx)
             if key in self._ENSURED:
                 continue
 
-            # Always attempt creation; tolerate pre-existence
-            try:
-                unify.get_context(all_ctx, project=self._project)
-            except Exception:
-                pass
-
-            # Determine description based on aggregation level
             if all_ctx.startswith("All/"):
                 description = f"Global aggregation of {self._ctx.split('/')[-1]} across all users and assistants"
             else:
                 description = f"Aggregation of {self._ctx.split('/')[-1]} across all assistants for this user"
 
-            # Create aggregation context (no unique_keys/auto_counting)
-            unify.create_context(all_ctx, description=description)
+            _create_context_with_retry(all_ctx, description=description)
 
-            # Mirror fields from source context + add private fields
             fields_with_private = dict(self._fields)
             fields_with_private.update(_PRIVATE_FIELDS)
 
@@ -132,23 +188,23 @@ class TableStore:
                 try:
                     unify.create_fields(fields_with_private, context=all_ctx)
                 except Exception:
-                    # Tolerate duplicates / partial creation
                     pass
 
             self._ENSURED.add(key)
 
     def ensure_context(self) -> None:
+        """Create the context (and its fields / aggregation siblings) in Orchestra.
+
+        Uses ``_create_context_with_retry`` so transient HTTP errors (5xx / 429 /
+        network) are retried with backoff.  Non-transient errors propagate
+        immediately — a missing context is fatal for the owning manager, so
+        callers must not silently swallow the exception.
+        """
         key = (self._project, self._ctx)
         if key in self._ENSURED:
             return
 
-        # Always attempt creation; tolerate pre-existence
-        try:
-            unify.get_context(self._ctx, project=self._project)
-        except Exception:
-            pass
-
-        unify.create_context(
+        _create_context_with_retry(
             self._ctx,
             unique_keys=self._unique_keys or None,
             auto_counting=self._auto_counting or None,
@@ -156,17 +212,14 @@ class TableStore:
             foreign_keys=self._foreign_keys or None,
         )
 
-        # Ensure required fields exist (idempotent per-field)
         if self._fields:
             try:
                 unify.create_fields(self._fields, context=self._ctx)
             except Exception:
-                # Tolerate duplicates / partial creation
                 pass
 
         self._ENSURED.add(key)
 
-        # Also ensure aggregation contexts exist for cross-assistant/cross-user queries
         all_ctxs = self._all_contexts()
         if all_ctxs:
             self._ensure_all_contexts(all_ctxs)

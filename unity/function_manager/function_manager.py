@@ -34,7 +34,7 @@ import unify
 from .shell_pool import ShellPool
 from unify.utils.http import RequestError as _UnifyRequestError
 from ..common.log_utils import create_logs as unity_create_logs
-from ..common.embed_utils import list_private_fields
+from ..common.embed_utils import ensure_vector_column, list_private_fields
 from ..common.search_utils import table_search_top_k
 from .execution_env import create_base_globals
 from .dependency_analysis import collect_dependencies_from_function_node
@@ -51,9 +51,7 @@ from ..common.context_registry import ContextRegistry, TableContext
 from unity.function_manager.primitives.scope import PrimitiveScope
 from unity.function_manager.primitives.registry import get_registry
 from .custom_functions import (
-    collect_custom_functions,
     compute_custom_functions_hash,
-    collect_custom_venvs,
     compute_custom_venvs_hash,
 )
 
@@ -1604,24 +1602,6 @@ class FunctionManager(BaseFunctionManager):
         # time we create a function.  Initialised lazily on first use.
         self._next_id: Optional[int] = None
 
-        ctxs = unify.get_active_context()
-        read_ctx, write_ctx = ctxs["read"], ctxs["write"]
-        if not read_ctx:
-            # Ensure the global assistant/context is selected before we derive our sub-context
-            try:
-                from .. import (
-                    ensure_initialised as _ensure_initialised,
-                )  # local to avoid cycles
-
-                _ensure_initialised()
-                ctxs = unify.get_active_context()
-                read_ctx, write_ctx = ctxs["read"], ctxs["write"]
-            except Exception:
-                # If ensure fails (e.g. offline tests), proceed; downstream will fall back safely
-                pass
-        assert (
-            read_ctx == write_ctx
-        ), "read and write contexts must be the same when instantiating a FunctionManager."
         self._venvs_ctx = ContextRegistry.get_context(self, "Functions/VirtualEnvs")
         self._compositional_ctx = ContextRegistry.get_context(
             self,
@@ -1906,6 +1886,17 @@ class FunctionManager(BaseFunctionManager):
     #  Public API                                                        #
     # ------------------------------------------------------------------ #
 
+    def warm_embeddings(self) -> None:
+        for ctx in (self._compositional_ctx, self._primitives_ctx):
+            try:
+                ensure_vector_column(
+                    ctx,
+                    embed_column="_embedding_text_emb",
+                    source_column="embedding_text",
+                )
+            except Exception:
+                pass
+
     @functools.wraps(BaseFunctionManager.clear, updated=())
     def clear(self) -> None:
         unify.delete_context(self._compositional_ctx)
@@ -2072,7 +2063,7 @@ class FunctionManager(BaseFunctionManager):
                 batched=True,
                 add_to_all_context=self.include_in_multi_assistant_table,
             )
-            logger.info(f"Inserted {len(entries)} primitives")
+            logger.debug(f"Inserted {len(entries)} primitives")
         except Exception as e:
             logger.error(f"Failed to insert primitives: {e}")
 
@@ -2093,13 +2084,27 @@ class FunctionManager(BaseFunctionManager):
         Returns:
             True if sync was performed, False if already up-to-date.
         """
+        import time as _sp_time
+
+        _sp_t0 = _sp_time.perf_counter()
+
+        def _sp_ms():
+            return f"{(_sp_time.perf_counter() - _sp_t0) * 1000:.0f}ms"
+
+        logger.debug(f"⏱️ [FM.sync_primitives +{_sp_ms()}] entered")
+
         if self._primitives_synced:
+            logger.debug(
+                f"⏱️ [FM.sync_primitives +{_sp_ms()}] already synced, skipping",
+            )
             return False
 
         target_managers = sorted(self._primitive_scope.scoped_managers)
 
         # Step 1: Read current hashes (one backend call)
+        logger.debug(f"⏱️ [FM.sync_primitives +{_sp_ms()}] reading stored hashes")
         current_hashes = self._get_stored_primitives_hash_by_manager()
+        logger.debug(f"⏱️ [FM.sync_primitives +{_sp_ms()}] hashes read")
 
         # Step 2: Compute expected hashes and collect pending updates if they differ
         pending_updates: List[Tuple[str, List[Dict[str, Any]], str]] = []
@@ -2117,28 +2122,35 @@ class FunctionManager(BaseFunctionManager):
         # Step 3: If nothing changed, mark synced and return
         if not pending_updates:
             logger.debug(
-                "Primitives hashes match for all scoped managers, skipping sync",
+                f"⏱️ [FM.sync_primitives +{_sp_ms()}] hashes match, skipping sync",
             )
             self._primitives_synced = True
             return False
 
         changed_managers = [alias for alias, _, _ in pending_updates]
-        logger.info(f"Primitives changed for managers: {changed_managers}, syncing...")
+        logger.debug(
+            f"⏱️ [FM.sync_primitives +{_sp_ms()}] changed: {changed_managers}, syncing...",
+        )
 
         # Step 4: Batched delete for all changed managers (one backend call)
         self._delete_primitives_for_managers(changed_managers)
+        logger.debug(f"⏱️ [FM.sync_primitives +{_sp_ms()}] delete done")
 
         # Step 5: Batched insert all new primitives (one backend call)
         all_rows = []
         for _, rows, _ in pending_updates:
             all_rows.extend(rows)
         self._insert_primitives(all_rows)
+        logger.debug(
+            f"⏱️ [FM.sync_primitives +{_sp_ms()}] insert done ({len(all_rows)} rows)",
+        )
 
         # Step 6: Update Meta with new hashes (one backend call)
         new_hashes = dict(current_hashes)
         for alias, _, hash_val in pending_updates:
             new_hashes[alias] = hash_val
         self._store_primitives_hash_by_manager(new_hashes)
+        logger.debug(f"⏱️ [FM.sync_primitives +{_sp_ms()}] hashes stored, done")
 
         self._primitives_synced = True
         return True
@@ -2367,29 +2379,30 @@ class FunctionManager(BaseFunctionManager):
                     return logs[0].entries.get("venv_id")
         return -1
 
-    def sync_custom_venvs(self) -> Dict[str, int]:
+    def sync_custom_venvs(
+        self,
+        *,
+        source_venvs: Optional[Dict[str, Dict[str, Any]]] = None,
+    ) -> Dict[str, int]:
         """
         Ensure custom venvs in the database match source definitions.
 
-        Scans the custom/venvs/ folder for .toml files and syncs them
-        to Functions/VirtualEnvs. Uses hash comparison to minimize writes.
-
-        Behavior:
-        - New venvs: inserted with auto-assigned venv_id
-        - Changed venvs: updated in place (preserves venv_id)
-        - Deleted venvs (in source): deleted from database
-        - User-added venvs with same name: overwritten by source version
+        Args:
+            source_venvs: Pre-collected venvs (from
+                :func:`collect_custom_venvs` or
+                :func:`collect_venvs_from_directories`).  If *None*,
+                an empty set is assumed (no custom venvs).
 
         Returns:
-            Dict mapping venv name to venv_id (for use by sync_custom_functions).
+            Dict mapping venv name to venv_id.
         """
         if self._custom_venvs_synced:
-            # Return existing name→id mapping
             db_venvs = self._get_custom_venvs_from_db()
             return {name: v["venv_id"] for name, v in db_venvs.items()}
 
-        source_venvs = collect_custom_venvs()
-        expected_hash = compute_custom_venvs_hash()
+        if source_venvs is None:
+            source_venvs = {}
+        expected_hash = compute_custom_venvs_hash(source_venvs=source_venvs)
         current_hash = self._get_stored_custom_venvs_hash()
 
         # Quick check: if aggregate hash matches, skip detailed sync
@@ -2454,25 +2467,19 @@ class FunctionManager(BaseFunctionManager):
     def sync_custom_functions(
         self,
         venv_name_to_id: Optional[Dict[str, int]] = None,
+        *,
+        source_functions: Optional[Dict[str, Dict[str, Any]]] = None,
     ) -> bool:
         """
         Ensure custom functions in the database match source definitions.
 
-        Scans the custom/functions/ folder for functions decorated with
-        @custom_function and syncs them to Functions/Compositional. Uses
-        per-function hash comparison to minimize database writes.
-
         Args:
             venv_name_to_id: Optional mapping from venv name to venv_id.
-                             Used to resolve venv_name in decorators.
-                             If not provided, venv_name resolution is skipped.
-
-        Behavior:
-        - New functions: inserted with auto-assigned function_id
-        - Changed functions: updated in place (preserves function_id)
-        - Deleted functions (in source): deleted from database
-        - User-added functions with same name: overwritten by source version
-        - venv_name: resolved to venv_id using venv_name_to_id mapping
+                Used to resolve ``venv_name`` in decorators.
+            source_functions: Pre-collected functions (from
+                :func:`collect_custom_functions` or
+                :func:`collect_functions_from_directories`).  If *None*,
+                an empty set is assumed (no custom functions).
 
         Returns:
             True if sync was performed, False if already up-to-date.
@@ -2480,9 +2487,11 @@ class FunctionManager(BaseFunctionManager):
         if self._custom_functions_synced:
             return False
 
-        # Collect source-defined custom functions
-        source_functions = collect_custom_functions()
-        expected_hash = compute_custom_functions_hash()
+        if source_functions is None:
+            source_functions = {}
+        expected_hash = compute_custom_functions_hash(
+            source_functions=source_functions,
+        )
         current_hash = self._get_stored_custom_functions_hash()
 
         # Quick check: if aggregate hash matches, skip detailed sync
@@ -2563,27 +2572,34 @@ class FunctionManager(BaseFunctionManager):
         self._custom_functions_synced = True
         return True
 
-    def sync_custom(self) -> bool:
+    def sync_custom(
+        self,
+        *,
+        source_functions: Optional[Dict[str, Dict[str, Any]]] = None,
+        source_venvs: Optional[Dict[str, Dict[str, Any]]] = None,
+    ) -> bool:
         """
-        Sync all custom venvs and functions from source.
+        Sync custom venvs and functions from pre-collected sources.
 
-        This is the recommended method for syncing custom definitions.
-        It ensures venvs are synced first (so venv_name can be resolved),
+        Ensures venvs are synced first (so venv_name can be resolved),
         then syncs functions.
+
+        Args:
+            source_functions: Pre-collected functions dict.
+            source_venvs: Pre-collected venvs dict.
 
         Returns:
             True if any sync was performed, False if everything up-to-date.
         """
-        # Sync venvs first to get name→id mapping
-        venv_name_to_id = self.sync_custom_venvs()
+        venv_name_to_id = self.sync_custom_venvs(source_venvs=source_venvs)
+        functions_changed = self.sync_custom_functions(
+            venv_name_to_id,
+            source_functions=source_functions,
+        )
 
-        # Then sync functions with the mapping
-        functions_changed = self.sync_custom_functions(venv_name_to_id)
-
-        # Return True if venvs were newly synced OR functions changed
-        # (venv sync always returns a dict, not a bool, so check if hash changed)
         venvs_hash_changed = (
-            self._get_stored_custom_venvs_hash() != compute_custom_venvs_hash()
+            self._get_stored_custom_venvs_hash()
+            != compute_custom_venvs_hash(source_venvs=source_venvs)
             if not self._custom_venvs_synced
             else False
         )
@@ -3019,6 +3035,11 @@ class FunctionManager(BaseFunctionManager):
 
         Returns the full stored record (as a dict) or ``None`` if not found.
         """
+        import time as _time
+
+        _gfdn_t0 = _time.perf_counter()
+        logger.debug(f"⏱️ [FM._get_function_data_by_name] start: {name}")
+
         # Normalize to the Unify filter grammar (and avoid quote-escaping issues).
         try:
             normalized = normalize_filter_expr(f"name == {json.dumps(name)}")
@@ -3026,21 +3047,30 @@ class FunctionManager(BaseFunctionManager):
             normalized = f"name == {json.dumps(name)}"
 
         last_exc: Exception | None = None
-        import time as _time
 
         # The backend can return 404 for missing contexts in fresh projects/tests.
-        for delay in (0.0, 0.05, 0.15):
+        for attempt, delay in enumerate((0.0, 0.05, 0.15)):
             if delay:
                 _time.sleep(delay)
             try:
+                _q_t0 = _time.perf_counter()
                 logs = unify.get_logs(
                     context=self._compositional_ctx,
                     filter=normalized,
                     limit=1,
                     exclude_fields=list_private_fields(self._compositional_ctx),
                 )
+                _q_ms = (_time.perf_counter() - _q_t0) * 1000
                 if logs:
+                    logger.debug(
+                        f"⏱️ [FM._get_function_data_by_name] found (attempt={attempt}, "
+                        f"query={_q_ms:.0f}ms, total={(_time.perf_counter() - _gfdn_t0) * 1000:.0f}ms)",
+                    )
                     return logs[0].entries
+                logger.debug(
+                    f"⏱️ [FM._get_function_data_by_name] miss (attempt={attempt}, "
+                    f"query={_q_ms:.0f}ms, total={(_time.perf_counter() - _gfdn_t0) * 1000:.0f}ms)",
+                )
                 return None
             except _UnifyRequestError as e:
                 status = getattr(getattr(e, "response", None), "status_code", None)
@@ -3053,6 +3083,10 @@ class FunctionManager(BaseFunctionManager):
                 break
 
         # Treat missing context as empty library.
+        logger.debug(
+            f"⏱️ [FM._get_function_data_by_name] exhausted retries "
+            f"(total={(_time.perf_counter() - _gfdn_t0) * 1000:.0f}ms)",
+        )
         if isinstance(last_exc, _UnifyRequestError):
             status = getattr(getattr(last_exc, "response", None), "status_code", None)
             if status == 404:
@@ -5008,122 +5042,6 @@ class FunctionManager(BaseFunctionManager):
 
         return SESSION_DETAILS.assistant.desktop_mode == "windows"
 
-    def _calculate_wait_time_from_vm_ready_at(
-        self,
-        vm_ready_at: Optional[str],
-    ) -> int:
-        """
-        Calculate seconds to wait based on vm_ready_at timestamp.
-
-        Uses the same logic as debug_logger._calc_wait_from_ready_at().
-
-        Args:
-            vm_ready_at: ISO timestamp string (e.g., "2025-01-16T14:02:00.000-08:00")
-
-        Returns:
-            Wait time in seconds, minimum 5 (no maximum).
-        """
-        if not vm_ready_at:
-            return 10  # Default if no timestamp
-
-        try:
-            from datetime import datetime, timezone
-
-            ready_dt = datetime.fromisoformat(vm_ready_at.replace("Z", "+00:00"))
-            now = datetime.now(timezone.utc)
-            delta = (ready_dt - now).total_seconds()
-            return max(5, int(delta))
-        except Exception:
-            return 10  # Fallback on parse error
-
-    async def _wait_for_remote_windows_vm_ready(
-        self,
-        timeout: float = 300.0,
-    ) -> str:
-        """
-        Wait for the remote Windows VM to be ready before execution.
-
-        Polls the /infra/vm/status/{assistant_id}?vm_type=windows endpoint until
-        vm_ready=True. Uses the same endpoint pattern as debug_logger._resolve_vm_liveview().
-
-        Args:
-            timeout: Maximum time to wait in seconds (default 5 minutes).
-
-        Returns:
-            The desktop_url when VM is ready.
-
-        Raises:
-            TimeoutError: If VM not ready within timeout.
-            RuntimeError: If configuration is missing.
-        """
-        import aiohttp
-
-        from unity.session_details import SESSION_DETAILS
-        from unity.settings import SETTINGS
-
-        comms_url = SETTINGS.conversation.COMMS_URL.rstrip("/")
-        admin_key = SETTINGS.ORCHESTRA_ADMIN_KEY.get_secret_value()
-        assistant_id = SESSION_DETAILS.assistant.id
-
-        if not comms_url or not admin_key:
-            raise RuntimeError(
-                "Cannot check Windows VM status: COMMS_URL or ORCHESTRA_ADMIN_KEY "
-                "not configured",
-            )
-
-        start_time = asyncio.get_event_loop().time()
-        LOGGER.info(
-            f"{ICONS['windows_exec']} [windows exec] Waiting for VM ready (timeout={timeout}s)",
-        )
-
-        async with aiohttp.ClientSession() as session:
-            while True:
-                elapsed = asyncio.get_event_loop().time() - start_time
-                if elapsed > timeout:
-                    raise TimeoutError(
-                        f"Windows VM not ready after {timeout}s for assistant "
-                        f"{assistant_id}",
-                    )
-
-                try:
-                    async with session.get(
-                        f"{comms_url}/infra/vm/status/{assistant_id}",
-                        params={"vm_type": "windows"},
-                        headers={"Authorization": f"Bearer {admin_key}"},
-                        timeout=aiohttp.ClientTimeout(total=30),
-                    ) as resp:
-                        if resp.ok:
-                            data = await resp.json()
-                            vm_ready = data.get("vm_ready", False)
-                            desktop_url = data.get("desktop_url")
-
-                            if vm_ready and desktop_url:
-                                LOGGER.info(
-                                    f"{ICONS['windows_exec']} [windows exec] VM ready",
-                                )
-                                logger.info(
-                                    f"Windows VM ready for {assistant_id}: "
-                                    f"{desktop_url}",
-                                )
-                                return desktop_url.rstrip("/")
-
-                            vm_ready_at = data.get("vm_ready_at")
-                            wait_secs = self._calculate_wait_time_from_vm_ready_at(
-                                vm_ready_at,
-                            )
-                            remaining = timeout - elapsed
-                            await asyncio.sleep(min(wait_secs, remaining))
-                        else:
-                            resp_text = await resp.text()
-                            logger.warning(
-                                f"VM status check failed: {resp.status} "
-                                f"{resp_text}",
-                            )
-                            await asyncio.sleep(10)
-                except aiohttp.ClientError as e:
-                    logger.warning(f"VM status check error: {e}")
-                    await asyncio.sleep(10)
-
     async def _prepare_venv_on_remote_windows(
         self,
         desktop_url: str,
@@ -5266,8 +5184,22 @@ class FunctionManager(BaseFunctionManager):
             f"{ICONS['windows_exec']} [windows exec] Executing '{func_name_meta}' on remote Windows",
         )
 
-        # Step 1: Get desktop URL
-        desktop_url = await self._wait_for_remote_windows_vm_ready()
+        from unity.function_manager.primitives.runtime import _vm_ready
+
+        if not _vm_ready.is_set():
+            ready = await asyncio.to_thread(_vm_ready.wait, 300)
+            if not ready:
+                raise RuntimeError(
+                    "Managed VM did not become ready within 5 minutes",
+                )
+
+        desktop_url = SESSION_DETAILS.assistant.desktop_url
+        if not desktop_url:
+            raise RuntimeError(
+                "Cannot execute on remote Windows: desktop_url not set "
+                "(AssistantDesktopReady event may not have arrived yet)",
+            )
+        desktop_url = desktop_url.rstrip("/")
         headers = {"Authorization": f"Bearer {SESSION_DETAILS.unify_key}"}
 
         # Step 2: Sync files to remote before execution
@@ -5370,7 +5302,6 @@ if __name__ == "__main__":
                     "cwd": cwd,
                     "timeout": 3600000,  # 1 hour
                     "shell_mode": self.REMOTE_WINDOWS_SHELL_MODE,
-                    "user_session": True,  # Run in interactive user session for COM/Excel
                 },
                 headers=headers,
                 timeout=aiohttp.ClientTimeout(total=3660),

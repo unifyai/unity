@@ -6,7 +6,7 @@ Creates a job with assistant-specific environment variables.
 All other config comes from cluster-wide ConfigMaps and Secrets.
 
 Usage:
-    python create_job.py --assistant-id ID --user-name NAME --user-number NUMBER
+    python create_job.py --assistant-id ID --user-first-name NAME --user-number NUMBER
 """
 
 import argparse
@@ -165,8 +165,9 @@ def check_job_exists(batch_api, assistant_id: str, namespace: str = "default"):
 def create_unity_job(
     batch_api,
     assistant_id: str,
-    user_name: str,
-    user_number: str,
+    user_first_name: str,
+    user_surname: str = "",
+    user_number: str = "",
     assistant_number: str = "",
     assistant_email: str = "",
     user_phone_number: str = "",
@@ -180,7 +181,8 @@ def create_unity_job(
     Args:
         batch_api: Kubernetes Batch API client
         assistant_id: Unique assistant identifier
-        user_name: User's name
+        user_first_name: User's first name
+        user_surname: User's surname
         user_number: User's phone number
         assistant_number: Assistant's phone number (optional)
         assistant_email: Assistant's email address (optional)
@@ -244,7 +246,11 @@ def create_unity_job(
                                 "env": [
                                     # Assistant-specific environment variables
                                     {"name": "ASSISTANT_ID", "value": assistant_id},
-                                    {"name": "USER_NAME", "value": user_name},
+                                    {
+                                        "name": "USER_FIRST_NAME",
+                                        "value": user_first_name,
+                                    },
+                                    {"name": "USER_SURNAME", "value": user_surname},
                                     {"name": "USER_EMAIL", "value": user_email},
                                     {
                                         "name": "ASSISTANT_EMAIL",
@@ -517,14 +523,14 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  python create_job.py --assistant-id test --user-name "John Doe" --user-number "+1234567890"
+  python create_job.py --assistant-id test --user-first-name "John" --user-surname "Doe" --user-number "+1234567890"
   python create_job.py --assistant-id test --cleanup-delay 600          # 10 minute cleanup delay
   python create_job.py --assistant-id test --status                     # Check job status
   python create_job.py --assistant-id test --delete                     # Delete job
   python create_job.py --list                                          # List all jobs
   python create_job.py --cleanup                                       # Clean up old jobs
   python create_job.py --cleanup-all                                   # Clean up ALL completed jobs
-  python pubsub_trigger.py --assistant-id test --user-name "John" --user-number "+1234567890"
+  python pubsub_trigger.py --assistant-id test --user-first-name "John" --user-number "+1234567890"
         """,
     )
 
@@ -535,9 +541,13 @@ Examples:
     )
 
     parser.add_argument(
-        "--user-name",
-        # required=True,
-        help="User's name",
+        "--user-first-name",
+        help="User's first name",
+    )
+    parser.add_argument(
+        "--user-surname",
+        default="",
+        help="User's surname",
     )
 
     parser.add_argument(
@@ -685,7 +695,8 @@ Examples:
     job = create_unity_job(
         batch_api=batch_api,
         assistant_id=args.assistant_id,
-        user_name=args.user_name,
+        user_first_name=args.user_first_name,
+        user_surname=args.user_surname,
         user_number=args.user_number,
         assistant_number=args.assistant_number,
         assistant_email=args.assistant_email,

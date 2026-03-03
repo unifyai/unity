@@ -41,6 +41,7 @@ from unity.settings import SETTINGS
 from unity.common.read_only_ask_guard import ReadOnlyAskGuardHandle
 from unity.events.manager_event_logging import log_manager_call
 from unity.common.context_store import TableStore
+from unity.common.context_registry import ContextRegistry, TableContext
 from unity.common.model_to_fields import model_to_fields
 from unity.common.llm_client import new_llm_client
 from .utils.search import (
@@ -120,6 +121,18 @@ class FileManager(BaseFileManager):
     - Exposes unified tools for read-only inspection and safe rename/move
     """
 
+    class Config:
+        required_contexts = [
+            TableContext(
+                name="FileRecords",
+                description="Root namespace for file record indices.",
+            ),
+            TableContext(
+                name="Files",
+                description="Root namespace for per-file content storage.",
+            ),
+        ]
+
     def __init__(
         self,
         adapter: Optional[BaseFileSystemAdapter] = None,
@@ -173,27 +186,10 @@ class FileManager(BaseFileManager):
         # Extract clean filesystem type for LLM prompts (without path/details)
         self._fs_type = self._extract_filesystem_type(raw_alias)
 
-        ctxs = unify.get_active_context()
-        read_ctx, write_ctx = ctxs.get("read"), ctxs.get("write")
-        if not read_ctx:
-            try:
-                from ... import ensure_initialised as _ensure_initialised  # type: ignore  # local to avoid cycles
-
-                _ensure_initialised()
-                ctxs = unify.get_active_context()
-                read_ctx, write_ctx = ctxs.get("read"), ctxs.get("write")
-            except Exception:
-                pass
-        assert (
-            read_ctx == write_ctx
-        ), "read and write contexts must be the same when instantiating a FileManager."
-        base_ctx = read_ctx or "default"
-        # Use a single Files namespace and a per‑filesystem suffix
-        # Root contexts
-        # - FileRecords: index of files (lightweight per file row)
-        # - File:        per-file content roots (one subcontext per safe filepath)
-        self._ctx = f"{base_ctx}/FileRecords/{self._fs_alias}"
-        self._per_file_root = f"{base_ctx}/Files/{self._fs_alias}"
+        file_records_base = ContextRegistry.get_context(FileManager, "FileRecords")
+        files_base = ContextRegistry.get_context(FileManager, "Files")
+        self._ctx = f"{file_records_base}/{self._fs_alias}"
+        self._per_file_root = f"{files_base}/{self._fs_alias}"
 
         # Ensure context and fields exist
         self._store = TableStore(
@@ -205,19 +201,8 @@ class FileManager(BaseFileManager):
             ),
             fields=model_to_fields(FileRecord),
         )
-        try:
-            self._store.ensure_context()
-        except unify.RequestError as e:
-            body = getattr(e.response, "text", "") or ""
-            # Treat duplicate context as success and do not emit error output
-            if "already exists" in body:
-                pass
-
-        # Ensure storage via shared helper (idempotent)
-        try:
-            self._provision_storage()
-        except Exception:
-            pass
+        self._store.ensure_context()
+        self._provision_storage()
 
         # Public tool dictionaries, mirroring other managers
         # Multi-table tools (joins across per-file tables)

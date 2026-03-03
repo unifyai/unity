@@ -5,6 +5,9 @@ Verifies the LLM makes reasonable tool choices for different types of queries:
 - Using a desktop application -> primitives.computer.desktop
 - Multi-site or isolated-state web tasks -> primitives.computer.web.new_session()
 - Interactive user-visible browsing -> NOT visible=False
+- Simple desktop actions -> verify=False (or omitted)
+- Complex multi-step desktop tasks -> verify=True
+- Live demo context -> verify=False even for moderate complexity
 """
 
 import pytest
@@ -39,7 +42,12 @@ async def _make_actor_with_computer():
 
     actor = CodeActActor(environments=[state_env, computer_env])
     act_tools = actor.get_tools("act")
-    actor.add_tools("act", {"execute_code": act_tools["execute_code"]})
+    keep = {
+        k: v
+        for k, v in act_tools.items()
+        if not k.startswith("FunctionManager_") and not k.startswith("GuidanceManager_")
+    }
+    actor.add_tools("act", keep)
 
     try:
         yield actor
@@ -167,4 +175,129 @@ async def test_interactive_browsing_not_headless():
         assert "visible=False" not in snippets, (
             f"When the user is watching, browser sessions must not be headless. "
             f"Snippets:\n{snippets}"
+        )
+
+
+# ---------------------------------------------------------------------------
+# Test 5: Simple single-action desktop task -> verify=False (or omitted)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+@pytest.mark.timeout(600)
+@_handle_project
+async def test_simple_desktop_click_does_not_verify():
+    """A simple single-action desktop task (clicking a button, opening an app)
+    should NOT use verify=True, since single-pass execution is sufficient."""
+    async with _make_actor_with_computer() as actor:
+        handle = await actor.act(
+            "Click the 'Settings' icon on the desktop.",
+            clarification_enabled=False,
+        )
+        await handle.result()
+
+        snippets = _join_snippets(handle)
+        assert (
+            "primitives.computer.desktop" in snippets
+        ), f"Should use desktop primitives. Snippets:\n{snippets}"
+        assert "verify=True" not in snippets, (
+            f"Simple click tasks should NOT use verify=True. " f"Snippets:\n{snippets}"
+        )
+
+
+# ---------------------------------------------------------------------------
+# Test 6: Form filling (moderate complexity) -> verify=False
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+@pytest.mark.timeout(600)
+@_handle_project
+async def test_short_form_fill_does_not_verify():
+    """Filling a short form (a few fields + submit) is well within
+    single-pass capability and should use verify=False."""
+    async with _make_actor_with_computer() as actor:
+        handle = await actor.act(
+            "In the open sign-up form, fill in the name as 'Jane Doe', "
+            "the email as 'jane@example.com', and click 'Submit'.",
+            clarification_enabled=False,
+        )
+        await handle.result()
+
+        snippets = _join_snippets(handle)
+        assert (
+            "primitives.computer.desktop" in snippets
+        ), f"Should use desktop primitives. Snippets:\n{snippets}"
+        assert "verify=True" not in snippets, (
+            f"Short form fills should NOT use verify=True. " f"Snippets:\n{snippets}"
+        )
+
+
+# ---------------------------------------------------------------------------
+# Test 7: Complex multi-step wizard -> verify=True
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+@pytest.mark.timeout(600)
+@_handle_project
+async def test_complex_multistep_wizard_uses_verify():
+    """A long multi-page wizard with many steps across different screens
+    should use verify=True to ensure each stage completes correctly."""
+    async with _make_actor_with_computer() as actor:
+        handle = await actor.act(
+            "Complete the full account setup wizard in the open application. "
+            "It has 5 pages: personal details (name, DOB, address, phone), "
+            "employment information (employer, job title, salary, start date), "
+            "financial profile (income sources, investment experience, risk "
+            "tolerance), document upload (ID and proof of address), and a "
+            "final review page where you must check all the confirmation "
+            "boxes and click 'Finish Setup'. Use these details:\n"
+            "- Name: John Smith, DOB: 1990-05-15\n"
+            "- Address: 123 Main St, Springfield, IL 62701\n"
+            "- Phone: (555) 123-4567\n"
+            "- Employer: Acme Corp, Job: Engineer, Salary: $95,000\n"
+            "- Income: salary only, Experience: moderate, Risk: balanced\n",
+            clarification_enabled=False,
+        )
+        await handle.result()
+
+        snippets = _join_snippets(handle)
+        assert (
+            "primitives.computer.desktop" in snippets
+        ), f"Should use desktop primitives. Snippets:\n{snippets}"
+        assert "verify=True" in snippets, (
+            f"Complex multi-step wizards should use verify=True. "
+            f"Snippets:\n{snippets}"
+        )
+
+
+# ---------------------------------------------------------------------------
+# Test 8: Live demo context -> verify=False even for moderate task
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+@pytest.mark.timeout(600)
+@_handle_project
+async def test_live_demo_prefers_no_verify():
+    """During a live demo where latency matters, even a moderately complex
+    desktop task should avoid verify=True to keep responsiveness high."""
+    async with _make_actor_with_computer() as actor:
+        handle = await actor.act(
+            "I'm doing a live demo right now and the audience is watching "
+            "my screen. Please open the CRM application, navigate to the "
+            "Contacts section, and create a new contact with name 'Demo "
+            "User' and email 'demo@example.com'.",
+            clarification_enabled=False,
+        )
+        await handle.result()
+
+        snippets = _join_snippets(handle)
+        assert (
+            "primitives.computer.desktop" in snippets
+        ), f"Should use desktop primitives. Snippets:\n{snippets}"
+        assert "verify=True" not in snippets, (
+            f"During live demos, should NOT use verify=True to minimize "
+            f"latency. Snippets:\n{snippets}"
         )

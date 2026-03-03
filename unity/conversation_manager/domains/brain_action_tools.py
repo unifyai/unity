@@ -22,7 +22,7 @@ from pydantic import create_model as _create_model
 
 from unity.common.prompt_helpers import now as prompt_now
 from unity.logger import LOGGER
-from unity.common.hierarchical_logger import DEFAULT_ICON
+from unity.common.hierarchical_logger import DEFAULT_ICON, ICONS
 
 from unity.conversation_manager.domains import comms_utils
 from unity.conversation_manager.domains import managers_utils
@@ -307,6 +307,56 @@ def _resolve_or_attach_detail(
     # Re-fetch to get fresh data after the update
     updated_contact = contact_index.get_contact(contact_id)
     return (None, updated_contact)
+
+
+class _DesktopActionHandle:
+    """Lightweight handle wrapping a single desktop primitive call.
+
+    Provides the minimal interface consumed by the CM watcher infrastructure
+    (``actor_watch_result``) so desktop fast-path actions participate in the
+    same in-flight lifecycle as ``act`` and the contact/transcript fast paths.
+
+    Steering operations (pause/resume/interject/ask) are no-ops because these
+    are atomic single-step actions with no inner loop to steer.
+    """
+
+    def __init__(self, task: asyncio.Task):
+        self._task = task
+        self._notification_q: asyncio.Queue = asyncio.Queue()
+
+    def done(self) -> bool:
+        return self._task.done()
+
+    async def result(self) -> str:
+        return await self._task
+
+    async def next_notification(self) -> dict:
+        while not self._task.done():
+            try:
+                return await asyncio.wait_for(self._notification_q.get(), timeout=30)
+            except asyncio.TimeoutError:
+                continue
+        raise asyncio.CancelledError
+
+    async def next_clarification(self) -> dict:
+        while not self._task.done():
+            await asyncio.sleep(30)
+        raise asyncio.CancelledError
+
+    async def stop(self, reason=None, **kwargs):
+        self._task.cancel()
+
+    async def interject(self, message, **kwargs):
+        pass
+
+    async def ask(self, question, **kwargs):
+        pass
+
+    async def pause(self):
+        pass
+
+    async def resume(self):
+        pass
 
 
 class ConversationManagerBrainActionTools:
@@ -1017,10 +1067,10 @@ class ConversationManagerBrainActionTools:
         LOGGER.debug(
             f"{DEFAULT_ICON} [make_call] context: {context}, to_number: {to_number}",
         )
-        # Store initial guidance so CallManager can publish it to the fast brain
-        # after the subprocess spawns (before the recipient picks up).
+        # Store initial notification so CallManager can publish it to the fast
+        # brain after the subprocess spawns (before the recipient picks up).
         if context:
-            self._cm.call_manager.initial_call_guidance = context
+            self._cm.call_manager.initial_notification = context
         response = await comms_utils.start_call(to_number=to_number)
         if response["success"]:
             fresh_contact = (
@@ -1131,6 +1181,18 @@ class ConversationManagerBrainActionTools:
         """
         global _next_handle_id
 
+        import time as _bat_time
+
+        _bat_t0 = _bat_time.perf_counter()
+
+        def _bat_ms() -> str:
+            return f"{(_bat_time.perf_counter() - _bat_t0) * 1000:.0f}ms"
+
+        import logging as _bat_logging
+
+        _bat_log = _bat_logging.getLogger("unity")
+        _bat_log.debug(f"⏱️ [CM.act tool +{_bat_ms()}] entered")
+
         # Pass the fresh rendered state snapshot as context for the Actor,
         # unless the LLM opted out.
         parent_context = None
@@ -1140,6 +1202,7 @@ class ConversationManagerBrainActionTools:
                 if self._cm._current_state_snapshot
                 else None
             )
+        _bat_log.debug(f"⏱️ [CM.act tool +{_bat_ms()}] parent context built")
 
         # Convert the LLM-provided schema dict into a Pydantic model that the
         # Actor's async tool loop uses for structured output validation.
@@ -1154,11 +1217,15 @@ class ConversationManagerBrainActionTools:
         cm = self._cm
 
         async def _invoke_actor():
+            _bat_log.debug(f"⏱️ [CM.act tool +{_bat_ms()}] calling cm.actor.act()")
             handle = await cm.actor.act(
                 query,
                 _parent_chat_context=parent_context,
                 response_format=pydantic_response_format,
                 persist=persist,
+            )
+            _bat_log.debug(
+                f"⏱️ [CM.act tool +{_bat_ms()}] cm.actor.act() returned handle",
             )
 
             # Capture the snapshot state for incremental diff computation.
@@ -1189,6 +1256,7 @@ class ConversationManagerBrainActionTools:
             asyncio.create_task(
                 managers_utils.actor_watch_clarifications(handle_id, handle),
             )
+            _bat_log.debug(f"⏱️ [CM.act tool +{_bat_ms()}] watchers started")
 
         handle_id = _next_handle_id
         _next_handle_id += 1
@@ -1198,6 +1266,7 @@ class ConversationManagerBrainActionTools:
         else:
             await managers_utils.queue_operation(_invoke_actor)
 
+        _bat_log.debug(f"⏱️ [CM.act tool +{_bat_ms()}] publishing ActorHandleStarted")
         await self._event_broker.publish(
             f"app:actor:actor_started_handle_{handle_id}",
             ActorHandleStarted(
@@ -1207,6 +1276,7 @@ class ConversationManagerBrainActionTools:
                 response_format=response_format,
             ).to_json(),
         )
+        _bat_log.debug(f"⏱️ [CM.act tool +{_bat_ms()}] done, returning")
 
         return {"status": "acting", "query": query}
 
@@ -1226,6 +1296,9 @@ class ConversationManagerBrainActionTools:
         ``in_flight_actions``, spawn watcher tasks, publish started event.
         """
         global _next_handle_id
+        LOGGER.info(
+            f"{ICONS['fast_path']} [FastPath] {action_type}: {text}",
+        )
 
         parent_context = None
         if include_conversation_context:
@@ -1421,6 +1494,230 @@ class ConversationManagerBrainActionTools:
             response_format=response_format,
         )
 
+    # ── Desktop fast-path tools ───────────────────────────────────────────
+
+    async def _silent_interject_desktop_act_sessions(
+        self,
+        message: str,
+    ) -> None:
+        """Send a silent interjection to all in-flight act sessions that have
+        used desktop primitives, keeping the Actor informed without triggering
+        an immediate LLM turn."""
+        for hid in list(self._cm._act_handles_with_desktop_usage):
+            data = self._cm.in_flight_actions.get(hid)
+            if data:
+                handle = data.get("handle")
+                if handle and not handle.done():
+                    try:
+                        await handle.interject(
+                            message,
+                            trigger_immediate_llm_turn=False,
+                        )
+                    except TypeError:
+                        await handle.interject(message)
+
+    async def _invoke_desktop_action(
+        self,
+        *,
+        coro,
+        text: str,
+        action_type: str,
+    ) -> dict[str, Any]:
+        """Shared lifecycle for desktop fast-path tools.
+
+        Runs the desktop primitive call in the background and registers it as
+        an in-flight action with the same lifecycle as ``act`` and the contact/
+        transcript fast paths: ``ActorHandleStarted`` event, watcher tasks for
+        result delivery, and automatic cleanup on completion.
+
+        Interjects in-flight Actor desktop sessions twice:
+        1. Immediately when the request is made (so the Actor knows what's happening)
+        2. After the primitive completes with the result
+        """
+        global _next_handle_id
+        LOGGER.info(
+            f"{ICONS['fast_path']} [FastPath] {action_type}: {text}",
+        )
+
+        cm = self._cm
+        handle_id = _next_handle_id
+        _next_handle_id += 1
+
+        async def _run():
+            result = await coro
+            summary = str(result) if result is not None else "done"
+            LOGGER.info(
+                f"{ICONS['fast_path']} [FastPath] {action_type} completed:\n"
+                f"{summary}",
+            )
+            await self._silent_interject_desktop_act_sessions(
+                f"[FYI — already done] The outer process executed "
+                f'{action_type}("{text}") via a direct fast path. '
+                f"Result: {result}\n"
+                f"No action needed from you — this is for awareness only. "
+                f"If you have relevant context (e.g. a stored skill that "
+                f"should be used instead, or a reason to adjust your own "
+                f"desktop plan), you may act on it; otherwise treat as a "
+                f"no-op.",
+            )
+            return str(result) if result is not None else "done"
+
+        handle = _DesktopActionHandle(asyncio.create_task(_run()))
+
+        cm.in_flight_actions[handle_id] = {
+            "handle": handle,
+            "query": text,
+            "persist": False,
+            "action_type": action_type,
+            "handle_actions": [
+                {
+                    "action_name": f"{action_type}_started",
+                    "query": text,
+                    "timestamp": prompt_now(),
+                },
+            ],
+            "initial_snapshot_state": getattr(cm, "_current_snapshot_state", None),
+            "context_opted_in": False,
+        }
+        asyncio.create_task(managers_utils.actor_watch_result(handle_id, handle))
+
+        await self._event_broker.publish(
+            f"app:actor:actor_started_handle_{handle_id}",
+            ActorHandleStarted(
+                handle_id=handle_id,
+                action_name=action_type,
+                query=text,
+            ).to_json(),
+        )
+
+        await self._silent_interject_desktop_act_sessions(
+            f"[FYI — being handled] The outer process is executing "
+            f'{action_type}("{text}") via a direct fast path. '
+            f"Do NOT replicate this action — it is already in progress. "
+            f"You will receive the result shortly. If this conflicts with "
+            f"your current plan, you may adjust accordingly.",
+        )
+
+        return {"status": "acting", "query": text}
+
+    async def desktop_act(
+        self,
+        *,
+        instruction: str,
+    ) -> dict[str, Any]:
+        """Execute a single atomic action on the assistant's desktop.
+
+        This is a **direct shortcut** to the desktop agent, bypassing the
+        general ``act`` pathway.  The action runs in the background and its
+        result is delivered asynchronously (same lifecycle as ``act``).
+
+        Use for **single atomic actions** where the user has explicitly
+        described both the action and the target:
+
+        - "Click the blue Submit button"
+        - "Type 'hello world' into the search box"
+        - "Scroll down"
+        - "Press Enter"
+
+        **Route through ``act`` instead** when the request requires reasoning
+        about *what* to do, involves multiple steps, or benefits from guidance
+        and compositional functions.
+
+        Args:
+            instruction: A concrete desktop action to perform
+                (e.g. "Click the Submit button").
+        """
+        cp = self._cm.computer_primitives
+        return await self._invoke_desktop_action(
+            coro=cp.desktop.act(instruction),
+            text=instruction,
+            action_type="desktop_act",
+        )
+
+    # ── Web fast-path tools ────────────────────────────────────────────
+
+    def _resolve_or_create_web_session(self, session_id: int | None):
+        """Return (handle, is_new) for an existing or freshly-created session."""
+        cp = self._cm.computer_primitives
+
+        async def _resolve():
+            if session_id is not None:
+                for h in cp.web.list_sessions():
+                    if h.session_id == session_id and h.active:
+                        return h, False
+                raise ValueError(
+                    f"No active web session with id {session_id}. "
+                    f"Check <active_web_sessions> for valid IDs.",
+                )
+            handle = await cp.web.new_session(visible=True)
+            return handle, True
+
+        return _resolve()
+
+    async def web_act(
+        self,
+        *,
+        request: str,
+        session_id: int | None = None,
+    ) -> dict[str, Any]:
+        """Execute a request in a visible web browser session.
+
+        This is a **direct shortcut** for browser-only work — searching the
+        web, navigating sites, filling web forms, reading web pages, or
+        extracting web content.  It bypasses the general ``act`` pathway and
+        runs directly against a Chromium browser session visible on the
+        desktop.
+
+        A new browser session is created automatically when ``session_id``
+        is omitted.  Pass a numeric ``session_id`` from
+        ``<active_web_sessions>`` to continue working in an existing session.
+
+        **Use ``desktop_act`` instead** for native desktop actions that
+        cannot be done inside a browser (clicking desktop UI, opening native
+        apps, terminal commands, file manager operations).
+
+        **Use ``act`` instead** for complex multi-step work, cross-domain
+        reasoning, or anything requiring guidance / functions / knowledge.
+
+        Args:
+            request: Natural language description of the browser task
+                (e.g. "Search Google for 'best CRM software 2025'").
+            session_id: Optional numeric ID of an existing active web session
+                to reuse.  When omitted a new visible session is created.
+        """
+        handle, is_new = await self._resolve_or_create_web_session(session_id)
+        used_id = handle.session_id
+        label = f"[session={used_id}, new={is_new}]"
+        return await self._invoke_desktop_action(
+            coro=handle.act(request),
+            text=f"{request} {label}",
+            action_type="web_act",
+        )
+
+    async def close_web_session(
+        self,
+        *,
+        session_id: int,
+    ) -> dict[str, Any]:
+        """Close a visible web browser session to free resources.
+
+        Use after completing browser work to clean up.  Check
+        ``<active_web_sessions>`` in the current state for valid IDs.
+
+        Args:
+            session_id: The numeric ID of the web session to close.
+        """
+        cp = self._cm.computer_primitives
+        for h in cp.web.list_sessions():
+            if h.session_id == session_id and h.active:
+                await h.stop()
+                return {"status": "closed", "session_id": session_id}
+        return {
+            "status": "not_found",
+            "session_id": session_id,
+            "error": "No active web session with that ID.",
+        }
+
     async def set_boss_details(
         self,
         *,
@@ -1492,6 +1789,7 @@ class ConversationManagerBrainActionTools:
             that many seconds — useful for probing a long-running action or
             revisiting a situation after a reasonable interval.
         """
+        self._cm._outbound_suppress_gen = self._cm._llm_gen
         return {"status": "waiting", "delay": delay}
 
     async def guide_voice_agent(
@@ -1552,13 +1850,15 @@ class ConversationManagerBrainActionTools:
         """Return the static tools dict for start_async_tool_loop."""
         from unity.settings import SETTINGS
 
-        tools = {
-            "send_sms": self.send_sms,
+        tools: dict[str, Callable[..., Any]] = {
             "send_unify_message": self.send_unify_message,
-            "send_email": self.send_email,
-            "make_call": self.make_call,
             "wait": self.wait,
         }
+        if self._cm.assistant_number:
+            tools["send_sms"] = self.send_sms
+            tools["make_call"] = self.make_call
+        if self._cm.assistant_email:
+            tools["send_email"] = self.send_email
         if getattr(self._cm.mode, "is_voice", False):
             tools["guide_voice_agent"] = self.guide_voice_agent
         if SETTINGS.DEMO_MODE:
@@ -1773,9 +2073,8 @@ class ConversationManagerBrainActionTools:
             params = []
 
         ask_completed_action.__signature__ = inspect.Signature(params)
-        ask_completed_action.__doc__ = (
-            docstring or f"Ask about completed action: {query}"
-        )
+        base_doc = docstring or "Ask about this completed action."
+        ask_completed_action.__doc__ = f"{base_doc}\n\nFor action: {query}"
         return ask_completed_action
 
     def _make_steering_tool(
@@ -1998,19 +2297,18 @@ class ConversationManagerBrainActionTools:
 
             return {"status": "ok", "operation": operation, "result": result}
 
-        # Copy signature from the handle's method to get proper tool schema.
-        # Parameters starting with _ (like _parent_chat_context_cont) are automatically
-        # hidden by method_to_schema, and images: Optional[ImageRefs] is schema-safe.
+        # Copy signature + docstring from the handle's method. Parameters
+        # starting with _ are automatically hidden by method_to_schema.
         if handle is not None and hasattr(handle, operation):
             DynamicToolFactory._adopt_signature_and_annotations(
                 getattr(handle, operation),
                 steering_tool,
             )
 
-        # Always set a custom docstring that describes this specific action
-        # (overrides any docstring copied from handle, e.g. from MagicMock in tests)
-        steering_tool.__doc__ = f"{docstring}\n\nFor action: {query}"
-        if param_name:
-            steering_tool.__doc__ += f"\n\nArgs:\n    {param_name}: {docstring}"
+        # Append action context so the CM knows which action this tool steers.
+        # Preserve the docstring set by _adopt_signature_and_annotations (or
+        # fall back to the docstring passed in from SteeringOperation).
+        base_doc = inspect.getdoc(steering_tool) or docstring
+        steering_tool.__doc__ = f"{base_doc}\n\nFor action: {query}"
 
         return steering_tool

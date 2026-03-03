@@ -3,12 +3,10 @@ import traceback
 from typing import TYPE_CHECKING, Union
 
 from unity.contact_manager.types.contact import UNASSIGNED
-from unity.logger import LOGGER
 from unity.common.hierarchical_logger import DEFAULT_ICON
 from unity.conversation_manager import assistant_jobs
 from unity.conversation_manager.events import *
 from unity.conversation_manager.domains import managers_utils
-from unity.conversation_manager.tracing import content_trace_id
 from unity.conversation_manager.types import Medium, Mode
 
 if TYPE_CHECKING:
@@ -57,13 +55,14 @@ class EventHandler:
             and not event.__class__.content_logged
             and event.__class__.loggable
         ):
-            event_trace = getattr(cm, "_current_event_trace", None) or {}
-            cm._session_logger.info(
+            log_fn = (
+                cm._session_logger.info
+                if event.__class__.prominent
+                else cm._session_logger.debug
+            )
+            log_fn(
                 event_key,
-                (
-                    f"Event: {event.__class__.__name__} "
-                    f"(event_id={event_trace.get('event_id', '-')})"
-                ),
+                f"Event: {event.__class__.__name__}",
             )
 
         if event.__class__.loggable:
@@ -211,15 +210,20 @@ async def _(
     # The fast brain starts with all flags as False and relies on guidance delivery,
     # so any state that was already active needs to be pushed now.
     if cm.assistant_screen_share_active and cm.call_manager._socket_server:
+        from unity.conversation_manager.medium_scripts.common import (
+            _resolve_agent_service_url,
+        )
+
         guidance_text = _MEET_FAST_BRAIN_GUIDANCE[AssistantScreenShareStarted]
-        guidance_event = CallGuidance(
+        notification_event = FastBrainNotification(
             contact=contact,
             content=guidance_text,
             source="meet_interaction",
+            agent_service_url=_resolve_agent_service_url(),
         )
         await cm.call_manager._socket_server.queue_for_clients(
-            "app:call:call_guidance",
-            guidance_event.to_json(),
+            "app:call:notification",
+            notification_event.to_json(),
         )
 
     # No LLM run here — call guidance is pre-computed via make_call(context=...).
@@ -343,11 +347,6 @@ async def _(event: Event, cm: "ConversationManager", *args, **kwargs):
         local_message_id=message_id,
     )
 
-    # Outbound utterances signal that the fast brain's generation+TTS cycle
-    # completed — clear the suppression flag so proactive speech can resume.
-    if role == "assistant":
-        cm._fast_brain_active = False
-
     # Reset proactive speech on any utterance (user or assistant).
     await cm.schedule_proactive_speech()
 
@@ -362,17 +361,16 @@ async def _(event: Event, cm: "ConversationManager", *args, **kwargs):
         await cm.interject_or_run(event.content)
 
 
-@EventHandler.register(CallGuidance)
+@EventHandler.register(FastBrainNotification)
 async def _(
-    event: CallGuidance,
+    event: FastBrainNotification,
     cm: "ConversationManager",
     *args,
     **kwargs,
 ):
-    guidance_id = content_trace_id("guid", event.content or "")
     cm._session_logger.info(
-        "call_guidance",
-        f"Received guidance guidance_id={guidance_id}: {event.content[:50]}...",
+        "call_notification",
+        f"Received notification: {event.content[:50]}...",
     )
     contact_id = event.contact["contact_id"]
     contact = cm.contact_index.get_contact(contact_id=contact_id)
@@ -467,12 +465,16 @@ async def _(
             exchange_id,
             {"recording_url": event.recording_url},
         )
-        LOGGER.debug(
+        cm._session_logger.debug(
+            "recording",
             f"{DEFAULT_ICON} [RecordingReady] Stored recording_url on exchange "
             f"{exchange_id} for {name}",
         )
     else:
-        LOGGER.debug(f"{DEFAULT_ICON} [RecordingReady] No exchange_id found for {name}")
+        cm._session_logger.debug(
+            "recording",
+            f"{DEFAULT_ICON} [RecordingReady] No exchange_id found for {name}",
+        )
 
 
 @EventHandler.register(
@@ -500,8 +502,13 @@ async def _(event, cm: "ConversationManager", *args, **kwargs):
             await cm.request_llm_run()
     elif isinstance(event, ActorHandleResponse):
         # Handle response from an action steering operation.
-        if event.handle_id in cm.in_flight_actions:
-            handle_data = cm.in_flight_actions[event.handle_id]
+        # Check both in-flight and completed actions — post-completion asks
+        # publish on the same channel after ActorResult has already moved
+        # the action to completed_actions.
+        handle_data = cm.in_flight_actions.get(
+            event.handle_id,
+        ) or cm.completed_actions.get(event.handle_id)
+        if handle_data:
             handle_actions = handle_data.get("handle_actions", [])
             action_name = event.action_name or "ask"
             expected_action_name = f"{action_name}_{event.handle_id}"
@@ -653,7 +660,6 @@ async def _(event, cm: "ConversationManager", *args, **kwargs):
             event_trace = getattr(cm, "_current_event_trace", None) or {}
             cm._session_logger.info(
                 "sms_sent",
-                f"({event_trace.get('event_id', '-')}) "
                 f"SMS to {sender_name}: {event.content}",
             )
         case SMSReceived():
@@ -664,7 +670,6 @@ async def _(event, cm: "ConversationManager", *args, **kwargs):
             event_trace = getattr(cm, "_current_event_trace", None) or {}
             cm._session_logger.info(
                 "sms_received",
-                f"({event_trace.get('event_id', '-')}) "
                 f"SMS from {sender_name}: {event.content}",
             )
         case EmailSent():
@@ -674,7 +679,6 @@ async def _(event, cm: "ConversationManager", *args, **kwargs):
                 recipients += "..."
             cm._session_logger.info(
                 "email_sent",
-                f"({event_trace.get('event_id', '-')}) "
                 f"Email to {recipients}\n"
                 f"Subject: {event.subject}\n\n"
                 f"{event.body}",
@@ -700,14 +704,14 @@ async def _(event, cm: "ConversationManager", *args, **kwargs):
             )
             notif_content = f"Email sent to {', '.join(email_to[:2])}{'...' if len(email_to) > 2 else ''}"
             cm.notifications_bar.push_notif("comms", notif_content, event.timestamp)
-            await cm.request_llm_run(delay=2)
+            if cm._outbound_suppress_gen != cm._llm_gen:
+                await cm.request_llm_run(delay=2)
             return  # Early return - email handling is complete
 
         case EmailReceived():
             event_trace = getattr(cm, "_current_event_trace", None) or {}
             cm._session_logger.info(
                 "email_received",
-                f"({event_trace.get('event_id', '-')}) "
                 f"Email from {sender_name}\n"
                 f"Subject: {event.subject}\n\n"
                 f"{event.body}",
@@ -745,7 +749,6 @@ async def _(event, cm: "ConversationManager", *args, **kwargs):
             event_trace = getattr(cm, "_current_event_trace", None) or {}
             cm._session_logger.info(
                 "unify_message_sent",
-                f"({event_trace.get('event_id', '-')}) "
                 f"Message to {sender_name}: {event.content}",
             )
         case UnifyMessageReceived():
@@ -757,7 +760,6 @@ async def _(event, cm: "ConversationManager", *args, **kwargs):
             event_trace = getattr(cm, "_current_event_trace", None) or {}
             cm._session_logger.info(
                 "unify_message_received",
-                f"({event_trace.get('event_id', '-')}) "
                 f"Message from {sender_name}: {event.content}",
             )
 
@@ -777,7 +779,8 @@ async def _(event, cm: "ConversationManager", *args, **kwargs):
     if role == "user":
         await cm.cancel_proactive_speech()
 
-    await cm.request_llm_run(delay=2)
+    if role == "user" or cm._outbound_suppress_gen != cm._llm_gen:
+        await cm.request_llm_run(delay=2)
 
 
 @EventHandler.register(Error)
@@ -861,12 +864,10 @@ async def _(event: UnknownContactCreated, cm: "ConversationManager", *args, **kw
 
 
 async def _startup_sequence(cm: "ConversationManager"):
-    """Run job startup logging, signal VM readiness, then file sync.
+    """Run job startup logging.
 
-    File sync depends on VM connectivity details that log_job_startup resolves,
-    so we must wait for job startup to complete before starting file sync.
-    log_job_startup includes _resolve_vm_liveview polling for managed VMs,
-    so once it returns the VM is confirmed reachable (or retries exhausted).
+    VM readiness, desktop session warm-up, and file sync are now driven by
+    the ``AssistantDesktopReady`` event handler rather than polling.
     """
     await asyncio.to_thread(
         assistant_jobs.log_job_startup,
@@ -874,17 +875,12 @@ async def _startup_sequence(cm: "ConversationManager"):
         user_id=cm.user_id,
         assistant_id=cm.assistant_id,
     )
-    # Unblock any pending MagnitudeBackend lazy initialization.
-    from unity.function_manager.primitives.runtime import _vm_ready
-
-    _vm_ready.set()
-    await managers_utils._start_file_sync()
 
 
 @EventHandler.register((StartupEvent))
 async def _(event: StartupEvent, cm: "ConversationManager", *args, **kwargs):
     try:
-        cm._session_logger.debug("startup", "Received startup event")
+        cm._session_logger.info("startup", "Received startup event")
 
         # Set demo mode from startup event before initializing managers
         # Demo mode is derived from the presence of a demo_id
@@ -902,7 +898,6 @@ async def _(event: StartupEvent, cm: "ConversationManager", *args, **kwargs):
         cm.set_details(payload)
         cm.call_manager.set_config(cm.get_call_config())
 
-        # Job logging + file sync run in sequence (file sync needs VM details from job startup)
         asyncio.create_task(_startup_sequence(cm))
 
         # Manager initialization runs in parallel
@@ -924,10 +919,12 @@ async def _(event: AssistantUpdateEvent, cm: "ConversationManager", *args, **kwa
     await managers_utils.queue_operation(
         managers_utils.update_session_contacts,
         cm,
-        event.assistant_name,
+        event.assistant_first_name,
+        event.assistant_surname,
         event.assistant_number,
         event.assistant_email,
-        event.user_name,
+        event.user_first_name,
+        event.user_surname,
         event.user_number,
         event.user_email,
     )
@@ -1009,6 +1006,7 @@ async def _(event: ActorResult, cm: "ConversationManager", *args, **kwargs):
     completed = cm.in_flight_actions.pop(event.handle_id, None)
     if completed:
         cm.completed_actions[event.handle_id] = completed
+    cm._act_handles_with_desktop_usage.discard(event.handle_id)
     await cm.request_llm_run()
 
 
@@ -1045,8 +1043,8 @@ async def _(event: ActorNotification, cm: "ConversationManager", *args, **kwargs
     working.  Progress is recorded in the action's history.
 
     The slow brain is woken to decide whether to relay progress via
-    ``guide_voice_agent``.  On boss-on-call, the fast brain receives the
-    raw event directly via channel forwarding (so guidance is not needed).
+    ``guide_voice_agent``.  On boss-on-call, the call manager renders
+    actor events into FastBrainNotification messages for the fast brain.
     """
     cm._has_non_forwarded_event = True
     if event.handle_id in cm.in_flight_actions:
@@ -1059,6 +1057,25 @@ async def _(event: ActorNotification, cm: "ConversationManager", *args, **kwargs
                 "timestamp": prompt_now(),
             },
         )
+    await cm.request_llm_run()
+
+
+@EventHandler.register(DesktopActCompleted)
+async def _(
+    event: DesktopActCompleted,
+    cm: "ConversationManager",
+    *args,
+    **kwargs,
+):
+    """A ``primitives.computer.desktop.act()`` call completed somewhere in the
+    system. Push a notification and wake the slow brain so it can react."""
+    cm._has_non_forwarded_event = True
+    snippet = event.summary[:120] if event.summary else event.instruction[:120]
+    cm.notifications_bar.push_notif(
+        "Desktop",
+        f"Desktop action completed: {snippet}",
+        event.timestamp,
+    )
     await cm.request_llm_run()
 
 
@@ -1115,11 +1132,118 @@ def _recent_conversation_snippet(cm: "ConversationManager", n: int = 4) -> str |
     return "\n".join(lines)
 
 
+async def _ensure_desktop_session(cm: "ConversationManager") -> None:
+    """Create a desktop session in agent-service if one doesn't already exist.
+
+    Sessions are lazy (created on first ``get_session`` call), so this must be
+    called explicitly to guarantee the ``/screenshot`` endpoint has an active
+    session to fall back to.  ``get_session`` is idempotent — calling it when a
+    session already exists returns the cached instance.
+
+    Retries with exponential backoff because the VM's Caddy reverse proxy may
+    still be starting up or obtaining its TLS certificate from Let's Encrypt
+    even after the Communication service reports the VM as "ready".
+    """
+    from unity.function_manager.primitives.runtime import ComputerPrimitives
+    from unity.manager_registry import ManagerRegistry
+
+    cp = ManagerRegistry.get_instance(ComputerPrimitives)
+    if cp is None:
+        return
+
+    max_attempts = 12
+    base_delay = 5.0
+    max_delay = 30.0
+    delay = base_delay
+
+    for attempt in range(1, max_attempts + 1):
+        try:
+            session = await cp.backend.get_session("desktop")
+            cm._session_logger.info(
+                "desktop_session",
+                f"Desktop session ready: {session._session_id}",
+            )
+            return
+        except Exception as e:
+            if attempt == max_attempts:
+                cm._session_logger.warning(
+                    "desktop_session",
+                    f"Failed to create desktop session after {max_attempts} attempts: "
+                    f"{type(e).__name__}: {e}",
+                )
+                return
+            cm._session_logger.debug(
+                "desktop_session",
+                f"Attempt {attempt}/{max_attempts} failed ({type(e).__name__}), "
+                f"retrying in {delay:.0f}s",
+            )
+            await asyncio.sleep(delay)
+            delay = min(delay * 1.5, max_delay)
+            cp.backend.clear_session("desktop")
+
+
+# --------------------------------------------------------------------------- #
+# Desktop Lifecycle Events
+# --------------------------------------------------------------------------- #
+
+
+@EventHandler.register((AssistantDesktopReady,))
+async def _(
+    event: AssistantDesktopReady,
+    cm: "ConversationManager",
+    *args,
+    **kwargs,
+):
+    from unity.conversation_manager.domains import comms_utils
+    from unity.function_manager.primitives.runtime import _vm_ready
+    from unity.session_details import SESSION_DETAILS
+
+    desktop_url = event.desktop_url or SESSION_DETAILS.assistant.desktop_url or ""
+
+    cm._session_logger.info(
+        "desktop_ready",
+        f"VM ready: {event.vm_type} at {desktop_url}",
+    )
+
+    _vm_ready.set()
+
+    if desktop_url:
+        SESSION_DETAILS.assistant.desktop_url = desktop_url
+
+    liveview_url = f"{desktop_url.rstrip('/')}/desktop/custom.html"
+    await asyncio.to_thread(
+        assistant_jobs.update_liveview_url,
+        cm.assistant_id,
+        cm.user_id,
+        liveview_url,
+    )
+
+    asyncio.ensure_future(_ensure_desktop_session(cm))
+    await managers_utils._start_file_sync()
+
+    await comms_utils.publish_assistant_desktop_ready(
+        desktop_url,
+        liveview_url,
+        event.vm_type,
+    )
+
+
 # --------------------------------------------------------------------------- #
 # Meet Interaction Events (screen share / remote control)
 # --------------------------------------------------------------------------- #
 
 # Mapping from event class to a human-readable notification for the slow brain.
+_MEET_LOG_TYPES: dict[type, str] = {
+    AssistantScreenShareStarted: "screen_share",
+    AssistantScreenShareStopped: "screen_share_off",
+    UserScreenShareStarted: "user_screen_share",
+    UserScreenShareStopped: "user_screen_share_off",
+    UserWebcamStarted: "webcam_on",
+    UserWebcamStopped: "webcam_off",
+    UserRemoteControlStarted: "remote_control",
+    UserRemoteControlStopped: "remote_control_off",
+}
+
 _MEET_INTERACTION_NOTIFICATIONS: dict[type, str] = {
     AssistantScreenShareStarted: "The user enabled assistant screen sharing — they can now see your desktop.",
     AssistantScreenShareStopped: "The user disabled assistant screen sharing — they can no longer see your desktop.",
@@ -1209,11 +1333,22 @@ async def _(
     **kwargs,
 ):
     event_name = event.__class__.__name__
-    cm._session_logger.info("meet_interaction", f"{event_name}: {event.reason}")
+    log_type = _MEET_LOG_TYPES.get(event.__class__, "meet_interaction")
+    log_msg = f"Event: {event_name}"
+    if event.reason == "LiveKit track auto-detected":
+        cm._session_logger.debug(log_type, log_msg)
+    else:
+        cm._session_logger.info(log_type, log_msg)
 
     # Update state flag on the CM.
     attr, value = _MEET_STATE_FLAGS[event.__class__]
     setattr(cm, attr, value)
+
+    if (
+        isinstance(event, (UserWebcamStarted, UserWebcamStopped))
+        and not cm.mode.is_voice
+    ):
+        return
 
     # Push a notification so the slow brain sees the state change.
     notification_text = _MEET_INTERACTION_NOTIFICATIONS[event.__class__]
@@ -1226,42 +1361,32 @@ async def _(
     if fast_brain_text and cm.mode.is_voice:
         contact = cm.get_active_contact()
         if contact:
-            guidance_id = content_trace_id("guid", fast_brain_text)
-            cm._session_logger.info(
-                "call_guidance",
-                (
-                    f"Publishing meet interaction guidance_id={guidance_id} "
-                    f"reason={event_name}"
-                ),
+            cm._session_logger.debug(
+                "call_notification",
+                f"Publishing meet interaction reason={event_name}",
             )
-            guidance_event = CallGuidance(
+            from unity.conversation_manager.medium_scripts.common import (
+                _resolve_agent_service_url,
+            )
+
+            notification_event = FastBrainNotification(
                 contact=contact,
                 content=fast_brain_text,
                 source="meet_interaction",
+                agent_service_url=_resolve_agent_service_url(),
             )
             await cm.event_broker.publish(
-                "app:call:call_guidance",
-                guidance_event.to_json(),
+                "app:call:notification",
+                notification_event.to_json(),
             )
 
-    # Eagerly initialize the MagnitudeBackend when screen sharing starts so
-    # the agent-service has an active session for fast brain screenshot capture.
-    # Runs in a thread because MagnitudeBackend.__init__ is synchronous
-    # (~1-4s for Chromium cold start).
+    await cm.schedule_proactive_speech()
+
     if isinstance(event, AssistantScreenShareStarted):
+        asyncio.ensure_future(_ensure_desktop_session(cm))
 
-        def _ensure_backend():
-            try:
-                from unity.function_manager.primitives.runtime import ComputerPrimitives
-                from unity.manager_registry import ManagerRegistry
-
-                cp = ManagerRegistry.get_instance(ComputerPrimitives)
-                if cp is not None:
-                    _ = cp.backend
-            except Exception:
-                pass
-
-        asyncio.get_event_loop().run_in_executor(None, _ensure_backend)
+    if isinstance(event, AssistantScreenShareStopped):
+        cm._act_handles_with_desktop_usage.clear()
 
     # Broadcast remote-control state change to all active CodeActActor loops
     # via the ComputerPrimitives singleton interject queue registry.
@@ -1309,13 +1434,12 @@ async def _(event: DirectMessageEvent, cm: "ConversationManager", *args, **kwarg
     )
 
     if cm.mode.is_voice:
-        guidance_id = content_trace_id("guid", event.content or "")
         cm._session_logger.info(
-            "call_guidance",
-            f"Publishing direct-message guidance guidance_id={guidance_id}",
+            "call_notification",
+            "Publishing direct-message notification",
         )
         await cm.event_broker.publish(
-            "app:call:call_guidance",
+            "app:call:notification",
             json.dumps({"content": event.content}),
         )
 

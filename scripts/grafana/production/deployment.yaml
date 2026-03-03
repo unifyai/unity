@@ -1,0 +1,75 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: grafana
+  namespace: production
+  labels:
+    app: grafana
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: grafana
+  template:
+    metadata:
+      labels:
+        app: grafana
+      annotations:
+        cluster-autoscaler.kubernetes.io/safe-to-evict: "false"
+    spec:
+      serviceAccountName: comm-sa
+      containers:
+      - name: grafana
+        image: grafana/grafana:11.5.1
+        ports:
+        - containerPort: 3000
+          name: http
+        env:
+        - name: GOOGLE_APPLICATION_CREDENTIALS
+          value: /secrets/key.json
+        - name: GF_SECURITY_ADMIN_USER
+          value: admin
+        - name: GF_SECURITY_ADMIN_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: grafana-secrets
+              key: admin-password
+        - name: GF_SERVER_ROOT_URL
+          value: https://grafana.internal.saas.unify.ai
+        volumeMounts:
+        - name: sa-key
+          mountPath: /secrets
+          readOnly: true
+        - name: datasource-provisioning
+          mountPath: /etc/grafana/provisioning/datasources
+          readOnly: true
+        - name: grafana-storage
+          mountPath: /var/lib/grafana
+        resources:
+          requests:
+            cpu: 250m
+            memory: 256Mi
+          limits:
+            cpu: 500m
+            memory: 512Mi
+        readinessProbe:
+          httpGet:
+            path: /api/health
+            port: 3000
+          initialDelaySeconds: 10
+          periodSeconds: 10
+        livenessProbe:
+          httpGet:
+            path: /api/health
+            port: 3000
+          initialDelaySeconds: 30
+          periodSeconds: 30
+      volumes:
+      - name: sa-key
+        secret:
+          secretName: comm-sa-key
+      - name: datasource-provisioning
+        configMap:
+          name: grafana-datasource-provisioning
+      - name: grafana-storage
+        emptyDir: {}

@@ -11,13 +11,11 @@ IMPORTANT: Do not duplicate docstrings in concrete implementations.
 from __future__ import annotations
 
 from abc import abstractmethod
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional, Union
 
 from unity.common.state_managers import BaseStateManager
-
-if TYPE_CHECKING:
-    from unity.data_manager.types.table import TableDescription
-    from unity.data_manager.types.plot import PlotResult
+from unity.data_manager.types.table import TableDescription
+from unity.data_manager.types.plot import PlotResult
 
 
 class BaseDataManager(BaseStateManager):

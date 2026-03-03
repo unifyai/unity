@@ -305,8 +305,11 @@ class TestActionToolsAsTools:
         assert isinstance(tools, dict)
         assert all(callable(fn) for fn in tools.values())
 
-    def test_contains_all_action_tools(self, brain_action_tools):
-        """Contains all expected action tools."""
+    def test_contains_all_action_tools_when_fully_configured(
+        self,
+        brain_action_tools,
+    ):
+        """All comms tools present when assistant has both phone and email."""
         tools = brain_action_tools.as_tools()
         expected = {
             "send_sms",
@@ -320,6 +323,50 @@ class TestActionToolsAsTools:
             "wait",
         }
         assert set(tools.keys()) == expected
+
+    def test_excludes_phone_tools_without_number(self, mock_cm):
+        """send_sms and make_call are excluded when assistant has no phone."""
+        mock_cm.assistant_number = ""
+        with patch(
+            "unity.conversation_manager.domains.brain_action_tools.get_event_broker",
+        ) as mock_broker:
+            mock_broker.return_value = MagicMock()
+            mock_broker.return_value.publish = AsyncMock()
+            tools = ConversationManagerBrainActionTools(mock_cm).as_tools()
+        assert "send_sms" not in tools
+        assert "make_call" not in tools
+        assert "send_email" in tools
+        assert "send_unify_message" in tools
+
+    def test_excludes_email_tool_without_email(self, mock_cm):
+        """send_email is excluded when assistant has no email."""
+        mock_cm.assistant_email = ""
+        with patch(
+            "unity.conversation_manager.domains.brain_action_tools.get_event_broker",
+        ) as mock_broker:
+            mock_broker.return_value = MagicMock()
+            mock_broker.return_value.publish = AsyncMock()
+            tools = ConversationManagerBrainActionTools(mock_cm).as_tools()
+        assert "send_email" not in tools
+        assert "send_sms" in tools
+        assert "make_call" in tools
+        assert "send_unify_message" in tools
+
+    def test_excludes_all_comms_without_capabilities(self, mock_cm):
+        """Only send_unify_message remains when assistant has no phone or email."""
+        mock_cm.assistant_number = ""
+        mock_cm.assistant_email = ""
+        with patch(
+            "unity.conversation_manager.domains.brain_action_tools.get_event_broker",
+        ) as mock_broker:
+            mock_broker.return_value = MagicMock()
+            mock_broker.return_value.publish = AsyncMock()
+            tools = ConversationManagerBrainActionTools(mock_cm).as_tools()
+        assert "send_sms" not in tools
+        assert "make_call" not in tools
+        assert "send_email" not in tools
+        assert "send_unify_message" in tools
+        assert "wait" in tools
 
 
 class TestWaitTool:
@@ -899,12 +946,12 @@ class TestMakeCallTool:
         assert "phone" in result["error"].lower()
 
     @pytest.mark.asyncio
-    async def test_context_stores_initial_call_guidance(
+    async def test_context_stores_initial_notification(
         self,
         brain_action_tools,
         mock_cm,
     ):
-        """The context param stores initial_call_guidance on call_manager
+        """The context param stores initial_notification on call_manager
         before the call is placed, so CallManager can publish it to the
         fast brain after the subprocess spawns."""
         contact = {
@@ -923,7 +970,7 @@ class TestMakeCallTool:
         )
 
         assert result["status"] == "ok"
-        assert mock_cm.call_manager.initial_call_guidance == guidance_text
+        assert mock_cm.call_manager.initial_notification == guidance_text
 
     @pytest.mark.asyncio
     async def test_context_is_required(self, brain_action_tools):

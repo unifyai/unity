@@ -296,12 +296,21 @@ class ToolsData:
 
         Merges three sources with increasing precedence:
         completed ask handles < extra_ask_tools < live dynamic tools.
+
+        The ``ask_about_completed_tool`` meta-dispatcher is excluded because
+        it is a routing tool, not a per-tool ask function.
         """
         result = dict(self._completed_ask_handles)
         result.update(self._extra_ask_tools)
         dt = self._dynamic_tools_ref
         if dt and isinstance(dt, dict):
-            result.update({k: v for k, v in dt.items() if k.startswith("ask_")})
+            result.update(
+                {
+                    k: v
+                    for k, v in dt.items()
+                    if k.startswith("ask_") and k != "ask_about_completed_tool"
+                },
+            )
         return result
 
     # Local helper: pretty-print tool payloads consistently
@@ -661,9 +670,22 @@ class ToolsData:
         5.  Record the payload in ``completed_results`` for potential post-hoc lookups.
         6.  Enforce the *max_consecutive_failures* safety valve.
         """
+        import time as _pct_time
+
+        _pct_t0 = _pct_time.perf_counter()
+
+        def _pct_ms():
+            return f"{(_pct_time.perf_counter() - _pct_t0) * 1000:.0f}ms"
+
         info: ToolCallMetadata = self.pop_task(task)
         name = info.name
         call_id = info.call_id
+
+        _pickup_delay = _pct_time.perf_counter() - info.scheduled_time
+        self._logger.debug(
+            f"⏱️ [ToolsData.process_completed +{_pct_ms()}] {name} ({call_id}) "
+            f"total_elapsed={_pickup_delay:.2f}s",
+        )
 
         # 1️⃣-a. Drain any pending notifications that arrived just before completion
         #      (prevents missing progress events when the tool finishes quickly).
@@ -722,6 +744,10 @@ class ToolsData:
                                 **event_payload,
                             },
                         )
+
+        self._logger.debug(
+            f"⏱️ [ToolsData.process_completed +{_pct_ms()}] {name} notification drain done",
+        )
 
         # 2️⃣  obtain result -------------------------------------------------
         try:
@@ -845,6 +871,10 @@ class ToolsData:
         self.completed_results[call_id] = result
         self._completed_tool_names[call_id] = name
 
+        self._logger.debug(
+            f"⏱️ [ToolsData.process_completed +{_pct_ms()}] {name} result obtained",
+        )
+
         # 4️⃣  update / insert tool-result message --------------------------
         asst_msg = info.assistant_msg
         clarify_ph = info.clarify_placeholder
@@ -884,6 +914,10 @@ class ToolsData:
                 self._client,
                 msg_dispatcher,
             )
+
+        self._logger.debug(
+            f"⏱️ [ToolsData.process_completed +{_pct_ms()}] {name} tool message emitted",
+        )
 
         # ── optional console logging for every finished tool call ────────────
         #     (mirrors the assistant-message logging above)

@@ -142,7 +142,6 @@ class CMStepDriver:
             await EventHandler.handle_event(
                 event,
                 self._cm,
-                is_voice_call=self._cm.call_manager.uses_realtime_api,
             )
 
             llm_requested = bool(step_requests)
@@ -150,10 +149,9 @@ class CMStepDriver:
 
             if llm_requested and run_llm:
                 llm_ran = True
-                tool_name = await self._cm._run_llm()
-                # Track tool call for test assertions
-                if tool_name:
-                    self.all_tool_calls.append(tool_name)
+                tool_names = await self._cm._run_llm()
+                # Track tool calls for test assertions
+                self.all_tool_calls.extend(tool_names)
 
                 # Await any pending steering tasks (e.g., async ask_*)
                 # so their events flow through our patches while active.
@@ -178,7 +176,6 @@ class CMStepDriver:
                 await EventHandler.handle_event(
                     evt,
                     self._cm,
-                    is_voice_call=self._cm.call_manager.uses_realtime_api,
                 )
         finally:
             self._cm.event_broker.publish = original_publish
@@ -242,7 +239,6 @@ class CMStepDriver:
                 await EventHandler.handle_event(
                     evt,
                     self._cm,
-                    is_voice_call=self._cm.call_manager.uses_realtime_api,
                 )
             return 0
 
@@ -267,7 +263,6 @@ class CMStepDriver:
             await EventHandler.handle_event(
                 event,
                 self._cm,
-                is_voice_call=self._cm.call_manager.uses_realtime_api,
             )
 
             llm_requested = bool(step_requests)
@@ -277,12 +272,11 @@ class CMStepDriver:
             step_count = 0
             while llm_requested and step_count < max_steps:
                 llm_ran = True
-                tool_name = await self._cm._run_llm()
+                tool_names = await self._cm._run_llm()
                 step_count += 1
 
-                # Track tool call for test assertions
-                if tool_name:
-                    self.all_tool_calls.append(tool_name)
+                # Track tool calls for test assertions
+                self.all_tool_calls.extend(tool_names)
 
                 # Await any pending steering tasks (e.g., async ask_*)
                 # so their events flow through our publish_wrapper and
@@ -297,11 +291,11 @@ class CMStepDriver:
                 step_requests.clear()
 
                 # Stop if 'wait' was called AND no new requests came in
-                if tool_name == "wait" and not llm_requested:
+                if "wait" in tool_names and not llm_requested:
                     break
 
                 # If no explicit request but we didn't call 'wait', continue
-                if not llm_requested and tool_name != "wait":
+                if not llm_requested and "wait" not in tool_names:
                     llm_requested = True
 
         finally:

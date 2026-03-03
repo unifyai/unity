@@ -207,6 +207,38 @@ def test_get_prompt_context_warns_not_to_search(fm_factory):
     assert "Do **not** search" in context
 
 
+@_handle_project
+def test_get_prompt_context_includes_function_id_and_language(fm_factory):
+    """get_prompt_context() renders function_id and language in the header."""
+    fm = fm_factory()
+    fm.add_functions(implementations=[_PY_ALPHA])
+
+    env = FunctionStoreEnvironment(fm, function_names=["alpha"])
+    context = env.get_prompt_context()
+
+    assert "function_id:" in context
+    assert "language: python" in context
+
+
+@_handle_project
+def test_get_prompt_context_renders_metadata_fields(fm_factory):
+    """get_prompt_context() renders all LLM-meaningful metadata when present."""
+    fm = fm_factory()
+    fm.add_functions(implementations=[_PY_ALPHA])
+
+    env = FunctionStoreEnvironment(fm, function_names=["alpha"])
+
+    env._func_metadata[0]["guidance_ids"] = [5, 12]
+    env._func_metadata[0]["depends_on"] = ["helper_func", "primitives.contacts.ask"]
+    env._func_metadata[0]["precondition"] = {"url": "https://example.com"}
+
+    context = env.get_prompt_context()
+
+    assert "Related guidance: [5, 12]" in context
+    assert "Depends on: helper_func, primitives.contacts.ask" in context
+    assert "Precondition:" in context
+
+
 # ────────────────────────────────────────────────────────────────────────────
 # 5. get_sandbox_instance() — callable resolution
 # ────────────────────────────────────────────────────────────────────────────

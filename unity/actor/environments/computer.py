@@ -100,22 +100,32 @@ class ComputerEnvironment(BaseEnvironment):
                 function_context="primitive",
             )
 
-        # Web factory -- new_session() only
+        # Web factory -- new_session() and list_sessions()
         web_factory = self._computer_primitives.web
-        fq_name = f"{self.NAMESPACE}.{self.MANAGER_ALIAS}.web.new_session"
-        if self._allowed_methods is None or fq_name in self._allowed_methods:
-            fn = web_factory.new_session
+        for factory_method_name in ("new_session", "list_sessions"):
+            fq_name = f"{self.NAMESPACE}.{self.MANAGER_ALIAS}.web.{factory_method_name}"
+            if (
+                self._allowed_methods is not None
+                and fq_name not in self._allowed_methods
+            ):
+                continue
+            fn = getattr(web_factory, factory_method_name, None)
+            if fn is None or not callable(fn):
+                continue
             try:
                 signature = str(inspect.signature(fn))
             except Exception:
                 signature = None
             tools[fq_name] = ToolMetadata(
                 name=fq_name,
-                is_impure=True,
+                is_impure=factory_method_name == "new_session",
                 is_steerable=False,
                 docstring=getattr(fn, "__doc__", None),
                 signature=signature,
-                function_id=registry.get_function_id(self.MANAGER_ALIAS, "new_session"),
+                function_id=registry.get_function_id(
+                    self.MANAGER_ALIAS,
+                    factory_method_name,
+                ),
                 function_context="primitive",
             )
 
@@ -127,15 +137,23 @@ class ComputerEnvironment(BaseEnvironment):
 
         parts.append(
             "### Computer Control\n\n"
-            "Two interfaces for controlling browsers and the desktop:\n\n"
+            "The VM desktop is accessed through a VNC connection.  The "
+            "`primitives.computer.desktop` namespace drives the desktop via a "
+            "headless Playwright browser connected to the noVNC VNC viewer.  "
+            "This means methods like `navigate()`, `get_links()`, and "
+            "`get_content()` operate on this headless browser (the VNC viewer "
+            "page), not on the X11 desktop itself.  Screenshots are captured "
+            "natively from the X11 display, so only changes visible on the "
+            "physical desktop surface appear in screenshots.\n\n"
+            "Two interfaces for controlling the desktop:\n\n"
             "#### `primitives.computer.desktop` -- Desktop Control (singleton)\n\n"
-            "Controls the full VM desktop via mouse and keyboard.  There is "
-            "exactly one desktop session -- it persists for the lifetime of the "
-            "assistant.  Suitable for native desktop apps, terminal operations, "
-            "and also straightforward single-site web browsing.\n\n"
+            "Sends mouse and keyboard actions to the VM desktop through the VNC "
+            "connection.  There is exactly one desktop session -- it persists "
+            "for the lifetime of the assistant.  Use this for native desktop "
+            "apps, terminal operations, file managers, and any interaction with "
+            "windows already visible on the desktop.\n\n"
             "```python\n"
             "await primitives.computer.desktop.act('Open the Terminal app')\n"
-            "await primitives.computer.desktop.navigate('https://example.com')\n"
             "display(await primitives.computer.desktop.get_screenshot())\n"
             "```\n\n"
             "#### `primitives.computer.web.new_session()` -- Web Sessions (factory)\n\n"
@@ -155,21 +173,15 @@ class ComputerEnvironment(BaseEnvironment):
             "no mouse or keyboard involved.\n"
             "- `visible=False`: headless browser on the host.  Faster, but "
             "invisible to the user.\n\n"
-            "Session handles have the same methods as the desktop namespace: "
+            "Session handles expose: "
             "`act`, `observe`, `query`, `navigate`, `get_links`, `get_content`, "
             "`get_screenshot`, plus `stop()`.\n\n"
-            "#### When to Consider Each\n\n"
-            "- **Simple single-site browsing** -- `primitives.computer.desktop` "
-            "works fine and is the simplest option.\n"
-            "- **Multiple sites in parallel, or isolated browser state** -- use "
-            "`web.new_session()`.  Each session has fresh cookies/storage and "
-            "runs independently.\n"
-            "- **Quick background lookup where the user doesn't need to see** -- "
+            "#### When to Use Each\n\n"
+            "- **Any web browsing** -- `web.new_session(visible=True)`.  This is "
+            "the only way to get a browser window visible on the desktop and in "
+            "screenshots.\n"
+            "- **Background web lookup the user doesn't need to see** -- "
             "`web.new_session(visible=False)` for speed.\n"
-            "- **Interactive session where the user is watching and you need "
-            "multiple concurrent browser tasks** -- "
-            "`web.new_session(visible=True)` so the user can observe each "
-            "browser window.\n"
             "- **Native desktop apps, terminal, file operations** -- "
             "`primitives.computer.desktop`.",
         )
@@ -188,9 +200,37 @@ class ComputerEnvironment(BaseEnvironment):
 
         parts.append(
             "### Progress Notifications for Computer Actions\n\n"
-            "- Treat computer calls as potentially long-running by default.\n"
-            "- Emit `notify({...})` before each major computer step.\n"
-            "- Keep notification messages user-facing and high-level.",
+            "Notify once per **logical task**, not per API call.  A task like "
+            '"search Google for X" is one notification at the start and one at '
+            "completion -- the sub-steps (open browser, navigate, type query, "
+            "press Enter) are implementation details the user does not need to "
+            "hear individually.\n\n"
+            "Reserve intermediate notifications for genuinely long workflows "
+            "that span multiple unrelated sites or take more than ~30 seconds "
+            "(e.g., comparing prices across five stores).  For a single-site "
+            "interaction that completes in a few seconds, one kickoff + one "
+            "completion is sufficient.",
+        )
+
+        parts.append(
+            "### Latency: Act and Observe Concurrently\n\n"
+            "Computer actions are the single biggest latency bottleneck — "
+            "especially during interactive sessions where the user is waiting "
+            "in real time.  **Never** follow a sequential observe → act → "
+            "observe pattern (three separate round trips).  Instead:\n\n"
+            "1. **Act immediately** based on known or assumed state.  If the "
+            "user says \"open Chrome\", just call `act('Open Chrome')` — do "
+            "not take a screenshot first to confirm the desktop is visible.\n"
+            "2. **Observe after acting** to verify the outcome.  If the state "
+            "is not what you expected, course-correct with a follow-up action.\n"
+            "3. **Combine observe + act in one turn** when possible.  If you "
+            "need both a screenshot and an action, issue them concurrently "
+            "rather than waiting for the screenshot before deciding to act.\n\n"
+            "The principle: **assume the likely state and act on it; verify "
+            "and correct afterwards.**  One optimistic action + one "
+            "verification is almost always faster than observe → plan → act → "
+            "verify, and the cost of an occasional correction is far less "
+            "than the cost of an extra round trip on every single interaction.",
         )
 
         if self._allowed_methods is not None:

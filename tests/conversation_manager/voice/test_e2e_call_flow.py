@@ -183,7 +183,7 @@ class TestEndToEndCallFlow:
             CM_EVENT_SOCKET_ENV,
         )
         from unity.conversation_manager.events import (
-            CallGuidance,
+            FastBrainNotification,
         )
 
         # Track events received from subprocess
@@ -201,7 +201,6 @@ class TestEndToEndCallFlow:
             assistant_number="+15555550000",
             voice_provider="cartesia",
             voice_id="test_voice",
-            voice_mode="tts",
         )
 
         call_manager = LivekitCallManager(config, event_broker)
@@ -262,14 +261,14 @@ class TestEndToEndCallFlow:
             # Now send call guidance (simulating CM sending guidance during a call)
             events_from_subprocess.clear()
 
-            guidance_event = CallGuidance(
+            guidance_event = FastBrainNotification(
                 contact=sample_contact,
                 content="Ask the caller about their schedule for next week",
             )
 
             # Publish guidance - this should be forwarded to subprocess via IPC
             await event_broker.publish(
-                "app:call:call_guidance",
+                "app:call:notification",
                 guidance_event.to_json(),
             )
 
@@ -351,7 +350,6 @@ class TestEndToEndCallFlow:
             assistant_number="+15555550000",
             voice_provider="cartesia",
             voice_id="test_voice",
-            voice_mode="tts",
         )
         call_manager = LivekitCallManager(config, event_broker)
         mock_cm.call_manager = call_manager
@@ -417,7 +415,6 @@ class TestEndToEndCallFlow:
             assistant_number="+15555550000",
             voice_provider="cartesia",
             voice_id="test",
-            voice_mode="tts",
         )
         call_manager = LivekitCallManager(config, event_broker)
         mock_cm.call_manager = call_manager
@@ -590,7 +587,6 @@ class TestRoomNameHandling:
             assistant_number="+15555550000",
             voice_provider="cartesia",
             voice_id="test_voice",
-            voice_mode="tts",
         )
         call_manager = LivekitCallManager(config, event_broker)
         mock_cm.call_manager = call_manager
@@ -657,18 +653,19 @@ class TestRapidEventHandling:
                 medium="sms",
                 assistant_id="25",
                 user_id="123",
-                assistant_name="Test Assistant",
+                assistant_first_name="Test",
+                assistant_surname="Assistant",
                 assistant_age="25",
                 assistant_nationality="American",
                 assistant_about="A test assistant",
                 assistant_number="+15555550000",
                 assistant_email="assistant@test.com",
-                user_name="Boss User",
+                user_first_name="Boss",
+                user_surname="User",
                 user_number="+15555550001",
                 user_email="boss@test.com",
                 voice_provider="cartesia",
                 voice_id="test_voice",
-                voice_mode="tts",
             )
 
             sms = SMSReceived(
@@ -730,14 +727,14 @@ class TestEventChannelRouting:
         sample_contact,
     ):
         """
-        Test that CallGuidance is published to the correct channel.
+        Test that FastBrainNotification is published to the correct channel.
 
         The voice agent subprocess listens on specific channels. Wrong
         channel = guidance never reaches the agent.
         """
-        from unity.conversation_manager.events import CallGuidance
+        from unity.conversation_manager.events import FastBrainNotification
 
-        guidance = CallGuidance(
+        guidance = FastBrainNotification(
             contact=sample_contact,
             content="Ask about their schedule",
         )
@@ -746,10 +743,10 @@ class TestEventChannelRouting:
 
         async with event_broker.pubsub() as pubsub:
             # Subscribe to the channel the voice agent listens on
-            await pubsub.subscribe("app:call:call_guidance")
+            await pubsub.subscribe("app:call:notification")
 
             await event_broker.publish(
-                "app:call:call_guidance",
+                "app:call:notification",
                 guidance.to_json(),
             )
 
@@ -766,8 +763,8 @@ class TestEventChannelRouting:
                 await asyncio.sleep(0.1)
 
         assert (
-            received_on_channel == "app:call:call_guidance"
-        ), f"CallGuidance published to wrong channel: {received_on_channel}"
+            received_on_channel == "app:call:notification"
+        ), f"FastBrainNotification published to wrong channel: {received_on_channel}"
 
     @pytest.mark.asyncio
     async def test_call_status_channel_for_answered(self, event_broker):
@@ -824,7 +821,7 @@ class TestIPCBidirectionalCommunication:
             CallEventSocketServer,
             CM_EVENT_SOCKET_ENV,
         )
-        from unity.conversation_manager.events import CallGuidance
+        from unity.conversation_manager.events import FastBrainNotification
 
         events_from_subprocess = []
 
@@ -878,8 +875,8 @@ class TestIPCBidirectionalCommunication:
 
             # Send guidance (subprocess will ack and exit after first one)
             await event_broker.publish(
-                "app:call:call_guidance",
-                CallGuidance(
+                "app:call:notification",
+                FastBrainNotification(
                     contact=sample_contact,
                     content="First guidance message",
                 ).to_json(),

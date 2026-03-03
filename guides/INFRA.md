@@ -142,15 +142,16 @@ All Pub/Sub messages follow this structure:
         "medium": "sms",
         "assistant_id": "25",
         "user_id": "123",
-        "assistant_name": "Alice Smith",
+        "assistant_first_name": "Alice",
+        "assistant_surname": "Smith",
         "assistant_email": "alice@unify.ai",
         "assistant_number": "+1234567890",
-        "user_name": "John Doe",
+        "user_first_name": "John",
+        "user_surname": "Doe",
         "user_email": "john@example.com",
         "user_number": "+0987654321",
         "voice_provider": "cartesia",
         "voice_id": "...",
-        "voice_mode": "tts"
     }
 }
 ```
@@ -160,12 +161,12 @@ All Pub/Sub messages follow this structure:
 ### 1. Idle State
 This is the default state of any newly created container on GKE:
 
-- **No assistant identity**: Uses a placeholder `DEFAULT_ASSISTANT_ID` (value: `"0"`) to indicate it's not yet assigned
+- **No assistant identity**: `agent_id` is `None` to indicate it's not yet assigned
 - **Subscribes to startup topics**: Listens to `unity-startup` or `unity-startup-staging`
 - **Keep-alive pings**: Sends pings to itself every 30 seconds to avoid the inactivity timeout (6 minutes) of the conversation manager
 - **Ready for engagement**: Waiting for a startup message to become live
 
-The container detects it's in idle state by checking `SESSION_DETAILS.assistant.id == DEFAULT_ASSISTANT_ID`.
+The container detects it's in idle state by checking `SESSION_DETAILS.assistant.agent_id is None`.
 
 ### 2. Live State
 When an inbound event occurs, the flow is:
@@ -403,11 +404,11 @@ Stored via `debug_logger.py`:
 
 ### What is liveview_url?
 
-Each Unity container runs a virtual desktop (VNC) that shows what the assistant is doing. The `liveview_url` is an external URL to view this desktop in real-time:
-- The URL is resolved by querying the GKE service IP via `/infra/job/service/ip`
-- It becomes available ~60 seconds after container startup (GCP load balancer initialization)
-- Format: `http://<external-ip>/custom.html`
-- Useful for debugging to see exactly what the assistant was doing
+Each assistant's VM runs a virtual desktop (VNC via noVNC) accessible over HTTPS through the Caddy reverse proxy. The `liveview_url` is the external URL to view this desktop in real-time:
+- Format: `https://unity-assistant-{id}{-staging}.vm.unify.ai/desktop/custom.html`
+- Set in `AssistantJobs` by the `AssistantDesktopReady` event handler once the VM's HTTPS endpoint is confirmed reachable (via `_probe_vm_https`)
+- The Console polls `AssistantJobs` for this URL to enable the "Share assistant screen" button
+- TLS is provided by the wildcard `*.vm.unify.ai` certificate (see "VM TLS Certificates" below)
 
 ## 🛠️ Infrastructure Components
 
@@ -427,6 +428,35 @@ Each assistant gets the following dedicated infrastructure:
 | **Pub/Sub Topic** | `/infra/pubsub/topic` | `unity-{assistant_id}[-staging]` | Notification routing |
 | **Pub/Sub Startup Topic** | `/infra/pubsub/startup` | `unity-startup[-staging]` | Container activation |
 | **GKE Job** | `/infra/gke/job` | `unity-{timestamp}[-staging]` | Assistant runtime |
+
+### VM TLS Certificates (Wildcard)
+
+Each VM runs [Caddy](https://caddyserver.com/) as an HTTPS reverse proxy, terminating TLS for the agent-service API (`/api/*`) and noVNC desktop (`/desktop/*`). All VM hostnames follow the pattern `unity-assistant-{id}{-staging}.vm.unify.ai`.
+
+Rather than each VM requesting its own Let's Encrypt certificate via ACME (which counts against LE's **50 certificates per registered domain per week** limit for `unify.ai`), a single **wildcard certificate** for `*.vm.unify.ai` is pre-provisioned and distributed to every VM:
+
+```
+Secret Manager                  VM metadata                 Caddyfile
+┌──────────────────┐     ┌─────────────────────┐     ┌──────────────────────┐
+│ VM_WILDCARD_      │ ──► │ tls-fullchain       │ ──► │ tls fullchain.pem    │
+│   FULLCHAIN       │     │ tls-privkey         │     │     privkey.pem      │
+│ VM_WILDCARD_      │     │                     │     │                      │
+│   PRIVKEY         │     │ (read by startup    │     │ (Caddy uses cert     │
+│                   │     │  script on boot)    │     │  directly, no ACME)  │
+└──────────────────┘     └─────────────────────┘     └──────────────────────┘
+```
+
+**How it works:**
+
+1. A `*.vm.unify.ai` wildcard cert is generated via `certbot` using a DNS-01 challenge against the `unifyai` Cloud DNS zone (project: `unify-dns-server`).
+2. The cert (`fullchain.pem`) and key (`privkey.pem`) are stored as secrets `VM_WILDCARD_FULLCHAIN` and `VM_WILDCARD_PRIVKEY` in GCP Secret Manager (project: `responsive-city-458413-a2`).
+3. During VM creation, `vm_helpers.py` fetches both secrets and passes them as GCP instance metadata (`tls-fullchain`, `tls-privkey`).
+4. The VM startup script (Ubuntu or Windows) reads the metadata, writes the cert files to disk, and injects an explicit `tls <cert> <key>` directive into the Caddyfile — Caddy serves the wildcard cert immediately without any ACME requests.
+5. If the secrets are absent (not yet provisioned, or Secret Manager unavailable), the startup scripts skip the `tls` directive and Caddy falls back to per-hostname ACME.
+
+**Renewal:** LE wildcard certs expire after 90 days. A Cloud Scheduler job (`cert-renewal` / `cert-renewal-staging`) runs at 3 AM UTC on the 1st of each month, hitting `POST /scheduled/cert-renewal` on the adapters. The endpoint checks the current cert's expiry via Secret Manager; if it's within 30 days, it performs a DNS-01 challenge (creating a TXT record in Cloud DNS, completing the ACME exchange, then cleaning up) and adds new versions to both secrets. All subsequently created VMs pick up the new cert automatically; already-running VMs continue using their copy until stopped.
+
+**Why not per-VM ACME:** With high assistant churn (each new `assistant_id` produces a never-before-seen hostname), per-VM ACME can exhaust the 50/week LE rate limit within days. The wildcard cert uses a single LE certificate slot regardless of how many VMs are created.
 
 ### Cleanup
 
@@ -559,6 +589,7 @@ orchestra/
 | Idle job cleanup | 10 min after creation | Removes old idle containers |
 | Microsoft token refresh | Every 30-45 min | Keeps OAuth tokens fresh |
 | Teams subscriptions | Every 30-45 min | Renews before 60-min expiry |
+| Wildcard TLS cert renewal | 1st of month, 3 AM UTC | Renews *.vm.unify.ai if <30 days to expiry |
 
 ### GCP Project
 
@@ -580,3 +611,5 @@ All infrastructure runs in the GCP project: `responsive-city-458413-a2`
 | Container dies immediately | Crash during startup | Check GKE job logs for exceptions |
 | `running: True` but assistant unresponsive | Container crashed without cleanup | Manually update AssistantJobs log to `running: False` |
 | Liveview URL not working | Service not ready yet (< 60s) or already deleted | Wait or check if job is still running |
+| `TLSV1_ALERT_INTERNAL_ERROR` on desktop session | VM has no TLS cert (wildcard secret missing or LE ACME rate-limited) | Check Secret Manager for `VM_WILDCARD_FULLCHAIN`; check `crt.sh/?q=%.vm.unify.ai` for rate limit status |
+| "Share assistant screen" shows broken iframe | VM HTTPS unreachable but `liveview_url` was set from a stale record | Check `AssistantJobs` for stale `running: True` entries; the adapter's `_expire_stale_records` should prevent this |

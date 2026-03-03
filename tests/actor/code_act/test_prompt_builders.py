@@ -68,7 +68,7 @@ def test_code_act_prompt_has_primary_execute_code_and_session_tools_and_no_legac
     assert "close_all_sessions" in prompt
 
     # Introspection-based docstring snippet from the actual tool implementation.
-    assert "brain execution" in prompt.lower()
+    assert "multi-step composition" in prompt.lower()
     assert (
         "multi-language + multi-session" in prompt.lower()
         or "multi-session" in prompt.lower()
@@ -106,7 +106,7 @@ def test_code_act_prompt_includes_diverse_examples_sessions_computer_primitives_
     assert "immediate in-code composition" in prompt
     assert "neutral or uncertain" in prompt.lower()
     assert "default to returning the handle" in prompt.lower()
-    assert "Choose return-handle vs await based on task shape" in prompt
+    assert "execute_function vs execute_code decision" in prompt
 
 
 @pytest.mark.timeout(30)
@@ -193,3 +193,80 @@ def test_computer_environment_prompt_context_from_registry():
     assert "get_content" in context
     # Docstrings should include parameter documentation
     assert "Parameters" in context
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# Guidelines composition (constructor baseline + per-invocation overlay)
+# ────────────────────────────────────────────────────────────────────────────
+
+
+@pytest.mark.timeout(30)
+def test_guidelines_neither_specified():
+    """No guidelines at all -> no ### Guidelines section in the prompt."""
+    actor = CodeActActor()
+    prompt = build_code_act_prompt(
+        environments={},
+        tools=dict(actor.get_tools("act")),
+        guidelines=None,
+    )
+    assert "### Guidelines" not in prompt
+
+
+@pytest.mark.timeout(30)
+def test_guidelines_constructor_only():
+    """Constructor-level guidelines appear in a single ### Guidelines section."""
+    actor = CodeActActor(guidelines="Always respond in formal English.")
+    base = actor._base_guidelines
+    effective = "\n\n".join(filter(None, [base, None])) or None
+
+    prompt = build_code_act_prompt(
+        environments={},
+        tools=dict(actor.get_tools("act")),
+        guidelines=effective,
+    )
+    assert prompt.count("### Guidelines") == 1
+    assert "Always respond in formal English." in prompt
+
+
+@pytest.mark.timeout(30)
+def test_guidelines_per_invocation_only():
+    """Per-invocation guidelines appear in a single ### Guidelines section."""
+    actor = CodeActActor()
+    per_invocation = "Check all contact fields."
+    effective = (
+        "\n\n".join(filter(None, [actor._base_guidelines, per_invocation])) or None
+    )
+
+    prompt = build_code_act_prompt(
+        environments={},
+        tools=dict(actor.get_tools("act")),
+        guidelines=effective,
+    )
+    assert prompt.count("### Guidelines") == 1
+    assert "Check all contact fields." in prompt
+
+
+@pytest.mark.timeout(30)
+def test_guidelines_both_compose():
+    """Constructor + per-invocation guidelines compose into one ### Guidelines section."""
+    actor = CodeActActor(guidelines="Always respond in formal English.")
+    per_invocation = "Check all contact fields."
+    effective = (
+        "\n\n".join(
+            filter(None, [actor._base_guidelines, per_invocation]),
+        )
+        or None
+    )
+
+    prompt = build_code_act_prompt(
+        environments={},
+        tools=dict(actor.get_tools("act")),
+        guidelines=effective,
+    )
+    assert prompt.count("### Guidelines") == 1
+    assert "Always respond in formal English." in prompt
+    assert "Check all contact fields." in prompt
+    # Constructor guidelines come first
+    idx_base = prompt.index("Always respond in formal English.")
+    idx_overlay = prompt.index("Check all contact fields.")
+    assert idx_base < idx_overlay

@@ -1,11 +1,10 @@
 """
 Collection and synchronization of custom functions and venvs from source code.
 
-This module scans the `custom/` folder for:
-- Python files in `custom/functions/` containing @custom_function decorated functions
-- TOML files in `custom/venvs/` containing pyproject.toml content
-
-Both are synced to the database with hash-based change detection.
+Functions and venvs are defined in per-client directories under
+``unity/customization/clients/``.  The collection helpers accept explicit
+directory paths so that the sync can target different source trees for
+different clients (org -> user -> assistant cascade).
 """
 
 import hashlib
@@ -23,26 +22,6 @@ logger = logging.getLogger(__name__)
 
 
 # ────────────────────────────────────────────────────────────────────────────
-# Path Helpers
-# ────────────────────────────────────────────────────────────────────────────
-
-
-def _get_custom_base_folder() -> Path:
-    """Get the path to the custom base folder."""
-    return Path(__file__).parent / "custom"
-
-
-def _get_custom_functions_folder() -> Path:
-    """Get the path to the custom functions folder."""
-    return _get_custom_base_folder() / "functions"
-
-
-def _get_custom_venvs_folder() -> Path:
-    """Get the path to the custom venvs folder."""
-    return _get_custom_base_folder() / "venvs"
-
-
-# ────────────────────────────────────────────────────────────────────────────
 # Venv Collection
 # ────────────────────────────────────────────────────────────────────────────
 
@@ -53,9 +32,15 @@ def _compute_venv_hash(name: str, content: str) -> str:
     return hashlib.sha256(combined.encode()).hexdigest()[:16]
 
 
-def collect_custom_venvs() -> Dict[str, Dict[str, Any]]:
+def collect_custom_venvs(
+    directory: Optional[Path] = None,
+) -> Dict[str, Dict[str, Any]]:
     """
-    Scan the custom/venvs/ folder and collect all custom venv metadata.
+    Scan a directory for ``.toml`` venv definitions.
+
+    Args:
+        directory: Folder containing ``*.toml`` files.  If *None* or
+            non-existent, returns an empty dict.
 
     Returns:
         Dict mapping venv name (filename without .toml) to metadata dict with keys:
@@ -63,8 +48,8 @@ def collect_custom_venvs() -> Dict[str, Dict[str, Any]]:
         - venv: str (the pyproject.toml content)
         - custom_hash: str
     """
-    venvs_folder = _get_custom_venvs_folder()
-    if not venvs_folder.exists():
+    venvs_folder = directory
+    if venvs_folder is None or not venvs_folder.exists():
         logger.debug("Custom venvs folder does not exist, no custom venvs to collect")
         return {}
 
@@ -90,14 +75,15 @@ def collect_custom_venvs() -> Dict[str, Dict[str, Any]]:
     return venvs
 
 
-def compute_custom_venvs_hash() -> str:
-    """
-    Compute an aggregate hash of all custom venvs.
+def compute_custom_venvs_hash(
+    source_venvs: Optional[Dict[str, Dict[str, Any]]] = None,
+) -> str:
+    """Compute an aggregate hash of all custom venvs.
 
-    This is used to quickly check if any custom venvs have changed
-    since the last sync, allowing for lazy synchronization.
+    Args:
+        source_venvs: Pre-collected venvs dict.  If *None*, returns ``""``.
     """
-    venvs = collect_custom_venvs()
+    venvs = source_venvs if source_venvs is not None else {}
     if not venvs:
         return ""
 
@@ -221,26 +207,26 @@ def _extract_functions_from_module(
     return functions
 
 
-def collect_custom_functions() -> Dict[str, Dict[str, Any]]:
+def collect_custom_functions(
+    directory: Optional[Path] = None,
+) -> Dict[str, Dict[str, Any]]:
     """
-    Scan the custom/functions/ folder and collect all custom function metadata.
+    Scan a directory for ``@custom_function`` decorated Python functions.
+
+    Args:
+        directory: Folder containing ``*.py`` files.  If *None* or
+            non-existent, returns an empty dict.
 
     Returns:
         Dict mapping function name to metadata dict with keys:
-        - name: str
-        - argspec: str
-        - docstring: str
-        - implementation: str
-        - venv_name: Optional[str] (for resolution during sync)
-        - venv_id: Optional[int] (direct ID, if specified)
-        - verify: bool
-        - precondition: Optional[dict]
-        - custom_hash: str
-        - embedding_text: str
-        - windows_os_required: bool (route to Windows VM when True)
+        - name, argspec, docstring, implementation
+        - venv_name, venv_id, verify, precondition
+        - custom_hash, embedding_text, depends_on
+        - is_primitive (always False), guidance_ids (always [])
+        - windows_os_required
     """
-    functions_folder = _get_custom_functions_folder()
-    if not functions_folder.exists():
+    functions_folder = directory
+    if functions_folder is None or not functions_folder.exists():
         logger.debug(
             "Custom functions folder does not exist, no custom functions to collect",
         )
@@ -326,14 +312,15 @@ def collect_custom_functions() -> Dict[str, Dict[str, Any]]:
     return functions
 
 
-def compute_custom_functions_hash() -> str:
-    """
-    Compute an aggregate hash of all custom functions.
+def compute_custom_functions_hash(
+    source_functions: Optional[Dict[str, Dict[str, Any]]] = None,
+) -> str:
+    """Compute an aggregate hash of custom functions.
 
-    This is used to quickly check if any custom functions have changed
-    since the last sync, allowing for lazy synchronization.
+    Args:
+        source_functions: Pre-collected functions dict.  If *None*, returns ``""``.
     """
-    functions = collect_custom_functions()
+    functions = source_functions if source_functions is not None else {}
     if not functions:
         return ""
 
@@ -343,3 +330,35 @@ def compute_custom_functions_hash() -> str:
     ]
     combined = "|".join(sorted_hashes)
     return hashlib.sha256(combined.encode()).hexdigest()[:16]
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# Multi-directory helpers (for the org -> user -> assistant cascade)
+# ────────────────────────────────────────────────────────────────────────────
+
+
+def collect_functions_from_directories(
+    directories: List[Path],
+) -> Dict[str, Dict[str, Any]]:
+    """Collect custom functions from multiple directories and merge.
+
+    Later directories override earlier ones when function names collide
+    (more-specific level wins).
+    """
+    merged: Dict[str, Dict[str, Any]] = {}
+    for d in directories:
+        merged.update(collect_custom_functions(directory=d))
+    return merged
+
+
+def collect_venvs_from_directories(
+    directories: List[Path],
+) -> Dict[str, Dict[str, Any]]:
+    """Collect custom venvs from multiple directories and merge.
+
+    Later directories override earlier ones when venv names collide.
+    """
+    merged: Dict[str, Dict[str, Any]] = {}
+    for d in directories:
+        merged.update(collect_custom_venvs(directory=d))
+    return merged

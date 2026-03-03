@@ -16,7 +16,7 @@ from .base import BaseGuidanceManager
 from .types.guidance import Guidance
 from ..manager_registry import ManagerRegistry
 from ..image_manager.types import AnnotatedImageRefs, AnnotatedImageRef
-from ..common.embed_utils import list_private_fields
+from ..common.embed_utils import ensure_vector_column, list_private_fields
 from ..common.filter_utils import normalize_filter_expr
 from ..common.context_registry import TableContext, ContextRegistry
 
@@ -59,22 +59,6 @@ class GuidanceManager(BaseGuidanceManager):
         exclude_ids: Optional[FrozenSet[int]] = None,
     ) -> None:
         super().__init__()
-        ctxs = unify.get_active_context()
-        read_ctx, write_ctx = ctxs.get("read"), ctxs.get("write")
-        if not read_ctx:
-            try:
-                from .. import ensure_initialised as _ensure_initialised  # local
-
-                _ensure_initialised()
-                ctxs = unify.get_active_context()
-                read_ctx, write_ctx = ctxs.get("read"), ctxs.get("write")
-            except Exception:
-                pass
-
-        assert (
-            read_ctx == write_ctx
-        ), "read and write contexts must be the same when instantiating a GuidanceManager."
-
         self.include_in_multi_assistant_table = True
         self._ctx = ContextRegistry.get_context(self, "Guidance")
 
@@ -181,6 +165,16 @@ class GuidanceManager(BaseGuidanceManager):
                     break
                 except Exception:
                     _time.sleep(0.05)
+        except Exception:
+            pass
+
+    def warm_embeddings(self) -> None:
+        try:
+            ensure_vector_column(
+                self._ctx,
+                embed_column="_content_emb",
+                source_column="content",
+            )
         except Exception:
             pass
 

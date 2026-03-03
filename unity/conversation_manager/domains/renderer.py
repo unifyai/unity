@@ -64,14 +64,32 @@ def _get_current_time_in_timezone(tz_name: str) -> str:
         return "unknown"
 
 
+_assistant_tz_cache: tuple[float, str | None] | None = None
+_ASSISTANT_TZ_TTL = 300  # 5 minutes — timezone changes are very rare
+
+
 def _get_assistant_timezone() -> str | None:
     """Get the assistant's timezone from contact_id=0.
+
+    Uses a module-level TTL cache to avoid synchronous HTTP round-trips to
+    Orchestra on every render_state() call (which runs in the hot path of the
+    event loop).
 
     Returns:
         IANA timezone identifier or None if not available.
     """
+    global _assistant_tz_cache
+    import time
+
+    now = time.monotonic()
+    if _assistant_tz_cache is not None:
+        cached_at, cached_val = _assistant_tz_cache
+        if now - cached_at < _ASSISTANT_TZ_TTL:
+            return cached_val
+
     import unify as _unify
 
+    result: str | None = None
     try:
         _ctxs = _unify.get_active_context()
         _read_ctx = _ctxs.get("read")
@@ -89,10 +107,12 @@ def _get_assistant_timezone() -> str | None:
         if rows:
             val = rows[0].entries.get("timezone")
             if isinstance(val, str) and val.strip():
-                return val.strip()
+                result = val.strip()
     except Exception:
         pass
-    return None
+
+    _assistant_tz_cache = (now, result)
+    return result
 
 
 def _format_timezone_block(
@@ -459,6 +479,7 @@ class Renderer:
         user_screen_share_active: bool = False,
         user_webcam_active: bool = False,
         user_remote_control_active: bool = False,
+        active_web_sessions: list | None = None,
     ) -> SnapshotState:
         """Render the full conversation state.
 
@@ -471,13 +492,15 @@ class Renderer:
         notification_elements: list[NotificationElement] = []
         action_elements: list[ActionElement] = []
 
-        # Meet interaction state sections render at the top when active, and
-        # vanish entirely when inactive (no clutter for text-only sessions).
         meet_render = self.render_meet_interaction_state(
             assistant_screen_share_active=assistant_screen_share_active,
             user_screen_share_active=user_screen_share_active,
             user_webcam_active=user_webcam_active,
             user_remote_control_active=user_remote_control_active,
+        )
+
+        web_sessions_render = self.render_active_web_sessions(
+            active_web_sessions or [],
         )
 
         notif_render = self.render_notification_bar(
@@ -507,6 +530,7 @@ class Renderer:
             s
             for s in [
                 meet_render,
+                web_sessions_render,
                 notif_render,
                 actions_render,
                 completed_render,
@@ -582,6 +606,32 @@ class Renderer:
             )
 
         return "\n\n".join(parts)
+
+    @staticmethod
+    def render_active_web_sessions(web_sessions: list) -> str:
+        """Render active visible web sessions for the slow brain snapshot.
+
+        Accepts either a list of ``WebSessionHandle`` objects (backward compat)
+        or a list of metadata dicts from ``list_sessions_with_metadata``.
+        Only produces output when there are active sessions to show.
+        """
+        if not web_sessions:
+            return ""
+        lines = ["<active_web_sessions>"]
+        for entry in web_sessions:
+            if isinstance(entry, dict):
+                sid = entry.get("session_id", "?")
+                label = entry.get("label", "")
+                url = entry.get("url", "")
+                lines.append(
+                    f'  <session id="{sid}" label="{label}" url="{url}" />',
+                )
+            else:
+                sid = getattr(entry, "session_id", "?")
+                label = getattr(entry, "label", "")
+                lines.append(f'  <session id="{sid}" label="{label}" />')
+        lines.append("</active_web_sessions>")
+        return "\n".join(lines)
 
     def render_notification_bar(
         self,

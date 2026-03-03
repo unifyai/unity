@@ -42,18 +42,19 @@ from unity.session_details import SESSION_DETAILS
 # Shared helpers
 from unity.conversation_manager.medium_scripts.common import (
     event_broker,
-    create_end_call,
+    create_end_call,  # kept for test monkeypatch compatibility
     match_say_meta,
     setup_inactivity_timeout,
-    setup_participant_disconnect_handler,
+    setup_participant_disconnect_handler,  # kept for test monkeypatch compatibility
     publish_call_started,
+    publish_call_ended,
+    delete_livekit_room,
     configure_from_cli,
     should_dispatch_livekit_agent,
     start_event_broker_receive,
     UserTrackCaptureManager,
     ScreenshotHistory,
     capture_assistant_screenshot,
-    render_event_for_fast_brain,
     render_participant_comms,
     publish_meet_interaction_from_track,
     FastBrainLogger,
@@ -72,7 +73,7 @@ VAD = None
 
 
 # Module-level logger created early for prewarm (before entrypoint runs).
-_log = FastBrainLogger(mode="tts")
+_log = FastBrainLogger()
 
 
 def prewarm(_ctx=None):
@@ -116,6 +117,7 @@ class Assistant(Agent):
             OutboundPhoneUtterance if channel == "phone" else OutboundUnifyMeetUtterance
         )
         self.call_received = not outbound
+        self._user_speech_logged = False
 
         super().__init__(instructions=instructions)
 
@@ -127,13 +129,11 @@ class Assistant(Agent):
         turn_ctx: ChatContext,
         new_message: ChatMessage,
     ) -> None:
-        """
-        Hook called when user finishes speaking.
-
-        Note: User utterance publishing is handled by _on_chat_item_added
-        to keep all transcript logging in one place alongside assistant utterances.
-        """
-        _log.user_speech(new_message.text_content or "")
+        """Hook called when user finishes speaking — before LLM generation starts."""
+        text = new_message.text_content or ""
+        if text:
+            _log.user_speech(text)
+            self._user_speech_logged = True
 
     async def llm_node(
         self,
@@ -164,7 +164,7 @@ class Assistant(Agent):
         else:
             trimmed_ctx = chat_ctx
 
-        _log.llm_thinking(reason="llm_node_start")
+        _log.info("LLM thinking… (llm_node_start)")
         async for chunk in super().llm_node(trimmed_ctx, tools, model_settings):
             yield chunk
 
@@ -268,10 +268,14 @@ async def entrypoint(ctx: agents.JobContext):
     )
 
     user_is_speaking = False
-    _queued_speech: list[tuple[str, str, str]] = []  # (text, guidance_id, source)
+    _queued_speech: list[tuple[str, str, str]] = []  # (text, notification_id, source)
     _last_say_meta: dict | None = None
     generation_seq = 0
     user_state_seq = 0
+    _was_quiescent = True
+    _pending_reply_timer: asyncio.TimerHandle | None = None
+    _pending_notification_eval_task: asyncio.Task | None = None
+    _NOTIFY_COALESCE_S = 0.05
 
     def _log_reply_task(task: asyncio.Task) -> None:
         try:
@@ -282,14 +286,14 @@ async def entrypoint(ctx: agents.JobContext):
         except Exception as exc:  # noqa: BLE001
             _log.llm_error(str(exc))
 
-    def trigger_generate_reply(
+    def _fire_generate_reply(
         reason: str,
         source_id: str,
-        *,
         allow_interruptions: bool = True,
-        wait_for_completion: bool = False,
+        user_input: str | None = None,
     ):
-        nonlocal generation_seq
+        nonlocal generation_seq, _pending_reply_timer
+        _pending_reply_timer = None
         generation_seq += 1
         generation_id = f"gen-{generation_seq:06d}"
         last_role = (
@@ -309,18 +313,46 @@ async def entrypoint(ctx: agents.JobContext):
             enqueue_trace_context(trigger)
         _log.llm_thinking(
             reason=reason,
-            generation_id=generation_id,
-            source_id=source_id,
             queued_speech=len(_queued_speech),
         )
-        maybe_result = session.generate_reply(
-            allow_interruptions=allow_interruptions,
-        )
+        reply_kwargs = {"allow_interruptions": allow_interruptions}
+        if user_input is not None:
+            reply_kwargs["user_input"] = user_input
+        maybe_result = session.generate_reply(**reply_kwargs)
         if isinstance(maybe_result, asyncio.Task):
             maybe_result.add_done_callback(_log_reply_task)
-        if wait_for_completion:
-            return maybe_result
         return maybe_result
+
+    def trigger_generate_reply(
+        reason: str,
+        source_id: str,
+        *,
+        allow_interruptions: bool = True,
+        wait_for_completion: bool = False,
+        user_input: str | None = None,
+    ):
+        nonlocal _pending_reply_timer
+        if _pending_reply_timer is not None:
+            _pending_reply_timer.cancel()
+            _pending_reply_timer = None
+
+        if wait_for_completion:
+            return _fire_generate_reply(
+                reason,
+                source_id,
+                allow_interruptions,
+                user_input,
+            )
+
+        loop = asyncio.get_event_loop()
+        _pending_reply_timer = loop.call_later(
+            _NOTIFY_COALESCE_S,
+            _fire_generate_reply,
+            reason,
+            source_id,
+            allow_interruptions,
+            user_input,
+        )
 
     if channel == "phone":
         user_utterance_event = InboundPhoneUtterance
@@ -329,10 +361,34 @@ async def entrypoint(ctx: agents.JobContext):
         user_utterance_event = InboundUnifyMeetUtterance
         assistant_utterance_event = OutboundUnifyMeetUtterance
 
-    # Shared end_call + inactivity + participant disconnect handler
-    end_call = create_end_call(contact, channel, room_name=ctx.room.name)
-    touch_activity = setup_inactivity_timeout(end_call)
-    setup_participant_disconnect_handler(ctx.room, end_call)
+    # Register cleanup as a LiveKit shutdown callback so it runs on any
+    # exit path: participant disconnect (close_on_disconnect), inactivity,
+    # or explicit stop.  LiveKit manages task lifecycle — no manual
+    # cancellation needed.
+    async def _on_job_shutdown():
+        await delete_livekit_room(ctx.room.name)
+        await publish_call_ended(contact, channel)
+
+    ctx.add_shutdown_callback(_on_job_shutdown)
+
+    async def _shutdown_inactivity():
+        ctx.shutdown(reason="inactivity")
+
+    touch_activity = setup_inactivity_timeout(_shutdown_inactivity)
+
+    def _check_quiescence_transition() -> None:
+        nonlocal _was_quiescent
+        now_quiescent = _is_pipeline_quiescent()
+        if now_quiescent != _was_quiescent:
+            _was_quiescent = now_quiescent
+            import json as _json
+
+            asyncio.create_task(
+                event_broker.publish(
+                    "app:comms:pipeline_quiescent",
+                    _json.dumps({"quiescent": now_quiescent}),
+                ),
+            )
 
     @session.on("user_state_changed")
     def _on_user_state_changed(ev):
@@ -342,6 +398,7 @@ async def entrypoint(ctx: agents.JobContext):
         user_is_speaking = ev.new_state == "speaking"
         _log.user_state(ev.new_state, state_id=state_id)
         touch_activity()
+        _check_quiescence_transition()
 
     @session.on("agent_state_changed")
     def _on_agent_state_changed(ev):
@@ -353,15 +410,20 @@ async def entrypoint(ctx: agents.JobContext):
         is None — firing then would race ahead of the fast brain's reply.
 
         Triggering here guarantees the full thinking → speaking → listening cycle
-        has completed before queued guidance speech plays.
+        has completed before queued notification speech plays.
         """
         if ev.new_state in ("listening", "idle"):
             maybe_speak_queued()
+        _check_quiescence_transition()
 
     # -- Screenshot state --
     screenshot_history = ScreenshotHistory()
     assistant_screen_share_active = False
+    _agent_service_url: str | None = None
     _visual_ctx_msg_id: str | None = None
+    import aiohttp as _aiohttp
+
+    _screenshot_http_session = _aiohttp.ClientSession()
 
     def _clear_visual_context(source: str | None = None) -> None:
         """Remove visual context from chat contexts and clear screenshot history."""
@@ -434,13 +496,18 @@ async def entrypoint(ctx: agents.JobContext):
         if say_meta:
             _last_say_meta = None
         if role == "user":
-            _log.user_speech(text)
+            if not assistant._user_speech_logged:
+                _log.user_speech(text)
+            assistant._user_speech_logged = False
         else:
-            _log.assistant_speech(
-                text,
-                source=(say_meta or {}).get("source", "generate_reply"),
-                guidance_id=(say_meta or {}).get("guidance_id", ""),
-            )
+            source = (say_meta or {}).get("source", "reply")
+            if say_meta and say_meta.get("llm_log_path"):
+                log_path = say_meta["llm_log_path"]
+            elif source == "reply":
+                log_path = getattr(llm_model, "last_log_path", "")
+            else:
+                log_path = ""
+            _log.assistant_speech(text, source=source, llm_log_path=log_path)
         if role == "user":
             event = user_utterance_event(contact, content=text)
             from datetime import datetime, timezone
@@ -507,7 +574,7 @@ async def entrypoint(ctx: agents.JobContext):
 
             copy_visual_id = _visual_ctx_msg_id
 
-            if screen_capture._latest_frame_data is not None:
+            if is_user_turn and screen_capture._latest_frame_data is not None:
                 b64 = screen_capture.capture_screenshot()
                 if b64:
                     _handle_screenshot(
@@ -519,7 +586,7 @@ async def entrypoint(ctx: agents.JobContext):
                         ),
                     )
                     captured_any = True
-            if webcam_capture._latest_frame_data is not None:
+            if is_user_turn and webcam_capture._latest_frame_data is not None:
                 b64 = webcam_capture.capture_screenshot()
                 if b64:
                     _handle_screenshot(
@@ -532,10 +599,21 @@ async def entrypoint(ctx: agents.JobContext):
                     )
                     captured_any = True
             if assistant_screen_share_active and is_user_turn:
-                entry = await capture_assistant_screenshot(utterance)
+                entry = await capture_assistant_screenshot(
+                    utterance,
+                    fb_logger=_log,
+                    agent_service_url=_agent_service_url,
+                    http_session=_screenshot_http_session,
+                )
                 if entry:
-                    _handle_screenshot(entry)
-                    captured_any = True
+                    if not assistant_screen_share_active:
+                        if copy_visual_id is not None:
+                            idx = chat_ctx.index_by_id(copy_visual_id)
+                            if idx is not None:
+                                chat_ctx.items.pop(idx)
+                    else:
+                        _handle_screenshot(entry)
+                        captured_any = True
 
             if captured_any:
                 content = screenshot_history.build_visual_context_content()
@@ -562,9 +640,9 @@ async def entrypoint(ctx: agents.JobContext):
     await publish_call_started(contact, channel)
     touch_activity()
 
-    pending_guidance: list[tuple[str, str, bool, str, str]] = (
+    pending_notifications: list[tuple[str, str, bool, str, str, str]] = (
         []
-    )  # (content, response_text, should_speak, guidance_id, guidance_source)
+    )  # (content, response_text, should_speak, notification_id, notification_source, llm_log_path)
     session_ready = False
 
     def on_status(data: dict) -> None:
@@ -577,38 +655,174 @@ async def entrypoint(ctx: agents.JobContext):
             call_answered_flag.set()
             assistant.set_call_received()
         elif event_type == "stop":
-            asyncio.create_task(end_call())
+            ctx.shutdown(reason="stopped")
 
-    def apply_guidance(
+    def _is_pipeline_quiescent() -> bool:
+        """True when the voice pipeline is completely idle (no speech in flight)."""
+        if user_is_speaking:
+            return False
+        if session.agent_state not in ("listening", "idle"):
+            return False
+        current = session.current_speech
+        if current is not None and not current.done:
+            return False
+        return True
+
+    def _speak_now(
+        text: str,
+        notification_id: str,
+        notification_source: str,
+        notification_content: str,
+        llm_log_path: str,
+    ) -> None:
+        nonlocal _last_say_meta
+        _last_say_meta = {
+            "notification_id": notification_id,
+            "source": notification_source,
+            "text": text,
+            "llm_log_path": llm_log_path,
+        }
+        notification_message = f"[notification] {notification_content}"
+        assistant._chat_ctx.add_message(
+            role="system",
+            content=[notification_message],
+        )
+        session._chat_ctx.add_message(
+            role="system",
+            content=[notification_message],
+        )
+        _log.notification_say(text, notification_source=notification_source)
+        session.say(text, allow_interruptions=True, add_to_chat_ctx=True)
+
+    def _extract_chat_messages(ctx) -> list[dict]:
+        """Convert a LiveKit ChatContext into a list of message dicts for direct LLM calls."""
+        from livekit.agents.llm import ImageContent
+
+        messages: list[dict] = []
+        for item in ctx.items:
+            role = getattr(item, "role", None)
+            if role is None:
+                continue
+            raw_content = getattr(item, "content", None)
+            if not raw_content:
+                continue
+            has_images = isinstance(raw_content, list) and any(
+                isinstance(c, ImageContent) for c in raw_content
+            )
+            if has_images:
+                parts: list[dict] = []
+                for c in raw_content:
+                    if isinstance(c, str):
+                        parts.append({"type": "text", "text": c})
+                    elif isinstance(c, ImageContent) and isinstance(c.image, str):
+                        parts.append(
+                            {"type": "image_url", "image_url": {"url": c.image}},
+                        )
+                if parts:
+                    messages.append({"role": role, "content": parts})
+            else:
+                text = getattr(item, "text_content", None)
+                if not text:
+                    continue
+                messages.append({"role": role, "content": text})
+        return messages
+
+    async def _evaluate_notification_reply() -> None:
+        """Structured-output sidecar: decide whether to speak for pending notification(s)."""
+        nonlocal _pending_notification_eval_task, _last_say_meta
+        from unity.conversation_manager.domains.notification_reply import (
+            NotificationReplyEvaluator,
+        )
+
+        evaluator = NotificationReplyEvaluator(
+            model=SETTINGS.conversation.FAST_BRAIN_MODEL,
+        )
+        chat_messages = _extract_chat_messages(session._chat_ctx)
+        decision, log_path = await evaluator.evaluate(
+            chat_history=chat_messages,
+            system_prompt=system_prompt,
+        )
+        _pending_notification_eval_task = None
+
+        if decision.speak and decision.content:
+            _last_say_meta = {
+                "notification_id": "",
+                "source": "notification_reply",
+                "text": decision.content,
+                "llm_log_path": log_path,
+            }
+            _log.notification_say(
+                decision.content,
+                notification_source="notification_reply",
+            )
+            session.say(
+                decision.content,
+                allow_interruptions=True,
+                add_to_chat_ctx=True,
+            )
+        else:
+            _log._emit("wait", "Decided to wait")
+
+    def _schedule_notification_eval() -> None:
+        """Schedule a structured notification evaluation with the same coalesce window."""
+        nonlocal _pending_notification_eval_task
+        if _pending_notification_eval_task is not None:
+            _pending_notification_eval_task.cancel()
+            _pending_notification_eval_task = None
+
+        async def _debounced_eval():
+            await asyncio.sleep(_NOTIFY_COALESCE_S)
+            await _evaluate_notification_reply()
+
+        _pending_notification_eval_task = asyncio.ensure_future(_debounced_eval())
+
+    def apply_notification(
         content: str,
         response_text: str = "",
         should_speak: bool = False,
         *,
-        guidance_id: str = "",
+        notification_id: str = "",
         source: str = "",
-        guidance_source: str = "",
+        notification_source: str = "",
+        llm_log_path: str = "",
     ) -> None:
-        _log.guidance_applied(guidance_id, source=guidance_source or source)
-
         if should_speak and response_text:
-            _queued_speech.append(
-                (response_text, guidance_id, guidance_source, content),
-            )
-            maybe_speak_queued()
+            if notification_source == "proactive_speech":
+                # Proactive speech exists purely to fill silence — never queue it.
+                # Play immediately if the pipeline is fully quiescent and nothing
+                # else is waiting; otherwise discard silently.
+                if not _is_pipeline_quiescent() or _queued_speech:
+                    return
+                _speak_now(
+                    response_text,
+                    notification_id,
+                    notification_source,
+                    content,
+                    llm_log_path,
+                )
+            else:
+                _queued_speech.append(
+                    (
+                        response_text,
+                        notification_id,
+                        notification_source,
+                        content,
+                        llm_log_path,
+                    ),
+                )
+                maybe_speak_queued()
         else:
-            guidance_message = f"[notification] {content}"
+            notification_message = f"[notification] {content}"
             assistant._chat_ctx.add_message(
                 role="system",
-                content=[guidance_message],
+                content=[notification_message],
             )
             session._chat_ctx.add_message(
                 role="system",
-                content=[guidance_message],
+                content=[notification_message],
             )
-            trigger_generate_reply(
-                reason="notification",
-                source_id=guidance_id or "guidance_notify",
-            )
+            if notification_source != "meet_interaction":
+                _schedule_notification_eval()
 
     def maybe_speak_queued() -> None:
         """Speak the next queued response when user is silent and assistant is idle.
@@ -618,89 +832,86 @@ async def entrypoint(ctx: agents.JobContext):
         speaking → listening. We only speak queued text once the agent has settled
         back to a quiescent state, guaranteeing the fast brain's reply comes first.
         """
-        nonlocal _last_say_meta
-        if not _queued_speech or user_is_speaking:
+        if not _queued_speech or not _is_pipeline_quiescent():
             return
-        if session.agent_state not in ("listening", "idle"):
-            return
-        current = session.current_speech
-        if current is not None and not current.done:
-            return
-        text, guidance_id, guidance_source, notification_content = _queued_speech.pop(0)
-        _last_say_meta = {
-            "guidance_id": guidance_id,
-            "source": guidance_source,
-            "text": text,
-        }
-
-        guidance_message = f"[notification] {notification_content}"
-        assistant._chat_ctx.add_message(
-            role="system",
-            content=[guidance_message],
-        )
-        session._chat_ctx.add_message(
-            role="system",
-            content=[guidance_message],
+        (
+            text,
+            notification_id,
+            notification_source,
+            notification_content,
+            llm_log_path,
+        ) = _queued_speech.pop(0)
+        _speak_now(
+            text,
+            notification_id,
+            notification_source,
+            notification_content,
+            llm_log_path,
         )
 
-        _log.guidance_say(guidance_id, text, guidance_source=guidance_source)
-        session.say(text, allow_interruptions=True, add_to_chat_ctx=True)
-
-    def on_guidance(data: dict) -> None:
-        """Handle guidance from conversation manager."""
-        nonlocal assistant_screen_share_active
+    def on_notification(data: dict) -> None:
+        """Handle notifications from conversation manager."""
+        nonlocal assistant_screen_share_active, _agent_service_url
         payload = data.get("payload") or data
         content = payload.get("content", "")
-        # Track screen share state from meet interaction guidance.
+        # Track screen share state from meet interaction notifications.
         if payload.get("source") == "meet_interaction":
             low = content.lower()
             if "screen sharing is now on" in low:
                 assistant_screen_share_active = True
+                if payload.get("agent_service_url"):
+                    _agent_service_url = payload["agent_service_url"]
             elif "screen sharing is now off" in low:
                 assistant_screen_share_active = False
                 _clear_visual_context(source="assistant")
-            if "stopped sharing" in low or "screen sharing is now off" in low:
+            elif "stopped sharing" in low:
                 source = "user" if "user" in low else "assistant"
                 _clear_visual_context(source=source)
         response_text = payload.get("response_text", "")
         should_speak = payload.get("should_speak", False)
-        guidance_source = payload.get("source", "")
-        guidance_id = content_trace_id("guid", content)
-        _log.guidance_received(
-            guidance_source,
-            should_speak,
+        notification_source = payload.get("source", "")
+        llm_log_path = payload.get("llm_log_path", "")
+        notification_id = content_trace_id("guid", content)
+        triggers_turn = (
+            not (should_speak and response_text)
+            and notification_source != "meet_interaction"
+        )
+        _log.notification(
+            notification_source,
             content,
-            guidance_id=guidance_id,
+            speak=should_speak,
+            turn=triggers_turn,
         )
         touch_activity()
 
         if content:
             if not session_ready:
-                pending_guidance.append(
+                pending_notifications.append(
                     (
                         content,
                         response_text,
                         should_speak,
-                        guidance_id,
-                        guidance_source,
+                        notification_id,
+                        notification_source,
+                        llm_log_path,
                     ),
                 )
-                _log.guidance_buffered(guidance_id, len(pending_guidance))
+                _log.notification_buffered(len(pending_notifications))
             else:
-                apply_guidance(
+                apply_notification(
                     content,
                     response_text,
                     should_speak,
-                    guidance_id=guidance_id,
+                    notification_id=notification_id,
                     source="socket_callback",
-                    guidance_source=guidance_source,
+                    notification_source=notification_source,
+                    llm_log_path=llm_log_path,
                 )
 
     event_broker.register_callback("app:call:status", on_status)
-    event_broker.register_callback("app:call:call_guidance", on_guidance)
+    event_broker.register_callback("app:call:notification", on_notification)
 
     # --- Tier 1: Comms from call participants (all calls) ---
-    # Build the set of contact_ids on this call.
     is_boss_user = contact.get("contact_id") == 1
     participant_ids: set[int] = set()
     if contact.get("contact_id") is not None:
@@ -728,26 +939,6 @@ async def entrypoint(ctx: agents.JobContext):
 
     event_broker.register_callback("app:comms:*", on_participant_comms)
 
-    # --- Tier 2: All other system events (boss calls only) ---
-    if is_boss_user:
-
-        def on_system_event(data: dict) -> None:
-            raw = data.get("event") if "event" in data else json.dumps(data)
-            text = render_event_for_fast_brain(
-                raw if isinstance(raw, str) else json.dumps(raw),
-            )
-            if not text:
-                return
-            _log.boss_event(text)
-            touch_activity()
-            if not session_ready:
-                return
-            _inject_and_reply(f"[notification] {text}", reason="boss_event")
-
-        event_broker.register_callback("app:actor:*", on_system_event)
-        event_broker.register_callback("app:managers:output", on_system_event)
-        event_broker.register_callback("app:logging:message_logged", on_system_event)
-
     # Handle call_answered that arrived during initialization
     if call_answered_flag.is_set():
         _log.call_status("call_answered (arrived during init)")
@@ -773,30 +964,32 @@ async def entrypoint(ctx: agents.JobContext):
         session._chat_ctx.add_message(role="system", content=[history_block])
         _log.info(f"Hydrated {len(history_lines)} historical events into context")
 
-    # Mark session ready and process any buffered guidance BEFORE first utterance.
-    # After this, the on_guidance callback will apply guidance immediately.
+    # Mark session ready and process any buffered notifications BEFORE first utterance.
+    # After this, the on_notification callback will apply notifications immediately.
     # Note: For outbound calls, llm_node will wait for call_received (set by on_status).
     session_ready = True
-    if pending_guidance:
+    if pending_notifications:
         _log.session_ready(
-            f"Applying {len(pending_guidance)} buffered guidance message(s)",
+            f"Applying {len(pending_notifications)} buffered notification(s)",
         )
         for (
             content,
             response_text,
             should_speak,
-            guidance_id,
-            guidance_source,
-        ) in pending_guidance:
-            apply_guidance(
+            notification_id,
+            notification_source,
+            llm_log_path,
+        ) in pending_notifications:
+            apply_notification(
                 content,
                 response_text,
                 should_speak,
-                guidance_id=guidance_id,
+                notification_id=notification_id,
                 source="pending_buffer_flush",
-                guidance_source=guidance_source,
+                notification_source=notification_source,
+                llm_log_path=llm_log_path,
             )
-        pending_guidance.clear()
+        pending_notifications.clear()
 
     await trigger_generate_reply(
         reason="session_start",
@@ -807,7 +1000,7 @@ async def entrypoint(ctx: agents.JobContext):
 
 
 if __name__ == "__main__":
-    # Shared CLI handling (same as sts_call.py)
+    # CLI handling
     room_name = configure_from_cli(
         extra_env=[
             ("CONTACT", True),
@@ -823,7 +1016,7 @@ if __name__ == "__main__":
         dispatch_livekit_agent(
             room_name,
             record=True,
-            assistant_id=SESSION_DETAILS.assistant.id,
+            assistant_id=SESSION_DETAILS.assistant.agent_id,
             user_id=SESSION_DETAILS.user.id,
         )
         _log.dispatch(f"LiveKit agent {room_name} dispatched")

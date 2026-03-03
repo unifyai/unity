@@ -116,7 +116,7 @@ async def initialize_cm(
     # may be missing `phone_number` / `email_address`, which makes brain actions
     # like `send_sms` / `send_email` fail with an Error event.
     #
-    # Reads from env vars: USER_NAME, USER_SURNAME, USER_NUMBER, USER_EMAIL.
+    # Reads from env vars: USER_FIRST_NAME, USER_SURNAME, USER_NUMBER, USER_EMAIL.
     try:
         from sandboxes.conversation_manager.event_publisher import (
             get_simulated_user_contact,

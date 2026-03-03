@@ -8,7 +8,7 @@ import unify
 import json
 import asyncio
 import datetime as dt
-from collections import deque
+from collections import defaultdict, deque
 from datetime import datetime
 from typing import (
     List,
@@ -44,6 +44,7 @@ __all__ = ["Event", "EventBus", "Subscription", "EVENT_BUS"]
 from ..common.global_docstrings import CLEAR_METHOD_DOCSTRING
 from ..common.log_utils import _derive_all_contexts, _inject_private_fields
 from ..common.model_to_fields import model_to_fields
+from ..logger import LOGGER
 
 # ---------------------------------------------------------------------------
 # Context-variable to track the *root* sequence number of a callback cascade.
@@ -319,6 +320,12 @@ class EventBus:
     # first EventBus instantiation. Can be overridden (e.g., tests use markers).
     _publishing_enabled: bool | None = None
 
+    # Monotonic timestamp of the most recent publish() call. Used by
+    # ConversationManager's inactivity check to detect that internal work
+    # (LLM calls, tool-loop turns, manager methods, …) is still happening
+    # even when no external pubsub messages are arriving.
+    last_publish_monotonic: float = 0.0
+
     # ── Pub/Sub streaming for Live Actions ────────────────────────────────
     _GCP_PROJECT = "responsive-city-458413-a2"
     _ACTION_EVENT_TYPES = frozenset({"ManagerMethod", "ToolLoop"})
@@ -336,6 +343,10 @@ class EventBus:
             except Exception:
                 # Fallback to disabled if settings can't be loaded
                 cls._publishing_enabled = False
+            LOGGER.info(
+                "EventBus publishing %s",
+                "enabled" if cls._publishing_enabled else "disabled",
+            )
 
     @classmethod
     def _init_pubsub_streaming(cls) -> None:
@@ -347,14 +358,30 @@ class EventBus:
                 cls._pubsub_streaming_enabled = SETTINGS.EVENTBUS_PUBSUB_STREAMING
             except Exception:
                 cls._pubsub_streaming_enabled = False
+            LOGGER.info(
+                "Pub/Sub action streaming %s",
+                "enabled" if cls._pubsub_streaming_enabled else "disabled",
+            )
 
     @classmethod
     def _get_pubsub_publisher(cls):
-        """Lazily initialize the GCP Pub/Sub publisher client."""
+        """Lazily initialize the GCP Pub/Sub publisher client.
+
+        Message ordering is enabled so that messages published with the same
+        ``ordering_key`` are delivered to subscribers in publish order.  Each
+        assistant's action events share a single ordering key (the assistant
+        ID), guaranteeing the console receives ManagerMethod and ToolLoop
+        events in the exact sequence they occurred.
+        """
         if cls._pubsub_publisher is None:
             from google.cloud import pubsub_v1
+            from google.cloud.pubsub_v1.types import PublisherOptions
 
-            cls._pubsub_publisher = pubsub_v1.PublisherClient()
+            cls._pubsub_publisher = pubsub_v1.PublisherClient(
+                publisher_options=PublisherOptions(
+                    enable_message_ordering=True,
+                ),
+            )
         return cls._pubsub_publisher
 
     def __init__(self):
@@ -423,6 +450,10 @@ class EventBus:
 
         # runtime subscriptions (id → Subscription)
         self._subscriptions: Dict[str, Subscription] = {}
+
+        # Deferred persistence buffer: (entries_dict, context_name) pairs
+        # accumulated during publish() and flushed in batch via flush()/clear().
+        self._pending_writes: list[tuple[dict, str]] = []
 
         # ── Hydrate in the *background* rather than blocking import time ───
         # The original synchronous pre-fill was executed right here,
@@ -518,41 +549,6 @@ class EventBus:
                 unify.create_context(all_ctx)
             except Exception:
                 pass  # Context may already exist; proceed
-
-    def _add_aggregation_callback(self, future: Any, context: str) -> None:
-        """Add a callback to mirror the created log to aggregation contexts.
-
-        When the log is successfully created (future completes with log_id),
-        the callback adds it by reference to:
-        - {User}/All/{suffix} for user-level aggregation
-        - All/{suffix} for global aggregation
-
-        This is best-effort and fire-and-forget - failures are silently ignored
-        to avoid blocking the main event publishing flow.
-        """
-        all_ctxs = _derive_all_contexts(context)
-        if not all_ctxs:
-            return  # No aggregation contexts to mirror to
-
-        project = unify.active_project()
-
-        def _on_log_created(fut: Any) -> None:
-            try:
-                log_id = fut.result()
-                if log_id:
-                    for all_ctx in all_ctxs:
-                        try:
-                            unify.add_logs_to_context(
-                                [log_id],
-                                context=all_ctx,
-                                project=project,
-                            )
-                        except Exception:
-                            pass  # Best-effort: don't fail the main operation
-            except Exception:
-                pass  # Log creation failed; nothing to mirror
-
-        future.add_done_callback(_on_log_created)
 
     # ------------------------------------------------------------------
     # Public readonly state helpers
@@ -804,6 +800,10 @@ class EventBus:
             self._next_row_ids.setdefault(event_type, 0)
 
     async def publish(self, event: Event, *, blocking: bool = False) -> None:
+        import time as _time
+
+        EventBus.last_publish_monotonic = _time.monotonic()
+
         # Initialize publishing flag from settings if not already done
         if EventBus._publishing_enabled is None:
             EventBus._init_publishing_enabled()
@@ -856,9 +856,7 @@ class EventBus:
             "payload_cls": event.payload_cls,
         }
 
-        # Log to global event table (payload stored as single JSON column to avoid
-        # cross-type schema conflicts when different event types have fields with
-        # the same name but different types)
+        # Buffer entries for deferred batch upload (flushed in flush()/clear())
         global_entries = _inject_private_fields(
             {
                 **base_entries,
@@ -866,44 +864,25 @@ class EventBus:
                 "payload_json": json.dumps(payload_dict),
             },
         )
-        global_future = self._get_logger().log_create(
-            project=unify.active_project(),
-            context=self._global_ctx,
-            entries=global_entries,
-        )
+        self._pending_writes.append((global_entries, self._global_ctx))
 
-        # Add callback to mirror to aggregation contexts (best-effort, async)
-        self._add_aggregation_callback(global_future, self._global_ctx)
-
-        # Log to specific event table
         specific_entries = _inject_private_fields(
             {
                 **base_entries,
                 **payload_dict,
             },
         )
-        specific_future = self._get_logger().log_create(
-            project=unify.active_project(),
-            context=self._specific_ctxs[event.type],
-            entries=specific_entries,
-        )
-
-        # Add callback to mirror to aggregation contexts (best-effort, async)
-        self._add_aggregation_callback(
-            specific_future,
-            self._specific_ctxs[event.type],
-        )
+        self._pending_writes.append((specific_entries, self._specific_ctxs[event.type]))
 
         # ── Stream action events to Pub/Sub for real-time frontend rendering ─
         if event.type in self._ACTION_EVENT_TYPES:
             self._stream_action_to_pubsub(event, base_entries, payload_dict)
 
-        # ── Evaluate subscriptions *after* persistence ──────────────────────
+        # ── Evaluate subscriptions ────────────────────────────────────────
         self._process_event(event)
 
-        # maybe block until published, if sync mode
         if blocking:
-            self._get_logger().join()
+            self.flush()
 
     # ------------------------------------------------------------------
     # Pub/Sub streaming (Live Actions)
@@ -925,33 +904,26 @@ class EventBus:
         Errors are logged at DEBUG level and never propagate — the Orchestra
         dual-write is the authoritative persistence path.
         """
-        import logging
-
-        _log = logging.getLogger(__name__)
-
         if EventBus._pubsub_streaming_enabled is None:
             EventBus._init_pubsub_streaming()
         if not EventBus._pubsub_streaming_enabled:
             return
 
+        topic_name = None
+        agent_id = None
         try:
-            from ..session_details import SESSION_DETAILS, DEFAULT_ASSISTANT_ID
+            from ..session_details import SESSION_DETAILS
             from ..settings import SETTINGS
 
-            assistant_id = SESSION_DETAILS.assistant.id
+            agent_id = str(SESSION_DETAILS.assistant.agent_id)
             staging_suffix = (
-                "-staging"
-                if SETTINGS.STAGING and DEFAULT_ASSISTANT_ID not in assistant_id
-                else ""
+                "-staging" if SETTINGS.STAGING and agent_id is not None else ""
             )
-            topic_name = f"unity-{assistant_id}{staging_suffix}"
+            topic_name = f"unity-{agent_id}{staging_suffix}"
 
             publisher = self._get_pubsub_publisher()
             topic_path = publisher.topic_path(self._GCP_PROJECT, topic_name)
 
-            # Build the message in the same flat shape that Orchestra stores
-            # (base_entries merged with payload fields) so the frontend can
-            # consume either source with identical parsing logic.
             message_data = {
                 "thread": "action_event",
                 "event": {
@@ -964,36 +936,146 @@ class EventBus:
             future = publisher.publish(
                 topic_path,
                 json.dumps(message_data, default=str).encode("utf-8"),
+                ordering_key=agent_id,
                 thread="action_event",
             )
-            future.add_done_callback(self._on_pubsub_publish_done)
+            LOGGER.debug(
+                "Pub/Sub publish fired: topic=%s event_type=%s row_id=%s",
+                topic_name,
+                event.type,
+                event.row_id,
+            )
+            future.add_done_callback(
+                self._make_publish_done_callback(topic_path, agent_id),
+            )
 
-        except Exception:
-            _log.debug(
-                "Pub/Sub action streaming unavailable — falling back to "
-                "Orchestra-only persistence",
+        except Exception as exc:
+            LOGGER.warning(
+                "Pub/Sub action streaming failed: topic=%s agent_id=%s "
+                "event_type=%s row_id=%s error=%s",
+                topic_name,
+                agent_id,
+                event.type,
+                event.row_id,
+                exc,
                 exc_info=True,
             )
 
-    @staticmethod
-    def _on_pubsub_publish_done(future) -> None:
-        """Callback for fire-and-forget Pub/Sub publishes.
+    @classmethod
+    def _make_publish_done_callback(cls, topic_path: str, ordering_key: str):
+        """Return a callback that handles publish success/failure.
 
-        Logs failures at WARNING; successes are silent.
+        On failure, calls ``resume_publish`` so that subsequent messages with the
+        same ordering key are not permanently blocked by a single transient error.
         """
-        import logging
 
-        try:
-            future.result()
-        except Exception:
-            logging.getLogger(__name__).warning(
-                "Failed to publish action event to Pub/Sub",
-                exc_info=True,
-            )
+        def _on_done(future) -> None:
+            try:
+                message_id = future.result()
+                LOGGER.debug(
+                    "Pub/Sub publish confirmed: topic=%s ordering_key=%s message_id=%s",
+                    topic_path,
+                    ordering_key,
+                    message_id,
+                )
+            except Exception as exc:
+                LOGGER.warning(
+                    "Pub/Sub publish failed: topic=%s ordering_key=%s error=%s",
+                    topic_path,
+                    ordering_key,
+                    exc,
+                    exc_info=True,
+                )
+                try:
+                    if cls._pubsub_publisher and ordering_key:
+                        cls._pubsub_publisher.resume_publish(topic_path, ordering_key)
+                        LOGGER.info(
+                            "Resumed Pub/Sub publishing: topic=%s ordering_key=%s",
+                            topic_path,
+                            ordering_key,
+                        )
+                except Exception as resume_exc:
+                    LOGGER.warning(
+                        "Failed to resume Pub/Sub publishing: topic=%s "
+                        "ordering_key=%s error=%s",
+                        topic_path,
+                        ordering_key,
+                        resume_exc,
+                        exc_info=True,
+                    )
+
+        return _on_done
+
+    def flush(self) -> None:
+        """Batch-upload all buffered event writes, grouped by context.
+
+        Uses ``unify.create_logs`` (single HTTP POST per context) rather
+        than N individual ``log_create`` calls.  Aggregation mirrors are
+        attached in bulk after each batch completes.
+        """
+        if not self._pending_writes:
+            return
+
+        project = unify.active_project()
+
+        batches: dict[str, list[dict]] = defaultdict(list)
+        for entries, context in self._pending_writes:
+            batches[context].append(entries)
+        total_events = len(self._pending_writes)
+        self._pending_writes.clear()
+
+        LOGGER.debug(
+            "EventBus flush: %d events across %d contexts",
+            total_events,
+            len(batches),
+        )
+
+        for context, entries_list in batches.items():
+            try:
+                logs = unify.create_logs(
+                    project=project,
+                    context=context,
+                    entries=entries_list,
+                )
+                LOGGER.debug(
+                    "EventBus flush: wrote %d logs to context=%s",
+                    len(entries_list),
+                    context,
+                )
+            except Exception as exc:
+                LOGGER.warning(
+                    "EventBus flush failed: context=%s events=%d error=%s",
+                    context,
+                    len(entries_list),
+                    exc,
+                    exc_info=True,
+                )
+                continue
+
+            # Mirror to aggregation contexts in bulk
+            all_ctxs = _derive_all_contexts(context)
+            if all_ctxs and logs:
+                log_ids = [lg.id for lg in logs if lg.id is not None]
+                if log_ids:
+                    for all_ctx in all_ctxs:
+                        try:
+                            unify.add_logs_to_context(
+                                log_ids,
+                                context=all_ctx,
+                                project=project,
+                            )
+                        except Exception as exc:
+                            LOGGER.debug(
+                                "EventBus flush: aggregation mirror failed: "
+                                "context=%s target=%s error=%s",
+                                context,
+                                all_ctx,
+                                exc,
+                            )
 
     def join_published(self):
-        """Ensures all published events have been uploaded"""
-        self._get_logger().join()
+        """Ensures all published events have been uploaded."""
+        self.flush()
 
     async def search(
         self,
@@ -1290,23 +1372,24 @@ class EventBus:
 
     # ------------------------------------------------------------------
     def _persist_subscription_state(self, sub: Subscription) -> None:
-        """Append current state to the callbacks context for durability."""
-        self._get_logger().log_create(
-            project=unify.active_project(),
-            context=self._callbacks_ctx,
-            entries={
-                "subscription_id": sub.subscription_id,
-                "event_type": sub.event_type,
-                "filter": sub.filter,
-                "count_step": sub.count_step,
-                "time_step": sub.time_step,
-                "last_row_id": sub.last_row_id,
-                "last_timestamp": (
-                    sub.last_timestamp.isoformat()
-                    if isinstance(sub.last_timestamp, dt.datetime)
-                    else sub.last_timestamp
-                ),
-            },
+        """Buffer subscription state for deferred batch upload."""
+        self._pending_writes.append(
+            (
+                {
+                    "subscription_id": sub.subscription_id,
+                    "event_type": sub.event_type,
+                    "filter": sub.filter,
+                    "count_step": sub.count_step,
+                    "time_step": sub.time_step,
+                    "last_row_id": sub.last_row_id,
+                    "last_timestamp": (
+                        sub.last_timestamp.isoformat()
+                        if isinstance(sub.last_timestamp, dt.datetime)
+                        else sub.last_timestamp
+                    ),
+                },
+                self._callbacks_ctx,
+            ),
         )
 
     # ------------------------------------------------------------------
@@ -1380,7 +1463,10 @@ class EventBus:
         except Exception:  # pragma: no cover – defensive
             pass
 
-        # 2. Delete all Unify contexts owned by this EventBus instance
+        # 2. Flush all buffered writes before cleanup
+        self.flush()
+
+        # 3. Delete all Unify contexts owned by this EventBus instance
         if delete_contexts:
             # First remove children (…/Events/<TYPE>, …/Events/_callbacks, …)
             upstream_ctxs = list(unify.get_contexts(prefix=self._global_ctx) or [])
@@ -1390,8 +1476,8 @@ class EventBus:
             # Finally remove the global Events context itself
             unify.delete_context(self._global_ctx)
 
-        # 3. Re-initialise this *same* instance
-        self._get_logger().clear_queue()  # *IMPORTANT* This will IMPACT all instances of EventBus
+        # 4. Re-initialise this *same* instance
+        self._get_logger().clear_queue()
         self._get_logger().join()
         type(self).__init__(self)
 

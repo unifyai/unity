@@ -2,19 +2,16 @@ from __future__ import annotations
 
 import asyncio
 from abc import abstractmethod
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, Union
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Union
+
+from PIL import Image
+from openpyxl.worksheet.worksheet import Worksheet
 
 from unity.common.async_tool_loop import SteerableToolHandle
 from unity.common.global_docstrings import CLEAR_METHOD_DOCSTRING
 from unity.common.state_managers import BaseStateManager
-
-if TYPE_CHECKING:
-    from pathlib import Path
-
-    from PIL import Image
-    from openpyxl.worksheet.worksheet import Worksheet
-
-    from unity.file_manager.types.ingest import IngestPipelineResult
+from unity.file_manager.types.ingest import IngestPipelineResult
 
 
 class BaseFileManager(BaseStateManager):

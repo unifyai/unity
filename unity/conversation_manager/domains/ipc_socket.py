@@ -2,7 +2,7 @@
 Unix domain socket IPC for cross-process event communication.
 
 This module provides a socket-based bridge between the voice agent subprocess
-(call.py/sts_call.py) and the ConversationManager parent process.
+(call.py) and the ConversationManager parent process.
 
 The voice agent runs as a separate process and cannot share the in-memory
 event broker with the parent. This socket bridge allows BIDIRECTIONAL event
@@ -162,12 +162,12 @@ class CallEventSocketServer:
             self._forward_task = asyncio.create_task(self._forward_events_to_clients())
             await self._forward_ready.wait()
 
-        _log.info(
+        _log.debug(
             "[CallEventSocketServer] Listening on %s, forward_channels=%s",
             self._socket_path,
             self._forward_channels,
         )
-        LOGGER.info(
+        LOGGER.debug(
             f"{ICONS['ipc']} [CallEventSocketServer] Listening on {self._socket_path}",
         )
         LOGGER.debug(
@@ -244,7 +244,7 @@ class CallEventSocketServer:
         if self._forward_channels:
             self._forward_task = asyncio.create_task(self._forward_events_to_clients())
             await self._forward_ready.wait()
-        _log.info(
+        _log.debug(
             "[CallEventSocketServer] Forward channels updated to %s",
             self._forward_channels,
         )
@@ -280,7 +280,7 @@ class CallEventSocketServer:
                     loop.sock_accept(self._server_socket),
                     timeout=0.5,
                 )
-                _log.info("[CallEventSocketServer] Client connected")
+                _log.debug("[CallEventSocketServer] Client connected")
                 LOGGER.debug(f"{ICONS['ipc']} [CallEventSocketServer] Client connected")
 
                 self._connected_clients.append(client_socket)
@@ -565,7 +565,7 @@ class CallEventSocketServer:
             async with self._event_broker.pubsub() as pubsub:
                 await pubsub.psubscribe(*self._forward_channels)
                 self._forward_ready.set()
-                _log.info(
+                _log.debug(
                     "[CallEventSocketServer] Forward subscription active, channels=%s",
                     self._forward_channels,
                 )

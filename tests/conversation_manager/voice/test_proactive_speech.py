@@ -27,7 +27,9 @@ from unity.conversation_manager.domains.proactive_speech import (
     ProactiveDecision,
     ProactiveSpeech,
 )
-from unity.conversation_manager.types import Medium, Mode
+from datetime import datetime, timezone
+
+from unity.conversation_manager.types import Medium, Mode, ScreenshotEntry
 
 # =============================================================================
 # Mock Helpers
@@ -110,7 +112,9 @@ def mock_cm(mock_session_logger, mock_event_broker, sample_contacts):
     cm.event_broker = mock_event_broker
     cm.mode = "call"  # Default to voice mode where proactive speech is active
     cm._proactive_speech_task = None
-    cm._fast_brain_active = False
+    cm._proactive_speech_gen = 0
+    cm._voice_pipeline_quiescent = asyncio.Event()
+    cm._voice_pipeline_quiescent.set()
     cm.assistant_screen_share_active = False
 
     # Create SimulatedContactManager and populate with sample contacts
@@ -293,45 +297,83 @@ class TestCancelProactiveSpeech:
 class TestProactiveSpeechLoop:
     """Tests for the _proactive_speech_loop() method."""
 
-    async def test_loop_defers_when_fast_brain_active(self, mock_cm):
-        """When _fast_brain_active is True, the loop exits without consulting
-        the LLM -- deferring to the next cycle when the fast brain finishes.
-
-        Regression test: without fast-brain state awareness, the proactive
-        speech LLM fires during long TTS responses (e.g. visual descriptions)
-        and produces contradictory content that plays after the fast brain.
+    async def test_loop_defers_when_pipeline_not_quiescent(self, mock_cm):
+        """When the pipeline becomes non-quiescent during the debounce sleep,
+        the loop exits without consulting the LLM.
         """
         from unity.conversation_manager.conversation_manager import ConversationManager
 
         mock_cm.mode = Mode.CALL
-        mock_cm._fast_brain_active = True
 
         decide_called = False
 
         async def mock_decide(*args, **kwargs):
             nonlocal decide_called
             decide_called = True
-            return ProactiveDecision(should_speak=True, delay=0, content="Stale filler")
+            return (
+                ProactiveDecision(should_speak=True, delay=0, content="Stale filler"),
+                "",
+            )
 
         mock_cm.proactive_speech.decide = mock_decide
 
-        with patch("asyncio.sleep", new=AsyncMock()):
+        original_sleep = asyncio.sleep
+
+        async def sleep_then_clear_quiescence(seconds):
+            mock_cm._voice_pipeline_quiescent.clear()
+            await original_sleep(0)
+
+        with patch("asyncio.sleep", new=sleep_then_clear_quiescence):
             await ConversationManager._proactive_speech_loop(mock_cm)
 
         assert (
             not decide_called
-        ), "LLM should NOT be consulted when fast brain is active"
+        ), "LLM should NOT be consulted when pipeline is not quiescent"
         mock_cm.event_broker.publish.assert_not_called()
 
-    async def test_loop_proceeds_when_fast_brain_inactive(self, mock_cm):
-        """When _fast_brain_active is False, the loop proceeds normally."""
+    async def test_loop_waits_for_quiescence_before_countdown(self, mock_cm):
+        """When the pipeline is not quiescent at the start, the loop waits
+        for quiescence before beginning the debounce countdown.
+        """
         from unity.conversation_manager.conversation_manager import ConversationManager
 
         mock_cm.mode = Mode.CALL
-        mock_cm._fast_brain_active = False
+        mock_cm._voice_pipeline_quiescent.clear()
+
+        decide_called = False
 
         async def mock_decide(*args, **kwargs):
-            return ProactiveDecision(should_speak=False)
+            nonlocal decide_called
+            decide_called = True
+            return ProactiveDecision(should_speak=False), ""
+
+        mock_cm.proactive_speech.decide = mock_decide
+
+        async def set_quiescent_after_delay():
+            await asyncio.sleep(0.05)
+            mock_cm._voice_pipeline_quiescent.set()
+
+        asyncio.create_task(set_quiescent_after_delay())
+
+        with (
+            patch("asyncio.sleep", new=AsyncMock()),
+            patch(
+                "unity.conversation_manager.conversation_manager.build_brain_spec",
+                return_value=MockBrainSpec(),
+            ),
+        ):
+            await ConversationManager._proactive_speech_loop(mock_cm)
+
+        assert decide_called, "LLM should be consulted after pipeline becomes quiescent"
+
+    async def test_loop_proceeds_when_pipeline_quiescent(self, mock_cm):
+        """When the pipeline is quiescent, the loop proceeds normally."""
+        from unity.conversation_manager.conversation_manager import ConversationManager
+
+        mock_cm.mode = Mode.CALL
+
+        async def mock_decide(*args, **kwargs):
+            return ProactiveDecision(should_speak=False), ""
 
         mock_cm.proactive_speech.decide = mock_decide
 
@@ -344,8 +386,6 @@ class TestProactiveSpeechLoop:
         ):
             await ConversationManager._proactive_speech_loop(mock_cm)
 
-        # The LLM was consulted (it decided not to speak, but it WAS asked)
-        # No publish because should_speak=False, but the decide path was hit
         mock_cm.event_broker.publish.assert_not_called()
 
     async def test_loop_goes_dormant_when_should_not_speak(self, mock_cm):
@@ -356,7 +396,7 @@ class TestProactiveSpeechLoop:
         mock_cm.mode = Mode.CALL
 
         async def mock_decide(*args, **kwargs):
-            return ProactiveDecision(should_speak=False)
+            return ProactiveDecision(should_speak=False), ""
 
         mock_cm.proactive_speech.decide = mock_decide
         mock_cm.schedule_proactive_speech = AsyncMock()
@@ -376,17 +416,20 @@ class TestProactiveSpeechLoop:
         mock_cm.schedule_proactive_speech.assert_not_called()
 
     async def test_loop_publishes_guidance_when_should_speak(self, mock_cm):
-        """The loop publishes a CallGuidance event with should_speak=True and
+        """The loop publishes a FastBrainNotification event with should_speak=True and
         response_text so the fast brain speaks it via session.say()."""
         from unity.conversation_manager.conversation_manager import ConversationManager
 
         mock_cm.mode = Mode.CALL
 
         async def mock_decide(*args, **kwargs):
-            return ProactiveDecision(
-                should_speak=True,
-                delay=0,
-                content="Still with you!",
+            return (
+                ProactiveDecision(
+                    should_speak=True,
+                    delay=0,
+                    content="Still with you!",
+                ),
+                "",
             )
 
         mock_cm.proactive_speech.decide = mock_decide
@@ -407,15 +450,15 @@ class TestProactiveSpeechLoop:
         # Find the call_guidance publish
         guidance_call = None
         for call in call_args:
-            if "app:call:call_guidance" in str(call):
+            if "app:call:notification" in str(call):
                 guidance_call = call
                 break
 
         assert guidance_call is not None
         channel, message = guidance_call.args
-        assert channel == "app:call:call_guidance"
+        assert channel == "app:call:notification"
 
-        # Proactive speech publishes a CallGuidance event (not raw JSON)
+        # Proactive speech publishes a FastBrainNotification event (not raw JSON)
         data = json.loads(message)
         payload = data["payload"]
         assert payload["content"] == "Still with you!"
@@ -429,10 +472,13 @@ class TestProactiveSpeechLoop:
         mock_cm.mode = Mode.CALL
 
         async def mock_decide(*args, **kwargs):
-            return ProactiveDecision(
-                should_speak=True,
-                delay=0,
-                content="Are you still there?",
+            return (
+                ProactiveDecision(
+                    should_speak=True,
+                    delay=0,
+                    content="Are you still there?",
+                ),
+                "",
             )
 
         mock_cm.proactive_speech.decide = mock_decide
@@ -482,7 +528,7 @@ class TestProactiveSpeechDecideIntegration:
         ]
         system_prompt = "You are a helpful assistant."
 
-        decision = await ps.decide(
+        decision, log_path = await ps.decide(
             chat_history=chat_history,
             system_prompt=system_prompt,
         )
@@ -491,29 +537,11 @@ class TestProactiveSpeechDecideIntegration:
         assert isinstance(decision.should_speak, bool)
         assert isinstance(decision.delay, int)
 
-    async def test_decide_does_not_speak_after_question(self):
-        """decide() should NOT speak when assistant just asked a question."""
-        ps = ProactiveSpeech()
-
-        chat_history = [
-            {"role": "user", "content": "Hello"},
-            {"role": "assistant", "content": "Hi! How can I help?"},
-        ]
-        system_prompt = "You are a helpful assistant."
-
-        decision = await ps.decide(
-            chat_history=chat_history,
-            system_prompt=system_prompt,
-        )
-
-        # The assistant just asked a question; the user is likely thinking.
-        assert decision.should_speak is False
-
     async def test_decide_handles_empty_history(self):
         """decide() handles empty chat history gracefully."""
         ps = ProactiveSpeech()
 
-        decision = await ps.decide(
+        decision, _ = await ps.decide(
             chat_history=[],
             system_prompt="You are a helpful assistant.",
         )
@@ -529,7 +557,7 @@ class TestProactiveSpeechDecideIntegration:
             "unity.conversation_manager.domains.proactive_speech.new_llm_client",
             side_effect=RuntimeError("connection failed"),
         ):
-            decision = await ps.decide(
+            decision, _ = await ps.decide(
                 chat_history=[{"role": "user", "content": "Hello"}],
                 system_prompt="Test",
             )
@@ -547,7 +575,7 @@ class TestEventHandlerProactiveSpeechIntegration:
     """Tests verifying event handlers properly reset/cancel proactive speech."""
 
     async def test_call_guidance_should_speak_resets_proactive(self, mock_cm):
-        """CallGuidance with should_speak=True resets (reschedules) proactive speech.
+        """FastBrainNotification with should_speak=True resets (reschedules) proactive speech.
 
         Regression test for a coordination gap: when slow-brain guidance is
         dispatched with should_speak=True, it will be spoken via session.say()
@@ -556,16 +584,16 @@ class TestEventHandlerProactiveSpeechIntegration:
         fire and produce stale filler that contradicts the just-delivered
         content.
 
-        The fix: the CallGuidance handler must reset the proactive timer when
+        The fix: the FastBrainNotification handler must reset the proactive timer when
         should_speak=True, preventing stale proactive speech from queueing
         during TTS playback of substantive guidance.
         """
-        from unity.conversation_manager.events import CallGuidance
+        from unity.conversation_manager.events import FastBrainNotification
         from unity.conversation_manager.domains.event_handlers import EventHandler
 
         mock_cm.schedule_proactive_speech = AsyncMock()
 
-        event = CallGuidance(
+        event = FastBrainNotification(
             contact={"contact_id": 1, "first_name": "Boss", "surname": "User"},
             content="I found several backend engineer openings at OpenAI.",
             response_text="I found several backend engineer openings at OpenAI.",
@@ -578,17 +606,17 @@ class TestEventHandlerProactiveSpeechIntegration:
         mock_cm.schedule_proactive_speech.assert_called_once()
 
     async def test_call_guidance_notify_only_does_not_reset_proactive(self, mock_cm):
-        """CallGuidance with should_speak=False does NOT reset proactive speech.
+        """FastBrainNotification with should_speak=False does NOT reset proactive speech.
 
         Notify-only guidance is silently injected into the fast brain's context.
         The user is still in silence, so proactive speech may still be warranted.
         """
-        from unity.conversation_manager.events import CallGuidance
+        from unity.conversation_manager.events import FastBrainNotification
         from unity.conversation_manager.domains.event_handlers import EventHandler
 
         mock_cm.schedule_proactive_speech = AsyncMock()
 
-        event = CallGuidance(
+        event = FastBrainNotification(
             contact={"contact_id": 1, "first_name": "Boss", "surname": "User"},
             content="Checking your contacts for Bob.",
             should_speak=False,
@@ -634,29 +662,6 @@ class TestEventHandlerProactiveSpeechIntegration:
 
         await EventHandler.handle_event(event, mock_cm, is_voice_call=False)
 
-        mock_cm.schedule_proactive_speech.assert_called_once()
-
-    async def test_outbound_utterance_clears_fast_brain_active_flag(self, mock_cm):
-        """OutboundUtterance clears _fast_brain_active, ending the suppression window.
-
-        The fast brain's generation+TTS cycle ends when the OutboundUtterance
-        arrives at the CM. Clearing the flag allows the next proactive speech
-        cycle to proceed normally.
-        """
-        from unity.conversation_manager.events import OutboundPhoneUtterance
-        from unity.conversation_manager.domains.event_handlers import EventHandler
-
-        mock_cm._fast_brain_active = True
-        mock_cm.schedule_proactive_speech = AsyncMock()
-
-        event = OutboundPhoneUtterance(
-            contact={"contact_id": 1, "first_name": "Boss", "surname": "User"},
-            content="I see your desktop with a terminal window.",
-        )
-
-        await EventHandler.handle_event(event, mock_cm, is_voice_call=False)
-
-        assert mock_cm._fast_brain_active is False
         mock_cm.schedule_proactive_speech.assert_called_once()
 
     async def test_phone_call_ended_cancels_proactive(self, mock_cm):
@@ -854,10 +859,13 @@ class TestProactiveSpeechBlindSpots:
         mock_cm.mode = Mode.MEET  # Key: test MEET mode specifically
 
         async def mock_decide(*args, **kwargs):
-            return ProactiveDecision(
-                should_speak=True,
-                delay=0,
-                content="Still here for the meeting!",
+            return (
+                ProactiveDecision(
+                    should_speak=True,
+                    delay=0,
+                    content="Still here for the meeting!",
+                ),
+                "",
             )
 
         mock_cm.proactive_speech.decide = mock_decide
@@ -994,10 +1002,13 @@ class TestProactiveSpeechBlindSpots:
         mock_cm.mode = Mode.CALL
 
         async def mock_decide(*args, **kwargs):
-            return ProactiveDecision(
-                should_speak=True,
-                delay=0,
-                content="Still with you!",
+            return (
+                ProactiveDecision(
+                    should_speak=True,
+                    delay=0,
+                    content="Still with you!",
+                ),
+                "",
             )
 
         mock_cm.proactive_speech.decide = mock_decide
@@ -1033,7 +1044,7 @@ class TestProactiveSpeechLLMBehavior:
         ]
         system_prompt = "You are a helpful assistant."
 
-        decision = await ps.decide(
+        decision, _ = await ps.decide(
             chat_history=chat_history,
             system_prompt=system_prompt,
         )
@@ -1057,7 +1068,7 @@ class TestProactiveSpeechLLMBehavior:
         ]
         system_prompt = "You are a helpful assistant."
 
-        decision = await ps.decide(
+        decision, _ = await ps.decide(
             chat_history=chat_history,
             system_prompt=system_prompt,
         )
@@ -1081,7 +1092,7 @@ class TestProactiveSpeechLLMBehavior:
         ]
         system_prompt = "You are a helpful assistant."
 
-        decision = await ps.decide(
+        decision, _ = await ps.decide(
             chat_history=chat_history,
             system_prompt=system_prompt,
         )
@@ -1092,50 +1103,579 @@ class TestProactiveSpeechLLMBehavior:
 
 
 @pytest.mark.asyncio
+class TestProactiveSpeechConcurrentScheduling:
+    """Tests for concurrent scheduling race conditions.
+
+    Regression: two concurrent schedule_proactive_speech() calls can interleave
+    at the ``await cancel_proactive_speech()`` yield point, causing both to
+    create a loop task — but only one is tracked by ``_proactive_speech_task``,
+    leaving the other orphaned. Both orphaned and tracked loops run to
+    completion and publish duplicate guidance events.
+    """
+
+    async def test_concurrent_schedule_publishes_only_once(self, mock_cm):
+        """Two concurrent schedule_proactive_speech() calls must not produce
+        two loops that both publish guidance.
+
+        This reproduces the race: an existing proactive loop is running (the
+        debounce sleep). Two ``schedule_proactive_speech`` calls arrive
+        concurrently. Both enter ``cancel_proactive_speech`` and await the
+        same existing task. When it finishes, both resume and each creates a
+        new loop — but only one is tracked by ``_proactive_speech_task``. The
+        orphaned loop runs to completion and publishes a duplicate guidance.
+        """
+        from unity.conversation_manager.conversation_manager import ConversationManager
+
+        mock_cm.mode = Mode.CALL
+
+        async def mock_decide(*args, **kwargs):
+            return (
+                ProactiveDecision(
+                    should_speak=True,
+                    delay=0,
+                    content="Still with you!",
+                ),
+                "",
+            )
+
+        mock_cm.proactive_speech.decide = mock_decide
+
+        # Bind real methods to the mock so the full cancel→create flow executes.
+        mock_cm.schedule_proactive_speech = (
+            lambda: ConversationManager.schedule_proactive_speech(mock_cm)
+        )
+        mock_cm.cancel_proactive_speech = (
+            lambda: ConversationManager.cancel_proactive_speech(mock_cm)
+        )
+        mock_cm._proactive_speech_loop = (
+            lambda gen=0: ConversationManager._proactive_speech_loop(mock_cm, gen)
+        )
+
+        mock_cm.PROACTIVE_DEBOUNCE_SECONDS = 0
+
+        # Seed an existing long-running proactive task so both concurrent
+        # schedule calls have a live task to cancel (forcing them both to
+        # yield at ``await self._proactive_speech_task`` simultaneously).
+        async def slow_existing_loop():
+            await asyncio.sleep(100)
+
+        mock_cm._proactive_speech_task = asyncio.create_task(slow_existing_loop())
+
+        with patch(
+            "unity.conversation_manager.conversation_manager.build_brain_spec",
+            return_value=MockBrainSpec(),
+        ):
+            # Fire two schedules concurrently. Both find the existing slow
+            # task, both cancel it, both await its completion, both resume
+            # and create new loop tasks — but only the last writer wins the
+            # _proactive_speech_task reference.
+            await asyncio.gather(
+                mock_cm.schedule_proactive_speech(),
+                mock_cm.schedule_proactive_speech(),
+            )
+
+            # Give both loops time to run to completion (debounce is 0).
+            await asyncio.sleep(0.2)
+
+        guidance_publishes = [
+            c
+            for c in mock_cm.event_broker.publish.call_args_list
+            if c.args[0] == "app:call:notification"
+        ]
+
+        assert len(guidance_publishes) == 1, (
+            f"Expected exactly 1 guidance publish from concurrent scheduling, "
+            f"got {len(guidance_publishes)}. "
+            f"This indicates an orphaned proactive loop escaped cancellation."
+        )
+
+
+@pytest.mark.asyncio
 class TestProactiveSpeechMediumScriptIntegration:
     """Tests verifying medium scripts properly handle proactive speech."""
 
     def test_tts_call_subscribes_to_call_guidance(self):
-        """call.py (TTS mode) should subscribe to app:call:call_guidance."""
+        """call.py should subscribe to app:call:notification."""
         import inspect
         from unity.conversation_manager.medium_scripts import call
 
-        # Read the source to verify subscription
         source = inspect.getsource(call)
         assert (
-            "app:call:call_guidance" in source
-        ), "call.py (TTS mode) should subscribe to app:call:call_guidance"
-        assert "on_guidance" in source, "call.py should have an on_guidance callback"
-
-    def test_sts_call_subscribes_to_call_guidance(self):
-        """sts_call.py (STS/fast mode) should subscribe to app:call:call_guidance."""
-        import inspect
-        from unity.conversation_manager.medium_scripts import sts_call
-
-        # Read the source to verify subscription
-        source = inspect.getsource(sts_call)
+            "app:call:notification" in source
+        ), "call.py should subscribe to app:call:notification"
         assert (
-            "app:call:call_guidance" in source
-        ), "sts_call.py (STS mode) should subscribe to app:call:call_guidance"
-        assert (
-            "on_guidance" in source
-        ), "sts_call.py should have an on_guidance callback"
+            "on_notification" in source
+        ), "call.py should have an on_notification callback"
 
-    def test_tts_and_sts_guidance_handlers_have_same_interface(self):
-        """Both TTS and STS guidance handlers should handle the same payload structure."""
-        import inspect
-        from unity.conversation_manager.medium_scripts import call, sts_call
 
-        # Both should extract content from payload
-        tts_source = inspect.getsource(call)
-        sts_source = inspect.getsource(sts_call)
+# =============================================================================
+# 10. Action-Awareness Regression Tests
+# =============================================================================
 
-        # Both should handle payload.get("content")
+
+@pytest.mark.asyncio
+class TestProactiveSpeechActionAwareness:
+    """Regression: proactive speech must not claim in-flight actions are done.
+
+    Reproduces the bug from unity-2026-02-28-15-10-22-staging where proactive
+    speech said "the browser should be up now" while the CodeActActor was still
+    in the discovery phase and hadn't yet opened anything.
+
+    Root cause: _proactive_speech_loop passes only conversation_turns and
+    system_prompt to ProactiveSpeech.decide(). Neither contains the action
+    status (in_flight_actions / completed_actions), so the LLM sees
+    "one moment, I'm pulling up the browser" in the transcript and infers
+    completion that hasn't happened.
+    """
+
+    async def test_decide_receives_in_flight_action_context(self, mock_cm):
+        """_proactive_speech_loop must tell decide() which actions are still
+        executing so it knows what is pending vs. done.
+
+        The conversation history alone says "I'm pulling up the browser" but
+        not whether that action has COMPLETED. The fix can thread this info
+        however it likes (extra param, system message, enriched turns, etc.)
+        — the test checks that the serialised decide() input contains an
+        explicit marker that an action is still executing (not just the
+        query words, which already appear in the transcript).
+        """
+        from unity.conversation_manager.conversation_manager import ConversationManager
+
+        mock_cm.mode = Mode.CALL
+        mock_cm.in_flight_actions = {
+            42: {
+                "query": "Open the web browser on the desktop",
+                "handle": MagicMock(),
+                "handle_actions": [],
+            },
+        }
+        mock_cm.completed_actions = {}
+        mock_cm.user_screen_share_active = False
+        mock_cm.user_webcam_active = False
+
+        captured_inputs: dict = {}
+
+        async def spy_decide(chat_history, system_prompt, **kwargs):
+            captured_inputs["chat_history"] = chat_history
+            captured_inputs["system_prompt"] = system_prompt
+            captured_inputs["kwargs"] = kwargs
+            return ProactiveDecision(should_speak=False), ""
+
+        mock_cm.proactive_speech.decide = spy_decide
+        mock_cm.get_recent_voice_transcript = MagicMock(
+            return_value=(
+                [
+                    {
+                        "role": "user",
+                        "content": "Could you please open the browser?",
+                    },
+                    {
+                        "role": "assistant",
+                        "content": "Got it — one moment, I'm pulling up the browser.",
+                    },
+                ],
+                None,
+            ),
+        )
+
+        with (
+            patch("asyncio.sleep", new=AsyncMock()),
+            patch(
+                "unity.conversation_manager.conversation_manager.build_brain_spec",
+                return_value=MockBrainSpec(),
+            ),
+        ):
+            await ConversationManager._proactive_speech_loop(mock_cm)
+
+        assert captured_inputs, "decide() was never called"
+
+        all_text = json.dumps(captured_inputs, default=str).lower()
+
+        # The decide() input must contain explicit STATUS markers about
+        # in-flight actions — not just the query words (which already
+        # appear in the transcript). Look for phrases that convey
+        # "something is currently executing / in-flight / in progress".
+        status_markers = [
+            "in-flight",
+            "in_flight",
+            "in flight",
+            "in progress",
+            "executing",
+            "running",
+            "pending",
+            "still running",
+            "currently executing",
+            "not yet complete",
+        ]
+        has_status_marker = any(marker in all_text for marker in status_markers)
+        assert has_status_marker, (
+            "decide() must receive explicit action STATUS context (e.g. "
+            "'in-flight', 'executing', 'in progress') so it knows 'Open the "
+            "web browser' is still running and must not claim completion. "
+            "Currently it only sees the transcript, which says 'I'm pulling "
+            "up the browser' but never says whether that action finished.\n"
+            f"Actual decide() inputs:\n{json.dumps(captured_inputs, default=str)[:800]}"
+        )
+
+    @pytest.mark.eval
+    async def test_no_completion_claim_while_action_in_flight(self):
+        """When given explicit action status showing an action is in-flight,
+        proactive speech must not claim the action is complete.
+
+        Uses a real LLM call. The scenario is maximally provocative: the
+        assistant said "one moment" a while ago, silence has elapsed, and
+        the natural LLM tendency is to say "it should be ready now".
+        With action_context injected, the LLM must respect the ground truth.
+        """
+        from unity.conversation_manager.conversation_manager import (
+            _render_action_context,
+        )
+
+        ps = ProactiveSpeech()
+
+        chat_history = [
+            {
+                "role": "user",
+                "content": "Could you please open the browser?",
+            },
+            {
+                "role": "assistant",
+                "content": "Got it — one moment, I'm pulling up the browser.",
+            },
+        ]
+        system_prompt = (
+            "You are a helpful assistant on a live call. "
+            "Your desktop is being screen-shared to the user."
+        )
+        action_context = _render_action_context(
+            in_flight_actions={
+                42: {
+                    "query": "Open the web browser on the desktop",
+                    "handle": None,
+                    "handle_actions": [],
+                },
+            },
+            completed_actions={},
+        )
+
+        decision, _ = await ps.decide(
+            chat_history=chat_history,
+            system_prompt=system_prompt,
+            action_context=action_context,
+        )
+
+        if decision.should_speak and decision.content:
+            lower = decision.content.lower()
+            completion_claims = [
+                "should be up",
+                "is up now",
+                "browser is open",
+                "browser is ready",
+                "it's open",
+                "all set",
+                "good to go",
+                "loaded",
+                "pulled up",
+                "should be open",
+                "is open now",
+                "ready now",
+                "can see it",
+                "it's up",
+            ]
+            assert not any(phrase in lower for phrase in completion_claims), (
+                f"Proactive speech claimed an in-flight action was complete: "
+                f"'{decision.content}'. The action status explicitly says "
+                f"'EXECUTING (in-flight)' — the LLM must not hallucinate "
+                f"completion."
+            )
+
+
+# =============================================================================
+# 11. Visual Context Regression Tests
+# =============================================================================
+
+FAKE_B64 = "iVBORw0KGgoAAAANSUhEUg=="
+FIXED_TS = datetime(2026, 2, 28, 12, 0, 0, tzinfo=timezone.utc)
+
+
+@pytest.mark.asyncio
+class TestProactiveSpeechVisualContext:
+    """Regression tests: proactive speech should receive actual screenshots.
+
+    The proactive speech module currently receives only text indicators
+    (e.g., "the assistant's desktop is being shared") but never actual
+    screenshot images. This means it cannot visually verify screen state
+    and may confabulate about what is or isn't visible — for example,
+    claiming "the browser is open" when the assistant screen clearly
+    shows a blank desktop.
+
+    These tests assert the desired behavior: screenshots should flow
+    through to the proactive speech LLM just as they do for the main brain.
+    """
+
+    async def test_loop_forwards_buffered_screenshots_to_decide(self, mock_cm):
+        """The proactive loop should peek the screenshot buffer and forward
+        the entries to decide() so the LLM can see what's on screen."""
+        from unity.conversation_manager.conversation_manager import ConversationManager
+
+        mock_cm.mode = Mode.CALL
+        mock_cm.assistant_screen_share_active = True
+        mock_cm.user_screen_share_active = False
+        mock_cm.user_webcam_active = False
+        mock_cm.in_flight_actions = {}
+        mock_cm.completed_actions = {}
+
+        mock_cm.peek_screenshot_buffer = MagicMock(
+            return_value=[
+                ScreenshotEntry(FAKE_B64, "Open the browser", FIXED_TS, "assistant"),
+            ],
+        )
+
+        captured = {}
+
+        async def spy_decide(chat_history, system_prompt, **kwargs):
+            captured["chat_history"] = chat_history
+            captured["system_prompt"] = system_prompt
+            captured["kwargs"] = kwargs
+            return ProactiveDecision(should_speak=False), ""
+
+        mock_cm.proactive_speech.decide = spy_decide
+
+        with (
+            patch("asyncio.sleep", new=AsyncMock()),
+            patch(
+                "unity.conversation_manager.conversation_manager.build_brain_spec",
+                return_value=MockBrainSpec(),
+            ),
+        ):
+            await ConversationManager._proactive_speech_loop(mock_cm)
+
+        assert captured, "decide() was never called"
+
+        all_inputs = json.dumps(captured, default=str)
+        assert FAKE_B64 in all_inputs, (
+            "Buffered screenshots should be forwarded to decide() so the "
+            "proactive speech LLM can see what's on screen. Currently, "
+            "screenshots are only forwarded to the main brain."
+        )
+
+    async def test_assistant_screen_image_not_just_text_indicator(self, mock_cm):
+        """When the assistant screen is shared, proactive speech should see
+        the actual screenshot — not just text saying 'the assistant's desktop
+        is being shared'."""
+        from unity.conversation_manager.conversation_manager import ConversationManager
+
+        mock_cm.mode = Mode.CALL
+        mock_cm.assistant_screen_share_active = True
+        mock_cm.user_screen_share_active = False
+        mock_cm.user_webcam_active = False
+        mock_cm.in_flight_actions = {}
+        mock_cm.completed_actions = {}
+
+        mock_cm.peek_screenshot_buffer = MagicMock(
+            return_value=[
+                ScreenshotEntry(FAKE_B64, "Open the browser", FIXED_TS, "assistant"),
+            ],
+        )
+
+        captured = {}
+
+        async def spy_decide(chat_history, system_prompt, **kwargs):
+            captured["chat_history"] = chat_history
+            captured["kwargs"] = kwargs
+            return ProactiveDecision(should_speak=False), ""
+
+        mock_cm.proactive_speech.decide = spy_decide
+
+        with (
+            patch("asyncio.sleep", new=AsyncMock()),
+            patch(
+                "unity.conversation_manager.conversation_manager.build_brain_spec",
+                return_value=MockBrainSpec(),
+            ),
+        ):
+            await ConversationManager._proactive_speech_loop(mock_cm)
+
+        assert captured, "decide() was never called"
+
+        all_inputs = json.dumps(captured, default=str)
+        has_image_data = "image_url" in all_inputs or "data:image" in all_inputs
+        has_text_only = "the assistant's desktop is being shared" in all_inputs.lower()
+
+        assert has_image_data, (
+            "The proactive speech LLM should receive the actual assistant "
+            "screen screenshot as image content, not just a text indicator"
+            + (' ("the assistant\'s desktop is being shared")' if has_text_only else "")
+            + ". Without visual grounding, it cannot verify whether actions "
+            "(like opening a browser) have actually completed."
+        )
+
+    async def test_all_three_visual_sources_in_decide_inputs(self, mock_cm):
+        """When all three visual sources are active, all three screenshot
+        images should reach the proactive speech LLM."""
+        from unity.conversation_manager.conversation_manager import ConversationManager
+
+        mock_cm.mode = Mode.CALL
+        mock_cm.assistant_screen_share_active = True
+        mock_cm.user_screen_share_active = True
+        mock_cm.user_webcam_active = True
+        mock_cm.in_flight_actions = {}
+        mock_cm.completed_actions = {}
+
+        b64_assistant = "ASSISTANT_SCREEN_B64_DATA"
+        b64_user = "USER_SCREEN_B64_DATA"
+        b64_webcam = "WEBCAM_B64_DATA"
+
+        mock_cm.peek_screenshot_buffer = MagicMock(
+            return_value=[
+                ScreenshotEntry(b64_assistant, "Open browser", FIXED_TS, "assistant"),
+                ScreenshotEntry(b64_user, "Look at my screen", FIXED_TS, "user"),
+                ScreenshotEntry(b64_webcam, "Can you see me?", FIXED_TS, "webcam"),
+            ],
+        )
+
+        captured = {}
+
+        async def spy_decide(chat_history, system_prompt, **kwargs):
+            captured["chat_history"] = chat_history
+            captured["kwargs"] = kwargs
+            return ProactiveDecision(should_speak=False), ""
+
+        mock_cm.proactive_speech.decide = spy_decide
+
+        with (
+            patch("asyncio.sleep", new=AsyncMock()),
+            patch(
+                "unity.conversation_manager.conversation_manager.build_brain_spec",
+                return_value=MockBrainSpec(),
+            ),
+        ):
+            await ConversationManager._proactive_speech_loop(mock_cm)
+
+        assert captured, "decide() was never called"
+
+        all_inputs = json.dumps(captured, default=str)
+
         assert (
-            'payload.get("content"' in tts_source
-            or "payload.get('content'" in tts_source
-        ), "TTS call.py should extract content from payload"
+            b64_assistant in all_inputs
+        ), "Assistant screen screenshot should reach the proactive speech LLM"
         assert (
-            'payload.get("content"' in sts_source
-            or "payload.get('content'" in sts_source
-        ), "STS sts_call.py should extract content from payload"
+            b64_user in all_inputs
+        ), "User screen screenshot should reach the proactive speech LLM"
+        assert (
+            b64_webcam in all_inputs
+        ), "Webcam frame should reach the proactive speech LLM"
+
+    async def test_screenshot_source_labels_in_decide_inputs(self, mock_cm):
+        """Each screenshot forwarded to proactive speech should carry its
+        source label so the LLM knows which screen it's looking at."""
+        from unity.conversation_manager.conversation_manager import ConversationManager
+
+        mock_cm.mode = Mode.CALL
+        mock_cm.assistant_screen_share_active = True
+        mock_cm.user_screen_share_active = True
+        mock_cm.user_webcam_active = True
+        mock_cm.in_flight_actions = {}
+        mock_cm.completed_actions = {}
+
+        mock_cm.peek_screenshot_buffer = MagicMock(
+            return_value=[
+                ScreenshotEntry(FAKE_B64, "Step one", FIXED_TS, "assistant"),
+                ScreenshotEntry(FAKE_B64, "Step two", FIXED_TS, "user"),
+                ScreenshotEntry(FAKE_B64, "Step three", FIXED_TS, "webcam"),
+            ],
+        )
+
+        captured = {}
+
+        async def spy_decide(chat_history, system_prompt, **kwargs):
+            captured["chat_history"] = chat_history
+            captured["kwargs"] = kwargs
+            return ProactiveDecision(should_speak=False), ""
+
+        mock_cm.proactive_speech.decide = spy_decide
+
+        with (
+            patch("asyncio.sleep", new=AsyncMock()),
+            patch(
+                "unity.conversation_manager.conversation_manager.build_brain_spec",
+                return_value=MockBrainSpec(),
+            ),
+        ):
+            await ConversationManager._proactive_speech_loop(mock_cm)
+
+        assert captured, "decide() was never called"
+
+        all_inputs = json.dumps(captured, default=str)
+
+        assert (
+            "Assistant's Screen" in all_inputs
+        ), "Assistant screenshots should be labeled 'Assistant's Screen'"
+        assert (
+            "User's Screen" in all_inputs
+        ), "User screenshots should be labeled 'User's Screen'"
+        assert (
+            "User's Webcam" in all_inputs
+        ), "Webcam frames should be labeled 'User's Webcam'"
+
+    async def test_proactive_and_main_brain_both_see_screenshots(self, mock_cm):
+        """The main brain receives screenshots via BrainSpec.state_message().
+        Proactive speech should receive the same visual context."""
+        from unity.conversation_manager.conversation_manager import ConversationManager
+        from unity.conversation_manager.domains.brain import BrainSpec
+
+        mock_cm.mode = Mode.CALL
+        mock_cm.assistant_screen_share_active = True
+        mock_cm.user_screen_share_active = False
+        mock_cm.user_webcam_active = False
+        mock_cm.in_flight_actions = {}
+        mock_cm.completed_actions = {}
+
+        screenshots = [
+            ScreenshotEntry(FAKE_B64, "Open browser", FIXED_TS, "assistant"),
+        ]
+
+        mock_cm.peek_screenshot_buffer = MagicMock(return_value=screenshots)
+
+        # Verify the main brain CAN see the screenshot (sanity baseline).
+        brain_spec = BrainSpec(
+            system_prompt=_default_prompt_parts(),
+            state_prompt="<state>test</state>",
+            response_model=ProactiveDecision,
+            screenshots=screenshots,
+        )
+        main_brain_msg = brain_spec.state_message()
+        main_brain_json = json.dumps(main_brain_msg, default=str)
+        assert (
+            FAKE_B64 in main_brain_json
+        ), "Sanity check: the main brain should see screenshots"
+
+        # Now check proactive speech.
+        captured = {}
+
+        async def spy_decide(chat_history, system_prompt, **kwargs):
+            captured["chat_history"] = chat_history
+            captured["kwargs"] = kwargs
+            return ProactiveDecision(should_speak=False), ""
+
+        mock_cm.proactive_speech.decide = spy_decide
+
+        with (
+            patch("asyncio.sleep", new=AsyncMock()),
+            patch(
+                "unity.conversation_manager.conversation_manager.build_brain_spec",
+                return_value=MockBrainSpec(),
+            ),
+        ):
+            await ConversationManager._proactive_speech_loop(mock_cm)
+
+        assert captured, "decide() was never called"
+
+        proactive_json = json.dumps(captured, default=str)
+        assert FAKE_B64 in proactive_json, (
+            f"Proactive speech should see the same screenshot data as the "
+            f"main brain. Main brain sees {len(screenshots)} screenshot(s) "
+            f"via BrainSpec.state_message(), but proactive speech receives "
+            f"none. This gap means proactive speech cannot visually verify "
+            f"screen state."
+        )

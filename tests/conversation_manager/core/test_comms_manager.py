@@ -95,7 +95,8 @@ def test_get_local_contact_has_correct_keys():
     """
     # Mock SESSION_DETAILS to avoid needing real session context
     mock_user = MagicMock()
-    mock_user.name = "Test User"
+    mock_user.first_name = "Test User"
+    mock_user.surname = ""
     mock_user.number = "+15555551234"
     mock_user.email = "test@example.com"
 
@@ -151,9 +152,10 @@ def broker():
 def mock_session_details():
     """Mock SESSION_DETAILS for testing."""
     with patch("unity.conversation_manager.comms_manager.SESSION_DETAILS") as mock:
-        mock.assistant.id = "test_assistant"
+        mock.assistant.agent_id = 42
         mock.assistant.email = "assistant@test.com"
-        mock.user.name = "Test User"
+        mock.user.first_name = "Test User"
+        mock.user.surname = ""
         mock.user.number = "+15555550000"
         mock.user.email = "user@test.com"
         mock.unify_key = "test_key"
@@ -241,21 +243,21 @@ class TestHelperFunctions:
         """Test subscription ID generation for non-staging environment."""
         from unity.conversation_manager.comms_manager import _get_subscription_id
 
-        mock_session_details.assistant.id = "my_assistant_123"
+        mock_session_details.assistant.agent_id = 123
         mock_settings.STAGING = False
 
         result = _get_subscription_id()
-        assert result == "unity-my_assistant_123-sub"
+        assert result == "unity-123-sub"
 
     def test_get_subscription_id_staging(self, mock_session_details, mock_settings):
         """Test subscription ID generation for staging environment."""
         from unity.conversation_manager.comms_manager import _get_subscription_id
 
-        mock_session_details.assistant.id = "my_assistant_123"
+        mock_session_details.assistant.agent_id = 123
         mock_settings.STAGING = True
 
         result = _get_subscription_id()
-        assert result == "unity-my_assistant_123-staging-sub"
+        assert result == "unity-123-staging-sub"
 
     def test_get_local_contact(self, mock_session_details):
         """Test local contact generation from session details."""
@@ -265,6 +267,7 @@ class TestHelperFunctions:
         assert result["contact_id"] == -1
         assert result["first_name"] == "Test User"
         assert result["surname"] == ""
+        # first_name carries the combined name from the mock fixture
         assert result["phone_number"] == "+15555550000"
         assert result["email_address"] == "user@test.com"
 
@@ -861,18 +864,19 @@ class TestStartupEvents:
                         "api_key": "test_api_key",
                         "assistant_id": "new_assistant_id",
                         "user_id": "user_123",
-                        "assistant_name": "Test Assistant",
+                        "assistant_first_name": "Test",
+                        "assistant_surname": "Assistant",
                         "assistant_age": "25",
                         "assistant_nationality": "American",
                         "assistant_about": "A helpful assistant",
                         "assistant_number": "+15555551234",
                         "assistant_email": "assistant@test.com",
-                        "user_name": "Test User",
+                        "user_first_name": "Test",
+                        "user_surname": "User",
                         "user_number": "+15555550000",
                         "user_email": "user@test.com",
                         "voice_provider": "cartesia",
                         "voice_id": "voice_123",
-                        "voice_mode": "tts",
                     },
                 )
 
@@ -915,18 +919,19 @@ class TestStartupEvents:
                     "api_key": "updated_api_key",
                     "assistant_id": "updated_assistant_id",
                     "user_id": "user_123",
-                    "assistant_name": "Updated Assistant",
+                    "assistant_first_name": "Updated",
+                    "assistant_surname": "Assistant",
                     "assistant_age": "30",
                     "assistant_nationality": "British",
                     "assistant_about": "An updated assistant",
                     "assistant_number": "+15555551234",
                     "assistant_email": "updated@test.com",
-                    "user_name": "Test User",
+                    "user_first_name": "Test",
+                    "user_surname": "User",
                     "user_number": "+15555550000",
                     "user_email": "user@test.com",
                     "voice_provider": "elevenlabs",
                     "voice_id": "new_voice",
-                    "voice_mode": "sts",
                 },
             )
 
@@ -940,8 +945,8 @@ class TestStartupEvents:
 
             event = Event.from_json(msg["data"])
             assert isinstance(event, AssistantUpdateEvent)
-            assert event.assistant_name == "Updated Assistant"
-            assert event.voice_mode == "sts"
+            assert event.assistant_first_name == "Updated"
+            assert event.assistant_surname == "Assistant"
 
 
 # =============================================================================
@@ -1026,12 +1031,12 @@ class TestMeetInteractionSystemEvents:
         (
             "user_webcam_started",
             UserWebcamStarted,
-            "User enabled their webcam",
+            "",
         ),
         (
             "user_webcam_stopped",
             UserWebcamStopped,
-            "User disabled their webcam",
+            "",
         ),
         (
             "user_remote_control_started",
@@ -1424,12 +1429,11 @@ class TestPingMechanism:
     ):
         """Test that send_pings publishes keepalive ping events."""
         from unity.conversation_manager.comms_manager import CommsManager
-        from unity.conversation_manager.comms_manager import DEFAULT_ASSISTANT_ID
 
         cm = CommsManager(broker)
 
-        # Set assistant to default (triggers ping loop)
-        mock_session_details.assistant.id = DEFAULT_ASSISTANT_ID
+        # Set assistant to unassigned (triggers ping loop)
+        mock_session_details.assistant.agent_id = None
 
         async with broker.pubsub() as pubsub:
             await pubsub.subscribe("app:comms:ping")
@@ -1445,7 +1449,7 @@ class TestPingMechanism:
                     call_count += 1
                     if call_count >= 1:
                         # Change assistant ID to break the loop
-                        mock_session_details.assistant.id = "new_assistant"
+                        mock_session_details.assistant.agent_id = 99
                     await original_sleep(0.01)  # Minimal sleep using original
 
                 with patch("asyncio.sleep", mock_sleep):

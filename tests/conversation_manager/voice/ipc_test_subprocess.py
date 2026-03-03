@@ -5,7 +5,7 @@ Minimal test subprocess for IPC integration testing.
 This script uses the REAL IPC client code from unity.conversation_manager.domains.ipc_socket
 to test bidirectional communication with the parent process.
 
-It mimics what the real voice agent (call.py/sts_call.py) does:
+It mimics what the real voice agent (call.py) does:
 1. Connects to parent's IPC socket
 2. Signals readiness
 3. Receives events from parent (like call guidance)
@@ -50,7 +50,7 @@ async def full_roundtrip():
     async def on_event(channel: str, event_json: str):
         nonlocal received_guidance
         print(f"RECEIVED: {channel} = {event_json}")
-        if channel == "app:call:call_guidance":
+        if channel == "app:call:notification":
             data = json.loads(event_json)
             payload = data.get("payload", data)
             received_guidance = {"content": payload.get("content", "")}

@@ -6,6 +6,7 @@ from typing import List, Dict, Optional, Type, Union, Any, Callable, Literal
 
 import unify
 from pydantic import BaseModel
+from ..common.embed_utils import ensure_vector_column
 from ..common.log_utils import log as unity_log, _inject_private_fields, _add_to_all
 from ..contact_manager.base import BaseContactManager
 from ..manager_registry import ManagerRegistry
@@ -144,25 +145,6 @@ class TranscriptManager(BaseTranscriptManager):
                 include_class_name=False,
             ),
         }
-
-        ctxs = unify.get_active_context()
-        read_ctx, write_ctx = ctxs["read"], ctxs["write"]
-        if not read_ctx:
-            # Ensure the global assistant/context is selected before we derive our sub-context
-            try:
-                from .. import (
-                    ensure_initialised as _ensure_initialised,
-                )  # local to avoid cycles
-
-                _ensure_initialised()
-                ctxs = unify.get_active_context()
-                read_ctx, write_ctx = ctxs["read"], ctxs["write"]
-            except Exception:
-                # If ensure fails (e.g. offline tests), proceed; downstream will fall back safely
-                pass
-        assert (
-            read_ctx == write_ctx
-        ), "read and write contexts must be the same when instantiating a TranscriptManager."
 
         self._transcripts_ctx = ContextRegistry.get_context(self, "Transcripts")
         self._exchanges_ctx = ContextRegistry.get_context(self, "Exchanges")
@@ -1017,6 +999,16 @@ class TranscriptManager(BaseTranscriptManager):
         return _storage_num_messages(self)
 
     # Internal provisioning helper
+    def warm_embeddings(self) -> None:
+        try:
+            ensure_vector_column(
+                self._transcripts_ctx,
+                embed_column="_content_emb",
+                source_column="content",
+            )
+        except Exception:
+            pass
+
     def _provision_storage(self) -> None:
         _storage_provision(self)
 

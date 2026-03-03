@@ -6,7 +6,7 @@ import os
 
 from unity.logger import LOGGER
 from unity.common.hierarchical_logger import ICONS
-from unity.session_details import DEFAULT_ASSISTANT_ID, SESSION_DETAILS
+from unity.session_details import SESSION_DETAILS
 from unity.settings import SETTINGS
 
 load_dotenv()
@@ -41,9 +41,6 @@ async def send_sms_message_via_number(to_number: str, content: str) -> str:
     if not from_number:
         return {"success": False}
 
-    LOGGER.info(
-        f"{ICONS['comms_outbound']} Sending SMS from {from_number} to {to_number}: {content}",
-    )
     async with aiohttp.ClientSession() as session:
         async with session.post(
             f"{SETTINGS.conversation.COMMS_URL}/phone/send-text",
@@ -81,22 +78,11 @@ async def send_unify_message(
     Returns:
         dict with "success" key indicating delivery status.
     """
-    assistant_id = SESSION_DETAILS.assistant.id
-    staging_suffix = (
-        "-staging"
-        if SETTINGS.STAGING and DEFAULT_ASSISTANT_ID not in assistant_id
-        else ""
-    )
-    topic_name = f"unity-{assistant_id}{staging_suffix}"
+    agent_id = SESSION_DETAILS.assistant.agent_id
+    staging_suffix = "-staging" if SETTINGS.STAGING and agent_id is not None else ""
+    topic_name = f"unity-{agent_id}{staging_suffix}"
     publisher = _get_publisher()
     topic_path = publisher.topic_path("responsive-city-458413-a2", topic_name)
-
-    attachment_info = (
-        f" with attachment '{attachment['filename']}'" if attachment else ""
-    )
-    LOGGER.info(
-        f"{ICONS['comms_outbound']} Sending unify message to contact_id={contact_id}{attachment_info}: {content}",
-    )
 
     event_data = {"content": content, "role": "assistant", "contact_id": contact_id}
     if attachment:
@@ -126,10 +112,49 @@ async def send_unify_message(
         return {"success": False, "error": str(e)}
 
 
+async def publish_assistant_desktop_ready(
+    desktop_url: str,
+    liveview_url: str,
+    vm_type: str,
+) -> None:
+    """Publish desktop-ready notification to the assistant's Pub/Sub topic.
+
+    The Console subscribes to this thread to update the liveview iframe.
+    """
+    agent_id = SESSION_DETAILS.assistant.agent_id
+    staging_suffix = "-staging" if SETTINGS.STAGING and agent_id is not None else ""
+    topic_name = f"unity-{agent_id}{staging_suffix}"
+    publisher = _get_publisher()
+    topic_path = publisher.topic_path("responsive-city-458413-a2", topic_name)
+
+    message_data = {
+        "thread": "assistant_desktop_ready",
+        "event": {
+            "desktop_url": desktop_url,
+            "liveview_url": liveview_url,
+            "vm_type": vm_type,
+        },
+    }
+    try:
+        future = publisher.publish(
+            topic_path,
+            json.dumps(message_data).encode("utf-8"),
+            thread="assistant_desktop_ready",
+        )
+        future.result()
+        LOGGER.debug(
+            f"{ICONS['comms_outbound']} Published assistant_desktop_ready to {topic_name}",
+        )
+    except Exception as e:
+        LOGGER.error(
+            f"{ICONS['comms_outbound']} Error publishing assistant_desktop_ready: {e}",
+        )
+
+
 async def upload_unify_attachment(
     file_content: bytes,
     filename: str,
-    assistant_id: str | None = None,
+    assistant_id: int | None = None,
 ) -> dict:
     """
     Upload a file attachment for use in outbound Unify messages.
@@ -144,12 +169,12 @@ async def upload_unify_attachment(
         or {"success": False, "error": str} on failure.
     """
     if assistant_id is None:
-        assistant_id = SESSION_DETAILS.assistant.id
+        assistant_id = SESSION_DETAILS.assistant.agent_id
 
     import aiohttp
     from io import BytesIO
 
-    comms_url = SETTINGS.conversation.COMMS_URL
+    adapters_url = SETTINGS.conversation.ADAPTERS_URL
 
     LOGGER.debug(
         f"{ICONS['comms_outbound']} Uploading unify attachment: {filename} ({len(file_content)} bytes)",
@@ -163,11 +188,11 @@ async def upload_unify_attachment(
         filename=filename,
         content_type="application/octet-stream",
     )
-    form_data.add_field("assistant_id", assistant_id)
+    form_data.add_field("assistant_id", str(assistant_id))
 
     async with aiohttp.ClientSession() as session:
         async with session.post(
-            f"{comms_url}/unify/attachment",
+            f"{adapters_url}/unify/attachment",
             headers=headers,
             data=form_data,
         ) as response:
@@ -213,18 +238,6 @@ async def send_email_via_address(
     if not from_email:
         return {"success": False, "error": "No sender email configured"}
 
-    attachment_info = (
-        f" with attachment '{attachment['filename']}'" if attachment else ""
-    )
-    recipients_summary = f"to={to}"
-    if cc:
-        recipients_summary += f", cc={cc}"
-    if bcc:
-        recipients_summary += f", bcc={bcc}"
-    LOGGER.info(
-        f"{ICONS['comms_outbound']} Sending email from {from_email} ({recipients_summary}): {subject}{attachment_info}",
-    )
-
     payload = {
         "from": from_email,
         "to": to,
@@ -263,17 +276,23 @@ async def start_call(to_number: str) -> str:
         str: The response
     """
     from_number = SESSION_DETAILS.assistant.number
-    LOGGER.info(
-        f"{ICONS['comms_outbound']} Sending call from {from_number} to {to_number}",
-    )
     if not from_number:
         return {"success": False}
+
+    from unity.conversation_manager.domains.call_manager import make_room_name
+
+    assistant_id = str(SESSION_DETAILS.assistant.agent_id)
+    room_name = make_room_name(assistant_id, "phone")
 
     async with aiohttp.ClientSession() as session:
         async with session.post(
             f"{SETTINGS.conversation.COMMS_URL}/phone/send-call",
             headers=headers,
-            json={"From": from_number, "To": to_number, "NewCall": "true"},
+            json={
+                "From": from_number,
+                "To": to_number,
+                "room_name": room_name,
+            },
         ) as response:
             try:
                 response.raise_for_status()
@@ -365,6 +384,48 @@ async def _get_signed_url_from_gs_url(
         return result.get("signed_url", "")
 
 
+async def _download_single_attachment(
+    session: aiohttp.ClientSession,
+    att: dict[str, str],
+    adapter,
+) -> str | None:
+    """Download one attachment and write it to disk. Returns the display name, or None on failure."""
+    att_id = att.get("id", "")
+    raw_filename = att.get("filename") or f"attachment_{att_id}"
+    safe_filename = os.path.basename(raw_filename)
+
+    url = att.get("url")
+    gs_url = att.get("gs_url")
+
+    if not url and gs_url:
+        try:
+            url = await _get_signed_url_from_gs_url(session, gs_url)
+        except Exception as e:
+            LOGGER.error(
+                f"{ICONS['comms_outbound']} Failed to get signed URL for {gs_url}: {e}",
+            )
+            url = None
+
+    if url:
+        async with session.get(url) as resp:
+            resp.raise_for_status()
+            data = await resp.read()
+    else:
+        data = b""
+
+    display_name = await asyncio.to_thread(
+        adapter.save_file_to_downloads,
+        safe_filename,
+        data,
+    )
+
+    LOGGER.debug(
+        f"{ICONS['comms_outbound']} Downloaded unify attachment {safe_filename} "
+        f"(size={len(data)} bytes)",
+    )
+    return display_name
+
+
 async def add_unify_message_attachments(
     attachments: list[dict[str, str]],
 ) -> None:
@@ -378,56 +439,53 @@ async def add_unify_message_attachments(
 
     If gs_url is present but url is not, a signed URL will be generated
     from Orchestra before downloading.
+
+    All downloads run in parallel, then ingestion (parse/index/embed) runs
+    afterward so files are immediately available to the assistant.
     """
     if not attachments:
         return
 
+    from unity.manager_registry import ManagerRegistry
+
     LOGGER.debug(f"{ICONS['comms_outbound']} Saving unify message attachments...")
+
+    file_manager = ManagerRegistry.get_file_manager()
+    adapter = file_manager._adapter
+
+    # Phase 1: Download all files to disk in parallel.
     async with aiohttp.ClientSession() as session:
-        for att in attachments:
-            try:
-                att_id = att.get("id", "")
-                raw_filename = att.get("filename") or f"attachment_{att_id}"
-                # very basic filename sanitization
-                safe_filename = os.path.basename(raw_filename)
+        results = await asyncio.gather(
+            *(
+                _download_single_attachment(session, att, adapter)
+                for att in attachments
+            ),
+            return_exceptions=True,
+        )
 
-                # Determine download URL
-                url = att.get("url")
-                gs_url = att.get("gs_url")
+    saved_display_names: list[str] = []
+    for att, result in zip(attachments, results):
+        if isinstance(result, BaseException):
+            LOGGER.error(
+                f"{ICONS['comms_outbound']} Failed to download unify attachment '{att}': {result}",
+            )
+        elif result is not None:
+            saved_display_names.append(result)
 
-                # If no direct URL but we have gs_url, generate signed URL
-                if not url and gs_url:
-                    try:
-                        url = await _get_signed_url_from_gs_url(session, gs_url)
-                    except Exception as e:
-                        LOGGER.error(
-                            f"{ICONS['comms_outbound']} Failed to get signed URL for {gs_url}: {e}",
-                        )
-                        url = None
+    # Phase 2: Ingest all saved files (parse, index, embed) in parallel.
+    # Files are already on disk and accessible to the assistant.
+    if saved_display_names:
+        try:
+            from unity.file_manager.types.config import FilePipelineConfig
 
-                # Download from the URL
-                # Don't pass auth headers to signed URLs - they're self-authenticating
-                if url:
-                    async with session.get(url) as resp:
-                        resp.raise_for_status()
-                        data = await resp.read()
-                else:
-                    # No URL available - use empty placeholder
-                    data = b""
-
-                from unity.manager_registry import ManagerRegistry
-
-                file_manager = ManagerRegistry.get_file_manager()
-                await asyncio.to_thread(
-                    file_manager.save_file_to_downloads,
-                    safe_filename,
-                    data,
-                )
-
-                LOGGER.debug(
-                    f"{ICONS['comms_outbound']} Downloaded unify attachment {safe_filename} (size={len(data)} bytes)",
-                )
-            except Exception as e:
-                LOGGER.error(
-                    f"{ICONS['comms_outbound']} Failed to fetch/write unify attachment '{att}': {e}",
-                )
+            cfg = FilePipelineConfig()
+            cfg.execution.parallel_files = True
+            await asyncio.to_thread(
+                file_manager.ingest_files,
+                saved_display_names,
+                config=cfg,
+            )
+        except Exception as e:
+            LOGGER.error(
+                f"{ICONS['comms_outbound']} Failed to ingest downloaded attachments: {e}",
+            )

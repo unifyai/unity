@@ -49,8 +49,7 @@ class TestVoiceCallFlowIntegration:
     """
     Integration tests for voice call flows.
 
-    These tests validate the event flow for both TTS and Realtime modes
-    using the in-memory event broker.
+    These tests validate the event flow using the in-memory event broker.
     """
 
     @pytest.fixture
@@ -99,17 +98,17 @@ class TestVoiceCallFlowIntegration:
         """
         Verify call guidance events flow through the system.
         """
-        from unity.conversation_manager.events import CallGuidance, Event
+        from unity.conversation_manager.events import FastBrainNotification, Event
 
         async with event_broker.pubsub() as pubsub:
-            await pubsub.subscribe("app:call:call_guidance")
+            await pubsub.subscribe("app:call:notification")
 
             # Publish a guidance event
-            event = CallGuidance(
+            event = FastBrainNotification(
                 contact=boss_contact,
                 content="Please ask about their schedule",
             )
-            await event_broker.publish("app:call:call_guidance", event.to_json())
+            await event_broker.publish("app:call:notification", event.to_json())
 
             msg = await pubsub.get_message(
                 timeout=2.0,
@@ -117,7 +116,7 @@ class TestVoiceCallFlowIntegration:
             )
             assert msg is not None
             captured = Event.from_json(msg["data"])
-            assert isinstance(captured, CallGuidance)
+            assert isinstance(captured, FastBrainNotification)
             assert captured.content == "Please ask about their schedule"
 
 
@@ -127,20 +126,20 @@ class TestVoiceCallFlowIntegration:
 
 
 @pytest.mark.asyncio
-class TestCallGuidanceChannel:
-    """Tests for call_guidance channel used by both TTS and STS modes."""
+class TestFastBrainNotificationChannel:
+    """Tests for the call_guidance channel."""
 
     async def test_call_guidance_channel_format(self, event_broker):
         """Verify call_guidance channel message format."""
         async with event_broker.pubsub() as pubsub:
-            await pubsub.subscribe("app:call:call_guidance")
+            await pubsub.subscribe("app:call:notification")
 
             # Consume the subscription confirmation message
             await pubsub.get_message(timeout=1.0)
 
             # Publish guidance (the format used by Main CM Brain)
             await event_broker.publish(
-                "app:call:call_guidance",
+                "app:call:notification",
                 json.dumps({"content": "Please ask about their schedule"}),
             )
 

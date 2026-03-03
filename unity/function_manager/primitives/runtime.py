@@ -65,18 +65,79 @@ _COMPUTER_METHODS = (
 )
 
 
+def _publish_desktop_invoked(method_name: str) -> None:
+    """Fire-and-forget EventBus publish for desktop primitive invocations."""
+    try:
+        from unity.events.event_bus import EVENT_BUS, Event
+
+        asyncio.get_running_loop().create_task(
+            EVENT_BUS.publish(
+                Event(type="DesktopPrimitiveInvoked", payload={"method": method_name}),
+            ),
+        )
+    except Exception:
+        pass
+
+
+def _publish_desktop_act_completed(instruction: str, result: "ActResult") -> None:
+    """Fire-and-forget EventBus publish when desktop.act() completes."""
+    try:
+        from unity.events.event_bus import EVENT_BUS, Event
+
+        asyncio.get_running_loop().create_task(
+            EVENT_BUS.publish(
+                Event(
+                    type="DesktopActCompleted",
+                    payload={
+                        "instruction": instruction,
+                        "summary": result.summary,
+                    },
+                ),
+            ),
+        )
+    except Exception:
+        pass
+
+
+def _is_dead_session_error(e) -> bool:
+    """Return True if the error indicates the session/browser is permanently gone."""
+    from unity.function_manager.computer_backends import ComputerAgentError
+
+    if not isinstance(e, ComputerAgentError):
+        return False
+    if e.error_type == "session_not_found":
+        return True
+    msg = (e.message or "").lower()
+    return any(
+        pattern in msg
+        for pattern in (
+            "browser has been closed",
+            "context has been closed",
+            "page has been closed",
+        )
+    )
+
+
 def _make_session_method(
     method_name: str,
     owner: "ComputerPrimitives",
     session_resolver,
+    *,
+    mode: str = "",
+    on_session_dead=None,
 ):
     """Build a wrapped async method that routes through a session.
 
     ``session_resolver`` is an async callable returning a ``ComputerSession``.
     Shared by ``_ComputerNamespace`` (lazy singleton) and ``WebSessionHandle``
     (bound instance).
+
+    ``on_session_dead`` is an optional callback invoked when a request fails
+    with a terminal session error (session removed, browser closed).
     """
     from unity.function_manager.computer_backends import ComputerSession
+
+    is_desktop = mode == "desktop"
 
     if method_name == "get_screenshot":
 
@@ -93,7 +154,14 @@ def _make_session_method(
             from PIL import Image as _Image
 
             session = await session_resolver()
-            b64 = await session.get_screenshot()
+            try:
+                b64 = await session.get_screenshot()
+            except Exception as e:
+                if on_session_dead and _is_dead_session_error(e):
+                    on_session_dead()
+                raise
+            if is_desktop:
+                _publish_desktop_invoked(method_name)
             return _Image.open(io.BytesIO(base64.b64decode(b64)))
 
         screenshot_wrapper.__name__ = method_name
@@ -106,17 +174,57 @@ def _make_session_method(
         return screenshot_wrapper
 
     async def wrapper(*args, **kwargs):
+        import time as _w_time
+        import logging as _w_logging
+
+        _w_t0 = _w_time.perf_counter()
+        _w_log = _w_logging.getLogger("unity")
+
+        def _w_ms():
+            return f"{(_w_time.perf_counter() - _w_t0) * 1000:.0f}ms"
+
+        _w_log.debug(
+            f"⏱️ [desktop.{method_name} +{_w_ms()}] entered",
+        )
         kwargs.pop("_clarification_up_q", None)
         kwargs.pop("_clarification_down_q", None)
         if not _vm_ready.is_set():
+            _w_log.debug(f"⏱️ [desktop.{method_name} +{_w_ms()}] waiting for _vm_ready")
             ready = await asyncio.to_thread(_vm_ready.wait, 300)
+            _w_log.debug(
+                f"⏱️ [desktop.{method_name} +{_w_ms()}] _vm_ready resolved (ready={ready})",
+            )
             if not ready:
                 raise RuntimeError("Managed VM did not become ready within 5 minutes")
+        else:
+            _w_log.debug(f"⏱️ [desktop.{method_name} +{_w_ms()}] _vm_ready already set")
         if method_name in owner._SECRET_INJECTED_METHODS and args:
+            _w_log.debug(f"⏱️ [desktop.{method_name} +{_w_ms()}] resolving secrets")
             resolved = await owner.secret_manager.from_placeholder(args[0])
             args = (resolved,) + args[1:]
+            _w_log.debug(f"⏱️ [desktop.{method_name} +{_w_ms()}] secrets resolved")
+        _w_log.debug(f"⏱️ [desktop.{method_name} +{_w_ms()}] session_resolver start")
         session = await session_resolver()
-        return await getattr(session, method_name)(*args, **kwargs)
+        _w_log.debug(
+            f"⏱️ [desktop.{method_name} +{_w_ms()}] session resolved (id={getattr(session, '_session_id', '?')})",
+        )
+        _w_log.debug(
+            f"⏱️ [desktop.{method_name} +{_w_ms()}] calling session.{method_name}",
+        )
+        try:
+            result = await getattr(session, method_name)(*args, **kwargs)
+        except Exception as e:
+            if on_session_dead and _is_dead_session_error(e):
+                on_session_dead()
+            raise
+        _w_log.debug(
+            f"⏱️ [desktop.{method_name} +{_w_ms()}] session.{method_name} returned",
+        )
+        if is_desktop:
+            _publish_desktop_invoked(method_name)
+            if method_name == "act":
+                _publish_desktop_act_completed(args[0] if args else "", result)
+        return result
 
     wrapper.__name__ = method_name
     # Prefer the rich docstrings from ComputerBackend ABC over ComputerSession's terse ones
@@ -143,7 +251,7 @@ class _ComputerNamespace:
             return await owner.backend.get_session(mode)
 
         for name in _COMPUTER_METHODS:
-            setattr(self, name, _make_session_method(name, owner, _resolve))
+            setattr(self, name, _make_session_method(name, owner, _resolve, mode=mode))
 
 
 class WebSessionHandle:
@@ -155,18 +263,60 @@ class WebSessionHandle:
     lifecycle management.
     """
 
-    def __init__(self, session: "ComputerSession", owner: "ComputerPrimitives"):
+    def __init__(
+        self,
+        session: "ComputerSession",
+        owner: "ComputerPrimitives",
+        session_id: int,
+    ):
         self._session = session
         self._owner = owner
+        self._session_id = session_id
+        self._agent_session_id: str = session._session_id
+        self._label = f"Web {session_id}"
+        self._active = True
+
+        def _mark_inactive():
+            self._active = False
 
         async def _resolve():
             return self._session
 
         for name in _COMPUTER_METHODS:
-            setattr(self, name, _make_session_method(name, owner, _resolve))
+            setattr(
+                self,
+                name,
+                _make_session_method(
+                    name,
+                    owner,
+                    _resolve,
+                    on_session_dead=_mark_inactive,
+                ),
+            )
+
+    @property
+    def session_id(self) -> int:
+        """Numeric session identifier (0, 1, 2, ...)."""
+        return self._session_id
+
+    @property
+    def label(self) -> str:
+        """Human-readable label shown as a visual badge in the browser."""
+        return self._label
+
+    @property
+    def visible(self) -> bool:
+        """Whether this session renders on the VM desktop (``web-vm`` mode)."""
+        return self._session._mode == "web-vm"
+
+    @property
+    def active(self) -> bool:
+        """Whether this session is still running (``stop()`` has not been called)."""
+        return self._active
 
     async def stop(self):
         """Stop the browser session and release resources."""
+        self._active = False
         await self._session.stop()
 
 
@@ -180,6 +330,8 @@ class _WebSessionFactory:
 
     def __init__(self, owner: "ComputerPrimitives"):
         self._owner = owner
+        self._handles: list[WebSessionHandle] = []
+        self._next_id: int = 0
 
     async def new_session(self, visible: bool = True) -> WebSessionHandle:
         """Create a new independent browser session.
@@ -206,9 +358,81 @@ class _WebSessionFactory:
             ``navigate``, ``get_links``, ``get_content``, ``get_screenshot``,
             and ``stop``.  Call ``stop()`` when done to release resources.
         """
+        sid = self._next_id
+        self._next_id += 1
+        label = f"Web {sid}"
         mode = "web-vm" if visible else "web"
-        session = await self._owner.backend.create_session(mode)
-        return WebSessionHandle(session, self._owner)
+        session = await self._owner.backend.create_session(mode, label=label)
+        handle = WebSessionHandle(session, self._owner, session_id=sid)
+        self._handles.append(handle)
+        return handle
+
+    def list_sessions(
+        self,
+        visible_only: bool = False,
+        active_only: bool = False,
+    ) -> list[WebSessionHandle]:
+        """List web sessions created across the entire system.
+
+        Returns the actual ``WebSessionHandle`` objects from a global
+        registry shared by all actors (``ComputerPrimitives`` is a
+        singleton).  Use this for cross-actor coordination — e.g. to
+        check how many browser sessions are currently active before
+        creating new ones.
+
+        Parameters
+        ----------
+        visible_only : bool, default False
+            When True, only return sessions running on the VM desktop
+            (``visible=True`` at creation time).  Excludes headless
+            background sessions.
+        active_only : bool, default False
+            When True, only return sessions where ``stop()`` has not
+            been called.
+
+        Returns
+        -------
+        list[WebSessionHandle]
+            Matching session handles.  Each handle can be used to call
+            ``act``, ``observe``, ``navigate``, ``stop``, etc.
+        """
+        result = self._handles
+        if visible_only:
+            result = [h for h in result if h.visible]
+        if active_only:
+            result = [h for h in result if h.active]
+        return list(result)
+
+    async def list_sessions_with_metadata(
+        self,
+        visible_only: bool = False,
+        active_only: bool = False,
+    ) -> list[dict]:
+        """Like ``list_sessions`` but includes URL metadata for each session.
+
+        Returns a list of dicts with keys ``handle``, ``url``, ``label``,
+        and ``session_id``.
+        """
+        sessions = self.list_sessions(
+            visible_only=visible_only,
+            active_only=active_only,
+        )
+        result = []
+        for h in sessions:
+            url = ""
+            try:
+                url = await h._session.get_current_url()
+            except Exception:
+                pass
+            result.append(
+                {
+                    "handle": h,
+                    "session_id": h.session_id,
+                    "label": h.label,
+                    "url": url,
+                },
+            )
+        return result
 
 
 class ComputerPrimitives(metaclass=SingletonABCMeta):
@@ -247,7 +471,10 @@ class ComputerPrimitives(metaclass=SingletonABCMeta):
             from unity.session_details import SESSION_DETAILS
 
             if SESSION_DETAILS.assistant.desktop_url:
-                return SESSION_DETAILS.assistant.desktop_url.rstrip("/") + "/api"
+                from urllib.parse import urlparse
+
+                parsed = urlparse(SESSION_DETAILS.assistant.desktop_url)
+                return f"{parsed.scheme}://{parsed.netloc}/api"
         except Exception:
             pass
         return DEFAULT_AGENT_SERVER_URL
@@ -316,7 +543,16 @@ class ComputerPrimitives(metaclass=SingletonABCMeta):
                 )
             else:
                 raise ValueError(f"Unknown computer_mode: '{self._computer_mode}'.")
+            self._backend._on_session_closed = self._invalidate_web_session
         return self._backend
+
+    def _invalidate_web_session(self, agent_session_id: str) -> None:
+        """Mark the WebSessionHandle matching the agent-service UUID as inactive."""
+        if self._web_factory is None:
+            return
+        for h in self._web_factory._handles:
+            if h._agent_session_id == agent_session_id:
+                h._active = False
 
     # ── Sub-namespace properties ─────────────────────────────────────────
 

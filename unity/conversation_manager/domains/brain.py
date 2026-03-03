@@ -12,6 +12,7 @@ from unity.conversation_manager.types import Mode, ScreenshotEntry
 
 if TYPE_CHECKING:
     from unity.conversation_manager.conversation_manager import ConversationManager
+    from unity.conversation_manager.domains.renderer import SnapshotState
 
 
 def _build_response_models() -> dict[Mode, type[BaseModel]]:
@@ -161,6 +162,7 @@ class BrainSpec:
 
 def build_brain_spec(
     cm: "ConversationManager",
+    snapshot_state: "SnapshotState",
     screenshots: list[ScreenshotEntry] | None = None,
     screenshot_paths: list[str] | None = None,
 ) -> BrainSpec:
@@ -174,6 +176,9 @@ def build_brain_spec(
     ----------
     cm : ConversationManager
         The conversation manager instance.
+    snapshot_state : SnapshotState
+        Pre-rendered conversation state (caller computes this once and reuses it
+        for both the BrainSpec and incremental-diff tracking).
     screenshots : list[ScreenshotEntry] | None
         Buffered screenshots from screen sharing (assistant and/or user), each
         paired with the user utterance that triggered capture and a timestamp.
@@ -182,16 +187,7 @@ def build_brain_spec(
     """
     from unity.settings import SETTINGS
 
-    prompt = cm.prompt_renderer.render_state(
-        cm.contact_index,
-        cm.notifications_bar,
-        cm.in_flight_actions,
-        cm.completed_actions,
-        cm.last_snapshot,
-        assistant_screen_share_active=cm.assistant_screen_share_active,
-        user_screen_share_active=cm.user_screen_share_active,
-        user_remote_control_active=cm.user_remote_control_active,
-    ).full_render
+    prompt = snapshot_state.full_render
 
     # Get boss contact (contact_id=1) from ContactManager - the source of truth
     boss_contact = cm.contact_index.get_contact(1) or {}
@@ -208,6 +204,9 @@ def build_brain_spec(
         is_voice_call=cm.mode.is_voice,
         is_boss_on_call=is_boss_on_call,
         demo_mode=SETTINGS.DEMO_MODE,
+        desktop_fast_path=cm.desktop_fast_path_eligible,
+        assistant_has_phone=bool(cm.assistant_number),
+        assistant_has_email=bool(cm.assistant_email),
     )
 
     response_model = _RESPONSE_MODELS[cm.mode]

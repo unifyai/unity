@@ -244,7 +244,6 @@ async def inject_actor_clarification_request(
     await EventHandler.handle_event(
         evt,
         cm,
-        is_voice_call=cm.call_manager.uses_realtime_api,
     )
 
 
@@ -262,7 +261,6 @@ async def inject_actor_notification(
     await EventHandler.handle_event(
         evt,
         cm,
-        is_voice_call=cm.call_manager.uses_realtime_api,
     )
 
 
@@ -310,7 +308,6 @@ async def inject_actor_result(
     await EventHandler.handle_event(
         evt,
         cm,
-        is_voice_call=cm.call_manager.uses_realtime_api,
     )
 
 
@@ -361,7 +358,6 @@ async def run_cm_until_wait(
             await EventHandler.handle_event(
                 evt,
                 cm,
-                is_voice_call=cm.call_manager.uses_realtime_api,
             )
         # Forward to real broker so actor lifecycle events work correctly.
         return await original_publish(channel, message)
@@ -380,7 +376,7 @@ async def run_cm_until_wait(
 
         # Run until `wait`.
         for _ in range(max_steps):
-            tool_name = await cm._run_llm()
+            tool_names = await cm._run_llm()
 
             # Await any pending steering tasks (e.g., async ask_*)
             # so their events flow through our patches while active.
@@ -388,7 +384,7 @@ async def run_cm_until_wait(
             if pending:
                 await asyncio.wait(pending, timeout=300)
 
-            if tool_name == "wait" or tool_name is None:
+            if "wait" in tool_names or not tool_names:
                 break
         return output_events
     finally:

@@ -101,35 +101,21 @@ Dataclass-based event definitions:
 
 ### `CallManager` (`domains/call_manager.py`)
 
-Manages voice call lifecycle:
-- **STS Mode**: Speech-to-Speech via audio-native LLM (e.g., OpenAI Realtime API)
-- **TTS Mode**: Text-to-Speech pipeline (STT → Fast Brain → TTS)
+Manages voice call lifecycle using the TTS (Text-to-Speech) pipeline.
 
 ---
 
-## Two Voice Modes
+## Voice Architecture
 
-Both modes use the "fast brain / slow brain" architecture where the Voice Agent (fast brain) handles conversation autonomously while the Main CM Brain (slow brain) provides guidance.
-
-### 1. TTS Mode (Text-to-Speech Pipeline)
+The voice system uses the "fast brain / slow brain" architecture where the Voice Agent (fast brain) handles conversation autonomously while the Main CM Brain (slow brain) sends notifications.
 
 ```
 User speaks → STT transcribes → Fast Brain (text LLM) → TTS speaks
     ↑                                                      ↓
-    └──────── Main CM Brain provides CallGuidance ─────────┘
+    └────── Main CM Brain sends FastBrainNotification ─────┘
 ```
 
 Uses separate STT/TTS services with a lightweight text-based LLM (gpt-5-mini) for fast responses.
-
-### 2. STS Mode (Speech-to-Speech)
-
-```
-User speaks → Audio-native LLM (OpenAI Realtime API) → responds immediately
-    ↑                                                      ↓
-    └──────── Main CM Brain provides CallGuidance ─────────┘
-```
-
-Uses OpenAI's Realtime API for native audio-to-audio processing with ultra-low latency.
 
 ---
 
@@ -227,8 +213,7 @@ conversation_manager/
 │   └── renderer.py          # State → prompt rendering
 │
 └── medium_scripts/          # Medium-specific voice handling
-    ├── call.py              # TTS mode calls (STT → Fast Brain → TTS)
-    ├── sts_call.py          # STS mode calls (OpenAI Realtime API)
+    ├── call.py              # Voice calls (STT → Fast Brain → TTS)
     └── common.py            # Shared voice utilities
 ```
 
@@ -247,7 +232,7 @@ Tests are located in `tests/conversation_manager/`:
 | `test_utils.py` | Unit tests for utility functions |
 | `test_logging.py` | Tests for logging infrastructure |
 | `test_in_memory_event_broker.py` | Tests for the in-memory event broker |
-| `test_voice_mode_architecture.py` | Tests for TTS/STS voice architecture |
+| `test_voice_mode_architecture.py` | Tests for voice architecture |
 | `test_event_bus_integration.py` | Tests for EventBus integration |
 
 ### Running Tests

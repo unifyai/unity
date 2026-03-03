@@ -22,6 +22,7 @@ from typing import (
 from pydantic import BaseModel
 
 from unity.actor.base import BaseCodeActActor
+from unity.common.context_dump import make_messages_safe_for_context_dump
 from unity.actor.execution import (
     ExecutionResult,
     PackageOverlay,
@@ -55,9 +56,9 @@ from unity.events.manager_event_logging import (
 
 if TYPE_CHECKING:
     from unity.actor.environments.base import BaseEnvironment
+    from unity.customization.clients import ResolvedCustomization
     from unity.function_manager.function_manager import FunctionManager
     from unity.guidance_manager.guidance_manager import GuidanceManager
-    from unillm.types import PromptCacheParam
 
 
 # ---------------------------------------------------------------------------
@@ -74,6 +75,18 @@ filtered_tools_dict)`` where *tool_choice_mode* is ``"auto"`` or
 
 _USE_DEFAULT: object = object()
 """Sentinel indicating 'use the built-in discovery-first tool policy'."""
+
+_UNSET: object = object()
+"""Sentinel indicating 'parameter was not explicitly provided'."""
+
+
+def _resolve_param(explicit: object, code_value: object, default: object) -> object:
+    """Three-tier resolution: explicit constructor arg > code config > hardcoded default."""
+    if explicit is not _UNSET:
+        return explicit
+    if code_value is not None:
+        return code_value
+    return default
 
 
 def _default_tool_policy(
@@ -139,6 +152,7 @@ def _default_tool_policy(
                     if isinstance(k, str) and k.startswith("GuidanceManager_")
                 },
             )
+
         return ("required", gated) if gated else ("auto", filtered)
 
     return _policy
@@ -339,6 +353,8 @@ def _start_storage_check_loop(
     completed_tool_metadata: dict | None = None,
     actor: "CodeActActor",
     original_result: str,
+    parent_lineage: list[str] | None = None,
+    stop_reason: str | None = None,
 ) -> "AsyncToolLoopHandle | None":
     """Start a loop that reviews a completed trajectory for reusable knowledge.
 
@@ -627,6 +643,23 @@ def _start_storage_check_loop(
             "about what you plan to store at the higher level).\n\n"
         )
 
+    stop_context_section = ""
+    if stop_reason:
+        stop_context_section = (
+            "## Session Termination Context\n\n"
+            "This session was explicitly stopped by the user. The stop reason "
+            "provides important signal about whether the user intended the "
+            "work to be saved:\n\n"
+            f"> {stop_reason}\n\n"
+            "Weigh this context when deciding what to store. If the reason "
+            "indicates the user wanted the workflow remembered or saved, that "
+            "is a strong positive signal — look for reusable patterns in the "
+            "trajectory. If the reason indicates cancellation or abandonment, "
+            "the trajectory is less likely to contain patterns worth "
+            "persisting, though genuinely reusable sub-patterns may still "
+            "be worth storing.\n\n"
+        )
+
     system_prompt = (
         "You are a skill librarian. A CodeActActor has just completed a task. "
         "Your job is to review the execution trajectory and decide whether "
@@ -636,6 +669,7 @@ def _start_storage_check_loop(
         f"{trajectory_json}\n\n"
         "## Final Result\n\n"
         f"{original_result}\n\n"
+        f"{stop_context_section}"
         f"{inner_storage_section}"
         "## What Can Be Stored\n\n"
         "Any code that executed successfully in `execute_code` during "
@@ -802,6 +836,7 @@ def _start_storage_check_loop(
         ),
         tools=tools,
         loop_id="StorageCheck(CodeActActor.act)",
+        parent_lineage=parent_lineage,
         max_steps=30,
         timeout=120,
     )
@@ -845,6 +880,7 @@ class _StorageCheckHandle(SteerableToolHandle):
         self._storage_handle: Optional["AsyncToolLoopHandle"] = None
         self._phase: str = "task"  # "task" | "storage" | "done"
         self._stopped: bool = False
+        self._stop_reason: Optional[str] = None
         self._active_relay: Optional[asyncio.Task] = None
 
         # Start the two-phase lifecycle manager.
@@ -900,9 +936,6 @@ class _StorageCheckHandle(SteerableToolHandle):
             await self._cancel_relay()
             self._task_done_event.set()
 
-            if self._stopped:
-                return
-
             # Snapshot trajectory and ask tools (client/messages are still
             # valid after result() returns -- cleanup only resets context
             # vars and releases the semaphore).
@@ -911,7 +944,9 @@ class _StorageCheckHandle(SteerableToolHandle):
             try:
                 client = getattr(self._inner, "_client", None)
                 if client is not None:
-                    trajectory = list(getattr(client, "messages", []) or [])
+                    trajectory = make_messages_safe_for_context_dump(
+                        list(getattr(client, "messages", []) or []),
+                    )
             except Exception:
                 pass
             try:
@@ -945,7 +980,7 @@ class _StorageCheckHandle(SteerableToolHandle):
             )
             _sc_hierarchy = [
                 *_sc_parent_lineage,
-                f"StorageCheck({_sc_suffix})",
+                f"StorageCheck(CodeActActor.act)({_sc_suffix})",
             ]
             _sc_lineage_token = TOOL_LOOP_LINEAGE.set(_sc_hierarchy)
             _sc_suffix_token = _PENDING_LOOP_SUFFIX.set(_sc_suffix)
@@ -966,6 +1001,8 @@ class _StorageCheckHandle(SteerableToolHandle):
                     completed_tool_metadata=completed_tool_metadata,
                     actor=self._actor,
                     original_result=str(self._original_result),
+                    parent_lineage=_sc_parent_lineage,
+                    stop_reason=self._stop_reason,
                 )
 
                 if storage_handle is None:
@@ -981,8 +1018,10 @@ class _StorageCheckHandle(SteerableToolHandle):
                     self._storage_handle = storage_handle
                     try:
                         await self._storage_handle.result()
-                    except Exception:
-                        pass
+                    except Exception as exc:
+                        logger.warning(
+                            f"StorageCheck failed: {type(exc).__name__}: {exc}",
+                        )
 
                     await publish_manager_method_event(
                         _sc_call_id,
@@ -1105,6 +1144,7 @@ class _StorageCheckHandle(SteerableToolHandle):
 
     async def stop(self, reason: Optional[str] = None, **kwargs) -> None:
         self._stopped = True
+        self._stop_reason = reason
         handle = self._active_handle
         if handle is not None:
             await handle.stop(reason=reason, **kwargs)
@@ -1128,6 +1168,11 @@ class _StorageCheckHandle(SteerableToolHandle):
 
     async def result(self) -> str:
         await self._task_done_event.wait()
+        if self._stopped and self._stop_reason:
+            return (
+                f"Task stopped as requested. Reason: {self._stop_reason}\n"
+                f"Background skill storage is reviewing the completed work."
+            )
         return self._original_result or ""
 
     # ── Events ────────────────────────────────────────────────────────
@@ -1275,13 +1320,15 @@ class CodeActActor(BaseCodeActActor):
         environments: Optional[list["BaseEnvironment"]] = None,
         function_manager: Optional["FunctionManager"] = None,
         guidance_manager: Optional["GuidanceManager"] = None,
-        can_compose: bool = True,
-        can_store: bool = False,
-        timeout: float = 3600,
-        model: Optional[str] = None,
+        can_compose: object = _UNSET,
+        can_store: object = _UNSET,
+        timeout: object = _UNSET,
+        model: object = _UNSET,
         preprocess_msgs: Optional[Callable[[list[dict]], list[dict]]] = None,
-        prompt_caching: Optional["PromptCacheParam"] = ("system", "tools", "messages"),
+        prompt_caching: object = _UNSET,
+        guidelines: object = _UNSET,
         tool_policy: Union[ToolPolicyFn, None, object] = _USE_DEFAULT,
+        resolved: Optional["ResolvedCustomization"] = None,
     ):
         """
         Initializes the CodeActActor.
@@ -1313,6 +1360,10 @@ class CodeActActor(BaseCodeActActor):
             prompt_caching: Optional list of cache targets (e.g. ["system", "messages"]).
                 Enables Anthropic prompt caching for the specified components to reduce
                 costs and latency. Valid values: "tools", "system", "messages".
+            guidelines: Persistent behavioral guidelines applied to every ``act()``
+                invocation.  Per-invocation ``guidelines`` passed to ``act()`` are
+                appended after these, so the constructor value acts as a baseline
+                and ``act()`` adds task-specific refinements on top.
             tool_policy: Controls per-turn dynamic tool filtering and tool-choice mode.
                 - ``_USE_DEFAULT`` (default): uses the built-in "discovery-first"
                   policy that requires both a FunctionManager and a GuidanceManager
@@ -1323,12 +1374,41 @@ class CodeActActor(BaseCodeActActor):
                   the tools.
                 - ``None``: no dynamic policy; only the static ``can_compose`` /
                   ``can_store`` filters apply.
+            resolved: Pre-resolved client customization. When provided, the
+                actor uses it directly for config and environments. When
+                ``None`` (e.g. in tests), resolution is performed internally.
+                Cross-cutting seed sync is the caller's responsibility.
         """
+        if resolved is None:
+            from unity.customization.clients import resolve as _resolve_customization
+            from unity.session_details import SESSION_DETAILS
+
+            resolved = _resolve_customization(
+                org_id=SESSION_DETAILS.org_id,
+                team_ids=SESSION_DETAILS.team_ids or None,
+                user_id=SESSION_DETAILS.user.id,
+                assistant_id=SESSION_DETAILS.assistant.agent_id,
+            )
+
+        merged_environments = resolved.environments + (environments or [])
+
         super().__init__(
-            environments=environments,
+            environments=merged_environments,
             function_manager=function_manager,
             guidance_manager=guidance_manager,
         )
+
+        can_compose = _resolve_param(can_compose, resolved.config.can_compose, True)
+        can_store = _resolve_param(can_store, resolved.config.can_store, True)
+        timeout = _resolve_param(timeout, resolved.config.timeout, 3600.0)
+        model = _resolve_param(model, resolved.config.model, None)
+        prompt_caching = _resolve_param(
+            prompt_caching,
+            resolved.config.prompt_caching,
+            ("system", "tools", "messages"),
+        )
+        guidelines = _resolve_param(guidelines, resolved.config.guidelines, None)
+        self._base_guidelines = guidelines
 
         # Collect function_ids from all environments, split by context, and set
         # them on the FunctionManager via setters. This prevents overlap between
@@ -1655,10 +1735,14 @@ class CodeActActor(BaseCodeActActor):
             _parent_chat_context: list[dict] | None = None,
         ) -> Any:
             """
-            Execute code in a specified language and state mode, optionally within a session.
+            Execute arbitrary code in a specified language and state mode.
 
-            Use this tool for BOTH Python and shell execution. This is the unified
-            "brain execution" tool for CodeActActor.
+            **IMPORTANT — single-call rule**: If the task requires only a
+            single function or primitive call with no surrounding logic,
+            use ``execute_function`` instead. ``execute_code`` is for
+            **multi-step composition** — conditional logic, loops, or
+            combining multiple primitives/functions where intermediate
+            results are needed within the same code block.
 
             Key concepts
             -----------
@@ -1687,52 +1771,6 @@ class CodeActActor(BaseCodeActActor):
             - Use **read_only** to "peek" without mutating state (what-if exploration).
             - Use `list_sessions()` and `inspect_state()` to decide which session to use.
 
-            Steerable handles
-            -----------------
-            State manager primitives (e.g. ``primitives.contacts.ask(...)``)
-            return **steerable handles** — live in-flight operations that can
-            be paused, resumed, interjected, or stopped from the outer loop.
-
-            You control whether to steer an operation or let it complete
-            internally, depending on what the task requires:
-
-            - **Return the handle as the last expression** to hand control
-              back to the outer loop. The handle is automatically adopted:
-              progress is shown as intermediate output, dynamic steering
-              helpers (``stop_*``, etc.) become available, and the final
-              result replaces the placeholder when the inner operation
-              completes. Use this when you may need to steer, monitor, or
-              cancel the operation mid-flight.
-
-              .. code-block:: python
-
-                  # Last expression is the handle → adopted for steering
-                  await primitives.contacts.ask(text="Who is Alice?")
-
-            - **Await the result inside the code** to let the operation
-              complete before returning. The outer loop receives only the
-              finished result with no steering opportunity. Use this when
-              you need the answer immediately for further processing within
-              the same code block.
-
-              .. code-block:: python
-
-                  # Blocks until done; result available for further logic
-                  handle = await primitives.contacts.ask(text="Who is Alice?")
-                  answer = await handle.result()
-                  print(f"Found: {answer}")
-
-            Decision guidance
-            -----------------
-            Prefer returning the handle when the operation is likely to be
-            long-running, externally dependent, or may require user steering
-            (status checks, corrections, pause/resume, or cancellation).
-            Prefer awaiting the result when you need that value immediately
-            for additional logic inside the same code block.
-            When the intent is neutral or ambiguous, default to returning
-            the handle so the outer loop preserves steering and progress
-            visibility.
-
             Output
             ------
             Returns either a dict or an ExecutionResult object with the following fields:
@@ -1743,7 +1781,7 @@ class CodeActActor(BaseCodeActActor):
             - **stderr**: Same format as stdout (list for in-process Python, string otherwise).
             - **result**: The evaluated result of the last expression (Any), or None.
               If the last expression is a steerable handle, it is automatically
-              adopted by the outer loop for mid-flight steering (see above).
+              adopted by the outer loop for mid-flight steering.
             - **error**: Error message string if execution failed, otherwise None.
             - **language**: The language used for execution.
             - **state_mode**: The state mode used ("stateless", "stateful", or "read_only").
@@ -2140,23 +2178,41 @@ class CodeActActor(BaseCodeActActor):
                 _parent_chat_context: list[dict] | None = None,
             ) -> Any:
                 """
-                Execute a known function by name and return its result.
+                Execute a single function or primitive by name.
 
-                This is the preferred way to run a known function without
-                writing any code.  The function is resolved from:
+                **This is the preferred tool for any task that maps to a single
+                function or primitive call.** Use it instead of ``execute_code``
+                whenever the task can be accomplished by invoking one callable
+                with keyword arguments — no surrounding Python logic needed.
 
+                Why prefer this tool
+                --------------------
+                ``execute_function`` **structurally guarantees** that the
+                returned handle is exposed to the outer loop for steering
+                (ask, stop, pause, resume, interject). When you write the
+                same call inside ``execute_code``, the handle is only
+                adopted if it happens to be the last expression — a pattern
+                that is easy to break by adding prints, notifications, or
+                error handling around the call.
+
+                When to use ``execute_function`` vs ``execute_code``
+                ----------------------------------------------------
+                - **Single primitive call** (e.g. ``primitives.contacts.ask``,
+                  ``primitives.web.ask``, ``primitives.knowledge.update``)
+                  → always ``execute_function``.
+                - **Single stored function call** (discovered via
+                  FunctionManager) → always ``execute_function``.
+                - **Multi-step composition**, conditional logic, loops,
+                  or any code that genuinely needs to combine multiple
+                  calls or process intermediate results
+                  → use ``execute_code``.
+
+                Resolution order
+                ----------------
                 1. The current sandbox namespace (environment-injected callables,
                    previously discovered FunctionManager functions, etc.).
                 2. The FunctionManager store (by exact name lookup).
                 3. If neither matches, a ``NameError`` is raised naturally.
-
-                Workflow
-                -------
-                1. Discover functions via ``FunctionManager_search_functions``,
-                   ``FunctionManager_filter_functions``, or
-                   ``FunctionManager_list_functions``.
-                2. Pick the best match by name.
-                3. Call ``execute_function(function_name=..., call_kwargs=...)``.
 
                 Key concepts
                 ------------
@@ -2172,7 +2228,9 @@ class CodeActActor(BaseCodeActActor):
                 Parameters
                 ----------
                 function_name : str
-                    Exact name of the function to execute.
+                    Exact name of the function or primitive to execute.
+                    For primitives, use the dotted path as it appears in the
+                    sandbox (e.g. ``"primitives.contacts.ask"``).
                 call_kwargs : dict, optional
                     Keyword arguments to pass to the function.
 
@@ -2184,6 +2242,19 @@ class CodeActActor(BaseCodeActActor):
                     session_created, duration_ms).
                 """
                 call_kwargs = call_kwargs or {}
+
+                import time as _ef_time
+                import logging as _ef_logging
+
+                _ef_t0 = _ef_time.perf_counter()
+                _ef_log = _ef_logging.getLogger("unity")
+
+                def _ef_ms():
+                    return f"{(_ef_time.perf_counter() - _ef_t0) * 1000:.0f}ms"
+
+                _ef_log.debug(
+                    f"⏱️ [execute_function +{_ef_ms()}] entered: {function_name}",
+                )
 
                 # ── Synthesize the code string ────────────────────────────
                 code: str | None = None
@@ -2202,6 +2273,9 @@ class CodeActActor(BaseCodeActActor):
                         call_kwargs=call_kwargs,
                         function_manager=self.function_manager,
                     )
+                _ef_log.debug(
+                    f"⏱️ [execute_function +{_ef_ms()}] code synthesized",
+                )
 
                 # ── Lineage boundary ─────────────────────────────────────
                 _ef_suffix = _token_hex(2)
@@ -2234,10 +2308,16 @@ class CodeActActor(BaseCodeActActor):
                             level="warning",
                         )
 
+                _ef_log.debug(
+                    f"⏱️ [execute_function +{_ef_ms()}] lineage boundary (incoming) start",
+                )
                 try:
                     await _ef_pub_safe(phase="incoming")
                 except Exception:
                     pass
+                _ef_log.debug(
+                    f"⏱️ [execute_function +{_ef_ms()}] lineage boundary (incoming) done",
+                )
                 log_boundary_event(
                     "->".join(_ef_hierarchy),
                     f"Executing function {function_name}...",
@@ -2288,6 +2368,9 @@ class CodeActActor(BaseCodeActActor):
                     except Exception:
                         pass
 
+                    _ef_log.debug(
+                        f"⏱️ [execute_function +{_ef_ms()}] sandbox.execute start",
+                    )
                     _pcc_token = _PARENT_CHAT_CONTEXT.set(_parent_chat_context)
                     try:
                         try:
@@ -2299,6 +2382,9 @@ class CodeActActor(BaseCodeActActor):
                                 venv_id=venv_id,
                                 primitives=primitives,
                                 computer_primitives=computer_primitives,
+                            )
+                            _ef_log.debug(
+                                f"⏱️ [execute_function +{_ef_ms()}] sandbox.execute done",
                             )
                         except Exception as e:
                             exec_exc = e
@@ -2337,8 +2423,14 @@ class CodeActActor(BaseCodeActActor):
                     ):
                         out = ExecutionResult(**out)
 
+                    _ef_log.debug(
+                        f"⏱️ [execute_function +{_ef_ms()}] returning result",
+                    )
                     return out
                 finally:
+                    _ef_log.debug(
+                        f"⏱️ [execute_function +{_ef_ms()}] lineage boundary (outgoing) start",
+                    )
                     try:
                         _out_err = (
                             (
@@ -2365,6 +2457,9 @@ class CodeActActor(BaseCodeActActor):
                             await _ef_pub_safe(phase="outgoing", status="ok")
                     except Exception:
                         pass
+                    _ef_log.debug(
+                        f"⏱️ [execute_function +{_ef_ms()}] lineage boundary (outgoing) done",
+                    )
                     try:
                         TOOL_LOOP_LINEAGE.reset(_ef_lineage_token)
                     except Exception:
@@ -2933,6 +3028,15 @@ class CodeActActor(BaseCodeActActor):
         if not self._main_event_loop:
             self._main_event_loop = asyncio.get_running_loop()
 
+        import time as _act_time
+
+        _act_t0 = _act_time.perf_counter()
+
+        def _act_ms() -> str:
+            return f"{(_act_time.perf_counter() - _act_t0) * 1000:.0f}ms"
+
+        logger.debug(f"⏱️ [CodeActActor.act +{_act_ms()}] entered")
+
         effective_can_compose = (
             self.can_compose if can_compose is None else bool(can_compose)
         )
@@ -2965,6 +3069,7 @@ class CodeActActor(BaseCodeActActor):
             clarification_down_q = None
 
         # Create per-call environments so clarification queues are not stored on shared actor environments.
+        logger.debug(f"⏱️ [CodeActActor.act +{_act_ms()}] copying environments")
         sandbox_envs: Dict[str, "BaseEnvironment"] = {}
         try:
             from unity.actor.environments.base import (
@@ -3024,6 +3129,9 @@ class CodeActActor(BaseCodeActActor):
                 sandbox_envs[ns] = env
 
         # Concurrency/backpressure guard. If we can't acquire within 30s, treat as resource exhaustion.
+        logger.debug(
+            f"⏱️ [CodeActActor.act +{_act_ms()}] envs copied, acquiring semaphore",
+        )
         try:
             await asyncio.wait_for(
                 self._act_semaphore.acquire(),
@@ -3034,6 +3142,9 @@ class CodeActActor(BaseCodeActActor):
                 "CodeActActor is at capacity (too many concurrent sessions). "
                 "Try again later or reduce concurrency.",
             )
+        logger.debug(
+            f"⏱️ [CodeActActor.act +{_act_ms()}] semaphore acquired, creating sandbox",
+        )
         sandbox = PythonExecutionSession(
             computer_primitives=self._computer_primitives,
             environments=sandbox_envs,
@@ -3231,12 +3342,21 @@ class CodeActActor(BaseCodeActActor):
                 "    session_created, duration_ms).\n"
             )
 
+        effective_guidelines = (
+            "\n\n".join(filter(None, [self._base_guidelines, guidelines])) or None
+        )
+
+        logger.debug(f"⏱️ [CodeActActor.act +{_act_ms()}] building system prompt")
         system_prompt = build_code_act_prompt(
             environments=sandbox_envs,
             tools=base_tools,
             can_store=effective_can_store,
-            guidelines=guidelines,
+            guidelines=effective_guidelines,
             discovery_first_policy=self.tool_policy is _USE_DEFAULT,
+        )
+        logger.debug(
+            f"⏱️ [CodeActActor.act +{_act_ms()}] prompt built "
+            f"({len(system_prompt)} chars, {len(base_tools)} tools)",
         )
 
         # Tool policy controls which tools are visible per turn, and whether a
@@ -3295,6 +3415,7 @@ class CodeActActor(BaseCodeActActor):
                 call_id=_call_id,
             )
 
+        logger.debug(f"⏱️ [CodeActActor.act +{_act_ms()}] starting async tool loop")
         handle = start_async_tool_loop(
             client,
             request or initial_prompt,
@@ -3311,6 +3432,9 @@ class CodeActActor(BaseCodeActActor):
             preprocess_msgs=self._preprocess_msgs,
             prompt_caching=self._prompt_caching,
             extra_ask_tools=self._get_extra_ask_tools(),
+        )
+        logger.debug(
+            f"⏱️ [CodeActActor.act +{_act_ms()}] loop started, returning handle",
         )
 
         # Wrap result() to run cleanup when the loop finishes

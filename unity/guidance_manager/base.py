@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 from abc import abstractmethod
-from typing import Dict, List, Optional, TYPE_CHECKING
+from typing import Dict, List, Optional
 
 from ..manager_registry import SingletonABCMeta
 from ..common.global_docstrings import CLEAR_METHOD_DOCSTRING
 from ..common.state_managers import BaseStateManager
+from ..common.tool_outcome import ToolOutcome
 from ..image_manager.types import AnnotatedImageRefs
+from .types.guidance import Guidance
 
 
 class BaseGuidanceManager(BaseStateManager, metaclass=SingletonABCMeta):
@@ -194,11 +196,6 @@ class BaseGuidanceManager(BaseStateManager, metaclass=SingletonABCMeta):
     @abstractmethod
     def clear(self) -> None:
         raise NotImplementedError
-
-
-if TYPE_CHECKING:
-    from .types.guidance import Guidance
-    from ..common.tool_outcome import ToolOutcome
 
 
 # Attach centralised docstring

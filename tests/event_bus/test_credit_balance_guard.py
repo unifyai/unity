@@ -64,7 +64,7 @@ def _patch_context(*, org_id=None):
             mock_session = stack.enter_context(
                 patch("unity.session_details.SESSION_DETAILS"),
             )
-            mock_session.assistant_record = {"agent_id": "agent_1"}
+            mock_session.assistant.agent_id = 1
             mock_session.user_id = "user_1"
             mock_session.org_id = org_id
             mock_session.assistant.timezone = "UTC"
@@ -78,7 +78,7 @@ def _patch_context(*, org_id=None):
 
 
 def _patch_http(get_side_effect):
-    """Patch httpx.AsyncClient with a custom GET handler."""
+    """Patch the shared HTTP client with a custom GET handler."""
 
     class _Ctx:
         def __init__(self):
@@ -88,15 +88,19 @@ def _patch_http(get_side_effect):
             import contextlib
 
             stack = contextlib.ExitStack()
-            mock_client = stack.enter_context(patch("httpx.AsyncClient"))
-            mock_instance = AsyncMock()
+            mock_instance = MagicMock()
+            mock_instance.is_closed = False
             if callable(get_side_effect) and not isinstance(get_side_effect, MagicMock):
                 mock_instance.get = get_side_effect
             else:
-                mock_instance.get.return_value = get_side_effect
-            mock_instance.__aenter__.return_value = mock_instance
-            mock_instance.__aexit__.return_value = None
-            mock_client.return_value = mock_instance
+                mock_instance.get = AsyncMock(return_value=get_side_effect)
+            mock_instance.post = AsyncMock()
+            stack.enter_context(
+                patch(
+                    "unity.spending_limits._get_http_client",
+                    return_value=mock_instance,
+                ),
+            )
             self._stack.append(stack)
             return mock_instance
 
@@ -734,7 +738,7 @@ class TestEdgeCases:
 
         with patch("unity.spending_limits._get_api_key", return_value="key"):
             with patch("unity.session_details.SESSION_DETAILS") as mock_session:
-                mock_session.assistant_record = None
+                mock_session.assistant.agent_id = None
                 mock_session.user_id = None
                 mock_session.org_id = None
 

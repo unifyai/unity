@@ -22,6 +22,7 @@ from dataclasses import dataclass
 from functools import cached_property
 
 from ..settings import SETTINGS
+from ..common.embed_utils import ensure_vector_column
 from ..common.tool_spec import read_only
 from ..common.llm_helpers import (
     methods_to_tool_dict,
@@ -219,25 +220,6 @@ class TaskScheduler(BaseTaskScheduler):
 
         # active task
         self.__actor = actor
-
-        ctxs = unify.get_active_context()
-        read_ctx, write_ctx = ctxs["read"], ctxs["write"]
-        if not read_ctx:
-            # Ensure the global assistant/context is selected before we derive our sub-context
-            try:
-                from .. import (
-                    ensure_initialised as _ensure_initialised,
-                )  # local to avoid cycles
-
-                _ensure_initialised()
-                ctxs = unify.get_active_context()
-                read_ctx, write_ctx = ctxs["read"], ctxs["write"]
-            except Exception:
-                # If ensure fails (e.g. offline tests), proceed; downstream will fall back safely
-                pass
-        assert (
-            read_ctx == write_ctx
-        ), "read and write contexts must be the same when instantiating a TaskScheduler."
         self._ctx = ContextRegistry.get_context(self, "Tasks")
 
         # Install storage adapter and ensure context/fields exist
@@ -285,6 +267,17 @@ class TaskScheduler(BaseTaskScheduler):
         return self.__actor
 
     # ------------------------------ Provisioning ----------------------------- #
+    def warm_embeddings(self) -> None:
+        for col in ("name", "description"):
+            try:
+                ensure_vector_column(
+                    self._ctx,
+                    embed_column=f"_{col}_emb",
+                    source_column=col,
+                )
+            except Exception:
+                pass
+
     def _provision_storage(self) -> None:
         """Ensure Tasks context, schema and local view exist (idempotent)."""
         # Install storage adapter and ensure context/fields exist

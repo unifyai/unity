@@ -18,6 +18,7 @@ async def test_code_act_persist_keeps_loop_alive_until_stopped():
         "Reply with exactly 'READY' and do not call any tools. Then wait for further instructions.",
         clarification_enabled=False,
         persist=True,
+        can_store=False,
     )
 
     try:

@@ -225,6 +225,9 @@ class ActorFactory:
         # Memory is optional; keep it aligned so behavior is predictable.
         os.environ["UNITY_MEMORY_IMPL"] = impl
 
+        # Config manager for per-company actor configuration.
+        os.environ["UNITY_CONFIG_IMPL"] = impl
+
         # If the mock computer backend is used, ensure a safe default screenshot exists.
         # (No-op for real mode.)
         os.environ.setdefault(

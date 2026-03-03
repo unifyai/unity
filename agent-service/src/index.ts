@@ -13,11 +13,51 @@ import os from 'os';
 import path from 'path';
 import fs from 'fs';
 import { randomUUID } from 'crypto';
-import { spawn } from 'child_process';
+import { spawn, execSync } from 'child_process';
 import multer from 'multer';
 import { jsonSchemaToZod } from './jsonSchemaToZod';
 
 const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+
+// --- Debug logging helpers ---
+const MAGNITUDE_DEBUG = process.env.MAGNITUDE_DEBUG === 'true';
+const MAGNITUDE_LOG_DIR = process.env.MAGNITUDE_LOG_DIR || '';
+
+function makeActId(task: string): string {
+  const ts = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+  const slug = task.slice(0, 40).replace(/[^a-zA-Z0-9]+/g, '_').replace(/_+$/, '');
+  return `${ts}_${slug}`;
+}
+
+function debugSaveImage(actId: string, label: string, base64Data: string): void {
+  if (!MAGNITUDE_DEBUG || !MAGNITUDE_LOG_DIR) return;
+  try {
+    const imgPath = path.join(MAGNITUDE_LOG_DIR, 'acts', actId, `${label}.png`);
+    fs.mkdirSync(path.dirname(imgPath), { recursive: true });
+    fs.writeFileSync(imgPath, Buffer.from(base64Data, 'base64'));
+  } catch (err) {
+    console.warn(`[debug] Failed to save image ${label}: ${err}`);
+  }
+}
+
+function debugSaveTrace(actId: string, trace: Record<string, any>): void {
+  if (!MAGNITUDE_DEBUG || !MAGNITUDE_LOG_DIR) return;
+  try {
+    const tracePath = path.join(MAGNITUDE_LOG_DIR, 'acts', actId, 'act_trace.json');
+    fs.mkdirSync(path.dirname(tracePath), { recursive: true });
+    fs.writeFileSync(tracePath, JSON.stringify(trace, null, 2));
+  } catch (err) {
+    console.warn(`[debug] Failed to save trace: ${err}`);
+  }
+}
+
+function debugLog(line: string): void {
+  if (!MAGNITUDE_DEBUG || !MAGNITUDE_LOG_DIR) return;
+  try {
+    fs.mkdirSync(MAGNITUDE_LOG_DIR, { recursive: true });
+    fs.appendFileSync(path.join(MAGNITUDE_LOG_DIR, 'magnitude.log'), line + '\n');
+  } catch (_) { /* best-effort */ }
+}
 
 // --- File System and Command Execution Utilities ---
 //
@@ -145,155 +185,6 @@ function executeCommand(command: string, cwd: string, timeout: number, shellMode
   });
 }
 
-// Execute command in interactive user session (for COM automation like Excel)
-async function executeCommandInUserSession(
-  command: string,
-  cwd: string,
-  timeout: number,
-  execId: string
-): Promise<ExecResult> {
-  const startTime = Date.now();
-  const taskName = `unity_exec_${execId}`;
-  const scriptFile = path.join(LOCAL_ROOT, `_script_${execId}.ps1`);
-  const resultFile = path.join(LOCAL_ROOT, `_result_${execId}.json`);
-
-  // Escape single quotes for PowerShell
-  const escapedCwd = cwd.replace(/\\/g, '\\\\').replace(/'/g, "''");
-  const escapedCommand = command.replace(/'/g, "''");
-  const escapedResultFile = resultFile.replace(/\\/g, '\\\\');
-
-  // PowerShell script that executes command and saves results to JSON
-  const scriptContent = `
-$ErrorActionPreference = 'Continue'
-$startTime = Get-Date
-$stdout = ''
-$stderr = ''
-$exitCode = 0
-
-try {
-    Set-Location -Path '${escapedCwd}'
-    $output = Invoke-Expression '${escapedCommand}' 2>&1
-    $stdout = ($output | Where-Object { $_ -isnot [System.Management.Automation.ErrorRecord] }) -join "\`n"
-    $stderr = ($output | Where-Object { $_ -is [System.Management.Automation.ErrorRecord] }) -join "\`n"
-} catch {
-    $stderr = $_.Exception.Message
-    $exitCode = 1
-}
-
-$duration = ((Get-Date) - $startTime).TotalMilliseconds
-
-$resultJson = @{
-    exitCode = $exitCode
-    stdout = $stdout
-    stderr = $stderr
-    duration = [int]$duration
-} | ConvertTo-Json
-
-# Write without BOM (Out-File adds BOM which breaks JSON.parse in Node.js)
-[System.IO.File]::WriteAllText('${escapedResultFile}', $resultJson, [System.Text.UTF8Encoding]::new($false))
-`;
-
-  await writeFileWithEncoding(scriptFile, scriptContent, 'text');
-
-  const escapedScriptFile = scriptFile.replace(/\\/g, '\\\\');
-
-  // PowerShell script to create and run scheduled task in user session
-  const createTaskScript = `
-$taskName = '${taskName}'
-$scriptPath = '${escapedScriptFile}'
-
-# Get the currently logged-in user
-$loggedInUser = (Get-WmiObject -Class Win32_ComputerSystem).UserName
-
-if (-not $loggedInUser) {
-    Write-Error 'No user logged in'
-    exit 1
-}
-
-Write-Host "Running task as user: $loggedInUser"
-
-# Create scheduled task action (hidden window)
-$action = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File \`"$scriptPath\`""
-
-# Create principal for interactive user session
-$principal = New-ScheduledTaskPrincipal -UserId $loggedInUser -LogonType Interactive -RunLevel Highest
-
-# Register and run the task
-Unregister-ScheduledTask -TaskName $taskName -Confirm:$false -ErrorAction SilentlyContinue
-Register-ScheduledTask -TaskName $taskName -Action $action -Principal $principal -Force | Out-Null
-Start-ScheduledTask -TaskName $taskName
-
-# Wait for task to complete
-$maxWait = ${timeout}
-$waited = 0
-while ($waited -lt $maxWait) {
-    Start-Sleep -Milliseconds 500
-    $waited += 500
-    $task = Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue
-    if ($task.State -eq 'Ready') {
-        break
-    }
-}
-
-# Cleanup task
-Unregister-ScheduledTask -TaskName $taskName -Confirm:$false -ErrorAction SilentlyContinue
-`;
-
-  return new Promise((resolve) => {
-    const proc = spawn(createTaskScript, [], {
-      shell: 'powershell.exe',
-      cwd: LOCAL_ROOT,
-      timeout,
-    });
-
-    let createStdout = '';
-    let createStderr = '';
-
-    proc.stdout.on('data', (data) => {
-      createStdout += data.toString();
-    });
-
-    proc.stderr.on('data', (data) => {
-      createStderr += data.toString();
-    });
-
-    proc.on('close', async () => {
-      let result: ExecResult = {
-        exitCode: 1,
-        stdout: createStdout,
-        stderr: createStderr || 'Task execution failed',
-        duration: Date.now() - startTime,
-      };
-
-      // Wait a moment for result file to be written
-      await new Promise(r => setTimeout(r, 1000));
-
-      try {
-        const resultJson = await fs.promises.readFile(resultFile, 'utf-8');
-        const parsed = JSON.parse(resultJson);
-        result = {
-          exitCode: parsed.exitCode ?? 0,
-          stdout: parsed.stdout ?? '',
-          stderr: parsed.stderr ?? '',
-          duration: parsed.duration ?? (Date.now() - startTime),
-        };
-      } catch (e) {
-        result.stderr += `\nFailed to read result file: ${e}`;
-      }
-
-      // Cleanup temp files
-      try {
-        await fs.promises.unlink(scriptFile);
-      } catch (_e) { /* ignore */ }
-      try {
-        await fs.promises.unlink(resultFile);
-      } catch (_e) { /* ignore */ }
-
-      resolve(result);
-    });
-  });
-}
-
 function getDefaultBrowserPaths() {
   const downloadsPath = path.join(LOCAL_ROOT, 'Downloads');
   const tracesDir = path.join(LOCAL_ROOT, 'Traces');
@@ -305,6 +196,21 @@ const defaultBrowserPaths = getDefaultBrowserPaths();
 const app = express();
 const wsInstance = expressWs(app);
 app.use(express.json({ limit: '100mb' }));
+
+const ALLOWED_ORIGINS = (process.env.CORS_ALLOWED_ORIGINS || '').split(',').filter(Boolean);
+app.use((req, res, next) => {
+  const origin = req.headers.origin;
+  if (origin && ALLOWED_ORIGINS.includes(origin)) {
+    res.setHeader('Access-Control-Allow-Origin', origin);
+    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', 'Authorization, Content-Type');
+    res.setHeader('Access-Control-Allow-Credentials', 'true');
+  }
+  if (req.method === 'OPTIONS') {
+    return res.sendStatus(204);
+  }
+  next();
+});
 
 // --- Authorization (Bearer) middleware ---
 function verifyApiKeyWithUnify(apiKey: string): Promise<boolean> {
@@ -403,6 +309,7 @@ setInterval(() => {
       console.log(`Cleaning up inactive session: ${sessionId}`);
       session.agent.stop().catch((err: unknown) => console.error(`Error stopping session ${sessionId}:`, err));
       activeSessions.delete(sessionId);
+      broadcastSessionEvent(sessionId, 'timeout');
     }
   }
 }, 5 * 60 * 1000); // Check every 5 minutes
@@ -418,6 +325,10 @@ function broadcastLog(message: string) {
       client.send(message);
     }
   });
+}
+
+function broadcastSessionEvent(sessionId: string, reason: string) {
+  broadcastLog(JSON.stringify({ __type: 'session:closed', sessionId, reason }));
 }
 
 // Monkey-patch console methods to capture and broadcast logs
@@ -612,7 +523,6 @@ const startBrowserOnVm = async (): Promise<BrowserAgent> => {
           "--disable-blink-features=AutomationControlled",
           "--disable-features=IsolateOrigins,site-per-process",
           '--auto-select-desktop-capture-source="Entire screen"',
-          "--start-minimized",
         ],
         downloadsPath: defaultBrowserPaths.downloadsPath || undefined,
         tracesDir: defaultBrowserPaths.tracesDir || undefined,
@@ -641,7 +551,7 @@ const startBrowserOnVm = async (): Promise<BrowserAgent> => {
 
 // --- API Endpoints ---
 app.post('/start', async (req: Request, res: Response) => {
-  const { headless, mode } = req.body;
+  const { headless, mode, label } = req.body;
   if (!mode || !['desktop', 'web', 'web-vm'].includes(mode)) {
     return res.status(400).json({
       error: 'bad_request',
@@ -660,11 +570,14 @@ app.post('/start', async (req: Request, res: Response) => {
           console.error(`Error stopping old desktop session: ${err}`)
         );
         activeSessions.delete(existingId);
+        broadcastSessionEvent(existingId, 'replaced');
       }
     }
   }
 
   const sessionId = randomUUID();
+  const t0 = Date.now();
+  console.log(`[start] BEGIN mode=${mode} sessionId=${sessionId}`);
   try {
     let agent: BrowserAgent;
     if (mode === "desktop") {
@@ -673,6 +586,31 @@ app.post('/start', async (req: Request, res: Response) => {
       agent = await startBrowserOnVm();
     } else {
       agent = await startBrowser(headless ?? false);
+    }
+    console.log(`[start] agent_created=${Date.now() - t0}ms mode=${mode}`);
+
+    if (label && mode === 'web-vm') {
+      try {
+        await agent.context.addInitScript(`
+          (function() {
+            function _injectBadge() {
+              if (document.getElementById('__mag_session_badge')) return;
+              var b = document.createElement('div');
+              b.id = '__mag_session_badge';
+              b.textContent = ${JSON.stringify(String(label))};
+              b.style.cssText = 'position:fixed;top:4px;right:4px;z-index:2147483647;'
+                + 'background:rgba(30,30,30,0.85);color:#fff;padding:2px 8px;'
+                + 'font:bold 12px/16px system-ui,sans-serif;border-radius:4px;'
+                + 'pointer-events:none;user-select:none;';
+              (document.body || document.documentElement).appendChild(b);
+            }
+            if (document.body) _injectBadge();
+            else document.addEventListener('DOMContentLoaded', _injectBadge);
+          })();
+        `);
+      } catch (badgeErr) {
+        console.warn(`[start] Badge injection failed: ${badgeErr}`);
+      }
     }
 
     activeSessions.set(sessionId, {
@@ -683,8 +621,10 @@ app.post('/start', async (req: Request, res: Response) => {
       actHistory: [],
     });
 
+    console.log(`[start] DONE mode=${mode} sessionId=${sessionId} total=${Date.now() - t0}ms active_sessions=${activeSessions.size}`);
     res.json({ status: 'started', sessionId });
   } catch (err) {
+    console.error(`[start] ERROR mode=${mode} after ${Date.now() - t0}ms:`, err);
     handleAgentError(err, res);
   }
 });
@@ -702,10 +642,16 @@ app.post('/nav', isAgentReady, async (req: Request, res: Response) => {
 });
 
 app.post('/act', isAgentReady, async (req: Request, res: Response) => {
-  const { task, sessionId, override_cache } = req.body;
+  const { task, sessionId, lineage, verify } = req.body;
   if (!task) return res.status(400).json({ error: 'bad_request', message: 'Task description is required.' });
   try {
     const session = activeSessions.get(sessionId)!;
+    const agent = session.agent;
+    const actId = makeActId(task);
+
+    const lineageLabel = Array.isArray(lineage) && lineage.length > 0
+      ? `[${lineage.join('->')}->desktop.act] `
+      : '[desktop.act] ';
 
     const memory = new AgentMemory({ promptCaching: true });
 
@@ -723,14 +669,133 @@ app.post('/act', isAgentReady, async (req: Request, res: Response) => {
           injectedCount++;
         }
       }
-      console.log(`[memory-carryover] Injecting history from ${session.actHistory.length} previous acts (${injectedCount} observations total)`);
+      console.log(`${lineageLabel}📋 Injecting history from ${session.actHistory.length} previous acts (${injectedCount} observations)`);
     } else {
-      console.log(`[memory-carryover] No prior act history in session`);
+      console.log(`${lineageLabel}📋 No prior act history in session`);
     }
 
     const boundary = memory.observationCount;
 
-    await session.agent.act(task, { memory, override_cache: override_cache === true } as any);
+    const actT0 = Date.now();
+    console.log(`${lineageLabel}🧠 Planning actions for: "${task}"${verify ? ' (verify=true)' : ''}`);
+
+    const actActions = verify
+      ? agent.actions
+      : agent.actions.filter(a => !a.name.startsWith('task:'));
+    const MAX_VERIFY_ITERATIONS = 5;
+    const actionTraces: any[] = [];
+    const iterationReasonings: string[] = [];
+    const iterationPlannedActions: any[][] = [];
+    let totalActionsExecuted = 0;
+
+    for (let iteration = 0; iteration < (verify ? MAX_VERIFY_ITERATIONS : 1); iteration++) {
+      if (iteration > 0) {
+        console.log(`${lineageLabel}🔄 Verify pass ${iteration + 1}: re-observing and re-planning...`);
+      }
+
+      await agent.recordConnectorObservations(memory);
+
+      if (MAGNITUDE_DEBUG) {
+        try {
+          const harness = agent.require(BrowserConnector).getHarness();
+          const planImg = await harness.screenshot();
+          debugSaveImage(actId, iteration === 0 ? 'planning_screenshot' : `verify_${iteration}_screenshot`, await planImg.toBase64());
+
+          if (session.mode === 'desktop') {
+            debugSaveImage(actId, iteration === 0 ? 'native_screenshot' : `verify_${iteration}_native`, nativeScreenshot());
+          }
+        } catch (debugErr) {
+          console.warn(`[debug] Pre-plan screenshot capture failed: ${debugErr}`);
+        }
+      }
+
+      const context = await agent.buildContext(memory);
+      const { reasoning, actions } = await agent.models.partialAct(context, task, [], actActions);
+
+      const planMs = Date.now() - actT0;
+      console.log(`${lineageLabel}💭 Reasoning [${planMs}ms]: ${reasoning}`);
+      console.log(`${lineageLabel}📋 Planned ${actions.length} action(s): ${actions.map(a => a.variant).join(', ')}`);
+
+      iterationReasonings.push(reasoning);
+      iterationPlannedActions.push(actions);
+      memory.recordThought(reasoning);
+
+      for (let i = 0; i < actions.length; i++) {
+        const action = actions[i];
+        const actionDef = agent.identifyAction(action);
+        const rendered = actionDef.render(action);
+        const detail = JSON.stringify(action);
+        console.log(`${lineageLabel}🛠️ Action ${totalActionsExecuted + i + 1}: ${rendered} ${detail}`);
+
+        const actionT0 = Date.now();
+        let actionError: string | undefined;
+        try {
+          await agent.exec(action, memory);
+        } catch (err) {
+          actionError = err instanceof Error ? err.message : String(err);
+          throw err;
+        } finally {
+          const actionMs = Date.now() - actionT0;
+          console.log(`${lineageLabel}✅ Completed ${action.variant} [${actionMs}ms]`);
+
+          const actionTrace: any = {
+            index: totalActionsExecuted + i,
+            iteration,
+            variant: action.variant,
+            params: action,
+            rendered,
+            executionMs: actionMs,
+          };
+          if (actionError) actionTrace.error = actionError;
+
+          if (MAGNITUDE_DEBUG) {
+            try {
+              const harness = agent.require(BrowserConnector).getHarness();
+              const postImg = await harness.screenshot();
+              const coordLabel = ('x' in action && 'y' in action)
+                ? `_${action.x}_${action.y}`
+                : ('from' in action && typeof action.from === 'object')
+                  ? `_${action.from.x}_${action.from.y}`
+                  : '';
+              const padIdx = String(totalActionsExecuted + i + 1).padStart(3, '0');
+              debugSaveImage(
+                actId,
+                `post_action/${padIdx}_${action.variant.replace(/:/g, '_')}${coordLabel}`,
+                await postImg.toBase64(),
+              );
+            } catch (debugErr) {
+              console.warn(`[debug] Post-action screenshot failed: ${debugErr}`);
+            }
+          }
+
+          actionTraces.push(actionTrace);
+        }
+      }
+
+      totalActionsExecuted += actions.length;
+
+      const taskDone = actions.some(a => a.variant === 'task:done');
+      if (!verify || taskDone) break;
+    }
+
+    const totalMs = Date.now() - actT0;
+    console.log(`${lineageLabel}🏁 ${totalActionsExecuted} action(s) executed across ${iterationReasonings.length} iteration(s) [${totalMs}ms]`);
+
+    debugSaveTrace(actId, {
+      actId,
+      task,
+      verify: !!verify,
+      lineage: lineage ?? [],
+      sessionMode: session.mode,
+      sessionId,
+      reasoning: iterationReasonings.join('\n---\n'),
+      plannedActions: iterationPlannedActions,
+      actionTraces,
+      iterations: iterationReasonings.length,
+      totalMs,
+      historyDepth: session.actHistory.length,
+      observationCountBefore: boundary,
+    });
 
     const newObservations = memory.getObservationsSlice(boundary);
     const filtered = newObservations.filter(obs => {
@@ -745,7 +810,25 @@ app.post('/act', isAgentReady, async (req: Request, res: Response) => {
 
     console.log(`[memory-carryover] Stored ${filtered.length} filtered observations for task "${task}" (history: ${session.actHistory.length}/${ACT_HISTORY_DEPTH})`);
 
-    res.json({ status: 'success', message: `Task "${task}" completed.` });
+    const thoughts = filtered
+      .filter(obs => obs.source.startsWith('thought'))
+      .map(obs => String(obs.content))
+      .join('\n');
+
+    let screenshot = '';
+    try {
+      if (session.mode === 'desktop') {
+        screenshot = nativeScreenshot();
+      } else {
+        const harness = session.agent.require(BrowserConnector).getHarness();
+        const image = await harness.screenshot();
+        screenshot = await image.toBase64();
+      }
+    } catch (screenshotErr) {
+      console.warn(`[act] Post-act screenshot failed: ${screenshotErr}`);
+    }
+
+    res.json({ status: 'success', summary: thoughts, screenshot });
   } catch (err) {
     handleAgentError(err, res);
   }
@@ -808,15 +891,79 @@ app.post('/query', isAgentReady, async (req: Request, res: Response) => {
   }
 });
 
+// --- Native desktop screenshot via OS commands ---
+
+function nativeScreenshotCommand(dest: string): string {
+  switch (process.platform) {
+    case 'win32':
+      // PowerShell: capture full primary screen using System.Drawing
+      return [
+        'powershell.exe -NoProfile -Command "',
+        'Add-Type -AssemblyName System.Windows.Forms;',
+        'Add-Type -AssemblyName System.Drawing;',
+        '$bounds = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds;',
+        '$bmp = New-Object System.Drawing.Bitmap($bounds.Width, $bounds.Height);',
+        '$g = [System.Drawing.Graphics]::FromImage($bmp);',
+        '$g.CopyFromScreen($bounds.Location, [System.Drawing.Point]::Empty, $bounds.Size);',
+        '$g.Dispose();',
+        `$bmp.Save('${dest.replace(/'/g, "''")}');`,
+        '$bmp.Dispose();"',
+      ].join(' ');
+    case 'darwin':
+      return `screencapture -x "${dest}"`;
+    default:
+      // Linux / other Unix — xfce4-screenshooter ships with xfce4-goodies
+      // (installed in the desktop Docker image). Falls back to scrot, then
+      // ImageMagick's import for non-XFCE environments.
+      return `xfce4-screenshooter -f -s "${dest}" 2>/dev/null || scrot "${dest}" 2>/dev/null || import -window root "${dest}"`;
+  }
+}
+
+function nativeScreenshot(): string {
+  const dest = path.join(os.tmpdir(), `unity-screenshot-${randomUUID()}.png`);
+  try {
+    execSync(nativeScreenshotCommand(dest), { timeout: 10_000 });
+    const buf = fs.readFileSync(dest);
+    return buf.toString('base64');
+  } finally {
+    try { fs.unlinkSync(dest); } catch (_) { /* already cleaned or never created */ }
+  }
+}
+
+let _screenshotInFlight = 0;
+
 app.post('/screenshot', isAgentReady, async (req: Request, res: Response) => {
   const { sessionId } = req.body;
+  _screenshotInFlight++;
+  const t0 = Date.now();
+  const session = activeSessions.get(sessionId)!;
+  console.log(`[screenshot] START session=${sessionId} mode=${session.mode} in_flight=${_screenshotInFlight}`);
   try {
-    const session = activeSessions.get(sessionId)!;
-    const harness = session.agent.require(BrowserConnector).getHarness();
-    const image = await harness.screenshot();
-    const base64Image = await image.toBase64();
+    let base64Image: string;
+
+    if (session.mode === 'desktop') {
+      // Native OS-level screenshot (works on Linux, macOS, Windows)
+      base64Image = nativeScreenshot();
+      console.log(`[screenshot] native_capture=${Date.now() - t0}ms b64_len=${base64Image.length}`);
+    } else {
+      // Playwright harness screenshot for web / web-vm modes
+      const harness = session.agent.require(BrowserConnector).getHarness();
+      const tHarness = Date.now();
+      console.log(`[screenshot] harness_acquired=${tHarness - t0}ms`);
+      const image = await harness.screenshot();
+      const tCapture = Date.now();
+      console.log(`[screenshot] playwright_capture=${tCapture - tHarness}ms`);
+      base64Image = await image.toBase64();
+      const tEncode = Date.now();
+      console.log(`[screenshot] base64_encode=${tEncode - tCapture}ms b64_len=${base64Image.length} total=${tEncode - t0}ms`);
+    }
+
     res.json({ screenshot: base64Image });
+    _screenshotInFlight--;
+    console.log(`[screenshot] DONE total=${Date.now() - t0}ms in_flight=${_screenshotInFlight}`);
   } catch (err) {
+    _screenshotInFlight--;
+    console.error(`[screenshot] ERROR after ${Date.now() - t0}ms in_flight=${_screenshotInFlight}:`, err);
     handleAgentError(err, res, 'screenshot_failed');
   }
 });
@@ -983,6 +1130,7 @@ app.post('/stop', async (req: Request, res: Response) => {
   try {
     await session.agent.stop();
     activeSessions.delete(sessionId);
+    broadcastSessionEvent(sessionId, 'stop');
     res.json({ status: 'stopped' });
     console.log(`BrowserAgent stopped for session ${sessionId}.`);
   } catch (err) {
@@ -1024,9 +1172,8 @@ app.post('/resume', isAgentReady, async (req: Request, res: Response) => {
 });
 
 // --- /exec endpoint: Execute shell commands (use /files first to upload files) ---
-// Pass user_session=true for commands that need interactive session (Excel, COM automation)
-app.post('/exec', async (req: Request, res: Response) => {
-  const { command, cwd, timeout, shell_mode, user_session } = req.body;
+app.post('/exec', auth, async (req: Request, res: Response) => {
+  const { command, cwd, timeout, shell_mode } = req.body;
   const execId = randomUUID().slice(0, 8);
 
   if (!command || typeof command !== 'string') {
@@ -1041,16 +1188,8 @@ app.post('/exec', async (req: Request, res: Response) => {
     const resolvedWorkDir = path.resolve(workDir);
     await ensureDir(resolvedWorkDir);
 
-    let result: ExecResult;
-
-    // Use user_session=true for commands that need interactive session (Excel, COM, etc.)
-    if (user_session === true && process.platform === 'win32') {
-      console.log(`[exec] Running in USER SESSION: ${command} (cwd: ${resolvedWorkDir}, execId: ${execId})`);
-      result = await executeCommandInUserSession(command, resolvedWorkDir, execTimeout, execId);
-    } else {
-      console.log(`[exec] Running command: ${command} (cwd: ${resolvedWorkDir}, timeout: ${execTimeout}ms, shell: ${shellMode}, execId: ${execId})`);
-      result = await executeCommand(command, resolvedWorkDir, execTimeout, shellMode);
-    }
+    console.log(`[exec] Running command: ${command} (cwd: ${resolvedWorkDir}, timeout: ${execTimeout}ms, shell: ${shellMode}, execId: ${execId})`);
+    const result = await executeCommand(command, resolvedWorkDir, execTimeout, shellMode);
 
     res.json({
       status: result.exitCode === 0 ? 'success' : 'error',
@@ -1060,7 +1199,6 @@ app.post('/exec', async (req: Request, res: Response) => {
       duration: result.duration,
       cwd: resolvedWorkDir,
       execId,
-      userSession: user_session === true,
     });
   } catch (err) {
     const errorMessage = err instanceof Error ? err.message : String(err);

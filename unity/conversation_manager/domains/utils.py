@@ -1,6 +1,8 @@
 import asyncio
 import traceback
 
+from unity.logger import LOGGER
+
 
 def log_task_exc(task: asyncio.Task) -> None:
     try:
@@ -12,9 +14,12 @@ def log_task_exc(task: asyncio.Task) -> None:
 
 
 class Debouncer:
-    def __init__(self):
+    def __init__(self, name: str | None = None):
         self.running_task: asyncio.Task = None
         self.pending_task: asyncio.Task = None
+        self._name = name
+        self._pending_label: str = ""
+        self.was_queued: bool = False
 
     async def submit(
         self,
@@ -23,15 +28,32 @@ class Debouncer:
         kwargs: dict = None,
         delay=0,
         cancel_running=False,
+        label: str = "",
     ):
-        # cancel pending task (debounce) and, optionally, cancel running task as well
         args, kwargs = args or (), kwargs or {}
+
+        had_pending = self.pending_task is not None and not self.pending_task.done()
+        has_running = self.running_task is not None and not self.running_task.done()
+        old_label = self._pending_label
+
         await self._cancel_tasks(running=cancel_running)
 
-        # schedule a new task to run
+        if self._name and not cancel_running:
+            new_type = f"{label} " if label else ""
+            if had_pending and has_running:
+                old_type = f" (replacing {old_label})" if old_label else ""
+                LOGGER.info(
+                    f"🚦 [{self._name}] {new_type}request queued{old_type}",
+                )
+            elif has_running:
+                LOGGER.info(
+                    f"🚦 [{self._name}] {new_type}request queued",
+                )
+
         async def wait_for_running_task():
             if delay > 0:
                 await asyncio.sleep(delay)
+            queued = self.running_task is not None and not self.running_task.done()
             try:
                 # Wait for any currently running task to complete.
                 # Use asyncio.shield() to protect the running task from being
@@ -53,12 +75,14 @@ class Debouncer:
                 else:
                     # We (the pending task) were cancelled, re-raise to stop
                     raise
-            # Create a running task (only if we weren't cancelled)
+            self.was_queued = queued
             self.running_task = asyncio.create_task(async_fn(*args, **kwargs))
             self.running_task.add_done_callback(log_task_exc)
             self.pending_task = None
+            self._pending_label = ""
 
         self.pending_task = asyncio.create_task(wait_for_running_task())
+        self._pending_label = label
 
     async def _cancel_tasks(self, pending=True, running=False):
         if running:

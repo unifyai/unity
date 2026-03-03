@@ -35,26 +35,26 @@ An `emptyDir` volume:
 
 ## Environment Variables
 
-Two env vars redirect large downloads to `/tmp` (and therefore onto the `emptyDir` volume):
+Two env vars are set in the job spec (`communication/infra/helpers.py`):
 
 | Env Var | Value | What It Redirects |
 |---------|-------|-------------------|
-| `HF_HOME` | `/tmp/huggingface` | HuggingFace Hub model cache (Docling's SmolVLM, any future HF models) |
+| `HF_HOME` | `/tmp/huggingface` | HuggingFace Hub model cache (turn detector, Docling SmolVLM, any future HF models) |
 | `XDG_CACHE_HOME` | `/tmp/.cache` | Catch-all for XDG-compliant tools that write to `~/.cache/` (pip, various CLI tools, etc.) |
 
-These are set in the job's env vars in `communication/infra/helpers.py`.
+Both point to paths under `/tmp`, which is backed by the `emptyDir` volume (not counted against ephemeral storage).
 
 ## What Goes Where
 
-| Component | Default Path | Redirected To | Mechanism |
-|-----------|-------------|---------------|-----------|
-| Docling / HuggingFace models | `~/.cache/huggingface/` | `/tmp/huggingface/` | `HF_HOME` env var |
-| PackageOverlay (actor pip installs) | `/tmp/unity_act_pkgs/` | `/tmp/unity_act_pkgs/` | Already uses `/tmp` |
-| `tempfile.mkdtemp()` calls | `/tmp/` | `/tmp/` | Already uses `/tmp` |
-| XDG-compliant caches | `~/.cache/` | `/tmp/.cache/` | `XDG_CACHE_HOME` env var |
-| Playwright browsers | N/A (baked into image) | N/A | Installed at Docker build time |
-| Turn detector models | N/A (baked into image) | N/A | Downloaded at Docker build time |
-| Python packages | N/A (baked into image) | N/A | Installed at Docker build time |
+| Component | Path | Storage Type | Mechanism |
+|-----------|------|-------------|-----------|
+| Turn detector models | `/tmp/huggingface/` | `emptyDir` volume (copied from image at startup) | `HF_HOME` env var + entrypoint copy |
+| Docling / SmolVLM (~5GB) | `/tmp/huggingface/` | `emptyDir` volume (runtime download) | `HF_HOME` env var |
+| PackageOverlay (actor pip installs) | `/tmp/unity_act_pkgs/` | `emptyDir` volume | Already uses `/tmp` |
+| `tempfile.mkdtemp()` calls | `/tmp/` | `emptyDir` volume | Already uses `/tmp` |
+| XDG-compliant caches | `/tmp/.cache/` | `emptyDir` volume | `XDG_CACHE_HOME` env var |
+| Playwright browsers | Image layer | Image layer (baked in) | Installed at Docker build time |
+| Python packages | Image layer | Image layer (baked in) | Installed at Docker build time |
 
 ## What's Baked Into the Docker Image (Not a Concern)
 
@@ -65,6 +65,20 @@ The Dockerfile installs these at build time, so they live in the image layers an
 - Turn detector models (`call.py download-files`)
 - Node.js packages (`npm ci`)
 - PyTorch CPU
+
+### Build-Time Models and the `emptyDir` at `/tmp`
+
+The Dockerfile downloads turn detector models to the default HuggingFace cache (`/root/.cache/huggingface/`). At runtime, `HF_HOME=/tmp/huggingface` redirects all HuggingFace lookups to the `emptyDir` volume — but that volume starts empty. An `emptyDir` mount **replaces** everything the image had at `/tmp`, so we can't download directly to `/tmp` during the build.
+
+To bridge this, `entrypoint.sh` copies the baked-in models into the `emptyDir` on container startup:
+
+```bash
+if [ -d /root/.cache/huggingface ] && [ ! -d /tmp/huggingface ]; then
+    cp -r /root/.cache/huggingface /tmp/huggingface
+fi
+```
+
+This is a fast one-time copy (turn detector models are small). After that, all HuggingFace operations — both lookups of pre-downloaded models and lazy runtime downloads like Docling's SmolVLM — use `/tmp/huggingface/` on the `emptyDir` volume, keeping everything off ephemeral storage.
 
 ## Why Not Just Increase `ephemeral-storage`?
 

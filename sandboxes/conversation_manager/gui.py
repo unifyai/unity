@@ -164,7 +164,7 @@ if _TEXTUAL_AVAILABLE:
                         )
                 with Horizontal(id="cmd_row"):
                     yield Input(
-                        placeholder="Commands: msg, sms, email, call, say, end_call, us",
+                        placeholder="Commands: msg, sms, email, meet, say, end_meet, us",
                         id="command_input",
                     )
                     yield Button("Send", id="submit_command")
@@ -247,7 +247,7 @@ if _TEXTUAL_AVAILABLE:
 
     class CallScreen(_BaseScreen):
         def compose_left(self) -> ComposeResult:
-            yield Label("Simulate phone call", id="title")
+            yield Label("Simulate voice call (Unify Meet)", id="title")
             yield Horizontal(
                 Button("Start Call", id="call_start"),
                 Button("End Call", id="call_end"),
@@ -259,9 +259,9 @@ if _TEXTUAL_AVAILABLE:
         async def on_button_pressed(self, event: Button.Pressed) -> None:
             await super().on_button_pressed(event)
             if event.button.id == "call_start":
-                await self._route_raw("call")
+                await self._route_raw("meet")
             elif event.button.id == "call_end":
-                await self._route_raw("end_call")
+                await self._route_raw("end_meet")
             elif event.button.id == "call_say":
                 utt = self.query_one("#call_utt", Input).value.strip()
                 await self._route_raw(f"say {utt}")
@@ -285,7 +285,6 @@ if _TEXTUAL_AVAILABLE:
             #cmd_row { height: auto; }
             #command_input { width: 1fr; }
             #logs { height: 18; }
-            #trace_panel { height: 14; }
             """
 
             async def _route_raw(self, raw: str) -> None:
@@ -303,11 +302,12 @@ if _TEXTUAL_AVAILABLE:
                             yield Label("Event Controls", id="title")
                             yield Button("Compose SMS", id="btn_sms")
                             yield Button("Compose Email", id="btn_email")
-                            yield Button("Start Call", id="btn_call_start")
-                            yield Button("End Call", id="btn_call_end")
-                            yield Button("Share Screen", id="btn_screen_share_start")
-                            yield Button("Stop Sharing", id="btn_screen_share_stop")
-                            yield Button("Toggle Trace Panel", id="btn_toggle_trace")
+                            yield Button("Start Call", id="btn_meet_start")
+                            yield Button("End Call", id="btn_meet_end")
+                            yield Button(
+                                "Start Screen Share",
+                                id="btn_screen_share_toggle",
+                            )
                             yield Button("Quit", id="btn_quit")
                         with Vertical(id="right_tabs"):
                             with TabbedContent(id="tabs"):
@@ -356,27 +356,15 @@ if _TEXTUAL_AVAILABLE:
                         )
                         yield Collapsible(
                             _make_rich_log(
-                                id="logs_manager",
+                                id="trace_panel",
                                 wrap=True,
                                 highlight=True,
                                 max_lines=1200,
                             ),
-                            title="Manager Logs",
-                            id="coll_manager",
+                            title="Trace (CodeAct)",
+                            id="coll_trace",
                             collapsed=True,
                         )
-                    with Collapsible(
-                        _make_rich_log(
-                            id="trace_panel",
-                            wrap=True,
-                            highlight=True,
-                            max_lines=1200,
-                        ),
-                        title="Trace (CodeAct)",
-                        id="coll_trace",
-                        collapsed=True,
-                    ):
-                        pass
                 yield Footer()
 
             def on_mount(self) -> None:
@@ -527,7 +515,6 @@ if _TEXTUAL_AVAILABLE:
                         "coll_trace",
                         "coll_cm",
                         "coll_actor",
-                        "coll_manager",
                     }:
                         self._refresh_logs()
                 except Exception:
@@ -677,29 +664,19 @@ if _TEXTUAL_AVAILABLE:
                 try:
                     cm_log = self.query_one("#logs_cm", RichLog)
                     actor_log = self.query_one("#logs_actor", RichLog)
-                    mgr_log = self.query_one("#logs_manager", RichLog)
                 except Exception:
                     return
-                # Replace content (RichLog may not expose clear(); best-effort).
                 try:
                     cm_log.clear()  # type: ignore[attr-defined]
                     actor_log.clear()  # type: ignore[attr-defined]
-                    mgr_log.clear()  # type: ignore[attr-defined]
                 except Exception:
                     pass
 
-                # Check if there are multiple handles to decide whether to group
                 try:
                     actor_handles = lg.get_active_handles("actor")
                     group_actor = len(actor_handles) > 1
                 except Exception:
                     group_actor = False
-
-                try:
-                    mgr_handles = lg.get_active_handles("manager")
-                    group_mgr = len(mgr_handles) > 1
-                except Exception:
-                    group_mgr = False
 
                 try:
                     cm_log.write(lg.render_expanded("cm"))
@@ -709,9 +686,6 @@ if _TEXTUAL_AVAILABLE:
                             group_by_handle=group_actor,
                             max_message_length=0,
                         ),
-                    )
-                    mgr_log.write(
-                        lg.render_expanded("manager", group_by_handle=group_mgr),
                     )
                 except Exception:
                     pass
@@ -877,33 +851,39 @@ if _TEXTUAL_AVAILABLE:
                     except Exception:
                         pass
                     return
-                if event.button.id == "btn_call_start":
+                if event.button.id == "btn_meet_start":
                     try:
                         app.post_message(AppendLine("[ui] Start Call pressed"))  # type: ignore[attr-defined]
                     except Exception:
                         pass
-                    await app.route_command("call")  # type: ignore[attr-defined]
+                    await app.route_command("meet")  # type: ignore[attr-defined]
                     return
-                if event.button.id == "btn_call_end":
+                if event.button.id == "btn_meet_end":
                     try:
                         app.post_message(AppendLine("[ui] End Call pressed"))  # type: ignore[attr-defined]
                     except Exception:
                         pass
-                    await app.route_command("end_call")  # type: ignore[attr-defined]
+                    await app.route_command("end_meet")  # type: ignore[attr-defined]
                     return
-                if event.button.id == "btn_screen_share_start":
-                    try:
-                        app.post_message(AppendLine("[ui] Share Screen pressed"))  # type: ignore[attr-defined]
-                    except Exception:
-                        pass
-                    await app.route_command("assistant_screen_share_start")  # type: ignore[attr-defined]
-                    return
-                if event.button.id == "btn_screen_share_stop":
-                    try:
-                        app.post_message(AppendLine("[ui] Stop Sharing pressed"))  # type: ignore[attr-defined]
-                    except Exception:
-                        pass
-                    await app.route_command("assistant_screen_share_stop")  # type: ignore[attr-defined]
+                if event.button.id == "btn_screen_share_toggle":
+                    btn = self.query_one("#btn_screen_share_toggle", Button)
+                    sharing = getattr(self, "_screen_share_active", False)
+                    if not sharing:
+                        try:
+                            app.post_message(AppendLine("[ui] Start Screen Share pressed"))  # type: ignore[attr-defined]
+                        except Exception:
+                            pass
+                        await app.route_command("assistant_screen_share_start")  # type: ignore[attr-defined]
+                        self._screen_share_active = True
+                        btn.label = "Stop Screen Share"
+                    else:
+                        try:
+                            app.post_message(AppendLine("[ui] Stop Screen Share pressed"))  # type: ignore[attr-defined]
+                        except Exception:
+                            pass
+                        await app.route_command("assistant_screen_share_stop")  # type: ignore[attr-defined]
+                        self._screen_share_active = False
+                        btn.label = "Start Screen Share"
                     return
                 if event.button.id == "btn_mic":
                     # Toggle mic recording: first click starts, second click stops.
@@ -976,12 +956,6 @@ if _TEXTUAL_AVAILABLE:
 
                     asyncio.create_task(_finish(rec))
                     return
-                if event.button.id == "btn_toggle_trace":
-                    try:
-                        coll = self.query_one("#coll_trace", Collapsible)
-                        coll.collapsed = not coll.collapsed
-                    except Exception:
-                        pass
 
     class ModernizedMessagingApp(App):
         CSS = """
@@ -1602,10 +1576,10 @@ if _TEXTUAL_AVAILABLE:
                 elif name == "VoiceInterrupt":
                     msg = "VoiceInterrupt"
                 # Call guidance
-                elif name == "CallGuidance":
+                elif name == "FastBrainNotification":
                     content = str(payload.get("content") or "").strip()
                     if content:
-                        msg = f"CallGuidance: {content}"
+                        msg = f"FastBrainNotification: {content}"
                 # Other useful events
                 elif name == "UnknownContactCreated":
                     medium = str(payload.get("medium") or "").strip()
@@ -1684,7 +1658,7 @@ if _TEXTUAL_AVAILABLE:
             # Best-effort TTS in call mode: the user should hear assistant-side
             # outputs (guidance to the voice agent and assistant utterances).
             try:
-                if name in {"OutboundPhoneUtterance", "CallGuidance"}:
+                if name in {"OutboundPhoneUtterance", "FastBrainNotification"}:
                     content = str(payload.get("content") or "").strip()
                     if content:
                         self._maybe_tts(content)
@@ -1843,12 +1817,15 @@ if _TEXTUAL_AVAILABLE:
                     from sandboxes.conversation_manager.call_transcript import (
                         build_timeline,
                         format_timeline,
+                        parse_cm_log,
                         parse_voice_log,
                     )
 
                     voice_data = parse_voice_log(voice_log)
+                    cm_log = _voice_root / ".logs_conversation_sandbox.txt"
+                    cm_data = parse_cm_log(cm_log) if cm_log.exists() else None
                     if voice_data.utterances:
-                        timeline = build_timeline(voice_data)
+                        timeline = build_timeline(voice_data, cm_data)
                         transcript_path = json_path.with_name(
                             json_path.stem + "_transcript.txt",
                         )

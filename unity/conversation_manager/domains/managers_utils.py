@@ -72,7 +72,7 @@ _MESSAGE_PRODUCING_EVENTS = {
     "OutboundPhoneUtterance",
     "InboundUnifyMeetUtterance",
     "OutboundUnifyMeetUtterance",
-    "CallGuidance",
+    "FastBrainNotification",
     "PhoneCallReceived",
     "PhoneCallSent",
     "UnifyMeetReceived",
@@ -251,8 +251,8 @@ async def hydrate_global_thread(cm: "ConversationManager") -> None:
                     timestamp=ts,
                 )
 
-            # --- Call guidance ---
-            case "CallGuidance":
+            # --- Fast brain notification ---
+            case "FastBrainNotification":
                 entry = cm.contact_index.build_message(
                     contact_id=contact_id,
                     sender_name=sender_name,
@@ -685,10 +685,12 @@ async def log_message(
 
 async def update_session_contacts(
     cm: "ConversationManager",
-    assistant_name: str,
+    assistant_first_name: str,
+    assistant_surname: str,
     assistant_number: str,
     assistant_email: str,
-    user_name: str,
+    user_first_name: str,
+    user_surname: str,
     user_number: str,
     user_email: str,
 ) -> None:
@@ -709,12 +711,6 @@ async def update_session_contacts(
             f"{ICONS['managers_worker']} [ManagersWorker] Cannot update contacts: contact_manager is None",
         )
         return
-
-    def _get_name_parts(name: str) -> tuple[str, str]:
-        if " " in name:
-            parts = name.split(" ", 1)
-            return parts[0], parts[1]
-        return name, ""
 
     async def _update_contact(
         contact_id: int,
@@ -740,12 +736,10 @@ async def update_session_contacts(
                 f"{ICONS['managers_worker']} [ManagersWorker] Failed to update contact {contact_id}: {e}",
             )
 
-    # Always update assistant contact (contact_id=0)
-    assistant_first_name, assistant_last_name = _get_name_parts(assistant_name)
     await _update_contact(
         0,
         assistant_first_name,
-        assistant_last_name,
+        assistant_surname,
         assistant_number,
         assistant_email,
     )
@@ -758,18 +752,10 @@ async def update_session_contacts(
             f"{ICONS['managers_worker']} [ManagersWorker] Demo mode: skipping boss contact (contact_id=1), "
             "updating demoer contact (contact_id=2)",
         )
-        user_first_name, user_last_name = _get_name_parts(user_name)
-        await _update_contact(
-            2,
-            user_first_name,
-            user_last_name,
-            user_number,
-            user_email,
-        )
+        await _update_contact(2, user_first_name, user_surname, user_number, user_email)
         return
 
-    user_first_name, user_last_name = _get_name_parts(user_name)
-    await _update_contact(1, user_first_name, user_last_name, user_number, user_email)
+    await _update_contact(1, user_first_name, user_surname, user_number, user_email)
 
 
 # Queueing operations that need managers
@@ -787,27 +773,16 @@ async def queue_operation(async_func: callable, *args, **kwargs) -> None:
 
 async def wait_for_initialization(
     cm: "ConversationManager",
-    timeout: float = 30.0,
 ) -> None:
     """
     Wait for initialization to complete.
 
-    Args:
-        cm: The ConversationManager instance to wait for.
-        timeout: Maximum seconds to wait before raising an error. Default 30s.
-
-    Raises:
-        RuntimeError: If initialization does not complete within the timeout.
+    Polls cm.initialized with no timeout. Initialization failures are
+    surfaced by init_conv_manager itself (logged errors, pod inactivity
+    shutdown). A timeout here would silently kill the operations queue
+    processor on slow cold starts, causing queued work to be orphaned.
     """
-    import time
-
-    start = time.monotonic()
     while not cm.initialized:
-        if time.monotonic() - start > timeout:
-            raise RuntimeError(
-                f"ConversationManager initialization did not complete within {timeout}s. "
-                "Check for initialization errors above.",
-            )
         await asyncio.sleep(0.1)
 
 
@@ -869,34 +844,11 @@ def _init_managers(
     """
     start_time = perf_counter()
 
-    # 0. Initialize unity using SESSION_DETAILS (the canonical source of session config)
+    # 0. Initialize unity (idempotent — SESSION_DETAILS.assistant.agent_id is
+    #    already set by the startup handler, so unity.init() reads it for context).
     LOGGER.debug(f"{ICONS['managers_worker']} [ManagersWorker] Initializing unity...")
     local_start_time = perf_counter()
-    if not SESSION_DETAILS.assistant_record:
-        # When default_assistant is provided, unity.init() uses it directly
-        # and ignores the assistant_id parameter entirely
-        unity.init(
-            default_assistant={
-                "agent_id": SESSION_DETAILS.assistant.id,
-                "first_name": SESSION_DETAILS.assistant.name,
-                "age": SESSION_DETAILS.assistant.age,
-                "nationality": SESSION_DETAILS.assistant.nationality,
-                "timezone": SESSION_DETAILS.assistant.timezone or None,
-                "about": SESSION_DETAILS.assistant.about,
-                "phone": SESSION_DETAILS.assistant.number or None,
-                "email": SESSION_DETAILS.assistant.email or None,
-                "user_id": SESSION_DETAILS.user.id,
-                "user_phone": SESSION_DETAILS.user.number or None,
-                "created_at": prompt_now(as_string=False).isoformat(),
-                "updated_at": prompt_now(as_string=False).isoformat(),
-                "surname": "",
-                "weekly_limit": None,
-                "max_parallel": None,
-                "profile_photo": None,
-                "country": None,
-                "user_last_name": "",
-            },
-        )
+    unity.init()
     _unity_init_dur = perf_counter() - local_start_time
     LOGGER.info(
         f"{ICONS['managers_worker']} [ManagersWorker] Unity initialized in {_unity_init_dur:.2f} seconds",
@@ -975,16 +927,8 @@ def _init_managers(
         # Note: We don't add to active_conversations as the demoer isn't someone
         # the assistant would typically interact with (call/email)
         try:
-            demoer_first = (
-                SESSION_DETAILS.user.name.split(" ")[0]
-                if SESSION_DETAILS.user.name
-                else ""
-            )
-            demoer_last = (
-                " ".join(SESSION_DETAILS.user.name.split(" ")[1:])
-                if SESSION_DETAILS.user.name and " " in SESSION_DETAILS.user.name
-                else ""
-            )
+            demoer_first = SESSION_DETAILS.user.first_name
+            demoer_last = SESSION_DETAILS.user.surname
             # Use _create_contact since contact_id=2 doesn't exist yet
             cm.contact_manager._create_contact(
                 first_name=demoer_first,
@@ -1073,7 +1017,7 @@ def _init_managers(
         cm._conversation_manager_handle = (
             ManagerRegistry.get_conversation_manager_handle(
                 description="production deployment",
-                assistant_id=SESSION_DETAILS.assistant.id,
+                assistant_id=SESSION_DETAILS.assistant.agent_id,
                 contact_id="1",
             )
         )
@@ -1081,7 +1025,7 @@ def _init_managers(
         cm._conversation_manager_handle = (
             ManagerRegistry.get_conversation_manager_handle(
                 event_broker=cm.event_broker,
-                conversation_id=SESSION_DETAILS.assistant.id,
+                conversation_id=SESSION_DETAILS.assistant.agent_id,
                 contact_id="1",
                 transcript_manager=cm.transcript_manager,
                 conversation_manager=cm,
@@ -1094,7 +1038,62 @@ def _init_managers(
     )
     per_manager_init.record(_cmhandle_dur, {"manager": "conversation_manager_handle"})
 
-    # 7. Initialize Actor (use provided actor or create via ManagerRegistry)
+    # 7. Resolve client customization (org -> team -> user -> assistant cascade)
+    LOGGER.debug(
+        f"{ICONS['customization']} [ManagersWorker] Resolving customization...",
+    )
+    local_start_time = perf_counter()
+    from unity.customization.clients import resolve as _resolve_customization
+
+    resolved = _resolve_customization(
+        org_id=SESSION_DETAILS.org_id,
+        team_ids=SESSION_DETAILS.team_ids or None,
+        user_id=SESSION_DETAILS.user.id,
+        assistant_id=SESSION_DETAILS.assistant.agent_id,
+    )
+    _resolve_dur = perf_counter() - local_start_time
+    LOGGER.info(
+        f"{ICONS['customization']} [ManagersWorker] Customization resolved in {_resolve_dur:.2f} seconds",
+    )
+
+    # 8. Sync cross-cutting seed data (contacts, guidance, knowledge, secrets, blacklist)
+    LOGGER.debug(
+        f"{ICONS['customization']} [ManagersWorker] Syncing seed data...",
+    )
+    local_start_time = perf_counter()
+    from unity.customization.seed_sync import sync_all_seed_data
+
+    sync_all_seed_data(resolved)
+    _seed_dur = perf_counter() - local_start_time
+    LOGGER.info(
+        f"{ICONS['customization']} [ManagersWorker] Seed data synced in {_seed_dur:.2f} seconds",
+    )
+
+    # 9. Sync custom functions/venvs from client customization
+    if resolved.function_dirs or resolved.venv_dirs:
+        LOGGER.debug(
+            f"{ICONS['customization']} [ManagersWorker] Syncing custom functions...",
+        )
+        local_start_time = perf_counter()
+        from unity.function_manager.custom_functions import (
+            collect_functions_from_directories,
+            collect_venvs_from_directories,
+        )
+
+        source_fns = collect_functions_from_directories(resolved.function_dirs)
+        source_venvs = collect_venvs_from_directories(resolved.venv_dirs)
+        fm = ManagerRegistry.get_function_manager()
+        if source_fns or source_venvs:
+            fm.sync_custom(
+                source_functions=source_fns,
+                source_venvs=source_venvs,
+            )
+        _func_dur = perf_counter() - local_start_time
+        LOGGER.info(
+            f"{ICONS['customization']} [ManagersWorker] Custom functions synced in {_func_dur:.2f} seconds",
+        )
+
+    # 10. Initialize Actor (use provided actor or create via ManagerRegistry)
     LOGGER.debug(f"{ICONS['managers_worker']} [ManagersWorker] Initializing Actor...")
     try:
         local_start_time = perf_counter()
@@ -1117,6 +1116,7 @@ def _init_managers(
                     ComputerEnvironment(ComputerPrimitives()),
                     ActorEnvironment(),
                 ],
+                resolved=resolved,
             )
         _actor_dur = perf_counter() - local_start_time
         actor_cls = type(cm.actor).__name__
@@ -1130,12 +1130,55 @@ def _init_managers(
             f"{ICONS['managers_worker']} [ManagersWorker] Error initializing Actor: {e}",
         )
 
+    # 11. Initialize FileManager (eagerly, so the FileRecords context exists
+    #     before any file operations or background tasks attempt to use it)
+    LOGGER.info(
+        f"{ICONS['managers_worker']} [ManagersWorker] Initializing FileManager...",
+    )
+    local_start_time = perf_counter()
+    ManagerRegistry.get_file_manager()
+    _file_dur = perf_counter() - local_start_time
+    LOGGER.info(
+        f"{ICONS['managers_worker']} [ManagersWorker] FileManager initialized in "
+        f"{_file_dur:.2f} seconds",
+    )
+    per_manager_init.record(_file_dur, {"manager": "file_manager"})
+
     # U2: Total manager init duration
     _total_dur = perf_counter() - start_time
     LOGGER.info(
         f"{ICONS['managers_worker']} [ManagersWorker] All managers initialized in {_total_dur:.2f} seconds",
     )
     manager_init_total.record(_total_dur)
+
+    # 12. Eager primitive sync (avoids ~7s cold-start on first execute_function).
+    #     Must run after all managers are initialised so the primitive registry
+    #     contains every manager's methods (actor, files, contacts, …).
+    LOGGER.debug(
+        f"{ICONS['managers_worker']} [ManagersWorker] Syncing primitives...",
+    )
+    local_start_time = perf_counter()
+    _init_fm = ManagerRegistry.get_function_manager()
+    _init_fm.sync_primitives()
+    _prim_dur = perf_counter() - local_start_time
+    LOGGER.info(
+        f"{ICONS['managers_worker']} [ManagersWorker] Primitives synced in {_prim_dur:.2f} seconds",
+    )
+
+    # 13. Pre-warm embedding columns for all managers (best-effort, avoids
+    #     cold-start latency on the first vector search after a fresh hire).
+    #     Also explicitly warm the FunctionManager (not in the singleton cache
+    #     due to _force_new=True) so Primitives embeddings are ready.
+    LOGGER.debug(
+        f"{ICONS['managers_worker']} [ManagersWorker] Warming embedding columns...",
+    )
+    local_start_time = perf_counter()
+    ManagerRegistry.warm_all_embeddings()
+    _init_fm.warm_embeddings()
+    _warm_dur = perf_counter() - local_start_time
+    LOGGER.info(
+        f"{ICONS['managers_worker']} [ManagersWorker] Embedding columns warmed in {_warm_dur:.2f} seconds",
+    )
 
 
 async def _start_file_sync() -> None:
@@ -1197,6 +1240,61 @@ async def _start_file_sync() -> None:
         traceback.print_exc()
 
 
+async def _register_desktop_primitive_callback(cm: "ConversationManager") -> None:
+    """Register an EventBus callback that marks in-flight act sessions as desktop-active.
+
+    When a ``DesktopPrimitiveInvoked`` event fires, all currently in-flight ``act``
+    handle_ids are added to ``cm._act_handles_with_desktop_usage`` so the CM can
+    conditionally expose desktop fast-path tools.
+    """
+
+    async def _on_desktop_invoked(events):  # noqa: ANN001
+        for hid, data in cm.in_flight_actions.items():
+            if data.get("action_type") == "act":
+                cm._act_handles_with_desktop_usage.add(hid)
+
+    try:
+        await EVENT_BUS.register_callback(
+            event_type="DesktopPrimitiveInvoked",
+            callback=_on_desktop_invoked,
+            every_n=1,
+        )
+    except Exception:
+        pass
+
+
+async def _register_desktop_act_completed_callback(cm: "ConversationManager") -> None:
+    """Bridge ``DesktopActCompleted`` events from the in-process EventBUS to the
+    CM's ``event_broker`` so both the slow brain and fast brain see them.
+
+    Only publishes when the assistant is actively screen-sharing on a meet.
+    """
+    from unity.conversation_manager.events import DesktopActCompleted
+
+    async def _on_desktop_act_completed(events):  # noqa: ANN001
+        if not cm.assistant_screen_share_active:
+            return
+        for evt in events:
+            payload = evt.payload if isinstance(evt.payload, dict) else {}
+            cm_event = DesktopActCompleted(
+                instruction=payload.get("instruction", ""),
+                summary=payload.get("summary", ""),
+            )
+            await cm.event_broker.publish(
+                "app:actor:desktop_act_completed",
+                cm_event.to_json(),
+            )
+
+    try:
+        await EVENT_BUS.register_callback(
+            event_type="DesktopActCompleted",
+            callback=_on_desktop_act_completed,
+            every_n=1,
+        )
+    except Exception:
+        pass
+
+
 async def init_conv_manager(
     cm: "ConversationManager",
     *,
@@ -1226,8 +1324,20 @@ async def init_conv_manager(
             # Get the main event loop to pass to managers that need it
             loop = asyncio.get_running_loop()
 
-            # Run all manager initialization in a thread (non-blocking)
+            # Run all manager initialization in a thread (non-blocking).
+            # unity.init() inside _init_managers sets Unify ContextVars
+            # (CONTEXT_READ/CONTEXT_WRITE) but asyncio.to_thread runs on a
+            # copy of the caller's context — changes don't propagate back.
+            # Re-apply the context afterwards so any lazily-created managers
+            # in the main async context see the correct values.
             await asyncio.to_thread(_init_managers, cm, loop, actor)
+
+            import unify as _unify
+
+            full_ctx = (
+                f"{SESSION_DETAILS.user_context}/{SESSION_DETAILS.assistant_context}"
+            )
+            _unify.set_context(full_ctx, skip_create=True)
 
             store_chat_history = await get_last_store_chat_history()
             if store_chat_history:
@@ -1243,6 +1353,9 @@ async def init_conv_manager(
             # historical messages — any messages that arrive in the meantime
             # are appended normally and stay in correct chronological order.
             cm.initialized = True
+
+            await _register_desktop_primitive_callback(cm)
+            await _register_desktop_act_completed_callback(cm)
 
             # Publish initialization complete event for test synchronization
             await event_broker.publish(

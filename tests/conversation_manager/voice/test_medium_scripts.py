@@ -2,7 +2,7 @@
 tests/conversation_manager/test_medium_scripts.py
 =======================================================
 
-Tests for the medium scripts (call.py and sts_call.py) that handle voice calls.
+Tests for the medium scripts (call.py) that handle voice calls.
 
 These scripts implement the "fast brain" Voice Agent that handles real-time
 conversation while the Main CM Brain (slow brain) handles orchestration.
@@ -23,7 +23,7 @@ conversation while the Main CM Brain (slow brain) handles orchestration.
 
 ## Key Components Tested
 
-1. **Assistant class** (call.py, sts_call.py):
+1. **Assistant class** (call.py):
    - Initialization with contact/boss/channel/instructions
    - set_call_received() state transitions
    - Utterance event type selection
@@ -211,58 +211,6 @@ class TestTTSAssistantClass:
 
 
 # =============================================================================
-# Unit Tests: Assistant Class (sts_call.py - Realtime/STS mode)
-# =============================================================================
-
-
-class TestSTSAssistantClass:
-    """Tests for the Assistant class in sts_call.py (STS mode)."""
-
-    def test_sts_assistant_initialization(self, boss_contact):
-        """STS Assistant initializes correctly."""
-        from unity.conversation_manager.medium_scripts.sts_call import Assistant
-
-        assistant = Assistant(
-            contact=boss_contact,
-            boss=boss_contact,
-            instructions="Test instructions",
-            outbound=False,
-        )
-
-        assert assistant.contact == boss_contact
-        assert assistant.boss == boss_contact
-        assert assistant.call_received is True
-
-    def test_sts_assistant_outbound_not_received(self, boss_contact):
-        """STS outbound calls start with call_received=False."""
-        from unity.conversation_manager.medium_scripts.sts_call import Assistant
-
-        assistant = Assistant(
-            contact=boss_contact,
-            boss=boss_contact,
-            instructions="Test instructions",
-            outbound=True,
-        )
-
-        assert assistant.call_received is False
-
-    def test_sts_assistant_set_call_received(self, boss_contact):
-        """STS set_call_received() updates state correctly."""
-        from unity.conversation_manager.medium_scripts.sts_call import Assistant
-
-        assistant = Assistant(
-            contact=boss_contact,
-            boss=boss_contact,
-            instructions="Test instructions",
-            outbound=True,
-        )
-
-        assert assistant.call_received is False
-        assistant.set_call_received()
-        assert assistant.call_received is True
-
-
-# =============================================================================
 # Unit Tests: Common Helpers
 # =============================================================================
 
@@ -298,209 +246,6 @@ class TestCommonHelpers:
 
         monkeypatch.setattr(common.sys, "argv", ["call.py"])
         assert common.should_dispatch_livekit_agent() is False
-
-
-# =============================================================================
-# Integration Tests: STS Per-Turn Usage Logging via unillm.log_usage
-# =============================================================================
-
-
-class TestSTSPerTurnUsageLogging:
-    """Tests that the sts_call metrics_collected handler calls unillm.log_usage
-    with real token usage from the Realtime API, replacing the old
-    duration-based heuristic."""
-
-    def test_metrics_handler_calls_log_usage(self, tmp_path, monkeypatch):
-        """The _on_metrics handler converts RealtimeModelMetrics to a
-        unillm.log_usage call with the correct usage dict and transcript."""
-        from unittest.mock import patch
-        from livekit.agents.metrics import RealtimeModelMetrics
-
-        # Build a realistic RealtimeModelMetrics (as LiveKit would emit)
-        metrics = RealtimeModelMetrics(
-            label="gpt-realtime",
-            model="gpt-4o-realtime-preview",
-            request_id="req_abc123",
-            timestamp=1000.0,
-            duration=2.5,
-            ttft=0.3,
-            cancelled=False,
-            input_tokens=200,
-            output_tokens=100,
-            total_tokens=300,
-            tokens_per_second=40.0,
-            input_token_details=RealtimeModelMetrics.InputTokenDetails(
-                audio_tokens=170,
-                text_tokens=30,
-                image_tokens=0,
-                cached_tokens=0,
-                cached_tokens_details=None,
-            ),
-            output_token_details=RealtimeModelMetrics.OutputTokenDetails(
-                text_tokens=15,
-                audio_tokens=85,
-                image_tokens=0,
-            ),
-        )
-
-        # Simulate the handler logic from sts_call.py
-        # (extracted here since sts_call.entrypoint requires a LiveKit room)
-        usage = {
-            "input_tokens": metrics.input_tokens,
-            "output_tokens": metrics.output_tokens,
-            "total_tokens": metrics.total_tokens,
-            "input_token_details": {
-                "audio_tokens": metrics.input_token_details.audio_tokens,
-                "text_tokens": metrics.input_token_details.text_tokens,
-                "cached_tokens": metrics.input_token_details.cached_tokens,
-            },
-            "output_token_details": {
-                "audio_tokens": metrics.output_token_details.audio_tokens,
-                "text_tokens": metrics.output_token_details.text_tokens,
-            },
-        }
-
-        transcript = [
-            {"role": "user", "content": "What time is the meeting?"},
-            {"role": "assistant", "content": "Let me check on that."},
-        ]
-
-        # Configure unillm file logging
-        from unillm import settings as unillm_settings
-        from unillm import logger as unillm_logger
-
-        monkeypatch.delenv("UNILLM_LOG_DIR", raising=False)
-        monkeypatch.setattr(unillm_settings.SETTINGS, "UNILLM_TERMINAL_LOG", True)
-        monkeypatch.setattr(
-            unillm_settings.SETTINGS,
-            "UNILLM_LOG_DIR",
-            str(tmp_path),
-        )
-        monkeypatch.setattr(unillm_logger, "_TERMINAL_LOG_ENABLED", True)
-        monkeypatch.setattr(unillm_logger, "_LOG_DIR_CHECKED", False)
-        monkeypatch.setattr(unillm_logger, "_LOG_DIR", None)
-
-        import unillm as _unillm
-
-        with patch("unillm.logger.unify.deduct_credits") as mock_deduct:
-            billed_cost = _unillm.log_usage(
-                metrics.model,
-                usage,
-                transcript=transcript,
-                label=metrics.model,
-            )
-
-        # Credits should have been deducted
-        mock_deduct.assert_called_once()
-        assert billed_cost > 0
-
-        # A log file should exist with usage details
-        log_files = list(tmp_path.glob("*_usage.txt"))
-        assert len(log_files) == 1
-
-        content = log_files[0].read_text()
-        assert "gpt-4o-realtime-preview" in content
-        assert "audio_tokens" in content
-        assert "What time is the meeting?" in content
-        assert "Let me check on that." in content
-
-    def test_usage_dict_shape_matches_realtime_api(self):
-        """The usage dict built from RealtimeModelMetrics has the shape
-        that unillm.log_usage and compute_full_cost_from_usage expect."""
-        from livekit.agents.metrics import RealtimeModelMetrics
-        from unillm.costs import compute_full_cost_from_usage
-
-        metrics = RealtimeModelMetrics(
-            label="test",
-            model="gpt-4o-realtime-preview",
-            request_id="req_1",
-            timestamp=0.0,
-            duration=1.0,
-            ttft=0.1,
-            cancelled=False,
-            input_tokens=100,
-            output_tokens=50,
-            total_tokens=150,
-            tokens_per_second=50.0,
-            input_token_details=RealtimeModelMetrics.InputTokenDetails(
-                audio_tokens=80,
-                text_tokens=20,
-                image_tokens=0,
-                cached_tokens=0,
-                cached_tokens_details=None,
-            ),
-            output_token_details=RealtimeModelMetrics.OutputTokenDetails(
-                text_tokens=10,
-                audio_tokens=40,
-                image_tokens=0,
-            ),
-        )
-
-        usage = {
-            "input_tokens": metrics.input_tokens,
-            "output_tokens": metrics.output_tokens,
-            "total_tokens": metrics.total_tokens,
-            "input_token_details": {
-                "audio_tokens": metrics.input_token_details.audio_tokens,
-                "text_tokens": metrics.input_token_details.text_tokens,
-                "cached_tokens": metrics.input_token_details.cached_tokens,
-            },
-            "output_token_details": {
-                "audio_tokens": metrics.output_token_details.audio_tokens,
-                "text_tokens": metrics.output_token_details.text_tokens,
-            },
-        }
-
-        # compute_full_cost_from_usage should handle this without error
-        cost = compute_full_cost_from_usage("gpt-4o-realtime-preview", usage)
-        assert cost > 0
-
-    def test_cancelled_response_still_logs(self, tmp_path, monkeypatch):
-        """Interrupted/cancelled responses still produce a log file with
-        partial usage (OpenAI still bills for partial audio tokens)."""
-        from unittest.mock import patch
-        from unillm import settings as unillm_settings
-        from unillm import logger as unillm_logger
-
-        monkeypatch.delenv("UNILLM_LOG_DIR", raising=False)
-        monkeypatch.setattr(unillm_settings.SETTINGS, "UNILLM_TERMINAL_LOG", True)
-        monkeypatch.setattr(
-            unillm_settings.SETTINGS,
-            "UNILLM_LOG_DIR",
-            str(tmp_path),
-        )
-        monkeypatch.setattr(unillm_logger, "_TERMINAL_LOG_ENABLED", True)
-        monkeypatch.setattr(unillm_logger, "_LOG_DIR_CHECKED", False)
-        monkeypatch.setattr(unillm_logger, "_LOG_DIR", None)
-
-        # Partial usage from a cancelled response (user interrupted)
-        usage = {
-            "input_tokens": 50,
-            "output_tokens": 10,
-            "total_tokens": 60,
-            "input_token_details": {
-                "audio_tokens": 40,
-                "text_tokens": 10,
-                "cached_tokens": 0,
-            },
-            "output_token_details": {
-                "audio_tokens": 8,
-                "text_tokens": 2,
-            },
-        }
-
-        import unillm as _unillm
-
-        with patch("unillm.logger.unify.deduct_credits"):
-            billed_cost = _unillm.log_usage(
-                "gpt-4o-realtime-preview",
-                usage,
-            )
-
-        assert billed_cost > 0
-
-        log_files = list(tmp_path.glob("*_usage.txt"))
-        assert len(log_files) == 1
 
 
 # =============================================================================
@@ -694,9 +439,11 @@ class TestEndCallHelper:
         event_broker,
         boss_contact,
         monkeypatch,
-        capsys,
+        caplog,
     ):
         """create_end_call continues even if callback raises."""
+        import logging
+
         from unity.conversation_manager.medium_scripts import common
 
         monkeypatch.setattr(common, "event_broker", event_broker)
@@ -710,11 +457,15 @@ class TestEndCallHelper:
             pre_shutdown_callback=failing_callback,
         )
 
-        # Should not raise
-        await end_call()
+        unity_logger = logging.getLogger("unity")
+        unity_logger.addHandler(caplog.handler)
+        caplog.handler.setLevel(logging.DEBUG)
+        try:
+            await end_call()
+        finally:
+            unity_logger.removeHandler(caplog.handler)
 
-        captured = capsys.readouterr()
-        assert "Error in pre-shutdown callback" in captured.out
+        assert "Error in pre-shutdown callback" in caplog.text
 
 
 # =============================================================================
@@ -884,16 +635,16 @@ class TestGuidanceChannelSubscription:
     """Tests for guidance channel subscription patterns."""
 
     async def test_guidance_channel_receives_call_guidance(self, event_broker):
-        """Guidance channel receives CallGuidance events."""
-        from unity.conversation_manager.events import CallGuidance, Event
+        """Guidance channel receives FastBrainNotification events."""
+        from unity.conversation_manager.events import FastBrainNotification, Event
 
         contact = {"contact_id": 1, "first_name": "Test"}
 
         async with event_broker.pubsub() as pubsub:
-            await pubsub.subscribe("app:call:call_guidance")
+            await pubsub.subscribe("app:call:notification")
 
-            event = CallGuidance(contact=contact, content="Test guidance")
-            await event_broker.publish("app:call:call_guidance", event.to_json())
+            event = FastBrainNotification(contact=contact, content="Test guidance")
+            await event_broker.publish("app:call:notification", event.to_json())
 
             msg = await pubsub.get_message(
                 timeout=2.0,
@@ -901,7 +652,7 @@ class TestGuidanceChannelSubscription:
             )
             assert msg is not None
             received = Event.from_json(msg["data"])
-            assert isinstance(received, CallGuidance)
+            assert isinstance(received, FastBrainNotification)
             assert received.content == "Test guidance"
 
     async def test_status_channel_receives_stop_signal(self, event_broker):
@@ -1053,13 +804,15 @@ class TestInactivityTimeout:
 class TestFastBrainGuidanceFlow:
     """Coverage for guidance delivery in the TTS fast brain path."""
 
-    async def test_notify_only_guidance_triggers_reply_but_not_speech(
+    async def test_notify_only_guidance_injects_context_without_direct_speech(
         self,
         monkeypatch,
     ):
-        """Guidance with should_speak=False injects into chat context and
-        triggers generate_reply() (so the LLM can decide whether to respond)
-        but does NOT trigger session.say()."""
+        """Guidance with should_speak=False injects into both chat contexts
+        without calling session.say() directly.  The structured notification
+        evaluator (_schedule_notification_eval) handles the speak/wait
+        decision asynchronously — that path is covered by
+        test_structured_notification_reply.py."""
         from livekit.agents import llm
         from unity.conversation_manager.medium_scripts import call as call_script
 
@@ -1097,6 +850,12 @@ class TestFastBrainGuidanceFlow:
 
             async def connect(self):
                 return None
+
+            def add_shutdown_callback(self, cb):
+                pass
+
+            def shutdown(self, reason=""):
+                pass
 
         class _FakeEventBroker:
             def __init__(self):
@@ -1209,10 +968,9 @@ class TestFastBrainGuidanceFlow:
         await call_script.entrypoint(_FakeJobContext())
 
         session = fake_session_holder["session"]
-        baseline_reply_calls = session.generate_reply_calls
 
         # Send notify-only guidance (should_speak=False, no response_text)
-        guidance_cb = fake_broker.callbacks["app:call:call_guidance"]
+        guidance_cb = fake_broker.callbacks["app:call:notification"]
         guidance_cb({"payload": {"content": "No, there is no contact named Bob."}})
 
         # Notification should be in both chat contexts
@@ -1230,14 +988,11 @@ class TestFastBrainGuidanceFlow:
         ]
         assert any("No, there is no contact named Bob." in txt for txt in agent_texts)
 
-        # say() must NOT fire (the articulator decided not to speak), but
-        # generate_reply() SHOULD fire so the LLM gets a chance to react.
+        # say() must NOT fire directly — the structured notification evaluator
+        # decides asynchronously whether to speak.
         assert (
             len(session.say_calls) == 0
-        ), "Notify-only guidance must NOT trigger session.say()."
-        assert (
-            session.generate_reply_calls > baseline_reply_calls
-        ), "Notify-only guidance must trigger generate_reply()."
+        ), "Notify-only guidance must NOT trigger session.say() directly."
 
     async def test_should_speak_guidance_not_injected_into_chat_ctx(
         self,
@@ -1288,6 +1043,12 @@ class TestFastBrainGuidanceFlow:
 
             async def connect(self):
                 return None
+
+            def add_shutdown_callback(self, cb):
+                pass
+
+            def shutdown(self, reason=""):
+                pass
 
         class _FakeEventBroker:
             def __init__(self):
@@ -1407,7 +1168,7 @@ class TestFastBrainGuidanceFlow:
         state_cb(SimpleNamespace(new_state="speaking"))
 
         # Send should_speak=True guidance while user is speaking
-        guidance_cb = fake_broker.callbacks["app:call:call_guidance"]
+        guidance_cb = fake_broker.callbacks["app:call:notification"]
         guidance_cb(
             {
                 "payload": {
@@ -1517,11 +1278,11 @@ class TestFastBrainGuidanceFlow:
         )
         await stream._run()
 
-        sent_system_message = captured["generate_kwargs"]["system_message"]
-        assert "BASE_PROMPT" in sent_system_message
-        assert (
-            "[notification] No, there is no contact named Bob." in sent_system_message
-        )
+        messages = captured["generate_kwargs"]["messages"]
+        system_texts = [m["content"] for m in messages if m["role"] == "system"]
+        all_system_text = "\n".join(system_texts)
+        assert "BASE_PROMPT" in all_system_text
+        assert "[notification] No, there is no contact named Bob." in all_system_text
 
     async def test_tts_guidance_received_while_user_speaking_is_replied_after_speech_ends(
         self,
@@ -1565,6 +1326,12 @@ class TestFastBrainGuidanceFlow:
 
             async def connect(self):
                 return None
+
+            def add_shutdown_callback(self, cb):
+                pass
+
+            def shutdown(self, reason=""):
+                pass
 
         class _FakeEventBroker:
             def __init__(self):
@@ -1677,7 +1444,7 @@ class TestFastBrainGuidanceFlow:
         await call_script.entrypoint(_FakeJobContext())
 
         session = fake_session_holder["session"]
-        guidance_cb = fake_broker.callbacks["app:call:call_guidance"]
+        guidance_cb = fake_broker.callbacks["app:call:notification"]
         agent_state_cb = session._events["agent_state_changed"]
 
         # User is speaking — guidance with should_speak=True arrives and is queued
@@ -1755,6 +1522,12 @@ class TestFastBrainGuidanceFlow:
             async def connect(self):
                 return None
 
+            def add_shutdown_callback(self, cb):
+                pass
+
+            def shutdown(self, reason=""):
+                pass
+
         class _FakeEventBroker:
             def __init__(self):
                 self.callbacks = {}
@@ -1866,7 +1639,7 @@ class TestFastBrainGuidanceFlow:
         await call_script.entrypoint(_FakeJobContext())
 
         session = fake_session_holder["session"]
-        guidance_cb = fake_broker.callbacks["app:call:call_guidance"]
+        guidance_cb = fake_broker.callbacks["app:call:notification"]
         agent_state_cb = session._events["agent_state_changed"]
 
         # Simulate agent in "thinking" state (processing a user turn)
@@ -1906,13 +1679,13 @@ class TestFastBrainGuidanceFlow:
 @pytest.mark.eval
 @pytest.mark.asyncio
 class TestFastBrainOpeningGreeting:
-    """The fast brain's first turn (session_start, zero user messages) should
+    """The fast brain's first turn (session_start with no user message) should
     produce a short, natural greeting — not an acknowledgment of the system
     prompt, not a capability list, and not a tutorial."""
 
     async def test_session_start_produces_natural_greeting(self):
-        """With only the system prompt and no user messages, the fast brain
-        should greet briefly and naturally.
+        """With only the system prompt (no user message), the fast brain should
+        greet briefly and naturally.
 
         Uses reasoning_effort='low' to match the production voice pipeline
         (call.py UnifyLLM configuration)."""

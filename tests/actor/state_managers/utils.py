@@ -236,6 +236,51 @@ def assert_code_act_function_manager_used(handle: Any) -> None:
     )
 
 
+def assert_used_execute_function(
+    handle: Any,
+    *,
+    expected_function: Optional[str] = None,
+) -> list[str]:
+    """Assert that the LLM chose ``execute_function`` (not ``execute_code``) for execution.
+
+    For simple single-primitive calls the LLM should use ``execute_function``
+    which structurally guarantees handle return and steerability.
+
+    Parameters
+    ----------
+    handle : Any
+        The CodeActActor handle whose chat history is inspected.
+    expected_function : str | None
+        If provided, assert that at least one ``execute_function`` call
+        targeted this function name (substring match).
+
+    Returns
+    -------
+    list[str]
+        The function names passed to ``execute_function``.
+    """
+    tool_calls = get_code_act_tool_calls(handle)
+    fn_names = extract_code_act_execute_function_names(handle)
+
+    assert "execute_function" in set(tool_calls), (
+        "Expected the LLM to use execute_function for this simple primitive call, "
+        f"but it was not found in tool calls: {tool_calls}"
+    )
+    assert "execute_code" not in set(tool_calls), (
+        "Expected the LLM to use execute_function (not execute_code) for this "
+        f"simple primitive call, but execute_code was also called. "
+        f"Tool calls: {tool_calls}"
+    )
+
+    if expected_function is not None:
+        assert any(expected_function in n for n in fn_names), (
+            f"Expected execute_function to target '{expected_function}', "
+            f"but saw function names: {fn_names}"
+        )
+
+    return fn_names
+
+
 @asynccontextmanager
 async def make_code_act_actor(
     *,
@@ -245,7 +290,12 @@ async def make_code_act_actor(
     exposed_managers: Optional[set[str]] = None,
 ) -> AsyncIterator[tuple[CodeActActor, Primitives, list[str]]]:
     """
-    Create a CodeActActor wired to a provided Primitives in primitives-only mode.
+    Create a CodeActActor wired to a provided Primitives with both
+    ``execute_code`` and ``execute_function`` available.
+
+    A FunctionManager is always created (with ``include_primitives=True``)
+    so that ``execute_function`` can resolve primitives by name. When an
+    explicit *function_manager* is passed, that instance is used instead.
 
     NOTE: IMPL selection ("real" vs "simulated") is controlled by the autouse fixtures
     in `tests/actor/state_managers/conftest.py`, keyed off test path.
@@ -260,15 +310,19 @@ async def make_code_act_actor(
         primitives = Primitives()
     calls = instrument_basic_primitives_calls(primitives)
     env = StateManagerEnvironment(primitives)
-    actor = CodeActActor(environments=[env], function_manager=function_manager)
 
-    # Optionally strip FunctionManager tools to focus on on-the-fly routing via primitives.
+    fm = function_manager if function_manager is not None else FunctionManager()
+    actor = CodeActActor(environments=[env], function_manager=fm)
+
     if not include_function_manager_tools:
         act_tools = actor.get_tools("act")
-        actor.add_tools(
-            "act",
-            {"execute_code": act_tools["execute_code"]},
-        )
+        keep = {
+            k: v
+            for k, v in act_tools.items()
+            if not k.startswith("FunctionManager_")
+            and not k.startswith("GuidanceManager_")
+        }
+        actor.add_tools("act", keep)
 
     try:
         yield actor, primitives, calls

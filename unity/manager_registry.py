@@ -26,7 +26,6 @@ Available typed methods:
     - get_contact_manager()
     - get_conversation_manager_handle()
     - get_data_manager()
-    - get_environment_manager()
     - get_file_manager()
     - get_function_manager()
     - get_guidance_manager()
@@ -60,7 +59,6 @@ if TYPE_CHECKING:
     from .task_scheduler.base import BaseTaskScheduler
     from .transcript_manager.base import BaseTranscriptManager
     from .web_searcher.base import BaseWebSearcher
-    from .environment_manager.base import BaseEnvironmentManager
     from .function_manager.primitives.scope import PrimitiveScope
 
 __all__ = [
@@ -330,6 +328,28 @@ class ManagerRegistry:
         """
         with cls._lock:
             cls._instances.clear()
+
+    # ──────────────────────────────────────────────────────────────────────────
+    # Lifecycle Hooks
+    # ──────────────────────────────────────────────────────────────────────────
+
+    @classmethod
+    def warm_all_embeddings(cls) -> None:
+        """Pre-create embedding columns on all cached manager singletons.
+
+        Iterates over every cached instance and calls ``warm_embeddings()``
+        (defined on ``BaseStateManager``) so that the first vector search
+        against each manager's context hits an already-populated embedding
+        column rather than paying the cold-start creation cost.
+        """
+        with cls._lock:
+            instances = list(cls._instances.values())
+        for instance in instances:
+            if callable(getattr(instance, "warm_embeddings", None)):
+                try:
+                    instance.warm_embeddings()
+                except Exception:
+                    pass
 
     # ──────────────────────────────────────────────────────────────────────────
     # Typed Factory Methods
@@ -606,24 +626,6 @@ class ManagerRegistry:
             **kwargs,
         )
 
-    @classmethod
-    def get_environment_manager(
-        cls,
-        *,
-        description: str | None = None,
-        simulation_guidance: str | None = None,
-        _force_new: bool = False,
-        **kwargs: Any,
-    ) -> "BaseEnvironmentManager":
-        """Get the EnvironmentManager singleton (respects IMPL settings)."""
-        return cls.get(
-            "environments",
-            description=description,
-            simulation_guidance=simulation_guidance,
-            _force_new=_force_new,
-            **kwargs,
-        )
-
 
 class SingletonABCMeta(ABCMeta):
     """Metaclass that enforces the Singleton pattern via ManagerRegistry.
@@ -675,7 +677,6 @@ def _populate_registry() -> None:
     ManagerRegistry.register_settings("web_search", lambda: SETTINGS.web)
     ManagerRegistry.register_settings("data", lambda: SETTINGS.data)
     ManagerRegistry.register_settings("files", lambda: SETTINGS.file)
-    ManagerRegistry.register_settings("environments", lambda: SETTINGS.environment)
     ManagerRegistry.register_settings("functions", lambda: SETTINGS.function)
     ManagerRegistry.register_settings("images", lambda: SETTINGS.image)
     ManagerRegistry.register_settings("memory", lambda: SETTINGS.memory)
@@ -805,19 +806,6 @@ def _populate_registry() -> None:
 
     ManagerRegistry.register_class("functions", "real", FunctionManager)
     ManagerRegistry.register_class("functions", "simulated", SimulatedFunctionManager)
-
-    # ─────────────────────────────────────────────────────────────────────────
-    # EnvironmentManager implementations
-    # ─────────────────────────────────────────────────────────────────────────
-    from .environment_manager.environment_manager import EnvironmentManager
-    from .environment_manager.simulated import SimulatedEnvironmentManager
-
-    ManagerRegistry.register_class("environments", "real", EnvironmentManager)
-    ManagerRegistry.register_class(
-        "environments",
-        "simulated",
-        SimulatedEnvironmentManager,
-    )
 
     # ─────────────────────────────────────────────────────────────────────────
     # ImageManager implementations
