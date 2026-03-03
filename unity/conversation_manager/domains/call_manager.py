@@ -143,7 +143,13 @@ class LivekitCallManager:
         return self._socket_server.socket_path
 
     async def start_call(self, contact: dict, boss: dict, outbound: bool = False):
-        # Track whether this is an outbound call
+        if self._call_proc is not None:
+            LOGGER.warning(
+                f"{ICONS['ipc']} [LivekitCallManager] start_call ignored: "
+                f"subprocess already running (pid={self._call_proc.pid})",
+            )
+            return
+
         self.is_outbound = outbound
         self._call_channel = "phone"
 
@@ -217,7 +223,13 @@ class LivekitCallManager:
         boss: dict,
         room_name: str | None,
     ):
-        # Unify Meet is always inbound (user initiates)
+        if self._call_proc is not None:
+            LOGGER.warning(
+                f"{ICONS['ipc']} [LivekitCallManager] start_unify_meet ignored: "
+                f"subprocess already running (pid={self._call_proc.pid})",
+            )
+            return
+
         self.is_outbound = False
         self._call_channel = "unify"
 
