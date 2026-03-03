@@ -362,14 +362,24 @@ async def entrypoint(ctx: agents.JobContext):
         assistant_utterance_event = OutboundUnifyMeetUtterance
 
     # Register cleanup as a LiveKit shutdown callback so it runs on any
-    # exit path: participant disconnect (close_on_disconnect), inactivity,
-    # or explicit stop.  LiveKit manages task lifecycle — no manual
-    # cancellation needed.
+    # exit path: participant disconnect, inactivity, or explicit stop.
     async def _on_job_shutdown():
         await delete_livekit_room(ctx.room.name)
         await publish_call_ended(contact, channel)
 
     ctx.add_shutdown_callback(_on_job_shutdown)
+
+    # Bridge AgentSession close → job shutdown.  close_on_disconnect
+    # (RoomInputOptions, default True) closes the AgentSession when the
+    # linked participant leaves, but does NOT resolve the JobContext's
+    # shutdown future — so our shutdown callbacks never fire.  Listening
+    # for the session "close" event completes the chain.
+    @session.on("close")
+    def _on_session_close(ev):
+        from livekit.agents.voice.events import CloseReason
+
+        if ev.reason == CloseReason.PARTICIPANT_DISCONNECTED:
+            ctx.shutdown(reason="participant_disconnected")
 
     async def _shutdown_inactivity():
         ctx.shutdown(reason="inactivity")
