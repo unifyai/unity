@@ -222,7 +222,7 @@ def delete_rows(
             name, msg = fut.result()
             summaries[name] = msg
 
-    return summaries
+    return dict(sorted(summaries.items()))
 
 
 def create_empty_column(
