@@ -1240,29 +1240,6 @@ async def _start_file_sync() -> None:
         traceback.print_exc()
 
 
-async def _register_desktop_primitive_callback(cm: "ConversationManager") -> None:
-    """Register an EventBus callback that marks in-flight act sessions as desktop-active.
-
-    When a ``DesktopPrimitiveInvoked`` event fires, all currently in-flight ``act``
-    handle_ids are added to ``cm._act_handles_with_desktop_usage`` so the CM can
-    conditionally expose desktop fast-path tools.
-    """
-
-    async def _on_desktop_invoked(events):  # noqa: ANN001
-        for hid, data in cm.in_flight_actions.items():
-            if data.get("action_type") == "act":
-                cm._act_handles_with_desktop_usage.add(hid)
-
-    try:
-        await EVENT_BUS.register_callback(
-            event_type="DesktopPrimitiveInvoked",
-            callback=_on_desktop_invoked,
-            every_n=1,
-        )
-    except Exception:
-        pass
-
-
 async def _register_desktop_act_completed_callback(cm: "ConversationManager") -> None:
     """Bridge ``DesktopActCompleted`` events from the in-process EventBUS to the
     CM's ``event_broker`` so both the slow brain and fast brain see them.
@@ -1354,7 +1331,6 @@ async def init_conv_manager(
             # are appended normally and stay in correct chronological order.
             cm.initialized = True
 
-            await _register_desktop_primitive_callback(cm)
             await _register_desktop_act_completed_callback(cm)
 
             # Publish initialization complete event for test synchronization

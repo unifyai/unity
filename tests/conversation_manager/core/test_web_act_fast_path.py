@@ -84,7 +84,6 @@ async def test_web_act_creates_session_when_no_id(initialized_cm):
 
     cm = initialized_cm.cm
     cm.assistant_screen_share_active = True
-    cm._act_handles_with_desktop_usage = set()
 
     ManagerRegistry.clear()
     cp = ComputerPrimitives(computer_mode="mock")
@@ -130,7 +129,6 @@ async def test_web_act_reuses_session_when_id_provided(initialized_cm):
 
     cm = initialized_cm.cm
     cm.assistant_screen_share_active = True
-    cm._act_handles_with_desktop_usage = set()
 
     ManagerRegistry.clear()
     cp = ComputerPrimitives(computer_mode="mock")

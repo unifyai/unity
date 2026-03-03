@@ -48,23 +48,16 @@ def _enable_fast_paths(cm_driver):
 
 
 def _setup_fast_paths_from_real_act(cm_driver):
-    """Activate fast-path gating and mark existing act sessions as
-    desktop-active (for interjection targeting).
+    """Activate fast-path gating.
 
     Call this AFTER a ``step_until_wait`` that triggered ``act``.
     """
-    cm = cm_driver.cm
-    cm.assistant_screen_share_active = True
-    for hid, data in cm.in_flight_actions.items():
-        if data.get("action_type") == "act":
-            cm._act_handles_with_desktop_usage.add(hid)
+    cm_driver.cm.assistant_screen_share_active = True
 
 
 def _teardown_fast_paths(cm_driver):
     """Reset gating state so subsequent tests start clean."""
-    cm = cm_driver.cm
-    cm._act_handles_with_desktop_usage.clear()
-    cm.assistant_screen_share_active = False
+    cm_driver.cm.assistant_screen_share_active = False
 
 
 # ---------------------------------------------------------------------------

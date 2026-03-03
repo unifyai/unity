@@ -1002,7 +1002,6 @@ async def _(event: ActorResult, cm: "ConversationManager", *args, **kwargs):
     completed = cm.in_flight_actions.pop(event.handle_id, None)
     if completed:
         cm.completed_actions[event.handle_id] = completed
-    cm._act_handles_with_desktop_usage.discard(event.handle_id)
     await cm.request_llm_run()
 
 
@@ -1380,9 +1379,6 @@ async def _(
 
     if isinstance(event, AssistantScreenShareStarted):
         asyncio.ensure_future(_ensure_desktop_session(cm))
-
-    if isinstance(event, AssistantScreenShareStopped):
-        cm._act_handles_with_desktop_usage.clear()
 
     # Broadcast remote-control state change to all active CodeActActor loops
     # via the ComputerPrimitives singleton interject queue registry.

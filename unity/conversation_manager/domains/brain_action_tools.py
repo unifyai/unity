@@ -1500,21 +1500,20 @@ class ConversationManagerBrainActionTools:
         self,
         message: str,
     ) -> None:
-        """Send a silent interjection to all in-flight act sessions that have
-        used desktop primitives, keeping the Actor informed without triggering
-        an immediate LLM turn."""
-        for hid in list(self._cm._act_handles_with_desktop_usage):
-            data = self._cm.in_flight_actions.get(hid)
-            if data:
-                handle = data.get("handle")
-                if handle and not handle.done():
-                    try:
-                        await handle.interject(
-                            message,
-                            trigger_immediate_llm_turn=False,
-                        )
-                    except TypeError:
-                        await handle.interject(message)
+        """Send a silent interjection to every in-flight ``act`` session,
+        keeping the Actor informed without triggering an immediate LLM turn."""
+        for hid, data in list(self._cm.in_flight_actions.items()):
+            if data.get("action_type") != "act":
+                continue
+            handle = data.get("handle")
+            if handle and not handle.done():
+                try:
+                    await handle.interject(
+                        message,
+                        trigger_immediate_llm_turn=False,
+                    )
+                except TypeError:
+                    await handle.interject(message)
 
     async def _invoke_desktop_action(
         self,
