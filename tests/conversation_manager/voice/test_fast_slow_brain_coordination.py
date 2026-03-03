@@ -696,43 +696,64 @@ class TestFastBrainNotificationSpeakMode:
 
 
 # =============================================================================
-# Test: slow brain relays pending-ask context to fast brain during boss call
+# Test: ask answers are forwarded to fast brain via event rendering
 # =============================================================================
 
 
 @pytest.mark.asyncio
-class TestSlowBrainGuidanceOnBossCall:
-    """Regression tests for the slow brain relaying context during boss calls.
+class TestAskAnswerEventForwarding:
+    """Verify that ActorHandleResponse events are rendered for the fast brain
+    and that guide_voice_agent is stripped during boss calls.
 
-    Production failure: the boss asked about a pending retrospective question
-    on a completed action. The slow brain had full visibility of the pending
-    ask in its state, but ``guide_voice_agent`` was stripped for boss-on-call,
-    leaving the fast brain with no context. The fast brain expressed confusion
-    and the user got no answer.
-
-    These tests verify that ``guide_voice_agent`` is available during boss
-    calls and that the slow brain uses it to relay actionable context.
+    The fast brain receives ask answers directly via the notification pipeline
+    (render_event_for_fast_brain renders ActorHandleResponse). The slow brain
+    does not need guide_voice_agent on boss calls — all relevant state flows
+    through event-level forwarding.
     """
 
+    def test_render_event_for_fast_brain_renders_ask_answer(self):
+        """render_event_for_fast_brain should render ActorHandleResponse
+        events so _render_boss_notifications forwards them to the fast brain.
+        """
+        from unity.conversation_manager.events import ActorHandleResponse
+        from unity.conversation_manager.medium_scripts.common import (
+            render_event_for_fast_brain,
+        )
+
+        event = ActorHandleResponse(
+            handle_id=0,
+            action_name="ask",
+            query="How did you break down the task?",
+            response=(
+                "I followed the Colliers standard workflow: "
+                "1) searched for guidance, 2) verified all 4 PDFs, "
+                "3) rendered pages 2-3 at a time, 4) extracted into "
+                "FiscalYearData schema, 5) saved JSON, 6) generated "
+                "Excel. Key finding: FYE 2024 had a net loss of "
+                "£136K with interest costs doubling."
+            ),
+            call_id="",
+        )
+        rendered = render_event_for_fast_brain(event.to_json())
+        assert rendered is not None, "ActorHandleResponse should be rendered"
+        assert "Ask answered" in rendered
+        assert "Colliers standard workflow" in rendered
+
     @_handle_project
-    async def test_slow_brain_relays_completed_ask_answer_during_boss_meet(
+    async def test_guide_voice_agent_stripped_during_boss_meet(
         self,
         initialized_cm,
     ):
-        """When a completed action's ask has just been answered and the boss
-        asks about it on a call, the slow brain should use guide_voice_agent
-        to relay the answer to the fast brain.
+        """guide_voice_agent should be stripped for boss-on-call, preventing
+        stale slow brain guidance. The fast brain receives all relevant state
+        via the notification pipeline instead.
         """
         cm = initialized_cm
 
-        # Enter meet mode with the boss
         await cm.step(UnifyMeetReceived(contact=BOSS))
         await cm.step(UnifyMeetStarted(contact=BOSS))
         assert cm.cm.mode == Mode.MEET
 
-        # Inject a completed action with a recently-answered ask, mimicking
-        # the production scenario where the ActorHandleResponse has just
-        # updated the state.
         cm.cm.completed_actions[0] = {
             "query": "Process 4 ASH PDF accounts into standard format",
             "handle_actions": [
@@ -743,26 +764,16 @@ class TestSlowBrainGuidanceOnBossCall:
                 },
                 {
                     "action_name": "ask_0",
-                    "query": (
-                        "How did you break down the task? "
-                        "Were there any issues or irregularities?"
-                    ),
+                    "query": "How did you break down the task?",
                     "status": "completed",
-                    "response": (
-                        "I followed the Colliers standard workflow: "
-                        "1) searched for guidance, 2) verified all 4 PDFs, "
-                        "3) rendered pages 2-3 at a time, 4) extracted into "
-                        "FiscalYearData schema, 5) saved JSON, 6) generated "
-                        "Excel. Key finding: FYE 2024 had a net loss of "
-                        "£136K with interest costs doubling."
-                    ),
+                    "response": "I followed the Colliers standard workflow.",
                 },
             ],
         }
 
         cm.all_tool_calls.clear()
 
-        result = await cm.step_until_wait(
+        await cm.step_until_wait(
             InboundUnifyMeetUtterance(
                 contact=BOSS,
                 content=(
@@ -773,63 +784,8 @@ class TestSlowBrainGuidanceOnBossCall:
             max_steps=5,
         )
 
-        assert "guide_voice_agent" in cm.all_tool_calls, (
-            f"Slow brain should relay the completed ask answer to the fast "
-            f"brain via guide_voice_agent during a boss call.\n"
-            f"Tool calls: {cm.all_tool_calls}"
-        )
-
-    @_handle_project
-    async def test_slow_brain_guides_on_pending_ask_during_boss_meet(
-        self,
-        initialized_cm,
-    ):
-        """When a completed action has a still-pending ask and the boss asks
-        about it on a call, the slow brain should use guide_voice_agent to
-        inform the fast brain that the request is still being processed.
-        """
-        cm = initialized_cm
-
-        # Enter meet mode with the boss
-        await cm.step(UnifyMeetReceived(contact=BOSS))
-        await cm.step(UnifyMeetStarted(contact=BOSS))
-        assert cm.cm.mode == Mode.MEET
-
-        # Inject a completed action with a pending ask (answer not yet back).
-        cm.cm.completed_actions[0] = {
-            "query": "Process 4 ASH PDF accounts into standard format",
-            "handle_actions": [
-                {
-                    "action_name": "act_completed",
-                    "query": "All 4 PDFs processed, Excel output generated.",
-                    "status": "completed",
-                },
-                {
-                    "action_name": "ask_0",
-                    "query": (
-                        "How did you break down the task? "
-                        "Were there any issues or irregularities?"
-                    ),
-                    "status": "pending",
-                },
-            ],
-        }
-
-        cm.all_tool_calls.clear()
-
-        result = await cm.step_until_wait(
-            InboundUnifyMeetUtterance(
-                contact=BOSS,
-                content=(
-                    "Are you still trying to find the answer to "
-                    "that question about the ASH process breakdown?"
-                ),
-            ),
-            max_steps=5,
-        )
-
-        assert "guide_voice_agent" in cm.all_tool_calls, (
-            f"Slow brain should notify the fast brain about the pending ask "
-            f"status via guide_voice_agent during a boss call.\n"
+        assert "guide_voice_agent" not in cm.all_tool_calls, (
+            f"guide_voice_agent should be stripped for boss-on-call. "
+            f"The fast brain receives ask answers via event forwarding.\n"
             f"Tool calls: {cm.all_tool_calls}"
         )
