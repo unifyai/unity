@@ -269,7 +269,7 @@ async def entrypoint(ctx: agents.JobContext):
 
     user_is_speaking = False
     _queued_speech: list[tuple[str, str, str]] = []  # (text, notification_id, source)
-    _last_say_meta: dict | None = None
+    _say_meta_queue: list[dict] = []
     generation_seq = 0
     user_state_seq = 0
     _was_quiescent = True
@@ -488,13 +488,15 @@ async def entrypoint(ctx: agents.JobContext):
     @session.on("conversation_item_added")
     def _on_chat_item_added(ev):
         """Publish both user and assistant utterances from a single location."""
-        nonlocal _last_say_meta
         role = ev.item.role  # "user" | "assistant"
         text = ev.item.text_content or ""
         utterance_id = content_trace_id("utt", f"{role}:{text}")
-        say_meta = match_say_meta(_last_say_meta, text) if role == "assistant" else None
-        if say_meta:
-            _last_say_meta = None
+        say_meta: dict | None = None
+        if role == "assistant" and _say_meta_queue:
+            for i, candidate in enumerate(_say_meta_queue):
+                if match_say_meta(candidate, text):
+                    say_meta = _say_meta_queue.pop(i)
+                    break
         if role == "user":
             if not assistant._user_speech_logged:
                 _log.user_speech(text)
@@ -675,13 +677,14 @@ async def entrypoint(ctx: agents.JobContext):
         notification_content: str,
         llm_log_path: str,
     ) -> None:
-        nonlocal _last_say_meta
-        _last_say_meta = {
-            "notification_id": notification_id,
-            "source": notification_source,
-            "text": text,
-            "llm_log_path": llm_log_path,
-        }
+        _say_meta_queue.append(
+            {
+                "notification_id": notification_id,
+                "source": notification_source,
+                "text": text,
+                "llm_log_path": llm_log_path,
+            },
+        )
         notification_message = f"[notification] {notification_content}"
         assistant._chat_ctx.add_message(
             role="system",
@@ -729,7 +732,7 @@ async def entrypoint(ctx: agents.JobContext):
 
     async def _evaluate_notification_reply() -> None:
         """Structured-output sidecar: decide whether to speak for pending notification(s)."""
-        nonlocal _pending_notification_eval_task, _last_say_meta
+        nonlocal _pending_notification_eval_task
         from unity.conversation_manager.domains.notification_reply import (
             NotificationReplyEvaluator,
         )
@@ -745,12 +748,14 @@ async def entrypoint(ctx: agents.JobContext):
         _pending_notification_eval_task = None
 
         if decision.speak and decision.content:
-            _last_say_meta = {
-                "notification_id": "",
-                "source": "notification_reply",
-                "text": decision.content,
-                "llm_log_path": log_path,
-            }
+            _say_meta_queue.append(
+                {
+                    "notification_id": "",
+                    "source": "notification_reply",
+                    "text": decision.content,
+                    "llm_log_path": log_path,
+                },
+            )
             _log.notification_say(
                 decision.content,
                 notification_source="notification_reply",
