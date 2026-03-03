@@ -194,6 +194,39 @@ class TestSharedHttpClient:
         sl._http_client = None
 
     @pytest.mark.asyncio
+    async def test_get_http_client_recreates_on_event_loop_change(self):
+        """_get_http_client should create a new client when the event loop changes.
+
+        Without this, an httpx.AsyncClient created on loop A will carry
+        asyncio.Event / asyncio.Lock objects bound to loop A. Using that
+        client on loop B raises:
+            RuntimeError: <asyncio.locks.Event ...> is bound to a different event loop
+        """
+        import unity.spending_limits as sl
+
+        sl._http_client = None
+        sl._http_client_loop = None
+
+        client1 = sl._get_http_client()
+        assert sl._http_client is client1
+        assert sl._http_client_loop is asyncio.get_running_loop()
+
+        # Simulate a different event loop (e.g., new test run or loop recreation)
+        fake_loop = asyncio.new_event_loop()
+        try:
+            sl._http_client_loop = fake_loop
+            client2 = sl._get_http_client()
+
+            assert client2 is not client1
+            assert sl._http_client_loop is asyncio.get_running_loop()
+        finally:
+            fake_loop.close()
+            await client1.aclose()
+            await client2.aclose()
+            sl._http_client = None
+            sl._http_client_loop = None
+
+    @pytest.mark.asyncio
     async def test_no_async_context_manager_per_request(self):
         """The check functions should NOT use `async with httpx.AsyncClient()`.
 
