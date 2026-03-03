@@ -834,6 +834,44 @@ app.post('/act', isAgentReady, async (req: Request, res: Response) => {
   }
 });
 
+app.post('/execute-actions', isAgentReady, async (req: Request, res: Response) => {
+  const { sessionId, actions } = req.body;
+  if (!actions || !Array.isArray(actions) || actions.length === 0) {
+    return res.status(400).json({
+      error: 'bad_request',
+      message: 'actions is required and must be a non-empty array of action objects.',
+    });
+  }
+
+  try {
+    const session = activeSessions.get(sessionId)!;
+    const agent = session.agent;
+    const t0 = Date.now();
+
+    console.log(`[execute-actions] Executing ${actions.length} direct action(s) for session ${sessionId}`);
+
+    await agent.executeTrajectory(actions, { memory: agent.memory, recordObservations: false });
+
+    const execMs = Date.now() - t0;
+    console.log(`[execute-actions] ${actions.length} action(s) executed [${execMs}ms]`);
+
+    let screenshot = '';
+    let cursorPosition: { x: number; y: number } | null = null;
+    try {
+      const harness = agent.require(BrowserConnector).getHarness();
+      const image = await harness.screenshot();
+      screenshot = await image.toBase64();
+      cursorPosition = harness.getCursorPosition();
+    } catch (screenshotErr) {
+      console.warn(`[execute-actions] Post-execution screenshot failed: ${screenshotErr}`);
+    }
+
+    res.json({ status: 'success', screenshot, cursorPosition });
+  } catch (err) {
+    handleAgentError(err, res);
+  }
+});
+
 app.post('/extract', isAgentReady, async (req: Request, res: Response) => {
   const { instructions, schema, bypassDomProcessing, sessionId } = req.body;
   if (!instructions) {
@@ -941,6 +979,8 @@ app.post('/screenshot', isAgentReady, async (req: Request, res: Response) => {
   try {
     let base64Image: string;
 
+    let cursorPosition: { x: number; y: number } | null = null;
+
     if (session.mode === 'desktop') {
       // Native OS-level screenshot (works on Linux, macOS, Windows)
       base64Image = nativeScreenshot();
@@ -954,11 +994,12 @@ app.post('/screenshot', isAgentReady, async (req: Request, res: Response) => {
       const tCapture = Date.now();
       console.log(`[screenshot] playwright_capture=${tCapture - tHarness}ms`);
       base64Image = await image.toBase64();
+      cursorPosition = harness.getCursorPosition();
       const tEncode = Date.now();
       console.log(`[screenshot] base64_encode=${tEncode - tCapture}ms b64_len=${base64Image.length} total=${tEncode - t0}ms`);
     }
 
-    res.json({ screenshot: base64Image });
+    res.json({ screenshot: base64Image, cursorPosition });
     _screenshotInFlight--;
     console.log(`[screenshot] DONE total=${Date.now() - t0}ms in_flight=${_screenshotInFlight}`);
   } catch (err) {

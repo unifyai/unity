@@ -86,12 +86,89 @@ to the site.
 
 When calling session methods (e.g. typing a password into a login field),
 **never hardcode or pass secret values directly**. Instead, use the
-``${SECRET_NAME}`` syntax and the system will automatically inject the
-real value behind the scenes. For example:
+``${SECRET_NAME}`` syntax with ``type_text()`` and the system will
+automatically inject the real value behind the scenes. For example:
 
 ```python
 session = await primitives.computer.web.new_session(visible=True)
-await session.act("Type ${COSTAR_PASSWORD} into the password field")
+await session.click(400, 300)  # click the password field
+await session.type_text("${COSTAR_PASSWORD}")
+```
+
+### Browser Interaction — Low-Level Actions
+
+**Always use low-level action methods** for browser interactions instead
+of ``act()``.  These methods bypass the LLM planning layer entirely,
+executing actions directly via the browser automation engine.  They are
+faster, cheaper, and more deterministic.
+
+The workflow for every browser interaction is:
+
+1. **Take a screenshot** to see the current page state:
+   ``img = await session.get_screenshot()``
+   ``display(img)``
+2. **Identify coordinates** of the element you want to interact with from
+   the screenshot.
+3. **Execute the action** using the appropriate low-level method.
+4. **Take another screenshot** to verify the result and decide on the
+   next action.
+
+Available low-level methods on every session:
+
+**Mouse:**
+- ``await session.click(x, y)`` — left-click at coordinates
+- ``await session.double_click(x, y)`` — double-click
+- ``await session.right_click(x, y)`` — right-click (context menu)
+- ``await session.drag(from_x, from_y, to_x, to_y)`` — drag and drop
+- ``await session.scroll(x, y, delta_x, delta_y)`` — scroll at position
+  (positive delta_y = down, negative = up; typical increment: 300-500)
+
+**Keyboard:**
+- ``await session.type_text(content)`` — type text into the focused element
+  (always ``click()`` the target field first!)
+- ``await session.press_enter()`` — press Enter
+- ``await session.press_tab()`` — press Tab
+- ``await session.press_backspace()`` — press Backspace
+- ``await session.select_all()`` — Ctrl+A to select all text
+
+**Browser:**
+- ``await session.navigate(url)`` — go to a URL
+- ``await session.go_back()`` — browser back button
+- ``await session.new_tab()`` — open a new tab
+- ``await session.switch_tab(index)`` — switch to tab by index
+- ``await session.close_tab(index)`` — close a tab
+
+**Reading the page:**
+- ``await session.get_screenshot()`` — take a screenshot (returns PIL Image)
+- ``await session.observe(query, response_format)`` — extract structured
+  data from the current page using vision
+- ``await session.get_content()`` — get page content as markdown/html/text
+- ``await session.get_current_url()`` — get the current URL
+
+Example — logging into a site:
+
+```python
+session = await primitives.computer.web.new_session(visible=True)
+await session.navigate("https://www.costar.com")
+
+# Take screenshot to find the login form
+img = await session.get_screenshot()
+display(img)
+
+# Click username field and type
+await session.click(512, 320)
+await session.type_text("${COSTAR_USERNAME}")
+
+# Tab to password field and type
+await session.press_tab()
+await session.type_text("${COSTAR_PASSWORD}")
+
+# Press Enter to submit
+await session.press_enter()
+
+# Verify login succeeded
+img = await session.get_screenshot()
+display(img)
 ```
 
 ### Steps
@@ -104,12 +181,18 @@ await session.act("Type ${COSTAR_PASSWORD} into the password field")
    await session.navigate("https://www.costar.com")
    ```
 3. **Log in** using the retrieved credentials, passing secrets via the
-   ``${SECRET_NAME}`` syntax (never expose raw secret values).
+   ``${SECRET_NAME}`` syntax (never expose raw secret values).  Use
+   ``get_screenshot()`` to find form fields, ``click()`` to focus them,
+   and ``type_text()`` to enter credentials.
 4. Search for care home transactions, deals, and opportunities from the
    **last 20 deals** only (unless the user specified a different date/number range).
+   Use ``click()``, ``type_text()``, ``press_enter()`` to interact with
+   the search UI.  Always take screenshots between actions to verify state.
 5. Extract deal information matching the DealRow schema (see the colliers
-   environment docs for the full JSON schema).
-6. Collect as many deals as possible.
+   environment docs for the full JSON schema).  Use ``observe()`` to
+   extract structured data from the visible page.
+6. Collect as many deals as possible.  Use ``scroll()`` to reveal more
+   content and ``click()`` to paginate.
 7. **Deduplicate** results before saving — if two deals share the same
    ``name`` and ``address`` (case-insensitive), keep only one (prefer the
    entry with more fields populated).
@@ -134,6 +217,12 @@ await session.act("Type ${COSTAR_PASSWORD} into the password field")
 
 ## General Rules
 
+- **ALWAYS use low-level action methods** (``click()``, ``type_text()``,
+  ``scroll()``, etc.) for browser interactions instead of ``act()``.
+  These bypass the LLM planning layer and execute directly — they are
+  faster, cheaper, and more reliable.
+- **ALWAYS take screenshots** between actions to verify the current page
+  state and determine the correct coordinates for the next action.
 - **ALWAYS use stateful sessions** — use ``state_mode="stateful"`` with a
   ``session_name`` (e.g. ``session_name="extraction"``) for ALL code
   execution. This preserves variables, loaded documents, and extracted data
