@@ -182,6 +182,44 @@ _STORAGE_DEFERRED_NOTICE = textwrap.dedent("""
 """).strip()
 
 
+_FAST_PATH_AWARENESS = textwrap.dedent("""
+    ### Fast-Path Awareness
+
+    During interactive screen-share sessions, the outer process may handle
+    simple desktop/browser actions via fast paths instead of routing them
+    through you.  You will see these as interjection messages tagged
+    `[Fast-path request]` and `[Fast-path result]`.
+
+    **Your role:** Monitor these interjections and intervene when the fast
+    path is out of its depth.  Specifically, escalate via `notify()` when:
+
+    - The fast-path result indicates failure or confusion (e.g. it tried to
+      "navigate to Secret Manager" instead of using `primitives.secrets`)
+    - The task falls within guidance you have loaded (e.g. a login procedure
+      with specific credential handling steps)
+    - The task requires capabilities the fast path lacks: stored credentials
+      (`${SECRET_NAME}` injection via `type_text`), multi-step workflows,
+      or data extraction with structured schemas
+
+    **How to escalate:**
+
+    ```python
+    notify({"type": "escalation", "message": "The fast path attempted X "
+        "but I have loaded guidance for this — I should handle it directly "
+        "using primitives.secrets and the stored login procedure."})
+    ```
+
+    After escalating, **proceed with execution** — do not wait for
+    permission.  The outer process will see your notification and coordinate
+    accordingly.
+
+    **When NOT to intervene:** Simple atomic actions (click, scroll,
+    navigate to URL, basic web search) that complete successfully are
+    working as intended.  Only escalate when the fast path is clearly
+    failing or attempting work beyond its scope.
+""").strip()
+
+
 def _build_filesystem_context() -> str:
     from unity.file_manager.settings import get_local_root
 
@@ -343,6 +381,9 @@ def _build_code_act_rules_and_examples(
             mixed = get_mixed_examples()
             if mixed and mixed.strip():
                 parts.append(f"### Mixed-Mode Examples\n\n{mixed}")
+
+        if _has_computer:
+            parts.append(_FAST_PATH_AWARENESS)
 
     return "\n\n---\n\n".join(p for p in parts if p and p.strip()).strip()
 

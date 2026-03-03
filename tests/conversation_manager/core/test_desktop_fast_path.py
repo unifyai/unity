@@ -199,7 +199,7 @@ async def test_desktop_act_returns_acting_and_interjects_on_completion(initializ
     # The request-time interjection should have already fired
     assert mock_actor_handle.interject.call_count == 1
     request_msg = mock_actor_handle.interject.call_args_list[0].args[0]
-    assert "being handled" in request_msg.lower()
+    assert "fast-path request" in request_msg.lower()
     assert "Click Submit" in request_msg
     assert "do not replicate" in request_msg.lower()
     assert (
@@ -217,7 +217,7 @@ async def test_desktop_act_returns_acting_and_interjects_on_completion(initializ
     # After completion, a second interjection should have fired with the result
     assert mock_actor_handle.interject.call_count == 2
     result_msg = mock_actor_handle.interject.call_args_list[1].args[0]
-    assert "already done" in result_msg.lower()
+    assert "fast-path result" in result_msg.lower()
     assert "Click Submit" in result_msg
     assert "Clicked Submit" in result_msg
     assert "no action needed" in result_msg.lower()
@@ -300,11 +300,11 @@ async def test_fast_path_interjects_act_session_without_prior_desktop_usage(
 
     # Verify the interjection content
     request_msg = mock_actor_handle.interject.call_args_list[0].args[0]
-    assert "being handled" in request_msg.lower()
+    assert "fast-path request" in request_msg.lower()
     assert "Click Submit" in request_msg
 
     result_msg = mock_actor_handle.interject.call_args_list[1].args[0]
-    assert "already done" in result_msg.lower()
+    assert "fast-path result" in result_msg.lower()
     assert "Clicked Submit" in result_msg
 
     # Clean up
