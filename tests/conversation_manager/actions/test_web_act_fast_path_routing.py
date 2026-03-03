@@ -18,10 +18,14 @@ import pytest
 from tests.helpers import _handle_project
 from tests.conversation_manager.cm_helpers import (
     assert_efficient,
+    has_steering_tool_call,
 )
 from tests.conversation_manager.conftest import BOSS
 from unity.conversation_manager.events import (
+    AssistantScreenShareStarted,
+    InboundUnifyMeetUtterance,
     SMSReceived,
+    UnifyMeetStarted,
     UnifyMessageReceived,
 )
 
@@ -221,6 +225,75 @@ async def test_complex_cross_domain_routes_to_act(initialized_cm):
         assert not web_or_desktop_calls, (
             f"Complex cross-domain task should NOT use fast paths, "
             f"but got: {web_or_desktop_calls}"
+        )
+    finally:
+        _teardown_fast_paths(cm)
+
+
+# ---------------------------------------------------------------------------
+#  Credentials / secrets → interject_* (NOT web_act)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+@_handle_project
+async def test_login_with_stored_credentials_routes_to_interject(initialized_cm):
+    """Logging in with stored credentials must route to interject_*, NOT
+    web_act, during an interactive Unify Meet screen-share session.
+
+    web_act's browser agent has no access to primitives.secrets.  Only the
+    CodeActActor sandbox can retrieve secret names and use the ${SECRET_NAME}
+    placeholder syntax with type_text().  When the user asks to log in using
+    stored credentials, the CM must interject the in-flight act session so
+    the Actor can execute the credential flow.
+
+    Reproduces the production scenario: Unify Meet with assistant screen
+    share, an in-flight act session that has loaded guidance, and a user
+    request to log in with saved credentials.
+    """
+    cm = initialized_cm
+    _ensure_mock_computer_primitives()
+
+    # Set up Unify Meet with assistant screen share (no LLM run for setup)
+    await cm.step(UnifyMeetStarted(contact=BOSS), run_llm=False)
+    await cm.step(AssistantScreenShareStarted(), run_llm=False)
+
+    # Bootstrap: first instruction triggers act(persist=True)
+    result = await cm.step_until_wait(
+        InboundUnifyMeetUtterance(
+            contact=BOSS,
+            content=(
+                "Let's go through CoStar. Open the browser and navigate "
+                "to costar.com."
+            ),
+        ),
+    )
+    assert (
+        "act" in cm.all_tool_calls
+    ), f"Bootstrap should trigger act, got: {cm.all_tool_calls}"
+    cm.all_tool_calls.clear()
+
+    try:
+        # Credential request — should interject the existing act, not web_act
+        result = await cm.step_until_wait(
+            InboundUnifyMeetUtterance(
+                contact=BOSS,
+                content=(
+                    "Now log in using the stored credentials — you have the "
+                    "username and password saved."
+                ),
+            ),
+        )
+
+        assert "web_act" not in cm.all_tool_calls, (
+            f"Credential-dependent login should NOT use web_act (browser agent "
+            f"has no access to primitives.secrets). "
+            f"Got: {cm.all_tool_calls}"
+        )
+        assert has_steering_tool_call(cm, "interject_"), (
+            f"Expected interject_* to relay credential-based login to the "
+            f"in-flight act session which has access to primitives.secrets. "
+            f"Got: {cm.all_tool_calls}"
         )
     finally:
         _teardown_fast_paths(cm)
