@@ -975,6 +975,21 @@ def get_socket_client() -> CallEventSocketClient | None:
     return _socket_client
 
 
+def init_socket_for_job(socket_path: str) -> CallEventSocketClient:
+    """Initialise the IPC socket client for a persistent-worker job.
+
+    In the persistent worker model the socket path arrives via job metadata
+    rather than an environment variable.  This helper sets the env var (so
+    ``from_env`` works on subsequent calls) and replaces the module-level
+    singleton.
+    """
+    global _socket_client, _receive_loop_started
+    os.environ[CM_EVENT_SOCKET_ENV] = socket_path
+    _socket_client = CallEventSocketClient(socket_path)
+    _receive_loop_started = False
+    return _socket_client
+
+
 async def send_event_to_parent(channel: str, event_json: str) -> bool:
     """
     Convenience function to send an event to the parent process.

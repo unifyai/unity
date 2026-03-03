@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import subprocess
 from pathlib import Path
 from typing import TYPE_CHECKING, Callable
+
+from livekit.api import CreateAgentDispatchRequest, LiveKitAPI
 
 from unity.contact_manager.types.contact import UNASSIGNED
 from unity.conversation_manager.events import *
@@ -41,6 +44,7 @@ class CallConfig:
     assistant_number: str
     voice_provider: str
     voice_id: str
+    assistant_name: str = ""
 
 
 _BASE_FORWARD_CHANNELS = [
@@ -62,30 +66,21 @@ class LivekitCallManager:
         self.unify_meet_start_timestamp = None
         self.call_contact = None
         self._call_proc: subprocess.Popen | None = None
+        self._worker_proc: subprocess.Popen | None = None
+        self._active_job: bool = False
         self.conference_name = ""
         self.room_name = ""
         self._event_broker = event_broker
         self._socket_server: CallEventSocketServer | None = None
-        # Track whether the current call is outbound (we initiated it)
         self.is_outbound: bool = False
-        # Initial notification for outbound calls, set by make_call tool before
-        # the call is placed, published to the fast brain after the subprocess spawns.
         self.initial_notification: str = ""
-        # Callback for screenshots (user or assistant) received via IPC.
-        # Set by the ConversationManager to route screenshots to its buffer.
         self.on_screenshot: Callable[[str], None] | None = None
-        # Callback when the fast brain starts generating a reply.
         self.on_fast_brain_generating: Callable[[], None] | None = None
-        # Callback when the voice pipeline quiescence state changes.
         self.on_pipeline_quiescent: Callable[[bool], None] | None = None
-        # Track the active call's channel type so the disconnect fallback
-        # can publish the correct call-ended event.
         self._call_channel: str | None = None
-        # Contact for the active call, used by the disconnect fallback.
         self._disconnect_contact: dict | None = None
-        # Async task that renders actor events into FastBrainNotification
-        # messages for boss calls.
         self._boss_notification_task: asyncio.Task | None = None
+        self._worker_watchdog_task: asyncio.Task | None = None
 
     def set_config(self, config: CallConfig):
         self.assistant_id = config.assistant_id
@@ -94,10 +89,106 @@ class LivekitCallManager:
         self.assistant_number = config.assistant_number
         self.voice_provider = config.voice_provider
         self.voice_id = config.voice_id
+        self.assistant_name = config.assistant_name
 
     def set_event_broker(self, event_broker: "InMemoryEventBroker") -> None:
         """Set the event broker for socket server to publish to."""
         self._event_broker = event_broker
+
+    @property
+    def worker_agent_name(self) -> str:
+        return f"unity_{self.assistant_id}"
+
+    @property
+    def has_active_call(self) -> bool:
+        return self._active_job or self._call_proc is not None
+
+    # ------------------------------------------------------------------
+    # Persistent worker lifecycle
+    # ------------------------------------------------------------------
+
+    def start_persistent_worker(self) -> None:
+        """Start the persistent LiveKit agent worker subprocess.
+
+        Called once during pod initialisation.  The worker registers with
+        LiveKit and maintains a pool of pre-warmed child processes.
+        Skips silently when LiveKit is not configured (e.g. in tests).
+        """
+        if not os.environ.get("LIVEKIT_URL"):
+            return
+        if self._worker_proc is not None and self._worker_proc.poll() is None:
+            return
+
+        target = Path(__file__).parent.parent.resolve() / "medium_scripts" / "worker.py"
+        self._worker_proc = run_script(str(target), "dev", self.worker_agent_name)
+        LOGGER.info(
+            f"{ICONS['ipc']} [LivekitCallManager] Persistent worker started "
+            f"(pid={self._worker_proc.pid}, agent_name={self.worker_agent_name})",
+        )
+        if self._worker_watchdog_task is None or self._worker_watchdog_task.done():
+            self._worker_watchdog_task = asyncio.create_task(self._worker_watchdog())
+
+    async def _worker_watchdog(self) -> None:
+        """Restart the persistent worker if it exits unexpectedly."""
+        while True:
+            await asyncio.sleep(10)
+            if self._worker_proc is None:
+                continue
+            if self._worker_proc.poll() is not None:
+                LOGGER.warning(
+                    f"{ICONS['ipc']} [LivekitCallManager] Persistent worker exited "
+                    f"(code={self._worker_proc.returncode}), restarting…",
+                )
+                self._worker_proc = None
+                self.start_persistent_worker()
+
+    async def _dispatch_job(
+        self,
+        room_name: str,
+        channel: str,
+        contact: dict,
+        boss: dict,
+        outbound: bool,
+    ) -> None:
+        """Dispatch a LiveKit job to the persistent worker."""
+        socket_path = await self._ensure_socket_server()
+
+        metadata = json.dumps(
+            {
+                "voice_provider": self.voice_provider,
+                "voice_id": self.voice_id,
+                "outbound": outbound,
+                "channel": channel,
+                "contact": contact,
+                "boss": boss,
+                "assistant_bio": self.assistant_bio,
+                "assistant_id": self.assistant_id,
+                "user_id": self.user_id,
+                "assistant_name": self.assistant_name,
+                "ipc_socket_path": socket_path or "",
+            },
+        )
+
+        lk = LiveKitAPI(
+            url=os.environ.get("LIVEKIT_URL", ""),
+            api_key=os.environ.get("LIVEKIT_API_KEY", ""),
+            api_secret=os.environ.get("LIVEKIT_API_SECRET", ""),
+        )
+        try:
+            dispatch = await lk.agent_dispatch.create_dispatch(
+                CreateAgentDispatchRequest(
+                    agent_name=self.worker_agent_name,
+                    room=room_name,
+                    metadata=metadata,
+                ),
+            )
+            self._active_job = True
+            LOGGER.info(
+                f"{ICONS['ipc']} [LivekitCallManager] Dispatched job "
+                f"(dispatch_id={dispatch.id}, room={room_name})",
+            )
+        finally:
+            await lk.aclose()
 
     async def _ensure_socket_server(self) -> str | None:
         """Start the socket server if not running, return socket path."""
@@ -143,71 +234,48 @@ class LivekitCallManager:
         return self._socket_server.socket_path
 
     async def start_call(self, contact: dict, boss: dict, outbound: bool = False):
-        if self._call_proc is not None:
+        if self.has_active_call:
             LOGGER.warning(
                 f"{ICONS['ipc']} [LivekitCallManager] start_call ignored: "
-                f"subprocess already running (pid={self._call_proc.pid})",
+                "call already active",
             )
             return
 
         self.is_outbound = outbound
         self._call_channel = "phone"
+        self._disconnect_contact = contact
 
-        # Start socket server and get path
-        socket_path = await self._ensure_socket_server()
-
+        await self._ensure_socket_server()
         if self._socket_server:
             await self._socket_server.set_forward_channels(list(_BASE_FORWARD_CHANNELS))
 
-        # For boss calls, start a task that renders actor events into
-        # FastBrainNotification messages and publishes them on the
-        # notification channel (which is already forwarded via app:call:*).
         is_boss = contact.get("contact_id") == 1
         if is_boss:
             self._start_boss_notification_rendering()
 
-        # Set socket path in environment for subprocess
-        if socket_path:
-            os.environ[CM_EVENT_SOCKET_ENV] = socket_path
-            LOGGER.debug(
-                f"{ICONS['ipc']} [LivekitCallManager] Socket server at {socket_path}",
+        room_name = make_room_name(self.assistant_id, "phone")
+
+        if self._worker_proc is not None and self._worker_proc.poll() is None:
+            await self._dispatch_job(room_name, "phone", contact, boss, outbound)
+        else:
+            await self._start_call_subprocess(
+                room_name,
+                "phone",
+                contact,
+                boss,
+                outbound,
             )
 
-        target_path = Path(__file__).parent.parent.resolve() / "medium_scripts"
-        args = [
-            make_room_name(self.assistant_id, "phone"),
-            self.voice_provider,
-            self.voice_id,
-            outbound,
-            "phone",
-            json.dumps(contact),
-            json.dumps(boss),
-            self.assistant_bio,
-            self.assistant_id,
-            self.user_id,
-        ]
-        target_path = target_path / "call.py"
-        args = [str(arg) for arg in args]
-        LOGGER.debug(f"{DEFAULT_ICON} target_path: {target_path}, args: {args}")
-        self._call_proc = run_script(str(target_path), "dev", *args)
-        self._disconnect_contact = contact
-
-        # Deliver initial notification to the fast brain (if any was stored by
-        # make_call).  We bypass the event-broker pub/sub roundtrip and push
-        # directly into the socket server buffer so the message cannot be lost
-        # due to the forward-subscription task not having subscribed yet.
         if self.initial_notification:
             notification_event = FastBrainNotification(
                 contact=contact,
                 content=self.initial_notification,
                 source="initial_call",
             )
-            # Direct socket delivery to the fast brain subprocess
             await self._socket_server.queue_for_clients(
                 "app:call:notification",
                 notification_event.to_json(),
             )
-            # Also publish on the comms channel for the transcript / UI
             await self._event_broker.publish(
                 "app:comms:assistant_notification",
                 notification_event.to_json(),
@@ -223,19 +291,18 @@ class LivekitCallManager:
         boss: dict,
         room_name: str | None,
     ):
-        if self._call_proc is not None:
+        if self.has_active_call:
             LOGGER.warning(
                 f"{ICONS['ipc']} [LivekitCallManager] start_unify_meet ignored: "
-                f"subprocess already running (pid={self._call_proc.pid})",
+                "call already active",
             )
             return
 
         self.is_outbound = False
         self._call_channel = "unify"
+        self._disconnect_contact = contact
 
-        # Start socket server and get path
-        socket_path = await self._ensure_socket_server()
-
+        await self._ensure_socket_server()
         if self._socket_server:
             await self._socket_server.set_forward_channels(list(_BASE_FORWARD_CHANNELS))
 
@@ -243,33 +310,55 @@ class LivekitCallManager:
         if is_boss:
             self._start_boss_notification_rendering()
 
-        # Set socket path in environment for subprocess
+        room_name = room_name or make_room_name(self.assistant_id, "meet")
+        self.room_name = room_name
+
+        if self._worker_proc is not None and self._worker_proc.poll() is None:
+            await self._dispatch_job(room_name, "unify", contact, boss, False)
+        else:
+            await self._start_call_subprocess(
+                room_name,
+                "unify",
+                contact,
+                boss,
+                False,
+            )
+
+    async def _start_call_subprocess(
+        self,
+        room_name: str,
+        channel: str,
+        contact: dict,
+        boss: dict,
+        outbound: bool,
+    ) -> None:
+        """Legacy path: spawn a fresh subprocess per call."""
+        socket_path = await self._ensure_socket_server()
         if socket_path:
             os.environ[CM_EVENT_SOCKET_ENV] = socket_path
             LOGGER.debug(
                 f"{ICONS['ipc']} [LivekitCallManager] Socket server at {socket_path}",
             )
-
-        target_path = Path(__file__).parent.parent.resolve() / "medium_scripts"
-        room_name = room_name or make_room_name(self.assistant_id, "meet")
-        self.room_name = room_name
+        target_path = (
+            Path(__file__).parent.parent.resolve() / "medium_scripts" / "call.py"
+        )
         args = [
-            room_name,
-            self.voice_provider,
-            self.voice_id,
-            False,
-            "unify",
-            json.dumps(contact),
-            json.dumps(boss),
-            self.assistant_bio,
-            self.assistant_id,
-            self.user_id,
+            str(a)
+            for a in [
+                room_name,
+                self.voice_provider,
+                self.voice_id,
+                outbound,
+                channel,
+                json.dumps(contact),
+                json.dumps(boss),
+                self.assistant_bio,
+                self.assistant_id,
+                self.user_id,
+            ]
         ]
-        target_path = target_path / "call.py"
-        args = [str(arg) for arg in args]
         LOGGER.debug(f"{DEFAULT_ICON} target_path: {target_path}, args: {args}")
         self._call_proc = run_script(str(target_path), "dev", *args)
-        self._disconnect_contact = contact
 
     # -- IPC disconnect fallback (safety net for lost call-ended events) --
     async def _on_ipc_client_disconnected(self) -> None:
@@ -279,13 +368,13 @@ class LivekitCallManager:
         event was lost), wait a short grace period then publish a synthetic
         call-ended event so the normal event-handler path runs the cleanup.
         """
-        if self._call_proc is None:
-            return  # already cleaned up
+        if not self.has_active_call:
+            return
 
         await asyncio.sleep(1)
 
-        if self._call_proc is None:
-            return  # cleaned up during grace period
+        if not self.has_active_call:
+            return
 
         contact = self._disconnect_contact or {}
         channel = self._call_channel or "phone"
@@ -305,20 +394,16 @@ class LivekitCallManager:
             )
 
     async def cleanup_call_proc(self) -> None:
-        """Stop any running voice agent subprocess and socket server."""
-        # Grab the proc ref and null it out FIRST.  stop() below awaits
-        # _handle_client's finally block, which fires the disconnect
-        # callback -- that callback is a no-op when _call_proc is None.
+        """Stop any running voice agent job/subprocess and socket server."""
         proc = self._call_proc
         self._call_proc = None
+        self._active_job = False
 
-        # Reset outbound tracking
         self.is_outbound = False
         self.initial_notification = ""
         self._call_channel = None
         self._disconnect_contact = None
 
-        # Cancel boss notification rendering task
         if self._boss_notification_task and not self._boss_notification_task.done():
             self._boss_notification_task.cancel()
             try:
@@ -327,19 +412,16 @@ class LivekitCallManager:
                 pass
         self._boss_notification_task = None
 
-        # Stop socket server
         if self._socket_server:
             await self._socket_server.stop()
             self._socket_server = None
 
-        # Clean up environment variable
         if CM_EVENT_SOCKET_ENV in os.environ:
             del os.environ[CM_EVENT_SOCKET_ENV]
 
         if proc is None:
             return
 
-        # Check if process is still running
         if proc.poll() is not None:
             LOGGER.debug(
                 f"{ICONS['ipc']} [LivekitCallManager] Process already exited with code {proc.returncode}",

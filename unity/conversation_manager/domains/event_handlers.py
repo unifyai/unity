@@ -893,6 +893,7 @@ async def _(event: StartupEvent, cm: "ConversationManager", *args, **kwargs):
         payload = event.to_dict()["payload"]
         cm.set_details(payload)
         cm.call_manager.set_config(cm.get_call_config())
+        cm.call_manager.start_persistent_worker()
 
         asyncio.create_task(_startup_sequence(cm))
 

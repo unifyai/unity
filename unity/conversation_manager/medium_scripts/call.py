@@ -169,11 +169,67 @@ class Assistant(Agent):
             yield chunk
 
 
+def _load_config_from_metadata(ctx: agents.JobContext) -> dict | None:
+    """Parse call config from job dispatch metadata (persistent worker path).
+
+    Returns the parsed dict, or None when no metadata is present (legacy
+    subprocess path).
+    """
+    raw = getattr(ctx.job, "metadata", None)
+    if not raw:
+        return None
+    try:
+        return json.loads(raw)
+    except (json.JSONDecodeError, TypeError):
+        return None
+
+
 async def entrypoint(ctx: agents.JobContext):
     global STT, VAD
 
     # Wire the module-level logger into the shared event broker.
     event_broker.set_logger(_log)
+
+    # --- Config: persistent worker (job metadata) or legacy subprocess (env) ---
+    meta = _load_config_from_metadata(ctx)
+    if meta:
+        from unity.conversation_manager.domains.ipc_socket import init_socket_for_job
+
+        ipc_path = meta.get("ipc_socket_path", "")
+        if ipc_path:
+            init_socket_for_job(ipc_path)
+            event_broker.reinit_socket()
+
+        voice_provider = meta.get("voice_provider", "cartesia")
+        voice_id = meta.get("voice_id", "")
+        outbound = meta.get("outbound", False)
+        channel = meta.get("channel", "phone")
+        assistant_bio = meta.get("assistant_bio", "")
+        contact = meta.get("contact", {})
+        boss = meta.get("boss", {})
+        SESSION_DETAILS.assistant.about = assistant_bio
+        if meta.get("assistant_id"):
+            try:
+                SESSION_DETAILS.assistant.agent_id = int(meta["assistant_id"])
+            except (ValueError, TypeError):
+                pass
+        if meta.get("user_id"):
+            SESSION_DETAILS.user.id = meta["user_id"]
+        if meta.get("assistant_name"):
+            SESSION_DETAILS.assistant.name = meta["assistant_name"]
+    else:
+        SESSION_DETAILS.populate_from_env()
+        voice_provider = SESSION_DETAILS.voice.provider
+        voice_id = SESSION_DETAILS.voice.id
+        outbound = SESSION_DETAILS.voice_call.outbound
+        channel = SESSION_DETAILS.voice_call.channel
+        assistant_bio = SESSION_DETAILS.assistant.about
+        contact = json.loads(SESSION_DETAILS.voice_call.contact_json or "{}")
+        boss = json.loads(SESSION_DETAILS.voice_call.boss_json or "{}")
+
+    _log.config(
+        f"voice_provider={voice_provider} voice_id={voice_id} outbound={outbound} channel={channel}",
+    )
 
     _log.session_start("Connecting to room…")
     await ctx.connect()
@@ -198,23 +254,6 @@ async def entrypoint(ctx: agents.JobContext):
 
     # Start receiving events from parent (callbacks registered later)
     await start_event_broker_receive()
-
-    # Populate SESSION_DETAILS from environment (set by configure_from_cli)
-    SESSION_DETAILS.populate_from_env()
-
-    # Read config from SESSION_DETAILS
-    voice_provider = SESSION_DETAILS.voice.provider
-    voice_id = SESSION_DETAILS.voice.id
-    outbound = SESSION_DETAILS.voice_call.outbound
-    channel = SESSION_DETAILS.voice_call.channel
-    assistant_bio = SESSION_DETAILS.assistant.about
-    _log.config(
-        f"voice_provider={voice_provider} voice_id={voice_id} outbound={outbound} channel={channel}",
-    )
-
-    # Contact/boss payloads from SESSION_DETAILS
-    contact = json.loads(SESSION_DETAILS.voice_call.contact_json or "{}")
-    boss = json.loads(SESSION_DETAILS.voice_call.boss_json or "{}")
 
     # Fallback for whenever pre-loading fails
     if STT is None:
