@@ -35,7 +35,7 @@ from unity.conversation_manager.events import (
     ActorResult,
     ActorHandleStarted,
     ActorSessionResponse,
-    DesktopActCompleted,
+    ComputerActCompleted,
     NotificationInjectedEvent,
     UserScreenShareStarted,
     UserScreenShareStopped,
@@ -1216,6 +1216,8 @@ def render_event_for_fast_brain(event_json: str) -> str | None:
     if isinstance(event, ActorNotification):
         return f"Action progress: {event.response}"
     if isinstance(event, ActorResult):
+        if getattr(event, "action_type", "") in ("desktop_act", "web_act"):
+            return None
         status = "completed successfully" if event.success else "failed"
         detail = event.result or event.error or ""
         if isinstance(detail, dict):
@@ -1228,9 +1230,9 @@ def render_event_for_fast_brain(event_json: str) -> str | None:
         return f"Action update: {event.content}"
     if isinstance(event, NotificationInjectedEvent):
         return event.content
-    if isinstance(event, DesktopActCompleted):
+    if isinstance(event, ComputerActCompleted):
         snippet = event.summary[:200] if event.summary else event.instruction[:200]
-        return f"Desktop action completed: {snippet}"
+        return f"Computer action completed: {snippet}"
 
     return None
 

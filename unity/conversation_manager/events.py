@@ -631,6 +631,7 @@ class ActorResult(Event):
     success: bool
     result: dict | str | None = None
     error: str | None = None
+    action_type: str = ""
 
 
 @dataclass
@@ -686,10 +687,10 @@ class ActorHandleStarted(Event):
 
 
 @dataclass
-class DesktopActCompleted(_TruncatedReprMixin, Event):
-    """Fired when primitives.computer.desktop.act() completes anywhere in the
-    system (CM fast path, CodeActActor, sub-agents).  Carries the instruction
-    and the agent's summary."""
+class ComputerActCompleted(_TruncatedReprMixin, Event):
+    """Fired when a visible computer session's act() completes anywhere in the
+    system (CM fast path, CodeActActor, sub-agents).  Covers both desktop and
+    web-vm sessions.  Carries the instruction and the agent's summary."""
 
     instruction: str = ""
     summary: str = ""
