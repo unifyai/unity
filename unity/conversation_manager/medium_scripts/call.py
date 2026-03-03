@@ -216,7 +216,9 @@ async def entrypoint(ctx: agents.JobContext):
         if meta.get("user_id"):
             SESSION_DETAILS.user.id = meta["user_id"]
         if meta.get("assistant_name"):
-            SESSION_DETAILS.assistant.name = meta["assistant_name"]
+            parts = meta["assistant_name"].split(None, 1)
+            SESSION_DETAILS.assistant.first_name = parts[0] if parts else ""
+            SESSION_DETAILS.assistant.surname = parts[1] if len(parts) > 1 else ""
     else:
         SESSION_DETAILS.populate_from_env()
         voice_provider = SESSION_DETAILS.voice.provider
