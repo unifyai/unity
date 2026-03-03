@@ -31,6 +31,7 @@ from unity.common.llm_helpers import _dumps
 from unity.common.llm_client import new_llm_client
 from tests.assertion_helpers import assertion_failed
 from tests.helpers import _handle_project
+from tests.async_helpers import _wait_for_next_assistant_response_event
 
 # --------------------------------------------------------------------------- #
 #  DETERMINISTIC GROUND-TRUTH GENERATOR                                       #
@@ -271,6 +272,7 @@ async def test_interjection(
     # 1) Initial semantic query – last Dan ⇢ Julia phone call date
     q_initial = QUESTIONS[1]  # "When did Dan last speak with Julia on the phone?"
     handle = await tm.ask(q_initial, _return_reasoning_steps=True)
+    await _wait_for_next_assistant_response_event(handle._client, timeout=60)
 
     # 2) Interject with a *different* question (Jimmy holiday date)
     q_follow_up = QUESTIONS[2]  # "Did Jimmy ever tell us when he's on holiday...?"

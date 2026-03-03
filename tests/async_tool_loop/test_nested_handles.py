@@ -853,8 +853,6 @@ async def test_dynamic_handle_public_method(llm_config):
         • Provides `.ask()` so external callers can query the elapsed time.
         """
 
-        start_ts = time.perf_counter()
-
         async def _job():
             # Ensure the dynamic `ask_…` helper is invoked before the job can finish
             await ask_called_gate.wait()
@@ -871,10 +869,9 @@ async def test_dynamic_handle_public_method(llm_config):
         # public helper – gets exposed automatically
         async def _ask(self):
             progress_calls["count"] += 1
-            elapsed = time.perf_counter() - start_ts
             # Signal that `ask_…` has been called so the job may proceed
             ask_called_gate.set()
-            return f"{elapsed:.1f}s elapsed"
+            return f"1s elapsed"
 
         # Bind and expose
         setattr(handle, "ask", _ask.__get__(handle, AsyncToolLoopHandle))

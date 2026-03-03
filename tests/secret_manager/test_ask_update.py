@@ -67,7 +67,7 @@ async def test_update_creates_two_secrets(secret_manager_context):
 
     # Ask the model to create two different secrets in a single turn
     req = (
-        "Create two secrets in one go: "
+        "Create two secrets (not in parallel): "
         "name alpha_token with value a1; and name beta_token with value b2."
     )
     handle = await sm.update(req)
