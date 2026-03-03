@@ -177,10 +177,6 @@ class ConversationManager(metaclass=SingletonABCMeta):
         self.user_webcam_active: bool = False
         self.user_remote_control_active: bool = False
 
-        # desktop fast-path gating: handle_ids of in-flight `act` sessions
-        # that have invoked at least one primitives.computer.desktop.* method.
-        self._act_handles_with_desktop_usage: set[int] = set()
-
         # screenshot buffer for slow brain visual context
         self._screenshot_buffer: list[ScreenshotEntry] = []
         # mapping from local_message_id (ephemeral CM counter) to
