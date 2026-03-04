@@ -12,6 +12,7 @@ adding zero overhead.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 import socket
@@ -108,11 +109,21 @@ def flush_metrics() -> None:
             LOGGER.error(f"{ICONS['metrics']} [metrics] Flush failed: {exc}")
 
 
-def shutdown_metrics() -> None:
+async def shutdown_metrics() -> None:
     """Shut down the metrics provider (flushes + releases resources)."""
     if _provider is not None:
         try:
-            _provider.shutdown()
+            # Wrap shutdown in a timeout to prevent hangs during container exit.
+            # Cloud Monitoring flushes can be slow or fail on flaky connections.
+            await asyncio.wait_for(
+                asyncio.to_thread(_provider.shutdown),
+                timeout=10.0,
+            )
             LOGGER.debug(f"{ICONS['metrics']} [metrics] Metrics provider shut down")
+        except asyncio.TimeoutError:
+            LOGGER.warning(
+                f"{ICONS['metrics']} [metrics] Metrics shutdown timed out after 10s, "
+                "proceeding anyway",
+            )
         except Exception as exc:
             LOGGER.error(f"{ICONS['metrics']} [metrics] Shutdown failed: {exc}")

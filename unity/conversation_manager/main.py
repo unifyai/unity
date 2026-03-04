@@ -312,10 +312,12 @@ async def main(project_name: str = "Assistants"):
     # Flush buffered EventBus writes to the backend before exit.
     from unity.events.event_bus import EVENT_BUS
 
+    LOGGER.info(f"{ICONS['lifecycle']} Final EventBus flush...")
     EVENT_BUS.flush()
 
     # Shut down the metrics exporter (flushes remaining data internally).
-    shutdown_metrics()
+    LOGGER.info(f"{ICONS['lifecycle']} Shutting down metrics...")
+    await shutdown_metrics()
 
     LOGGER.debug(f"{ICONS['lifecycle']} Shutdown finished")
 
