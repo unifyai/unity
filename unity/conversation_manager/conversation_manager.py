@@ -670,17 +670,26 @@ class ConversationManager(metaclass=SingletonABCMeta):
         except Exception:
             return messages
 
+    SPEECH_PREEMPT_THRESHOLD_SECONDS = 3.0
+
     async def interject_or_run(self, content: str):
         """Interject the ask handle or run the LLM"""
         if self.active_ask_handle and not self.active_ask_handle.done():
             await self.active_ask_handle.interject(content)
         else:
-            # Voice mode: cancel_running=False so running LLM tasks complete
-            # while only pending tasks are replaced ("queue of 2"). This
-            # prevents rapid user speech from cancelling every LLM run.
-            # Text mode: cancel_running=True — rapid messages should get
-            # fresh responses with the latest context.
-            cancel_running = not self.mode.is_voice
+            if not self.mode.is_voice:
+                cancel_running = True
+            elif (
+                self.debouncer.running_task
+                and not self.debouncer.running_task.done()
+                and (
+                    self.loop.time() - self.debouncer.running_task_started_at
+                    > self.SPEECH_PREEMPT_THRESHOLD_SECONDS
+                )
+            ):
+                cancel_running = True
+            else:
+                cancel_running = False
             await self.request_llm_run(delay=0, cancel_running=cancel_running)
 
     # this is non-blocking, it will quickly submit the
