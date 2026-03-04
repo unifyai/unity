@@ -1140,13 +1140,16 @@ class ConversationManager(metaclass=SingletonABCMeta):
             idle_seconds = min(pubsub_idle, eventbus_idle)
 
             # important to know the idle times from the event bus and pubsub
-            self._session_logger.info(
-                "inactivity_check",
-                f"Idle check: pubsub_idle={pubsub_idle:.1f}s, "
-                f"eventbus_idle={eventbus_idle:.1f}s, "
-                f"min_idle={idle_seconds:.1f}s, "
-                f"timeout={self.inactivity_timeout}s",
-            )
+            # Log every 3 minutes (180s) instead of every check interval (30s)
+            # to make the terminal logs less verbose.
+            if int(current_time) % 180 < self.inactivity_check_interval:
+                self._session_logger.info(
+                    "inactivity_check",
+                    f"Idle check: pubsub_idle={pubsub_idle:.1f}s, "
+                    f"eventbus_idle={eventbus_idle:.1f}s, "
+                    f"min_idle={idle_seconds:.1f}s, "
+                    f"timeout={self.inactivity_timeout}s",
+                )
 
             if idle_seconds > self.inactivity_timeout:
                 log_str = f"Inactivity timeout reached ({self.inactivity_timeout}s), requesting shutdown"
