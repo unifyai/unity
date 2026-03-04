@@ -938,8 +938,7 @@ async def _(event: GetChatHistory, cm: "ConversationManager", *args, **kwargs):
 
 @EventHandler.register(ActorHandleStarted)
 async def _(event: ActorHandleStarted, cm: "ConversationManager", *args, **kwargs):
-    cm._has_non_forwarded_event = True
-    await cm.request_llm_run()
+    pass
 
 
 @EventHandler.register(NotificationInjectedEvent)
@@ -1036,13 +1035,12 @@ async def _(event: ActorNotification, cm: "ConversationManager", *args, **kwargs
     """A progress notification from an in-flight action.
 
     Unlike ``ActorResponse``, notifications arrive while the actor is still
-    working.  Progress is recorded in the action's history.
+    working.  Progress is recorded in the action's history so the slow brain
+    sees accumulated progress when it next runs on a legitimate event.
 
-    The slow brain is woken to decide whether to relay progress via
-    ``guide_voice_agent``.  On boss-on-call, the call manager renders
-    actor events into FastBrainNotification messages for the fast brain.
+    The fast brain receives actor progress via ``_render_boss_notifications``
+    and the ``NotificationReplyEvaluator`` decides whether to speak.
     """
-    cm._has_non_forwarded_event = True
     if event.handle_id in cm.in_flight_actions:
         from unity.common.prompt_helpers import now as prompt_now
 
@@ -1053,7 +1051,6 @@ async def _(event: ActorNotification, cm: "ConversationManager", *args, **kwargs
                 "timestamp": prompt_now(),
             },
         )
-    await cm.request_llm_run()
 
 
 @EventHandler.register(ComputerActCompleted)
@@ -1288,6 +1285,16 @@ _MEET_FAST_BRAIN_GUIDANCE: dict[type, str] = {
     ),
 }
 
+# Meet events that warrant a slow-brain turn because they require an
+# orchestration decision (e.g. warm up a desktop session, interject an
+# in-flight actor about remote-control state).  Events not listed here
+# are handled entirely by the fast brain via silent notification injection.
+_MEET_SLOW_BRAIN_TRIGGERS: set[type] = {
+    UserScreenShareStarted,
+    UserRemoteControlStarted,
+    UserRemoteControlStopped,
+}
+
 # State attribute name on the CM for each toggle pair.
 _MEET_STATE_FLAGS: dict[type, tuple[str, bool]] = {
     AssistantScreenShareStarted: ("assistant_screen_share_active", True),
@@ -1397,7 +1404,8 @@ async def _(
         except Exception:
             pass
 
-    await cm.request_llm_run()
+    if event.__class__ in _MEET_SLOW_BRAIN_TRIGGERS:
+        await cm.request_llm_run()
 
 
 @EventHandler.register(LogMessageResponse)
