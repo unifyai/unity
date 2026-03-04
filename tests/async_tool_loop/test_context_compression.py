@@ -1,18 +1,3 @@
-"""
-tests/async_tool_loop/test_context_compression.py
-==================================================
-
-Phase 1 tests for the core context compression API.
-
-Tests cover:
-- _CompressionRequest dataclass
-- compress_context tool function (no params, has docstring)
-- prepare_messages_for_compression (strips images + thinking blocks)
-- CompressedMessage / CompressedMessages Pydantic schemas
-- compress_messages (real LLM, schema-enforced output length)
-- render_compressed_context (indexed format)
-"""
-
 from __future__ import annotations
 
 import copy
