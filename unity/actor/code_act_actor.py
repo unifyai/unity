@@ -286,7 +286,6 @@ class _CodeActEntrypointHandle(SteerableToolHandle):  # type: ignore[abstract-me
             tools={},
             loop_id=f"EntrypointQuestion({self._entrypoint_id})",
             max_consecutive_failures=1,
-            timeout=30,
         )
 
     async def interject(
@@ -837,8 +836,6 @@ def _start_storage_check_loop(
         tools=tools,
         loop_id="StorageCheck(CodeActActor.act)",
         parent_lineage=parent_lineage,
-        max_steps=30,
-        timeout=120,
     )
 
 
@@ -993,6 +990,7 @@ class _StorageCheckHandle(SteerableToolHandle):
                     phase="incoming",
                     display_label="Storing Reusable Skills",
                     hierarchy=_sc_hierarchy,
+                    instructions="Review the trajectory and store any reusable functions and compositional guidance.",
                 )
 
                 storage_handle = _start_storage_check_loop(
@@ -1123,8 +1121,6 @@ class _StorageCheckHandle(SteerableToolHandle):
             message=question,
             tools=routing_tools,
             loop_id="Question(StorageCheck.routing)",
-            max_steps=5,
-            timeout=60,
         )
 
     async def interject(
@@ -1351,7 +1347,7 @@ class CodeActActor(BaseCodeActActor):
                 trajectory. Storage is always deferred to a dedicated second
                 loop after the main task completes — the main loop never
                 exposes storage tools.
-            timeout: Maximum seconds for the actor to complete.
+            timeout: Maximum seconds for individual code execution in sessions.
             model: Optional LLM model identifier (e.g. "claude-4.5-opus@anthropic").
                 If None, uses SETTINGS.UNIFY_MODEL (default: "claude-4.5-opus@anthropic").
             preprocess_msgs: Optional callback to modify messages before each LLM call.
@@ -1459,7 +1455,6 @@ class CodeActActor(BaseCodeActActor):
         self._max_sessions_total: int = 20
         self._next_session_id: dict[tuple[str, Optional[int]], int] = {}
 
-        self._timeout = timeout
         self.can_compose: bool = bool(can_compose)
         self.can_store: bool = bool(can_store)
         self.tool_policy: Union[ToolPolicyFn, None, object] = tool_policy
@@ -3424,8 +3419,6 @@ class CodeActActor(BaseCodeActActor):
             parent_chat_context=_parent_chat_context,
             interrupt_llm_with_interjections=True,
             log_steps=True,
-            max_steps=100,
-            timeout=self._timeout,
             tool_policy=tool_policy,
             response_format=response_format,
             persist=persist,

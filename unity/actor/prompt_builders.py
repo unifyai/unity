@@ -161,6 +161,21 @@ _EXECUTION_RULES = textwrap.dedent("""
     7. **Final Answer Rule**:
        - When the user's request has been fully addressed, you **MUST** provide the final answer directly as a tool-less assistant message.
        - Do not call a tool to print the final answer.
+
+    8. **Surface Uncertainties in Your Response**:
+       - When you encounter ambiguity during execution — mapping
+         approximate labels to schema fields, choosing between plausible
+         interpretations of source data, making assumptions where
+         information was unclear — include a brief **Uncertainties**
+         section at the end of your final answer listing the judgment
+         calls you were least confident about.
+       - This complements (not replaces) clarification requests. If
+         ambiguity is a genuine blocker, request clarification as
+         normal. But for the many smaller judgment calls you make while
+         proceeding, surface them in the response so the user can
+         verify and correct if needed.
+       - Focus on decisions that could materially affect the output.
+         Do not list trivial or obvious choices.
 """).strip()
 
 _STORAGE_DEFERRED_NOTICE = textwrap.dedent("""
@@ -186,9 +201,10 @@ _FAST_PATH_AWARENESS = textwrap.dedent("""
     ### Fast-Path Awareness
 
     During interactive screen-share sessions, the outer process may handle
-    simple desktop/browser actions via fast paths instead of routing them
-    through you.  You will see these as interjection messages tagged
-    `[Fast-path request]` and `[Fast-path result]`.
+    simple computer actions (browser navigation, clicks, scrolls) via fast
+    paths instead of routing them through you.  You will see these as
+    interjection messages tagged `[Fast-path request]` and
+    `[Fast-path result]`.
 
     **Your role:** Monitor these interjections and intervene when the fast
     path is out of its depth.  Specifically, escalate via `notify()` when:

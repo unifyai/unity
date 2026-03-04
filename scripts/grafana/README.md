@@ -507,4 +507,3 @@ spec:
 | Secret | `grafana-secrets` | `production` |
 | ManagedCertificate | `grafana-cert` | `production` |
 | Secret (pre-existing) | `comm-sa-key` | `production` |
-

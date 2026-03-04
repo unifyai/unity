@@ -58,7 +58,7 @@ async def test_desktop_tools_present_when_screen_share_active_no_act(initialized
     cm = initialized_cm.cm
     cm.assistant_screen_share_active = True
 
-    assert cm.desktop_fast_path_eligible
+    assert cm.computer_fast_path_eligible
 
 
 @pytest.mark.asyncio
@@ -81,13 +81,13 @@ async def test_desktop_tools_remain_after_act_completion(initialized_cm):
         "action_type": "act",
         "handle_actions": [],
     }
-    assert cm.desktop_fast_path_eligible
+    assert cm.computer_fast_path_eligible
 
     event = ActorResult(handle_id=99, success=True, result="done")
     await EventHandler.handle_event(event, cm)
 
     assert (
-        cm.desktop_fast_path_eligible
+        cm.computer_fast_path_eligible
     ), "Tools should remain available — screen share is still active"
 
 
@@ -109,12 +109,12 @@ async def test_desktop_tools_disappear_on_screen_share_stop(initialized_cm):
         "action_type": "act",
         "handle_actions": [],
     }
-    assert cm.desktop_fast_path_eligible
+    assert cm.computer_fast_path_eligible
 
     event = AssistantScreenShareStopped(reason="user_stopped")
     await EventHandler.handle_event(event, cm)
 
-    assert not cm.desktop_fast_path_eligible
+    assert not cm.computer_fast_path_eligible
 
     # Clean up
     cm.in_flight_actions.pop(50, None)
@@ -241,7 +241,7 @@ async def test_fast_path_interjects_act_session_without_prior_desktop_usage(
     """Fast paths must interject ALL in-flight act sessions, not just those that
     have already called desktop primitives.
 
-    Regression: _silent_interject_desktop_act_sessions previously iterated
+    Regression: _silent_interject_act_sessions previously iterated
     only act sessions that had already called desktop primitives.  When the
     CM did all the desktop work via fast paths (and the act session had only
     done non-desktop work like loading guidance), the interjections had zero

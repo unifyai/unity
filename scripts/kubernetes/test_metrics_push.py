@@ -6,7 +6,6 @@ Can run locally (hardcodes GKE resource attributes) or inside a GKE pod.
 """
 
 import logging
-import os
 import random
 import socket
 import time
@@ -31,7 +30,7 @@ resource = Resource.create(
         "k8s.namespace.name": "staging",
         "k8s.pod.name": f"test-metrics-{socket.gethostname()}",
         "k8s.container.name": "unity-assistant",
-    }
+    },
 )
 print(f"Resource: {resource.attributes}")
 
@@ -61,5 +60,5 @@ time.sleep(15)
 print("Shutting down...")
 provider.shutdown()
 print(
-    "Done. Check Metrics Explorer for 'unity_test_metric' under Kubernetes Container."
+    "Done. Check Metrics Explorer for 'unity_test_metric' under Kubernetes Container.",
 )

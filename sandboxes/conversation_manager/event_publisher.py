@@ -11,9 +11,13 @@ text-based events.
 
 from __future__ import annotations
 
+import mimetypes
 import os
+import shutil
 import time
+import uuid
 from dataclasses import dataclass
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 from unity.conversation_manager.events import (
@@ -66,10 +70,37 @@ class EventPublisher:
         self.state.last_event_published_at = time.monotonic()
         await self.cm.event_broker.publish(topic, event.to_json())
 
-    async def publish_unify_message(self, message: str) -> None:
+    async def publish_unify_message(
+        self,
+        message: str,
+        attachments: list[Path] | None = None,
+    ) -> None:
         contact = get_simulated_user_contact()
+        attachment_meta: list[dict] = []
+        if attachments:
+            downloads_dir = Path("Downloads")
+            downloads_dir.mkdir(parents=True, exist_ok=True)
+            for src in attachments:
+                dest = downloads_dir / src.name
+                shutil.copy2(src, dest)
+                content_type = (
+                    mimetypes.guess_type(src.name)[0] or "application/octet-stream"
+                )
+                attachment_meta.append(
+                    {
+                        "id": str(uuid.uuid4()),
+                        "filename": src.name,
+                        "url": dest.resolve().as_uri(),
+                        "content_type": content_type,
+                        "size_bytes": src.stat().st_size,
+                    },
+                )
         await self.publish_event(
-            UnifyMessageReceived(contact=contact, content=message),
+            UnifyMessageReceived(
+                contact=contact,
+                content=message,
+                attachments=attachment_meta,
+            ),
         )
 
     async def publish_sms(self, message: str) -> None:

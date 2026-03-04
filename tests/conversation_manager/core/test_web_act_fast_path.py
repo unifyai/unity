@@ -51,7 +51,7 @@ async def test_web_act_present_when_screen_share_active(initialized_cm):
     cm = initialized_cm.cm
     cm.assistant_screen_share_active = True
 
-    assert cm.desktop_fast_path_eligible
+    assert cm.computer_fast_path_eligible
 
 
 @pytest.mark.asyncio
@@ -60,7 +60,7 @@ async def test_close_web_session_present_when_screen_share_active(initialized_cm
     """close_web_session is gated by the same flag as web_act."""
     cm = initialized_cm.cm
     cm.assistant_screen_share_active = True
-    assert cm.desktop_fast_path_eligible
+    assert cm.computer_fast_path_eligible
 
 
 # =============================================================================

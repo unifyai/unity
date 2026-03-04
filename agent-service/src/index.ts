@@ -488,7 +488,7 @@ const startDesktop = async (): Promise<BrowserAgent> => {
 const startBrowser = async (headless: boolean): Promise<BrowserAgent> => {
   try {
     const agent = await startBrowserAgent({
-      url: "https://www.duckduckgo.com/",
+      url: "https://www.google.com/",
       browser: getLaunchOptions(headless, defaultBrowserPaths.downloadsPath, defaultBrowserPaths.tracesDir),
       narrate: true,
       // Route LLM calls through Orchestra/UniLLM proxy for billing and caching
@@ -516,17 +516,20 @@ const startBrowser = async (headless: boolean): Promise<BrowserAgent> => {
 const startBrowserOnVm = async (): Promise<BrowserAgent> => {
   try {
     const agent = await startBrowserAgent({
-      url: "https://www.duckduckgo.com/",
-      browser: { launchOptions: {
-        headless: false,
-        args: [
-          "--disable-blink-features=AutomationControlled",
-          "--disable-features=IsolateOrigins,site-per-process",
-          '--auto-select-desktop-capture-source="Entire screen"',
-        ],
-        downloadsPath: defaultBrowserPaths.downloadsPath || undefined,
-        tracesDir: defaultBrowserPaths.tracesDir || undefined,
-      }},
+      url: "https://www.google.com/",
+      browser: {
+        launchOptions: {
+          headless: false,
+          args: [
+            "--disable-blink-features=AutomationControlled",
+            "--disable-features=IsolateOrigins,site-per-process",
+            '--auto-select-desktop-capture-source="Entire screen"',
+          ],
+          downloadsPath: defaultBrowserPaths.downloadsPath || undefined,
+          tracesDir: defaultBrowserPaths.tracesDir || undefined,
+        },
+        contextOptions: { viewport: null },
+      },
       narrate: true,
       llm: {
         provider: 'openai-generic',
@@ -654,6 +657,19 @@ app.post('/act', isAgentReady, async (req: Request, res: Response) => {
       : '[desktop.act] ';
 
     const memory = new AgentMemory({ promptCaching: true });
+
+    // Fresh web/web-vm sessions already have a browser open and loaded.
+    // Tell the LLM so it can no-op (return an empty action list) if the
+    // task is simply asking to open a browser.
+    if (session.actHistory.length === 0 && session.mode !== 'desktop') {
+      memory.recordObservation(new Observation(
+        'thought' as any,
+        'user',
+        'This is a freshly created browser session — the browser is already open and loaded. '
+        + 'If the task is simply asking to open a browser, open a new browser window, or launch a browser, '
+        + 'this has already been accomplished. Return an empty actions list.'
+      ));
+    }
 
     if (session.actHistory.length > 0) {
       let injectedCount = 0;
