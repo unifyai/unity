@@ -1145,7 +1145,7 @@ class ConversationManager(metaclass=SingletonABCMeta):
                 f"Idle check: pubsub_idle={pubsub_idle:.1f}s, "
                 f"eventbus_idle={eventbus_idle:.1f}s, "
                 f"min_idle={idle_seconds:.1f}s, "
-                f"timeout={self.inactivity_timeout}s"
+                f"timeout={self.inactivity_timeout}s",
             )
 
             if idle_seconds > self.inactivity_timeout:
