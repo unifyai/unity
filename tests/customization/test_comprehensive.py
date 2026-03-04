@@ -313,50 +313,40 @@ class TestEnvironmentReconstruct:
 
 
 class TestColliersScaffold:
-    def test_colliers_environment_importable(self):
-        from unity.customization.clients.colliers.colliers_env import (
-            ColliersEnvironment,
+    def test_colliers_functions_importable(self):
+        from unity.customization.clients.colliers.functions.create_financial_data_excel import (
+            create_financial_data_excel,
+        )
+        from unity.customization.clients.colliers.functions.create_web_search_excel import (
+            create_web_search_excel,
         )
 
-        assert ColliersEnvironment.NAMESPACE == "colliers"
+        assert callable(create_financial_data_excel)
+        assert callable(create_web_search_excel)
 
-    def test_colliers_environment_has_tools(self):
-        from unity.customization.clients.colliers.colliers_env import (
-            ColliersEnvironment,
-        )
+    def test_colliers_guidance_entries(self):
+        from unity.customization.clients.colliers import _COLLIERS_GUIDANCE
 
-        env = ColliersEnvironment()
-        tools = env.get_tools()
-        assert "colliers.create_financial_data_excel" in tools
-        assert "colliers.create_web_search_excel" in tools
+        assert len(_COLLIERS_GUIDANCE) == 4
+        titles = {g["title"] for g in _COLLIERS_GUIDANCE}
+        assert "Financial Data Extraction from Excel and PDF Documents" in titles
+        assert "CoStar Web Research for UK Care Home Deals" in titles
+        assert "Healthcare Valuation Financial Data Schema" in titles
+        assert "Deal Tracker Data Schema" in titles
+        for g in _COLLIERS_GUIDANCE:
+            assert len(g["content"]) > 100
 
-    def test_colliers_environment_has_prompt_context(self):
-        from unity.customization.clients.colliers.colliers_env import (
-            ColliersEnvironment,
-        )
+    def test_colliers_config_is_thin(self):
+        from unity.customization.clients.colliers import _COLLIERS_CONFIG
 
-        env = ColliersEnvironment()
-        ctx = env.get_prompt_context()
-        assert "FiscalYearData" in ctx
-        assert "DealRow" in ctx
+        assert _COLLIERS_CONFIG.guidelines is not None
+        assert len(_COLLIERS_CONFIG.guidelines) < 300
 
-    def test_colliers_guidelines_nonempty(self):
-        from unity.customization.clients.colliers.guidelines import (
-            COLLIERS_GUIDELINES,
-        )
+    def test_colliers_no_environments(self):
+        pass
 
-        assert len(COLLIERS_GUIDELINES) > 100
-        assert "Financial Data Extraction" in COLLIERS_GUIDELINES
-        assert "Web Deal Research" in COLLIERS_GUIDELINES
-
-    def test_colliers_schemas_importable(self):
-        from unity.customization.clients.colliers.colliers_schemas import (
-            FiscalYearData,
-            DealRow,
-        )
-
-        assert FiscalYearData.model_fields["property_name"] is not None
-        assert DealRow.model_fields["name"] is not None
+        r = resolve(org_id=-1)
+        assert r.environments == []
 
     def test_colliers_not_registered_with_dummy_id(self):
         r = resolve(org_id=-1)
