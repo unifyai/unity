@@ -255,12 +255,12 @@ class ConversationManager(metaclass=SingletonABCMeta):
         return ManagerRegistry.get_instance(ComputerPrimitives)
 
     @property
-    def desktop_fast_path_eligible(self) -> bool:
-        """True when the CM should expose desktop fast-path tools.
+    def computer_fast_path_eligible(self) -> bool:
+        """True when the CM should expose computer fast-path tools.
 
         Requires assistant screen share to be active.  The tools are available
         regardless of whether an in-flight ``act`` session has already invoked
-        desktop primitives — the prompt guides the LLM to spin up a concurrent
+        computer primitives — the prompt guides the LLM to spin up a concurrent
         ``act(persist=True)`` session when one isn't already running.
         """
         return self.assistant_screen_share_active
@@ -670,17 +670,26 @@ class ConversationManager(metaclass=SingletonABCMeta):
         except Exception:
             return messages
 
+    SPEECH_PREEMPT_THRESHOLD_SECONDS = 3.0
+
     async def interject_or_run(self, content: str):
         """Interject the ask handle or run the LLM"""
         if self.active_ask_handle and not self.active_ask_handle.done():
             await self.active_ask_handle.interject(content)
         else:
-            # Voice mode: cancel_running=False so running LLM tasks complete
-            # while only pending tasks are replaced ("queue of 2"). This
-            # prevents rapid user speech from cancelling every LLM run.
-            # Text mode: cancel_running=True — rapid messages should get
-            # fresh responses with the latest context.
-            cancel_running = not self.mode.is_voice
+            if not self.mode.is_voice:
+                cancel_running = True
+            elif (
+                self.debouncer.running_task
+                and not self.debouncer.running_task.done()
+                and (
+                    self.loop.time() - self.debouncer.running_task_started_at
+                    > self.SPEECH_PREEMPT_THRESHOLD_SECONDS
+                )
+            ):
+                cancel_running = True
+            else:
+                cancel_running = False
             await self.request_llm_run(delay=0, cancel_running=cancel_running)
 
     # this is non-blocking, it will quickly submit the
@@ -896,7 +905,7 @@ class ConversationManager(metaclass=SingletonABCMeta):
                 tools.pop("guide_voice_agent")
         self._has_non_forwarded_event = False
 
-        if self.desktop_fast_path_eligible:
+        if self.computer_fast_path_eligible:
             tools["desktop_act"] = action_tools.desktop_act
             tools["web_act"] = action_tools.web_act
             tools["close_web_session"] = action_tools.close_web_session
@@ -1138,10 +1147,23 @@ class ConversationManager(metaclass=SingletonABCMeta):
             pubsub_idle = current_time - self.last_activity_time
             eventbus_idle = _time.monotonic() - EventBus.last_publish_monotonic
             idle_seconds = min(pubsub_idle, eventbus_idle)
+
+            # important to know the idle times from the event bus and pubsub
+            # Log every 3 minutes (180s) instead of every check interval (30s)
+            # to make the terminal logs less verbose.
+            if int(current_time) % 180 < self.inactivity_check_interval:
+                self._session_logger.info(
+                    "inactivity_check",
+                    f"Idle check: pubsub_idle={pubsub_idle:.1f}s, "
+                    f"eventbus_idle={eventbus_idle:.1f}s, "
+                    f"min_idle={idle_seconds:.1f}s, "
+                    f"timeout={self.inactivity_timeout}s",
+                )
+
             if idle_seconds > self.inactivity_timeout:
                 log_str = f"Inactivity timeout reached ({self.inactivity_timeout}s), requesting shutdown"
-                LOGGER.debug(f"{DEFAULT_ICON} {log_str}")
-                self._session_logger.debug("session_end", log_str)
+                LOGGER.info(f"{DEFAULT_ICON} {log_str}")
+                self._session_logger.info("session_end", log_str)
                 self.stop.set()
                 await self.event_broker.aclose()
                 break  # Exit the loop after triggering shutdown
@@ -1228,6 +1250,7 @@ class ConversationManager(metaclass=SingletonABCMeta):
             assistant_number=self.assistant_number,
             voice_provider=self.voice_provider,
             voice_id=self.voice_id,
+            assistant_name=f"{self.assistant_first_name} {self.assistant_surname}".strip(),
         )
 
     async def store_chat_history(self):

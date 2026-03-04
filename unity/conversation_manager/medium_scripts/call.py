@@ -169,11 +169,105 @@ class Assistant(Agent):
             yield chunk
 
 
+def _load_config_from_metadata(ctx: agents.JobContext) -> dict | None:
+    """Parse call config from job dispatch metadata (persistent worker path).
+
+    Returns the parsed dict, or None when no metadata is present (legacy
+    subprocess path).
+    """
+    raw = getattr(ctx.job, "metadata", None)
+    if not raw:
+        return None
+    try:
+        return json.loads(raw)
+    except (json.JSONDecodeError, TypeError):
+        return None
+
+
+def _configure_child_logging() -> None:
+    """Ensure Unity's LOGGER works in LiveKit's pre-warmed child processes.
+
+    LiveKit agents (v1.2.x) uses ``forkserver`` on Linux.  Child processes
+    are forked from a lean server process, not from the worker, so the
+    ``unity`` logger's handlers may point to stale file descriptors.
+
+    The framework routes child logs through a ``LogQueueHandler`` on the
+    **root** logger, which serialises records back to the worker process.
+    We enable propagation so Unity records flow through that channel, and
+    remove any direct handlers that could double-emit or silently fail.
+    """
+    import logging as _logging
+
+    from unity.logger import LOGGER as _L
+
+    _L.propagate = True
+    for h in list(_L.handlers):
+        _L.removeHandler(h)
+
+    for name in ("livekit", "livekit.agents", "livekit.plugins"):
+        lg = _logging.getLogger(name)
+        lg.propagate = True
+        for h in list(lg.handlers):
+            lg.removeHandler(h)
+
+
 async def entrypoint(ctx: agents.JobContext):
     global STT, VAD
 
+    _configure_child_logging()
+
     # Wire the module-level logger into the shared event broker.
     event_broker.set_logger(_log)
+
+    # --- Config: persistent worker (job metadata) or legacy subprocess (env) ---
+    meta = _load_config_from_metadata(ctx)
+    _log.info(f"Entrypoint started (has_metadata={meta is not None})")
+    if meta:
+        from unity.conversation_manager.domains.ipc_socket import init_socket_for_job
+
+        ipc_path = meta.get("ipc_socket_path", "")
+        if ipc_path:
+            init_socket_for_job(ipc_path)
+            event_broker.reinit_socket()
+            _log.info(f"IPC socket initialised: {ipc_path}")
+        else:
+            _log.warning("No ipc_socket_path in job metadata — IPC disabled")
+
+        voice_provider = meta.get("voice_provider", "cartesia")
+        voice_id = meta.get("voice_id", "")
+        outbound = meta.get("outbound", False)
+        channel = meta.get("channel", "phone")
+        assistant_bio = meta.get("assistant_bio", "")
+        contact = meta.get("contact", {})
+        boss = meta.get("boss", {})
+        SESSION_DETAILS.assistant.about = assistant_bio
+        if meta.get("assistant_id"):
+            try:
+                SESSION_DETAILS.assistant.agent_id = int(meta["assistant_id"])
+            except (ValueError, TypeError):
+                pass
+        if meta.get("user_id"):
+            SESSION_DETAILS.user.id = meta["user_id"]
+        if meta.get("assistant_name"):
+            parts = meta["assistant_name"].split(None, 1)
+            SESSION_DETAILS.assistant.first_name = parts[0] if parts else ""
+            SESSION_DETAILS.assistant.surname = parts[1] if len(parts) > 1 else ""
+    else:
+        _log.warning(
+            "No job metadata — falling back to env-based config (IPC disabled)",
+        )
+        SESSION_DETAILS.populate_from_env()
+        voice_provider = SESSION_DETAILS.voice.provider
+        voice_id = SESSION_DETAILS.voice.id
+        outbound = SESSION_DETAILS.voice_call.outbound
+        channel = SESSION_DETAILS.voice_call.channel
+        assistant_bio = SESSION_DETAILS.assistant.about
+        contact = json.loads(SESSION_DETAILS.voice_call.contact_json or "{}")
+        boss = json.loads(SESSION_DETAILS.voice_call.boss_json or "{}")
+
+    _log.config(
+        f"voice_provider={voice_provider} voice_id={voice_id} outbound={outbound} channel={channel}",
+    )
 
     _log.session_start("Connecting to room…")
     await ctx.connect()
@@ -198,23 +292,6 @@ async def entrypoint(ctx: agents.JobContext):
 
     # Start receiving events from parent (callbacks registered later)
     await start_event_broker_receive()
-
-    # Populate SESSION_DETAILS from environment (set by configure_from_cli)
-    SESSION_DETAILS.populate_from_env()
-
-    # Read config from SESSION_DETAILS
-    voice_provider = SESSION_DETAILS.voice.provider
-    voice_id = SESSION_DETAILS.voice.id
-    outbound = SESSION_DETAILS.voice_call.outbound
-    channel = SESSION_DETAILS.voice_call.channel
-    assistant_bio = SESSION_DETAILS.assistant.about
-    _log.config(
-        f"voice_provider={voice_provider} voice_id={voice_id} outbound={outbound} channel={channel}",
-    )
-
-    # Contact/boss payloads from SESSION_DETAILS
-    contact = json.loads(SESSION_DETAILS.voice_call.contact_json or "{}")
-    boss = json.loads(SESSION_DETAILS.voice_call.boss_json or "{}")
 
     # Fallback for whenever pre-loading fails
     if STT is None:
@@ -362,14 +439,24 @@ async def entrypoint(ctx: agents.JobContext):
         assistant_utterance_event = OutboundUnifyMeetUtterance
 
     # Register cleanup as a LiveKit shutdown callback so it runs on any
-    # exit path: participant disconnect (close_on_disconnect), inactivity,
-    # or explicit stop.  LiveKit manages task lifecycle — no manual
-    # cancellation needed.
+    # exit path: participant disconnect, inactivity, or explicit stop.
     async def _on_job_shutdown():
         await delete_livekit_room(ctx.room.name)
         await publish_call_ended(contact, channel)
 
     ctx.add_shutdown_callback(_on_job_shutdown)
+
+    # Bridge AgentSession close → job shutdown.  close_on_disconnect
+    # (RoomInputOptions, default True) closes the AgentSession when the
+    # linked participant leaves, but does NOT resolve the JobContext's
+    # shutdown future — so our shutdown callbacks never fire.  Listening
+    # for the session "close" event completes the chain.
+    @session.on("close")
+    def _on_session_close(ev):
+        from livekit.agents.voice.events import CloseReason
+
+        if ev.reason == CloseReason.PARTICIPANT_DISCONNECTED:
+            ctx.shutdown(reason="participant_disconnected")
 
     async def _shutdown_inactivity():
         ctx.shutdown(reason="inactivity")

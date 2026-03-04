@@ -34,6 +34,9 @@ CommandKind = Literal[
     "scenario_seed_voice",
     # Steering
     "steering",
+    # File attachments
+    "attach",
+    "detach",
     # Event simulation (inbound)
     "event",
     # Freeform utterance (during a call)
@@ -86,6 +89,11 @@ Inbound event simulation:
   end_call                      End active phone call
   end_meet                      End active Unify Meet session
 
+File attachments:
+  attach <path>                 Queue a local file for the next `msg` command
+  attach                        Show currently queued attachments
+  detach                        Clear all queued attachments
+
 Scenario seeding (idle-only):
   us <description>              Generate a synthetic scenario from text
   usv                           Generate a synthetic scenario from voice (requires --voice)
@@ -122,10 +130,11 @@ def parse_command(*, text: str, in_call: bool, active: bool) -> ParsedCommand:
 
     Precedence:
     1) Meta commands
-    2) Scenario commands (only when idle)
-    3) Steering commands (only when active)
-    4) Event commands
-    5) Freeform text: utterance if in_call else error
+    2) File attachment commands
+    3) Scenario commands (only when idle)
+    4) Steering commands (only when active)
+    5) Event commands
+    6) Freeform text: utterance if in_call else error
     """
     raw = (text or "").rstrip("\n")
     trimmed = raw.strip()
@@ -196,7 +205,20 @@ def parse_command(*, text: str, in_call: bool, active: bool) -> ParsedCommand:
             args=trimmed[len("agent_logs ") :].strip(),
         )
 
-    # 2) Scenario commands — only when idle
+    # 2) File attachment commands
+    if lower == "attach":
+        return ParsedCommand(kind="attach", raw=raw, name="attach", args="")
+    if lower.startswith("attach "):
+        return ParsedCommand(
+            kind="attach",
+            raw=raw,
+            name="attach",
+            args=trimmed[len("attach ") :].strip(),
+        )
+    if lower == "detach":
+        return ParsedCommand(kind="detach", raw=raw, name="detach")
+
+    # 3) Scenario commands — only when idle
     if lower == "usv":
         if active:
             return ParsedCommand(
@@ -221,7 +243,7 @@ def parse_command(*, text: str, in_call: bool, active: bool) -> ParsedCommand:
             args=trimmed[3:].strip(),
         )
 
-    # 3) Event commands
+    # 4) Event commands
     if lower.startswith("msg "):
         return ParsedCommand(
             kind="event",
@@ -279,7 +301,7 @@ def parse_command(*, text: str, in_call: bool, active: bool) -> ParsedCommand:
                 args=trimmed[len(_cmd_name) + 1 :].strip(),
             )
 
-    # 5) Freeform text
+    # 6) Freeform text
     if in_call:
         # During a call, any non-command text is treated as a phone utterance.
         return ParsedCommand(kind="utterance", raw=raw, name="utterance", args=trimmed)

@@ -1739,6 +1739,26 @@ class BaseFileManager(BaseStateManager):
     ) -> "Image.Image":
         """Render an Excel sheet range as a PIL Image.
 
+        This is the primary tool for extracting information from Excel
+        files.  Visual rendering is far more robust than text-based
+        extraction — it preserves formatting, merged cells, colours,
+        and layout cues that are critical for understanding real-world
+        spreadsheets.
+
+        Recommended workflow
+        ~~~~~~~~~~~~~~~~~~~~
+        1. Open the workbook with ``openpyxl`` and iterate over visible
+           sheets (skip sheets where ``sheet.sheet_state != 'visible'``).
+        2. **Render the full sheet first** (omit ``cell_range``) and
+           ``display()`` the result. This gives a global view of the
+           entire layout — without it you risk missing sections such as
+           summary totals at the bottom or columns to the right.
+        3. **Zoom in** on areas of interest by rendering specific cell
+           ranges (e.g. ``cell_range="A1:G30"``) and by reading exact
+           cell values via ``openpyxl`` for precise extraction.
+        4. Record provenance for every extracted value (sheet name, cell
+           reference) so results can be traced back to the source.
+
         Parameters
         ----------
         sheet : openpyxl Worksheet
@@ -1763,6 +1783,24 @@ class BaseFileManager(BaseStateManager):
         dpi: int = 150,
     ) -> "Image.Image":
         """Render a PDF page as a PIL Image.
+
+        This is the primary tool for extracting information from PDFs.
+        Visual rendering is far more robust than text extraction —
+        scanned documents, poor-quality originals, complex tables, and
+        multi-column layouts all render faithfully as images, whereas
+        text-based parsing frequently drops or garbles content.
+
+        Recommended workflow
+        ~~~~~~~~~~~~~~~~~~~~
+        1. Get the total page count (e.g. via ``pymupdf``).
+        2. Render **2–3 pages at a time** and ``display()`` each image.
+           This keeps context manageable while giving a good overview.
+           Do not render more than 3 pages in a single code execution
+           step.
+        3. After surveying the document visually, revisit specific pages
+           to extract the information you need.
+        4. Record provenance for every extracted value (page number,
+           location on page) so results can be traced back to the source.
 
         Parameters
         ----------

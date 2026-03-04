@@ -330,6 +330,7 @@ _EXAMPLE_GENERATORS: Dict[str, List[str]] = {
         "get_primitives_secrets_update_example",
     ],
     "files": [
+        "get_primitives_files_render_extract_example",
         "get_primitives_files_describe_example",
         "get_primitives_files_reduce_example",
         "get_primitives_files_filter_example",

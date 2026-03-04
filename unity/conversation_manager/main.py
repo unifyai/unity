@@ -312,20 +312,21 @@ async def main(project_name: str = "Assistants"):
     # Flush buffered EventBus writes to the backend before exit.
     from unity.events.event_bus import EVENT_BUS
 
+    LOGGER.info(f"{ICONS['lifecycle']} Final EventBus flush...")
     EVENT_BUS.flush()
 
     # Shut down the metrics exporter (flushes remaining data internally).
-    shutdown_metrics()
+    LOGGER.info(f"{ICONS['lifecycle']} Shutting down metrics...")
+    await shutdown_metrics()
 
     LOGGER.debug(f"{ICONS['lifecycle']} Shutdown finished")
 
-    # Exit with special code 42 if:
-    # - Shutdown was triggered by external signal (i.e. not inactivity timeout)
-    # - AND assistant_id is the default (i.e. it's an idle container)
-    # This signals to start.py to exit immediately to trigger restart
-    # within the backoff limit
+    # Final hard exit to ensure the pod is deallocated.
+    # sys.exit() can hang if there are non-daemon threads (e.g. from OTel or PubSub)
+    # that haven't closed. os._exit() forces the process to terminate immediately.
     if _signal_shutdown and _conversation_manager.assistant_id is None:
-        sys.exit(42)
+        os._exit(42)
+    os._exit(0)
 
 
 if __name__ == "__main__":

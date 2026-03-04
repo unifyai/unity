@@ -95,6 +95,7 @@ class CommandRouter:
     event_tree_display: EventTreeDisplay | None = None
     log_aggregator: LogAggregator | None = None
     conversation_lines: list[str] = field(default_factory=list)
+    pending_attachments: list[Path] = field(default_factory=list)
 
     async def execute_raw(
         self,
@@ -199,6 +200,12 @@ class CommandRouter:
         # Scenario seeding
         if cmd.kind in {"scenario_seed", "scenario_seed_voice"}:
             return await self._handle_scenario(cmd, prompt_text=prompt_text)
+
+        # File attachments
+        if cmd.kind == "attach":
+            return self._handle_attach(cmd.args)
+        if cmd.kind == "detach":
+            return self._handle_detach()
 
         # Event / utterance
         if cmd.kind in {"event", "utterance"}:
@@ -557,6 +564,32 @@ class CommandRouter:
         except Exception:
             pass
 
+    def _handle_attach(self, args: str) -> RouterResult:
+        if not args:
+            if not self.pending_attachments:
+                return RouterResult(lines=["📎 No files attached."])
+            names = ", ".join(p.name for p in self.pending_attachments)
+            return RouterResult(
+                lines=[f"📎 Pending ({len(self.pending_attachments)}): {names}"],
+            )
+        path = Path(args).expanduser().resolve()
+        if not path.is_file():
+            return RouterResult(lines=[f"⚠️ File not found: {path}"])
+        self.pending_attachments.append(path)
+        names = ", ".join(p.name for p in self.pending_attachments)
+        return RouterResult(
+            lines=[
+                f"📎 Attached: {names} ({len(self.pending_attachments)} file(s) pending)",
+            ],
+        )
+
+    def _handle_detach(self) -> RouterResult:
+        count = len(self.pending_attachments)
+        self.pending_attachments.clear()
+        if count == 0:
+            return RouterResult(lines=["📎 No files to clear."])
+        return RouterResult(lines=[f"📎 Cleared {count} pending attachment(s)."])
+
     async def _handle_event(self, cmd: ParsedCommand) -> RouterResult:
         st = self.state
         st.last_event_published_at = asyncio.get_running_loop().time()
@@ -566,7 +599,15 @@ class CommandRouter:
             return RouterResult(lines=[])
 
         if cmd.name == "message":
-            await self.publisher.publish_unify_message(cmd.args)
+            attachments = (
+                list(self.pending_attachments) if self.pending_attachments else None
+            )
+            await self.publisher.publish_unify_message(
+                cmd.args,
+                attachments=attachments,
+            )
+            if self.pending_attachments:
+                self.pending_attachments.clear()
             return RouterResult(lines=[])
         if cmd.name == "sms":
             await self.publisher.publish_sms(cmd.args)

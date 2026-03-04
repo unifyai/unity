@@ -3,11 +3,11 @@ tests/conversation_manager/actions/test_desktop_fast_path_routing.py
 =====================================================================
 
 Eval tests verifying the CM brain routes:
-- Atomic desktop action requests to ``desktop_act``
+- Native desktop actions to ``desktop_act`` (not ``web_act``)
+- Concurrent ``act(persist=True)`` alongside ``desktop_act`` when no act
+  session is already in-flight
 - Complex / multi-step requests to ``act`` even when fast path is available
-- Concurrent ``act(persist=True)`` is spun up alongside ``desktop_act`` when
-  no act session is already in-flight
-- Observation/screenshot requests route through ``act`` (not fast path)
+- Observation/screenshot requests through ``act`` (not fast path)
 
 These tests follow the same end-to-end pattern as test_take_action.py and
 test_ask_about_contacts.py: the ``initialized_cm`` fixture provides a real
@@ -16,8 +16,8 @@ real ``_run_llm()`` with a real LLM call.
 
 A ``ComputerPrimitives(computer_mode="mock")`` singleton is registered so
 ``cm.computer_primitives`` resolves naturally via ManagerRegistry (no
-property patching). The desktop fast-path tool is exposed when screen share
-is active — no bootstrap ``act`` call is required.
+property patching). Computer fast-path tools are exposed when screen share
+is active.
 """
 
 from __future__ import annotations
@@ -51,13 +51,13 @@ def _ensure_mock_computer_primitives():
         ComputerPrimitives(computer_mode="mock")
 
 
-def _enable_desktop_fast_path(cm_driver):
-    """Activate desktop fast-path tool by turning on screen share."""
+def _enable_computer_fast_path(cm_driver):
+    """Activate computer fast-path tools by turning on screen share."""
     cm_driver.cm.assistant_screen_share_active = True
 
 
-def _setup_desktop_fast_path_from_real_act(cm_driver):
-    """Activate desktop fast-path gating.
+def _setup_computer_fast_path_from_real_act(cm_driver):
+    """Activate computer fast-path gating.
 
     Call this AFTER a ``step_until_wait`` that triggered ``act`` — the
     SimulatedActor handle will be sitting in ``in_flight_actions``.
@@ -65,7 +65,7 @@ def _setup_desktop_fast_path_from_real_act(cm_driver):
     cm_driver.cm.assistant_screen_share_active = True
 
 
-def _teardown_desktop_fast_path(cm_driver):
+def _teardown_computer_fast_path(cm_driver):
     """Reset gating state so subsequent tests start clean.
 
     NOTE: in_flight_actions cleanup is handled by the ``initialized_cm``
@@ -75,17 +75,17 @@ def _teardown_desktop_fast_path(cm_driver):
 
 
 # ---------------------------------------------------------------------------
-#  Atomic action requests → desktop_act (with existing act session)
+#  Native desktop action → desktop_act (with existing act session)
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_click_routes_to_desktop_act(initialized_cm):
-    """A simple 'click X' request should route to desktop_act.
+async def test_open_terminal_routes_to_desktop_act(initialized_cm):
+    """Opening a native desktop application should route to desktop_act.
 
     Flow: first message triggers ``act`` (creates in-flight action) →
-    mark act as desktop-active → second message should route to ``desktop_act``.
+    activate screen share → second message should route to ``desktop_act``.
     """
     cm = initialized_cm
     _ensure_mock_computer_primitives()
@@ -93,59 +93,100 @@ async def test_click_routes_to_desktop_act(initialized_cm):
     result = await cm.step_until_wait(
         SMSReceived(
             contact=BOSS,
-            content="Search the web for how to configure CRM software settings",
+            content="Help me set up the development environment",
         ),
     )
     assert (
         "act" in cm.all_tool_calls
     ), f"First message should trigger act, got: {cm.all_tool_calls}"
 
-    _setup_desktop_fast_path_from_real_act(cm)
+    _setup_computer_fast_path_from_real_act(cm)
     cm.all_tool_calls.clear()
 
     try:
         result = await cm.step_until_wait(
             UnifyMessageReceived(
                 contact=BOSS,
-                content="Click the Submit button on the screen",
+                content="Open the Terminal application on the desktop",
             ),
         )
 
         assert "desktop_act" in cm.all_tool_calls, (
-            f"Expected 'desktop_act' for atomic click request, "
+            f"Expected 'desktop_act' for native Terminal app request, "
             f"got: {cm.all_tool_calls}"
+        )
+        assert "web_act" not in cm.all_tool_calls, (
+            f"Native app request should NOT use web_act, " f"got: {cm.all_tool_calls}"
         )
         assert_efficient(result, 5)
     finally:
-        _teardown_desktop_fast_path(cm)
-
-
-# ---------------------------------------------------------------------------
-#  Atomic action requests → desktop_act + concurrent act (no existing session)
-# ---------------------------------------------------------------------------
+        _teardown_computer_fast_path(cm)
 
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_click_routes_to_desktop_act_with_concurrent_act(initialized_cm):
-    """When no act session is in-flight, an atomic click request should trigger
-    both ``desktop_act`` (for the immediate action) AND ``act`` with
-    ``persist=True`` (for the full-capability session) in the same turn.
-    """
+async def test_switch_native_window_routes_to_desktop_act(initialized_cm):
+    """Switching to a native application window should route to desktop_act."""
     cm = initialized_cm
     _ensure_mock_computer_primitives()
-    _enable_desktop_fast_path(cm)
+
+    result = await cm.step_until_wait(
+        SMSReceived(
+            contact=BOSS,
+            content="Look up best practices for file organisation and management",
+        ),
+    )
+    assert "act" in cm.all_tool_calls
+
+    _setup_computer_fast_path_from_real_act(cm)
+    cm.all_tool_calls.clear()
 
     try:
         result = await cm.step_until_wait(
             UnifyMessageReceived(
                 contact=BOSS,
-                content="Click the Submit button on the screen",
+                content="Switch to the File Manager window",
             ),
         )
 
         assert "desktop_act" in cm.all_tool_calls, (
-            f"Expected 'desktop_act' for atomic click request, "
+            f"Expected 'desktop_act' for native window switch, "
+            f"got: {cm.all_tool_calls}"
+        )
+        assert "web_act" not in cm.all_tool_calls, (
+            f"Native window switch should NOT use web_act, " f"got: {cm.all_tool_calls}"
+        )
+        assert_efficient(result, 5)
+    finally:
+        _teardown_computer_fast_path(cm)
+
+
+# ---------------------------------------------------------------------------
+#  Native desktop action + concurrent act (no existing session)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+@_handle_project
+async def test_desktop_action_with_concurrent_act(initialized_cm):
+    """When no act session is in-flight, a native desktop action should trigger
+    both ``desktop_act`` (for the immediate action) AND ``act`` with
+    ``persist=True`` (for the full-capability session) in the same turn.
+    """
+    cm = initialized_cm
+    _ensure_mock_computer_primitives()
+    _enable_computer_fast_path(cm)
+
+    try:
+        result = await cm.step_until_wait(
+            UnifyMessageReceived(
+                contact=BOSS,
+                content="Open the Terminal application on the desktop",
+            ),
+        )
+
+        assert "desktop_act" in cm.all_tool_calls, (
+            f"Expected 'desktop_act' for native app request, "
             f"got: {cm.all_tool_calls}"
         )
         assert "act" in cm.all_tool_calls, (
@@ -154,7 +195,7 @@ async def test_click_routes_to_desktop_act_with_concurrent_act(initialized_cm):
         )
         assert_efficient(result, 5)
     finally:
-        _teardown_desktop_fast_path(cm)
+        _teardown_computer_fast_path(cm)
 
 
 # ---------------------------------------------------------------------------
@@ -177,7 +218,7 @@ async def test_observation_routes_to_act_not_fast_path(initialized_cm):
         ),
     )
 
-    _setup_desktop_fast_path_from_real_act(cm)
+    _setup_computer_fast_path_from_real_act(cm)
     cm.all_tool_calls.clear()
 
     try:
@@ -195,7 +236,7 @@ async def test_observation_routes_to_act_not_fast_path(initialized_cm):
         )
         assert_efficient(result, 5)
     finally:
-        _teardown_desktop_fast_path(cm)
+        _teardown_computer_fast_path(cm)
 
 
 # ---------------------------------------------------------------------------
@@ -217,7 +258,7 @@ async def test_complex_task_routes_to_act(initialized_cm):
         ),
     )
 
-    _setup_desktop_fast_path_from_real_act(cm)
+    _setup_computer_fast_path_from_real_act(cm)
     cm.all_tool_calls.clear()
 
     try:
@@ -237,4 +278,4 @@ async def test_complex_task_routes_to_act(initialized_cm):
             f"but got: {desktop_calls}"
         )
     finally:
-        _teardown_desktop_fast_path(cm)
+        _teardown_computer_fast_path(cm)
