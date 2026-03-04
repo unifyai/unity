@@ -541,15 +541,6 @@ class ConversationManagerBrainActionTools:
                 with open(abs_path, "rb") as f:
                     file_contents = f.read()
 
-                max_size_mb = 25
-                file_size_mb = len(file_contents) / (1024 * 1024)
-                if file_size_mb > max_size_mb:
-                    return await self._surface_comms_error(
-                        f"File too large: {file_size_mb:.1f}MB exceeds {max_size_mb}MB limit",
-                        _unify_topic,
-                        **_unify_err,
-                    )
-
                 attachment_filename = os.path.basename(attachment_filepath)
                 upload_result = await comms_utils.upload_unify_attachment(
                     file_content=file_contents,
@@ -907,11 +898,12 @@ class ConversationManagerBrainActionTools:
                 with open(abs_path, "rb") as f:
                     file_contents = f.read()
 
-                max_size_mb = 25
                 file_size_mb = len(file_contents) / (1024 * 1024)
-                if file_size_mb > max_size_mb:
+                if file_size_mb > 25:
                     return await self._surface_comms_error(
-                        f"File too large: {file_size_mb:.1f}MB exceeds {max_size_mb}MB limit",
+                        f"File too large for email: {file_size_mb:.1f}MB exceeds "
+                        f"Gmail's 25MB attachment limit. Consider sharing via "
+                        f"Unify message instead.",
                         _email_topic,
                         **_email_err,
                     )
