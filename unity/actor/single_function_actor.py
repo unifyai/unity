@@ -315,7 +315,6 @@ class SingleFunctionActorHandle(BaseActorHandle):
             tools={},
             loop_id=f"SingleFunctionAsk({self._function_name})",
             max_consecutive_failures=1,
-            timeout=30,
         )
 
     async def next_clarification(self) -> dict:
@@ -646,7 +645,6 @@ class SingleFunctionActor(BaseActor):
                 tools={},
                 loop_id=f"SingleFunctionVerify({function_name})",
                 max_consecutive_failures=1,
-                timeout=60,
                 response_format=SingleFunctionVerificationResult,
             )
             result = await handle.result()
@@ -748,7 +746,6 @@ class SingleFunctionActor(BaseActor):
                 tools={},
                 loop_id=f"SingleFunctionGenerateArgs({function_name})",
                 max_consecutive_failures=1,
-                timeout=30,
                 response_format=GeneratedCallKwargs,
             )
             result = await handle.result()
