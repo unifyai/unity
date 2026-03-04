@@ -154,13 +154,12 @@ async def compress_messages(
     client = new_llm_client(endpoint, origin="compress_messages")
     client.set_system_message(COMPRESSION_PROMPT)
 
-    await client.generate(
+    response = await client.generate(
         messages=[{"role": "user", "content": user_prompt}],
         response_format=CompressedMessages,
     )
 
-    raw_content = client.messages[-1].get("content", "")
-    parsed = json.loads(raw_content)
+    parsed = json.loads(response)
     result = CompressedMessages.model_validate(parsed)
 
     if len(result.messages) != len(messages):
