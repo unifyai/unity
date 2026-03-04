@@ -408,7 +408,7 @@ def pytest_sessionstart(session):
     #  Activate the UnityTests project
     # ------------------------------------------------------------------
 
-    if os.environ.get("CI"):
+    if os.environ.get("GITHUB_ACTIONS"):
         import unillm
 
         unillm.set_cache_backend("local_separate")
