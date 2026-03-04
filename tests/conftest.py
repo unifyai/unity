@@ -518,7 +518,7 @@ def pytest_unconfigure(config):
         os.environ.pop("HOME", None)
     else:
         os.environ["HOME"] = _original_home
-    if test_home.startswith("/tmp/") and "unity_test_home_" in test_home:
+    if test_home.endswith("/unity_test_home"):
         shutil.rmtree(test_home, ignore_errors=True)
 
 
@@ -552,12 +552,18 @@ def pytest_configure(config):
     # get_local_root() defaults to ~/Unity/Local, and the process cwd
     # is set to the same path at startup.  By pointing HOME at a temp
     # dir we keep Downloads/, .env, snapshots, etc. sandboxed.
+    #
+    # The path is deterministic (not random) so that CodeActActor system
+    # prompts — which embed the resolved ~/Unity/Local path — produce
+    # stable LLM cache keys across pytest sessions.  Actual test file
+    # isolation is handled by pytest's tmp_path fixture, not HOME.
     # ------------------------------------------------------------------
     import tempfile
 
     global _original_home
     _original_home = os.environ.get("HOME")
-    test_home = tempfile.mkdtemp(prefix="unity_test_home_")
+    test_home = os.path.join(tempfile.gettempdir(), "unity_test_home")
+    os.makedirs(test_home, exist_ok=True)
     os.environ["HOME"] = test_home
 
     config.addinivalue_line(
