@@ -923,6 +923,73 @@ async def plot_distribution(table_context: str) -> str:
 '''
 
 
+def get_primitives_files_render_extract_example() -> str:
+    """Example: visual render-first extraction from Excel and PDF files."""
+
+    return '''
+# Example: Extract structured data from Excel and PDF documents
+# The render-first workflow is the most robust approach for document
+# extraction — it handles scanned PDFs, complex layouts, merged cells,
+# and formatting cues that text-based parsing misses.
+import openpyxl
+
+async def extract_financials_from_documents(directory: str) -> dict:
+    """Extract financial data from Excel and PDF files in a directory."""
+    import os
+
+    results = {}
+
+    for filename in os.listdir(directory):
+        filepath = os.path.join(directory, filename)
+
+        if filename.endswith((".xlsx", ".xls")):
+            # --- Excel: render full sheet first, then zoom in ---
+            wb = openpyxl.load_workbook(filepath, data_only=True)
+            for sheet_name in wb.sheetnames:
+                sheet = wb[sheet_name]
+                if sheet.sheet_state != "visible":
+                    continue
+
+                # Step 1: Global view — render the full sheet
+                overview = await primitives.files.render_excel_sheet(sheet)
+                display(overview)
+
+                # Step 2: Zoom into a specific area of interest
+                detail = await primitives.files.render_excel_sheet(
+                    sheet, cell_range="A1:H30",
+                )
+                display(detail)
+
+                # Step 3: Read exact cell values via openpyxl
+                for row in sheet.iter_rows(min_row=2, max_col=8, values_only=False):
+                    label = row[0].value
+                    value = row[1].value
+                    if label and value is not None:
+                        results[label] = {
+                            "value": value,
+                            "source": f"{sheet_name}!{row[0].coordinate}",
+                        }
+
+        elif filename.endswith(".pdf"):
+            # --- PDF: render 2-3 pages at a time ---
+            import pymupdf
+
+            doc = pymupdf.open(filepath)
+            total_pages = len(doc)
+            for page_num in range(0, total_pages, 2):
+                img = await primitives.files.render_pdf(filepath, page=page_num)
+                display(img)
+                if page_num + 1 < total_pages:
+                    img2 = await primitives.files.render_pdf(
+                        filepath, page=page_num + 1,
+                    )
+                    display(img2)
+            doc.close()
+
+    return results
+'''
+
+
 def get_primitives_web_ask_example() -> str:
     """Example: web research query via `primitives.web.ask(...)`."""
 
@@ -1404,6 +1471,7 @@ def get_example_function_map() -> dict[str, callable]:
         # Transcripts
         "get_primitives_transcript_ask_example": lambda: "",  # placeholder
         # Files (using real FileManager primitives)
+        "get_primitives_files_render_extract_example": get_primitives_files_render_extract_example,
         "get_primitives_files_describe_example": get_primitives_files_describe_example,
         "get_primitives_files_reduce_example": get_primitives_files_reduce_example,
         "get_primitives_files_filter_example": get_primitives_files_filter_example,
