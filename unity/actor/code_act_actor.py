@@ -990,6 +990,7 @@ class _StorageCheckHandle(SteerableToolHandle):
                     phase="incoming",
                     display_label="Storing Reusable Skills",
                     hierarchy=_sc_hierarchy,
+                    instructions="Review the trajectory and store any reusable functions and compositional guidance.",
                 )
 
                 storage_handle = _start_storage_check_loop(

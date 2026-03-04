@@ -153,6 +153,84 @@ async def test_storage_check_runs_after_stop_no_reason():
 
 
 # ---------------------------------------------------------------------------
+# Symbolic: StorageCheck incoming event carries instructions
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+@pytest.mark.timeout(30)
+async def test_storage_check_incoming_event_has_instructions():
+    """The incoming ManagerMethod event for StorageCheck must carry a non-null
+    ``instructions`` field so that every incoming event has at least one
+    content payload (instructions, request, or question)."""
+    result_future: asyncio.Future[str] = asyncio.get_event_loop().create_future()
+
+    inner = MagicMock()
+
+    async def _await_result():
+        return await result_future
+
+    inner.result = _await_result
+    inner.next_notification = AsyncMock(
+        side_effect=lambda: asyncio.Event().wait(),
+    )
+
+    async def _stop(**kwargs):
+        if not result_future.done():
+            result_future.set_result("done")
+
+    inner.stop = AsyncMock(side_effect=_stop)
+
+    mock_client = MagicMock()
+    mock_client.messages = [{"role": "user", "content": "do something"}]
+    inner._client = mock_client
+
+    mock_task = MagicMock()
+    mock_task.get_ask_tools = MagicMock(return_value={})
+    mock_task.get_completed_tool_metadata = MagicMock(return_value={})
+    inner._task = mock_task
+
+    actor = MagicMock()
+    actor.function_manager = None
+    actor.guidance_manager = None
+
+    with (
+        patch(
+            "unity.actor.code_act_actor._start_storage_check_loop",
+        ) as mock_loop,
+        patch(
+            "unity.actor.code_act_actor.publish_manager_method_event",
+            new_callable=AsyncMock,
+        ) as mock_publish,
+    ):
+        mock_loop.return_value = None
+
+        handle = _StorageCheckHandle(inner=inner, actor=actor)
+
+        await handle.stop(reason="save this")
+
+        deadline = asyncio.get_event_loop().time() + 10
+        while not handle.done():
+            if asyncio.get_event_loop().time() > deadline:
+                raise TimeoutError("Handle did not complete")
+            await asyncio.sleep(0.1)
+
+    incoming_calls = [
+        c
+        for c in mock_publish.call_args_list
+        if c.kwargs.get("phase") == "incoming" and c.args[2] == "StorageCheck"
+    ]
+    assert (
+        len(incoming_calls) == 1
+    ), f"Expected 1 incoming StorageCheck publish call, got {len(incoming_calls)}"
+    instructions = incoming_calls[0].kwargs.get("instructions")
+    assert instructions and isinstance(
+        instructions,
+        str,
+    ), f"StorageCheck incoming event must have a non-null instructions kwarg, got {instructions!r}"
+
+
+# ---------------------------------------------------------------------------
 # Eval: persist=True + stop with memoize intent stores a function
 # ---------------------------------------------------------------------------
 
