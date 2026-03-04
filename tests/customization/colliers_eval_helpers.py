@@ -7,6 +7,7 @@ used by both the Colliers-seeded and generic baseline tests.
 from __future__ import annotations
 
 import json
+import shutil
 from pathlib import Path
 from typing import Any
 
@@ -378,20 +379,57 @@ def print_comparison(
     print(f"{'='*60}\n")
 
 
+def stable_workspace(name: str) -> tuple[Path, Path]:
+    """Create a deterministic workspace under ~/Unity/Local for cache-stable prompts.
+
+    Returns (workspace_dir, output_path) with fixed paths that don't
+    contain session-varying components like pytest's tmp_path counter.
+    The workspace is cleaned and recreated on each call.
+    """
+    from unity.file_manager.settings import get_local_root
+
+    root = Path(get_local_root())
+    workspace_dir = root / name / "accounts"
+    output_path = root / name / "output" / "ASH_Historic_Accounts.xlsx"
+
+    if workspace_dir.parent.exists():
+        shutil.rmtree(workspace_dir.parent)
+    workspace_dir.mkdir(parents=True)
+    output_path.parent.mkdir(parents=True)
+
+    return workspace_dir, output_path
+
+
 def find_output(
-    tmp_path: Path,
+    search_dirs: list[Path],
     output_path: Path,
 ) -> dict[str, dict[str, Any]]:
-    """Find and parse the actor's output, trying Excel then JSON."""
-    xlsx_files = [f for f in tmp_path.rglob("*.xlsx") if "TEMPLATE" not in f.name]
+    """Find and parse the actor's output, trying Excel then JSON.
 
+    Searches the explicit output_path first, then globs across all
+    provided search directories.
+    """
     if output_path.exists():
         return parse_output_excel(str(output_path))
-    if xlsx_files:
-        return parse_output_excel(str(xlsx_files[0]))
 
-    json_files = list(tmp_path.rglob("*.json"))
-    if json_files:
-        return parse_output_json(str(json_files[0]))
+    for d in search_dirs:
+        if not d.exists():
+            continue
+        xlsx_files = [f for f in d.rglob("*.xlsx") if "TEMPLATE" not in f.name]
+        if xlsx_files:
+            return parse_output_excel(str(xlsx_files[0]))
 
-    return collect_json_values(tmp_path)
+    for d in search_dirs:
+        if not d.exists():
+            continue
+        json_files = list(d.rglob("*.json"))
+        if json_files:
+            return parse_output_json(str(json_files[0]))
+
+    for d in search_dirs:
+        if d.exists():
+            result = collect_json_values(d)
+            if result:
+                return result
+
+    return {}

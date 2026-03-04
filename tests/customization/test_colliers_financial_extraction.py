@@ -22,6 +22,7 @@ from tests.customization.colliers_eval_helpers import (
     find_output,
     parse_ground_truth,
     print_comparison,
+    stable_workspace,
 )
 from unity.manager_registry import ManagerRegistry
 
@@ -67,13 +68,9 @@ async def test_colliers_ash_financial_extraction(tmp_path: Path):
     assert len(PDF_FILES) == 4
     assert GROUND_TRUTH_XLSX.exists()
 
-    workspace_dir = tmp_path / "accounts"
-    workspace_dir.mkdir()
+    workspace_dir, output_path = stable_workspace("colliers_ash_extraction")
     for pdf in PDF_FILES:
         shutil.copy(pdf, workspace_dir / pdf.name)
-
-    output_path = tmp_path / "output" / "ASH_Historic_Accounts.xlsx"
-    output_path.parent.mkdir()
 
     _seed_colliers_guidance()
     fm = _seed_colliers_functions()
@@ -99,10 +96,11 @@ async def test_colliers_ash_financial_extraction(tmp_path: Path):
         )
         result = await handle.result()
 
-    actual = find_output(tmp_path, output_path)
+    search_dirs = [workspace_dir.parent, tmp_path]
+    actual = find_output(search_dirs, output_path)
     assert actual, (
         f"No output found. Actor result:\n{result[:500]}\n"
-        f"Files: {list(tmp_path.rglob('*'))}"
+        f"Files: {list(workspace_dir.parent.rglob('*'))}"
     )
 
     expected = parse_ground_truth()

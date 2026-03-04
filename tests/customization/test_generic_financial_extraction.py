@@ -27,6 +27,7 @@ from tests.customization.colliers_eval_helpers import (
     merge_lenient_fields,
     parse_ground_truth,
     print_comparison,
+    stable_workspace,
 )
 
 pytestmark = pytest.mark.eval
@@ -46,16 +47,12 @@ async def test_generic_ash_financial_extraction(tmp_path: Path):
     assert len(PDF_FILES) == 4
     assert TEMPLATE_XLSX.exists()
 
-    workspace_dir = tmp_path / "accounts"
-    workspace_dir.mkdir()
+    workspace_dir, output_path = stable_workspace("generic_ash_extraction")
     for pdf in PDF_FILES:
         shutil.copy(pdf, workspace_dir / pdf.name)
 
-    template_path = tmp_path / "HISTORIC_ACCOUNTS_TEMPLATE.xlsx"
-    shutil.copy(TEMPLATE_XLSX, template_path)
-
-    output_path = tmp_path / "output" / "ASH_Historic_Accounts.xlsx"
-    output_path.parent.mkdir()
+    template_dest = workspace_dir / "HISTORIC_ACCOUNTS_TEMPLATE.xlsx"
+    shutil.copy(TEMPLATE_XLSX, template_dest)
 
     async with make_code_act_actor(
         impl="real",
@@ -73,7 +70,7 @@ async def test_generic_ash_financial_extraction(tmp_path: Path):
             f"Administration Expenses, Interest, Profit before Tax, Taxation). "
             f"The Notes page lists every individual expense (wages, heating, "
             f"repairs, insurance, etc.) with exact amounts.\n\n"
-            f"I've attached an empty Excel template at {template_path} that "
+            f"I've attached an empty Excel template at {template_dest} that "
             f"shows the exact format I need. Please open this template first "
             f"to see the row labels and structure. Then go through each PDF "
             f"and fill in every value you can find. The PDFs are scans of "
@@ -89,7 +86,8 @@ async def test_generic_ash_financial_extraction(tmp_path: Path):
         )
         result = await handle.result()
 
-    actual = find_output(tmp_path, output_path)
+    search_dirs = [workspace_dir.parent, tmp_path]
+    actual = find_output(search_dirs, output_path)
 
     expected = parse_ground_truth()
     matches, mismatches, acceptable = compare_results(
@@ -103,5 +101,5 @@ async def test_generic_ash_financial_extraction(tmp_path: Path):
     assert total_strict > 0 or actual, (
         f"Actor produced no parseable output.\n"
         f"Result: {result[:1000]}\n"
-        f"Files: {list(tmp_path.rglob('*'))}"
+        f"Files: {list(workspace_dir.parent.rglob('*'))}"
     )
