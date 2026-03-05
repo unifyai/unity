@@ -124,6 +124,30 @@ class SlowBrainRun:
     thoughts: str
     action: str
     dispatch_utc: str = ""
+    llm_log_path: str = ""
+
+
+@dataclass
+class ProactiveSpeechDecision:
+    """A proactive speech LLM decision from the CM side."""
+
+    ts_utc: str
+    should_speak: bool
+    delay_s: int
+    content: str  # empty when should_speak=False
+
+
+@dataclass
+class ActorToolCall:
+    """A tool call within the CodeActActor execution loop."""
+
+    ts_utc: str
+    actor_id: str  # e.g. "accb"
+    event_type: str  # "request", "llm_thinking", "tool_scheduled", "tool_completed", "execute_code", "persist_wait"
+    tool_name: str
+    duration_s: float | None = None
+    llm_log_path: str = ""
+    detail: str = ""
 
 
 @dataclass
@@ -176,6 +200,8 @@ class CMLogData:
     blocked_ids: list[str] = field(default_factory=list)
     slow_brain_runs: list[SlowBrainRun] = field(default_factory=list)
     steering_contents: list[SteeringContent] = field(default_factory=list)
+    proactive_decisions: list[ProactiveSpeechDecision] = field(default_factory=list)
+    actor_tool_calls: list[ActorToolCall] = field(default_factory=list)
 
 
 @dataclass
@@ -201,6 +227,8 @@ class Timeline:
     steering_contents: list[SteeringContent]
     actor_notifications: list[ActorNotification]
     silent_guidance: list[GuidanceReceived]
+    proactive_decisions: list[ProactiveSpeechDecision]
+    actor_tool_calls: list[ActorToolCall]
     anomalies: list[Anomaly]
     call_start_ms: int
     call_end_ms: int
@@ -311,37 +339,15 @@ def _find_next_generation_id(
     start_idx: int,
     log_date: str,
 ) -> str:
-    """Find the generation_id from the LLM thinking line that follows an actor notification."""
-    for j in range(start_idx + 1, min(start_idx + 3, len(lines))):
-        if "LLM thinking" in lines[j] and "generation_id=" in lines[j]:
-            return _extract_field(lines[j], "generation_id", "source_id")
-    return ""
+    """Find a generation link from the LLM thinking line that follows an actor notification.
 
-
-def _collect_full_text(lines: list[str], trace_line_idx: int, role: str) -> str:
-    """Collect full utterance text from content lines following a trace event.
-
-    After a conversation_item_added trace, the next line starts with
-    '{role} <text>' and may continue across multiple lines until a line
-    starting with '[' or a timestamp log line.
+    Since generation_id was removed from log output, this now returns a
+    content-derived hash when a thinking line follows within 3 lines.
     """
-    prefix = f"{role} "
-    text_lines: list[str] = []
-    collecting = False
-
-    for i in range(trace_line_idx + 1, min(trace_line_idx + 50, len(lines))):
-        raw = lines[i]
-        if raw.startswith("[") or (raw[:4].isdigit() and " - " in raw[:30]):
-            if collecting:
-                break
-            continue
-        if not collecting and raw.startswith(prefix):
-            text_lines.append(raw[len(prefix) :])
-            collecting = True
-        elif collecting:
-            text_lines.append(raw)
-
-    return "\n".join(text_lines).strip()
+    for j in range(start_idx + 1, min(start_idx + 3, len(lines))):
+        if "LLM thinking" in lines[j]:
+            return _content_hash("gen", lines[j])
+    return ""
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -352,8 +358,9 @@ def _collect_full_text(lines: list[str], trace_line_idx: int, role: str) -> str:
 def parse_voice_log(path: Path) -> VoiceLogData:
     """Parse all relevant trace events from the voice agent log.
 
-    Supports both the legacy ``[TRACE::FAST_BRAIN_CALL]`` format and the
-    current ``FastBrainLogger`` emoji format introduced in c9e3c8f4a.
+    Parses the ``FastBrainLogger`` emoji format: ``[FastBrain...] <body>``.
+    Actor notifications are extracted from the unified notification channel
+    (embedded inside ``Notification (...)`` lines).
     """
     text = path.read_text(encoding="utf-8", errors="replace")
     lines = text.splitlines()
@@ -361,295 +368,176 @@ def parse_voice_log(path: Path) -> VoiceLogData:
     log_date = _extract_log_date(lines)
 
     for i, line in enumerate(lines):
+        if "[FastBrain" not in line:
+            continue
 
-        # ══════════════════════════════════════════════════════════════════
-        # Legacy [TRACE::...] format (pre-c9e3c8f4a)
-        # ══════════════════════════════════════════════════════════════════
+        fb = _parse_fb_line(line, log_date, i)
+        if fb is None:
+            continue
+        ts_utc, mono, body = fb
 
-        # ── conversation_item_added ──
-        if "event=conversation_item_added" in line and "[TRACE::" in line:
-            role = _extract_field(line, "role", "utterance_id")
-            utterance_id = _extract_field(line, "utterance_id", "text_preview")
-            speech_source = _extract_field(line, "speech_source", "guidance_id")
-            guidance_id = _extract_field(line, "guidance_id")
-            full_text = _collect_full_text(lines, i, role)
-            if not full_text:
-                full_text = _extract_field(
-                    line,
-                    "text_preview",
-                    "speech_source",
-                ).replace("\\n", "\n")
-
-            data.utterances.append(
-                Utterance(
-                    monotonic_ms=_extract_int(line, "monotonic_ms", "role"),
-                    ts_utc=_extract_field(line, "ts_utc", "monotonic_ms"),
-                    role=role,
-                    text=full_text,
-                    utterance_id=utterance_id,
-                    speech_source=speech_source,
-                    guidance_id=guidance_id,
-                ),
-            )
-
-        # ── guidance_received ──
-        elif "event=guidance_received" in line and "[TRACE::" in line:
-            data.guidance_events.append(
-                GuidanceReceived(
-                    monotonic_ms=_extract_int(line, "monotonic_ms", "guidance_id"),
-                    ts_utc=_extract_field(line, "ts_utc", "monotonic_ms"),
-                    guidance_id=_extract_field(line, "guidance_id", "guidance_source"),
-                    source=_extract_field(line, "guidance_source", "session_ready"),
-                    should_speak=_extract_bool(
-                        line,
-                        "should_speak",
-                        "user_is_speaking",
-                    ),
-                    user_is_speaking=_extract_bool(
-                        line,
-                        "user_is_speaking",
-                        "content_preview",
-                    ),
-                    content=_extract_field(line, "content_preview"),
-                ),
-            )
-
-        # ── session_say ──
-        elif "event=session_say" in line and "[TRACE::" in line:
-            data.session_says.append(
-                SessionSay(
-                    monotonic_ms=_extract_int(line, "monotonic_ms", "guidance_id"),
-                    ts_utc=_extract_field(line, "ts_utc", "monotonic_ms"),
-                    guidance_id=_extract_field(line, "guidance_id", "guidance_source"),
-                    source=_extract_field(line, "guidance_source", "text_preview"),
-                    text=_extract_field(line, "text_preview"),
-                ),
-            )
-
-        # ── generate_reply_trigger ──
-        elif "event=generate_reply_trigger" in line and "[TRACE::" in line:
-            data.fb_triggers.append(
-                GenerateReplyTrigger(
-                    monotonic_ms=_extract_int(line, "monotonic_ms", "generation_id"),
-                    ts_utc=_extract_field(line, "ts_utc", "monotonic_ms"),
-                    generation_id=_extract_field(line, "generation_id", "reason"),
-                    reason=_extract_field(line, "reason", "source_id"),
-                    source_id=_extract_field(line, "source_id", "queued_speech_count"),
-                    queued_speech_count=_extract_int(
-                        line,
-                        "queued_speech_count",
-                        "user_is_speaking",
-                    ),
-                ),
-            )
-
-        # ── FAST_BRAIN_REQUEST_START ──
-        elif "[TRACE::FAST_BRAIN_REQUEST_START]" in line:
-            data.fb_requests.append(
-                FastBrainRequest(
-                    request_id=_extract_field(line, "request_id", "model"),
-                    start_ms=_extract_int(line, "monotonic_ms"),
-                    start_utc=_extract_field(line, "ts_utc", "monotonic_ms"),
-                    trigger_json=_extract_field(line, "trigger", "ts_utc"),
-                ),
-            )
-
-        # ── FAST_BRAIN_REQUEST_END ──
-        elif "[TRACE::FAST_BRAIN_REQUEST_END]" in line:
-            req_id = _extract_field(line, "request_id", "chunk_count")
-            end_ms = _extract_int(line, "monotonic_ms")
-            end_utc = _extract_field(line, "ts_utc", "monotonic_ms")
-            chunk_count = _extract_int(line, "chunk_count", "trigger_id")
-            for req in reversed(data.fb_requests):
-                if req.request_id == req_id:
-                    req.end_ms = end_ms
-                    req.end_utc = end_utc
-                    req.chunk_count = chunk_count
-                    break
-
-        # ── user_state_changed ──
-        elif "event=user_state_changed" in line and "[TRACE::" in line:
+        if body.startswith("User state:"):
+            new_state = body.split(":", 1)[1].strip().split()[0]
             data.user_states.append(
                 UserStateChange(
-                    monotonic_ms=_extract_int(line, "monotonic_ms", "state_id"),
-                    ts_utc=_extract_field(line, "ts_utc", "monotonic_ms"),
-                    state_id=_extract_field(line, "state_id", "new_state"),
-                    new_state=_extract_field(line, "new_state", "user_is_speaking"),
+                    monotonic_ms=mono,
+                    ts_utc=ts_utc,
+                    state_id=_extract_field(line, "state_id"),
+                    new_state=new_state,
                 ),
             )
 
-        # ══════════════════════════════════════════════════════════════════
-        # FastBrainLogger emoji format (post-c9e3c8f4a)
-        # ══════════════════════════════════════════════════════════════════
+        elif body.startswith("Notification ("):
+            should_speak = "speak=True" in body
+            src_match = re.search(r"src=([^,)]+)", body)
+            source = src_match.group(1).strip() if src_match else ""
+            content_match = re.search(r"\):\s*(.*)", body)
+            content = content_match.group(1).strip() if content_match else ""
+            nid = _content_hash("guid", content)
 
-        elif "[FastBrain" in line:
-            fb = _parse_fb_line(line, log_date, i)
-            if fb is None:
-                continue
-            ts_utc, mono, body = fb
+            data.guidance_events.append(
+                GuidanceReceived(
+                    monotonic_ms=mono,
+                    ts_utc=ts_utc,
+                    guidance_id=nid,
+                    source=source,
+                    should_speak=should_speak,
+                    user_is_speaking=False,
+                    content=content,
+                ),
+            )
 
-            if body.startswith("User state:"):
-                new_state = body.split(":", 1)[1].strip().split()[0]
-                data.user_states.append(
-                    UserStateChange(
-                        monotonic_ms=mono,
-                        ts_utc=ts_utc,
-                        state_id=_extract_field(line, "state_id"),
-                        new_state=new_state,
-                    ),
-                )
-
-            elif body.startswith("Guidance from "):
-                source = body.split("Guidance from ", 1)[1].split(":")[0]
-                should_speak = "speak=True" in body
-                content = (
-                    body.split("speak=True ", 1)[-1]
-                    if should_speak
-                    else body.split("speak=False ", 1)[-1]
-                )
-                gid = _extract_field(line, "guidance_id")
-                if " guidance_id=" in content:
-                    content = content[: content.index(" guidance_id=")]
-                data.guidance_events.append(
-                    GuidanceReceived(
-                        monotonic_ms=mono,
-                        ts_utc=ts_utc,
-                        guidance_id=gid or _content_hash("guid", content),
-                        source=source,
-                        should_speak=should_speak,
-                        user_is_speaking=False,
-                        content=content.strip(),
-                    ),
-                )
-
-            elif body.startswith("Speaking guidance "):
-                parts = body.split("Speaking guidance ", 1)[1]
-                gid = parts.split(":")[0].strip()
-                text = parts.split(":", 1)[1].strip() if ":" in parts else ""
-                gsource = _extract_field(line, "guidance_source")
-                if " guidance_source=" in text:
-                    text = text[: text.index(" guidance_source=")]
-                data.session_says.append(
-                    SessionSay(
-                        monotonic_ms=mono,
-                        ts_utc=ts_utc,
-                        guidance_id=gid,
-                        source=gsource,
-                        text=text,
-                    ),
-                )
-
-            elif body.startswith("LLM thinking"):
-                data.fb_triggers.append(
-                    GenerateReplyTrigger(
-                        monotonic_ms=mono,
-                        ts_utc=ts_utc,
-                        generation_id=_extract_field(
-                            line,
-                            "generation_id",
-                            "source_id",
-                        ),
-                        reason=_extract_field(line, "reason", "generation_id"),
-                        source_id=_extract_field(
-                            line,
-                            "source_id",
-                            "queued_speech",
-                        ),
-                        queued_speech_count=_extract_int(
-                            line,
-                            "queued_speech",
-                        ),
-                    ),
-                )
-
-            elif body.startswith("Action started:"):
-                content = body[len("Action started:") :].strip()
-                gen_id = _find_next_generation_id(lines, i, log_date)
+            if content.startswith("Action started:"):
                 data.actor_notifications.append(
                     ActorNotification(
                         ts_utc=ts_utc,
                         notification_type="started",
-                        content=content,
-                        generation_id=gen_id,
+                        content=content[len("Action started:") :].strip(),
+                        generation_id=_find_next_generation_id(lines, i, log_date),
                     ),
                 )
-
-            elif body.startswith("Action update:"):
-                content = body[len("Action update:") :].strip()
-                gen_id = _find_next_generation_id(lines, i, log_date)
+            elif content.startswith("Action progress:"):
                 data.actor_notifications.append(
                     ActorNotification(
                         ts_utc=ts_utc,
                         notification_type="update",
-                        content=content,
-                        generation_id=gen_id,
+                        content=content[len("Action progress:") :].strip(),
+                        generation_id=_find_next_generation_id(lines, i, log_date),
                     ),
                 )
-
-            elif body.startswith("Action completed"):
-                content = body.split(":", 1)[1].strip() if ":" in body else body
-                gen_id = _find_next_generation_id(lines, i, log_date)
+            elif content.startswith("Action update:"):
+                data.actor_notifications.append(
+                    ActorNotification(
+                        ts_utc=ts_utc,
+                        notification_type="update",
+                        content=content[len("Action update:") :].strip(),
+                        generation_id=_find_next_generation_id(lines, i, log_date),
+                    ),
+                )
+            elif content.startswith(("Action completed", "Action failed")):
+                detail = content.split(":", 1)[1].strip() if ":" in content else content
                 data.actor_notifications.append(
                     ActorNotification(
                         ts_utc=ts_utc,
                         notification_type="completed",
-                        content=content,
-                        generation_id=gen_id,
+                        content=detail,
+                        generation_id=_find_next_generation_id(lines, i, log_date),
+                    ),
+                )
+            elif content.startswith("Desktop action completed:"):
+                data.actor_notifications.append(
+                    ActorNotification(
+                        ts_utc=ts_utc,
+                        notification_type="completed",
+                        content=content[len("Desktop action completed:") :].strip(),
+                        generation_id=_find_next_generation_id(lines, i, log_date),
                     ),
                 )
 
-            elif _ASSISTANT_SPEECH_ICON in line:
-                source = "reply"
-                gid = ""
-                llm_log_path = ""
-                # Strip trailing "→ /path" (LLM log path suffix).
-                raw_body = body
-                arrow_idx = raw_body.rfind(" → /")
-                if arrow_idx != -1:
-                    llm_log_path = raw_body[arrow_idx + 3 :].strip()
-                    raw_body = raw_body[:arrow_idx].strip()
-                # Format: "Source Label: speech text"
-                m = re.match(r"^([\w ]+):\s+(.+)$", raw_body)
-                if m:
-                    source = m.group(1).strip().lower().replace(" ", "_")
-                    text = m.group(2).strip()
-                else:
-                    text = raw_body.strip()
-                if text.endswith("\u2026"):
-                    text = text[:-1]
-                if text:
-                    data.utterances.append(
-                        Utterance(
-                            monotonic_ms=mono,
-                            ts_utc=ts_utc,
-                            role="assistant",
-                            text=text,
-                            utterance_id=_content_hash(
-                                "utt",
-                                f"assistant:{text}",
-                            ),
-                            speech_source=source,
-                            guidance_id=gid,
-                            llm_log_path=llm_log_path,
-                        ),
-                    )
+        elif body.startswith("Speaking notification"):
+            text = body.split(":", 1)[1].strip() if ":" in body else ""
+            nsource = _extract_field(line, "notification_source")
+            if " notification_source=" in text:
+                text = text[: text.index(" notification_source=")]
+            nid = _content_hash("guid", text)
+            data.session_says.append(
+                SessionSay(
+                    monotonic_ms=mono,
+                    ts_utc=ts_utc,
+                    guidance_id=nid,
+                    source=nsource,
+                    text=text,
+                ),
+            )
 
-            elif _USER_SPEECH_ICON in line:
-                text = body.strip()
-                if text.endswith("\u2026"):
-                    text = text[:-1]
-                if text:
-                    data.utterances.append(
-                        Utterance(
-                            monotonic_ms=mono,
-                            ts_utc=ts_utc,
-                            role="user",
-                            text=text,
-                            utterance_id=_content_hash("utt", f"user:{text}"),
-                            speech_source="reply",
-                            guidance_id="",
+        elif body.startswith("LLM thinking"):
+            reason = _extract_field(line, "reason", "queued_speech")
+            if not reason:
+                reason = _extract_field(line, "reason")
+            data.fb_triggers.append(
+                GenerateReplyTrigger(
+                    monotonic_ms=mono,
+                    ts_utc=ts_utc,
+                    generation_id=_content_hash("gen", f"{ts_utc}:{reason}"),
+                    reason=reason,
+                    source_id="",
+                    queued_speech_count=_extract_int(
+                        line,
+                        "queued_speech",
+                    ),
+                ),
+            )
+
+        elif _ASSISTANT_SPEECH_ICON in line:
+            source = "reply"
+            gid = ""
+            llm_log_path = ""
+            raw_body = body
+            arrow_idx = raw_body.rfind(" \u2192 /")
+            if arrow_idx != -1:
+                llm_log_path = raw_body[arrow_idx + 3 :].strip()
+                raw_body = raw_body[:arrow_idx].strip()
+            m = re.match(r"^([\w ]+):\s+(.+)$", raw_body)
+            if m:
+                source = m.group(1).strip().lower().replace(" ", "_")
+                text = m.group(2).strip()
+            else:
+                text = raw_body.strip()
+            if text.endswith("\u2026"):
+                text = text[:-1]
+            if text:
+                data.utterances.append(
+                    Utterance(
+                        monotonic_ms=mono,
+                        ts_utc=ts_utc,
+                        role="assistant",
+                        text=text,
+                        utterance_id=_content_hash(
+                            "utt",
+                            f"assistant:{text}",
                         ),
-                    )
+                        speech_source=source,
+                        guidance_id=gid,
+                        llm_log_path=llm_log_path,
+                    ),
+                )
+
+        elif _USER_SPEECH_ICON in line:
+            text = body.strip()
+            if text.endswith("\u2026"):
+                text = text[:-1]
+            if text:
+                data.utterances.append(
+                    Utterance(
+                        monotonic_ms=mono,
+                        ts_utc=ts_utc,
+                        role="user",
+                        text=text,
+                        utterance_id=_content_hash("utt", f"user:{text}"),
+                        speech_source="reply",
+                        guidance_id="",
+                    ),
+                )
 
     data.utterances.sort(key=lambda u: u.monotonic_ms)
     data.guidance_events.sort(key=lambda g: g.monotonic_ms)
@@ -696,8 +584,17 @@ def parse_cm_log(path: Path) -> CMLogData:
     data = CMLogData()
 
     run_meta: dict[str, dict[str, str]] = {}
+    sb_llm_paths: dict[str, str] = {}
 
     for line in lines:
+        # Slow-brain LLM log path: [ConversationManager] LLM thinking… (...) → /path
+        if "[ConversationManager] LLM thinking" in line and "\u2192 " in line:
+            path_part = line.split("\u2192 ", 1)[1].strip()
+            origin_match = re.search(r"\(([^)]+)\)", line.split("LLM thinking", 1)[1])
+            if origin_match:
+                origin_key = _parse_cm_ts(line)
+                sb_llm_paths[origin_key] = path_part
+
         # Slow-brain dispatch: captures origin metadata per run_id
         if "Dispatching slow-brain" in line and "run_id=" in line:
             run_id = _extract_field(line, "run_id", "request_id")
@@ -717,17 +614,19 @@ def parse_cm_log(path: Path) -> CMLogData:
             }
 
         # Slow-brain thought + action decision
-        # Format: run_id=llmrun-NNNNN thoughts: <text> | action: <action>
-        # Can't use _extract_field for run_id because "thoughts:" uses colon, not equals.
-        elif "thoughts:" in line and "| action:" in line and "run_id=" in line:
+        # Format: run_id=llmrun-NNNNN thoughts: <text> | actions: ['wait']
+        elif "thoughts:" in line and "| actions:" in line and "run_id=" in line:
             run_id_raw = line.split("run_id=", 1)[1]
             run_id = run_id_raw.split()[0]
             raw = line.split("thoughts:", 1)[1]
-            parts = raw.rsplit("| action:", 1)
+            parts = raw.rsplit("| actions:", 1)
             thoughts = parts[0].strip()
-            action = parts[1].strip() if len(parts) > 1 else ""
+            actions_raw = parts[1].strip() if len(parts) > 1 else "[]"
+            actions_list = re.findall(r"'([^']*)'", actions_raw)
+            action = actions_list[0] if actions_list else ""
             ts = _parse_cm_ts(line)
             meta = run_meta.get(run_id, {})
+            llm_path = sb_llm_paths.get(ts, "")
             data.slow_brain_runs.append(
                 SlowBrainRun(
                     ts_utc=ts,
@@ -738,6 +637,7 @@ def parse_cm_log(path: Path) -> CMLogData:
                     thoughts=thoughts,
                     action=action,
                     dispatch_utc=meta.get("dispatch_utc", ""),
+                    llm_log_path=llm_path,
                 ),
             )
 
@@ -782,6 +682,136 @@ def parse_cm_log(path: Path) -> CMLogData:
             gid = _extract_field(line, "guidance_id")
             if gid:
                 data.blocked_ids.append(gid)
+
+        # Proactive speech decisions: 🗣️ [ProactiveSpeech] should_speak=True, delay=3s: text
+        elif "[ProactiveSpeech] should_speak=" in line:
+            should_speak = "should_speak=True" in line
+            delay_match = re.search(r"delay=(\d+)s", line)
+            delay_s = int(delay_match.group(1)) if delay_match else 0
+            content = ""
+            if should_speak and ": " in line.split("delay=")[1]:
+                content = (
+                    line.split("delay=")[1].split(": ", 1)[1].strip()
+                    if ": " in line.split("delay=")[1]
+                    else ""
+                )
+            data.proactive_decisions.append(
+                ProactiveSpeechDecision(
+                    ts_utc=_parse_cm_ts(line),
+                    should_speak=should_speak,
+                    delay_s=delay_s,
+                    content=content,
+                ),
+            )
+
+        # Actor request: ➡️ [CodeActActor.act(XXXX)] Request: ...
+        elif "CodeActActor.act(" in line and "] Request:" in line:
+            aid_match = re.search(r"CodeActActor\.act\((\w+)\)", line)
+            actor_id = aid_match.group(1) if aid_match else ""
+            detail = line.split("] Request:", 1)[1].strip()
+            data.actor_tool_calls.append(
+                ActorToolCall(
+                    ts_utc=_parse_cm_ts(line),
+                    actor_id=actor_id,
+                    event_type="request",
+                    tool_name="",
+                    detail=detail,
+                ),
+            )
+
+        # Actor LLM thinking: 🧠 [CodeActActor.act(XXXX)] LLM thinking… → /path
+        elif "CodeActActor.act(" in line and "LLM thinking" in line:
+            aid_match = re.search(r"CodeActActor\.act\((\w+)\)", line)
+            actor_id = aid_match.group(1) if aid_match else ""
+            llm_path = ""
+            if "\u2192 " in line:
+                llm_path = line.split("\u2192 ", 1)[1].strip()
+            data.actor_tool_calls.append(
+                ActorToolCall(
+                    ts_utc=_parse_cm_ts(line),
+                    actor_id=actor_id,
+                    event_type="llm_thinking",
+                    tool_name="",
+                    llm_log_path=llm_path,
+                ),
+            )
+
+        # Actor tool scheduled: 🛠️  ToolCall Scheduled [CodeActActor.act(XXXX)] tool_name - id
+        elif "ToolCall Scheduled" in line and "CodeActActor.act(" in line:
+            aid_match = re.search(r"CodeActActor\.act\((\w+)\)", line)
+            actor_id = aid_match.group(1) if aid_match else ""
+            parts = line.split("]", 2)
+            tool_part = parts[2].strip() if len(parts) > 2 else ""
+            tool_name = (
+                tool_part.split(" - ")[0].strip() if " - " in tool_part else tool_part
+            )
+            data.actor_tool_calls.append(
+                ActorToolCall(
+                    ts_utc=_parse_cm_ts(line),
+                    actor_id=actor_id,
+                    event_type="tool_scheduled",
+                    tool_name=tool_name,
+                ),
+            )
+
+        # Actor execute_code: 🛠️ [CodeActActor.act(XXXX)->execute_code(YYYY)] Executing code...
+        elif "->execute_code(" in line and "Executing code" in line:
+            aid_match = re.search(r"CodeActActor\.act\((\w+)\)", line)
+            actor_id = aid_match.group(1) if aid_match else ""
+            exec_match = re.search(r"execute_code\((\w+)\)", line)
+            exec_id = exec_match.group(1) if exec_match else ""
+            data.actor_tool_calls.append(
+                ActorToolCall(
+                    ts_utc=_parse_cm_ts(line),
+                    actor_id=actor_id,
+                    event_type="execute_code",
+                    tool_name=f"execute_code({exec_id})",
+                ),
+            )
+
+        # Actor tool completed: ✅  ToolCall Completed [Ns] [CodeActActor.act(XXXX)] ...
+        elif "ToolCall Completed" in line and "CodeActActor.act(" in line:
+            aid_match = re.search(r"CodeActActor\.act\((\w+)\)", line)
+            actor_id = aid_match.group(1) if aid_match else ""
+            dur_match = re.search(r"ToolCall Completed \[(\d+\.?\d*)s\]", line)
+            duration = float(dur_match.group(1)) if dur_match else None
+            data.actor_tool_calls.append(
+                ActorToolCall(
+                    ts_utc=_parse_cm_ts(line),
+                    actor_id=actor_id,
+                    event_type="tool_completed",
+                    tool_name="",
+                    duration_s=duration,
+                ),
+            )
+
+        # Actor persist wait: ⏸️ [CodeActActor.act(XXXX)] Persist mode: waiting...
+        elif "Persist mode:" in line and "CodeActActor.act(" in line:
+            aid_match = re.search(r"CodeActActor\.act\((\w+)\)", line)
+            actor_id = aid_match.group(1) if aid_match else ""
+            data.actor_tool_calls.append(
+                ActorToolCall(
+                    ts_utc=_parse_cm_ts(line),
+                    actor_id=actor_id,
+                    event_type="persist_wait",
+                    tool_name="",
+                ),
+            )
+
+        # StorageCheck: ➡️ [StorageCheck(...)(XXXX)] Request: ...
+        elif "StorageCheck(" in line and "] Request:" in line:
+            aid_match = re.search(r"StorageCheck\([^)]*\)\((\w+)\)", line)
+            actor_id = aid_match.group(1) if aid_match else ""
+            detail = line.split("] Request:", 1)[1].strip()
+            data.actor_tool_calls.append(
+                ActorToolCall(
+                    ts_utc=_parse_cm_ts(line),
+                    actor_id=actor_id,
+                    event_type="storage_check",
+                    tool_name="StorageCheck",
+                    detail=detail,
+                ),
+            )
 
     return data
 
@@ -936,6 +966,8 @@ def build_timeline(
     slow_brain_runs = cm_data.slow_brain_runs if cm_data else []
     steering_contents = cm_data.steering_contents if cm_data else []
     actor_notifications = list(data.actor_notifications)
+    proactive_decisions = cm_data.proactive_decisions if cm_data else []
+    actor_tool_calls = cm_data.actor_tool_calls if cm_data else []
 
     return Timeline(
         entries=entries,
@@ -943,6 +975,8 @@ def build_timeline(
         steering_contents=steering_contents,
         actor_notifications=actor_notifications,
         silent_guidance=silent_guidance,
+        proactive_decisions=proactive_decisions,
+        actor_tool_calls=actor_tool_calls,
         anomalies=anomalies,
         call_start_ms=call_start_ms,
         call_end_ms=call_end_ms,
@@ -1104,6 +1138,7 @@ _DSEP = "\u2550" * 72  # ════════
 
 SOURCE_LABELS = {
     "reply": "fast_brain",
+    "notification_reply": "notification_reply",
     "proactive_speech": "proactive_speech",
     "slow_brain": "slow_brain",
     "actor_notification": "actor_notification",
@@ -1186,6 +1221,9 @@ def _format_slow_brain(
                 label = "\U0001f4ac" if sc.kind == "interject" else "\u2753"
                 parts.append(f"    {label} {sc.kind}: {preview}")
 
+    if sb.llm_log_path:
+        parts.append(f"    \U0001f4dd {sb.llm_log_path}")
+
     if origin_content:
         preview = origin_content
         if not verbose and len(preview) > 120:
@@ -1216,6 +1254,61 @@ def _format_actor_notification(
     if an.generation_id:
         parts.append(f"    \u2192 triggered fast brain {an.generation_id}")
     return parts
+
+
+def _format_proactive_decision(
+    pd: ProactiveSpeechDecision,
+    *,
+    verbose: bool = False,
+) -> list[str]:
+    """Format a proactive speech decision as a timeline line."""
+    if pd.should_speak:
+        preview = pd.content
+        if not verbose and len(preview) > 120:
+            preview = preview[:117] + "..."
+        return [
+            f"  \U0001f5e3\ufe0f {_short_utc(pd.ts_utc)} "
+            f"PROACTIVE SPEECH \u2192 speak (delay={pd.delay_s}s): {preview}",
+        ]
+    return [
+        f"  \U0001f5e3\ufe0f {_short_utc(pd.ts_utc)} "
+        f"PROACTIVE SPEECH \u2192 silent (delay={pd.delay_s}s)",
+    ]
+
+
+def _format_actor_tool_call(
+    atc: ActorToolCall,
+    *,
+    verbose: bool = False,
+) -> list[str]:
+    """Format an actor tool call as a timeline line."""
+    ts = _short_utc(atc.ts_utc)
+    if atc.event_type == "request":
+        preview = atc.detail
+        if not verbose and len(preview) > 150:
+            preview = preview[:147] + "..."
+        return [f"  \u2699\ufe0f {ts} ACTOR [{atc.actor_id}] Request: {preview}"]
+    elif atc.event_type == "llm_thinking":
+        suffix = f" \u2192 {atc.llm_log_path}" if atc.llm_log_path else ""
+        return [f"  \U0001f9e0 {ts} ACTOR [{atc.actor_id}] LLM thinking{suffix}"]
+    elif atc.event_type == "tool_scheduled":
+        return [
+            f"  \U0001f6e0\ufe0f  {ts} ACTOR [{atc.actor_id}] Tool: {atc.tool_name}",
+        ]
+    elif atc.event_type == "execute_code":
+        return [f"  \U0001f4bb {ts} ACTOR [{atc.actor_id}] {atc.tool_name}"]
+    elif atc.event_type == "tool_completed":
+        dur = f" [{atc.duration_s:.1f}s]" if atc.duration_s is not None else ""
+        return [f"  \u2705 {ts} ACTOR [{atc.actor_id}] Tool completed{dur}"]
+    elif atc.event_type == "persist_wait":
+        return [
+            f"  \u23f8\ufe0f  {ts} ACTOR [{atc.actor_id}] Persist mode \u2014 waiting for interjection",
+        ]
+    elif atc.event_type == "storage_check":
+        return [f"  \U0001f4be {ts} STORAGE CHECK [{atc.actor_id}] {atc.detail}"]
+    return [
+        f"  \u2699\ufe0f {ts} ACTOR [{atc.actor_id}] {atc.event_type}: {atc.tool_name}",
+    ]
 
 
 def _format_duration(ms: int) -> str:
@@ -1301,16 +1394,40 @@ def format_timeline(timeline: Timeline, *, verbose: bool = False) -> str:
         parts.append(
             f"Actor notifications: {len(timeline.actor_notifications)}",
         )
+        if timeline.actor_tool_calls:
+            exec_count = sum(
+                1 for a in timeline.actor_tool_calls if a.event_type == "execute_code"
+            )
+            llm_count = sum(
+                1 for a in timeline.actor_tool_calls if a.event_type == "llm_thinking"
+            )
+            parts.append(
+                f"Actor internals: {llm_count} LLM calls, "
+                f"{exec_count} code executions",
+            )
+        if timeline.proactive_decisions:
+            speak = sum(1 for p in timeline.proactive_decisions if p.should_speak)
+            silent = len(timeline.proactive_decisions) - speak
+            parts.append(
+                f"Proactive decisions: {len(timeline.proactive_decisions)} "
+                f"({speak} speak, {silent} silent)",
+            )
 
     parts.append("")
     parts.append("Source breakdown (assistant only):")
-    for src in ["fast_brain", "proactive_speech", "slow_brain", "actor_notification"]:
+    for src in [
+        "fast_brain",
+        "notification_reply",
+        "proactive_speech",
+        "slow_brain",
+        "actor_notification",
+    ]:
         cnt = source_counts.get(src, 0)
         if cnt:
             parts.append(f"  {src:24s} {cnt}")
     parts.append("")
     parts.append(
-        f"Silent guidance (should_speak=False): {len(timeline.silent_guidance)}",
+        f"Silent notifications (should_speak=False): {len(timeline.silent_guidance)}",
     )
 
     # ── Transcript ──
@@ -1327,7 +1444,9 @@ def format_timeline(timeline: Timeline, *, verbose: bool = False) -> str:
     # ── Silent Guidance ──
     if timeline.silent_guidance:
         parts.append(_DSEP)
-        parts.append("SILENT GUIDANCE (should_speak=False, injected as notification)")
+        parts.append(
+            "SILENT NOTIFICATIONS (should_speak=False, injected as [notification])",
+        )
         parts.append(_DSEP)
         parts.append("")
         for g in timeline.silent_guidance:
@@ -1388,7 +1507,13 @@ def format_timeline(timeline: Timeline, *, verbose: bool = False) -> str:
 
 # Sort order: system events before utterances at the same timestamp,
 # so causal events (actor notification) appear before the response they trigger.
-_KIND_ORDER = {"slow_brain": 0, "actor_notification": 1, "utterance": 2}
+_KIND_ORDER = {
+    "proactive_decision": 0,
+    "actor_tool_call": 1,
+    "slow_brain": 2,
+    "actor_notification": 3,
+    "utterance": 4,
+}
 
 
 def _format_utterance_entry(
@@ -1552,6 +1677,14 @@ def _format_interleaved_transcript(
         sk = _time_sort_key(an.ts_utc)
         merged.append((sk, "actor_notification", an))
 
+    for pd in timeline.proactive_decisions:
+        sk = _time_sort_key(pd.ts_utc)
+        merged.append((sk, "proactive_decision", pd))
+
+    for atc in timeline.actor_tool_calls:
+        sk = _time_sort_key(atc.ts_utc)
+        merged.append((sk, "actor_tool_call", atc))
+
     merged.sort(key=lambda x: (x[0], _KIND_ORDER.get(x[1], 9)))
 
     for _, kind, event in merged:
@@ -1569,6 +1702,14 @@ def _format_interleaved_transcript(
         elif kind == "actor_notification":
             an_lines = _format_actor_notification(event, verbose=verbose)  # type: ignore[arg-type]
             parts.extend(an_lines)
+            parts.append("")
+        elif kind == "proactive_decision":
+            pd_lines = _format_proactive_decision(event, verbose=verbose)  # type: ignore[arg-type]
+            parts.extend(pd_lines)
+            parts.append("")
+        elif kind == "actor_tool_call":
+            atc_lines = _format_actor_tool_call(event, verbose=verbose)  # type: ignore[arg-type]
+            parts.extend(atc_lines)
             parts.append("")
 
 
