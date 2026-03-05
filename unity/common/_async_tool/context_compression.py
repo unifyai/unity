@@ -6,6 +6,15 @@ from dataclasses import dataclass
 from pydantic import BaseModel
 from unity.common.llm_client import new_llm_client
 
+
+def context_over_threshold(
+    n_tokens: int,
+    threshold: float,
+    max_input_tokens: int,
+) -> bool:
+    return n_tokens >= max_input_tokens * threshold
+
+
 COMPRESSION_PROMPT = (
     "You are a context compactor. You receive a conversation transcript and must "
     "produce a shorter version that preserves all essential information.\n"

@@ -49,7 +49,11 @@ from .messages import (
 from .tools_data import ToolsData, compute_context_injection
 from .dynamic_tools_factory import DynamicToolFactory
 from .time_context import create_time_context, TimeContext
-from .context_compression import compress_context, _COMPRESSION_SIGNAL
+from .context_compression import (
+    compress_context,
+    _COMPRESSION_SIGNAL,
+    context_over_threshold,
+)
 from ..context_dump import make_messages_safe_for_context_dump
 from ...common.hierarchical_logger import ICONS
 
@@ -2500,7 +2504,11 @@ async def async_tool_loop_inner(
                     and getattr(_usage, "prompt_tokens", None)
                     and _max_input_tokens
                 ):
-                    _over_threshold = _usage.prompt_tokens >= _max_input_tokens * 0.7
+                    _over_threshold = context_over_threshold(
+                        _usage.prompt_tokens,
+                        0.7,
+                        _max_input_tokens,
+                    )
 
             # LLM responded - reset the activity-based timeout. The timeout is
             # designed to catch hung tools, not slow LLM inference. LLM providers
