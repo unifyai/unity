@@ -449,7 +449,7 @@ Secret Manager                  VM metadata                 Caddyfile
 **How it works:**
 
 1. A `*.vm.unify.ai` wildcard cert is generated via `certbot` using a DNS-01 challenge against the `unifyai` Cloud DNS zone (project: `unify-dns-server`).
-2. The cert (`fullchain.pem`) and key (`privkey.pem`) are stored as secrets `VM_WILDCARD_FULLCHAIN` and `VM_WILDCARD_PRIVKEY` in GCP Secret Manager (project: `responsive-city-458413-a2`).
+2. The cert (`fullchain.pem`) and key (`privkey.pem`) are stored as secrets `VM_WILDCARD_FULLCHAIN` and `VM_WILDCARD_PRIVKEY` in GCP Secret Manager (project: `unity-assistant-vms`).
 3. During VM creation, `vm_helpers.py` fetches both secrets and passes them as GCP instance metadata (`tls-fullchain`, `tls-privkey`).
 4. The VM startup script (Ubuntu or Windows) reads the metadata, writes the cert files to disk, and injects an explicit `tls <cert> <key>` directive into the Caddyfile — Caddy serves the wildcard cert immediately without any ACME requests.
 5. If the secrets are absent (not yet provisioned, or Secret Manager unavailable), the startup scripts skip the `tls` directive and Caddy falls back to per-hostname ACME.
@@ -591,14 +591,58 @@ orchestra/
 | Teams subscriptions | Every 30-45 min | Renews before 60-min expiry |
 | Wildcard TLS cert renewal | 1st of month, 3 AM UTC | Renews *.vm.unify.ai if <30 days to expiry |
 
-### GCP Project
+### GCP Projects
 
-All infrastructure runs in the GCP project: `responsive-city-458413-a2`
+Infrastructure is split across multiple GCP projects to isolate workloads and avoid shared API rate limits:
 
-- **GKE Cluster**: Hosts Unity container jobs
-- **Pub/Sub**: Message routing
-- **Artifact Registry**: Docker images (`us-central1-docker.pkg.dev/responsive-city-458413-a2/unity/`)
-- **Cloud Run**: Hosts adapters and communications services
+| Project | ID | Purpose |
+|---|---|---|
+| **Comms & GKE** | `responsive-city-458413-a2` | GKE Autopilot cluster, Pub/Sub, Cloud Run services, Artifact Registry |
+| **Assistant VMs** | `unity-assistant-vms` | Compute Engine VMs for assistant desktops, static IPs, VM images, Secret Manager (TLS certs) |
+| **DNS** | `unify-dns-server` | Cloud DNS zone (`unifyai`) for all `*.unify.ai` records |
+| **Orchestra** | `saas-368716` | Orchestra and Console Cloud Run services |
+
+#### Why VMs are in a separate project
+
+The GKE Autopilot cluster in `responsive-city-458413-a2` dynamically creates and destroys node VMs via Node Auto-Provisioning (NAP). These node lifecycle operations consume the per-project GCE `instances.insert` API rate limit. When assistant VM creation (during hiring) coincides with a GKE NAP scaling burst, the shared rate limit can be exhausted, causing the hiring flow to fail with `403 Rate Limit Exceeded`.
+
+This was observed in production on 2026-03-04: a GKE NAP burst at ~17:59 UTC exhausted the rate limit, and a subsequent hire attempt at ~18:29 UTC failed because `instances.insert` for `unity-ubuntu-617-staging` returned 403. The assistant VM creation has no retry logic (it's a synchronous step in the hiring flow), so the entire hire rolled back with a 500.
+
+Separating assistant VMs into `unity-assistant-vms` gives each workload its own independent rate limit budget. GKE NAP can scale freely without affecting hiring, and vice versa.
+
+#### What lives where
+
+**`responsive-city-458413-a2`** (Comms & GKE):
+- GKE Autopilot cluster (`unity`) — container orchestration for Unity jobs
+- Pub/Sub topics — message routing between adapters and containers
+- Artifact Registry — Docker images (`us-central1-docker.pkg.dev/responsive-city-458413-a2/unity/`)
+- Cloud Run — adapters (`unity-adapters`, `unity-adapters-staging`) and comms app (`unity-comms-app`, `unity-comms-app-staging`)
+- Remaining Secret Manager secrets (API keys, Twilio, LiveKit, etc.)
+
+**`unity-assistant-vms`** (Assistant VMs):
+- Compute Engine VMs — assistant desktops (Ubuntu and Windows)
+- Static IPs — one per assistant VM
+- VM images — custom golden images (`unity-ubuntu-vm`, `unity-windows-vm`, pool variants)
+- Secret Manager — `VM_WILDCARD_FULLCHAIN`, `VM_WILDCARD_PRIVKEY`, `DEVBOT_GITHUB_TOKEN`
+- Firewall rules — VM-specific port access (2222, 3000, 6080, 7000, WinRM, HTTPS)
+- Tunnel server VM — shared relay for local machine tunnelling
+
+#### Cross-project access
+
+The communication service account (`comm-sa@responsive-city-458413-a2.iam.gserviceaccount.com`) has IAM bindings in `unity-assistant-vms`:
+- `roles/compute.admin` — create, start, stop, delete VMs and static IPs
+- `roles/secretmanager.admin` — read secrets during VM provisioning, write during cert renewal
+
+DNS is already cross-project: VM A records are created in `unify-dns-server`'s `unifyai` zone.
+
+#### Configuration
+
+The project separation is controlled by two config files in the communication repo:
+
+- `communication/infra/vm_config.py` — `VM_PROJECT_ID`, `WINDOWS_VM_IMAGE_PROJECT`, `UBUNTU_VM_IMAGE_PROJECT`
+- `communication/infra/tunnel_config.py` — `TUNNEL_PROJECT_ID`
+
+The GKE/PubSub/Artifact Registry project ID (`responsive-city-458413-a2`) is set separately in `communication/infra/views.py` as `GCP_PROJECT_ID`.
 
 ## 🐛 Common Issues & Troubleshooting
 
@@ -611,5 +655,6 @@ All infrastructure runs in the GCP project: `responsive-city-458413-a2`
 | Container dies immediately | Crash during startup | Check GKE job logs for exceptions |
 | `running: True` but assistant unresponsive | Container crashed without cleanup | Manually update AssistantJobs log to `running: False` |
 | Liveview URL not working | Service not ready yet (< 60s) or already deleted | Wait or check if job is still running |
-| `TLSV1_ALERT_INTERNAL_ERROR` on desktop session | VM has no TLS cert (wildcard secret missing or LE ACME rate-limited) | Check Secret Manager for `VM_WILDCARD_FULLCHAIN`; check `crt.sh/?q=%.vm.unify.ai` for rate limit status |
+| `TLSV1_ALERT_INTERNAL_ERROR` on desktop session | VM has no TLS cert (wildcard secret missing or LE ACME rate-limited) | Check Secret Manager for `VM_WILDCARD_FULLCHAIN` in `unity-assistant-vms`; check `crt.sh/?q=%.vm.unify.ai` for rate limit status |
 | "Share assistant screen" shows broken iframe | VM HTTPS unreachable but `liveview_url` was set from a stale record | Check `AssistantJobs` for stale `running: True` entries; the adapter's `_expire_stale_records` should prevent this |
+| Hiring fails with 500 / "Rate Limit Exceeded" | GCE API rate limit exhausted (historically from shared project with GKE NAP) | Check `gcloud logging read` in the VM project for 403 errors on `instances.insert`. If VMs are still in a shared project with GKE, this can recur. |

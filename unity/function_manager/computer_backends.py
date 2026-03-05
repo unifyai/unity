@@ -1887,7 +1887,11 @@ class MagnitudeBackend(ComputerBackend):
 
     async def act(self, instruction: str, verify: bool = False, **kwargs) -> ActResult:
         s = await self._default_session()
-        return await s.act(instruction, verify=verify)
+        try:
+            return await s.act(instruction, verify=verify)
+        except asyncio.CancelledError:
+            await self.interrupt_current_action()
+            raise
 
     async def observe(self, query: str, response_format: Any = str, **kwargs) -> Any:
         s = await self._default_session()

@@ -1,9 +1,9 @@
 """
-ConversationManager → CodeActActor integration test for memoization signals.
+ConversationManager → CodeActActor integration test for skill storage signals.
 
 Verifies the slow brain correctly interprets "remember this" / "save this
-workflow" as stop actions rather than interjections during in-flight sessions
-with a real CodeActActor.
+workflow" as interjections (skill-storage requests relayed to the running
+action) rather than stop signals that would kill the session.
 """
 
 import pytest
@@ -11,12 +11,12 @@ import pytest
 from tests.helpers import _handle_project
 from tests.conversation_manager.cm_helpers import (
     assert_steering_called,
+    has_steering_tool_call,
 )
 from tests.conversation_manager.conftest import BOSS
 from tests.conversation_manager.actions.integration.helpers import (
     assert_no_errors,
     get_actor_started_event,
-    wait_for_actor_completion,
 )
 from unity.conversation_manager.events import SMSReceived
 
@@ -26,14 +26,15 @@ pytestmark = [pytest.mark.integration, pytest.mark.eval]
 @pytest.mark.asyncio
 @pytest.mark.timeout(300)
 @_handle_project
-async def test_memoize_signal_triggers_stop(initialized_cm_codeact):
+async def test_memoize_signal_triggers_interject(initialized_cm_codeact):
     """User says "remember this for next time" during a guided session.
 
     Flow:
     1. User describes a workflow and gives the first instruction (triggers act)
     2. User gives another guided step (interject)
     3. User says "remember this for next time"
-    4. Verify stop_* is called (not interject_*)
+    4. Verify interject_* is called (not stop_*) — the session stays alive
+       so the action can store the skill without losing progress
     """
     cm = initialized_cm_codeact
 
@@ -47,7 +48,6 @@ async def test_memoize_signal_triggers_stop(initialized_cm_codeact):
         ),
     )
     actor_event = get_actor_started_event(result1)
-    handle_id = actor_event.handle_id
 
     result2 = await cm.step_until_wait(
         SMSReceived(
@@ -65,25 +65,28 @@ async def test_memoize_signal_triggers_stop(initialized_cm_codeact):
 
     assert_steering_called(
         cm,
-        "stop_",
-        "Memoization signal should call stop_* to end the guided session",
+        "interject_",
+        "Skill-storage request should interject into the running action, not stop it",
         result=result3,
     )
-
-    actor_result = await wait_for_actor_completion(cm, handle_id, timeout=300)
+    assert not has_steering_tool_call(cm, "stop_"), (
+        f"CM should interject the skill-storage request, not stop the session. "
+        f"Tool calls: {cm.all_tool_calls}"
+    )
     assert_no_errors(result1)
 
 
 @pytest.mark.asyncio
 @pytest.mark.timeout(300)
 @_handle_project
-async def test_save_workflow_signal_triggers_stop(initialized_cm_codeact):
+async def test_save_workflow_signal_triggers_interject(initialized_cm_codeact):
     """User says "save this, I want you to do this on your own" — alternate phrasing.
 
     Flow:
     1. User gives a guided instruction (triggers act)
-    2. User says they want the assistant to do this autonomously
-    3. Verify stop_* is called
+    2. User says they want the assistant to store the skill
+    3. Verify interject_* is called (not stop_*) — the action handles
+       skill storage while remaining alive
     """
     cm = initialized_cm_codeact
 
@@ -97,7 +100,6 @@ async def test_save_workflow_signal_triggers_stop(initialized_cm_codeact):
         ),
     )
     actor_event = get_actor_started_event(result1)
-    handle_id = actor_event.handle_id
 
     result2 = await cm.step_until_wait(
         SMSReceived(
@@ -110,10 +112,12 @@ async def test_save_workflow_signal_triggers_stop(initialized_cm_codeact):
 
     assert_steering_called(
         cm,
-        "stop_",
-        "'Save this, do it on your own' should call stop_* to end the session",
+        "interject_",
+        "'Save this, do it on your own' should interject to request skill storage",
         result=result2,
     )
-
-    actor_result = await wait_for_actor_completion(cm, handle_id, timeout=300)
+    assert not has_steering_tool_call(cm, "stop_"), (
+        f"CM should interject the skill-storage request, not stop the session. "
+        f"Tool calls: {cm.all_tool_calls}"
+    )
     assert_no_errors(result1)
