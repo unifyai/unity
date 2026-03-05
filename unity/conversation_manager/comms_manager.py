@@ -24,6 +24,7 @@ to the event broker instead.
 from __future__ import annotations
 
 import asyncio
+from functools import partial
 import json
 import threading
 import time
@@ -41,6 +42,7 @@ from unity.conversation_manager.domains.comms_utils import (
     add_unify_message_attachments,
 )
 from unity.conversation_manager.events import *
+from unity.conversation_manager.metrics import pubsub_e2e_latency
 from unity.session_details import SESSION_DETAILS
 from unity.contact_manager.types.contact import UNASSIGNED
 from unity.conversation_manager.types import Medium
@@ -237,9 +239,17 @@ class CommsManager:
             self.loop,
         )
 
+    def _ack_with_latency(self, message, publish_timestamp, topic):
+        """Ack the message and record end-to-end Pub/Sub latency if available."""
+        if publish_timestamp is not None:
+            latency = time.time() - publish_timestamp
+            pubsub_e2e_latency.record(latency, {"topic": topic})
+        message.ack()
+
     def handle_message(
         self,
         message: pubsub_v1.types.PubsubMessage,
+        subscription_id: str = "",
     ):
         """
         Handle incoming messages from PubSub subscriptions.
@@ -248,10 +258,12 @@ class CommsManager:
         NOT from the asyncio event loop. All async operations must use
         `_publish_from_callback` or `asyncio.run_coroutine_threadsafe`.
         """
+        topic = subscription_id.removesuffix("-sub")
         try:
             data = json.loads(message.data.decode("utf-8"))
             thread = data["thread"]
             event = data["event"]
+            publish_timestamp = data.get("publish_timestamp")
             LOGGER.debug(
                 f"{DEFAULT_ICON} Received message from {thread}: {message.data.decode('utf-8')}",
             )
@@ -268,7 +280,7 @@ class CommsManager:
                             return
 
                         # Acknowledge message only when we're sure we're taking it
-                        message.ack()
+                        self._ack_with_latency(message, publish_timestamp, topic)
 
                         # can't use asyncio.to_thread because this code runs on a pubsub
                         # thread pool thread rather than the main event loop
@@ -291,7 +303,7 @@ class CommsManager:
                     self.subscribe_to_topic(_get_subscription_id(), max_messages=10)
                 else:
                     # assistant_update - always ack
-                    message.ack()
+                    self._ack_with_latency(message, publish_timestamp, topic)
 
                 # publish
                 details = {
@@ -339,7 +351,7 @@ class CommsManager:
                     "app:comms:ping",
                     Ping(kind="keepalive").to_json(),
                 )
-                message.ack()
+                self._ack_with_latency(message, publish_timestamp, topic)
             elif thread == "unity_system_event":
                 system_event_type = event.get("event_type")
                 system_message = event.get("message")
@@ -387,7 +399,7 @@ class CommsManager:
                         f"app:comms:{system_event_type}",
                         evt.to_json(),
                     )
-                message.ack()
+                self._ack_with_latency(message, publish_timestamp, topic)
             elif thread in events_map:
                 # Get contacts for message routing
                 contacts = [*event.get("contacts", []), _get_local_contact()]
@@ -412,7 +424,7 @@ class CommsManager:
                         LOGGER.debug(
                             f"{DEFAULT_ICON} Ignoring blacklisted email from: {contact_detail}",
                         )
-                        message.ack()
+                        self._ack_with_latency(message, publish_timestamp, topic)
                         return
 
                     # Find or create contact
@@ -433,7 +445,7 @@ class CommsManager:
                         LOGGER.error(
                             f"{DEFAULT_ICON} Failed to resolve contact for email from: {contact_detail}",
                         )
-                        message.ack()
+                        self._ack_with_latency(message, publish_timestamp, topic)
                         return
 
                     # Extract attachment filenames for the event
@@ -506,7 +518,7 @@ class CommsManager:
                             f"{DEFAULT_ICON} Error: contact_id is required for unify_message, "
                             "skipping message",
                         )
-                        message.ack()
+                        self._ack_with_latency(message, publish_timestamp, topic)
                         return
                     contact = next(
                         (c for c in contacts if c["contact_id"] == target_contact_id),
@@ -517,7 +529,7 @@ class CommsManager:
                             f"{DEFAULT_ICON} Error: contact_id {target_contact_id} not found in "
                             f"contacts list, skipping message",
                         )
-                        message.ack()
+                        self._ack_with_latency(message, publish_timestamp, topic)
                         return
 
                     # Extract attachments with full metadata for the event
@@ -554,7 +566,7 @@ class CommsManager:
                         LOGGER.debug(
                             f"{DEFAULT_ICON} Ignoring blacklisted SMS from: {contact_detail}",
                         )
-                        message.ack()
+                        self._ack_with_latency(message, publish_timestamp, topic)
                         return
 
                     # Find or create contact
@@ -575,7 +587,7 @@ class CommsManager:
                         LOGGER.error(
                             f"{DEFAULT_ICON} Failed to resolve contact for SMS from: {contact_detail}",
                         )
-                        message.ack()
+                        self._ack_with_latency(message, publish_timestamp, topic)
                         return
 
                     self._publish_from_callback(
@@ -597,7 +609,7 @@ class CommsManager:
                             ).to_json(),
                         )
 
-                message.ack()
+                self._ack_with_latency(message, publish_timestamp, topic)
             elif thread == "log_pre_hire_chats":
                 try:
                     contacts = [*event.get("contacts", []), _get_local_contact()]
@@ -631,7 +643,7 @@ class CommsManager:
                     LOGGER.debug(
                         f"{DEFAULT_ICON} Logged {published} pre-hire chat message(s) for assistant {assistant_id}",
                     )
-                    message.ack()
+                    self._ack_with_latency(message, publish_timestamp, topic)
                 except Exception as e:
                     LOGGER.error(f"{DEFAULT_ICON} Error processing pre-hire logs: {e}")
                     message.nack()
@@ -644,7 +656,7 @@ class CommsManager:
                     "app:comms:recording_ready",
                     recording_event.to_json(),
                 )
-                message.ack()
+                self._ack_with_latency(message, publish_timestamp, topic)
             elif "call" in thread or "meet" in thread:
                 try:
                     # Get contacts for call routing
@@ -672,7 +684,7 @@ class CommsManager:
                             LOGGER.debug(
                                 f"{DEFAULT_ICON} Ignoring blacklisted call from: {number}",
                             )
-                            message.ack()
+                            self._ack_with_latency(message, publish_timestamp, topic)
                             return
 
                         # Find or create contact
@@ -693,7 +705,7 @@ class CommsManager:
                             LOGGER.error(
                                 f"{DEFAULT_ICON} Failed to resolve contact for call from: {number}",
                             )
-                            message.ack()
+                            self._ack_with_latency(message, publish_timestamp, topic)
                             return
 
                         call_event = PhoneCallReceived(
@@ -746,23 +758,23 @@ class CommsManager:
                         self.event_broker.publish(topic, call_event.to_json()),
                         self.loop,
                     )
-                    message.ack()
+                    self._ack_with_latency(message, publish_timestamp, topic)
                     future.result()  # Wait for publish to complete
                 except json.JSONDecodeError:
                     LOGGER.error(
                         f"{DEFAULT_ICON} Invalid message format for {thread} event",
                     )
-                    message.ack()
+                    self._ack_with_latency(message, publish_timestamp, topic)
                 except Exception as e:
                     LOGGER.error(f"{DEFAULT_ICON} Error processing {thread} event: {e}")
                     import traceback
 
                     traceback.print_exc()
-                    message.ack()
+                    self._ack_with_latency(message, publish_timestamp, topic)
             else:
                 if thread != "assistant_desktop_ready":
                     LOGGER.error(f"{DEFAULT_ICON} Unknown event type: {thread}")
-                message.ack()
+                self._ack_with_latency(message, publish_timestamp, topic)
         except Exception as e:
             LOGGER.error(f"{DEFAULT_ICON} Error processing message: {e}")
             message.ack()
@@ -790,9 +802,10 @@ class CommsManager:
                 else pubsub_v1.types.FlowControl()
             )
 
+            callback = partial(self.handle_message, subscription_id=subscription_id)
             streaming_pull_future = subscriber.subscribe(
                 subscription_path,
-                callback=self.handle_message,
+                callback=callback,
                 flow_control=flow_control,
             )
 

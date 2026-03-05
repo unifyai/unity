@@ -153,7 +153,7 @@ _EXECUTION_RULES = textwrap.dedent("""
 
        **Display Helper (`display`)**
        - `display(obj)` emits rich output (text or PIL images) to stdout.
-       - Images are auto-resized and base64-encoded.
+       - Images are base64-encoded.
        - Use `display(...)` instead of `print(...)` for image output.
 
     6. **Error Handling**: If your code produces an error, the traceback will be returned. Read it carefully, correct your code, and try again.
@@ -178,22 +178,70 @@ _EXECUTION_RULES = textwrap.dedent("""
          Do not list trivial or obvious choices.
 """).strip()
 
+_INCREMENTAL_EXECUTION = textwrap.dedent("""
+    ### Incremental Execution
+
+    The right granularity depends on how predictable each step is.
+
+    **Deterministic work** — pure computation, data transforms, file I/O
+    with known schemas — can and should run in a single `execute_code`
+    block.  Don't fragment code that you are confident will run correctly
+    from start to finish.
+
+    **Uncertain interactions** — browser automation, UI clicks, unfamiliar
+    APIs, coordinate-based actions, web scraping — should be broken into
+    small steps with verification between each.  The more unpredictable
+    the outcome, the more incremental you should be.
+
+    Guidelines for uncertain / interactive work:
+
+    1. **One step per call**: Execute one meaningful action, then review
+       the output before deciding the next step.
+
+    2. **Stateful sessions**: Use `state_mode="stateful"` so variables,
+       session handles, and intermediate results persist across calls.
+
+    3. **Verify before scaling**: Before writing a loop or repeating a
+       pattern, execute the body once and confirm the result.  Only
+       generalize to iteration after the single case works correctly.
+
+    4. **Read-only for exploration**: Use `state_mode="read_only"` to
+       branch off a known-good intermediate state and try alternative
+       approaches without risking that state.
+
+    5. **Inspect results**: After each uncertain step, print or display
+       key outputs — don't assume success.
+""").strip()
+
 _STORAGE_DEFERRED_NOTICE = textwrap.dedent("""
-    ### Function Storage Is Handled Separately
+    ### Skill Storage
 
-    A dedicated skill-consolidation process will run automatically after you
-    return your result. It will review your full execution trajectory and
-    decide which **functions** are worth storing as reusable implementations,
-    and which **compositional strategies** deserve guidance entries.
+    You can proactively store reusable skills at any point during execution
+    using the `store_skills` tool. This is useful when you have just
+    completed a complex subtask and recognize a pattern worth preserving.
 
-    This means:
-    - Do not spend effort on storing or managing *functions* — that concern
-      is fully covered by the follow-up process.
-    - **Guidance is different**: if the user explicitly asks you to remember
-      procedures, instructions, or how-to information, store it directly via
-      `GuidanceManager_add_guidance` as part of the current task. The
-      follow-up process handles *compositional* guidance derived from the
-      trajectory; user-requested procedural guidance is your responsibility.
+    A dedicated skill-consolidation process will also run automatically
+    after you return your result, reviewing your full execution trajectory.
+    So you are not obligated to call `store_skills` — use it when you judge
+    it valuable, not as a routine step.
+
+    When to use `store_skills`:
+    - After completing a complex workflow that discovered non-obvious
+      configuration or composition strategies.
+    - When the user explicitly asks you to remember or store a skill.
+    - Before transitioning to a different phase, to capture learnings
+      from the current phase.
+
+    When NOT needed:
+    - Trivial operations unlikely to be reused.
+    - Every single code execution — the automatic post-completion review
+      is comprehensive.
+
+    **Guidance is separate**: if the user explicitly asks you to remember
+    procedures, instructions, or how-to information, store it directly via
+    `GuidanceManager_add_guidance` as part of the current task. `store_skills`
+    is for extracting reusable function implementations and compositional
+    strategies from the execution trajectory.
 """).strip()
 
 
@@ -355,8 +403,6 @@ def _build_code_act_rules_and_examples(
     # is available. When can_compose=False the tool is masked and the LLM
     # should not receive any references to it.
     if has_execute_code:
-        parts.append(_EXECUTION_RULES)
-
         core_patterns = get_code_act_pattern_examples()
         if core_patterns:
             parts.append(f"### Core Patterns\n\n{core_patterns}")
@@ -485,6 +531,7 @@ def build_code_act_prompt(
         parts.append(tools_section)
 
         parts.append(_EXECUTION_RULES)
+        parts.append(_INCREMENTAL_EXECUTION)
 
         if has_fm_tools or has_gm_tools:
             parts.append(_FUNCTION_AND_GUIDANCE_LIBRARY)

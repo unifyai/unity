@@ -189,6 +189,7 @@ class AgentContext:
     depth: int = 0
     agent_id: str = dataclass_field(default_factory=lambda: str(uuid.uuid4()))
     handle: "AsyncToolLoopHandle | None" = None
+    proactive_storage_summaries: list[str] = dataclass_field(default_factory=list)
 
 
 _CURRENT_AGENT_CONTEXT: contextvars.ContextVar[AgentContext] = contextvars.ContextVar(
@@ -341,37 +342,187 @@ class _CodeActEntrypointHandle(SteerableToolHandle):  # type: ignore[abstract-me
 
 
 # ---------------------------------------------------------------------------
-# Storage check: start a review loop and return its handle
+# Shared storage-review prompt sections
+# ---------------------------------------------------------------------------
+
+_STORAGE_WHAT_CAN_BE_STORED = (
+    "## What Can Be Stored\n\n"
+    "Any code that executed successfully in `execute_code` during "
+    "this trajectory can be stored as a function. Environment-provided "
+    "namespaces (`primitives`, `primitives.computer`, `primitives.actor`) and "
+    "other stored functions referenced in the code are automatically "
+    "detected from the source and injected at runtime — you do not "
+    "need to add imports or worry about whether these names will be "
+    "available when the function runs later. Focus on whether a "
+    "pattern is *worth* reusing, not whether it is *technically "
+    "executable* in isolation.\n\n"
+    "### Wrapping to bake in configuration\n\n"
+    "Stored functions should NOT be verbatim copies of code blocks "
+    "from the trajectory. During execution, the agent discovered the "
+    "right combination of parameters, tool selections, and strategies "
+    "through reasoning — that configuration knowledge is the valuable "
+    "part. A stored function should **bake in** the hard-won "
+    "configuration as fixed values and **expose** only the parts "
+    "that genuinely vary between uses (typically the task-specific "
+    "input). This produces a function that future callers can use "
+    "without rediscovering the right setup.\n\n"
+    "For example, if the trajectory contained:\n\n"
+    "```python\n"
+    "handle = await primitives.actor.act(\n"
+    '    request="Find Alice\'s work email",\n'
+    '    guidelines="Check all contact fields including notes and metadata. ....",\n'
+    '    prompt_functions=["primitives.contacts.ask"],\n'
+    "    discovery_scope=\"'contacts' in docstring\",\n"
+    ")\n"
+    "result = await handle.result()\n"
+    "```\n\n"
+    "Do NOT store this verbatim (every parameter hardcoded). Instead, "
+    "wrap it into a reusable function that bakes in the configuration "
+    "and exposes only the task:\n\n"
+    "```python\n"
+    "async def research_contact_info(request: str):\n"
+    '    """Delegate contact research to a scoped sub-agent with curated tools."""\n'
+    "    handle = await primitives.actor.act(\n"
+    "        request=request,\n"
+    '        guidelines="Check all contact fields including notes and metadata. ....",\n'
+    '        prompt_functions=["primitives.contacts.ask"],\n'
+    "        discovery_scope=\"'contacts' in docstring\",\n"
+    "    )\n"
+    "    return await handle.result()\n"
+    "```\n\n"
+    "Now `research_contact_info` captures the curated agent setup and "
+    "any future caller only needs to provide the request. The same "
+    "principle applies to any code pattern — whenever some parameters "
+    "represent reusable configuration and others represent per-call "
+    "input, wrap to bake in the former and expose the latter.\n\n"
+)
+
+_STORAGE_TWO_STORES = (
+    "## Two Stores\n\n"
+    "You have access to two complementary stores:\n\n"
+    "### Function Store — the *what*\n\n"
+    "The FunctionManager stores concrete, reusable function "
+    "implementations — the building blocks. Each entry is a "
+    "single callable with a clear name, docstring, and implementation.\n\n"
+    "Actions:\n"
+    "- **Add** a genuinely new, reusable function "
+    "(`FunctionManager_add_functions`).\n"
+    "- **Update** an existing function with a better implementation "
+    "(`FunctionManager_add_functions` with `overwrite=True`).\n"
+    "- **Merge** overlapping functions into one general-purpose function: "
+    "add the merged version, then delete the old entries "
+    "(`FunctionManager_delete_functions`).\n"
+    "- **Delete** functions that are redundant or superseded "
+    "(`FunctionManager_delete_functions`).\n\n"
+    "Do NOT store trivial one-liners, test scaffolding, or functions "
+    "that are too task-specific to be reusable.\n\n"
+    "### Guidance Store — the *how*\n\n"
+    "The GuidanceManager stores procedural how-to entries: "
+    "step-by-step instructions, standard operating procedures, "
+    "software usage walkthroughs, and strategies for composing "
+    "multiple functions together to accomplish broader tasks. "
+    "Think of guidance entries as recipes or playbooks — they "
+    "describe the procedure, decision points, and caveats, "
+    "rather than containing executable code.\n\n"
+    "In this storage-review context, guidance is most relevant "
+    "when the trajectory reveals a non-obvious multi-step "
+    "composition strategy that would be hard to rediscover. "
+    "A single function call, a linear sequence of obvious steps, "
+    "or a workflow fully explained by the individual function "
+    "docstrings does NOT need guidance.\n\n"
+    "Actions:\n"
+    "- **Add** guidance for a genuinely non-trivial compositional "
+    "workflow (`GuidanceManager_add_guidance`). Include `function_ids` "
+    "to cross-reference the concrete functions it describes.\n"
+    "- **Update** existing guidance that is incomplete or "
+    "superseded (`GuidanceManager_update_guidance`).\n"
+    "- **Delete** guidance that is obsolete or redundant "
+    "(`GuidanceManager_delete_guidance`).\n\n"
+    "Do NOT duplicate information that already lives in a "
+    "function's docstring. Do NOT create guidance for simple or "
+    "self-explanatory workflows.\n\n"
+    "### Relationship between the two stores\n\n"
+    "| Aspect | FunctionManager | GuidanceManager |\n"
+    "|--------|----------------|----------------|\n"
+    "| Granularity | Single callable | Multi-step workflow |\n"
+    "| Content | Executable implementation | Natural-language recipe |\n"
+    "| Analogy | A tool's docstring | A prompt that references tools |\n\n"
+    "When a trajectory reveals both a useful function AND a non-trivial "
+    "workflow that uses it, store the function first, then create a "
+    "guidance entry referencing it via `function_ids`.\n\n"
+)
+
+_STORAGE_SUB_AGENT_PATTERNS = (
+    "## Sub-Agent Delegation Patterns\n\n"
+    "Calls to `primitives.actor.act(...)` in the trajectory are especially "
+    "high-value storage candidates because they represent **pre-configured "
+    "specialist agents**. Each `primitives.actor.act` invocation encodes a curated "
+    "combination of `prompt_functions` (which tools the sub-agent sees), "
+    "`guidelines` (how it should reason and compose those tools), "
+    "`discovery_scope` (what it can find via search), and permission "
+    "flags — together these define a specialist that can handle a "
+    "particular *class* of tasks, not just the single task it was "
+    "originally invoked for.\n\n"
+    "### When to store\n\n"
+    "Not every `primitives.actor.act` call is worth storing. Use this spectrum:\n\n"
+    "- **Low value** — broad, unscoped delegation: all state managers "
+    "in `prompt_functions`, generic or no `guidelines`, no "
+    "`discovery_scope`, trivial `request`. This is just a passthrough "
+    "that any future agent could reconstruct trivially.\n"
+    "- **High value** — curated specialist: a carefully selected set of "
+    "`prompt_functions`, detailed `guidelines` explaining how to compose "
+    "those specific tools, a narrowed `discovery_scope`, and a non-trivial "
+    "task that the sub-agent solved successfully. The configuration "
+    "required real reasoning to discover and would be hard to "
+    "rediscover from scratch.\n\n"
+    "The more curation and domain knowledge went into the `primitives.actor.act` "
+    "parameters, the more valuable it is to store.\n\n"
+    "### What to bake in vs expose\n\n"
+    "The parameters split naturally into two categories:\n\n"
+    "- **Bake in** (agent specification): `guidelines`, "
+    "`prompt_functions`, `discovery_scope`, `can_compose`, `can_store`, "
+    "`can_spawn_sub_agents`, `timeout` — these define *what kind of "
+    "specialist* this is and should be fixed in the stored function.\n"
+    "- **Expose** (task specification): `request` — this defines *what "
+    "to ask the specialist to do* and should be a parameter of the "
+    "stored function.\n\n"
+    "The result is a function that future callers can invoke with just "
+    "a `request` string, without needing to know anything about the "
+    "right tool selection, scoping, or behavioral guidelines.\n\n"
+)
+
+_STORAGE_BASE_INSTRUCTIONS = (
+    "## Instructions\n\n"
+    "1. Review the trajectory for reusable patterns.\n"
+    "2. Search the existing stores to understand what already exists "
+    "(use the search/filter tools for each store).\n"
+    "3. Decide what actions (if any) would improve the library. "
+    "Prefer a clean, non-redundant library over a large one. "
+    "Most trajectories will only warrant function changes, if "
+    "anything at all. Add guidance only when a multi-step "
+    "composition is genuinely non-obvious.\n"
+    "4. When done (or if there is nothing worth changing), respond "
+    "with a brief summary of what you did (or that nothing was needed)."
+)
+
+# ---------------------------------------------------------------------------
+# Shared storage tool construction
 # ---------------------------------------------------------------------------
 
 
-def _start_storage_check_loop(
+def _build_storage_tools(
     *,
-    trajectory: list[dict],
+    actor: "CodeActActor",
     ask_tools: dict,
     completed_tool_metadata: dict | None = None,
-    actor: "CodeActActor",
-    original_result: str,
-    parent_lineage: list[str] | None = None,
-    stop_reason: str | None = None,
-) -> "AsyncToolLoopHandle | None":
-    """Start a loop that reviews a completed trajectory for reusable knowledge.
+) -> tuple[Dict[str, Callable], list[str]]:
+    """Build the tool dict shared by both post-processing and proactive storage loops.
 
-    The loop maintains two complementary stores:
-
-    * **FunctionManager** — stores the *what*: concrete, reusable function
-      implementations (the building blocks).
-    * **GuidanceManager** — stores the *how*: high-level guidance on
-      composing multiple functions together to accomplish broader tasks
-      (the recipes / playbooks).
-
-    Both stores are required. Returns ``None`` when either manager is
-    missing.
+    Returns ``(tools, storage_active_lines)`` so callers can reference
+    which inner tools are still actively reviewing skills.
     """
     fm = actor.function_manager
     gm = actor.guidance_manager
-    if fm is None or gm is None:
-        return None
 
     # ── FunctionManager tools ─────────────────────────────────────────
 
@@ -468,14 +619,11 @@ def _start_storage_check_loop(
 
     # ── Wire ask_about_completed_tool from snapshot ───────────────────
 
-    # Classify completed tools into storage-active (background skill
-    # review in progress) vs dormant (fully finished).
     _meta = completed_tool_metadata or {}
     storage_active_lines: list[str] = []
     storage_active_handles: Dict[str, Any] = {}
     dormant_lines: list[str] = []
     for name, fn in ask_tools.items():
-        # Try to find the metadata entry for this ask tool.
         entry = None
         for _cid, _m in _meta.items():
             if _m.get("ask_fn") is fn:
@@ -489,8 +637,6 @@ def _start_storage_check_loop(
             dormant_lines.append(f"- `{name}`")
 
     if ask_tools:
-
-        # Build categorized docstring for the tool.
         doc_sections: list[str] = [
             "Ask a follow-up question about a completed tool from the "
             "trajectory to inspect its internal reasoning or results.",
@@ -617,6 +763,49 @@ def _start_storage_check_loop(
         tools["pause_inner_storage"] = pause_inner_storage
         tools["resume_inner_storage"] = resume_inner_storage
 
+    return tools, storage_active_lines
+
+
+# ---------------------------------------------------------------------------
+# Storage check: start a review loop and return its handle
+# ---------------------------------------------------------------------------
+
+
+def _start_storage_check_loop(
+    *,
+    trajectory: list[dict],
+    ask_tools: dict,
+    completed_tool_metadata: dict | None = None,
+    actor: "CodeActActor",
+    original_result: str,
+    parent_lineage: list[str] | None = None,
+    stop_reason: str | None = None,
+    proactive_summaries: list[str] | None = None,
+) -> "AsyncToolLoopHandle | None":
+    """Start a loop that reviews a completed trajectory for reusable knowledge.
+
+    The loop maintains two complementary stores:
+
+    * **FunctionManager** — stores the *what*: concrete, reusable function
+      implementations (the building blocks).
+    * **GuidanceManager** — stores the *how*: high-level guidance on
+      composing multiple functions together to accomplish broader tasks
+      (the recipes / playbooks).
+
+    Both stores are required. Returns ``None`` when either manager is
+    missing.
+    """
+    fm = actor.function_manager
+    gm = actor.guidance_manager
+    if fm is None or gm is None:
+        return None
+
+    tools, storage_active_lines = _build_storage_tools(
+        actor=actor,
+        ask_tools=ask_tools,
+        completed_tool_metadata=completed_tool_metadata,
+    )
+
     # ── Build prompt ──────────────────────────────────────────────────
 
     trajectory_json = json.dumps(trajectory, indent=2, default=str)
@@ -640,6 +829,46 @@ def _start_storage_check_loop(
             "Use these to coordinate storage decisions (e.g. stop an inner "
             "loop that would store something redundant, or interject context "
             "about what you plan to store at the higher level).\n\n"
+        )
+
+    # ── Proactive storage awareness ───────────────────────────────────
+    proactive_storage_section = ""
+    if proactive_summaries:
+        summaries_text = "\n\n".join(
+            f"**Proactive pass {i + 1}:**\n{s}"
+            for i, s in enumerate(proactive_summaries)
+        )
+        proactive_storage_section = (
+            "## Proactive Storage Already Performed\n\n"
+            "The executing agent proactively triggered skill storage during "
+            "this run via the `store_skills` tool. Below are the summaries "
+            "from each proactive storage pass:\n\n"
+            f"{summaries_text}\n\n"
+            "Check the function and guidance stores to confirm what was "
+            "already added. Do not duplicate existing entries. Focus on "
+            "any additional reusable patterns — especially from sections "
+            "of the trajectory *after* the last `store_skills` call — "
+            "that the proactive passes may have missed.\n\n"
+        )
+
+    instructions = _STORAGE_BASE_INSTRUCTIONS
+    if proactive_summaries:
+        instructions = (
+            "## Instructions\n\n"
+            "1. Skill storage was proactively triggered during this run. "
+            "Start by reviewing the proactive storage summaries above and "
+            "checking the function and guidance stores to see what was "
+            "already added.\n"
+            "2. Search the existing stores to confirm exactly what was stored "
+            "(use the search/filter tools for each store).\n"
+            "3. Review the full trajectory — especially sections after the "
+            "last `store_skills` call — for any additional reusable patterns "
+            "the proactive passes may have missed.\n"
+            "4. Do not duplicate entries that already exist. Only add, update, "
+            "or merge if there is genuinely new value.\n"
+            "5. When done (or if there is nothing more to add), respond "
+            "with a brief summary of what you did (or that nothing additional "
+            "was needed)."
         )
 
     stop_context_section = ""
@@ -670,154 +899,11 @@ def _start_storage_check_loop(
         f"{original_result}\n\n"
         f"{stop_context_section}"
         f"{inner_storage_section}"
-        "## What Can Be Stored\n\n"
-        "Any code that executed successfully in `execute_code` during "
-        "this trajectory can be stored as a function. Environment-provided "
-        "namespaces (`primitives`, `primitives.computer`, `primitives.actor`) and "
-        "other stored functions referenced in the code are automatically "
-        "detected from the source and injected at runtime — you do not "
-        "need to add imports or worry about whether these names will be "
-        "available when the function runs later. Focus on whether a "
-        "pattern is *worth* reusing, not whether it is *technically "
-        "executable* in isolation.\n\n"
-        "### Wrapping to bake in configuration\n\n"
-        "Stored functions should NOT be verbatim copies of code blocks "
-        "from the trajectory. During execution, the agent discovered the "
-        "right combination of parameters, tool selections, and strategies "
-        "through reasoning — that configuration knowledge is the valuable "
-        "part. A stored function should **bake in** the hard-won "
-        "configuration as fixed values and **expose** only the parts "
-        "that genuinely vary between uses (typically the task-specific "
-        "input). This produces a function that future callers can use "
-        "without rediscovering the right setup.\n\n"
-        "For example, if the trajectory contained:\n\n"
-        "```python\n"
-        "handle = await primitives.actor.act(\n"
-        '    request="Find Alice\'s work email",\n'
-        '    guidelines="Check all contact fields including notes and metadata. ....",\n'
-        '    prompt_functions=["primitives.contacts.ask"],\n'
-        "    discovery_scope=\"'contacts' in docstring\",\n"
-        ")\n"
-        "result = await handle.result()\n"
-        "```\n\n"
-        "Do NOT store this verbatim (every parameter hardcoded). Instead, "
-        "wrap it into a reusable function that bakes in the configuration "
-        "and exposes only the task:\n\n"
-        "```python\n"
-        "async def research_contact_info(request: str):\n"
-        '    """Delegate contact research to a scoped sub-agent with curated tools."""\n'
-        "    handle = await primitives.actor.act(\n"
-        "        request=request,\n"
-        '        guidelines="Check all contact fields including notes and metadata. ....",\n'
-        '        prompt_functions=["primitives.contacts.ask"],\n'
-        "        discovery_scope=\"'contacts' in docstring\",\n"
-        "    )\n"
-        "    return await handle.result()\n"
-        "```\n\n"
-        "Now `research_contact_info` captures the curated agent setup and "
-        "any future caller only needs to provide the request. The same "
-        "principle applies to any code pattern — whenever some parameters "
-        "represent reusable configuration and others represent per-call "
-        "input, wrap to bake in the former and expose the latter.\n\n"
-        "## Two Stores\n\n"
-        "You have access to two complementary stores:\n\n"
-        "### Function Store — the *what*\n\n"
-        "The FunctionManager stores concrete, reusable function "
-        "implementations — the building blocks. Each entry is a "
-        "single callable with a clear name, docstring, and implementation.\n\n"
-        "Actions:\n"
-        "- **Add** a genuinely new, reusable function "
-        "(`FunctionManager_add_functions`).\n"
-        "- **Update** an existing function with a better implementation "
-        "(`FunctionManager_add_functions` with `overwrite=True`).\n"
-        "- **Merge** overlapping functions into one general-purpose function: "
-        "add the merged version, then delete the old entries "
-        "(`FunctionManager_delete_functions`).\n"
-        "- **Delete** functions that are redundant or superseded "
-        "(`FunctionManager_delete_functions`).\n\n"
-        "Do NOT store trivial one-liners, test scaffolding, or functions "
-        "that are too task-specific to be reusable.\n\n"
-        "### Guidance Store — the *how*\n\n"
-        "The GuidanceManager stores procedural how-to entries: "
-        "step-by-step instructions, standard operating procedures, "
-        "software usage walkthroughs, and strategies for composing "
-        "multiple functions together to accomplish broader tasks. "
-        "Think of guidance entries as recipes or playbooks — they "
-        "describe the procedure, decision points, and caveats, "
-        "rather than containing executable code.\n\n"
-        "In this storage-review context, guidance is most relevant "
-        "when the trajectory reveals a non-obvious multi-step "
-        "composition strategy that would be hard to rediscover. "
-        "A single function call, a linear sequence of obvious steps, "
-        "or a workflow fully explained by the individual function "
-        "docstrings does NOT need guidance.\n\n"
-        "Actions:\n"
-        "- **Add** guidance for a genuinely non-trivial compositional "
-        "workflow (`GuidanceManager_add_guidance`). Include `function_ids` "
-        "to cross-reference the concrete functions it describes.\n"
-        "- **Update** existing guidance that is incomplete or "
-        "superseded (`GuidanceManager_update_guidance`).\n"
-        "- **Delete** guidance that is obsolete or redundant "
-        "(`GuidanceManager_delete_guidance`).\n\n"
-        "Do NOT duplicate information that already lives in a "
-        "function's docstring. Do NOT create guidance for simple or "
-        "self-explanatory workflows.\n\n"
-        "### Relationship between the two stores\n\n"
-        "| Aspect | FunctionManager | GuidanceManager |\n"
-        "|--------|----------------|----------------|\n"
-        "| Granularity | Single callable | Multi-step workflow |\n"
-        "| Content | Executable implementation | Natural-language recipe |\n"
-        "| Analogy | A tool's docstring | A prompt that references tools |\n\n"
-        "When a trajectory reveals both a useful function AND a non-trivial "
-        "workflow that uses it, store the function first, then create a "
-        "guidance entry referencing it via `function_ids`.\n\n"
-        "## Sub-Agent Delegation Patterns\n\n"
-        "Calls to `primitives.actor.act(...)` in the trajectory are especially "
-        "high-value storage candidates because they represent **pre-configured "
-        "specialist agents**. Each `primitives.actor.act` invocation encodes a curated "
-        "combination of `prompt_functions` (which tools the sub-agent sees), "
-        "`guidelines` (how it should reason and compose those tools), "
-        "`discovery_scope` (what it can find via search), and permission "
-        "flags — together these define a specialist that can handle a "
-        "particular *class* of tasks, not just the single task it was "
-        "originally invoked for.\n\n"
-        "### When to store\n\n"
-        "Not every `primitives.actor.act` call is worth storing. Use this spectrum:\n\n"
-        "- **Low value** — broad, unscoped delegation: all state managers "
-        "in `prompt_functions`, generic or no `guidelines`, no "
-        "`discovery_scope`, trivial `request`. This is just a passthrough "
-        "that any future agent could reconstruct trivially.\n"
-        "- **High value** — curated specialist: a carefully selected set of "
-        "`prompt_functions`, detailed `guidelines` explaining how to compose "
-        "those specific tools, a narrowed `discovery_scope`, and a non-trivial "
-        "task that the sub-agent solved successfully. The configuration "
-        "required real reasoning to discover and would be hard to "
-        "rediscover from scratch.\n\n"
-        "The more curation and domain knowledge went into the `primitives.actor.act` "
-        "parameters, the more valuable it is to store.\n\n"
-        "### What to bake in vs expose\n\n"
-        "The parameters split naturally into two categories:\n\n"
-        "- **Bake in** (agent specification): `guidelines`, "
-        "`prompt_functions`, `discovery_scope`, `can_compose`, `can_store`, "
-        "`can_spawn_sub_agents`, `timeout` — these define *what kind of "
-        "specialist* this is and should be fixed in the stored function.\n"
-        "- **Expose** (task specification): `request` — this defines *what "
-        "to ask the specialist to do* and should be a parameter of the "
-        "stored function.\n\n"
-        "The result is a function that future callers can invoke with just "
-        "a `request` string, without needing to know anything about the "
-        "right tool selection, scoping, or behavioral guidelines.\n\n"
-        "## Instructions\n\n"
-        "1. Review the trajectory for reusable patterns.\n"
-        "2. Search the existing stores to understand what already exists "
-        "(use the search/filter tools for each store).\n"
-        "3. Decide what actions (if any) would improve the library. "
-        "Prefer a clean, non-redundant library over a large one. "
-        "Most trajectories will only warrant function changes, if "
-        "anything at all. Add guidance only when a multi-step "
-        "composition is genuinely non-obvious.\n"
-        "4. When done (or if there is nothing worth changing), respond "
-        "with a brief summary of what you did (or that nothing was needed)."
+        f"{proactive_storage_section}"
+        f"{_STORAGE_WHAT_CAN_BE_STORED}"
+        f"{_STORAGE_TWO_STORES}"
+        f"{_STORAGE_SUB_AGENT_PATTERNS}"
+        f"{instructions}"
     )
 
     client = new_llm_client(
@@ -835,6 +921,118 @@ def _start_storage_check_loop(
         ),
         tools=tools,
         loop_id="StorageCheck(CodeActActor.act)",
+        parent_lineage=parent_lineage,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Proactive storage: on-demand storage loop triggered from the doing loop
+# ---------------------------------------------------------------------------
+
+
+def _start_proactive_storage_loop(
+    *,
+    trajectory: list[dict],
+    ask_tools: dict,
+    completed_tool_metadata: dict | None = None,
+    actor: "CodeActActor",
+    request: str,
+    parent_lineage: list[str] | None = None,
+) -> "AsyncToolLoopHandle | None":
+    """Start an on-demand storage review loop triggered mid-flight by the doing loop.
+
+    Shares the same tool set and core prompt sections as the post-processing
+    ``_start_storage_check_loop``, but uses a distinct prompt framing:
+    the trajectory is partial (task still in progress), there is no final
+    result, and the ``request`` parameter focuses the reviewer on specific
+    skills worth storing.
+
+    Returns ``None`` when either FunctionManager or GuidanceManager is
+    missing.
+    """
+    fm = actor.function_manager
+    gm = actor.guidance_manager
+    if fm is None or gm is None:
+        return None
+
+    tools, storage_active_lines = _build_storage_tools(
+        actor=actor,
+        ask_tools=ask_tools,
+        completed_tool_metadata=completed_tool_metadata,
+    )
+
+    # ── Build prompt ──────────────────────────────────────────────────
+
+    trajectory_json = json.dumps(trajectory, indent=2, default=str)
+
+    inner_storage_section = ""
+    if storage_active_lines:
+        inner_storage_section = (
+            "## Inner Storage Loops\n\n"
+            "Some inner tools from this trajectory are currently running "
+            "their own background skill-review loops:\n\n"
+            + "\n".join(storage_active_lines)
+            + "\n\n"
+            "These inner loops may be storing functions independently at a "
+            "finer granularity. You can:\n"
+            "- Query them via `ask_about_completed_tool`\n"
+            "- Inject directives via `interject_inner_storage`\n"
+            "- Stop them via `stop_inner_storage`\n"
+            "- Pause/resume them via `pause_inner_storage` / "
+            "`resume_inner_storage`\n\n"
+            "Use these to coordinate storage decisions (e.g. stop an inner "
+            "loop that would store something redundant, or interject context "
+            "about what you plan to store at the higher level).\n\n"
+        )
+
+    instructions = (
+        "## Instructions\n\n"
+        "1. Review the trajectory so far, focusing on the storage request.\n"
+        "2. Search the existing stores to understand what already exists "
+        "(use the search/filter tools for each store).\n"
+        "3. Decide what actions (if any) would improve the library based on "
+        "the requested skill(s). Prefer a clean, non-redundant library over "
+        "a large one.\n"
+        "4. When done (or if there is nothing worth storing), respond "
+        "with a brief, concrete summary of what you stored (function names, "
+        "guidance titles) or that nothing was needed. This summary will be "
+        "visible to both the executing agent and a follow-up storage review, "
+        "so be specific."
+    )
+
+    system_prompt = (
+        "You are a skill librarian. A CodeActActor is currently executing "
+        "a task and has proactively requested skill storage. Your job is "
+        "to review the execution trajectory so far and store the "
+        "requested skill(s) for future reuse. Often nothing is worth "
+        "storing — that is perfectly fine.\n\n"
+        "## Storage Request\n\n"
+        f"{request}\n\n"
+        "## Trajectory So Far\n\n"
+        f"{trajectory_json}\n\n"
+        f"{inner_storage_section}"
+        f"{_STORAGE_WHAT_CAN_BE_STORED}"
+        f"{_STORAGE_TWO_STORES}"
+        f"{_STORAGE_SUB_AGENT_PATTERNS}"
+        f"{instructions}"
+    )
+
+    client = new_llm_client(
+        actor._model,
+        reasoning_effort=None,
+        service_tier=None,
+    )
+    client.set_system_message(system_prompt)
+
+    return start_async_tool_loop(
+        client=client,
+        message=(
+            f"The executing agent has proactively requested skill storage: "
+            f"{request!r}. Review the trajectory so far and store the "
+            f"relevant skills."
+        ),
+        tools=tools,
+        loop_id="ProactiveStorage(CodeActActor.act)",
         parent_lineage=parent_lineage,
     )
 
@@ -993,6 +1191,16 @@ class _StorageCheckHandle(SteerableToolHandle):
                     instructions="Review the trajectory and store any reusable functions and compositional guidance.",
                 )
 
+                proactive_summaries: list[str] = []
+                try:
+                    _ctx = _CURRENT_AGENT_CONTEXT.get(None)
+                    if _ctx is not None:
+                        proactive_summaries = list(
+                            _ctx.proactive_storage_summaries,
+                        )
+                except Exception:
+                    pass
+
                 storage_handle = _start_storage_check_loop(
                     trajectory=trajectory,
                     ask_tools=ask_tools,
@@ -1001,6 +1209,7 @@ class _StorageCheckHandle(SteerableToolHandle):
                     original_result=str(self._original_result),
                     parent_lineage=_sc_parent_lineage,
                     stop_reason=self._stop_reason,
+                    proactive_summaries=proactive_summaries or None,
                 )
 
                 if storage_handle is None:
@@ -2158,6 +2367,131 @@ class CodeActActor(BaseCodeActActor):
                 ),
             )
 
+        # ── Proactive skill storage tool ──────────────────────────────
+        if self.function_manager and self.guidance_manager:
+            _actor_ref = self
+
+            async def store_skills(request: str) -> Any:
+                """Proactively store reusable skills from the current execution trajectory.
+
+                Triggers a skill-storage review of the trajectory so far. A dedicated
+                reviewer will examine the execution history and store any reusable
+                functions and compositional guidance based on your request.
+
+                Use this when you have just completed a complex subtask and recognize
+                a reusable pattern worth preserving — for example, a non-obvious
+                configuration of primitives.actor.act, a multi-step workflow, or a
+                function that bakes in hard-won configuration.
+
+                Parameters
+                ----------
+                request : str
+                    Describe the skill(s) you want stored. Be specific about which
+                    part of the trajectory contains the reusable pattern and what
+                    makes it valuable. For example: "Store the email lookup function
+                    that uses primitives.contacts.ask with the scoped discovery_scope"
+                    or "Store the multi-step data pipeline that combines file parsing
+                    with knowledge update."
+
+                Returns
+                -------
+                str
+                    A summary of what was stored (functions and/or guidance entries),
+                    or a note that nothing was worth storing.
+                """
+                ctx = get_current_agent_context()
+                handle = ctx.handle
+                if handle is None:
+                    return "No active execution context to snapshot."
+
+                _client = getattr(handle, "_client", None)
+                _trajectory = (
+                    make_messages_safe_for_context_dump(
+                        list(getattr(_client, "messages", []) or []),
+                    )
+                    if _client
+                    else []
+                )
+
+                _task = getattr(handle, "_task", None)
+                _ask_tools = (
+                    _task.get_ask_tools()
+                    if _task and hasattr(_task, "get_ask_tools")
+                    else {}
+                )
+                _completed_meta = (
+                    _task.get_completed_tool_metadata()
+                    if _task and hasattr(_task, "get_completed_tool_metadata")
+                    else {}
+                )
+
+                _ps_call_id = new_call_id()
+                _ps_parent = TOOL_LOOP_LINEAGE.get([])
+                _ps_parent_lineage = (
+                    list(_ps_parent) if isinstance(_ps_parent, list) else []
+                )
+                _ps_suffix = _token_hex(2)
+                _ps_hierarchy = [
+                    *_ps_parent_lineage,
+                    f"ProactiveStorage(CodeActActor.act)({_ps_suffix})",
+                ]
+
+                await publish_manager_method_event(
+                    _ps_call_id,
+                    "CodeActActor",
+                    "ProactiveStorage",
+                    phase="incoming",
+                    display_label="Proactive Skill Storage",
+                    hierarchy=_ps_hierarchy,
+                    instructions=request,
+                )
+
+                storage_handle = _start_proactive_storage_loop(
+                    trajectory=_trajectory,
+                    ask_tools=_ask_tools,
+                    completed_tool_metadata=_completed_meta,
+                    actor=_actor_ref,
+                    request=request,
+                    parent_lineage=_ps_parent_lineage,
+                )
+
+                if storage_handle is None:
+                    await publish_manager_method_event(
+                        _ps_call_id,
+                        "CodeActActor",
+                        "ProactiveStorage",
+                        phase="outgoing",
+                        display_label="Proactive Skill Storage",
+                        hierarchy=_ps_hierarchy,
+                    )
+                    return (
+                        "Skill storage unavailable "
+                        "(FunctionManager or GuidanceManager missing)."
+                    )
+
+                _orig_result_fn = storage_handle.result
+
+                async def _tracking_result():
+                    try:
+                        result = await _orig_result_fn()
+                        ctx.proactive_storage_summaries.append(result)
+                        return result
+                    finally:
+                        await publish_manager_method_event(
+                            _ps_call_id,
+                            "CodeActActor",
+                            "ProactiveStorage",
+                            phase="outgoing",
+                            display_label="Proactive Skill Storage",
+                            hierarchy=_ps_hierarchy,
+                        )
+
+                storage_handle.result = _tracking_result  # type: ignore[assignment]
+
+                return storage_handle
+
+            tools["store_skills"] = store_skills
+
         if self.function_manager:
 
             async def execute_function(
@@ -3272,11 +3606,13 @@ class CodeActActor(BaseCodeActActor):
         }
 
         def _filter_tools(tool_dict: Dict[str, Any]) -> Dict[str, Any]:
-            """Apply static per-call filters (can_compose)."""
+            """Apply static per-call filters (can_compose, can_store)."""
             out = dict(tool_dict)
             if not effective_can_compose:
                 for name in _compose_only_tools:
                     out.pop(name, None)
+            if not effective_can_store:
+                out.pop("store_skills", None)
             return out
 
         base_tools = _filter_tools(self.get_tools("act"))

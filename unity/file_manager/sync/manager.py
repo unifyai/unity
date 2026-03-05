@@ -244,7 +244,7 @@ class SyncManager:
                     # Find assistant by matching agent_id
                     matched = None
                     for assistant in assistants:
-                        if assistant.get("agent_id") == assistant_id:
+                        if str(assistant.get("agent_id")) == str(assistant_id):
                             matched = assistant
                             break
 

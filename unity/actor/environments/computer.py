@@ -232,7 +232,14 @@ class ComputerEnvironment(BaseEnvironment):
             "and correct afterwards.**  One optimistic action + one "
             "verification is almost always faster than observe → plan → act → "
             "verify, and the cost of an occasional correction is far less "
-            "than the cost of an extra round trip on every single interaction.",
+            "than the cost of an extra round trip on every single interaction.\n\n"
+            "**Multi-step automated workflows are different.**  The above "
+            "applies to individual interactive actions where latency matters "
+            "(user is watching).  For multi-step automated work — loops, "
+            "sequential data extraction, form-filling pipelines — work "
+            "incrementally: execute one iteration, verify the result, then "
+            "proceed.  The cost of one wrong action is small; the cost of "
+            "repeating it in an unverified loop is not.",
         )
 
         if self._allowed_methods is not None:
