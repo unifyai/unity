@@ -153,7 +153,7 @@ _EXECUTION_RULES = textwrap.dedent("""
 
        **Display Helper (`display`)**
        - `display(obj)` emits rich output (text or PIL images) to stdout.
-       - Images are auto-resized and base64-encoded.
+       - Images are base64-encoded.
        - Use `display(...)` instead of `print(...)` for image output.
 
     6. **Error Handling**: If your code produces an error, the traceback will be returned. Read it carefully, correct your code, and try again.
