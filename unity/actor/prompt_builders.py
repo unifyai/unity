@@ -179,21 +179,34 @@ _EXECUTION_RULES = textwrap.dedent("""
 """).strip()
 
 _STORAGE_DEFERRED_NOTICE = textwrap.dedent("""
-    ### Function Storage Is Handled Separately
+    ### Skill Storage
 
-    A dedicated skill-consolidation process will run automatically after you
-    return your result. It will review your full execution trajectory and
-    decide which **functions** are worth storing as reusable implementations,
-    and which **compositional strategies** deserve guidance entries.
+    You can proactively store reusable skills at any point during execution
+    using the `store_skills` tool. This is useful when you have just
+    completed a complex subtask and recognize a pattern worth preserving.
 
-    This means:
-    - Do not spend effort on storing or managing *functions* — that concern
-      is fully covered by the follow-up process.
-    - **Guidance is different**: if the user explicitly asks you to remember
-      procedures, instructions, or how-to information, store it directly via
-      `GuidanceManager_add_guidance` as part of the current task. The
-      follow-up process handles *compositional* guidance derived from the
-      trajectory; user-requested procedural guidance is your responsibility.
+    A dedicated skill-consolidation process will also run automatically
+    after you return your result, reviewing your full execution trajectory.
+    So you are not obligated to call `store_skills` — use it when you judge
+    it valuable, not as a routine step.
+
+    When to use `store_skills`:
+    - After completing a complex workflow that discovered non-obvious
+      configuration or composition strategies.
+    - When the user explicitly asks you to remember or store a skill.
+    - Before transitioning to a different phase, to capture learnings
+      from the current phase.
+
+    When NOT needed:
+    - Trivial operations unlikely to be reused.
+    - Every single code execution — the automatic post-completion review
+      is comprehensive.
+
+    **Guidance is separate**: if the user explicitly asks you to remember
+    procedures, instructions, or how-to information, store it directly via
+    `GuidanceManager_add_guidance` as part of the current task. `store_skills`
+    is for extracting reusable function implementations and compositional
+    strategies from the execution trajectory.
 """).strip()
 
 
