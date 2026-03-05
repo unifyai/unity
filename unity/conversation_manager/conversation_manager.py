@@ -117,6 +117,7 @@ class ConversationManager(metaclass=SingletonABCMeta):
 
         # initialization state
         self.initialized: bool = False
+        self.ready_for_brain: bool = False
         # logging
         self.loop = asyncio.get_event_loop()
         self.project_name = project_name
@@ -793,6 +794,8 @@ class ConversationManager(metaclass=SingletonABCMeta):
     async def flush_llm_requests(self) -> None:
         """Schedule any pending LLM runs recorded during event handling."""
         if not self._pending_llm_requests:
+            return
+        if not self.ready_for_brain:
             return
 
         dropped_requests = max(len(self._pending_llm_requests) - 1, 0)

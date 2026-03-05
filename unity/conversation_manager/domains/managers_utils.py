@@ -873,6 +873,17 @@ def _init_managers(
     )
     per_manager_init.record(_eventbus_dur, {"manager": "event_bus"})
 
+    # 1b. Kick off hydration concurrently — it only needs unity.init() and
+    # EventBus config (both done). Runs on the main event loop while the
+    # remaining managers initialize in this thread.
+    LOGGER.info(
+        f"{ICONS['managers_worker']} [ManagersWorker] Starting concurrent hydration...",
+    )
+    cm._hydration_future = asyncio.run_coroutine_threadsafe(
+        hydrate_global_thread(cm),
+        loop,
+    )
+
     # 2. Initialize ContactManager (respects SETTINGS.contact.IMPL)
     LOGGER.info(
         f"{ICONS['managers_worker']} [ManagersWorker] Initializing ContactManager...",
@@ -1328,11 +1339,30 @@ async def init_conv_manager(
                     ).to_json(),
                 )
 
-            # Mark as initialized before hydration so the CM is usable
-            # immediately.  Hydration runs in the background and prepends
-            # historical messages — any messages that arrive in the meantime
-            # are appended normally and stay in correct chronological order.
             cm.initialized = True
+
+            # Await the concurrent hydration that was kicked off inside
+            # _init_managers right after EventBus config.  In practice it
+            # finishes long before this point (hidden behind ContactManager
+            # init), so this is effectively a no-op await.
+            hydration_future = getattr(cm, "_hydration_future", None)
+            if hydration_future is not None:
+                try:
+                    await asyncio.wrap_future(hydration_future)
+                    LOGGER.info(
+                        f"{ICONS['managers_worker']} [ManagersWorker] "
+                        "Concurrent hydration completed",
+                    )
+                except Exception as e:
+                    LOGGER.error(
+                        f"{ICONS['managers_worker']} [ManagersWorker] "
+                        f"Global thread hydration failed: {e}",
+                    )
+                    import traceback
+
+                    traceback.print_exc()
+                finally:
+                    cm._hydration_future = None
 
             await _register_computer_act_completed_callback(cm)
 
@@ -1341,6 +1371,11 @@ async def init_conv_manager(
                 "app:comms:initialization_complete",
                 InitializationComplete().to_json(),
             )
+
+            # Brain is now safe to run: managers are initialized and the
+            # global thread is hydrated with conversation history.
+            cm.ready_for_brain = True
+            await cm.flush_llm_requests()
 
             _init_dur = perf_counter() - start_time
             LOGGER.info(
@@ -1352,26 +1387,3 @@ async def init_conv_manager(
                 f"{ICONS['managers_worker']} [ManagersWorker] Error during initialization: {e}",
             )
             raise
-
-    # Hydrate the global thread from persisted EventBus events.
-    # Runs after the init lock is released so the CM is fully usable.
-    # The EventBus search internally offloads I/O to a thread.
-    # Hydration failure is non-fatal — the brain can still operate on
-    # whatever messages arrive from this point forward.
-    try:
-        local_start_time = perf_counter()
-        LOGGER.info(
-            f"{ICONS['managers_worker']} [ManagersWorker] Hydrating global thread...",
-        )
-        await hydrate_global_thread(cm)
-        LOGGER.info(
-            f"{ICONS['managers_worker']} [ManagersWorker] Global thread hydrated in "
-            f"{perf_counter() - local_start_time:.2f} seconds",
-        )
-    except Exception as e:
-        LOGGER.error(
-            f"{ICONS['managers_worker']} [ManagersWorker] Global thread hydration failed: {e}",
-        )
-        import traceback
-
-        traceback.print_exc()
