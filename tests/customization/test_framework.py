@@ -1,8 +1,9 @@
-"""Comprehensive tests for the code-first client customization system.
+"""Tests for the customization framework infrastructure.
 
-Covers registration helpers, environment reconstruction, the Colliers
-client scaffold, knowledge row-level dedup, ActorConfig model behavior,
-team-level customization, and the sync_all_seed_data orchestrator.
+Covers registration helpers, environment reconstruction, knowledge
+row-level dedup, ActorConfig model behavior, blacklist cascade,
+team-level customization, secrets cascade, custom function collection,
+hash behavior, and the sync_all_seed_data orchestrator.
 """
 
 from __future__ import annotations
@@ -308,66 +309,7 @@ class TestEnvironmentReconstruct:
 
 
 # ---------------------------------------------------------------------------
-# 4. Colliers client scaffold
-# ---------------------------------------------------------------------------
-
-
-class TestColliersScaffold:
-    def test_colliers_functions_importable(self):
-        from unity.customization.clients.colliers.functions.create_financial_data_excel import (
-            create_financial_data_excel,
-        )
-        from unity.customization.clients.colliers.functions.create_web_search_excel import (
-            create_web_search_excel,
-        )
-
-        assert callable(create_financial_data_excel)
-        assert callable(create_web_search_excel)
-
-    def test_colliers_guidance_entries(self):
-        from unity.customization.clients.colliers import _COLLIERS_GUIDANCE
-
-        assert len(_COLLIERS_GUIDANCE) == 4
-        titles = {g["title"] for g in _COLLIERS_GUIDANCE}
-        assert "Financial Data Extraction from Excel and PDF Documents" in titles
-        assert "CoStar Web Research for UK Care Home Deals" in titles
-        assert "Healthcare Valuation Financial Data Schema" in titles
-        assert "Deal Tracker Data Schema" in titles
-        for g in _COLLIERS_GUIDANCE:
-            assert len(g["content"]) > 100
-
-    def test_colliers_config_is_thin(self):
-        from unity.customization.clients.colliers import _COLLIERS_CONFIG
-
-        assert _COLLIERS_CONFIG.guidelines is not None
-        assert len(_COLLIERS_CONFIG.guidelines) < 300
-
-    def test_colliers_org_registration(self):
-        from unity.customization.clients.colliers import (
-            _COLLIERS_CONFIG,
-            _COLLIERS_FUNCTION_DIR,
-            _COLLIERS_GUIDANCE,
-            _COLLIERS_ORG_ID,
-            _COLLIERS_SECRETS,
-        )
-
-        assert _COLLIERS_ORG_ID == 2
-        register_org(
-            _COLLIERS_ORG_ID,
-            config=_COLLIERS_CONFIG,
-            function_dir=_COLLIERS_FUNCTION_DIR,
-            guidance=_COLLIERS_GUIDANCE,
-            secrets=_COLLIERS_SECRETS,
-        )
-        r = resolve(org_id=_COLLIERS_ORG_ID)
-        assert r.config.guidelines is not None
-        assert r.environments == []
-        assert len(r.guidance) == 4
-        assert len(r.function_dirs) == 1
-
-
-# ---------------------------------------------------------------------------
-# 5. Knowledge cascade: row-level dedup within same table
+# 4. Knowledge cascade: row-level dedup within same table
 # ---------------------------------------------------------------------------
 
 
@@ -456,7 +398,7 @@ class TestKnowledgeCascade:
 
 
 # ---------------------------------------------------------------------------
-# 6. Blacklist cascade dedup
+# 5. Blacklist cascade dedup
 # ---------------------------------------------------------------------------
 
 
@@ -487,7 +429,7 @@ class TestBlacklistCascade:
 
 
 # ---------------------------------------------------------------------------
-# 7. sync_all_seed_data with empty data
+# 6. sync_all_seed_data with empty data
 # ---------------------------------------------------------------------------
 
 
@@ -509,7 +451,7 @@ class TestSyncAllSeedData:
 
 
 # ---------------------------------------------------------------------------
-# 8. Secrets file: cascade with team level
+# 7. Secrets file: cascade with team level
 # ---------------------------------------------------------------------------
 
 
@@ -630,7 +572,7 @@ class TestSecretsAssistantLevel:
 
 
 # ---------------------------------------------------------------------------
-# 9. Custom function collection from directories
+# 8. Custom function collection from directories
 # ---------------------------------------------------------------------------
 
 
@@ -663,7 +605,7 @@ class TestCustomFunctionCollection:
 
 
 # ---------------------------------------------------------------------------
-# 10. Hash behavior edge cases
+# 9. Hash behavior edge cases
 # ---------------------------------------------------------------------------
 
 
@@ -688,7 +630,7 @@ class TestHashEdgeCases:
 
 
 # ---------------------------------------------------------------------------
-# 11. Full four-level cascade integration
+# 10. Full four-level cascade integration
 # ---------------------------------------------------------------------------
 
 

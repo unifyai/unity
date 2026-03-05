@@ -13,7 +13,7 @@ from typing import Any
 
 import openpyxl
 
-FIXTURES_DIR = Path(__file__).parent / "fixtures" / "colliers_ash"
+FIXTURES_DIR = Path(__file__).parent / "fixtures" / "ash"
 GROUND_TRUTH_XLSX = FIXTURES_DIR / "ASH_Historic_Accounts.xlsx"
 TEMPLATE_XLSX = FIXTURES_DIR / "HISTORIC_ACCOUNTS_TEMPLATE.xlsx"
 PDF_FILES = sorted(FIXTURES_DIR.glob("*.pdf"))
