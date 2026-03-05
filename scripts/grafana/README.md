@@ -287,9 +287,12 @@ metrics per environment, add these label filters to every query:
 | Unity (GKE) | `namespace_name` | `staging` | `production` |
 | Adapters (Cloud Run) | `service_name` | `unity-adapters-staging` | `unity-adapters` |
 | Comms (Cloud Run) | `service_name` | `unity-comms-app-staging` | `unity-comms-app` |
+| Pub/Sub startup topic | `topic` | `unity-startup-staging` | `unity-startup` |
+| Pub/Sub assistant topics | `topic` (regex) | `unity-[0-9]+-staging` | `unity-[0-9]+` |
 
-The queries below use `$NS` and `$SVC_ADAPTERS` as placeholders. Substitute
-the values from the table above for your environment.
+The queries below use `$NS`, `$SVC_ADAPTERS`, `$STARTUP_TOPIC`, and
+`$STAGING_SUFFIX` as placeholders. Substitute the values from the table
+above for your environment.
 
 ### Live Assistants (Supply)
 
@@ -435,24 +438,27 @@ Per-route request throughput for the comms service.
 sum by (endpoint) (rate(http_requests_total{service="comms", service_name="$SVC_COMMS"}[5m]))
 ```
 
-### Average Pub/Sub E2E Latency (seconds)
+### Pub/Sub E2E Latency — Startup Topic (seconds)
 
-End-to-end time from when a message is published to Pub/Sub (in the
+End-to-end time from when a startup message is published to Pub/Sub (in the
 communication service) to when it is acknowledged by the unity subscriber.
-Captures container startup delays, backlog wait, and processing time.
+Captures container startup delays and backlog wait.
 
 ```promql
-sum(rate({__name__="workload.googleapis.com/unity_pubsub_e2e_latency_seconds_sum", monitored_resource="k8s_container", namespace_name="$NS"}[5m]))
+sum(rate({__name__="workload.googleapis.com/unity_pubsub_e2e_latency_seconds_sum", monitored_resource="k8s_container", namespace_name="$NS", topic="$STARTUP_TOPIC"}[5m]))
 /
-sum(rate({__name__="workload.googleapis.com/unity_pubsub_e2e_latency_seconds_count", monitored_resource="k8s_container", namespace_name="$NS"}[5m]))
+sum(rate({__name__="workload.googleapis.com/unity_pubsub_e2e_latency_seconds_count", monitored_resource="k8s_container", namespace_name="$NS", topic="$STARTUP_TOPIC"}[5m]))
 ```
 
-By topic:
+### Pub/Sub E2E Latency — Per-Assistant Topics (seconds)
+
+End-to-end time from when a message is published to a per-assistant topic
+to when it is acknowledged. Broken down by topic.
 
 ```promql
-sum by (topic) (rate({__name__="workload.googleapis.com/unity_pubsub_e2e_latency_seconds_sum", monitored_resource="k8s_container", namespace_name="$NS"}[5m]))
+sum by (topic) (rate({__name__="workload.googleapis.com/unity_pubsub_e2e_latency_seconds_sum", monitored_resource="k8s_container", namespace_name="$NS", topic=~"unity-[0-9]+-$STAGING_SUFFIX"}[5m]))
 /
-sum by (topic) (rate({__name__="workload.googleapis.com/unity_pubsub_e2e_latency_seconds_count", monitored_resource="k8s_container", namespace_name="$NS"}[5m]))
+sum by (topic) (rate({__name__="workload.googleapis.com/unity_pubsub_e2e_latency_seconds_count", monitored_resource="k8s_container", namespace_name="$NS", topic=~"unity-[0-9]+-$STAGING_SUFFIX"}[5m]))
 ```
 
 ### Notes
@@ -462,6 +468,10 @@ sum by (topic) (rate({__name__="workload.googleapis.com/unity_pubsub_e2e_latency
   for adapter metrics.
 - Replace `$SVC_COMMS` with `unity-comms-app-staging` or `unity-comms-app`
   for comms metrics.
+- Replace `$STARTUP_TOPIC` with `unity-startup-staging` or `unity-startup`
+  for startup topic latency.
+- Replace `$STAGING_SUFFIX` with `staging` or remove the trailing `-$STAGING_SUFFIX`
+  for per-assistant topic latency (regex becomes `unity-[0-9]+` in production).
 - Replace `5m` with a different window size as needed, or create a dashboard
   variable named `interval` (type: Custom, values: `1m,2m,5m,10m,15m,30m,1h`)
   and use `[$interval]` in queries.
