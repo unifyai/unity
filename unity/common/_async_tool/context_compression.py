@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
 
 from pydantic import BaseModel
 from unity.common.llm_client import new_llm_client
@@ -40,12 +39,6 @@ COMPRESSION_PROMPT = (
     "for failures, or a minimal factual summary for everything else.\n"
     "- Do NOT invent information that was not in the original message."
 )
-
-
-@dataclass
-class _CompressionRequest:
-    messages: list[dict]
-    system_message: str
 
 
 # ── Sentinel returned by the loop when compression is requested ──────────────
