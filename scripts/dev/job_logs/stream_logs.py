@@ -607,6 +607,11 @@ def main():
         help="Disable automatic log sync on stream exit.",
     )
     parser.add_argument(
+        "--email",
+        default=None,
+        help="User email to look up the latest job for (bypasses UNIFY_KEY identity resolution).",
+    )
+    parser.add_argument(
         "--no-keepalive",
         action="store_true",
         default=False,
@@ -618,7 +623,7 @@ def main():
     mirror = not args.no_mirror
     sync_all = args.sync_all_logs and not args.no_sync
     mirror_base = Path(args.mirror_dir).resolve() if args.mirror_dir else MIRROR_BASE
-    job_name = args.job or resolve_latest_job(namespace)
+    job_name = args.job or resolve_latest_job(namespace, email=args.email)
 
     check_prerequisites()
     ensure_gke_credentials()
