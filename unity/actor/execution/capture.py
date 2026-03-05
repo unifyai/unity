@@ -137,26 +137,6 @@ def _ensure_stream_router_installed() -> None:
 # ---------------------------------------------------------------------------
 # Display function for rich output (images, etc.)
 # ---------------------------------------------------------------------------
-def _resize_image(img: Any, edge_max: int = 1500) -> Any:
-    """Resize image so longest edge is at most edge_max pixels.
-
-    Args:
-        img: PIL Image to resize.
-        edge_max: Maximum size for the longest edge (default: 1500).
-
-    Returns:
-        Resized PIL Image (or original if already smaller).
-    """
-    from PIL import Image
-
-    w, h = img.size
-    if max(w, h) <= edge_max:
-        return img
-    scale = edge_max / max(w, h)
-    new_size = (round(w * scale), round(h * scale))
-    return img.resize(new_size, Image.Resampling.LANCZOS)
-
-
 def _make_display(
     parts_var: contextvars.ContextVar[List[Union[TextPart, ImagePart]]],
 ) -> Callable[[Any], None]:
@@ -171,15 +151,13 @@ def _make_display(
         parts = parts_var.get()
 
         if Image is not None and isinstance(obj, Image.Image):
-            resized = _resize_image(obj)
             buf = io.BytesIO()
-            resized.save(buf, format="PNG")
+            obj.save(buf, format="PNG")
             b64_data = base64.b64encode(buf.getvalue()).decode("ascii")
             parts.append(ImagePart(mime="image/png", data=b64_data))
         elif isinstance(obj, str):
             parts.append(TextPart(text=obj + "\n"))
         else:
-            # Fallback: convert to string
             parts.append(TextPart(text=str(obj) + "\n"))
 
     return display
