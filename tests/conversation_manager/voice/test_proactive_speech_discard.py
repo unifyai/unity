@@ -89,6 +89,7 @@ async def _boot_entrypoint(monkeypatch):
     class _FakeJobContext:
         def __init__(self):
             self.room = _FakeRoom()
+            self.job = SimpleNamespace()
 
         async def connect(self):
             return None

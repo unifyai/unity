@@ -803,7 +803,18 @@ class EventBus:
     async def publish(self, event: Event, *, blocking: bool = False) -> None:
         import time as _time
 
-        EventBus.last_publish_monotonic = _time.monotonic()
+        now = _time.monotonic()
+        prev = EventBus.last_publish_monotonic
+        EventBus.last_publish_monotonic = now
+        if prev > 0 and 25 < (now - prev) < 35:
+            import traceback as _tb
+
+            LOGGER.info(
+                "EventBus.publish after %.1fs gap: type=%s caller:\n%s",
+                now - prev,
+                event.type,
+                "".join(_tb.format_stack()[-4:-1]),
+            )
 
         # Initialize publishing flag from settings if not already done
         if EventBus._publishing_enabled is None:

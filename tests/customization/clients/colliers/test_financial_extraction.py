@@ -14,7 +14,7 @@ import pytest
 
 from tests.helpers import _handle_project
 from tests.actor.state_managers.utils import make_code_act_actor
-from tests.customization.colliers_eval_helpers import (
+from tests.customization.clients.colliers.eval_helpers import (
     BASE_LENIENT_FIELDS,
     PDF_FILES,
     GROUND_TRUTH_XLSX,
