@@ -110,6 +110,25 @@ def test_code_act_prompt_includes_diverse_examples_sessions_computer_primitives_
 
 
 @pytest.mark.timeout(30)
+def test_incremental_execution_present_and_execution_rules_not_duplicated():
+    """Incremental Execution section is present; _EXECUTION_RULES appears exactly once."""
+    actor = CodeActActor()
+    prompt = build_code_act_prompt(
+        environments=_real_envs_mixed(),
+        tools=dict(actor.get_tools("act")),
+    )
+
+    assert "### Incremental Execution" in prompt
+    assert "Verify before scaling" in prompt
+    assert "Read-only for exploration" in prompt
+
+    exec_rules_marker = "### Tool Selection: `execute_function` vs `execute_code`"
+    assert (
+        prompt.count(exec_rules_marker) == 1
+    ), f"Expected _EXECUTION_RULES exactly once, found {prompt.count(exec_rules_marker)}"
+
+
+@pytest.mark.timeout(30)
 def test_custom_environment_prompt_context_included():
     """Custom environments (not computer_primitives/primitives) should have their
     prompt context included in the generated prompt."""

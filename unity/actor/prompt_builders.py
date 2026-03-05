@@ -178,6 +178,41 @@ _EXECUTION_RULES = textwrap.dedent("""
          Do not list trivial or obvious choices.
 """).strip()
 
+_INCREMENTAL_EXECUTION = textwrap.dedent("""
+    ### Incremental Execution
+
+    The right granularity depends on how predictable each step is.
+
+    **Deterministic work** — pure computation, data transforms, file I/O
+    with known schemas — can and should run in a single `execute_code`
+    block.  Don't fragment code that you are confident will run correctly
+    from start to finish.
+
+    **Uncertain interactions** — browser automation, UI clicks, unfamiliar
+    APIs, coordinate-based actions, web scraping — should be broken into
+    small steps with verification between each.  The more unpredictable
+    the outcome, the more incremental you should be.
+
+    Guidelines for uncertain / interactive work:
+
+    1. **One step per call**: Execute one meaningful action, then review
+       the output before deciding the next step.
+
+    2. **Stateful sessions**: Use `state_mode="stateful"` so variables,
+       session handles, and intermediate results persist across calls.
+
+    3. **Verify before scaling**: Before writing a loop or repeating a
+       pattern, execute the body once and confirm the result.  Only
+       generalize to iteration after the single case works correctly.
+
+    4. **Read-only for exploration**: Use `state_mode="read_only"` to
+       branch off a known-good intermediate state and try alternative
+       approaches without risking that state.
+
+    5. **Inspect results**: After each uncertain step, print or display
+       key outputs — don't assume success.
+""").strip()
+
 _STORAGE_DEFERRED_NOTICE = textwrap.dedent("""
     ### Skill Storage
 
@@ -368,8 +403,6 @@ def _build_code_act_rules_and_examples(
     # is available. When can_compose=False the tool is masked and the LLM
     # should not receive any references to it.
     if has_execute_code:
-        parts.append(_EXECUTION_RULES)
-
         core_patterns = get_code_act_pattern_examples()
         if core_patterns:
             parts.append(f"### Core Patterns\n\n{core_patterns}")
@@ -498,6 +531,7 @@ def build_code_act_prompt(
         parts.append(tools_section)
 
         parts.append(_EXECUTION_RULES)
+        parts.append(_INCREMENTAL_EXECUTION)
 
         if has_fm_tools or has_gm_tools:
             parts.append(_FUNCTION_AND_GUIDANCE_LIBRARY)
