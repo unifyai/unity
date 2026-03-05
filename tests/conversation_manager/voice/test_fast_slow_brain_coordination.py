@@ -457,6 +457,16 @@ class TestRapidUtteranceHandling:
         """
         cm = initialized_cm.cm
 
+        # Disable the speech urgency evaluator for this test. The urgency
+        # evaluator is a separate sidecar that can legitimately preempt
+        # stale slow-brain runs — tested independently in test_speech_urgency.
+        # Here we isolate the base debouncing guarantee: cancel_running=False
+        # plus asyncio.shield() protect running tasks from being replaced.
+        from unity.settings import SETTINGS
+
+        orig = SETTINGS.conversation.SPEECH_URGENCY_PREEMPT_ENABLED
+        SETTINGS.conversation.SPEECH_URGENCY_PREEMPT_ENABLED = False
+
         # Start a call first
         started_event = PhoneCallStarted(contact=boss_contact)
         await initialized_cm.step(started_event)
@@ -603,6 +613,7 @@ class TestRapidUtteranceHandling:
             )
 
         finally:
+            SETTINGS.conversation.SPEECH_URGENCY_PREEMPT_ENABLED = orig
             cm._run_llm = tracked_run_llm_with_simulated_delay  # Keep mock for teardown
 
 
