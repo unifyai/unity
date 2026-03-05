@@ -36,6 +36,7 @@ from unity.conversation_manager.events import (
     ActorHandleStarted,
     ActorHandleResponse,
     ActorSessionResponse,
+    ActorClarificationRequest,
     ComputerActCompleted,
     NotificationInjectedEvent,
     UserScreenShareStarted,
@@ -1239,6 +1240,8 @@ def render_event_for_fast_brain(event_json: str) -> str | None:
         return f"Action update: {event.content}"
     if isinstance(event, NotificationInjectedEvent):
         return event.content
+    if isinstance(event, ActorClarificationRequest):
+        return f"Clarification needed: {event.query}"
     if isinstance(event, ComputerActCompleted):
         snippet = event.summary[:200] if event.summary else event.instruction[:200]
         return f"Computer action completed: {snippet}"
