@@ -1285,16 +1285,6 @@ _MEET_FAST_BRAIN_GUIDANCE: dict[type, str] = {
     ),
 }
 
-# Meet events that warrant a slow-brain turn because they require an
-# orchestration decision (e.g. warm up a desktop session, interject an
-# in-flight actor about remote-control state).  Events not listed here
-# are handled entirely by the fast brain via silent notification injection.
-_MEET_SLOW_BRAIN_TRIGGERS: set[type] = {
-    UserScreenShareStarted,
-    UserRemoteControlStarted,
-    UserRemoteControlStopped,
-}
-
 # State attribute name on the CM for each toggle pair.
 _MEET_STATE_FLAGS: dict[type, tuple[str, bool]] = {
     AssistantScreenShareStarted: ("assistant_screen_share_active", True),
@@ -1403,9 +1393,6 @@ async def _(
                 )
         except Exception:
             pass
-
-    if event.__class__ in _MEET_SLOW_BRAIN_TRIGGERS:
-        await cm.request_llm_run()
 
 
 @EventHandler.register(LogMessageResponse)
