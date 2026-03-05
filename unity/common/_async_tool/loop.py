@@ -49,6 +49,7 @@ from .messages import (
 from .tools_data import ToolsData, compute_context_injection
 from .dynamic_tools_factory import DynamicToolFactory
 from .time_context import create_time_context, TimeContext
+from .context_compression import compress_context, _COMPRESSION_SIGNAL
 from ..context_dump import make_messages_safe_for_context_dump
 from ...common.hierarchical_logger import ICONS
 
@@ -667,6 +668,10 @@ async def async_tool_loop_inner(
     assistant_meta: Dict[int, Dict[str, Any]] = {}
     step_index: int = 0  # per assistant turn
     called_tools: list[str] = []  # tool names in invocation order across all turns
+
+    _max_input_tokens = unillm.get_max_input_tokens(client.endpoint)
+    _over_threshold = False
+    _full_completion: Any = None
 
     # Pre-compute whether tool_policy accepts a third positional arg
     # (called_tools history) so we avoid per-turn introspection overhead.
@@ -1983,18 +1988,57 @@ async def async_tool_loop_inner(
             logger.debug(
                 f"[setup +{_setup_elapsed()}] building tool schemas ({len(policy_tools_norm)} tools)",
             )
-            visible_base_tools_schema = [
-                method_to_schema(
-                    spec.fn,
-                    name,
-                    expose_context_control=(
-                        propagate_chat_context == ChatContextPropagation.LLM_DECIDES
-                    ),
-                    has_parent_context=bool(parent_chat_context),
-                )
-                for name, spec in policy_tools_norm.items()
-                if tools_data.concurrency_ok(name) and tools_data.quota_ok(name)
-            ]
+            _compress_schema = method_to_schema(compress_context, "compress_context")
+
+            if _over_threshold:
+                if _has_pending_tools:
+                    # Over threshold, pending tools → no base tools, no
+                    # compress_context (can't compress mid-flight). Only
+                    # dynamic steering tools (check_status_*, stop_*, etc.)
+                    # remain visible.
+                    visible_base_tools_schema = []
+                    await _msg_dispatcher.append_msgs(
+                        [
+                            {
+                                "role": "user",
+                                "content": (
+                                    "System: Context window is nearly full. "
+                                    "You cannot start new tools. Finish or "
+                                    "stop your in-flight tools, then call "
+                                    "`compress_context`."
+                                ),
+                            },
+                        ],
+                    )
+                else:
+                    # Over threshold, no pending → compress_context only
+                    visible_base_tools_schema = [_compress_schema]
+                    tool_choice_mode = "required"
+                    await _msg_dispatcher.append_msgs(
+                        [
+                            {
+                                "role": "user",
+                                "content": (
+                                    "System: Context window is nearly full. "
+                                    "You must call `compress_context` now."
+                                ),
+                            },
+                        ],
+                    )
+            else:
+                visible_base_tools_schema = [
+                    method_to_schema(
+                        spec.fn,
+                        name,
+                        expose_context_control=(
+                            propagate_chat_context == ChatContextPropagation.LLM_DECIDES
+                        ),
+                        has_parent_context=bool(parent_chat_context),
+                    )
+                    for name, spec in policy_tools_norm.items()
+                    if tools_data.concurrency_ok(name) and tools_data.quota_ok(name)
+                ]
+                visible_base_tools_schema.append(_compress_schema)
 
             # Inject the response-submission tool when response_format is set
             # AND no other tools are in-flight.  This tool is semantically
@@ -2418,6 +2462,8 @@ async def async_tool_loop_inner(
                             await _handle_notification(notif_waiters2[pw], pw.result())
                         llm_turn_required = True
 
+                _full_completion = llm_task.result()
+
             else:
                 # ––––– legacy *blocking* mode ––––––––––––––––––––––––––––
                 try:
@@ -2431,7 +2477,7 @@ async def async_tool_loop_inner(
                     if max_parallel_tool_calls is not None:
                         _gen_kwargs["parallel_tool_calls"] = max_parallel_tool_calls > 1
 
-                    _result = await generate_with_preprocess(
+                    _full_completion = await generate_with_preprocess(
                         client,
                         _apply_reasoning_model_compat(_gen_kwargs, tool_choice_mode),
                         **_gen_kwargs,
@@ -2445,6 +2491,16 @@ async def async_tool_loop_inner(
 
             msg = client.messages[-1]
             await to_event_bus(msg, cfg)
+
+            # Update context threshold from the LLM response usage data.
+            with suppress(Exception):
+                _usage = getattr(_full_completion, "usage", None)
+                if (
+                    _usage
+                    and getattr(_usage, "prompt_tokens", None)
+                    and _max_input_tokens
+                ):
+                    _over_threshold = _usage.prompt_tokens >= _max_input_tokens * 0.7
 
             # LLM responded - reset the activity-based timeout. The timeout is
             # designed to catch hung tools, not slow LLM inference. LLM providers
@@ -2777,6 +2833,25 @@ async def async_tool_loop_inner(
                                 _msg_dispatcher,
                             )
                             continue
+
+                    # ── Special-case: compress_context ────────────────────
+                    if name == "compress_context":
+                        tool_msg = create_tool_call_message(
+                            name=name,
+                            call_id=call["id"],
+                            content=(
+                                "Compression initiated. Ending current loop "
+                                "to restart with compressed context."
+                            ),
+                        )
+                        await insert_tool_message_after_assistant(
+                            assistant_meta,
+                            msg,
+                            tool_msg,
+                            client,
+                            _msg_dispatcher,
+                        )
+                        return _COMPRESSION_SIGNAL
 
                     # ── Special-case dynamic helpers ──────────────────────
                     # • wait        → acknowledge, list running tasks, no scheduling

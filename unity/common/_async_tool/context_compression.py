@@ -39,14 +39,22 @@ class _CompressionRequest:
     system_message: str
 
 
+# ── Sentinel returned by the loop when compression is requested ──────────────
+
+_COMPRESSION_SIGNAL = object()
+
+
 # ── Marker tool exposed to the loop LLM ─────────────────────────────────────
 
 
 def compress_context() -> str:
-    """Compress accumulated context to free up space in the context window.
+    """Compress the conversation history to free up context window space.
 
-    Call this when the context is getting large. Cannot be called while tools
-    are in-flight.
+    This tool is always visible. When the context window is nearly full, this
+    becomes the **only** available tool and you **must** call it.
+
+    Cannot be called while other tools are in-flight -- finish or stop all
+    running tools first.
     """
     return "compression acknowledged"
 
