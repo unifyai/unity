@@ -435,6 +435,26 @@ Per-route request throughput for the comms service.
 sum by (endpoint) (rate(http_requests_total{service="comms", service_name="$SVC_COMMS"}[5m]))
 ```
 
+### Average Pub/Sub E2E Latency (seconds)
+
+End-to-end time from when a message is published to Pub/Sub (in the
+communication service) to when it is acknowledged by the unity subscriber.
+Captures container startup delays, backlog wait, and processing time.
+
+```promql
+sum(rate({__name__="workload.googleapis.com/unity_pubsub_e2e_latency_seconds_sum", monitored_resource="k8s_container", namespace_name="$NS"}[5m]))
+/
+sum(rate({__name__="workload.googleapis.com/unity_pubsub_e2e_latency_seconds_count", monitored_resource="k8s_container", namespace_name="$NS"}[5m]))
+```
+
+By topic:
+
+```promql
+sum by (topic) (rate({__name__="workload.googleapis.com/unity_pubsub_e2e_latency_seconds_sum", monitored_resource="k8s_container", namespace_name="$NS"}[5m]))
+/
+sum by (topic) (rate({__name__="workload.googleapis.com/unity_pubsub_e2e_latency_seconds_count", monitored_resource="k8s_container", namespace_name="$NS"}[5m]))
+```
+
 ### Notes
 
 - Replace `$NS` with `staging` or `production` for Unity (GKE) metrics.
