@@ -342,16 +342,28 @@ class TestColliersScaffold:
         assert _COLLIERS_CONFIG.guidelines is not None
         assert len(_COLLIERS_CONFIG.guidelines) < 300
 
-    def test_colliers_no_environments(self):
-        pass
+    def test_colliers_org_registration(self):
+        from unity.customization.clients.colliers import (
+            _COLLIERS_CONFIG,
+            _COLLIERS_FUNCTION_DIR,
+            _COLLIERS_GUIDANCE,
+            _COLLIERS_ORG_ID,
+            _COLLIERS_SECRETS,
+        )
 
-        r = resolve(org_id=-1)
+        assert _COLLIERS_ORG_ID == 2
+        register_org(
+            _COLLIERS_ORG_ID,
+            config=_COLLIERS_CONFIG,
+            function_dir=_COLLIERS_FUNCTION_DIR,
+            guidance=_COLLIERS_GUIDANCE,
+            secrets=_COLLIERS_SECRETS,
+        )
+        r = resolve(org_id=_COLLIERS_ORG_ID)
+        assert r.config.guidelines is not None
         assert r.environments == []
-
-    def test_colliers_not_registered_with_dummy_id(self):
-        r = resolve(org_id=-1)
-        assert r.config == ActorConfig()
-        assert r.environments == []
+        assert len(r.guidance) == 4
+        assert len(r.function_dirs) == 1
 
 
 # ---------------------------------------------------------------------------

@@ -220,19 +220,18 @@ _COLLIERS_SECRETS = [
 ]
 
 # ---------------------------------------------------------------------------
-# Org-level registration (activates once Colliers signs up)
+# Org-level registration (Colliers Healthcare, org ID 2)
 # ---------------------------------------------------------------------------
 
-_COLLIERS_ORG_ID = -1
+_COLLIERS_ORG_ID = 2
 
-if _COLLIERS_ORG_ID != -1:
-    register_org(
-        _COLLIERS_ORG_ID,
-        config=_COLLIERS_CONFIG,
-        function_dir=_COLLIERS_FUNCTION_DIR,
-        guidance=_COLLIERS_GUIDANCE,
-        secrets=_COLLIERS_SECRETS,
-    )
+register_org(
+    _COLLIERS_ORG_ID,
+    config=_COLLIERS_CONFIG,
+    function_dir=_COLLIERS_FUNCTION_DIR,
+    guidance=_COLLIERS_GUIDANCE,
+    secrets=_COLLIERS_SECRETS,
+)
 
 # ---------------------------------------------------------------------------
 # Team-level registration (Unify-internal testing)
