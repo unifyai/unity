@@ -847,6 +847,7 @@ class TestFastBrainGuidanceFlow:
         class _FakeJobContext:
             def __init__(self):
                 self.room = _FakeRoom()
+                self.job = SimpleNamespace()
 
             async def connect(self):
                 return None
@@ -1040,6 +1041,7 @@ class TestFastBrainGuidanceFlow:
         class _FakeJobContext:
             def __init__(self):
                 self.room = _FakeRoom()
+                self.job = SimpleNamespace()
 
             async def connect(self):
                 return None
@@ -1323,6 +1325,7 @@ class TestFastBrainGuidanceFlow:
         class _FakeJobContext:
             def __init__(self):
                 self.room = _FakeRoom()
+                self.job = SimpleNamespace()
 
             async def connect(self):
                 return None
@@ -1518,6 +1521,7 @@ class TestFastBrainGuidanceFlow:
         class _FakeJobContext:
             def __init__(self):
                 self.room = _FakeRoom()
+                self.job = SimpleNamespace()
 
             async def connect(self):
                 return None
