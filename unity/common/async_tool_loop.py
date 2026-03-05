@@ -857,7 +857,12 @@ class AsyncToolLoopHandle(SteerableToolHandle):
         system_msgs.append(
             {
                 "role": "system",
-                "content": rendered,
+                "content": (
+                    f"{rendered}\n\n"
+                    "When you need details from a compressed message, call "
+                    "`unpack_message(idx)` with its `[N]` index to retrieve "
+                    "the full original content."
+                ),
             },
         )
 
