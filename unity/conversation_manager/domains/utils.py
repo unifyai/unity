@@ -20,6 +20,8 @@ class Debouncer:
         self._name = name
         self._pending_label: str = ""
         self.was_queued: bool = False
+        self.running_task_started_at: float = 0.0
+        self.running_task_trace_meta: dict = {}
 
     async def submit(
         self,
@@ -29,6 +31,7 @@ class Debouncer:
         delay=0,
         cancel_running=False,
         label: str = "",
+        trace_meta: dict | None = None,
     ):
         args, kwargs = args or (), kwargs or {}
 
@@ -76,6 +79,8 @@ class Debouncer:
                     # We (the pending task) were cancelled, re-raise to stop
                     raise
             self.was_queued = queued
+            self.running_task_started_at = asyncio.get_event_loop().time()
+            self.running_task_trace_meta = trace_meta or {}
             self.running_task = asyncio.create_task(async_fn(*args, **kwargs))
             self.running_task.add_done_callback(log_task_exc)
             self.pending_task = None

@@ -847,6 +847,7 @@ class TestFastBrainGuidanceFlow:
         class _FakeJobContext:
             def __init__(self):
                 self.room = _FakeRoom()
+                self.job = SimpleNamespace()
 
             async def connect(self):
                 return None
@@ -1040,6 +1041,7 @@ class TestFastBrainGuidanceFlow:
         class _FakeJobContext:
             def __init__(self):
                 self.room = _FakeRoom()
+                self.job = SimpleNamespace()
 
             async def connect(self):
                 return None
@@ -1323,6 +1325,7 @@ class TestFastBrainGuidanceFlow:
         class _FakeJobContext:
             def __init__(self):
                 self.room = _FakeRoom()
+                self.job = SimpleNamespace()
 
             async def connect(self):
                 return None
@@ -1518,6 +1521,7 @@ class TestFastBrainGuidanceFlow:
         class _FakeJobContext:
             def __init__(self):
                 self.room = _FakeRoom()
+                self.job = SimpleNamespace()
 
             async def connect(self):
                 return None
@@ -1914,3 +1918,85 @@ class TestParticipantCommsRendering:
         result = render_participant_comms(event.to_json(), {1, 3, 5})
         assert result is not None
         assert "[SMS from Sarah Chen]" in result
+
+
+# =============================================================================
+# Child Process Logging (forkserver compatibility)
+# =============================================================================
+
+
+class TestChildProcessLogging:
+    """Verify _configure_child_logging fixes log propagation for LiveKit's
+    forkserver child processes.
+
+    LiveKit agents (v1.2.x) routes child-process logs through a
+    LogQueueHandler on the **root** logger.  Unity's LOGGER defaults to
+    propagate=False, which silently drops every record in the child.
+    _configure_child_logging must flip propagation on and strip stale
+    direct handlers so records reach the root relay.
+    """
+
+    def test_propagation_enabled_and_handlers_cleared(self):
+        import logging
+
+        from unity.logger import LOGGER
+
+        from unity.conversation_manager.medium_scripts.call import (
+            _configure_child_logging,
+        )
+
+        original_propagate = LOGGER.propagate
+        original_handlers = list(LOGGER.handlers)
+        try:
+            assert (
+                LOGGER.propagate is False
+            ), "precondition: LOGGER.propagate should be False before the fix runs"
+
+            _configure_child_logging()
+
+            assert LOGGER.propagate is True
+            assert LOGGER.handlers == []
+
+            for name in ("livekit", "livekit.agents", "livekit.plugins"):
+                lg = logging.getLogger(name)
+                assert lg.propagate is True
+                assert lg.handlers == []
+        finally:
+            LOGGER.propagate = original_propagate
+            LOGGER.handlers = original_handlers
+
+    def test_records_reach_root_logger_after_configure(self):
+        import logging
+
+        from unity.logger import LOGGER
+
+        from unity.conversation_manager.medium_scripts.call import (
+            _configure_child_logging,
+        )
+
+        original_propagate = LOGGER.propagate
+        original_handlers = list(LOGGER.handlers)
+        captured: list[logging.LogRecord] = []
+
+        class _CaptureHandler(logging.Handler):
+            def emit(self, record):
+                captured.append(record)
+
+        root = logging.getLogger()
+        capture = _CaptureHandler()
+        root.addHandler(capture)
+        root_level = root.level
+        root.setLevel(logging.NOTSET)
+        try:
+            _configure_child_logging()
+
+            LOGGER.info("test-sentinel-message")
+
+            assert any(
+                r.message == "test-sentinel-message" for r in captured
+            ), "LOGGER records must propagate to root after _configure_child_logging"
+        finally:
+            root.removeHandler(capture)
+            root.setLevel(root_level)
+            LOGGER.propagate = original_propagate
+            LOGGER.handlers = original_handlers

@@ -873,7 +873,8 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "green"
+                "color": "green",
+                "value": null
               },
               {
                 "color": "red",
@@ -908,7 +909,7 @@
       "targets": [
         {
           "promQLQuery": {
-            "expr": "sum(rate({__name__=\"pubsub.googleapis.com/subscription/ack_latencies_sum\", monitored_resource=\"pubsub_subscription\", metadata_system_topic_id=\"unity-startup\"}[5m]))\n/\nsum(rate({__name__=\"pubsub.googleapis.com/subscription/ack_latencies_count\", monitored_resource=\"pubsub_subscription\", metadata_system_topic_id=\"unity-startup\"}[5m]))\n/ 1000",
+            "expr": "sum(rate({__name__=\"workload.googleapis.com/unity_pubsub_e2e_latency_seconds_sum\", monitored_resource=\"k8s_container\", namespace_name=\"production\", topic=\"unity-startup\"}[5m]))\n/\nsum(rate({__name__=\"workload.googleapis.com/unity_pubsub_e2e_latency_seconds_count\", monitored_resource=\"k8s_container\", namespace_name=\"production\", topic=\"unity-startup\"}[5m]))",
             "projectName": "responsive-city-458413-a2",
             "step": "5m"
           },
@@ -972,7 +973,8 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "green"
+                "color": "green",
+                "value": null
               },
               {
                 "color": "red",
@@ -1007,7 +1009,7 @@
       "targets": [
         {
           "promQLQuery": {
-            "expr": "sum by (metadata_system_topic_id) (rate({__name__=\"pubsub.googleapis.com/subscription/ack_latencies_sum\", monitored_resource=\"pubsub_subscription\", metadata_system_topic_id=~\"unity-[0-9]+\"}[5m]))\n/\nsum by (metadata_system_topic_id) (rate({__name__=\"pubsub.googleapis.com/subscription/ack_latencies_count\", monitored_resource=\"pubsub_subscription\", metadata_system_topic_id=~\"unity-[0-9]+\"}[5m]))\n/ 1000",
+            "expr": "sum by (topic) (rate({__name__=\"workload.googleapis.com/unity_pubsub_e2e_latency_seconds_sum\", monitored_resource=\"k8s_container\", namespace_name=\"production\", topic=~\"unity-[0-9]+\"}[5m]))\n/\nsum by (topic) (rate({__name__=\"workload.googleapis.com/unity_pubsub_e2e_latency_seconds_count\", monitored_resource=\"k8s_container\", namespace_name=\"production\", topic=~\"unity-[0-9]+\"}[5m]))",
             "projectName": "responsive-city-458413-a2",
             "step": "5m"
           },
@@ -1071,7 +1073,8 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "green"
+                "color": "green",
+                "value": null
               },
               {
                 "color": "red",
@@ -1170,7 +1173,8 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "green"
+                "color": "green",
+                "value": null
               },
               {
                 "color": "red",
@@ -1269,7 +1273,8 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "green"
+                "color": "green",
+                "value": null
               },
               {
                 "color": "red",
@@ -1368,7 +1373,8 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "green"
+                "color": "green",
+                "value": null
               },
               {
                 "color": "red",
@@ -1435,6 +1441,6 @@
   "timezone": "browser",
   "title": "Main",
   "uid": "afeslsolm30n4c",
-  "version": 4,
+  "version": 7,
   "weekStart": ""
 }

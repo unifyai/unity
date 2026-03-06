@@ -197,8 +197,18 @@ async def upload_unify_attachment(
             data=form_data,
         ) as response:
             try:
-                response.raise_for_status()
-                result = await response.json()
+                body = await response.text()
+                if response.status >= 400:
+                    try:
+                        detail = json.loads(body).get("error", body)
+                    except (json.JSONDecodeError, AttributeError):
+                        detail = body
+                    error_msg = f"Upload rejected ({response.status}): {detail}"
+                    LOGGER.debug(
+                        f"{ICONS['comms_outbound']} Failed to upload unify attachment: {error_msg}",
+                    )
+                    return {"success": False, "error": error_msg}
+                result = json.loads(body)
                 LOGGER.debug(f"{ICONS['comms_outbound']} Uploaded attachment: {result}")
                 return result
             except Exception as e:

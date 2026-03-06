@@ -572,6 +572,10 @@ class ComputerPrimitives(metaclass=SingletonABCMeta):
                 MockComputerBackend,
             )
 
+            fresh_url = self._resolve_container_url(None)
+            if fresh_url != DEFAULT_AGENT_SERVER_URL:
+                self._computer_kwargs_map["magnitude"]["container_url"] = fresh_url
+
             if self._computer_mode == "magnitude":
                 self._backend = MagnitudeBackend(
                     **self._computer_kwargs_map["magnitude"],

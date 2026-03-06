@@ -117,12 +117,13 @@ class ConversationManager(metaclass=SingletonABCMeta):
 
         # initialization state
         self.initialized: bool = False
+        self.ready_for_brain: bool = False
         # logging
         self.loop = asyncio.get_event_loop()
         self.project_name = project_name
 
         # inactivity & shutdown
-        self.inactivity_timeout = 900  # 15 minutes in seconds
+        self.inactivity_timeout = 300  # 5 minutes in seconds
         self.inactivity_check_interval = 30  # seconds
         self.last_activity_time = self.loop.time()
         self.stop = stop
@@ -683,6 +684,70 @@ class ConversationManager(metaclass=SingletonABCMeta):
             cancel_running = not self.mode.is_voice
             await self.request_llm_run(delay=0, cancel_running=cancel_running)
 
+            if (
+                self.mode.is_voice
+                and SETTINGS.conversation.SPEECH_URGENCY_PREEMPT_ENABLED
+                and self.debouncer.running_task
+                and not self.debouncer.running_task.done()
+            ):
+                stale_task = self.debouncer.running_task
+                asyncio.create_task(
+                    self._evaluate_speech_urgency(content, stale_task),
+                )
+
+    async def _evaluate_speech_urgency(
+        self,
+        utterance: str,
+        stale_task: asyncio.Task,
+    ) -> None:
+        """Concurrent sidecar: evaluate whether *utterance* should preempt the slow brain."""
+        from unity.conversation_manager.domains.speech_urgency import (
+            SpeechUrgencyEvaluator,
+        )
+
+        trace_meta = self.debouncer.running_task_trace_meta
+        origin_event = trace_meta.get("origin_event_name", "unknown")
+        elapsed = self.loop.time() - self.debouncer.running_task_started_at
+
+        actions_parts = []
+        for info in self.in_flight_actions.values():
+            action_type = info.get("action_type", "unknown")
+            query = info.get("query", "")
+            actions_parts.append(f"{action_type}: {query!r}")
+        actions_summary = "; ".join(actions_parts) if actions_parts else "none"
+
+        evaluator = SpeechUrgencyEvaluator(
+            model=SETTINGS.conversation.FAST_BRAIN_MODEL,
+        )
+        decision = await evaluator.evaluate(
+            utterance=utterance,
+            origin_event=origin_event,
+            elapsed_seconds=elapsed,
+            actions_summary=actions_summary,
+        )
+
+        self._session_logger.debug(
+            "speech_urgency",
+            (
+                f"Urgency eval: urgent={decision.urgent} "
+                f"utterance={utterance!r} origin={origin_event} "
+                f"elapsed={elapsed:.1f}s reasoning={decision.reasoning!r}"
+            ),
+        )
+
+        if not decision.urgent:
+            return
+
+        # Only cancel if the same stale task is still the running task.
+        # If it completed (or a new task started) the utterance is already
+        # being processed — cancelling would be counterproductive.
+        if self.debouncer.running_task is stale_task and not stale_task.done():
+            self._session_logger.debug(
+                "speech_urgency",
+                "Preempting stale slow-brain run — pending task will promote",
+            )
+            stale_task.cancel()
+
     # this is non-blocking, it will quickly submit the
     # coro and return
     async def run_llm(
@@ -697,6 +762,7 @@ class ConversationManager(metaclass=SingletonABCMeta):
             delay=delay,
             cancel_running=cancel_running,
             label=(trace_meta or {}).get("origin_event_name", ""),
+            trace_meta=trace_meta,
         )
 
     async def request_llm_run(self, delay=0, cancel_running=False) -> None:
@@ -728,6 +794,8 @@ class ConversationManager(metaclass=SingletonABCMeta):
     async def flush_llm_requests(self) -> None:
         """Schedule any pending LLM runs recorded during event handling."""
         if not self._pending_llm_requests:
+            return
+        if not self.ready_for_brain:
             return
 
         dropped_requests = max(len(self._pending_llm_requests) - 1, 0)
@@ -1138,10 +1206,23 @@ class ConversationManager(metaclass=SingletonABCMeta):
             pubsub_idle = current_time - self.last_activity_time
             eventbus_idle = _time.monotonic() - EventBus.last_publish_monotonic
             idle_seconds = min(pubsub_idle, eventbus_idle)
+
+            # important to know the idle times from the event bus and pubsub
+            # Log every 3 minutes (180s) instead of every check interval (30s)
+            # to make the terminal logs less verbose.
+            if int(current_time) % 180 < self.inactivity_check_interval:
+                self._session_logger.info(
+                    "inactivity_check",
+                    f"Idle check: pubsub_idle={pubsub_idle:.1f}s, "
+                    f"eventbus_idle={eventbus_idle:.1f}s, "
+                    f"min_idle={idle_seconds:.1f}s, "
+                    f"timeout={self.inactivity_timeout}s",
+                )
+
             if idle_seconds > self.inactivity_timeout:
                 log_str = f"Inactivity timeout reached ({self.inactivity_timeout}s), requesting shutdown"
-                LOGGER.debug(f"{DEFAULT_ICON} {log_str}")
-                self._session_logger.debug("session_end", log_str)
+                LOGGER.info(f"{DEFAULT_ICON} {log_str}")
+                self._session_logger.info("session_end", log_str)
                 self.stop.set()
                 await self.event_broker.aclose()
                 break  # Exit the loop after triggering shutdown
@@ -1165,7 +1246,6 @@ class ConversationManager(metaclass=SingletonABCMeta):
         self.voice_provider = payload["voice_provider"]
         self.voice_id = payload["voice_id"]
         self.desktop_mode = payload.get("desktop_mode", "ubuntu")
-        self.desktop_url = payload.get("desktop_url")
         self.user_desktop_mode = payload.get("user_desktop_mode")
         self.user_desktop_filesys_sync = payload.get("user_desktop_filesys_sync", False)
         self.user_desktop_url = payload.get("user_desktop_url")
@@ -1197,7 +1277,6 @@ class ConversationManager(metaclass=SingletonABCMeta):
             voice_provider=self.voice_provider,
             voice_id=self.voice_id,
             desktop_mode=self.desktop_mode,
-            desktop_url=self.desktop_url,
             user_desktop_mode=self.user_desktop_mode,
             user_desktop_filesys_sync=self.user_desktop_filesys_sync,
             user_desktop_url=self.user_desktop_url,

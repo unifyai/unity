@@ -24,6 +24,7 @@ to the event broker instead.
 from __future__ import annotations
 
 import asyncio
+from functools import partial
 import json
 import threading
 import time
@@ -41,6 +42,7 @@ from unity.conversation_manager.domains.comms_utils import (
     add_unify_message_attachments,
 )
 from unity.conversation_manager.events import *
+from unity.conversation_manager.metrics import pubsub_e2e_latency
 from unity.session_details import SESSION_DETAILS
 from unity.contact_manager.types.contact import UNASSIGNED
 from unity.conversation_manager.types import Medium
@@ -49,6 +51,9 @@ load_dotenv()
 
 # Lock for unknown contact creation to prevent duplicates
 _unknown_contact_lock = threading.Lock()
+
+# Lock for startup transition to prevent multiple messages being acked by the same container
+_startup_lock = threading.Lock()
 
 
 if TYPE_CHECKING:
@@ -234,9 +239,17 @@ class CommsManager:
             self.loop,
         )
 
+    def _ack_with_latency(self, message, publish_timestamp, topic):
+        """Ack the message and record end-to-end Pub/Sub latency if available."""
+        if publish_timestamp is not None:
+            latency = time.time() - publish_timestamp
+            pubsub_e2e_latency.record(latency, {"topic": topic})
+        message.ack()
+
     def handle_message(
         self,
         message: pubsub_v1.types.PubsubMessage,
+        subscription_id: str = "",
     ):
         """
         Handle incoming messages from PubSub subscriptions.
@@ -245,35 +258,52 @@ class CommsManager:
         NOT from the asyncio event loop. All async operations must use
         `_publish_from_callback` or `asyncio.run_coroutine_threadsafe`.
         """
+        topic = subscription_id.removesuffix("-sub")
         try:
             data = json.loads(message.data.decode("utf-8"))
             thread = data["thread"]
             event = data["event"]
+            publish_timestamp = data.get("publish_timestamp")
             LOGGER.debug(
                 f"{DEFAULT_ICON} Received message from {thread}: {message.data.decode('utf-8')}",
             )
             if thread in ["startup", "assistant_update"]:
-                message.ack()
                 if thread == "startup":
-                    # can't use asyncio.to_thread because this code runs on a pubsub
-                    # thread pool thread rather than the main event loop
-                    threading.Thread(
-                        target=mark_job_label,
-                        args=(SETTINGS.conversation.JOB_NAME, "running"),
-                        daemon=True,
-                    ).start()
+                    with _startup_lock:
+                        # If already assigned, nack the message so another idle container can pick it up
+                        if SESSION_DETAILS.assistant.agent_id is not None:
+                            LOGGER.debug(
+                                f"{DEFAULT_ICON} Already assigned to assistant {SESSION_DETAILS.assistant.agent_id}, "
+                                f"nacking startup message for {event.get('assistant_id')}",
+                            )
+                            message.nack()
+                            return
 
-                    # acknowledge message and cancel startup subscription
-                    while startup_subscription_id not in self.subscribers:
-                        time.sleep(0.1)
-                    self.subscribers[startup_subscription_id].cancel()
-                    self.subscribers.pop(startup_subscription_id)
+                        # Acknowledge message only when we're sure we're taking it
+                        self._ack_with_latency(message, publish_timestamp, topic)
+
+                        # can't use asyncio.to_thread because this code runs on a pubsub
+                        # thread pool thread rather than the main event loop
+                        threading.Thread(
+                            target=mark_job_label,
+                            args=(SETTINGS.conversation.JOB_NAME, "running"),
+                            daemon=True,
+                        ).start()
+
+                        # cancel startup subscription
+                        while startup_subscription_id not in self.subscribers:
+                            time.sleep(0.1)
+                        self.subscribers[startup_subscription_id].cancel()
+                        self.subscribers.pop(startup_subscription_id)
 
                     # Update assistant context and subscribe to the assistant's subscription
                     # Note: Full context is populated by ConversationManager.set_details()
                     # Here we just need to set assistant_id early for subscription
                     SESSION_DETAILS.assistant.agent_id = int(event["assistant_id"])
-                    self.subscribe_to_topic(_get_subscription_id())
+                    self.subscribe_to_topic(_get_subscription_id(), max_messages=10)
+                else:
+                    # assistant_update - always ack
+                    self._ack_with_latency(message, publish_timestamp, topic)
 
                 # publish
                 details = {
@@ -296,7 +326,6 @@ class CommsManager:
                     "voice_provider": event["voice_provider"],
                     "voice_id": event["voice_id"],
                     "desktop_mode": event.get("desktop_mode", "ubuntu"),
-                    "desktop_url": event.get("desktop_url"),
                     "user_desktop_mode": event.get("user_desktop_mode"),
                     "user_desktop_filesys_sync": event.get(
                         "user_desktop_filesys_sync",
@@ -321,7 +350,7 @@ class CommsManager:
                     "app:comms:ping",
                     Ping(kind="keepalive").to_json(),
                 )
-                message.ack()
+                self._ack_with_latency(message, publish_timestamp, topic)
             elif thread == "unity_system_event":
                 system_event_type = event.get("event_type")
                 system_message = event.get("message")
@@ -369,7 +398,7 @@ class CommsManager:
                         f"app:comms:{system_event_type}",
                         evt.to_json(),
                     )
-                message.ack()
+                self._ack_with_latency(message, publish_timestamp, topic)
             elif thread in events_map:
                 # Get contacts for message routing
                 contacts = [*event.get("contacts", []), _get_local_contact()]
@@ -394,7 +423,7 @@ class CommsManager:
                         LOGGER.debug(
                             f"{DEFAULT_ICON} Ignoring blacklisted email from: {contact_detail}",
                         )
-                        message.ack()
+                        self._ack_with_latency(message, publish_timestamp, topic)
                         return
 
                     # Find or create contact
@@ -415,7 +444,7 @@ class CommsManager:
                         LOGGER.error(
                             f"{DEFAULT_ICON} Failed to resolve contact for email from: {contact_detail}",
                         )
-                        message.ack()
+                        self._ack_with_latency(message, publish_timestamp, topic)
                         return
 
                     # Extract attachment filenames for the event
@@ -488,7 +517,7 @@ class CommsManager:
                             f"{DEFAULT_ICON} Error: contact_id is required for unify_message, "
                             "skipping message",
                         )
-                        message.ack()
+                        self._ack_with_latency(message, publish_timestamp, topic)
                         return
                     contact = next(
                         (c for c in contacts if c["contact_id"] == target_contact_id),
@@ -499,7 +528,7 @@ class CommsManager:
                             f"{DEFAULT_ICON} Error: contact_id {target_contact_id} not found in "
                             f"contacts list, skipping message",
                         )
-                        message.ack()
+                        self._ack_with_latency(message, publish_timestamp, topic)
                         return
 
                     # Extract attachments with full metadata for the event
@@ -536,7 +565,7 @@ class CommsManager:
                         LOGGER.debug(
                             f"{DEFAULT_ICON} Ignoring blacklisted SMS from: {contact_detail}",
                         )
-                        message.ack()
+                        self._ack_with_latency(message, publish_timestamp, topic)
                         return
 
                     # Find or create contact
@@ -557,7 +586,7 @@ class CommsManager:
                         LOGGER.error(
                             f"{DEFAULT_ICON} Failed to resolve contact for SMS from: {contact_detail}",
                         )
-                        message.ack()
+                        self._ack_with_latency(message, publish_timestamp, topic)
                         return
 
                     self._publish_from_callback(
@@ -579,7 +608,7 @@ class CommsManager:
                             ).to_json(),
                         )
 
-                message.ack()
+                self._ack_with_latency(message, publish_timestamp, topic)
             elif thread == "log_pre_hire_chats":
                 try:
                     contacts = [*event.get("contacts", []), _get_local_contact()]
@@ -613,7 +642,7 @@ class CommsManager:
                     LOGGER.debug(
                         f"{DEFAULT_ICON} Logged {published} pre-hire chat message(s) for assistant {assistant_id}",
                     )
-                    message.ack()
+                    self._ack_with_latency(message, publish_timestamp, topic)
                 except Exception as e:
                     LOGGER.error(f"{DEFAULT_ICON} Error processing pre-hire logs: {e}")
                     message.nack()
@@ -626,7 +655,7 @@ class CommsManager:
                     "app:comms:recording_ready",
                     recording_event.to_json(),
                 )
-                message.ack()
+                self._ack_with_latency(message, publish_timestamp, topic)
             elif "call" in thread or "meet" in thread:
                 try:
                     # Get contacts for call routing
@@ -654,7 +683,7 @@ class CommsManager:
                             LOGGER.debug(
                                 f"{DEFAULT_ICON} Ignoring blacklisted call from: {number}",
                             )
-                            message.ack()
+                            self._ack_with_latency(message, publish_timestamp, topic)
                             return
 
                         # Find or create contact
@@ -675,7 +704,7 @@ class CommsManager:
                             LOGGER.error(
                                 f"{DEFAULT_ICON} Failed to resolve contact for call from: {number}",
                             )
-                            message.ack()
+                            self._ack_with_latency(message, publish_timestamp, topic)
                             return
 
                         call_event = PhoneCallReceived(
@@ -728,29 +757,28 @@ class CommsManager:
                         self.event_broker.publish(topic, call_event.to_json()),
                         self.loop,
                     )
-                    message.ack()
+                    self._ack_with_latency(message, publish_timestamp, topic)
                     future.result()  # Wait for publish to complete
                 except json.JSONDecodeError:
                     LOGGER.error(
                         f"{DEFAULT_ICON} Invalid message format for {thread} event",
                     )
-                    message.ack()
+                    self._ack_with_latency(message, publish_timestamp, topic)
                 except Exception as e:
                     LOGGER.error(f"{DEFAULT_ICON} Error processing {thread} event: {e}")
                     import traceback
 
                     traceback.print_exc()
-                    message.ack()
+                    self._ack_with_latency(message, publish_timestamp, topic)
             else:
                 if thread != "assistant_desktop_ready":
                     LOGGER.error(f"{DEFAULT_ICON} Unknown event type: {thread}")
-                message.ack()
+                self._ack_with_latency(message, publish_timestamp, topic)
         except Exception as e:
             LOGGER.error(f"{DEFAULT_ICON} Error processing message: {e}")
             message.ack()
 
-    def subscribe_to_topic(self, subscription_id: str):
-        # async def subscribe_to_topic(self, subscription_id: str):
+    def subscribe_to_topic(self, subscription_id: str, max_messages: int | None = None):
         """Subscribe to a specific PubSub topic and process messages."""
         try:
             # Let GCP libraries handle authentication automatically
@@ -764,12 +792,20 @@ class CommsManager:
             )
 
             LOGGER.debug(
-                f"{ICONS['subscription']} Starting subscription to {subscription_path}",
+                f"{ICONS['subscription']} Starting subscription to {subscription_path} (max_messages={max_messages})",
             )
 
+            flow_control = (
+                pubsub_v1.types.FlowControl(max_messages=max_messages)
+                if max_messages
+                else pubsub_v1.types.FlowControl()
+            )
+
+            callback = partial(self.handle_message, subscription_id=subscription_id)
             streaming_pull_future = subscriber.subscribe(
                 subscription_path,
-                callback=self.handle_message,
+                callback=callback,
+                flow_control=flow_control,
             )
 
             # Store the future for cleanup
@@ -783,8 +819,8 @@ class CommsManager:
     async def start(self):
         """Start all subscriptions and maintain connection to event manager."""
         if SESSION_DETAILS.assistant.agent_id is None:
-            # Start the startup subscription
-            self.subscribe_to_topic(startup_subscription_id)
+            # Start the startup subscription with max_messages=1 to prevent batch stealing
+            self.subscribe_to_topic(startup_subscription_id, max_messages=1)
             # Label this container as idle so cleanup endpoints can find it
             threading.Thread(
                 target=mark_job_label,
@@ -794,8 +830,8 @@ class CommsManager:
             # Start ping mechanism for idle containers
             asyncio.create_task(self.send_pings())
         else:
-            # Start subscription
-            self.subscribe_to_topic(_get_subscription_id())
+            # Start subscription for live assistant
+            self.subscribe_to_topic(_get_subscription_id(), max_messages=10)
 
         # Keep the connection alive
         try:

@@ -1558,12 +1558,13 @@ class MagnitudeBackend(ComputerBackend):
             ) as resp:
                 _cs_ms = (_cs_time.perf_counter() - _cs_t0) * 1000
                 if resp.status >= 400:
+                    body = await resp.text()
                     logger.debug(
                         f"⏱️ [MagnitudeBackend._create_session] POST /start FAILED "
                         f"({_cs_ms:.0f}ms, status={resp.status})",
                     )
                     raise RuntimeError(
-                        f"Failed to create {mode} session: {resp.status}",
+                        f"Failed to create {mode} session: {resp.status} {body}",
                     )
                 data = await resp.json()
         _cs_ms = (_cs_time.perf_counter() - _cs_t0) * 1000
@@ -1887,7 +1888,11 @@ class MagnitudeBackend(ComputerBackend):
 
     async def act(self, instruction: str, verify: bool = False, **kwargs) -> ActResult:
         s = await self._default_session()
-        return await s.act(instruction, verify=verify)
+        try:
+            return await s.act(instruction, verify=verify)
+        except asyncio.CancelledError:
+            await self.interrupt_current_action()
+            raise
 
     async def observe(self, query: str, response_format: Any = str, **kwargs) -> Any:
         s = await self._default_session()

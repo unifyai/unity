@@ -938,8 +938,7 @@ async def _(event: GetChatHistory, cm: "ConversationManager", *args, **kwargs):
 
 @EventHandler.register(ActorHandleStarted)
 async def _(event: ActorHandleStarted, cm: "ConversationManager", *args, **kwargs):
-    cm._has_non_forwarded_event = True
-    await cm.request_llm_run()
+    pass
 
 
 @EventHandler.register(NotificationInjectedEvent)
@@ -1036,13 +1035,12 @@ async def _(event: ActorNotification, cm: "ConversationManager", *args, **kwargs
     """A progress notification from an in-flight action.
 
     Unlike ``ActorResponse``, notifications arrive while the actor is still
-    working.  Progress is recorded in the action's history.
+    working.  Progress is recorded in the action's history so the slow brain
+    sees accumulated progress when it next runs on a legitimate event.
 
-    The slow brain is woken to decide whether to relay progress via
-    ``guide_voice_agent``.  On boss-on-call, the call manager renders
-    actor events into FastBrainNotification messages for the fast brain.
+    The fast brain receives actor progress via ``_render_boss_notifications``
+    and the ``NotificationReplyEvaluator`` decides whether to speak.
     """
-    cm._has_non_forwarded_event = True
     if event.handle_id in cm.in_flight_actions:
         from unity.common.prompt_helpers import now as prompt_now
 
@@ -1053,7 +1051,6 @@ async def _(event: ActorNotification, cm: "ConversationManager", *args, **kwargs
                 "timestamp": prompt_now(),
             },
         )
-    await cm.request_llm_run()
 
 
 @EventHandler.register(ComputerActCompleted)
@@ -1201,8 +1198,6 @@ async def _(
         f"VM ready: {event.vm_type} at {desktop_url}",
     )
 
-    _vm_ready.set()
-
     if desktop_url:
         SESSION_DETAILS.assistant.desktop_url = desktop_url
 
@@ -1213,6 +1208,8 @@ async def _(
         cm.user_id,
         liveview_url,
     )
+
+    _vm_ready.set()
 
     asyncio.ensure_future(_ensure_desktop_session(cm))
     await managers_utils._start_file_sync()
@@ -1396,8 +1393,6 @@ async def _(
                 )
         except Exception:
             pass
-
-    await cm.request_llm_run()
 
 
 @EventHandler.register(LogMessageResponse)

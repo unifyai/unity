@@ -53,6 +53,15 @@ session_duration = meter.create_histogram(
 )
 
 # ---------------------------------------------------------------------------
+# U10  Pub/Sub end-to-end latency
+# ---------------------------------------------------------------------------
+pubsub_e2e_latency = meter.create_histogram(
+    name="unity_pubsub_e2e_latency_seconds",
+    description="End-to-end latency from Pub/Sub publish to ack.",
+    unit="s",
+)
+
+# ---------------------------------------------------------------------------
 # X1  Running job count (cluster-wide snapshot)
 # ---------------------------------------------------------------------------
 running_job_count = meter.create_gauge(

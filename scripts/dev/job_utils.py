@@ -4,7 +4,7 @@ import os
 import sys
 
 ORCHESTRA_URLS = {
-    "staging": "https://orchestra-staging-lz5fmz6i7q-ew.a.run.app/v0",
+    "staging": "https://api.staging.internal.saas.unify.ai/v0",
     "production": "https://api.unify.ai/v0",
 }
 
@@ -33,7 +33,12 @@ def success(msg):
     print(f"{GREEN}[OK]{NC} {msg}")
 
 
-def _find_latest_job_entry(namespace: str, *, running_only: bool = False):
+def _find_latest_job_entry(
+    namespace: str,
+    *,
+    running_only: bool = False,
+    email: str | None = None,
+):
     """Return the log entry for the latest matching job, or exit."""
     import unify
 
@@ -42,16 +47,19 @@ def _find_latest_job_entry(namespace: str, *, running_only: bool = False):
         error("SHARED_UNIFY_KEY environment variable is not set.")
         sys.exit(1)
 
-    unify_key = os.environ.get("UNIFY_KEY")
-    if not unify_key:
-        error("UNIFY_KEY is required to auto-detect jobs.")
-        print("  Set it in .env or pass the job name explicitly.")
-        sys.exit(1)
+    if email:
+        info(f"Looking up jobs for {email}...")
+    else:
+        unify_key = os.environ.get("UNIFY_KEY")
+        if not unify_key:
+            error("UNIFY_KEY is required to auto-detect jobs.")
+            print("  Set it in .env or pass the job name explicitly.")
+            sys.exit(1)
 
-    info("Resolving identity from UNIFY_KEY...")
-    user_info = unify.get_user_basic_info(api_key=unify_key)
-    email = user_info["email"]
-    info(f"Authenticated as {user_info['first']} {user_info['last']} ({email})")
+        info("Resolving identity from UNIFY_KEY...")
+        user_info = unify.get_user_basic_info(api_key=unify_key)
+        email = user_info["email"]
+        info(f"Authenticated as {user_info['first']} {user_info['last']} ({email})")
 
     info(f"Searching for latest '{namespace}' job...")
     logs = unify.get_logs(
@@ -79,18 +87,26 @@ def _find_latest_job_entry(namespace: str, *, running_only: bool = False):
     sys.exit(1)
 
 
-def resolve_latest_job(namespace: str, *, running_only: bool = False) -> str:
+def resolve_latest_job(
+    namespace: str,
+    *,
+    running_only: bool = False,
+    email: str | None = None,
+) -> str:
     """Resolve the most recent job name for the current user.
 
-    Uses UNIFY_KEY to identify the caller, then queries AssistantJobs for
-    their most recent job whose name ends with ``-{namespace}``.
+    Uses *email* directly if provided, otherwise falls back to UNIFY_KEY to
+    identify the caller. Queries AssistantJobs for the most recent job whose
+    name ends with ``-{namespace}``.
 
     When *running_only* is True, only jobs with running status are
     considered — useful for suspension where completed jobs are irrelevant.
     """
-    return _find_latest_job_entry(namespace, running_only=running_only).entries[
-        "job_name"
-    ]
+    return _find_latest_job_entry(
+        namespace,
+        running_only=running_only,
+        email=email,
+    ).entries["job_name"]
 
 
 def resolve_latest_assistant_id(namespace: str) -> str:

@@ -44,8 +44,8 @@ cleanup() {
 # Set up signal handlers
 trap cleanup SIGTERM SIGINT
 
-# Create log directories for file-based traces
-mkdir -p /var/log/unity /var/log/unify /var/log/unillm
+# Create log directories for file-based traces in background
+mkdir -p /var/log/unity /var/log/unify /var/log/unillm &
 
 # Announce where logs will be preserved after shutdown
 if [ ! -z "$UNITY_CONVERSATION_JOB_NAME" ]; then
@@ -64,16 +64,21 @@ if [ ! -z "$UNITY_CONVERSATION_JOB_NAME" ]; then
     echo "═══════════════════════════════════════════════════════════"
 fi
 
-# Seed the emptyDir-backed /tmp with pre-downloaded HuggingFace models.
+# Seed the emptyDir-backed /tmp with pre-downloaded HuggingFace models in background.
 # The Dockerfile bakes models into /opt/hf-cache (user-agnostic); at runtime
 # HF_HOME=/tmp/huggingface redirects lookups to the writable emptyDir volume.
 if [ -d /opt/hf-cache ] && [ ! -d /tmp/huggingface ]; then
-    cp -r /opt/hf-cache /tmp/huggingface
+    cp -r /opt/hf-cache /tmp/huggingface &
 fi
 
 # Start agent-service on port 3000 (for web automation via Magnitude)
 echo "⬥ Starting agent-service..."
-cd /app/agent-service && npx ts-node src/index.ts &
+# Use pre-compiled JavaScript if available, otherwise fallback to ts-node
+if [ -f "/app/agent-service/dist/index.js" ]; then
+    cd /app/agent-service && node dist/index.js &
+else
+    cd /app/agent-service && npx ts-node src/index.ts &
+fi
 AGENT_PID=$!
 cd /app
 echo "⬥ Agent-service started with PID: $AGENT_PID"

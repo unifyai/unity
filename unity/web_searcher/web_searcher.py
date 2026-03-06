@@ -118,7 +118,6 @@ class WebSearcher(BaseWebSearcher):
             handle_cls=(
                 ReadOnlyAskGuardHandle if SETTINGS.UNITY_READONLY_ASK_GUARD else None
             ),
-            timeout=1200,
         )
 
         # If the caller requests reasoning steps, wrap the handle's result

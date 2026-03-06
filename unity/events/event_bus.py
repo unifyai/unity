@@ -45,6 +45,7 @@ from ..common.global_docstrings import CLEAR_METHOD_DOCSTRING
 from ..common.log_utils import _derive_all_contexts, _inject_private_fields
 from ..common.model_to_fields import model_to_fields
 from ..logger import LOGGER
+from .stream_filters import is_streaming_noise
 
 # ---------------------------------------------------------------------------
 # Context-variable to track the *root* sequence number of a callback cascade.
@@ -802,7 +803,18 @@ class EventBus:
     async def publish(self, event: Event, *, blocking: bool = False) -> None:
         import time as _time
 
-        EventBus.last_publish_monotonic = _time.monotonic()
+        now = _time.monotonic()
+        prev = EventBus.last_publish_monotonic
+        EventBus.last_publish_monotonic = now
+        if prev > 0 and 25 < (now - prev) < 35:
+            import traceback as _tb
+
+            LOGGER.info(
+                "EventBus.publish after %.1fs gap: type=%s caller:\n%s",
+                now - prev,
+                event.type,
+                "".join(_tb.format_stack()[-4:-1]),
+            )
 
         # Initialize publishing flag from settings if not already done
         if EventBus._publishing_enabled is None:
@@ -876,7 +888,8 @@ class EventBus:
 
         # ── Stream action events to Pub/Sub for real-time frontend rendering ─
         if event.type in self._ACTION_EVENT_TYPES:
-            self._stream_action_to_pubsub(event, base_entries, payload_dict)
+            if not is_streaming_noise(event.type, payload_dict):
+                self._stream_action_to_pubsub(event, base_entries, payload_dict)
 
         # ── Evaluate subscriptions ────────────────────────────────────────
         self._process_event(event)

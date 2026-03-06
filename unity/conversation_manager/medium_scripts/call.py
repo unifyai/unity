@@ -184,14 +184,44 @@ def _load_config_from_metadata(ctx: agents.JobContext) -> dict | None:
         return None
 
 
+def _configure_child_logging() -> None:
+    """Ensure Unity's LOGGER works in LiveKit's pre-warmed child processes.
+
+    LiveKit agents (v1.2.x) uses ``forkserver`` on Linux.  Child processes
+    are forked from a lean server process, not from the worker, so the
+    ``unity`` logger's handlers may point to stale file descriptors.
+
+    The framework routes child logs through a ``LogQueueHandler`` on the
+    **root** logger, which serialises records back to the worker process.
+    We enable propagation so Unity records flow through that channel, and
+    remove any direct handlers that could double-emit or silently fail.
+    """
+    import logging as _logging
+
+    from unity.logger import LOGGER as _L
+
+    _L.propagate = True
+    for h in list(_L.handlers):
+        _L.removeHandler(h)
+
+    for name in ("livekit", "livekit.agents", "livekit.plugins"):
+        lg = _logging.getLogger(name)
+        lg.propagate = True
+        for h in list(lg.handlers):
+            lg.removeHandler(h)
+
+
 async def entrypoint(ctx: agents.JobContext):
     global STT, VAD
+
+    _configure_child_logging()
 
     # Wire the module-level logger into the shared event broker.
     event_broker.set_logger(_log)
 
     # --- Config: persistent worker (job metadata) or legacy subprocess (env) ---
     meta = _load_config_from_metadata(ctx)
+    _log.info(f"Entrypoint started (has_metadata={meta is not None})")
     if meta:
         from unity.conversation_manager.domains.ipc_socket import init_socket_for_job
 
@@ -199,6 +229,9 @@ async def entrypoint(ctx: agents.JobContext):
         if ipc_path:
             init_socket_for_job(ipc_path)
             event_broker.reinit_socket()
+            _log.info(f"IPC socket initialised: {ipc_path}")
+        else:
+            _log.warning("No ipc_socket_path in job metadata — IPC disabled")
 
         voice_provider = meta.get("voice_provider", "cartesia")
         voice_id = meta.get("voice_id", "")
@@ -220,6 +253,9 @@ async def entrypoint(ctx: agents.JobContext):
             SESSION_DETAILS.assistant.first_name = parts[0] if parts else ""
             SESSION_DETAILS.assistant.surname = parts[1] if len(parts) > 1 else ""
     else:
+        _log.warning(
+            "No job metadata — falling back to env-based config (IPC disabled)",
+        )
         SESSION_DETAILS.populate_from_env()
         voice_provider = SESSION_DETAILS.voice.provider
         voice_id = SESSION_DETAILS.voice.id

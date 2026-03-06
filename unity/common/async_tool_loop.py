@@ -532,7 +532,6 @@ class AsyncToolLoopHandle(SteerableToolHandle):
                 prune_tool_duplicates=False,
                 interrupt_llm_with_interjections=False,
                 max_consecutive_failures=1,
-                timeout=300,
             )
         finally:
             _PENDING_LOOP_SUFFIX.reset(_suffix_token)
@@ -1001,8 +1000,8 @@ def start_async_tool_loop(
     parent_chat_context: Optional[list[dict]] = None,
     caller_description: Optional[str] = None,
     log_steps: Union[bool, str] = True,
-    max_steps: Optional[int] = 100,
-    timeout: Optional[int] = 300,
+    max_steps: Optional[int] = None,
+    timeout: Optional[int] = None,
     raise_on_limit: bool = False,
     include_class_in_dynamic_tool_names: bool = False,
     tool_policy: Optional[
@@ -1037,13 +1036,9 @@ def start_async_tool_loop(
           - True: log everything except system messages
           - "full": log everything including system messages
 
-    timeout : int | None, default 300
-        Activity-based timeout in seconds. The timer resets after each
-        observable event (LLM response, tool completion, interjection).
-        This timeout guards against hung user-defined tools, NOT slow LLM
-        inference. LLM providers have their own timeout mechanisms; if an
-        LLM call is in-flight, the loop will wait for it to complete before
-        checking the timeout. When ``None``, no timeout is enforced.
+    timeout : int | None, default None
+        Activity-based timeout in seconds. When ``None`` (default), no
+        timeout is enforced.
 
     raise_on_limit : bool, default False
         If ``True``, raises ``asyncio.TimeoutError`` or ``RuntimeError``

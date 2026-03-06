@@ -15,7 +15,6 @@ from __future__ import annotations
 from datetime import datetime
 import os
 import signal
-import sys
 import time
 from typing import TYPE_CHECKING
 
@@ -206,16 +205,18 @@ async def run_conversation_manager(
     # Clear Outputs/ between sessions so generated files don't accumulate.
     _outputs = _local_root / "Outputs"
     if _outputs.exists():
-        _shutil.rmtree(_outputs)
-    _outputs.mkdir(exist_ok=True)
+        asyncio.create_task(asyncio.to_thread(_shutil.rmtree, _outputs))
+    else:
+        _outputs.mkdir(exist_ok=True)
 
     # Clear Screenshots/ between sessions (ephemeral visual context).
     _screenshots = _local_root / "Screenshots"
     if _screenshots.exists():
-        _shutil.rmtree(_screenshots)
-    (_screenshots / "User").mkdir(parents=True, exist_ok=True)
-    (_screenshots / "Assistant").mkdir(parents=True, exist_ok=True)
-    (_screenshots / "Webcam").mkdir(parents=True, exist_ok=True)
+        asyncio.create_task(asyncio.to_thread(_shutil.rmtree, _screenshots))
+    else:
+        (_screenshots / "User").mkdir(parents=True, exist_ok=True)
+        (_screenshots / "Assistant").mkdir(parents=True, exist_ok=True)
+        (_screenshots / "Webcam").mkdir(parents=True, exist_ok=True)
 
     # Clean up dangling call processes
     if cleanup_call_processes:
@@ -312,20 +313,21 @@ async def main(project_name: str = "Assistants"):
     # Flush buffered EventBus writes to the backend before exit.
     from unity.events.event_bus import EVENT_BUS
 
+    LOGGER.info(f"{ICONS['lifecycle']} Final EventBus flush...")
     EVENT_BUS.flush()
 
     # Shut down the metrics exporter (flushes remaining data internally).
-    shutdown_metrics()
+    LOGGER.info(f"{ICONS['lifecycle']} Shutting down metrics...")
+    await shutdown_metrics()
 
     LOGGER.debug(f"{ICONS['lifecycle']} Shutdown finished")
 
-    # Exit with special code 42 if:
-    # - Shutdown was triggered by external signal (i.e. not inactivity timeout)
-    # - AND assistant_id is the default (i.e. it's an idle container)
-    # This signals to start.py to exit immediately to trigger restart
-    # within the backoff limit
+    # Final hard exit to ensure the pod is deallocated.
+    # sys.exit() can hang if there are non-daemon threads (e.g. from OTel or PubSub)
+    # that haven't closed. os._exit() forces the process to terminate immediately.
     if _signal_shutdown and _conversation_manager.assistant_id is None:
-        sys.exit(42)
+        os._exit(42)
+    os._exit(0)
 
 
 if __name__ == "__main__":
