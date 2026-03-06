@@ -833,13 +833,11 @@ app.post('/act', isAgentReady, async (req: Request, res: Response) => {
 
     let screenshot = '';
     try {
-      if (session.mode === 'desktop') {
-        screenshot = nativeScreenshot();
-      } else {
-        const harness = session.agent.require(BrowserConnector).getHarness();
-        const image = await harness.screenshot();
-        screenshot = await image.toBase64();
-      }
+      const connector = session.agent.require(BrowserConnector);
+      const harness = connector.getHarness();
+      const rawImage = await harness.screenshot();
+      const image = await connector.transformScreenshot(rawImage);
+      screenshot = await image.toBase64();
     } catch (screenshotErr) {
       console.warn(`[act] Post-act screenshot failed: ${screenshotErr}`);
     }
@@ -874,8 +872,10 @@ app.post('/execute-actions', isAgentReady, async (req: Request, res: Response) =
     let screenshot = '';
     let cursorPosition: { x: number; y: number } | null = null;
     try {
-      const harness = agent.require(BrowserConnector).getHarness();
-      const image = await harness.screenshot();
+      const connector = agent.require(BrowserConnector);
+      const harness = connector.getHarness();
+      const rawImage = await harness.screenshot();
+      const image = await connector.transformScreenshot(rawImage);
       screenshot = await image.toBase64();
       cursorPosition = harness.getCursorPosition();
     } catch (screenshotErr) {
@@ -993,27 +993,23 @@ app.post('/screenshot', isAgentReady, async (req: Request, res: Response) => {
   const session = activeSessions.get(sessionId)!;
   console.log(`[screenshot] START session=${sessionId} mode=${session.mode} in_flight=${_screenshotInFlight}`);
   try {
-    let base64Image: string;
-
-    let cursorPosition: { x: number; y: number } | null = null;
-
-    if (session.mode === 'desktop') {
-      // Native OS-level screenshot (works on Linux, macOS, Windows)
-      base64Image = nativeScreenshot();
-      console.log(`[screenshot] native_capture=${Date.now() - t0}ms b64_len=${base64Image.length}`);
-    } else {
-      // Playwright harness screenshot for web / web-vm modes
-      const harness = session.agent.require(BrowserConnector).getHarness();
-      const tHarness = Date.now();
-      console.log(`[screenshot] harness_acquired=${tHarness - t0}ms`);
-      const image = await harness.screenshot();
-      const tCapture = Date.now();
-      console.log(`[screenshot] playwright_capture=${tCapture - tHarness}ms`);
-      base64Image = await image.toBase64();
-      cursorPosition = harness.getCursorPosition();
-      const tEncode = Date.now();
-      console.log(`[screenshot] base64_encode=${tEncode - tCapture}ms b64_len=${base64Image.length} total=${tEncode - t0}ms`);
-    }
+    // Use harness screenshot + transformScreenshot for ALL modes. This ensures the
+    // screenshot coordinate space matches the click coordinate space (both go through
+    // the Playwright page). For desktop mode, this captures the noVNC page which
+    // renders the VM desktop with noVNC's own scaling — the same coordinate space
+    // that page.mouse.click() uses.
+    const connector = session.agent.require(BrowserConnector);
+    const harness = connector.getHarness();
+    const tHarness = Date.now();
+    console.log(`[screenshot] harness_acquired=${tHarness - t0}ms`);
+    const rawImage = await harness.screenshot();
+    const tCapture = Date.now();
+    console.log(`[screenshot] playwright_capture=${tCapture - tHarness}ms`);
+    const image = await connector.transformScreenshot(rawImage);
+    const base64Image = await image.toBase64();
+    const cursorPosition = harness.getCursorPosition();
+    const tEncode = Date.now();
+    console.log(`[screenshot] base64_encode=${tEncode - tCapture}ms b64_len=${base64Image.length} total=${tEncode - t0}ms`);
 
     res.json({ screenshot: base64Image, cursorPosition });
     _screenshotInFlight--;
@@ -1022,6 +1018,70 @@ app.post('/screenshot', isAgentReady, async (req: Request, res: Response) => {
     _screenshotInFlight--;
     console.error(`[screenshot] ERROR after ${Date.now() - t0}ms in_flight=${_screenshotInFlight}:`, err);
     handleAgentError(err, res, 'screenshot_failed');
+  }
+});
+
+app.post('/eval', isAgentReady, async (req: Request, res: Response) => {
+  const { sessionId, expression } = req.body;
+  if (!expression) {
+    return res.status(400).json({ error: 'bad_request', message: 'expression is required.' });
+  }
+  try {
+    const session = activeSessions.get(sessionId)!;
+    const harness = session.agent.require(BrowserConnector).getHarness();
+    const result = await harness.page.evaluate(expression);
+    res.json({ result });
+  } catch (err) {
+    handleAgentError(err, res, 'eval_failed');
+  }
+});
+
+app.post('/viewport-info', isAgentReady, async (req: Request, res: Response) => {
+  const { sessionId } = req.body;
+  try {
+    const session = activeSessions.get(sessionId)!;
+    const harness = session.agent.require(BrowserConnector).getHarness();
+    const page = harness.page;
+
+    const playwrightViewport = page.viewportSize();
+
+    const jsInfo = await page.evaluate(() => ({
+      innerWidth: window.innerWidth,
+      innerHeight: window.innerHeight,
+      outerWidth: window.outerWidth,
+      outerHeight: window.outerHeight,
+      devicePixelRatio: window.devicePixelRatio,
+      scrollX: window.scrollX,
+      scrollY: window.scrollY,
+      clientWidth: document.documentElement.clientWidth,
+      clientHeight: document.documentElement.clientHeight,
+      screenWidth: window.screen.width,
+      screenHeight: window.screen.height,
+      screenAvailWidth: window.screen.availWidth,
+      screenAvailHeight: window.screen.availHeight,
+    }));
+
+    const screenshotBuffer = await page.screenshot({ type: 'png' });
+    // PNG IHDR: width at bytes 16-19, height at bytes 20-23 (big-endian uint32)
+    const rawScreenshotDims = {
+      width: screenshotBuffer.readUInt32BE(16),
+      height: screenshotBuffer.readUInt32BE(20),
+    };
+
+    console.log(`[viewport-info] mode=${session.mode} playwright=${JSON.stringify(playwrightViewport)} js=${JSON.stringify(jsInfo)} rawScreenshot=${JSON.stringify(rawScreenshotDims)}`);
+
+    res.json({
+      mode: session.mode,
+      playwrightViewport,
+      jsViewport: jsInfo,
+      rawScreenshotDims,
+      rescaledScreenshotDims: {
+        width: Math.round(rawScreenshotDims.width / jsInfo.devicePixelRatio),
+        height: Math.round(rawScreenshotDims.height / jsInfo.devicePixelRatio),
+      },
+    });
+  } catch (err) {
+    handleAgentError(err, res, 'viewport_info_failed');
   }
 });
 
