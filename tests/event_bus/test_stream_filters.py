@@ -8,6 +8,7 @@ import json
 
 from unity.events.stream_filters import (
     is_streaming_noise,
+    is_suppressed_manager_tree,
     is_synthetic_status_check,
     is_placeholder_message,
     is_runtime_context_header,
@@ -213,19 +214,30 @@ def test_assistant_text_response_passes():
 # ============================================================================
 
 
-def test_manager_method_never_filtered():
-    """ManagerMethod events must NEVER be filtered regardless of payload."""
+def test_non_suppressed_manager_method_never_filtered():
+    """ManagerMethod events for non-suppressed managers must NEVER be filtered."""
     payloads = [
         {
+            "manager": "CodeActActor",
             "message": {
                 "role": "assistant",
                 "tool_calls": [{"function": {"name": "check_status_fake"}}],
             },
         },
-        {"message": {"role": "tool", "name": "check_status_fake", "content": "{}"}},
-        {"message": {"role": "system", "_runtimeContext": True}},
-        {"message": {"role": "system", "_visibility_guidance": True}},
         {
+            "manager": "ContactManager",
+            "message": {"role": "tool", "name": "check_status_fake", "content": "{}"},
+        },
+        {
+            "manager": "KnowledgeManager",
+            "message": {"role": "system", "_runtimeContext": True},
+        },
+        {
+            "manager": "WebSearcher",
+            "message": {"role": "system", "_visibility_guidance": True},
+        },
+        {
+            "manager": "TaskScheduler",
             "message": {
                 "role": "tool",
                 "content": json.dumps({"_placeholder": "pending"}),
@@ -236,23 +248,22 @@ def test_manager_method_never_filtered():
     for payload in payloads:
         assert (
             is_streaming_noise("ManagerMethod", payload) is False
-        ), f"ManagerMethod must never be filtered, but was for payload={payload}"
+        ), f"Non-suppressed ManagerMethod must not be filtered: {payload}"
 
 
-def test_hierarchy_safe_all_filtered_types_are_toolloop():
-    """Every individual rule only matches dict messages, and the top-level
-    predicate only applies to ToolLoop events.  This test verifies the
-    invariant programmatically for all registered rules."""
+def test_toolloop_noise_only_applies_to_toolloop_type():
+    """Per-message noise rules (check_status, placeholder, etc.) only apply
+    to ToolLoop events.  Non-ToolLoop/non-suppressed events always pass."""
     noise_msg = {
         "role": "assistant",
         "content": None,
         "tool_calls": [{"function": {"name": "check_status_x"}}],
     }
     assert is_streaming_noise("ToolLoop", {"message": noise_msg}) is True
-    for event_type in ("ManagerMethod", "Message", "Comms", "LLM", "DesktopPrimitive"):
+    for event_type in ("Message", "Comms", "LLM", "DesktopPrimitive"):
         assert (
             is_streaming_noise(event_type, {"message": noise_msg}) is False
-        ), f"Only ToolLoop events should be filtered, but {event_type} was filtered"
+        ), f"Per-message noise rules should not apply to {event_type}"
 
 
 # ============================================================================
@@ -292,3 +303,116 @@ def test_check_status_mixed_tool_calls():
     }
     assert is_synthetic_status_check(msg) is True
     assert is_streaming_noise("ToolLoop", {"message": msg}) is True
+
+
+# ============================================================================
+#  Disjoint tree suppression (MemoryManager)
+# ============================================================================
+
+
+def test_memory_manager_method_incoming_filtered():
+    """ManagerMethod with manager=MemoryManager is suppressed."""
+    payload = {
+        "manager": "MemoryManager",
+        "method": "process_chunk",
+        "phase": "incoming",
+        "hierarchy": ["MemoryManager.process_chunk(a1b2)"],
+    }
+    assert is_suppressed_manager_tree("ManagerMethod", payload) is True
+    assert is_streaming_noise("ManagerMethod", payload) is True
+
+
+def test_memory_manager_method_outgoing_filtered():
+    payload = {
+        "manager": "MemoryManager",
+        "method": "update_contacts",
+        "phase": "outgoing",
+        "answer": "Updated 3 contacts.",
+        "hierarchy": ["MemoryManager.update_contacts(c3d4)"],
+    }
+    assert is_suppressed_manager_tree("ManagerMethod", payload) is True
+    assert is_streaming_noise("ManagerMethod", payload) is True
+
+
+def test_memory_manager_toolloop_root_filtered():
+    """ToolLoop event whose hierarchy root is MemoryManager is suppressed."""
+    payload = {
+        "message": {"role": "assistant", "content": "Analyzing transcript..."},
+        "method": "MemoryManager.process_chunk",
+        "hierarchy": ["MemoryManager.process_chunk(a1b2)"],
+    }
+    assert is_suppressed_manager_tree("ToolLoop", payload) is True
+    assert is_streaming_noise("ToolLoop", payload) is True
+
+
+def test_memory_manager_nested_toolloop_filtered():
+    """ToolLoop from an inner manager called BY MemoryManager is also suppressed."""
+    payload = {
+        "message": {"role": "tool", "name": "filter_contacts", "content": "[]"},
+        "method": "ContactManager.ask",
+        "hierarchy": [
+            "MemoryManager.process_chunk(a1b2)",
+            "ContactManager.ask(e5f6)",
+        ],
+    }
+    assert is_suppressed_manager_tree("ToolLoop", payload) is True
+    assert is_streaming_noise("ToolLoop", payload) is True
+
+
+def test_memory_manager_nested_manager_method_filtered():
+    """ManagerMethod from an inner manager called BY MemoryManager is also
+    suppressed — the hierarchy root belongs to a suppressed manager."""
+    payload = {
+        "manager": "ContactManager",
+        "method": "ask",
+        "phase": "incoming",
+        "hierarchy": [
+            "MemoryManager.process_chunk(a1b2)",
+            "ContactManager.ask(e5f6)",
+        ],
+    }
+    assert is_suppressed_manager_tree("ManagerMethod", payload) is True
+    assert is_streaming_noise("ManagerMethod", payload) is True
+
+
+def test_non_memory_manager_not_suppressed():
+    """Other managers' ManagerMethod events are NOT suppressed."""
+    for manager in (
+        "CodeActActor",
+        "ContactManager",
+        "KnowledgeManager",
+        "TaskScheduler",
+        "WebSearcher",
+        "SecretManager",
+        "TranscriptManager",
+        "FileManager",
+    ):
+        payload = {
+            "manager": manager,
+            "method": "ask",
+            "phase": "incoming",
+            "hierarchy": [f"{manager}.ask(a1b2)"],
+        }
+        assert is_suppressed_manager_tree("ManagerMethod", payload) is False
+        assert is_streaming_noise("ManagerMethod", payload) is False
+
+
+def test_non_memory_manager_toolloop_not_suppressed():
+    """ToolLoop events rooted in non-suppressed managers pass through."""
+    payload = {
+        "message": {"role": "assistant", "content": "Searching..."},
+        "method": "WebSearcher.ask",
+        "hierarchy": [
+            "CodeActActor.act(abdf)",
+            "execute_code(d67e)",
+            "WebSearcher.ask(a0ce)",
+        ],
+    }
+    assert is_suppressed_manager_tree("ToolLoop", payload) is False
+
+
+def test_suppressed_tree_toolloop_empty_hierarchy_passes():
+    """ToolLoop with empty or missing hierarchy is not suppressed."""
+    assert is_suppressed_manager_tree("ToolLoop", {"hierarchy": []}) is False
+    assert is_suppressed_manager_tree("ToolLoop", {}) is False
+    assert is_suppressed_manager_tree("ToolLoop", {"hierarchy": None}) is False
