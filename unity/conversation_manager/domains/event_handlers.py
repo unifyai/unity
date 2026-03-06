@@ -1201,8 +1201,6 @@ async def _(
     if desktop_url:
         SESSION_DETAILS.assistant.desktop_url = desktop_url
 
-    _vm_ready.set()
-
     liveview_url = f"{desktop_url.rstrip('/')}/desktop/custom.html"
     await asyncio.to_thread(
         assistant_jobs.update_liveview_url,
@@ -1210,6 +1208,8 @@ async def _(
         cm.user_id,
         liveview_url,
     )
+
+    _vm_ready.set()
 
     asyncio.ensure_future(_ensure_desktop_session(cm))
     await managers_utils._start_file_sync()
