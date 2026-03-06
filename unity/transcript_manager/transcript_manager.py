@@ -32,7 +32,7 @@ from ..events.manager_event_logging import (
 )
 from .prompt_builders import build_ask_prompt
 from .base import BaseTranscriptManager
-from ..common.tool_spec import read_only, manager_tool
+from ..common.tool_spec import read_only, manager_tool, ToolSpec
 from ..settings import SETTINGS
 from ..common.read_only_ask_guard import ReadOnlyAskGuardHandle
 from .storage import (
@@ -135,13 +135,22 @@ class TranscriptManager(BaseTranscriptManager):
 
         ask_tools = {
             **methods_to_tool_dict(
-                self._contact_manager.ask,
+                ToolSpec(
+                    fn=self._contact_manager.ask,
+                    display_label="Looking up contact details",
+                ),
                 include_class_name=True,
             ),
             **methods_to_tool_dict(
-                self._filter_messages,
-                self._search_messages,
-                self._reduce,
+                ToolSpec(
+                    fn=self._filter_messages,
+                    display_label="Filtering conversation messages",
+                ),
+                ToolSpec(
+                    fn=self._search_messages,
+                    display_label="Searching conversation messages",
+                ),
+                ToolSpec(fn=self._reduce, display_label="Summarising conversations"),
                 include_class_name=False,
             ),
         }
@@ -153,10 +162,19 @@ class TranscriptManager(BaseTranscriptManager):
         _ensure_image_manager(self)
         ask_tools.update(
             methods_to_tool_dict(
-                self._get_images_for_message,
-                self._ask_image,
-                self._attach_image_to_context,
-                self._attach_message_images_to_context,
+                ToolSpec(
+                    fn=self._get_images_for_message,
+                    display_label="Retrieving message images",
+                ),
+                ToolSpec(fn=self._ask_image, display_label="Analysing an image"),
+                ToolSpec(
+                    fn=self._attach_image_to_context,
+                    display_label="Attaching image to context",
+                ),
+                ToolSpec(
+                    fn=self._attach_message_images_to_context,
+                    display_label="Attaching message images",
+                ),
                 include_class_name=False,
             ),
         )

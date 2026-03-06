@@ -33,7 +33,7 @@ from .prompt_builders import (
     build_ask_prompt,
     build_refactor_prompt,
 )
-from ..common.tool_spec import read_only, manager_tool
+from ..common.tool_spec import read_only, manager_tool, ToolSpec
 from ..settings import SETTINGS
 from ..common.read_only_ask_guard import ReadOnlyAskGuardHandle
 from ..common.context_registry import ContextRegistry, TableContext
@@ -118,32 +118,47 @@ class KnowledgeManager(BaseKnowledgeManager):
         # Allow ingestion/deprecation only within update/refactor flows
         refactor_tools = methods_to_tool_dict(
             # Ask
-            self.ask,
+            ToolSpec(fn=self.ask, display_label="Querying notes"),
             # Tables
-            self._create_table,
-            self._rename_table,
-            self._delete_tables,
+            ToolSpec(fn=self._create_table, display_label="Creating a new notes table"),
+            ToolSpec(fn=self._rename_table, display_label="Renaming a notes table"),
+            ToolSpec(fn=self._delete_tables, display_label="Deleting notes tables"),
             # Columns
-            self._rename_column,
-            self._copy_column,
-            self._move_column,
-            self._delete_column,
-            self._create_empty_column,
-            self._create_derived_column,
-            self._transform_column,
-            self._vectorize_column,
+            ToolSpec(fn=self._rename_column, display_label="Renaming a column"),
+            ToolSpec(fn=self._copy_column, display_label="Copying a column"),
+            ToolSpec(fn=self._move_column, display_label="Moving a column"),
+            ToolSpec(fn=self._delete_column, display_label="Deleting a column"),
+            ToolSpec(fn=self._create_empty_column, display_label="Adding a new column"),
+            ToolSpec(
+                fn=self._create_derived_column,
+                display_label="Creating a derived column",
+            ),
+            ToolSpec(
+                fn=self._transform_column,
+                display_label="Transforming column values",
+            ),
+            ToolSpec(
+                fn=self._vectorize_column,
+                display_label="Indexing a column for search",
+            ),
             # Rows
-            self._delete_rows,
-            self._update_rows,
+            ToolSpec(fn=self._delete_rows, display_label="Deleting rows"),
+            ToolSpec(fn=self._update_rows, display_label="Updating rows"),
             include_class_name=False,
         )
         self.add_tools("refactor", refactor_tools)
 
         multi_table_ask_tools = methods_to_tool_dict(
-            self._filter_join,
-            self._search_join,
-            self._filter_multi_join,
-            self._search_multi_join,
+            ToolSpec(fn=self._filter_join, display_label="Cross-referencing notes"),
+            ToolSpec(fn=self._search_join, display_label="Searching across notes"),
+            ToolSpec(
+                fn=self._filter_multi_join,
+                display_label="Cross-referencing multiple note tables",
+            ),
+            ToolSpec(
+                fn=self._search_multi_join,
+                display_label="Searching across multiple note tables",
+            ),
             include_class_name=False,
         )
         self.add_tools("ask.multi_table", multi_table_ask_tools)
@@ -151,10 +166,13 @@ class KnowledgeManager(BaseKnowledgeManager):
         # We decide in `ask` method whether to include the multi-table tools or not
         ask_tools = {
             **methods_to_tool_dict(
-                self._tables_overview,
-                self._filter,
-                self._search,
-                self._reduce,
+                ToolSpec(
+                    fn=self._tables_overview,
+                    display_label="Reviewing notes structure",
+                ),
+                ToolSpec(fn=self._filter, display_label="Filtering notes"),
+                ToolSpec(fn=self._search, display_label="Searching notes"),
+                ToolSpec(fn=self._reduce, display_label="Summarising notes"),
                 include_class_name=False,
             ),
         }
@@ -163,7 +181,7 @@ class KnowledgeManager(BaseKnowledgeManager):
         update_tools = {
             **refactor_tools,
             **methods_to_tool_dict(
-                self._add_rows,
+                ToolSpec(fn=self._add_rows, display_label="Adding new entries"),
                 include_class_name=False,
             ),
         }

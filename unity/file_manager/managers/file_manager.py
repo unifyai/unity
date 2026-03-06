@@ -9,7 +9,7 @@ logger = logging.getLogger(__name__)
 
 import unify
 
-from unity.common.tool_spec import manager_tool, read_only
+from unity.common.tool_spec import manager_tool, read_only, ToolSpec
 from unity.file_manager.base import BaseFileManager
 from unity.file_manager.file_parsers import FileParser
 from unity.file_manager.types.file import FileRecord
@@ -207,21 +207,25 @@ class FileManager(BaseFileManager):
         # Public tool dictionaries, mirroring other managers
         # Multi-table tools (joins across per-file tables)
         ask_multi_table_tools: Dict[str, Callable] = methods_to_tool_dict(
-            self.filter_join,
-            self.search_join,
-            self.filter_multi_join,
-            self.search_multi_join,
+            ToolSpec(fn=self.filter_join, display_label="Cross-referencing file data"),
+            ToolSpec(fn=self.search_join, display_label="Searching across files"),
+            ToolSpec(
+                fn=self.filter_multi_join,
+                display_label="Cross-referencing multiple files",
+            ),
+            ToolSpec(
+                fn=self.search_multi_join,
+                display_label="Searching across multiple files",
+            ),
             include_class_name=False,
         )
         ask_about_file_tools: Dict[str, Callable] = methods_to_tool_dict(
-            # Read-only helpers (no ingest_files - this is read-only)
-            self.describe,
-            self.list_columns,
-            self.filter_files,
-            self.search_files,
-            self.reduce,
-            # Visualization
-            self.visualize,
+            ToolSpec(fn=self.describe, display_label="Describing file structure"),
+            ToolSpec(fn=self.list_columns, display_label="Listing file columns"),
+            ToolSpec(fn=self.filter_files, display_label="Filtering file data"),
+            ToolSpec(fn=self.search_files, display_label="Searching file contents"),
+            ToolSpec(fn=self.reduce, display_label="Summarising file data"),
+            ToolSpec(fn=self.visualize, display_label="Creating a visualisation"),
             include_class_name=False,
         )
         self.add_tools("ask_about_file", ask_about_file_tools)

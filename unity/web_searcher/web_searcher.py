@@ -15,6 +15,7 @@ from unity.common.llm_helpers import (
     methods_to_tool_dict,
     make_request_clarification_tool,
 )
+from unity.common.tool_spec import ToolSpec
 from unity.events.manager_event_logging import log_manager_call
 from unity.events.event_bus import EVENT_BUS, Event
 from unity.web_searcher import prompt_builders
@@ -35,10 +36,10 @@ class WebSearcher(BaseWebSearcher):
 
         # Build the tools mapping once; copy when used
         ask_tools: Dict[str, Any] = methods_to_tool_dict(
-            self._search,
-            self._extract,
-            self._crawl,
-            self._map,
+            ToolSpec(fn=self._search, display_label="Searching the web"),
+            ToolSpec(fn=self._extract, display_label="Extracting page content"),
+            ToolSpec(fn=self._crawl, display_label="Crawling a website"),
+            ToolSpec(fn=self._map, display_label="Mapping website structure"),
             include_class_name=False,
         )
         self.add_tools("ask", ask_tools)
