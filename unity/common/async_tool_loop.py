@@ -297,6 +297,7 @@ class AsyncToolLoopHandle(SteerableToolHandle):
 
         # Context compression state
         self._raw_message_archives: list[list[dict]] = []
+        self._compressed_renders: list[str] = []
         self._compression_count: int = 0
         self._loop_config: Optional[dict] = None
 
@@ -829,14 +830,18 @@ class AsyncToolLoopHandle(SteerableToolHandle):
 
         self._raw_message_archives.append(conversation_messages)
 
-        # 2. Compress
+        # 2. Compress with index offset so labels continue from prior passes
+        index_offset = sum(len(a) for a in self._raw_message_archives[:-1])
         compressed = await compress_messages(
             conversation_messages,
             self._client.endpoint,
         )
-        rendered = render_compressed_context(compressed)
+        rendered = render_compressed_context(compressed, index_offset=index_offset)
+        self._compressed_renders.append(rendered)
 
-        # 3. Build unpack_messages closure over the latest archive
+        combined = "## Compressed Prior Context\n" + "\n".join(self._compressed_renders)
+
+        # 3. Build unpack_messages closure over all archives (cumulative indexing)
         archive_ref = self._raw_message_archives
 
         def unpack_messages(index: int, n: int = 1) -> str:
@@ -846,27 +851,37 @@ class AsyncToolLoopHandle(SteerableToolHandle):
             context summary.  Returns up to ``n`` consecutive original
             messages as a JSON array.
             """
-            latest = archive_ref[-1]
-            if index < 0 or index >= len(latest):
+            flat = [msg for archive in archive_ref for msg in archive]
+            if index < 0 or index >= len(flat):
                 return json.dumps(
-                    {"error": f"Index {index} out of range (0-{len(latest) - 1})"},
+                    {"error": f"Index {index} out of range (0-{len(flat) - 1})"},
                 )
-            return json.dumps(latest[index : index + n], default=str)
+            end = min(index + n, len(flat))
+            return json.dumps(flat[index:end], default=str)
 
-        # 4. Reuse existing client -- carry over all system message blocks
-        #    and append a new block with the compressed context.
-        system_msgs.append(
-            {
-                "role": "system",
-                "content": (
-                    f"{rendered}\n\n"
-                    "When you need details from a compressed message, call "
-                    "`unpack_messages(index)` with its `[N]` index to "
-                    "retrieve the full original content. Pass `n` to "
-                    "retrieve a range of consecutive messages."
-                ),
-            },
+        # 4. Reuse existing client -- carry over all system message blocks.
+        #    Replace existing compressed-context message if present,
+        #    otherwise append a new one.
+        compressed_sys_msg = {
+            "role": "system",
+            "_compressed_message": True,
+            "content": (
+                f"{combined}\n\n"
+                "When you need details from a compressed message, call "
+                "`unpack_messages(index)` with its `[N]` index to "
+                "retrieve the full original content. Pass `n` to "
+                "retrieve a range of consecutive messages."
+            ),
+        }
+
+        existing_idx = next(
+            (i for i, m in enumerate(system_msgs) if m.get("_compressed_message")),
+            None,
         )
+        if existing_idx is not None:
+            system_msgs[existing_idx] = compressed_sys_msg
+        else:
+            system_msgs.append(compressed_sys_msg)
 
         self._client._messages = system_msgs
         self._client._system_message = None
@@ -884,7 +899,7 @@ class AsyncToolLoopHandle(SteerableToolHandle):
 
         # All keys in _loop_config map directly to async_tool_loop_inner
         # kwargs except "parent_lineage" (used to compute lineage above)
-        # and "tools" (overridden with unpack_message added).
+        # and "tools" (overridden with unpack_messages added).
         inner_kwargs = {
             k: v for k, v in cfg.items() if k not in ("parent_lineage", "tools")
         }
@@ -920,7 +935,7 @@ class AsyncToolLoopHandle(SteerableToolHandle):
         LOGGER.info(
             f"{ICONS.get('completed', '✓')} [{self._log_label}] "
             f"Context compressed (pass #{self._compression_count}), "
-            f"Compressed content: {rendered}\n"
+            f"Compressed content: {combined}\n"
             f"archived {len(conversation_messages)} messages, new loop started.",
         )
 
