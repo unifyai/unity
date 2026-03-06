@@ -20,6 +20,7 @@ class ToolSpec:
     max_total_calls: Optional[int] = None
     read_only: Optional[bool] = None
     manager_tool: bool = False
+    display_label: Optional[str] = None
 
     # Let a ToolSpec be invoked like the underlying callable (nice for tests)
     def __call__(self, *a, **kw):  # pragma: no cover
@@ -33,6 +34,20 @@ def normalise_tools(
     out: Dict[str, ToolSpec] = {}
     for n, v in raw.items():
         if isinstance(v, ToolSpec):
+            if v.read_only is None or not v.manager_tool:
+                fn_ro = getattr(v.fn, "_tool_spec_read_only", None)
+                fn_mt = getattr(v.fn, "_tool_spec_manager_tool", False)
+                if (v.read_only is None and fn_ro is not None) or (
+                    not v.manager_tool and fn_mt
+                ):
+                    v = ToolSpec(
+                        fn=v.fn,
+                        max_concurrent=v.max_concurrent,
+                        max_total_calls=v.max_total_calls,
+                        read_only=v.read_only if v.read_only is not None else fn_ro,
+                        manager_tool=v.manager_tool or fn_mt,
+                        display_label=v.display_label,
+                    )
             out[n] = v
         else:
             out[n] = ToolSpec(
