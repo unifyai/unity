@@ -181,17 +181,20 @@ async def compress_messages(
     return result
 
 
-def render_compressed_context(compressed: CompressedMessages) -> str:
-    """Render compressed messages into a compact indexed format.
+def render_compressed_context(
+    compressed: CompressedMessages,
+    index_offset: int = 0,
+) -> str:
+    """Render compressed messages into compact indexed lines.
 
-    Output format::
+    Returns only the message lines (no header).  The caller is responsible
+    for prepending ``## Compressed Prior Context`` when assembling the
+    final system-message block.
 
-        ## Compressed Prior Context
-        [0] [user]: Find contact John -> phone, email
-        [1] [assistant]: search(name="John")
-        [2] [tool]: error
+    ``index_offset`` shifts every ``[N]`` label so that multiple renders
+    can be concatenated with continuous numbering.
     """
-    lines = ["## Compressed Prior Context"]
+    lines: list[str] = []
     for i, msg in enumerate(compressed.messages):
-        lines.append(f"[{i}] [{msg.role}]: {msg.content}")
+        lines.append(f"[{i + index_offset}] [{msg.role}]: {msg.content}")
     return "\n".join(lines)
