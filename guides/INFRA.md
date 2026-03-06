@@ -342,13 +342,13 @@ The system maintains a demand-aware pool of "warm" containers using three coordi
 All three mechanisms share a single function (`get_target_idle_count` in `adapters/helpers.py`) to determine how many idle jobs should exist:
 
 ```
-target = max(UNITY_MIN_IDLE_JOBS, live_count // UNITY_IDLE_DEMAND_FACTOR)
+target = max(UNITY_MIN_IDLE_JOBS, live_count // UNITY_IDLE_JOB_DEMAND_FACTOR)
 ```
 
 | Env Var | Default | Purpose |
 |---------|---------|---------|
 | `UNITY_MIN_IDLE_JOBS` | `3` | Absolute floor — guarantees this many warm containers regardless of traffic |
-| `UNITY_IDLE_DEMAND_FACTOR` | `5` | Proportional scaling — 1 idle job per N live assistants (e.g., 5 = 20% buffer) |
+| `UNITY_IDLE_JOB_DEMAND_FACTOR` | `5` | Proportional scaling — 1 idle job per N live assistants (e.g., 5 = 20% buffer) |
 
 At small scale the floor dominates (e.g., 10 live assistants → target is 3). At larger scale the proportional buffer takes over (e.g., 100 live assistants with factor 5 → target is 20).
 
