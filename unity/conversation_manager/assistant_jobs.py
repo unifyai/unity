@@ -201,49 +201,45 @@ def update_liveview_url(assistant_id: str, user_id: str, liveview_url: str) -> N
         )
 
 
-def _stop_vm(assistant_id: str, vm_type: str) -> None:
-    """Stop the VM for the given assistant.
+def _release_vm(assistant_id: str) -> None:
+    """Release the pool VM assigned to this assistant back to the pool.
 
-    Called when a job is marked done and the assistant was running on a
-    managed VM (desktop_mode in windows/ubuntu).
-
-    Args:
-        assistant_id: The assistant ID whose VM to stop.
-        vm_type: VM type ("windows" or "ubuntu").
+    The pool release endpoint finds the VM by its ``assistant_id`` label
+    and transitions it from "assigned" back to "available".
     """
     try:
         comms_url = SETTINGS.conversation.COMMS_URL.rstrip("/")
         admin_key = SETTINGS.ORCHESTRA_ADMIN_KEY.get_secret_value()
         if not comms_url or not admin_key:
             LOGGER.debug(
-                f"{ICONS['assistant_jobs']} [assistant_jobs] Skipping VM stop: "
+                f"{ICONS['assistant_jobs']} [assistant_jobs] Skipping VM release: "
                 "COMMS_URL or admin key not configured",
             )
             return
 
         response = requests.post(
-            f"{comms_url}/infra/vm/stop",
-            json={"assistant_id": assistant_id, "vm_type": vm_type},
+            f"{comms_url}/infra/vm/pool/release",
+            json={"assistant_id": assistant_id},
             headers={"Authorization": f"Bearer {admin_key}"},
             timeout=60,
         )
         if response.ok:
             LOGGER.debug(
-                f"{ICONS['assistant_jobs']} [assistant_jobs] {vm_type.capitalize()} VM stopped for assistant "
+                f"{ICONS['assistant_jobs']} [assistant_jobs] Pool VM released for assistant "
                 f"{assistant_id}: {response.json()}",
             )
         else:
             LOGGER.error(
-                f"{ICONS['assistant_jobs']} [assistant_jobs] Failed to stop {vm_type} VM: "
+                f"{ICONS['assistant_jobs']} [assistant_jobs] Failed to release pool VM: "
                 f"{response.status_code} {response.text}",
             )
     except requests.exceptions.Timeout:
         LOGGER.error(
-            f"{ICONS['assistant_jobs']} [assistant_jobs] {vm_type.capitalize()} VM stop request timed out",
+            f"{ICONS['assistant_jobs']} [assistant_jobs] Pool VM release request timed out",
         )
     except Exception as e:
         LOGGER.error(
-            f"{ICONS['assistant_jobs']} [assistant_jobs] Error stopping {vm_type} VM: {e}",
+            f"{ICONS['assistant_jobs']} [assistant_jobs] Error releasing pool VM: {e}",
         )
         traceback.print_exc()
 
@@ -286,7 +282,6 @@ def mark_job_done(job_name: str, inactivity_timeout: float = 0.0):
             f"{total_dur:.1f}s total, {inactivity_timeout:.1f}s idle, {active_dur:.1f}s active",
         )
 
-    # Stop VM if applicable (managed VM, not user's own desktop)
+    # Release pool VM if applicable (managed VM, not user's own desktop)
     if _is_managed_vm():
-        vm_type = SESSION_DETAILS.assistant.desktop_mode
-        _stop_vm(str(SESSION_DETAILS.assistant.agent_id), vm_type)
+        _release_vm(str(SESSION_DETAILS.assistant.agent_id))
