@@ -934,7 +934,6 @@ class AsyncToolLoopHandle(SteerableToolHandle):
         LOGGER.info(
             f"{ICONS.get('completed', '✓')} [{self._log_label}] "
             f"Context compressed (pass #{self._compression_count}), "
-            f"Compressed content: {combined}\n"
             f"archived {len(conversation_messages)} messages, new loop started.",
         )
 

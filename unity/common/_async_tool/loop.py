@@ -2002,7 +2002,7 @@ async def async_tool_loop_inner(
                     # remain visible.
                     visible_base_tools_schema = []
                     _threshold_msg = (
-                        "System: Context window is nearly full. "
+                        "Context window is nearly full. "
                         "You cannot start new tools. Wait for in-flight tools to complete and then call "
                         "`compress_context` to free up context."
                     )
@@ -2019,7 +2019,7 @@ async def async_tool_loop_inner(
                     visible_base_tools_schema = [_compress_schema]
                     tool_choice_mode = "required"
                     _threshold_msg = (
-                        "System: Context window is nearly full. "
+                        "Context window is nearly full. "
                         "You must call `compress_context` now."
                     )
                     if log_steps == "full":
