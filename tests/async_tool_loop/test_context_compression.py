@@ -371,18 +371,10 @@ class TestRenderCompressedContext:
             ],
         )
         rendered = render_compressed_context(compressed)
-        assert "## Compressed Prior Context" in rendered
         assert "[0] [user]: Find John" in rendered
         assert '[1] [assistant]: search(name="John")' in rendered
         assert "[2] [tool]: John,j@test.com,+123" in rendered
         assert "[3] [assistant]: John: j@test.com, +123" in rendered
-
-    def test_includes_header(self):
-        compressed = CompressedMessages(
-            messages=[CompressedMessage(role="user", content="hi")],
-        )
-        rendered = render_compressed_context(compressed)
-        assert rendered.startswith("## Compressed Prior Context")
 
     def test_one_line_per_message(self):
         compressed = CompressedMessages(
@@ -394,4 +386,4 @@ class TestRenderCompressedContext:
         )
         rendered = render_compressed_context(compressed)
         lines = [l for l in rendered.strip().split("\n") if l.strip()]
-        assert len(lines) == 4
+        assert len(lines) == 3
