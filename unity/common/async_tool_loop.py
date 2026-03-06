@@ -1,4 +1,5 @@
 import asyncio
+import copy
 import unillm
 import functools
 import json
@@ -21,6 +22,11 @@ from ._async_tool.loop_config import TOOL_LOOP_LINEAGE, _PENDING_LOOP_SUFFIX
 from ._async_tool.messages import forward_handle_call
 from ._async_tool.loop import async_tool_loop_inner
 from ._async_tool.propagation_mode import ChatContextPropagation
+from ._async_tool.context_compression import (
+    _COMPRESSION_SIGNAL,
+    compress_messages,
+    render_compressed_context,
+)
 from .context_dump import make_messages_safe_for_context_dump
 from typing import Iterable
 
@@ -288,6 +294,12 @@ class AsyncToolLoopHandle(SteerableToolHandle):
         # Event streams for bottom-up signals
         self._clar_q: asyncio.Queue[dict] = asyncio.Queue()
         self._notification_q: asyncio.Queue[dict] = asyncio.Queue()
+
+        # Context compression state
+        self._raw_message_archives: list[list[dict]] = []
+        self._compressed_renders: list[str] = []
+        self._compression_count: int = 0
+        self._loop_config: Optional[dict] = None
 
     # small local helpers to keep user-visible history consistent
     def _append_user_visible_user(
@@ -766,20 +778,164 @@ class AsyncToolLoopHandle(SteerableToolHandle):
         raw JSON string produced by the inner loop is automatically parsed into
         a Pydantic model instance.  Callers receive the typed object directly
         and do not need to call ``model_validate_json`` themselves.
+
+        If the inner loop returns ``_COMPRESSION_SIGNAL``, the handle
+        orchestrates context compression and starts a new loop transparently.
+        This may repeat multiple times; callers always receive the final
+        real result.
         """
         _stopped_notice = "processed stopped early, no result"
-        try:
-            raw = await self._task
-        except asyncio.CancelledError:
-            # When callers cancel the OUTER loop without a delegate, return a stable notice.
-            return _stopped_notice
-
-        if self._response_format is not None and isinstance(raw, str):
+        while True:
             try:
-                return self._response_format.model_validate_json(raw)
-            except Exception:
-                pass
-        return raw
+                raw = await self._task
+            except asyncio.CancelledError:
+                return _stopped_notice
+
+            if raw is _COMPRESSION_SIGNAL:
+                try:
+                    await self._restart_with_compressed_context()
+                except Exception as exc:
+                    LOGGER.error(
+                        f"Context compression failed: {type(exc).__name__}: {exc}",
+                    )
+                    return _stopped_notice
+                continue
+
+            if self._response_format is not None and isinstance(raw, str):
+                try:
+                    return self._response_format.model_validate_json(raw)
+                except Exception:
+                    pass
+            return raw
+
+    async def _restart_with_compressed_context(self) -> None:
+        """Archive messages, compress them, and start a new loop.
+
+        Swaps ``_task`` in-place so that all steering methods automatically target the new loop.
+        ``_queue`` (interject queue) and ``_pause_event`` are reused so pending interjections carry over and pause state persists.
+        """
+        cfg = self._loop_config
+        if cfg is None:
+            raise RuntimeError(
+                "Cannot compress: loop config was not stored on the handle.",
+            )
+
+        # 1. Separate system messages (preserved verbatim) from conversation
+        #    messages (compressed). System messages carry special attributes
+        #    like _runtime_context that must not be touched by the compressor.
+        all_messages = copy.deepcopy(self._client.messages)
+        system_msgs = [m for m in all_messages if m.get("role") == "system"]
+        conversation_messages = [m for m in all_messages if m.get("role") != "system"]
+
+        self._raw_message_archives.append(conversation_messages)
+
+        # 2. Compress with index offset so labels continue from prior passes
+        index_offset = sum(len(a) for a in self._raw_message_archives[:-1])
+        compressed = await compress_messages(
+            conversation_messages,
+            self._client.endpoint,
+        )
+        rendered = render_compressed_context(compressed, index_offset=index_offset)
+        self._compressed_renders.append(rendered)
+
+        combined = "## Compressed Prior Context\n" + "\n".join(self._compressed_renders)
+
+        # 3. Build unpack_messages closure over all archives (cumulative indexing)
+        archive_ref = self._raw_message_archives
+
+        def unpack_messages(index: int, n: int = 1) -> str:
+            """Retrieve one or more uncompressed messages by index.
+
+            ``index`` corresponds to the ``[N]`` label in the compressed
+            context summary.  Returns up to ``n`` consecutive original
+            messages as a JSON array.
+            """
+            flat = [msg for archive in archive_ref for msg in archive]
+            if index < 0 or index >= len(flat):
+                return json.dumps(
+                    {"error": f"Index {index} out of range (0-{len(flat) - 1})"},
+                )
+            end = min(index + n, len(flat))
+            return json.dumps(flat[index:end], default=str)
+
+        # 4. Reuse existing client -- carry over all system message blocks.
+        #    Replace existing compressed-context message if present,
+        #    otherwise append a new one.
+        compressed_sys_msg = {
+            "role": "system",
+            "_compressed_message": True,
+            "content": (
+                f"{combined}\n\n"
+                "When you need details from a compressed message, call "
+                "`unpack_messages(index)` with its `[N]` index to "
+                "retrieve the full original content. Pass `n` to "
+                "retrieve a range of consecutive messages."
+            ),
+        }
+
+        existing_idx = next(
+            (i for i, m in enumerate(system_msgs) if m.get("_compressed_message")),
+            None,
+        )
+        if existing_idx is not None:
+            system_msgs[existing_idx] = compressed_sys_msg
+        else:
+            system_msgs.append(compressed_sys_msg)
+
+        self._client._messages = system_msgs
+        self._client._system_message = None
+
+        # 5. Prepare tools: original tools + unpack_messages
+        tools = dict(cfg["tools"])
+        tools["unpack_messages"] = unpack_messages
+
+        # 6. Reuse all steering events so that any stop/cancel/pause issued
+        #    during the compression window carries over to the new loop.
+        outer_handle_container: list = [None]
+
+        _parent = cfg["parent_lineage"] or TOOL_LOOP_LINEAGE.get([])
+        _lineage = [*_parent, cfg.get("loop_id", "compressed")]
+
+        # All keys in _loop_config map directly to async_tool_loop_inner
+        # kwargs except "parent_lineage" (used to compute lineage above)
+        # and "tools" (overridden with unpack_messages added).
+        inner_kwargs = {
+            k: v for k, v in cfg.items() if k not in ("parent_lineage", "tools")
+        }
+
+        async def _loop_wrapper():
+            return await async_tool_loop_inner(
+                self._client,
+                "Context was compressed. Continue from where you left off.",
+                tools,
+                lineage=_lineage,
+                interject_queue=self._queue,
+                cancel_event=self._cancel_event,
+                stop_event=self._stop_event,
+                pause_event=self._pause_event,
+                outer_handle_container=outer_handle_container,
+                **inner_kwargs,
+            )
+
+        new_task = asyncio.create_task(_loop_wrapper(), name="ToolUseLoop")
+
+        with suppress(Exception):
+            setattr(new_task, "task_info", {})
+            setattr(new_task, "clarification_channels", {})
+            setattr(new_task, "get_ask_tools", lambda: {})
+            setattr(new_task, "get_completed_tool_metadata", lambda: {})
+
+        # 7. Swap task reference (client and events are reused in-place)
+        self._task = new_task
+        self._compression_count += 1
+
+        outer_handle_container[0] = self
+
+        LOGGER.info(
+            f"{ICONS.get('completed', '✓')} [{self._log_label}] "
+            f"Context compressed (pass #{self._compression_count}), "
+            f"archived {len(conversation_messages)} messages, new loop started.",
+        )
 
     def get_history(self) -> list[dict]:
         """Returns the full LLM conversation history including tool calls and reasoning.
@@ -1035,6 +1191,34 @@ def start_async_tool_loop(
         initial_user_message=init_content,
         response_format=response_format,
     )
+
+    # Store loop config so _restart_with_compressed_context can re-create
+    # the loop with identical settings after compression.
+    handle._loop_config = {
+        "loop_id": loop_id,
+        "parent_lineage": list(_parent),
+        "tools": dict(tools),
+        "max_consecutive_failures": max_consecutive_failures,
+        "prune_tool_duplicates": prune_tool_duplicates,
+        "interrupt_llm_with_interjections": interrupt_llm_with_interjections,
+        "propagate_chat_context": propagate_chat_context,
+        "parent_chat_context": parent_chat_context,
+        "caller_description": caller_description,
+        "log_steps": log_steps,
+        "max_steps": max_steps,
+        "timeout": timeout,
+        "raise_on_limit": raise_on_limit,
+        "include_class_in_dynamic_tool_names": include_class_in_dynamic_tool_names,
+        "tool_policy": tool_policy,
+        "preprocess_msgs": preprocess_msgs,
+        "response_format": response_format,
+        "max_parallel_tool_calls": max_parallel_tool_calls,
+        "persist": persist,
+        "multi_handle_coordinator": multi_handle_coordinator,
+        "prompt_caching": prompt_caching,
+        "time_awareness": time_awareness,
+        "extra_ask_tools": extra_ask_tools,
+    }
 
     # Attach lineage to handle for optional external inspection
     with suppress(Exception):
