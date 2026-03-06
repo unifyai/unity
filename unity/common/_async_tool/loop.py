@@ -2001,33 +2001,34 @@ async def async_tool_loop_inner(
                     # dynamic steering tools (check_status_*, stop_*, etc.)
                     # remain visible.
                     visible_base_tools_schema = []
+                    _threshold_msg = (
+                        "System: Context window is nearly full. "
+                        "You cannot start new tools. Wait for in-flight tools to complete and then call "
+                        "`compress_context` to free up context."
+                    )
+                    if log_steps == "full":
+                        logger.info(
+                            f"Context over threshold (pending in-flight tools): {_threshold_msg}",
+                            prefix=ICONS["summarize"],
+                        )
                     await _msg_dispatcher.append_msgs(
-                        [
-                            {
-                                "role": "user",
-                                "content": (
-                                    "System: Context window is nearly full. "
-                                    "You cannot start new tools. Finish or "
-                                    "stop your in-flight tools, then call "
-                                    "`compress_context`."
-                                ),
-                            },
-                        ],
+                        [{"role": "user", "content": _threshold_msg}],
                     )
                 else:
                     # Over threshold, no pending → compress_context only
                     visible_base_tools_schema = [_compress_schema]
                     tool_choice_mode = "required"
+                    _threshold_msg = (
+                        "System: Context window is nearly full. "
+                        "You must call `compress_context` now."
+                    )
+                    if log_steps == "full":
+                        logger.info(
+                            f"Context over threshold (no pending): {_threshold_msg}",
+                            prefix=ICONS["summarize"],
+                        )
                     await _msg_dispatcher.append_msgs(
-                        [
-                            {
-                                "role": "user",
-                                "content": (
-                                    "System: Context window is nearly full. "
-                                    "You must call `compress_context` now."
-                                ),
-                            },
-                        ],
+                        [{"role": "user", "content": _threshold_msg}],
                     )
             else:
                 visible_base_tools_schema = [
