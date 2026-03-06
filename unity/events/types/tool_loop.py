@@ -31,3 +31,7 @@ class ToolLoopPayload(BaseModel):
         description="Human-readable hierarchy label (deprecated: derivable from hierarchy)",
     )
     origin: Optional[str] = Field(default=None, description="Origin identifier")
+    tool_aliases: Optional[Dict[str, str]] = Field(
+        default=None,
+        description="Sparse mapping of tool_name -> human-readable label for tool calls in this event only",
+    )
