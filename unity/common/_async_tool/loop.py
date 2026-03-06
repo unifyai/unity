@@ -663,6 +663,13 @@ async def async_tool_loop_inner(
         f"[setup +{_setup_elapsed()}] ToolsData ready ({len(tools_data.normalized)} tools)",
     )
 
+    _alias_lookup = {
+        name: spec.display_label
+        for name, spec in tools_data.normalized.items()
+        if spec.display_label
+    }
+    cfg.tool_alias_lookup = _alias_lookup or None
+
     consecutive_failures = _LoopToolFailureTracker(max_consecutive_failures)
     assistant_meta: Dict[int, Dict[str, Any]] = {}
     step_index: int = 0  # per assistant turn

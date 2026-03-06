@@ -53,6 +53,7 @@ class LoopConfig:
         self._label = (
             "->".join(self._lineage) if self._lineage else f"{self._loop_id}({_suffix})"
         )
+        self._tool_alias_lookup: dict[str, str] | None = None
 
     @property
     def loop_id(self):
@@ -65,3 +66,11 @@ class LoopConfig:
     @property
     def label(self):
         return self._label
+
+    @property
+    def tool_alias_lookup(self) -> dict[str, str] | None:
+        return self._tool_alias_lookup
+
+    @tool_alias_lookup.setter
+    def tool_alias_lookup(self, value: dict[str, str] | None):
+        self._tool_alias_lookup = value
