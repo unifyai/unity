@@ -1198,10 +1198,10 @@ async def _(
         f"VM ready: {event.vm_type} at {desktop_url}",
     )
 
-    _vm_ready.set()
-
     if desktop_url:
         SESSION_DETAILS.assistant.desktop_url = desktop_url
+
+    _vm_ready.set()
 
     liveview_url = f"{desktop_url.rstrip('/')}/desktop/custom.html"
     await asyncio.to_thread(
