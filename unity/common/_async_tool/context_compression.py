@@ -128,15 +128,22 @@ def _serialize_messages_for_prompt(messages: list[dict]) -> str:
             tc_strs: list[str] = []
             for tc in tool_calls:
                 fn = tc.get("function", {})
-                tc_strs.append(f"{fn.get('name', '?')}({fn.get('arguments', '')})")
+                name = fn.get("name", "?")
+                args = fn.get("arguments", "")
+                short_id = tc.get("id", "")[-6:]
+                if short_id:
+                    tc_strs.append(f"{name}[{short_id}]({args})")
+                else:
+                    tc_strs.append(f"{name}({args})")
             parts.append("[tool_calls: " + ", ".join(tc_strs) + "]")
 
         extra = ""
         if "tool_call_id" in msg:
-            extra = f" (tool_call_id={msg['tool_call_id']})"
+            short_id = msg["tool_call_id"][-6:]
+            extra = f":{short_id}" if short_id else ""
 
         lines.append(
-            f"[{i}] [{role}]{extra}: {' | '.join(parts) if parts else '(empty)'}",
+            f"[{i}] [{role}{extra}]: {' | '.join(parts) if parts else '(empty)'}",
         )
 
     return "\n".join(lines)
