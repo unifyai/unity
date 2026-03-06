@@ -326,7 +326,6 @@ class CommsManager:
                     "voice_provider": event["voice_provider"],
                     "voice_id": event["voice_id"],
                     "desktop_mode": event.get("desktop_mode", "ubuntu"),
-                    "desktop_url": event.get("desktop_url"),
                     "user_desktop_mode": event.get("user_desktop_mode"),
                     "user_desktop_filesys_sync": event.get(
                         "user_desktop_filesys_sync",
