@@ -7,7 +7,7 @@ from .prompt_builders import build_ask_prompt, build_update_prompt
 from ..knowledge_manager.types import ColumnType
 from ..common.embed_utils import ensure_vector_column
 from ..common.tool_outcome import ToolOutcome
-from ..common.tool_spec import read_only, manager_tool
+from ..common.tool_spec import read_only, manager_tool, ToolSpec
 from ..common.metrics_utils import reduce_logs
 
 import unify
@@ -132,10 +132,10 @@ class ContactManager(BaseContactManager):
         # ask-side tools are read-only, so they never change
         ask_tools: Dict[str, Callable] = {
             **methods_to_tool_dict(
-                self._list_columns,
-                self.filter_contacts,
-                self._search_contacts,
-                self._reduce,
+                ToolSpec(fn=self._list_columns, display_label="Listing contact fields"),
+                ToolSpec(fn=self.filter_contacts, display_label="Filtering contacts"),
+                ToolSpec(fn=self._search_contacts, display_label="Searching contacts"),
+                ToolSpec(fn=self._reduce, display_label="Summarising contact data"),
                 include_class_name=False,
             ),
         }
@@ -144,14 +144,29 @@ class ContactManager(BaseContactManager):
         # update-side tools can read and write
         update_tools: Dict[str, Callable] = {
             **methods_to_tool_dict(
-                self.ask,
-                self._create_contact,
-                self.update_contact,
-                self._delete_contact,
-                self._create_custom_column,
-                self._delete_custom_column,
-                self._merge_contacts,
-                self._move_to_blacklist,
+                ToolSpec(fn=self.ask, display_label="Querying contact book"),
+                ToolSpec(
+                    fn=self._create_contact,
+                    display_label="Creating a new contact",
+                ),
+                ToolSpec(fn=self.update_contact, display_label="Updating a contact"),
+                ToolSpec(fn=self._delete_contact, display_label="Deleting a contact"),
+                ToolSpec(
+                    fn=self._create_custom_column,
+                    display_label="Adding a custom contact field",
+                ),
+                ToolSpec(
+                    fn=self._delete_custom_column,
+                    display_label="Removing a custom contact field",
+                ),
+                ToolSpec(
+                    fn=self._merge_contacts,
+                    display_label="Merging duplicate contacts",
+                ),
+                ToolSpec(
+                    fn=self._move_to_blacklist,
+                    display_label="Blocking a contact",
+                ),
                 include_class_name=False,
             ),
         }

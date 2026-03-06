@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from ..common.llm_client import new_llm_client
 from ..manager_registry import ManagerRegistry
 from ..common.llm_helpers import methods_to_tool_dict
+from ..common.tool_spec import ToolSpec
 from ..common.async_tool_loop import start_async_tool_loop
 from . import prompt_builders as pb
 from .base import BaseMemoryManager
@@ -239,10 +240,22 @@ class MemoryManager(BaseMemoryManager):
             )
 
         return {
-            "contact_ask": self._contact_manager.ask,
-            "create_contact": _create_contact,
-            "update_contact": _update_contact,
-            "merge_contacts": _merge_contacts,
+            "contact_ask": ToolSpec(
+                fn=self._contact_manager.ask,
+                display_label="Querying contact book",
+            ),
+            "create_contact": ToolSpec(
+                fn=_create_contact,
+                display_label="Creating a contact",
+            ),
+            "update_contact": ToolSpec(
+                fn=_update_contact,
+                display_label="Updating a contact",
+            ),
+            "merge_contacts": ToolSpec(
+                fn=_merge_contacts,
+                display_label="Merging contacts",
+            ),
         }
 
     # ------------------------------------------------------------------ #
@@ -302,10 +315,10 @@ class MemoryManager(BaseMemoryManager):
         _km = self._knowledge_manager
 
         tools: Dict[str, Callable[..., Any]] = methods_to_tool_dict(
-            self._contact_manager.ask,
-            _km.ask,
-            _km.refactor,
-            _km.update,
+            ToolSpec(fn=self._contact_manager.ask, display_label="Looking up contacts"),
+            ToolSpec(fn=_km.ask, display_label="Querying notes"),
+            ToolSpec(fn=_km.refactor, display_label="Reorganising notes"),
+            ToolSpec(fn=_km.update, display_label="Updating notes"),
             include_class_name=True,
         )
 
@@ -347,8 +360,8 @@ class MemoryManager(BaseMemoryManager):
         necessary.
         """
         tools: Dict[str, Callable[..., Any]] = methods_to_tool_dict(
-            self._task_scheduler.ask,
-            self._task_scheduler.update,
+            ToolSpec(fn=self._task_scheduler.ask, display_label="Querying tasks"),
+            ToolSpec(fn=self._task_scheduler.update, display_label="Updating tasks"),
             include_class_name=True,
         )
 
@@ -401,22 +414,31 @@ class MemoryManager(BaseMemoryManager):
             _km = self._knowledge_manager
             tools.update(
                 methods_to_tool_dict(
-                    _km.ask,
-                    _km.refactor,
-                    _km.update,
+                    ToolSpec(fn=_km.ask, display_label="Querying notes"),
+                    ToolSpec(fn=_km.refactor, display_label="Reorganising notes"),
+                    ToolSpec(fn=_km.update, display_label="Updating notes"),
                     include_class_name=True,
                 ),
             )
             # Also expose contact_ask for knowledge context lookups
             if "contact_ask" not in tools:
-                tools["contact_ask"] = self._contact_manager.ask
+                tools["contact_ask"] = ToolSpec(
+                    fn=self._contact_manager.ask,
+                    display_label="Looking up contacts",
+                )
 
         # Task tools
         if self._cfg.tasks:
             tools.update(
                 methods_to_tool_dict(
-                    self._task_scheduler.ask,
-                    self._task_scheduler.update,
+                    ToolSpec(
+                        fn=self._task_scheduler.ask,
+                        display_label="Querying tasks",
+                    ),
+                    ToolSpec(
+                        fn=self._task_scheduler.update,
+                        display_label="Updating tasks",
+                    ),
                     include_class_name=True,
                 ),
             )
