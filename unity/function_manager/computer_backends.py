@@ -1558,12 +1558,13 @@ class MagnitudeBackend(ComputerBackend):
             ) as resp:
                 _cs_ms = (_cs_time.perf_counter() - _cs_t0) * 1000
                 if resp.status >= 400:
+                    body = await resp.text()
                     logger.debug(
                         f"⏱️ [MagnitudeBackend._create_session] POST /start FAILED "
                         f"({_cs_ms:.0f}ms, status={resp.status})",
                     )
                     raise RuntimeError(
-                        f"Failed to create {mode} session: {resp.status}",
+                        f"Failed to create {mode} session: {resp.status} {body}",
                     )
                 data = await resp.json()
         _cs_ms = (_cs_time.perf_counter() - _cs_t0) * 1000
