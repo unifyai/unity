@@ -22,8 +22,8 @@ COMPRESSION_PROMPT = (
     "- You MUST return exactly one entry per input message. Never drop or merge messages.\n"
     "- Compact verbose text to its essential meaning. Remove filler, pleasantries, and "
     "redundant explanations.\n"
-    '- Error messages and tracebacks: reduce to "error" or "error: <one-line cause>" '
-    "only when the specific error identity is not needed for subsequent reasoning.\n"
+    '- Error messages and tracebacks: reduce to "error" or "error: <one-line cause>" omit verbose traceback messages completely\n'
+    "you may partially keep the traceback if it is needed for subsequent reasoning.\n"
     "- Tool results: keep only the data that was actually used or referenced later. "
     "Discard decorative formatting, repeated schema keys, and unreferenced fields.\n"
     '- Image placeholders: these have already been replaced with "[N image(s) provided]". '
