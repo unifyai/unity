@@ -815,3 +815,91 @@ class TestActQueuedBeforeInit:
             "after the queued operation executes."
         )
         assert action["query"] == "check calendar"
+
+
+class TestBrainGatedOnReadyForBrain:
+    """
+    Tests for the ready_for_brain gate that prevents the CM slow brain from
+    running before managers are initialized and hydration is complete.
+
+    Without this gate, the brain can dispatch duplicate act() calls when
+    messages arrive during the initialization window (see the
+    unity-2026-03-05-22-00-05-u13ae-staging duplicate weather bug).
+    """
+
+    @staticmethod
+    def _make_cm_stub():
+        """Build a lightweight stub with the real pending-request bookkeeping."""
+        from unity.conversation_manager.conversation_manager import (
+            ConversationManager,
+        )
+        from unity.conversation_manager.domains.utils import Debouncer
+
+        cm = MagicMock(spec=ConversationManager)
+        cm.ready_for_brain = False
+        cm._pending_llm_requests = []
+        cm._pending_llm_request_meta = []
+        cm._llm_request_seq = 0
+        cm._llm_run_seq = 0
+        cm._current_event_trace = None
+        cm._session_logger = MagicMock()
+        cm.debouncer = Debouncer(name="test")
+
+        # Bind real methods so they operate on the stub's attributes
+        cm.request_llm_run = ConversationManager.request_llm_run.__get__(cm)
+        cm.flush_llm_requests = ConversationManager.flush_llm_requests.__get__(cm)
+        cm.run_llm = AsyncMock()
+        return cm
+
+    @pytest.mark.asyncio
+    async def test_flush_deferred_while_not_ready(self):
+        """
+        Brain requests accumulate but are NOT dispatched while
+        ready_for_brain is False.
+        """
+        cm = self._make_cm_stub()
+        assert not cm.ready_for_brain
+
+        await cm.request_llm_run(delay=0)
+        await cm.request_llm_run(delay=2)
+        await cm.request_llm_run(delay=0, cancel_running=True)
+
+        assert len(cm._pending_llm_requests) == 3
+
+        await cm.flush_llm_requests()
+
+        assert (
+            len(cm._pending_llm_requests) == 3
+        ), "Pending requests should NOT be drained while ready_for_brain is False"
+        cm.run_llm.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_flush_dispatches_after_ready(self):
+        """
+        Once ready_for_brain becomes True, flush_llm_requests dispatches
+        the coalesced request.
+        """
+        cm = self._make_cm_stub()
+
+        await cm.request_llm_run(delay=0)
+        await cm.request_llm_run(delay=2)
+        assert len(cm._pending_llm_requests) == 2
+
+        cm.ready_for_brain = True
+        await cm.flush_llm_requests()
+
+        assert len(cm._pending_llm_requests) == 0
+        cm.run_llm.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_no_spurious_flush_when_no_requests(self):
+        """
+        If no events arrived during init, setting ready_for_brain and
+        flushing does not trigger a brain turn.
+        """
+        cm = self._make_cm_stub()
+        cm.ready_for_brain = True
+
+        await cm.flush_llm_requests()
+
+        cm.run_llm.assert_not_called()
