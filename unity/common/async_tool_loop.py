@@ -836,21 +836,22 @@ class AsyncToolLoopHandle(SteerableToolHandle):
         )
         rendered = render_compressed_context(compressed)
 
-        # 3. Build unpack_message closure over the latest archive
+        # 3. Build unpack_messages closure over the latest archive
         archive_ref = self._raw_message_archives
 
-        def unpack_message(idx: int) -> str:
-            """Retrieve the full uncompressed content of a message by index.
+        def unpack_messages(index: int, n: int = 1) -> str:
+            """Retrieve one or more uncompressed messages by index.
 
-            The idx corresponds to the ``[N]`` index shown in the compressed
-            context summary. Returns the original message as JSON.
+            ``index`` corresponds to the ``[N]`` label in the compressed
+            context summary.  Returns up to ``n`` consecutive original
+            messages as a JSON array.
             """
             latest = archive_ref[-1]
-            if idx < 0 or idx >= len(latest):
+            if index < 0 or index >= len(latest):
                 return json.dumps(
-                    {"error": f"Index {idx} out of range (0-{len(latest) - 1})"},
+                    {"error": f"Index {index} out of range (0-{len(latest) - 1})"},
                 )
-            return json.dumps(latest[idx], default=str)
+            return json.dumps(latest[index : index + n], default=str)
 
         # 4. Reuse existing client -- carry over all system message blocks
         #    and append a new block with the compressed context.
@@ -860,8 +861,9 @@ class AsyncToolLoopHandle(SteerableToolHandle):
                 "content": (
                     f"{rendered}\n\n"
                     "When you need details from a compressed message, call "
-                    "`unpack_message(idx)` with its `[N]` index to retrieve "
-                    "the full original content."
+                    "`unpack_messages(index)` with its `[N]` index to "
+                    "retrieve the full original content. Pass `n` to "
+                    "retrieve a range of consecutive messages."
                 ),
             },
         )
@@ -869,9 +871,9 @@ class AsyncToolLoopHandle(SteerableToolHandle):
         self._client._messages = system_msgs
         self._client._system_message = None
 
-        # 5. Prepare tools: original tools + unpack_message
+        # 5. Prepare tools: original tools + unpack_messages
         tools = dict(cfg["tools"])
-        tools["unpack_message"] = unpack_message
+        tools["unpack_messages"] = unpack_messages
 
         # 6. Reuse all steering events so that any stop/cancel/pause issued
         #    during the compression window carries over to the new loop.
