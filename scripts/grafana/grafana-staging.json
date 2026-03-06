@@ -209,7 +209,7 @@
       "targets": [
         {
           "promQLQuery": {
-            "expr": "sum(increase(adapter_job_demand_total{service_name=\"unity-adapters-staging\"}[5m]))",
+            "expr": "sum(max_over_time(adapter_job_demand{service_name=\"unity-adapters-staging\"}[5m]) - min_over_time(adapter_job_demand{service_name=\"unity-adapters-staging\"}[5m]))",
             "projectName": "responsive-city-458413-a2",
             "step": "5m"
           },
@@ -873,8 +873,7 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "green",
-                "value": null
+                "color": "green"
               },
               {
                 "color": "red",
@@ -973,8 +972,7 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "green",
-                "value": null
+                "color": "green"
               },
               {
                 "color": "red",
@@ -1073,8 +1071,7 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "green",
-                "value": null
+                "color": "green"
               },
               {
                 "color": "red",
@@ -1173,8 +1170,7 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "green",
-                "value": null
+                "color": "green"
               },
               {
                 "color": "red",
@@ -1273,8 +1269,7 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "green",
-                "value": null
+                "color": "green"
               },
               {
                 "color": "red",
@@ -1373,8 +1368,7 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "green",
-                "value": null
+                "color": "green"
               },
               {
                 "color": "red",
@@ -1441,6 +1435,6 @@
   "timezone": "browser",
   "title": "Main",
   "uid": "cfes44366w1z4b",
-  "version": 34,
+  "version": 35,
   "weekStart": ""
 }
