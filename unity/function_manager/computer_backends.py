@@ -1564,8 +1564,7 @@ class MagnitudeBackend(ComputerBackend):
                         f"({_cs_ms:.0f}ms, status={resp.status})",
                     )
                     raise RuntimeError(
-                        f"Failed to create {mode} session: {resp.status} {body} "
-                        f"(key=...{auth_key[-6:] if auth_key else 'EMPTY'})",
+                        f"Failed to create {mode} session: {resp.status} {body}",
                     )
                 data = await resp.json()
         _cs_ms = (_cs_time.perf_counter() - _cs_t0) * 1000
