@@ -58,6 +58,7 @@ class SyncConfig:
             ".DS_Store",
             ".bisync/**",  # rclone's own state files
             "venvs/**",  # Virtual environments (managed via HTTP API)
+            "lost+found/**",  # ext4 filesystem recovery directory by GCP Disks
         ],
     )
 
@@ -89,14 +90,8 @@ class SyncConfig:
             )
             return cls(enabled=False)
 
-        ssh_user = str(SESSION_DETAILS.assistant.agent_id)
-        if not ssh_user:
-            LOGGER.error(
-                f"{ICONS['file_sync']} [FileSync] No assistant name configured for SSH user",
-            )
-            return cls(enabled=False)
+        ssh_user = "unityuser"
 
-        # Temp file for SSH key (secure permissions set on write)
         ssh_key_path = f"/tmp/.unity_vm_key_{assistant_id}"
 
         LOGGER.debug(
