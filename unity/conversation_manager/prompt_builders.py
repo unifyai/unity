@@ -129,6 +129,9 @@ def _build_comms_tool_listing(
     if assistant_has_email:
         lines.append("- `send_email`: Send an email to a contact")
     lines.append("- `send_unify_message`: Send a Unify platform message to a contact")
+    lines.append(
+        "- `send_api_response`: Reply to a programmatic API message (use when the inbound medium is `api_message`)",
+    )
     if assistant_has_phone:
         lines.append("- `make_call`: Start an outbound phone call to a contact")
     return "\n".join(lines)
@@ -526,7 +529,7 @@ I do NOT need to poll or check on actions - the system will wake me when somethi
         f"\n{missing_phone_notice}" if missing_phone_notice else ""
     ) + (f"\n{missing_email_notice}" if missing_email_notice else "")
 
-    available_tool_names = ["send_unify_message"]
+    available_tool_names = ["send_unify_message", "send_api_response"]
     if assistant_has_phone:
         available_tool_names = ["send_sms"] + available_tool_names + ["make_call"]
     if assistant_has_email:

@@ -25,6 +25,7 @@ from unity.conversation_manager.events import (
     EmailSent,
     UnifyMessageSent,
     PhoneCallSent,
+    ApiMessageSent,
     ActorHandleStarted,
 )
 
@@ -169,6 +170,7 @@ class CMStepDriver:
                         EmailSent,
                         UnifyMessageSent,
                         PhoneCallSent,
+                        ApiMessageSent,
                         ActorHandleStarted,
                     ),
                 ):
@@ -227,6 +229,7 @@ class CMStepDriver:
                         EmailSent,
                         UnifyMessageSent,
                         PhoneCallSent,
+                        ApiMessageSent,
                         ActorHandleStarted,
                     ),
                 ):
