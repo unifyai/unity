@@ -75,6 +75,22 @@ COMPRESSION_PROMPT = (
     "  (`re` and `json` are available in the execution environment)"
 )
 
+COMPRESSION_MULTI_PASS_ADDENDUM = (
+    "\n\n## Multi-Pass Compression\n"
+    "Some entries are from prior compression passes (already compressed once or "
+    "more). You have a `get_raw` tool to retrieve the original uncompressed "
+    "content of any entry.\n"
+    "\n"
+    "- Prior entries may still be verbose or contain information now irrelevant "
+    "given later context.\n"
+    "- Use `get_raw(index)` to inspect the original before deciding whether to "
+    "re-compress.\n"
+    "- You can `update` any entry (prior or new) using the same transformation "
+    "rules.\n"
+    "- If an old compression lost important detail, use `get_raw` to recover it "
+    "and write a better summary."
+)
+
 
 # ── Sentinel returned by the loop when compression is requested ──────────────
 
@@ -189,9 +205,9 @@ def _eval_transformation(transformation_str: str, content: str) -> str:
     return result
 
 
-def _compute_token_usage(entries: list[str], endpoint: str) -> str:
+def _compute_token_usage(entries: dict[int, str], endpoint: str) -> str:
     """Compute token usage of all entries as a percentage of the context window."""
-    total_text = "\n".join(entries)
+    total_text = "\n".join(entries.values())
     tokens = count_tokens(total_text)
     max_input = unillm.get_max_input_tokens(endpoint) or 0
     if max_input > 0:
@@ -200,8 +216,8 @@ def _compute_token_usage(entries: list[str], endpoint: str) -> str:
     return f"[{tokens:,} tokens]"
 
 
-def _make_update_tool(entries: list[str], endpoint: str) -> callable:
-    """Build the ``update`` tool closure over a mutable entries list."""
+def _make_update_tool(entries: dict[int, str], endpoint: str) -> callable:
+    """Build the ``update`` tool closure over a mutable entries dict."""
 
     def update(index: int, transformation: str) -> str:
         """Transform a message to compress it in-place.
@@ -232,8 +248,9 @@ def _make_update_tool(entries: list[str], endpoint: str) -> callable:
             The new entry after transformation, followed by current
             token usage of the compressed context.
         """
-        if index < 0 or index >= len(entries):
-            return f"Error: index {index} out of range (0-{len(entries) - 1})"
+        if index not in entries:
+            valid = sorted(entries.keys())
+            return f"Error: index {index} not found. Valid indices: {valid}"
         try:
             new_content = _eval_transformation(
                 transformation,
@@ -250,9 +267,39 @@ def _make_update_tool(entries: list[str], endpoint: str) -> callable:
     return update
 
 
+def _make_get_raw_tool(raw_archives: list[list[dict]]) -> callable:
+    """Build the ``get_raw`` tool closure over raw message archives."""
+
+    def get_raw(index: int, n: int = 1) -> str:
+        """Retrieve the original uncompressed content of a message.
+
+        Use this to inspect what a previously-compressed entry looked
+        like before compression.  Helpful when re-evaluating whether
+        an old compression decision was too aggressive or when the
+        conversation focus has shifted.
+
+        Args:
+            index: The [N] index of the message.
+            n: Number of consecutive messages to retrieve (default 1).
+        """
+        flat = [msg for archive in raw_archives for msg in archive]
+        if index < 0 or index >= len(flat):
+            return json.dumps(
+                {"error": f"Index {index} out of range (0-{len(flat) - 1})"},
+            )
+        end = min(index + n, len(flat))
+        return json.dumps(flat[index:end], default=str)
+
+    return get_raw
+
+
 async def compress_messages(
     messages: list[dict],
     endpoint: str,
+    *,
+    prior_entries: list[tuple[int, str]] | None = None,
+    raw_archives: list[list[dict]] | None = None,
+    new_indices: list[int] | None = None,
 ) -> CompressedMessages:
     """Compact a message list using a tool-loop that surgically edits entries.
 
@@ -261,26 +308,69 @@ async def compress_messages(
     3. Starts a short-lived async tool loop where the LLM calls ``update``
        to compress individual entries via Python transformations
     4. Wraps the mutated entries as ``CompressedMessages``
+
+    For multi-pass compression, ``prior_entries`` provides already-compressed
+    entries from previous passes (as ``(global_index, content)`` tuples),
+    ``raw_archives`` enables the ``get_raw`` tool for peeking at originals,
+    and ``new_indices`` maps each message to its global archive index.
     """
     from unity.common.async_tool_loop import start_async_tool_loop
 
     prepared = prepare_messages_for_compression(messages)
-    entries = [json.dumps(msg, default=str) for msg in prepared]
-    serialized = "\n\n".join(f"[{i}] {e}" for i, e in enumerate(entries))
+
+    if new_indices is not None and len(new_indices) != len(prepared):
+        raise ValueError(
+            f"new_indices length ({len(new_indices)}) must match "
+            f"messages length ({len(prepared)})",
+        )
+
+    # Build entries dict: prior entries + new messages
+    entries: dict[int, str] = {}
+    if prior_entries:
+        for idx, content in prior_entries:
+            entries[idx] = content
+
+    indices = new_indices if new_indices is not None else list(range(len(prepared)))
+    for i, msg in enumerate(prepared):
+        entries[indices[i]] = json.dumps(msg, default=str)
+
+    serialized = "\n\n".join(f"[{idx}] {e}" for idx, e in sorted(entries.items()))
 
     update_tool = _make_update_tool(entries, endpoint)
-    tools = {"update": update_tool}
+    tools: dict[str, callable] = {"update": update_tool}
+
+    if prior_entries and raw_archives:
+        tools["get_raw"] = _make_get_raw_tool(raw_archives)
 
     initial_usage = _compute_token_usage(entries, endpoint)
-    user_prompt = (
-        f"Compress the following {len(messages)} message transcript. "
-        f"Focus on the largest entries first.\n"
-        f"Current usage: {initial_usage}\n\n"
-        f"{serialized}"
-    )
+
+    if prior_entries:
+        prior_indices = sorted(idx for idx, _ in prior_entries)
+        new_msg_indices = sorted(indices)
+        user_prompt = (
+            f"Compress the following transcript. "
+            f"Entries [{prior_indices[0]}]-[{prior_indices[-1]}] are from "
+            f"prior passes (already compressed). "
+            f"Entries [{new_msg_indices[0]}]-[{new_msg_indices[-1]}] are "
+            f"from the current session.\n"
+            f"Focus on the largest entries first.\n"
+            f"Current usage: {initial_usage}\n\n"
+            f"{serialized}"
+        )
+    else:
+        user_prompt = (
+            f"Compress the following {len(messages)} message transcript. "
+            f"Focus on the largest entries first.\n"
+            f"Current usage: {initial_usage}\n\n"
+            f"{serialized}"
+        )
+
+    sys_prompt = COMPRESSION_PROMPT
+    if prior_entries:
+        sys_prompt += COMPRESSION_MULTI_PASS_ADDENDUM
 
     client = new_llm_client(endpoint, origin="compress_messages")
-    client.set_system_message(COMPRESSION_PROMPT)
+    client.set_system_message(sys_prompt)
 
     handle = start_async_tool_loop(
         client,
@@ -296,7 +386,9 @@ async def compress_messages(
     await handle.result()
 
     return CompressedMessages(
-        messages=[CompressedMessage(content=e) for e in entries],
+        messages=[
+            CompressedMessage(content=entries[idx]) for idx in sorted(entries.keys())
+        ],
     )
 
 

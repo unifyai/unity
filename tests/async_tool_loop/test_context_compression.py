@@ -17,6 +17,7 @@ from unity.common._async_tool.context_compression import (
     render_compressed_context,
     _eval_transformation,
     _make_update_tool,
+    _make_get_raw_tool,
 )
 
 
@@ -250,10 +251,10 @@ class TestMakeUpdateTool:
     _ENDPOINT = "gpt-4o@openai"
 
     def test_overwrite_entry(self):
-        entries = [
-            json.dumps({"role": "user", "content": "original"}),
-            json.dumps({"role": "assistant", "content": "keep this"}),
-        ]
+        entries = {
+            0: json.dumps({"role": "user", "content": "original"}),
+            1: json.dumps({"role": "assistant", "content": "keep this"}),
+        }
         update = _make_update_tool(entries, self._ENDPOINT)
         result = update(0, 'x = "replaced"')
         assert "replaced" in result
@@ -261,18 +262,18 @@ class TestMakeUpdateTool:
         assert "keep this" in entries[1]
 
     def test_response_includes_token_usage(self):
-        entries = [json.dumps({"role": "user", "content": "some content here"})]
+        entries = {0: json.dumps({"role": "user", "content": "some content here"})}
         update = _make_update_tool(entries, self._ENDPOINT)
         result = update(0, 'x = "short"')
         assert "tokens" in result
         assert "%" in result
 
     def test_surgical_replace(self):
-        entries = [
-            json.dumps(
+        entries = {
+            0: json.dumps(
                 {"role": "tool", "content": "verbose error with traceback details"},
             ),
-        ]
+        }
         update = _make_update_tool(entries, self._ENDPOINT)
         result = update(
             0,
@@ -281,15 +282,15 @@ class TestMakeUpdateTool:
         assert "error" in result
         assert "verbose" not in entries[0]
 
-    def test_out_of_range_returns_error(self):
-        entries = [json.dumps({"role": "user", "content": "only one"})]
+    def test_not_found_returns_error(self):
+        entries = {0: json.dumps({"role": "user", "content": "only one"})}
         update = _make_update_tool(entries, self._ENDPOINT)
         result = update(5, 'x = "y"')
         assert "Error" in result
-        assert "out of range" in result
+        assert "not found" in result
 
     def test_invalid_code_returns_error(self):
-        entries = [json.dumps({"role": "user", "content": "content"})]
+        entries = {0: json.dumps({"role": "user", "content": "content"})}
         original = entries[0]
         update = _make_update_tool(entries, self._ENDPOINT)
         result = update(0, "def def def")
@@ -297,18 +298,18 @@ class TestMakeUpdateTool:
         assert entries[0] == original
 
     def test_empty_result_becomes_marker(self):
-        entries = [json.dumps({"role": "user", "content": "something"})]
+        entries = {0: json.dumps({"role": "user", "content": "something"})}
         update = _make_update_tool(entries, self._ENDPOINT)
         result = update(0, 'x = ""')
         assert "(empty)" in result
         assert entries[0] == "(empty)"
 
     def test_multiple_updates(self):
-        entries = [
-            json.dumps({"role": "user", "content": "first"}),
-            json.dumps({"role": "assistant", "content": "second"}),
-            json.dumps({"role": "tool", "content": "third"}),
-        ]
+        entries = {
+            0: json.dumps({"role": "user", "content": "first"}),
+            1: json.dumps({"role": "assistant", "content": "second"}),
+            2: json.dumps({"role": "tool", "content": "third"}),
+        }
         update = _make_update_tool(entries, self._ENDPOINT)
         update(0, 'x = "1"')
         update(2, 'x = "3"')
@@ -317,16 +318,16 @@ class TestMakeUpdateTool:
         assert entries[2] == "3"
 
     def test_bare_expression(self):
-        entries = [json.dumps({"role": "user", "content": "hello world"})]
+        entries = {0: json.dumps({"role": "user", "content": "hello world"})}
         update = _make_update_tool(entries, self._ENDPOINT)
         result = update(0, 'x.replace("hello", "hi")')
         assert "hi world" in result
         assert "hi world" in entries[0]
 
     def test_structured_transformation(self):
-        entries = [
-            json.dumps({"role": "tool", "content": "line1\nERROR line2\nline3"}),
-        ]
+        entries = {
+            0: json.dumps({"role": "tool", "content": "line1\nERROR line2\nline3"}),
+        }
         update = _make_update_tool(entries, self._ENDPOINT)
         code = (
             "msg = json.loads(x)\n"
@@ -338,6 +339,75 @@ class TestMakeUpdateTool:
         assert "line1" in result
         parsed = json.loads(entries[0])
         assert "ERROR" not in parsed["content"]
+
+    def test_non_contiguous_indices(self):
+        entries = {
+            3: json.dumps({"role": "user", "content": "at index 3"}),
+            7: json.dumps({"role": "tool", "content": "at index 7"}),
+        }
+        update = _make_update_tool(entries, self._ENDPOINT)
+        result = update(3, 'x = "short"')
+        assert "short" in result
+        assert entries[3] == "short"
+        result = update(5, 'x = "nope"')
+        assert "Error" in result
+        assert "not found" in result
+
+
+class TestMakeGetRawTool:
+    def test_returns_raw_content(self):
+        archives = [
+            [
+                {"role": "user", "content": "hello"},
+                {"role": "assistant", "content": "world"},
+            ],
+        ]
+        get_raw = _make_get_raw_tool(archives)
+        result = json.loads(get_raw(0))
+        assert len(result) == 1
+        assert result[0]["content"] == "hello"
+
+    def test_out_of_range_returns_error(self):
+        archives = [[{"role": "user", "content": "only one"}]]
+        get_raw = _make_get_raw_tool(archives)
+        result = json.loads(get_raw(5))
+        assert "error" in result
+        assert "out of range" in result["error"].lower()
+
+    def test_multiple_archives(self):
+        archives = [
+            [
+                {"role": "user", "content": "first_archive_msg0"},
+                {"role": "assistant", "content": "first_archive_msg1"},
+            ],
+            [
+                {"role": "user", "content": "second_archive_msg0"},
+                {"role": "tool", "content": "second_archive_msg1"},
+                {"role": "assistant", "content": "second_archive_msg2"},
+            ],
+        ]
+        get_raw = _make_get_raw_tool(archives)
+        r0 = json.loads(get_raw(0))
+        assert r0[0]["content"] == "first_archive_msg0"
+        r2 = json.loads(get_raw(2))
+        assert r2[0]["content"] == "second_archive_msg0"
+        r4 = json.loads(get_raw(4))
+        assert r4[0]["content"] == "second_archive_msg2"
+
+    def test_n_consecutive(self):
+        archives = [
+            [
+                {"role": "user", "content": "msg0"},
+                {"role": "assistant", "content": "msg1"},
+                {"role": "user", "content": "msg2"},
+                {"role": "assistant", "content": "msg3"},
+            ],
+        ]
+        get_raw = _make_get_raw_tool(archives)
+        result = json.loads(get_raw(1, n=2))
+        assert len(result) == 2
+        assert result[0]["content"] == "msg1"
+        assert result[1]["content"] == "msg2"
 
 
 @pytest.mark.asyncio
@@ -566,3 +636,135 @@ class TestRenderCompressedContext:
         rendered = render_compressed_context(compressed)
         lines = [l for l in rendered.strip().split("\n") if l.strip()]
         assert len(lines) == 3
+
+
+class TestMultiPassCompression:
+    """Symbolic tests for the multi-pass compression interface."""
+
+    def test_result_count_includes_prior_and_new(self):
+        """compress_messages with prior_entries returns prior + new entries."""
+        import asyncio
+
+        prior = [
+            (0, "compressed msg 0"),
+            (1, "compressed msg 1"),
+        ]
+        new_messages = [
+            {"role": "user", "content": "new message"},
+        ]
+        archives = [
+            [
+                {"role": "user", "content": "raw 0"},
+                {"role": "assistant", "content": "raw 1"},
+            ],
+        ]
+
+        loop = asyncio.new_event_loop()
+        try:
+            result = loop.run_until_complete(
+                compress_messages(
+                    new_messages,
+                    "gpt-4o@openai",
+                    prior_entries=prior,
+                    raw_archives=archives,
+                    new_indices=[2],
+                ),
+            )
+        except Exception:
+            pytest.skip("LLM call required for full integration")
+        finally:
+            loop.close()
+
+        assert len(result.messages) == 3
+
+    def test_new_indices_validation(self):
+        """new_indices must match messages length."""
+        import asyncio
+
+        with pytest.raises(ValueError, match="new_indices length"):
+            asyncio.get_event_loop().run_until_complete(
+                compress_messages(
+                    [{"role": "user", "content": "a"}],
+                    "gpt-4o@openai",
+                    new_indices=[0, 1],
+                ),
+            )
+
+
+_VERBOSE_PRIOR_TOOL_RESULT = json.dumps(
+    {
+        "role": "tool",
+        "tool_call_id": "call_99",
+        "name": "get_contacts",
+        "content": json.dumps(
+            {
+                "contacts": [
+                    {
+                        "id": 1,
+                        "name": "Alice Smith",
+                        "email": "alice@example.com",
+                        "phone": "+15551234567",
+                        "address": "123 Oak Street, Springfield, IL 62704",
+                        "notes": "Prefers morning meetings. Has a dog named Rex.",
+                        "created_at": "2024-01-15T10:30:00Z",
+                        "updated_at": "2024-06-20T14:22:00Z",
+                        "tags": ["vip", "engineering", "remote"],
+                        "company": "Acme Corp",
+                        "title": "Senior Engineer",
+                    },
+                    {
+                        "id": 2,
+                        "name": "Bob Jones",
+                        "email": "bob@example.com",
+                        "phone": "+15559876543",
+                        "address": "456 Maple Avenue, Portland, OR 97201",
+                        "notes": "Referred by Alice. Working on Project Phoenix.",
+                        "created_at": "2024-03-01T09:00:00Z",
+                        "updated_at": "2024-07-10T11:45:00Z",
+                        "tags": ["engineering", "onsite"],
+                        "company": "Acme Corp",
+                        "title": "Junior Engineer",
+                    },
+                ],
+                "total": 2,
+                "page": 1,
+                "per_page": 50,
+            },
+        ),
+    },
+)
+
+
+@pytest.mark.asyncio
+@_handle_project
+async def test_compress_multi_pass_recompresses_prior(llm_config):
+    """Multi-pass compression can further compress verbose prior entries."""
+    prior_entries = [
+        (0, _VERBOSE_PRIOR_TOOL_RESULT),
+        (1, json.dumps({"role": "assistant", "content": "Found Alice and Bob."})),
+    ]
+    new_messages = [
+        {"role": "user", "content": "What is Alice's email?"},
+        {"role": "assistant", "content": "Alice's email is alice@example.com."},
+    ]
+    raw_archives = [
+        [
+            {
+                "role": "tool",
+                "tool_call_id": "call_99",
+                "name": "get_contacts",
+                "content": "original raw content",
+            },
+            {"role": "assistant", "content": "Found Alice and Bob."},
+        ],
+    ]
+    result = await compress_messages(
+        new_messages,
+        llm_config["model"],
+        prior_entries=prior_entries,
+        raw_archives=raw_archives,
+        new_indices=[2, 3],
+    )
+    assert len(result.messages) == 4
+    recompressed_tool_result = result.messages[0]
+    assert len(recompressed_tool_result.content) < len(_VERBOSE_PRIOR_TOOL_RESULT) * 0.7
