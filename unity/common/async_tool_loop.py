@@ -40,6 +40,20 @@ if TYPE_CHECKING:
     from unillm.types import PromptCacheParam
 
 
+_COMPRESSED_HEADER = "## Compressed Prior Context\n"
+_UNPACK_INSTRUCTIONS_MARKER = "\nWhen you need details from a compressed message"
+
+
+def _strip_compressed_wrapper(content: str) -> str:
+    """Strip the header and trailing unpack instructions we add to _compressed_message content."""
+    if content.startswith(_COMPRESSED_HEADER):
+        content = content[len(_COMPRESSED_HEADER) :]
+    idx = content.find(_UNPACK_INSTRUCTIONS_MARKER)
+    if idx >= 0:
+        content = content[:idx]
+    return content.strip()
+
+
 def _transform_inner_roles(messages: list[dict]) -> list[dict]:
     """Transform 'user'/'assistant' roles to 'inner_user'/'inner_assistant'.
 
@@ -296,7 +310,7 @@ class AsyncToolLoopHandle(SteerableToolHandle):
 
         # Context compression state
         self._raw_message_archives: list[list[dict]] = []
-        self._compressed_renders: list[str] = []
+        self._compressed_context_body: str | None = None
         self._compression_count: int = 0
         self._loop_config: Optional[dict] = None
 
@@ -834,13 +848,26 @@ class AsyncToolLoopHandle(SteerableToolHandle):
         # 2. Separate compressed entries back into system messages and
         #    conversation lines.  System messages preserve their original
         #    metadata attributes (e.g. _runtime_context, _parent_chat_context)
-        #    but get the compressed content.
+        #    but get the compressed content.  The _compressed_message entry
+        #    is handled specially: its re-compressed body is captured and
+        #    combined with new conversation lines so that multi-pass
+        #    compression can further compress prior passes.
         system_msgs: list[dict] = []
         conv_lines: list[str] = []
+        recompressed_prior: str | None = None
         for i, (orig_msg, comp_entry) in enumerate(
             zip(all_messages, compressed.messages),
         ):
-            if orig_msg.get("role") == "system":
+            if orig_msg.get("_compressed_message"):
+                try:
+                    compressed_dict = json.loads(comp_entry.content)
+                    recompressed_prior = compressed_dict.get(
+                        "content",
+                        comp_entry.content,
+                    )
+                except (json.JSONDecodeError, TypeError):
+                    recompressed_prior = comp_entry.content
+            elif orig_msg.get("role") == "system":
                 new_msg = dict(orig_msg)
                 try:
                     compressed_dict = json.loads(comp_entry.content)
@@ -854,12 +881,17 @@ class AsyncToolLoopHandle(SteerableToolHandle):
             else:
                 conv_lines.append(f"[{archive_base + i}] {comp_entry.content}")
 
-        rendered = "\n".join(conv_lines)
-        self._compressed_renders.append(rendered)
+        new_rendered = "\n".join(conv_lines)
 
-        combined = "## Compressed Prior Context\n" + "\n".join(
-            self._compressed_renders,
-        )
+        if recompressed_prior is not None:
+            prior_body = _strip_compressed_wrapper(recompressed_prior)
+            self._compressed_context_body = (
+                f"{prior_body}\n{new_rendered}" if prior_body else new_rendered
+            )
+        else:
+            self._compressed_context_body = new_rendered
+
+        combined = _COMPRESSED_HEADER + self._compressed_context_body
 
         # 3. Build unpack_messages closure over all archives (cumulative indexing)
         archive_ref = self._raw_message_archives
@@ -879,7 +911,7 @@ class AsyncToolLoopHandle(SteerableToolHandle):
             end = min(index + n, len(flat))
             return json.dumps(flat[index:end], default=str)
 
-        # 4. Replace or append the compressed-context system message.
+        # 4. Append the compressed-context system message.
         compressed_sys_msg = {
             "role": "system",
             "_compressed_message": True,
@@ -892,14 +924,7 @@ class AsyncToolLoopHandle(SteerableToolHandle):
             ),
         }
 
-        existing_idx = next(
-            (i for i, m in enumerate(system_msgs) if m.get("_compressed_message")),
-            None,
-        )
-        if existing_idx is not None:
-            system_msgs[existing_idx] = compressed_sys_msg
-        else:
-            system_msgs.append(compressed_sys_msg)
+        system_msgs.append(compressed_sys_msg)
 
         self._client._messages = system_msgs
         self._client._system_message = None
