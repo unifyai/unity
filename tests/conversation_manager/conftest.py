@@ -139,6 +139,7 @@ def _stub_outbound_comms(request):
         patch(f"{_COMMS_MODULE}.send_unify_message", _success),
         patch(f"{_COMMS_MODULE}.send_email_via_address", _success),
         patch(f"{_COMMS_MODULE}.start_call", _success),
+        patch(f"{_COMMS_MODULE}.complete_api_message", _success),
     ):
         yield
 
