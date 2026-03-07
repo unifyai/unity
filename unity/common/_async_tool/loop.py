@@ -246,6 +246,7 @@ async def async_tool_loop_inner(
     prompt_caching: Optional["PromptCacheParam"] = None,
     time_awareness: bool = False,
     extra_ask_tools: Optional[Dict[str, Callable]] = None,
+    enable_compression: bool = True,
 ) -> str:
     r"""
     Orchestrate an *interactive* "function-calling" dialogue between an LLM
@@ -1999,9 +2000,13 @@ async def async_tool_loop_inner(
             logger.debug(
                 f"[setup +{_setup_elapsed()}] building tool schemas ({len(policy_tools_norm)} tools)",
             )
-            _compress_schema = method_to_schema(compress_context, "compress_context")
+            _compress_schema = (
+                method_to_schema(compress_context, "compress_context")
+                if enable_compression
+                else None
+            )
 
-            if _over_threshold:
+            if _over_threshold and enable_compression:
                 if _has_pending_tools:
                     # Over threshold, pending tools → no base tools, no
                     # compress_context (can't compress mid-flight). Only
@@ -2050,7 +2055,8 @@ async def async_tool_loop_inner(
                     for name, spec in policy_tools_norm.items()
                     if tools_data.concurrency_ok(name) and tools_data.quota_ok(name)
                 ]
-                visible_base_tools_schema.append(_compress_schema)
+                if _compress_schema is not None:
+                    visible_base_tools_schema.append(_compress_schema)
 
             # Inject the response-submission tool when response_format is set
             # AND no other tools are in-flight.  This tool is semantically
@@ -2505,18 +2511,19 @@ async def async_tool_loop_inner(
             await to_event_bus(msg, cfg)
 
             # Update context threshold from the LLM response usage data.
-            with suppress(Exception):
-                _usage = getattr(_full_completion, "usage", None)
-                if (
-                    _usage
-                    and getattr(_usage, "prompt_tokens", None)
-                    and _max_input_tokens
-                ):
-                    _over_threshold = context_over_threshold(
-                        _usage.prompt_tokens,
-                        0.7,
-                        _max_input_tokens,
-                    )
+            if enable_compression:
+                with suppress(Exception):
+                    _usage = getattr(_full_completion, "usage", None)
+                    if (
+                        _usage
+                        and getattr(_usage, "prompt_tokens", None)
+                        and _max_input_tokens
+                    ):
+                        _over_threshold = context_over_threshold(
+                            _usage.prompt_tokens,
+                            0.7,
+                            _max_input_tokens,
+                        )
 
             # LLM responded - reset the activity-based timeout. The timeout is
             # designed to catch hung tools, not slow LLM inference. LLM providers

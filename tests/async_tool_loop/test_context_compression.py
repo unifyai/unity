@@ -13,6 +13,10 @@ from unity.common._async_tool.context_compression import (
     compress_messages,
     prepare_messages_for_compression,
     render_compressed_context,
+    _eval_transformation,
+    _parse_serialized_entries,
+    _serialize_messages_for_prompt,
+    _make_update_tool,
 )
 
 
@@ -188,6 +192,215 @@ class TestPrepareMessagesForCompression:
         ]
         result = prepare_messages_for_compression(messages)
         assert len(result) == len(messages)
+
+
+class TestEvalTransformation:
+    def test_overwrite(self):
+        result = _eval_transformation('x = "compressed"', "original long content")
+        assert result == "compressed"
+
+    def test_surgical_replace(self):
+        content = "Hello verbose world with extra stuff"
+        result = _eval_transformation(
+            'x = x.replace("verbose world with extra stuff", "world")',
+            content,
+        )
+        assert result == "Hello world"
+
+    def test_bare_expression_auto_assigned(self):
+        content = "Hello verbose world with extra stuff"
+        result = _eval_transformation(
+            'x.replace("verbose world with extra stuff", "world")',
+            content,
+        )
+        assert result == "Hello world"
+
+    def test_keep_first_line(self):
+        content = "first line\nsecond line\nthird line"
+        result = _eval_transformation('x = x.split("\\n")[0]', content)
+        assert result == "first line"
+
+    def test_truncate(self):
+        content = "a" * 500
+        result = _eval_transformation("x = x[:100]", content)
+        assert len(result) == 100
+
+    def test_regex_via_re(self):
+        content = "data Traceback (most recent call last):\n  File... end"
+        result = _eval_transformation(
+            r'x = re.sub(r"Traceback[\s\S]*", "traceback omitted", x)',
+            content,
+        )
+        assert "traceback omitted" in result
+        assert "most recent" not in result
+
+    def test_multiline_code(self):
+        content = "keep\nERROR: bad\nkeep too"
+        # Mirrors what arrives after JSON decode: \\n in strings becomes \n
+        # (which exec interprets as the newline escape), and actual newlines
+        # separate code lines.
+        code = "lines = x.split('\\n')\nx = '\\n'.join(l for l in lines if 'ERROR' not in l)"
+        result = _eval_transformation(code, content)
+        assert result == "keep\nkeep too"
+
+    def test_non_string_result_coerced(self):
+        result = _eval_transformation("x = len(x)", "hello")
+        assert result == "5"
+
+    def test_runtime_error_raises(self):
+        with pytest.raises(ZeroDivisionError):
+            _eval_transformation("x = 1 // 0", "content")
+
+
+class TestParseSerializedEntries:
+    def test_roundtrip_basic(self):
+        messages = [
+            {"role": "user", "content": "Hello"},
+            {"role": "assistant", "content": "Hi there"},
+        ]
+        serialized = _serialize_messages_for_prompt(messages)
+        entries = _parse_serialized_entries(serialized)
+        assert len(entries) == 2
+        assert entries[0]["role"] == "user"
+        assert entries[0]["content"] == "Hello"
+        assert entries[1]["role"] == "assistant"
+        assert entries[1]["content"] == "Hi there"
+
+    def test_tool_message_strips_call_id_suffix(self):
+        messages = [
+            {
+                "role": "tool",
+                "tool_call_id": "call_abc123",
+                "content": "result data",
+            },
+        ]
+        serialized = _serialize_messages_for_prompt(messages)
+        entries = _parse_serialized_entries(serialized)
+        assert len(entries) == 1
+        assert entries[0]["role"] == "tool"
+
+    def test_tool_call_message(self):
+        messages = [
+            {
+                "role": "assistant",
+                "content": None,
+                "tool_calls": [
+                    {
+                        "id": "call_1",
+                        "type": "function",
+                        "function": {
+                            "name": "search",
+                            "arguments": '{"name": "John"}',
+                        },
+                    },
+                ],
+            },
+        ]
+        serialized = _serialize_messages_for_prompt(messages)
+        entries = _parse_serialized_entries(serialized)
+        assert len(entries) == 1
+        assert entries[0]["role"] == "assistant"
+        assert "search" in entries[0]["content"]
+
+    def test_empty_content(self):
+        messages = [
+            {"role": "user", "content": ""},
+        ]
+        serialized = _serialize_messages_for_prompt(messages)
+        entries = _parse_serialized_entries(serialized)
+        assert len(entries) == 1
+
+    def test_preserves_message_count(self):
+        messages = [
+            {"role": "user", "content": "a"},
+            {"role": "assistant", "content": "b"},
+            {"role": "tool", "tool_call_id": "c1", "content": "c"},
+            {"role": "user", "content": "d"},
+        ]
+        serialized = _serialize_messages_for_prompt(messages)
+        entries = _parse_serialized_entries(serialized)
+        assert len(entries) == len(messages)
+
+
+class TestMakeUpdateTool:
+    _ENDPOINT = "gpt-4o@openai"
+
+    def test_overwrite_entry(self):
+        entries = [
+            {"role": "user", "content": "original"},
+            {"role": "assistant", "content": "keep this"},
+        ]
+        update = _make_update_tool(entries, self._ENDPOINT)
+        result = update(0, 'x = "replaced"')
+        assert "replaced" in result
+        assert entries[0]["content"] == "replaced"
+        assert entries[1]["content"] == "keep this"
+
+    def test_response_includes_token_usage(self):
+        entries = [{"role": "user", "content": "some content here"}]
+        update = _make_update_tool(entries, self._ENDPOINT)
+        result = update(0, 'x = "short"')
+        assert "tokens" in result
+        assert "%" in result
+
+    def test_surgical_replace(self):
+        entries = [{"role": "tool", "content": "verbose error with traceback details"}]
+        update = _make_update_tool(entries, self._ENDPOINT)
+        result = update(
+            0,
+            'x = x.replace("verbose error with traceback details", "error")',
+        )
+        assert "error" in result
+        assert entries[0]["content"] == "error"
+
+    def test_out_of_range_returns_error(self):
+        entries = [{"role": "user", "content": "only one"}]
+        update = _make_update_tool(entries, self._ENDPOINT)
+        result = update(5, 'x = "y"')
+        assert "Error" in result
+        assert "out of range" in result
+
+    def test_invalid_code_returns_error(self):
+        entries = [{"role": "user", "content": "content"}]
+        update = _make_update_tool(entries, self._ENDPOINT)
+        result = update(0, "def def def")
+        assert "Error" in result
+        assert entries[0]["content"] == "content"
+
+    def test_empty_result_becomes_marker(self):
+        entries = [{"role": "user", "content": "something"}]
+        update = _make_update_tool(entries, self._ENDPOINT)
+        result = update(0, 'x = ""')
+        assert "(empty)" in result
+        assert entries[0]["content"] == "(empty)"
+
+    def test_multiple_updates(self):
+        entries = [
+            {"role": "user", "content": "first"},
+            {"role": "assistant", "content": "second"},
+            {"role": "tool", "content": "third"},
+        ]
+        update = _make_update_tool(entries, self._ENDPOINT)
+        update(0, 'x = "1"')
+        update(2, 'x = "3"')
+        assert entries[0]["content"] == "1"
+        assert entries[1]["content"] == "second"
+        assert entries[2]["content"] == "3"
+
+    def test_bare_expression(self):
+        entries = [{"role": "user", "content": "hello world"}]
+        update = _make_update_tool(entries, self._ENDPOINT)
+        result = update(0, 'x.replace("hello", "hi")')
+        assert "hi world" in result
+        assert entries[0]["content"] == "hi world"
+
+    def test_multiline_transformation(self):
+        entries = [{"role": "tool", "content": "line1\nERROR line2\nline3"}]
+        update = _make_update_tool(entries, self._ENDPOINT)
+        code = "lines = x.split('\\n')\nx = '\\n'.join(l for l in lines if 'ERROR' not in l)"
+        result = update(0, code)
+        assert "line1" in result
+        assert "ERROR" not in entries[0]["content"]
 
 
 @pytest.mark.asyncio
