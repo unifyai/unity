@@ -25,6 +25,7 @@ from ._async_tool.propagation_mode import ChatContextPropagation
 from ._async_tool.context_compression import (
     _COMPRESSION_SIGNAL,
     compress_messages,
+    tag_images_in_messages,
 )
 from .context_dump import make_messages_safe_for_context_dump
 from typing import Iterable
@@ -302,6 +303,11 @@ class AsyncToolLoopHandle(SteerableToolHandle):
         self._compressed_entries: list[tuple[int, str]] = []
         self._compression_count: int = 0
         self._loop_config: Optional[dict] = None
+
+        # Image-aware compression state
+        self._image_registry: dict[int, dict] = {}
+        self._live_image_ids: set[int] = set()
+        self._next_image_id: int = 0
 
     # small local helpers to keep user-visible history consistent
     def _append_user_visible_user(
@@ -837,14 +843,35 @@ class AsyncToolLoopHandle(SteerableToolHandle):
             new_messages.append(msg)
             new_msg_global_indices.append(archive_base + i)
 
+        # 2b. Tag images in new messages and accumulate to the registry.
+        tagged_messages, new_image_blocks, next_id = tag_images_in_messages(
+            new_messages,
+            start_id=self._next_image_id,
+        )
+        self._next_image_id = next_id
+        self._image_registry.update(new_image_blocks)
+        self._live_image_ids.update(new_image_blocks.keys())
+
+        # Build the set of live images to send to the compression LLM.
+        live_images = (
+            {iid: self._image_registry[iid] for iid in self._live_image_ids}
+            if self._live_image_ids
+            else None
+        )
+
         # 3. Compress with prior entries visible alongside new messages.
         compressed = await compress_messages(
-            new_messages,
+            tagged_messages,
             self._client.endpoint,
+            image_blocks=live_images,
             prior_entries=self._compressed_entries or None,
             raw_archives=self._raw_message_archives,
             new_indices=new_msg_global_indices,
         )
+
+        # 3b. Update live image IDs based on which tags survived.
+        if live_images:
+            self._live_image_ids = compressed.surviving_image_ids
 
         # 4. Split result: first N are re-compressed prior, rest map to new.
         n_prior = len(self._compressed_entries)
@@ -901,16 +928,31 @@ class AsyncToolLoopHandle(SteerableToolHandle):
             end = min(index + n, len(flat))
             return json.dumps(flat[index:end], default=str)
 
+        _instructions = (
+            "When you need details from a compressed message, call "
+            "`unpack_messages(index)` with its `[N]` index to "
+            "retrieve the full original content. Pass `n` to "
+            "retrieve a range of consecutive messages."
+        )
+
+        if self._live_image_ids:
+            content_blocks: list[dict] = [
+                {"type": "text", "text": f"{combined}\n\n{_instructions}"},
+            ]
+            for img_id in sorted(self._live_image_ids):
+                if img_id in self._image_registry:
+                    content_blocks.append(
+                        {"type": "text", "text": f"[img:{img_id}]"},
+                    )
+                    content_blocks.append(self._image_registry[img_id])
+            compressed_content: str | list[dict] = content_blocks
+        else:
+            compressed_content = f"{combined}\n\n{_instructions}"
+
         compressed_sys_msg = {
             "role": "system",
             "_compressed_message": True,
-            "content": (
-                f"{combined}\n\n"
-                "When you need details from a compressed message, call "
-                "`unpack_messages(index)` with its `[N]` index to "
-                "retrieve the full original content. Pass `n` to "
-                "retrieve a range of consecutive messages."
-            ),
+            "content": compressed_content,
         }
 
         system_msgs.append(compressed_sys_msg)
