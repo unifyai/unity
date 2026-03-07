@@ -768,3 +768,419 @@ async def test_compress_multi_pass_recompresses_prior(llm_config):
     assert len(result.messages) == 4
     recompressed_tool_result = result.messages[0]
     assert len(recompressed_tool_result.content) < len(_VERBOSE_PRIOR_TOOL_RESULT) * 0.7
+
+
+# ── End-to-end multi-pass compression tests ──────────────────────────────────
+#
+# These eval tests exercise sequential compression passes through the real LLM,
+# verifying that:
+#   - Pass 2 can further compress pass 1's output
+#   - raw_archives enables the get_raw tool for peeking at originals
+#   - Triple-pass chaining accumulates entries correctly across all passes
+
+_MULTI_PASS_CONTACT_LIST = json.dumps(
+    {
+        "contacts": [
+            {
+                "id": i,
+                "name": name,
+                "email": f"{name.lower().replace(' ', '.')}@example.com",
+                "phone": f"+1555{i:07d}",
+                "address": addr,
+                "notes": notes,
+                "tags": tags,
+                "company": company,
+                "title": title,
+            }
+            for i, (name, addr, notes, tags, company, title) in enumerate(
+                [
+                    (
+                        "Alice Smith",
+                        "123 Oak St, Springfield IL 62704",
+                        "Prefers morning meetings. Has a dog named Rex.",
+                        ["vip", "engineering"],
+                        "Acme Corp",
+                        "Senior Engineer",
+                    ),
+                    (
+                        "Bob Jones",
+                        "456 Maple Ave, Portland OR 97201",
+                        "Referred by Alice. Working on Project Phoenix.",
+                        ["engineering", "onsite"],
+                        "Acme Corp",
+                        "Junior Engineer",
+                    ),
+                    (
+                        "Carol White",
+                        "789 Pine Rd, Austin TX 73301",
+                        "Expert in ML pipelines. Ex-colleague from TechStart.",
+                        ["data-science"],
+                        "DataFlow Inc",
+                        "Lead Data Scientist",
+                    ),
+                    (
+                        "David Brown",
+                        "321 Elm Blvd, Seattle WA 98101",
+                        "Met at PyCon 2024. Interested in OSS collaboration.",
+                        ["open-source", "python"],
+                        "IndieCode LLC",
+                        "Founder",
+                    ),
+                    (
+                        "Eve Davis",
+                        "654 Cedar Ln, Denver CO 80201",
+                        "Client contact for Q3 deliverable. Responsive on Slack.",
+                        ["client", "priority"],
+                        "BigClient Co",
+                        "Product Manager",
+                    ),
+                ],
+            )
+        ],
+        "total": 5,
+        "page": 1,
+        "per_page": 50,
+    },
+)
+
+_MULTI_PASS_TRACEBACK = (
+    "Traceback (most recent call last):\n"
+    '  File "/app/services/contact_service.py", line 287, in search_contacts\n'
+    "    results = await self._database.query(params)\n"
+    '  File "/app/database/postgres.py", line 154, in query\n'
+    "    validated = self._validate_params(params)\n"
+    '  File "/app/database/postgres.py", line 89, in _validate_params\n'
+    "    for key, value in params.items():\n"
+    '  File "/app/database/validators.py", line 42, in validate_field\n'
+    "    raise ValueError(\n"
+    "ValueError: invalid search parameter 'status'. "
+    "Supported parameters are: 'name', 'id', 'phone', 'email', 'company'. "
+    "Please use one of the supported parameters listed above.\n"
+    "\n"
+    "During handling of the above exception, another exception occurred:\n"
+    "\n"
+    "Traceback (most recent call last):\n"
+    '  File "/app/api/endpoints/contacts.py", line 45, in handle_request\n'
+    "    return await service.process(request_data)\n"
+    '  File "/app/services/contact_service.py", line 300, in process\n'
+    "    return self._format_error_response(e, request_id=req.id)\n"
+    "ServiceError: Failed to process contact search request"
+)
+
+
+def _mp_pass1() -> list[dict]:
+    """Verbose conversation: contact lookup + failed search with traceback."""
+    return [
+        {
+            "role": "user",
+            "content": "List all contacts at Acme Corp and tell me their emails.",
+        },
+        {
+            "role": "assistant",
+            "content": None,
+            "tool_calls": [
+                {
+                    "id": "call_1",
+                    "type": "function",
+                    "function": {
+                        "name": "get_contacts",
+                        "arguments": '{"company": "Acme Corp"}',
+                    },
+                },
+            ],
+        },
+        {
+            "role": "tool",
+            "tool_call_id": "call_1",
+            "name": "get_contacts",
+            "content": _MULTI_PASS_CONTACT_LIST,
+        },
+        {
+            "role": "assistant",
+            "content": (
+                "I found 5 contacts. The Acme Corp employees are:\n"
+                "- Alice Smith: alice.smith@example.com\n"
+                "- Bob Jones: bob.jones@example.com\n\n"
+                "The other contacts (Carol, David, Eve) are at different companies."
+            ),
+        },
+        {"role": "user", "content": "Search for contacts with status=active"},
+        {
+            "role": "assistant",
+            "content": None,
+            "tool_calls": [
+                {
+                    "id": "call_2",
+                    "type": "function",
+                    "function": {
+                        "name": "search_contacts",
+                        "arguments": '{"status": "active"}',
+                    },
+                },
+            ],
+        },
+        {
+            "role": "tool",
+            "tool_call_id": "call_2",
+            "name": "search_contacts",
+            "content": json.dumps({"error": _MULTI_PASS_TRACEBACK}),
+        },
+        {
+            "role": "assistant",
+            "content": (
+                "The 'status' field is not a supported search parameter. "
+                "I can search by name, id, phone, email, or company. "
+                "Would you like me to try a different search?"
+            ),
+        },
+    ]
+
+
+def _mp_pass2() -> list[dict]:
+    """Follow-up: user asks for Alice's phone number."""
+    return [
+        {"role": "user", "content": "OK, just find Alice's phone number."},
+        {
+            "role": "assistant",
+            "content": None,
+            "tool_calls": [
+                {
+                    "id": "call_3",
+                    "type": "function",
+                    "function": {
+                        "name": "get_contact",
+                        "arguments": '{"name": "Alice Smith"}',
+                    },
+                },
+            ],
+        },
+        {
+            "role": "tool",
+            "tool_call_id": "call_3",
+            "name": "get_contact",
+            "content": json.dumps(
+                {
+                    "id": 0,
+                    "name": "Alice Smith",
+                    "email": "alice.smith@example.com",
+                    "phone": "+15550000000",
+                    "company": "Acme Corp",
+                },
+            ),
+        },
+        {
+            "role": "assistant",
+            "content": "Alice Smith's phone number is +15550000000.",
+        },
+    ]
+
+
+def _mp_pass3() -> list[dict]:
+    """Another follow-up: user asks for Bob's email."""
+    return [
+        {"role": "user", "content": "Now find Bob's email too."},
+        {
+            "role": "assistant",
+            "content": None,
+            "tool_calls": [
+                {
+                    "id": "call_4",
+                    "type": "function",
+                    "function": {
+                        "name": "get_contact",
+                        "arguments": '{"name": "Bob Jones"}',
+                    },
+                },
+            ],
+        },
+        {
+            "role": "tool",
+            "tool_call_id": "call_4",
+            "name": "get_contact",
+            "content": json.dumps(
+                {
+                    "id": 1,
+                    "name": "Bob Jones",
+                    "email": "bob.jones@example.com",
+                    "phone": "+15550000001",
+                    "company": "Acme Corp",
+                },
+            ),
+        },
+        {
+            "role": "assistant",
+            "content": "Bob Jones' email is bob.jones@example.com.",
+        },
+    ]
+
+
+def _accumulate_entries(
+    result: CompressedMessages,
+    new_indices: list[int],
+    prior_entries: list[tuple[int, str]] | None = None,
+) -> list[tuple[int, str]]:
+    """Extract accumulated (index, content) entries from a compression result.
+
+    Mirrors the entry accumulation logic in _restart_with_compressed_context:
+    re-compressed prior entries keep their original global indices, new entries
+    get their global indices from new_indices.
+    """
+    entries: list[tuple[int, str]] = []
+    n_prior = len(prior_entries) if prior_entries else 0
+
+    if prior_entries:
+        for (orig_idx, _), comp in zip(prior_entries, result.messages[:n_prior]):
+            entries.append((orig_idx, comp.content))
+
+    for global_idx, comp in zip(new_indices, result.messages[n_prior:]):
+        entries.append((global_idx, comp.content))
+
+    return entries
+
+
+@pytest.mark.eval
+@pytest.mark.asyncio
+@_handle_project
+async def test_multi_pass_double_further_compresses_prior(llm_config):
+    """Pass 2 further compresses verbose entries that survived pass 1.
+
+    Scenario: pass 1 compresses a verbose transcript (big tool results, traceback).
+    Pass 2 receives pass 1's output as prior_entries alongside new messages and
+    must not expand prior entries — and ideally compresses them further given the
+    new context.
+    """
+    pass1_msgs = _mp_pass1()
+    pass2_msgs = _mp_pass2()
+
+    # --- Pass 1 ---
+    result1 = await compress_messages(pass1_msgs, llm_config["model"])
+    assert len(result1.messages) == len(pass1_msgs)
+
+    original_tool_len = len(json.dumps(pass1_msgs[2], default=str))
+    assert len(result1.messages[2].content) < original_tool_len * 0.7
+
+    # --- Pass 2 ---
+    prior_entries = [(i, msg.content) for i, msg in enumerate(result1.messages)]
+    pass2_base = len(pass1_msgs)
+    pass2_indices = list(range(pass2_base, pass2_base + len(pass2_msgs)))
+
+    result2 = await compress_messages(
+        pass2_msgs,
+        llm_config["model"],
+        prior_entries=prior_entries,
+        raw_archives=[pass1_msgs],
+        new_indices=pass2_indices,
+    )
+
+    assert len(result2.messages) == len(prior_entries) + len(pass2_msgs)
+
+    for i, (_, pass1_content) in enumerate(prior_entries):
+        pass2_content = result2.messages[i].content
+        assert len(pass2_content) <= len(pass1_content) * 1.5, (
+            f"Prior entry {i} expanded significantly: "
+            f"{len(pass1_content)} → {len(pass2_content)}"
+        )
+
+
+@pytest.mark.eval
+@pytest.mark.asyncio
+@_handle_project
+async def test_multi_pass_double_with_raw_archives(llm_config):
+    """Pass 2 with raw_archives can inspect originals via get_raw.
+
+    The LLM receives both prior compressed entries and the raw_archives that
+    enable the get_raw tool. The overall compressed output should be
+    significantly smaller than the raw original content.
+    """
+    pass1_msgs = _mp_pass1()
+    pass2_msgs = _mp_pass2()
+
+    # --- Pass 1 ---
+    result1 = await compress_messages(pass1_msgs, llm_config["model"])
+    prior_entries = [(i, msg.content) for i, msg in enumerate(result1.messages)]
+    pass2_base = len(pass1_msgs)
+    pass2_indices = list(range(pass2_base, pass2_base + len(pass2_msgs)))
+
+    # --- Pass 2 with raw_archives ---
+    result2 = await compress_messages(
+        pass2_msgs,
+        llm_config["model"],
+        prior_entries=prior_entries,
+        raw_archives=[pass1_msgs],
+        new_indices=pass2_indices,
+    )
+
+    total_expected = len(prior_entries) + len(pass2_msgs)
+    assert len(result2.messages) == total_expected
+
+    original_total = sum(
+        len(json.dumps(m, default=str)) for m in pass1_msgs + pass2_msgs
+    )
+    compressed_total = sum(len(m.content) for m in result2.messages)
+    assert (
+        compressed_total < original_total * 0.7
+    ), f"Expected significant compression: {original_total} → {compressed_total}"
+
+
+@pytest.mark.eval
+@pytest.mark.asyncio
+@_handle_project
+async def test_multi_pass_triple_accumulates_correctly(llm_config):
+    """Three sequential passes accumulate and compress all entries.
+
+    Pass 1 compresses the initial verbose transcript. Pass 2 adds new messages
+    and re-compresses with pass 1's output as prior. Pass 3 adds more messages
+    and re-compresses with the accumulated prior from passes 1+2. The final
+    result must contain exactly as many entries as there are original messages
+    across all three passes, with significant overall compression.
+    """
+    pass1_msgs = _mp_pass1()
+    pass2_msgs = _mp_pass2()
+    pass3_msgs = _mp_pass3()
+
+    # --- Pass 1 ---
+    result1 = await compress_messages(pass1_msgs, llm_config["model"])
+    assert len(result1.messages) == len(pass1_msgs)
+
+    prior_1 = [(i, msg.content) for i, msg in enumerate(result1.messages)]
+    raw_archives = [pass1_msgs]
+
+    # --- Pass 2 ---
+    pass2_base = len(pass1_msgs)
+    pass2_indices = list(range(pass2_base, pass2_base + len(pass2_msgs)))
+
+    result2 = await compress_messages(
+        pass2_msgs,
+        llm_config["model"],
+        prior_entries=prior_1,
+        raw_archives=raw_archives,
+        new_indices=pass2_indices,
+    )
+    assert len(result2.messages) == len(prior_1) + len(pass2_msgs)
+
+    prior_2 = _accumulate_entries(result2, pass2_indices, prior_1)
+    raw_archives = [pass1_msgs, pass2_msgs]
+
+    # --- Pass 3 ---
+    pass3_base = pass2_base + len(pass2_msgs)
+    pass3_indices = list(range(pass3_base, pass3_base + len(pass3_msgs)))
+
+    result3 = await compress_messages(
+        pass3_msgs,
+        llm_config["model"],
+        prior_entries=prior_2,
+        raw_archives=raw_archives,
+        new_indices=pass3_indices,
+    )
+
+    total_all_msgs = len(pass1_msgs) + len(pass2_msgs) + len(pass3_msgs)
+    assert len(result3.messages) == total_all_msgs
+
+    original_total = sum(
+        len(json.dumps(m, default=str)) for m in pass1_msgs + pass2_msgs + pass3_msgs
+    )
+    compressed_total = sum(len(m.content) for m in result3.messages)
+    assert compressed_total < original_total * 0.7, (
+        f"Expected significant compression across 3 passes: "
+        f"{original_total} → {compressed_total}"
+    )
