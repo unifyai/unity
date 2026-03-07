@@ -47,6 +47,10 @@ COMPRESSION_PROMPT = (
     "- Assistant messages with tool_calls: compact to tool names and key arguments.\n"
     '- Narration-only assistant text ("Let me look that up"): replace with the '
     "tool call summary. Keep reasoning text only if it informs later steps.\n"
+    '- System messages (role "system"): preserve instructions faithfully. '
+    "The exception is parent chat context sections — look for "
+    '"Parent Chat Context" headers — which can be heavily pruned '
+    "if they contain information redundant with the conversation.\n"
     "- Every entry must remain non-empty after transformation.\n"
     "- Do NOT invent information that was not in the original message.\n"
     "\n"

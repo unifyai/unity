@@ -25,7 +25,6 @@ from ._async_tool.propagation_mode import ChatContextPropagation
 from ._async_tool.context_compression import (
     _COMPRESSION_SIGNAL,
     compress_messages,
-    render_compressed_context,
 )
 from .context_dump import make_messages_safe_for_context_dump
 from typing import Iterable
@@ -820,25 +819,47 @@ class AsyncToolLoopHandle(SteerableToolHandle):
                 "Cannot compress: loop config was not stored on the handle.",
             )
 
-        # 1. Separate system messages (preserved verbatim) from conversation
-        #    messages (compressed). System messages carry special attributes
-        #    like _runtime_context that must not be touched by the compressor.
+        # 1. Archive ALL messages (including system) and compress them together.
+        #    This lets the compression LLM prune large parent chat context
+        #    blocks that live inside system messages.
         all_messages = copy.deepcopy(self._client.messages)
-        system_msgs = [m for m in all_messages if m.get("role") == "system"]
-        conversation_messages = [m for m in all_messages if m.get("role") != "system"]
+        self._raw_message_archives.append(all_messages)
 
-        self._raw_message_archives.append(conversation_messages)
-
-        # 2. Compress with index offset so labels continue from prior passes
-        index_offset = sum(len(a) for a in self._raw_message_archives[:-1])
+        archive_base = sum(len(a) for a in self._raw_message_archives[:-1])
         compressed = await compress_messages(
-            conversation_messages,
+            all_messages,
             self._client.endpoint,
         )
-        rendered = render_compressed_context(compressed, index_offset=index_offset)
+
+        # 2. Separate compressed entries back into system messages and
+        #    conversation lines.  System messages preserve their original
+        #    metadata attributes (e.g. _runtime_context, _parent_chat_context)
+        #    but get the compressed content.
+        system_msgs: list[dict] = []
+        conv_lines: list[str] = []
+        for i, (orig_msg, comp_entry) in enumerate(
+            zip(all_messages, compressed.messages),
+        ):
+            if orig_msg.get("role") == "system":
+                new_msg = dict(orig_msg)
+                try:
+                    compressed_dict = json.loads(comp_entry.content)
+                    new_msg["content"] = compressed_dict.get(
+                        "content",
+                        comp_entry.content,
+                    )
+                except (json.JSONDecodeError, TypeError):
+                    new_msg["content"] = comp_entry.content
+                system_msgs.append(new_msg)
+            else:
+                conv_lines.append(f"[{archive_base + i}] {comp_entry.content}")
+
+        rendered = "\n".join(conv_lines)
         self._compressed_renders.append(rendered)
 
-        combined = "## Compressed Prior Context\n" + "\n".join(self._compressed_renders)
+        combined = "## Compressed Prior Context\n" + "\n".join(
+            self._compressed_renders,
+        )
 
         # 3. Build unpack_messages closure over all archives (cumulative indexing)
         archive_ref = self._raw_message_archives
@@ -858,9 +879,7 @@ class AsyncToolLoopHandle(SteerableToolHandle):
             end = min(index + n, len(flat))
             return json.dumps(flat[index:end], default=str)
 
-        # 4. Reuse existing client -- carry over all system message blocks.
-        #    Replace existing compressed-context message if present,
-        #    otherwise append a new one.
+        # 4. Replace or append the compressed-context system message.
         compressed_sys_msg = {
             "role": "system",
             "_compressed_message": True,
@@ -934,7 +953,7 @@ class AsyncToolLoopHandle(SteerableToolHandle):
         LOGGER.info(
             f"{ICONS.get('completed', '✓')} [{self._log_label}] "
             f"Context compressed (pass #{self._compression_count}), "
-            f"archived {len(conversation_messages)} messages, new loop started.",
+            f"archived {len(all_messages)} messages, new loop started.",
         )
 
     def get_history(self) -> list[dict]:
