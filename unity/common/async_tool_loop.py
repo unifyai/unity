@@ -1022,6 +1022,7 @@ def start_async_tool_loop(
     prompt_caching: Optional["PromptCacheParam"] = None,
     time_awareness: bool = False,
     extra_ask_tools: Optional[Dict[str, Callable]] = None,
+    enable_compression: bool = True,
 ) -> AsyncToolLoopHandle:
     """
     Kick off `_async_tool_use_loop_inner` in its own task and give the caller
@@ -1144,6 +1145,7 @@ def start_async_tool_loop(
                 prompt_caching=prompt_caching,
                 time_awareness=time_awareness,
                 extra_ask_tools=extra_ask_tools,
+                enable_compression=enable_compression,
             )
         except asyncio.CancelledError:
             raise
@@ -1218,6 +1220,7 @@ def start_async_tool_loop(
         "prompt_caching": prompt_caching,
         "time_awareness": time_awareness,
         "extra_ask_tools": extra_ask_tools,
+        "enable_compression": enable_compression,
     }
 
     # Attach lineage to handle for optional external inspection
