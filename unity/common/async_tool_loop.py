@@ -1,5 +1,4 @@
 import asyncio
-import copy
 import unillm
 import functools
 import json
@@ -24,8 +23,8 @@ from ._async_tool.loop import async_tool_loop_inner
 from ._async_tool.propagation_mode import ChatContextPropagation
 from ._async_tool.context_compression import (
     _COMPRESSION_SIGNAL,
-    compress_messages,
-    tag_images_in_messages,
+    CompressionState,
+    compress_and_rebuild,
 )
 from .context_dump import make_messages_safe_for_context_dump
 from typing import Iterable
@@ -39,9 +38,6 @@ from ._async_tool.tagging import tag_message_with_request
 
 if TYPE_CHECKING:
     from unillm.types import PromptCacheParam
-
-
-_COMPRESSED_HEADER = "## Compressed Prior Context\n"
 
 
 def _transform_inner_roles(messages: list[dict]) -> list[dict]:
@@ -298,16 +294,9 @@ class AsyncToolLoopHandle(SteerableToolHandle):
         self._clar_q: asyncio.Queue[dict] = asyncio.Queue()
         self._notification_q: asyncio.Queue[dict] = asyncio.Queue()
 
-        # Context compression state
-        self._raw_message_archives: list[list[dict]] = []
-        self._compressed_entries: list[tuple[int, str]] = []
-        self._compression_count: int = 0
+        # Context compression state (all fields live in CompressionState)
+        self._compression = CompressionState()
         self._loop_config: Optional[dict] = None
-
-        # Image-aware compression state
-        self._image_registry: dict[int, dict] = {}
-        self._live_image_ids: set[int] = set()
-        self._next_image_id: int = 0
 
     # small local helpers to keep user-visible history consistent
     def _append_user_visible_user(
@@ -817,10 +806,13 @@ class AsyncToolLoopHandle(SteerableToolHandle):
             return raw
 
     async def _restart_with_compressed_context(self) -> None:
-        """Archive messages, compress them, and start a new loop.
+        """Compress context and start a new loop iteration.
 
-        Swaps ``_task`` in-place so that all steering methods automatically target the new loop.
-        ``_queue`` (interject queue) and ``_pause_event`` are reused so pending interjections carry over and pause state persists.
+        Delegates all data transformation to ``compress_and_rebuild`` in
+        ``context_compression``.  This method only handles the loop lifecycle:
+        replacing client messages, creating a new ``asyncio.Task``, and swapping
+        the task reference so that steering methods automatically target the
+        new loop.
         """
         cfg = self._loop_config
         if cfg is None:
@@ -828,152 +820,21 @@ class AsyncToolLoopHandle(SteerableToolHandle):
                 "Cannot compress: loop config was not stored on the handle.",
             )
 
-        # 1. Archive ALL messages (including system) for raw access.
-        all_messages = copy.deepcopy(self._client.messages)
-        self._raw_message_archives.append(all_messages)
-        archive_base = sum(len(a) for a in self._raw_message_archives[:-1])
-
-        # 2. Separate current messages: skip _compressed_message (handled
-        #    via prior entries) and collect new messages with global indices.
-        new_messages: list[dict] = []
-        new_msg_global_indices: list[int] = []
-        for i, msg in enumerate(all_messages):
-            if msg.get("_compressed_message"):
-                continue
-            new_messages.append(msg)
-            new_msg_global_indices.append(archive_base + i)
-
-        # 2b. Tag images in new messages and accumulate to the registry.
-        tagged_messages, new_image_blocks, next_id = tag_images_in_messages(
-            new_messages,
-            start_id=self._next_image_id,
-        )
-        self._next_image_id = next_id
-        self._image_registry.update(new_image_blocks)
-        self._live_image_ids.update(new_image_blocks.keys())
-
-        # Build the set of live images to send to the compression LLM.
-        live_images = (
-            {iid: self._image_registry[iid] for iid in self._live_image_ids}
-            if self._live_image_ids
-            else None
-        )
-
-        # 3. Compress with prior entries visible alongside new messages.
-        compressed = await compress_messages(
-            tagged_messages,
+        n_archived = len(self._client.messages)
+        result = await compress_and_rebuild(
+            self._compression,
+            self._client.messages,
             self._client.endpoint,
-            image_blocks=live_images,
-            prior_entries=self._compressed_entries or None,
-            raw_archives=self._raw_message_archives,
-            new_indices=new_msg_global_indices,
+            dict(cfg["tools"]),
         )
 
-        # 3b. Update live image IDs based on which tags survived.
-        if live_images:
-            self._live_image_ids = compressed.surviving_image_ids
-
-        # 4. Split result: first N are re-compressed prior, rest map to new.
-        n_prior = len(self._compressed_entries)
-        prior_results = compressed.messages[:n_prior]
-        new_results = compressed.messages[n_prior:]
-
-        conversation_entries: list[tuple[int, str]] = []
-        system_msgs: list[dict] = []
-
-        for (orig_idx, _), comp in zip(self._compressed_entries, prior_results):
-            conversation_entries.append((orig_idx, comp.content))
-
-        for global_idx, orig_msg, comp in zip(
-            new_msg_global_indices,
-            new_messages,
-            new_results,
-        ):
-            if orig_msg.get("role") == "system":
-                new_msg = dict(orig_msg)
-                try:
-                    compressed_dict = json.loads(comp.content)
-                    new_msg["content"] = compressed_dict.get(
-                        "content",
-                        comp.content,
-                    )
-                except (json.JSONDecodeError, TypeError):
-                    new_msg["content"] = comp.content
-                system_msgs.append(new_msg)
-            else:
-                conversation_entries.append((global_idx, comp.content))
-
-        self._compressed_entries = conversation_entries
-
-        # 5. Render _compressed_message from structured entries.
-        body = "\n".join(
-            f"[{idx}] {content}" for idx, content in self._compressed_entries
-        )
-        combined = _COMPRESSED_HEADER + body
-
-        archive_ref = self._raw_message_archives
-
-        def unpack_messages(index: int, n: int = 1) -> str:
-            """Retrieve one or more uncompressed messages by index.
-
-            ``index`` corresponds to the ``[N]`` label in the compressed
-            context summary.  Returns up to ``n`` consecutive original
-            messages as a JSON array.
-            """
-            flat = [msg for archive in archive_ref for msg in archive]
-            if index < 0 or index >= len(flat):
-                return json.dumps(
-                    {"error": f"Index {index} out of range (0-{len(flat) - 1})"},
-                )
-            end = min(index + n, len(flat))
-            return json.dumps(flat[index:end], default=str)
-
-        _instructions = (
-            "When you need details from a compressed message, call "
-            "`unpack_messages(index)` with its `[N]` index to "
-            "retrieve the full original content. Pass `n` to "
-            "retrieve a range of consecutive messages."
-        )
-
-        if self._live_image_ids:
-            content_blocks: list[dict] = [
-                {"type": "text", "text": f"{combined}\n\n{_instructions}"},
-            ]
-            for img_id in sorted(self._live_image_ids):
-                if img_id in self._image_registry:
-                    content_blocks.append(
-                        {"type": "text", "text": f"[img:{img_id}]"},
-                    )
-                    content_blocks.append(self._image_registry[img_id])
-            compressed_content: str | list[dict] = content_blocks
-        else:
-            compressed_content = f"{combined}\n\n{_instructions}"
-
-        compressed_sys_msg = {
-            "role": "system",
-            "_compressed_message": True,
-            "content": compressed_content,
-        }
-
-        system_msgs.append(compressed_sys_msg)
-
-        self._client._messages = system_msgs
+        self._client._messages = result.system_msgs
         self._client._system_message = None
 
-        # 5. Prepare tools: original tools + unpack_messages
-        tools = dict(cfg["tools"])
-        tools["unpack_messages"] = unpack_messages
-
-        # 6. Reuse all steering events so that any stop/cancel/pause issued
-        #    during the compression window carries over to the new loop.
         outer_handle_container: list = [None]
-
         _parent = cfg["parent_lineage"] or TOOL_LOOP_LINEAGE.get([])
         _lineage = [*_parent, cfg.get("loop_id", "compressed")]
 
-        # All keys in _loop_config map directly to async_tool_loop_inner
-        # kwargs except "parent_lineage" (used to compute lineage above)
-        # and "tools" (overridden with unpack_messages added).
         inner_kwargs = {
             k: v for k, v in cfg.items() if k not in ("parent_lineage", "tools")
         }
@@ -982,7 +843,7 @@ class AsyncToolLoopHandle(SteerableToolHandle):
             return await async_tool_loop_inner(
                 self._client,
                 "Context was compressed. Continue from where you left off.",
-                tools,
+                result.tools,
                 lineage=_lineage,
                 interject_queue=self._queue,
                 cancel_event=self._cancel_event,
@@ -1000,16 +861,13 @@ class AsyncToolLoopHandle(SteerableToolHandle):
             setattr(new_task, "get_ask_tools", lambda: {})
             setattr(new_task, "get_completed_tool_metadata", lambda: {})
 
-        # 7. Swap task reference (client and events are reused in-place)
         self._task = new_task
-        self._compression_count += 1
-
         outer_handle_container[0] = self
 
         LOGGER.info(
             f"{ICONS.get('completed', '✓')} [{self._log_label}] "
-            f"Context compressed (pass #{self._compression_count}), "
-            f"archived {len(all_messages)} messages, new loop started.",
+            f"Context compressed (pass #{self._compression.count}), "
+            f"archived {n_archived} messages, new loop started.",
         )
 
     def get_history(self) -> list[dict]:

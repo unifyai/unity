@@ -9,16 +9,13 @@ import json
 
 from tests.helpers import _handle_project
 from unity.common._async_tool.context_compression import (
-    CompressedMessage,
     CompressedMessages,
     compress_context,
     compress_messages,
-    prepare_messages_for_compression,
-    render_compressed_context,
     tag_images_in_messages,
     _eval_transformation,
     _make_update_tool,
-    _make_get_raw_tool,
+    _make_archive_lookup_tool,
     _scan_surviving_image_ids,
 )
 
@@ -35,160 +32,6 @@ class TestCompressContextTool:
     def test_returns_string(self):
         result = compress_context()
         assert isinstance(result, str)
-
-
-class TestPrepareMessagesForCompression:
-    def test_strips_image_blocks(self):
-        messages = [
-            {
-                "role": "user",
-                "content": [
-                    {"type": "text", "text": "What is this?"},
-                    {
-                        "type": "image_url",
-                        "image_url": {"url": "data:image/png;base64,iVBORw0KGgo..."},
-                    },
-                ],
-            },
-        ]
-        result = prepare_messages_for_compression(messages)
-        assert len(result) == 1
-        content = result[0]["content"]
-        if isinstance(content, list):
-            texts = [b["text"] for b in content if b.get("type") == "text"]
-            full_text = " ".join(texts)
-        else:
-            full_text = content
-        assert "1 image" in full_text.lower()
-        assert "base64" not in str(content)
-
-    def test_strips_multiple_images(self):
-        messages = [
-            {
-                "role": "user",
-                "content": [
-                    {"type": "text", "text": "Compare these"},
-                    {
-                        "type": "image",
-                        "source": {"type": "base64", "data": "abc123..."},
-                    },
-                    {
-                        "type": "image_url",
-                        "image_url": {"url": "data:image/jpeg;base64,def456..."},
-                    },
-                    {
-                        "type": "image",
-                        "source": {"type": "base64", "data": "ghi789..."},
-                    },
-                ],
-            },
-        ]
-        result = prepare_messages_for_compression(messages)
-        content = result[0]["content"]
-        if isinstance(content, list):
-            texts = [b["text"] for b in content if b.get("type") == "text"]
-            full_text = " ".join(texts)
-        else:
-            full_text = content
-        assert "3 image" in full_text.lower()
-
-    def test_preserves_thinking_blocks(self):
-        messages = [
-            {
-                "role": "assistant",
-                "content": [
-                    {
-                        "type": "thinking",
-                        "thinking": "Let me reason about this...",
-                        "signature": "base64signatureblob==",
-                    },
-                    {"type": "text", "text": "Here is the answer."},
-                ],
-            },
-        ]
-        result = prepare_messages_for_compression(messages)
-        content = result[0]["content"]
-        assert isinstance(content, list)
-        types = [b.get("type") for b in content]
-        assert "thinking" in types
-        texts = [b["text"] for b in content if b.get("type") == "text"]
-        assert "Here is the answer." in texts
-
-    def test_preserves_text_only_messages(self):
-        messages = [
-            {"role": "user", "content": "Hello world"},
-            {"role": "assistant", "content": "Hi there"},
-        ]
-        result = prepare_messages_for_compression(messages)
-        assert result[0]["content"] == "Hello world"
-        assert result[1]["content"] == "Hi there"
-
-    def test_handles_mixed_content(self):
-        """Message with text + images + thinking all at once."""
-        messages = [
-            {
-                "role": "assistant",
-                "content": [
-                    {
-                        "type": "thinking",
-                        "thinking": "internal reasoning",
-                        "signature": "sig==",
-                    },
-                    {"type": "text", "text": "Here is what I see."},
-                    {
-                        "type": "image_url",
-                        "image_url": {"url": "data:image/png;base64,abc..."},
-                    },
-                    {"type": "text", "text": "The image shows a cat."},
-                ],
-            },
-        ]
-        result = prepare_messages_for_compression(messages)
-        content = result[0]["content"]
-        assert isinstance(content, list)
-        types = [b.get("type") for b in content]
-        assert "thinking" in types
-        assert "image_url" not in types
-        assert "image" not in types
-        texts = [b.get("text", "") for b in content if b.get("type") == "text"]
-        full = " ".join(texts)
-        assert "Here is what I see." in full
-        assert "The image shows a cat." in full
-        assert "1 image" in full.lower()
-
-    def test_does_not_mutate_input(self):
-        original_content = [
-            {"type": "text", "text": "hello"},
-            {
-                "type": "image_url",
-                "image_url": {"url": "data:image/png;base64,abc..."},
-            },
-        ]
-        messages = [{"role": "user", "content": copy.deepcopy(original_content)}]
-        original_snapshot = copy.deepcopy(messages)
-        prepare_messages_for_compression(messages)
-        assert messages == original_snapshot
-
-    def test_preserves_tool_messages(self):
-        messages = [
-            {
-                "role": "tool",
-                "tool_call_id": "call_1",
-                "name": "search",
-                "content": "result data",
-            },
-        ]
-        result = prepare_messages_for_compression(messages)
-        assert result[0] == messages[0] or result[0]["content"] == "result data"
-
-    def test_preserves_message_count(self):
-        messages = [
-            {"role": "user", "content": "hi"},
-            {"role": "assistant", "content": "hello"},
-            {"role": "user", "content": "bye"},
-        ]
-        result = prepare_messages_for_compression(messages)
-        assert len(result) == len(messages)
 
 
 class TestEvalTransformation:
@@ -356,7 +199,7 @@ class TestMakeUpdateTool:
         assert "not found" in result
 
 
-class TestMakeGetRawTool:
+class TestMakeArchiveLookupTool:
     def test_returns_raw_content(self):
         archives = [
             [
@@ -364,14 +207,14 @@ class TestMakeGetRawTool:
                 {"role": "assistant", "content": "world"},
             ],
         ]
-        get_raw = _make_get_raw_tool(archives)
+        get_raw = _make_archive_lookup_tool(archives, for_compression=True)
         result = json.loads(get_raw(0))
         assert len(result) == 1
         assert result[0]["content"] == "hello"
 
     def test_out_of_range_returns_error(self):
         archives = [[{"role": "user", "content": "only one"}]]
-        get_raw = _make_get_raw_tool(archives)
+        get_raw = _make_archive_lookup_tool(archives, for_compression=True)
         result = json.loads(get_raw(5))
         assert "error" in result
         assert "out of range" in result["error"].lower()
@@ -388,7 +231,7 @@ class TestMakeGetRawTool:
                 {"role": "assistant", "content": "second_archive_msg2"},
             ],
         ]
-        get_raw = _make_get_raw_tool(archives)
+        get_raw = _make_archive_lookup_tool(archives, for_compression=True)
         r0 = json.loads(get_raw(0))
         assert r0[0]["content"] == "first_archive_msg0"
         r2 = json.loads(get_raw(2))
@@ -405,11 +248,19 @@ class TestMakeGetRawTool:
                 {"role": "assistant", "content": "msg3"},
             ],
         ]
-        get_raw = _make_get_raw_tool(archives)
+        get_raw = _make_archive_lookup_tool(archives, for_compression=True)
         result = json.loads(get_raw(1, n=2))
         assert len(result) == 2
         assert result[0]["content"] == "msg1"
         assert result[1]["content"] == "msg2"
+
+    def test_compression_mode_sets_name(self):
+        tool = _make_archive_lookup_tool([[]], for_compression=True)
+        assert tool.__name__ == "get_raw"
+
+    def test_unpack_mode_sets_name(self):
+        tool = _make_archive_lookup_tool([[]], for_compression=False)
+        assert tool.__name__ == "unpack_messages"
 
 
 @pytest.mark.asyncio
@@ -598,46 +449,6 @@ async def test_compress_compacts_verbose_errors(llm_config):
     original_json = json.dumps(messages[2], default=str)
     error_msg = result.messages[2]
     assert len(error_msg.content) < len(original_json) * 0.5
-
-
-class TestRenderCompressedContext:
-    def test_basic_format(self):
-        compressed = CompressedMessages(
-            messages=[
-                CompressedMessage(
-                    content=json.dumps({"role": "user", "content": "Find John"}),
-                ),
-                CompressedMessage(
-                    content=json.dumps(
-                        {"role": "assistant", "content": 'search(name="John")'},
-                    ),
-                ),
-                CompressedMessage(
-                    content=json.dumps(
-                        {"role": "tool", "content": "John,j@test.com,+123"},
-                    ),
-                ),
-            ],
-        )
-        rendered = render_compressed_context(compressed)
-        assert rendered.startswith("[0] ")
-        assert "[1] " in rendered
-        assert "[2] " in rendered
-        assert "Find John" in rendered
-        assert "search" in rendered
-        assert "j@test.com" in rendered
-
-    def test_one_line_per_message(self):
-        compressed = CompressedMessages(
-            messages=[
-                CompressedMessage(content="a"),
-                CompressedMessage(content="b"),
-                CompressedMessage(content="c"),
-            ],
-        )
-        rendered = render_compressed_context(compressed)
-        lines = [l for l in rendered.strip().split("\n") if l.strip()]
-        assert len(lines) == 3
 
 
 class TestMultiPassCompression:
