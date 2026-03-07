@@ -41,17 +41,6 @@ if TYPE_CHECKING:
 
 
 _COMPRESSED_HEADER = "## Compressed Prior Context\n"
-_UNPACK_INSTRUCTIONS_MARKER = "\nWhen you need details from a compressed message"
-
-
-def _strip_compressed_wrapper(content: str) -> str:
-    """Strip the header and trailing unpack instructions we add to _compressed_message content."""
-    if content.startswith(_COMPRESSED_HEADER):
-        content = content[len(_COMPRESSED_HEADER) :]
-    idx = content.find(_UNPACK_INSTRUCTIONS_MARKER)
-    if idx >= 0:
-        content = content[:idx]
-    return content.strip()
 
 
 def _transform_inner_roles(messages: list[dict]) -> list[dict]:
@@ -310,7 +299,7 @@ class AsyncToolLoopHandle(SteerableToolHandle):
 
         # Context compression state
         self._raw_message_archives: list[list[dict]] = []
-        self._compressed_context_body: str | None = None
+        self._compressed_entries: list[tuple[int, str]] = []
         self._compression_count: int = 0
         self._loop_config: Optional[dict] = None
 
@@ -833,67 +822,68 @@ class AsyncToolLoopHandle(SteerableToolHandle):
                 "Cannot compress: loop config was not stored on the handle.",
             )
 
-        # 1. Archive ALL messages (including system) and compress them together.
-        #    This lets the compression LLM prune large parent chat context
-        #    blocks that live inside system messages.
+        # 1. Archive ALL messages (including system) for raw access.
         all_messages = copy.deepcopy(self._client.messages)
         self._raw_message_archives.append(all_messages)
-
         archive_base = sum(len(a) for a in self._raw_message_archives[:-1])
+
+        # 2. Separate current messages: skip _compressed_message (handled
+        #    via prior entries) and collect new messages with global indices.
+        new_messages: list[dict] = []
+        new_msg_global_indices: list[int] = []
+        for i, msg in enumerate(all_messages):
+            if msg.get("_compressed_message"):
+                continue
+            new_messages.append(msg)
+            new_msg_global_indices.append(archive_base + i)
+
+        # 3. Compress with prior entries visible alongside new messages.
         compressed = await compress_messages(
-            all_messages,
+            new_messages,
             self._client.endpoint,
+            prior_entries=self._compressed_entries or None,
+            raw_archives=self._raw_message_archives,
+            new_indices=new_msg_global_indices,
         )
 
-        # 2. Separate compressed entries back into system messages and
-        #    conversation lines.  System messages preserve their original
-        #    metadata attributes (e.g. _runtime_context, _parent_chat_context)
-        #    but get the compressed content.  The _compressed_message entry
-        #    is handled specially: its re-compressed body is captured and
-        #    combined with new conversation lines so that multi-pass
-        #    compression can further compress prior passes.
+        # 4. Split result: first N are re-compressed prior, rest map to new.
+        n_prior = len(self._compressed_entries)
+        prior_results = compressed.messages[:n_prior]
+        new_results = compressed.messages[n_prior:]
+
+        conversation_entries: list[tuple[int, str]] = []
         system_msgs: list[dict] = []
-        conv_lines: list[str] = []
-        recompressed_prior: str | None = None
-        for i, (orig_msg, comp_entry) in enumerate(
-            zip(all_messages, compressed.messages),
+
+        for (orig_idx, _), comp in zip(self._compressed_entries, prior_results):
+            conversation_entries.append((orig_idx, comp.content))
+
+        for global_idx, orig_msg, comp in zip(
+            new_msg_global_indices,
+            new_messages,
+            new_results,
         ):
-            if orig_msg.get("_compressed_message"):
-                try:
-                    compressed_dict = json.loads(comp_entry.content)
-                    recompressed_prior = compressed_dict.get(
-                        "content",
-                        comp_entry.content,
-                    )
-                except (json.JSONDecodeError, TypeError):
-                    recompressed_prior = comp_entry.content
-            elif orig_msg.get("role") == "system":
+            if orig_msg.get("role") == "system":
                 new_msg = dict(orig_msg)
                 try:
-                    compressed_dict = json.loads(comp_entry.content)
+                    compressed_dict = json.loads(comp.content)
                     new_msg["content"] = compressed_dict.get(
                         "content",
-                        comp_entry.content,
+                        comp.content,
                     )
                 except (json.JSONDecodeError, TypeError):
-                    new_msg["content"] = comp_entry.content
+                    new_msg["content"] = comp.content
                 system_msgs.append(new_msg)
             else:
-                conv_lines.append(f"[{archive_base + i}] {comp_entry.content}")
+                conversation_entries.append((global_idx, comp.content))
 
-        new_rendered = "\n".join(conv_lines)
+        self._compressed_entries = conversation_entries
 
-        if recompressed_prior is not None:
-            prior_body = _strip_compressed_wrapper(recompressed_prior)
-            self._compressed_context_body = (
-                f"{prior_body}\n{new_rendered}" if prior_body else new_rendered
-            )
-        else:
-            self._compressed_context_body = new_rendered
+        # 5. Render _compressed_message from structured entries.
+        body = "\n".join(
+            f"[{idx}] {content}" for idx, content in self._compressed_entries
+        )
+        combined = _COMPRESSED_HEADER + body
 
-        combined = _COMPRESSED_HEADER + self._compressed_context_body
-
-        # 3. Build unpack_messages closure over all archives (cumulative indexing)
         archive_ref = self._raw_message_archives
 
         def unpack_messages(index: int, n: int = 1) -> str:
@@ -911,7 +901,6 @@ class AsyncToolLoopHandle(SteerableToolHandle):
             end = min(index + n, len(flat))
             return json.dumps(flat[index:end], default=str)
 
-        # 4. Append the compressed-context system message.
         compressed_sys_msg = {
             "role": "system",
             "_compressed_message": True,
