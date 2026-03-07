@@ -8,8 +8,12 @@ import pytest
 import json
 
 from tests.helpers import _handle_project
+import unity.common._async_tool.context_compression as _cc_mod
 from unity.common._async_tool.context_compression import (
+    CompressedMessage,
     CompressedMessages,
+    CompressionState,
+    compress_and_rebuild,
     compress_context,
     compress_messages,
     tag_images_in_messages,
@@ -261,6 +265,258 @@ class TestMakeArchiveLookupTool:
     def test_unpack_mode_sets_name(self):
         tool = _make_archive_lookup_tool([[]], for_compression=False)
         assert tool.__name__ == "unpack_messages"
+
+
+# ── compress_and_rebuild tests ────────────────────────────────────────────────
+
+
+async def _mock_compress_for_rebuild(messages, endpoint, **kwargs):
+    """Mock that returns predictable compressed entries for each input message.
+
+    Handles prior_entries correctly: returns len(prior) + len(messages)
+    entries, echoing back a prefix of each entry's content for traceability.
+    """
+    prior = kwargs.get("prior_entries") or []
+    surviving = (
+        kwargs.get("image_blocks", {}).keys() if kwargs.get("image_blocks") else set()
+    )
+    results = []
+    for _, content in prior:
+        results.append(CompressedMessage(content=f"recompressed:{content[:30]}"))
+    for msg in messages:
+        raw = json.dumps(msg, default=str)
+        results.append(CompressedMessage(content=f"compressed:{raw[:40]}"))
+    return CompressedMessages(
+        messages=results,
+        surviving_image_ids=set(surviving),
+    )
+
+
+class TestCompressAndRebuild:
+    """Symbolic tests for compress_and_rebuild data transformation."""
+
+    @pytest.mark.asyncio
+    async def test_first_pass_archives_and_compresses(self, monkeypatch):
+        monkeypatch.setattr(_cc_mod, "compress_messages", _mock_compress_for_rebuild)
+
+        state = CompressionState()
+        messages = [
+            {"role": "user", "content": "hello"},
+            {"role": "assistant", "content": "world"},
+            {"role": "user", "content": "thanks"},
+        ]
+        original_tools = {"my_tool": lambda: "ok"}
+
+        result = await compress_and_rebuild(
+            state,
+            messages,
+            "gpt-4o@openai",
+            original_tools,
+        )
+
+        assert len(state.raw_archives) == 1
+        assert len(state.raw_archives[0]) == 3
+        assert state.count == 1
+        assert len(state.entries) == 3
+        assert [idx for idx, _ in state.entries] == [0, 1, 2]
+
+        compressed_sys = result.system_msgs[-1]
+        assert compressed_sys["_compressed_message"] is True
+        assert "## Compressed Prior Context" in compressed_sys["content"]
+        assert "[0]" in compressed_sys["content"]
+        assert "[1]" in compressed_sys["content"]
+        assert "[2]" in compressed_sys["content"]
+
+        assert "my_tool" in result.tools
+        assert "unpack_messages" in result.tools
+
+        unpacked = json.loads(result.tools["unpack_messages"](0))
+        assert unpacked[0]["content"] == "hello"
+
+    @pytest.mark.asyncio
+    async def test_second_pass_skips_compressed_message_marker(self, monkeypatch):
+        call_log = {}
+
+        async def _tracking_mock(messages, endpoint, **kwargs):
+            call_log["messages"] = messages
+            call_log["kwargs"] = kwargs
+            return await _mock_compress_for_rebuild(messages, endpoint, **kwargs)
+
+        monkeypatch.setattr(_cc_mod, "compress_messages", _tracking_mock)
+
+        state = CompressionState()
+        pass1_messages = [
+            {"role": "user", "content": "first"},
+            {"role": "assistant", "content": "response"},
+        ]
+        await compress_and_rebuild(state, pass1_messages, "gpt-4o@openai", {})
+
+        assert state.count == 1
+        assert len(state.entries) == 2
+        pass1_archive_len = len(state.raw_archives[0])
+
+        pass2_messages = [
+            {
+                "role": "system",
+                "_compressed_message": True,
+                "content": "prior context...",
+            },
+            {"role": "user", "content": "follow-up"},
+            {"role": "assistant", "content": "answer"},
+        ]
+        await compress_and_rebuild(state, pass2_messages, "gpt-4o@openai", {})
+
+        assert state.count == 2
+        mock_received = call_log["messages"]
+        for msg in mock_received:
+            assert not msg.get(
+                "_compressed_message",
+            ), "_compressed_message marker should be filtered before compress_messages"
+
+        assert call_log["kwargs"].get("prior_entries") is not None
+        assert len(call_log["kwargs"]["prior_entries"]) == 2
+
+        new_conv_entries = [
+            (idx, c) for idx, c in state.entries if idx >= pass1_archive_len
+        ]
+        assert len(new_conv_entries) == 2
+
+    @pytest.mark.asyncio
+    async def test_system_messages_extracted_into_system_msgs(self, monkeypatch):
+        async def _sys_aware_mock(messages, endpoint, **kwargs):
+            results = []
+            prior = kwargs.get("prior_entries") or []
+            for _, content in prior:
+                results.append(
+                    CompressedMessage(content=f"recompressed:{content[:30]}"),
+                )
+            for msg in messages:
+                if msg.get("role") == "system":
+                    results.append(
+                        CompressedMessage(
+                            content=json.dumps(
+                                {"content": f"compressed-sys:{msg['content'][:20]}"},
+                            ),
+                        ),
+                    )
+                else:
+                    results.append(
+                        CompressedMessage(
+                            content=f"compressed:{msg.get('content', '')[:20]}",
+                        ),
+                    )
+            return CompressedMessages(messages=results)
+
+        monkeypatch.setattr(_cc_mod, "compress_messages", _sys_aware_mock)
+
+        state = CompressionState()
+        messages = [
+            {"role": "system", "content": "You are helpful"},
+            {"role": "user", "content": "hello"},
+            {"role": "assistant", "content": "hi there"},
+        ]
+        result = await compress_and_rebuild(state, messages, "gpt-4o@openai", {})
+
+        non_compressed_sys = [
+            m for m in result.system_msgs if not m.get("_compressed_message")
+        ]
+        assert len(non_compressed_sys) == 1
+        assert non_compressed_sys[0]["role"] == "system"
+        assert "compressed-sys:" in non_compressed_sys[0]["content"]
+
+        entry_indices = {idx for idx, _ in state.entries}
+        sys_msg_idx = 0
+        assert (
+            sys_msg_idx not in entry_indices
+        ), "System messages should be segregated into system_msgs, not entries"
+        assert len(state.entries) == 2
+
+    @pytest.mark.asyncio
+    async def test_image_tagging_accumulates_across_passes(self, monkeypatch):
+        monkeypatch.setattr(_cc_mod, "compress_messages", _mock_compress_for_rebuild)
+
+        state = CompressionState()
+
+        pass1_messages = [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": "look at this"},
+                    _IMG_PNG_BLOCK,
+                ],
+            },
+            {"role": "assistant", "content": "I see a red pixel."},
+        ]
+        result1 = await compress_and_rebuild(state, pass1_messages, "gpt-4o@openai", {})
+
+        assert 0 in state.image_registry
+        assert 0 in state.live_image_ids
+        assert state.next_image_id == 1
+
+        compressed_content = result1.system_msgs[-1]["content"]
+        assert isinstance(compressed_content, list), "Should be multimodal with images"
+        img_labels = [
+            b["text"]
+            for b in compressed_content
+            if isinstance(b, dict)
+            and b.get("type") == "text"
+            and "[img:" in b.get("text", "")
+        ]
+        assert any("[img:0]" in label for label in img_labels)
+
+        pass2_messages = [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": "now this one"},
+                    _IMG_PNG_BLOCK_2,
+                ],
+            },
+            {"role": "assistant", "content": "A blue pixel."},
+        ]
+
+        async def _pass2_mock(messages, endpoint, **kwargs):
+            """Return surviving_image_ids with only the pass-2 image."""
+            result = await _mock_compress_for_rebuild(messages, endpoint, **kwargs)
+            return CompressedMessages(
+                messages=result.messages,
+                surviving_image_ids={1},
+            )
+
+        monkeypatch.setattr(_cc_mod, "compress_messages", _pass2_mock)
+        await compress_and_rebuild(state, pass2_messages, "gpt-4o@openai", {})
+
+        assert state.next_image_id == 2
+        assert 0 in state.image_registry and 1 in state.image_registry
+        assert state.live_image_ids == {1}
+
+    @pytest.mark.asyncio
+    async def test_unpack_messages_tool_retrieves_archived_content(self, monkeypatch):
+        monkeypatch.setattr(_cc_mod, "compress_messages", _mock_compress_for_rebuild)
+
+        state = CompressionState()
+        messages = [
+            {"role": "user", "content": "msg-zero"},
+            {"role": "assistant", "content": "msg-one"},
+            {"role": "user", "content": "msg-two"},
+        ]
+        result = await compress_and_rebuild(state, messages, "gpt-4o@openai", {})
+
+        unpack = result.tools["unpack_messages"]
+        single = json.loads(unpack(0))
+        assert len(single) == 1
+        assert single[0]["content"] == "msg-zero"
+
+        pair = json.loads(unpack(0, n=2))
+        assert len(pair) == 2
+        assert pair[0]["content"] == "msg-zero"
+        assert pair[1]["content"] == "msg-one"
+
+        last = json.loads(unpack(2))
+        assert last[0]["content"] == "msg-two"
+
+        err = json.loads(unpack(99))
+        assert "error" in err
 
 
 @pytest.mark.asyncio
