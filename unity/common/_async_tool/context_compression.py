@@ -41,7 +41,7 @@ COMPRESSION_PROMPT = (
     "Keep the traceback only if later messages reference it.\n"
     "- Tool results: keep only data that was actually used or referenced later. "
     "Discard decorative formatting, repeated schema keys, and unreferenced fields.\n"
-    '- Image placeholders (e.g. "[2 image(s) provided]"): keep as-is.\n'
+    "- Image tags (`[img:N]`): see the Images section below.\n"
     "- Thinking blocks: compress extended reasoning to key conclusions and "
     "decisions. Remove exploratory tangents that didn't affect the outcome.\n"
     "- Assistant messages with tool_calls: compact to tool names and key arguments.\n"
@@ -72,7 +72,19 @@ COMPRESSION_PROMPT = (
     "  ```\n"
     "- String operations work directly on the JSON string — no need to\n"
     "  parse/serialize for simple replacements.\n"
-    "  (`re` and `json` are available in the execution environment)"
+    "  (`re` and `json` are available in the execution environment)\n"
+    "\n"
+    "## Images\n"
+    "Messages may contain `[img:N]` tags referencing images visible in the "
+    "accompanying image blocks below the transcript.\n"
+    "- To KEEP an image: leave its `[img:N]` tag in the entry text.\n"
+    "- To REMOVE an image: remove its `[img:N]` tag via `update`. "
+    "Images whose tags no longer appear in any entry are discarded, "
+    "freeing significant context space.\n"
+    "- Remove images that are no longer relevant to the conversation's "
+    "current direction. Keep images that are still actively referenced "
+    "or needed for upcoming work.\n"
+    "- When no `[img:N]` tags are present, ignore this section."
 )
 
 COMPRESSION_MULTI_PASS_ADDENDUM = (
@@ -145,12 +157,72 @@ def prepare_messages_for_compression(messages: list[dict]) -> list[dict]:
     return result
 
 
+def tag_images_in_messages(
+    messages: list[dict],
+    start_id: int = 0,
+) -> tuple[list[dict], dict[int, dict], int]:
+    """Replace image blocks with ``[img:N]`` text tags and build an image registry.
+
+    Walks every message; each ``image`` or ``image_url`` content block is
+    replaced by a text block containing its unique tag.  All other blocks
+    (text, thinking, etc.) and plain-string messages pass through unchanged.
+
+    Returns
+    -------
+    tagged_messages : list[dict]
+        Deep-ish copy of *messages* with image blocks replaced by tags.
+    image_registry : dict[int, dict]
+        Mapping from ``img_id`` to the original image content block.
+    next_id : int
+        The next available ID (``start_id`` + number of images found).
+    """
+    result: list[dict] = []
+    registry: dict[int, dict] = {}
+    current_id = start_id
+
+    for msg in messages:
+        content = msg.get("content")
+        if not isinstance(content, list):
+            result.append(msg)
+            continue
+
+        new_blocks: list[dict] = []
+        for block in content:
+            btype = block.get("type", "")
+            if btype in ("image", "image_url"):
+                registry[current_id] = block
+                new_blocks.append(
+                    {"type": "text", "text": f"[img:{current_id}]"},
+                )
+                current_id += 1
+            else:
+                new_blocks.append(block)
+
+        new_msg = {k: v for k, v in msg.items() if k != "content"}
+        new_msg["content"] = new_blocks
+        result.append(new_msg)
+
+    return result, registry, current_id
+
+
+_IMG_TAG_RE = re.compile(r"\[img:(\d+)\]")
+
+
+def _scan_surviving_image_ids(entries: dict[int, str]) -> set[int]:
+    """Scan compressed entries for ``[img:N]`` tags and return surviving IDs."""
+    ids: set[int] = set()
+    for content in entries.values():
+        ids.update(int(m) for m in _IMG_TAG_RE.findall(content))
+    return ids
+
+
 class CompressedMessage(BaseModel):
     content: str
 
 
 class CompressedMessages(BaseModel):
     messages: list[CompressedMessage]
+    surviving_image_ids: set[int] = set()
 
 
 _SANDBOX_GLOBALS = None
@@ -297,17 +369,18 @@ async def compress_messages(
     messages: list[dict],
     endpoint: str,
     *,
+    image_blocks: dict[int, dict] | None = None,
     prior_entries: list[tuple[int, str]] | None = None,
     raw_archives: list[list[dict]] | None = None,
     new_indices: list[int] | None = None,
 ) -> CompressedMessages:
     """Compact a message list using a tool-loop that surgically edits entries.
 
-    1. Strips images via ``prepare_messages_for_compression``
-    2. JSON-serializes each message into indexed ``[N] {json}`` format
-    3. Starts a short-lived async tool loop where the LLM calls ``update``
-       to compress individual entries via Python transformations
-    4. Wraps the mutated entries as ``CompressedMessages``
+    When ``image_blocks`` is *None* (legacy path), images are stripped via
+    ``prepare_messages_for_compression``.  When ``image_blocks`` is provided,
+    messages are assumed to already contain ``[img:N]`` tags and the image
+    content blocks are delivered inline as multimodal content so the
+    compression LLM can reason about which images to keep or remove.
 
     For multi-pass compression, ``prior_entries`` provides already-compressed
     entries from previous passes (as ``(global_index, content)`` tuples),
@@ -316,7 +389,10 @@ async def compress_messages(
     """
     from unity.common.async_tool_loop import start_async_tool_loop
 
-    prepared = prepare_messages_for_compression(messages)
+    if image_blocks is None:
+        prepared = prepare_messages_for_compression(messages)
+    else:
+        prepared = messages
 
     if new_indices is not None and len(new_indices) != len(prepared):
         raise ValueError(
@@ -347,7 +423,7 @@ async def compress_messages(
     if prior_entries:
         prior_indices = sorted(idx for idx, _ in prior_entries)
         new_msg_indices = sorted(indices)
-        user_prompt = (
+        text_prompt = (
             f"Compress the following transcript. "
             f"Entries [{prior_indices[0]}]-[{prior_indices[-1]}] are from "
             f"prior passes (already compressed). "
@@ -358,12 +434,24 @@ async def compress_messages(
             f"{serialized}"
         )
     else:
-        user_prompt = (
+        text_prompt = (
             f"Compress the following {len(messages)} message transcript. "
             f"Focus on the largest entries first.\n"
             f"Current usage: {initial_usage}\n\n"
             f"{serialized}"
         )
+
+    # Build multimodal user prompt when images are provided.
+    if image_blocks:
+        content_blocks: list[dict] = [{"type": "text", "text": text_prompt}]
+        for img_id in sorted(image_blocks):
+            content_blocks.append(
+                {"type": "text", "text": f"--- [img:{img_id}] ---"},
+            )
+            content_blocks.append(image_blocks[img_id])
+        user_prompt: str | list[dict] = content_blocks
+    else:
+        user_prompt = text_prompt
 
     sys_prompt = COMPRESSION_PROMPT
     if prior_entries:
@@ -385,10 +473,13 @@ async def compress_messages(
 
     await handle.result()
 
+    surviving = _scan_surviving_image_ids(entries) if image_blocks else set()
+
     return CompressedMessages(
         messages=[
             CompressedMessage(content=entries[idx]) for idx in sorted(entries.keys())
         ],
+        surviving_image_ids=surviving,
     )
 
 

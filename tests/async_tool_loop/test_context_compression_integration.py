@@ -50,7 +50,7 @@ def _make_threshold_trigger():
     return trigger, reset, check
 
 
-async def _mock_compress(messages, endpoint):
+async def _mock_compress(messages, endpoint, **kwargs):
     return CompressedMessages(
         messages=[
             CompressedMessage(
@@ -107,7 +107,7 @@ async def test_handle_state_preserved_after_compression(llm_config, monkeypatch)
     trigger, reset, check = _make_threshold_trigger()
     monkeypatch.setattr(_loop_mod, "context_over_threshold", check)
 
-    async def _compress_and_reset(messages, endpoint):
+    async def _compress_and_reset(messages, endpoint, **kwargs):
         reset()
         return await _mock_compress(messages, endpoint)
 
@@ -147,7 +147,7 @@ async def test_nested_inner_compression_outer_unaffected(llm_config, monkeypatch
     trigger, reset, check = _make_threshold_trigger()
     monkeypatch.setattr(_loop_mod, "context_over_threshold", check)
 
-    async def _compress_and_reset(messages, endpoint):
+    async def _compress_and_reset(messages, endpoint, **kwargs):
         reset()
         return await _mock_compress(messages, endpoint)
 
@@ -197,7 +197,7 @@ async def test_compression_blocked_while_tool_in_flight(llm_config, monkeypatch)
     trigger, reset, check = _make_threshold_trigger()
     monkeypatch.setattr(_loop_mod, "context_over_threshold", check)
 
-    async def _compress_and_reset(messages, endpoint):
+    async def _compress_and_reset(messages, endpoint, **kwargs):
         reset()
         return await _mock_compress(messages, endpoint)
 
@@ -251,7 +251,7 @@ async def test_no_new_tools_when_threshold_triggered(llm_config, monkeypatch):
     trigger, reset, check = _make_threshold_trigger()
     monkeypatch.setattr(_loop_mod, "context_over_threshold", check)
 
-    async def _compress_and_reset(messages, endpoint):
+    async def _compress_and_reset(messages, endpoint, **kwargs):
         reset()
         return await _mock_compress(messages, endpoint)
 
@@ -304,7 +304,7 @@ async def test_pause_carries_over_during_compression(llm_config, monkeypatch):
 
     handle_ref: dict = {}
 
-    async def _compress_with_pause(messages, endpoint):
+    async def _compress_with_pause(messages, endpoint, **kwargs):
         h = handle_ref.get("handle")
         if h:
             h._pause_event.clear()
@@ -346,7 +346,7 @@ async def test_stop_carries_over_during_compression(llm_config, monkeypatch):
 
     handle_ref: dict = {}
 
-    async def _compress_with_stop(messages, endpoint):
+    async def _compress_with_stop(messages, endpoint, **kwargs):
         h = handle_ref.get("handle")
         if h:
             h._stop_event.set()
@@ -383,7 +383,7 @@ async def test_interjection_carries_over_during_compression(llm_config, monkeypa
     handle_ref: dict = {}
     interjection_text = "URGENT: also compute 10 + 20"
 
-    async def _compress_with_interjection(messages, endpoint):
+    async def _compress_with_interjection(messages, endpoint, **kwargs):
         h = handle_ref.get("handle")
         if h:
             await h._queue.put(interjection_text)

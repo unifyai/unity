@@ -15,9 +15,11 @@ from unity.common._async_tool.context_compression import (
     compress_messages,
     prepare_messages_for_compression,
     render_compressed_context,
+    tag_images_in_messages,
     _eval_transformation,
     _make_update_tool,
     _make_get_raw_tool,
+    _scan_surviving_image_ids,
 )
 
 
@@ -1184,3 +1186,316 @@ async def test_multi_pass_triple_accumulates_correctly(llm_config):
         f"Expected significant compression across 3 passes: "
         f"{original_total} → {compressed_total}"
     )
+
+
+# ── Image-aware compression tests ────────────────────────────────────────────
+
+
+# Valid 1x1 pixel PNGs (red / blue) accepted by all multimodal LLM APIs.
+_IMG_PNG_BLOCK = {
+    "type": "image_url",
+    "image_url": {
+        "url": (
+            "data:image/png;base64,"
+            "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4"
+            "nGP4z8AAAAMBAQDJ/pLvAAAAAElFTkSuQmCC"
+        ),
+    },
+}
+_IMG_PNG_BLOCK_2 = {
+    "type": "image_url",
+    "image_url": {
+        "url": (
+            "data:image/png;base64,"
+            "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4"
+            "nGNgYPgPAAEDAQAIicLsAAAAAElFTkSuQmCC"
+        ),
+    },
+}
+
+
+class TestTagImagesInMessages:
+    def test_single_image_tagged(self):
+        msgs = [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": "What is this?"},
+                    _IMG_PNG_BLOCK,
+                ],
+            },
+        ]
+        tagged, registry, next_id = tag_images_in_messages(msgs)
+        assert next_id == 1
+        assert 0 in registry
+        assert registry[0] is _IMG_PNG_BLOCK
+        content = tagged[0]["content"]
+        assert any("[img:0]" in b.get("text", "") for b in content)
+        assert all(b.get("type") != "image_url" for b in content)
+
+    def test_multiple_images_across_messages(self):
+        msgs = [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": "Compare these:"},
+                    _IMG_PNG_BLOCK,
+                    _IMG_PNG_BLOCK_2,
+                ],
+            },
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": "And this one:"},
+                    _IMG_PNG_BLOCK,
+                ],
+            },
+        ]
+        tagged, registry, next_id = tag_images_in_messages(msgs)
+        assert next_id == 3
+        assert len(registry) == 3
+        assert set(registry.keys()) == {0, 1, 2}
+
+    def test_start_id_offset(self):
+        msgs = [
+            {
+                "role": "user",
+                "content": [{"type": "text", "text": "hi"}, _IMG_PNG_BLOCK],
+            },
+        ]
+        tagged, registry, next_id = tag_images_in_messages(msgs, start_id=10)
+        assert next_id == 11
+        assert 10 in registry
+        content = tagged[0]["content"]
+        assert any("[img:10]" in b.get("text", "") for b in content)
+
+    def test_preserves_text_only_messages(self):
+        msgs = [
+            {"role": "user", "content": "Hello"},
+            {"role": "assistant", "content": "Hi there"},
+        ]
+        tagged, registry, next_id = tag_images_in_messages(msgs)
+        assert next_id == 0
+        assert len(registry) == 0
+        assert tagged[0]["content"] == "Hello"
+        assert tagged[1]["content"] == "Hi there"
+
+    def test_preserves_thinking_blocks(self):
+        msgs = [
+            {
+                "role": "assistant",
+                "content": [
+                    {
+                        "type": "thinking",
+                        "thinking": "reasoning...",
+                        "signature": "sig==",
+                    },
+                    {"type": "text", "text": "answer"},
+                    _IMG_PNG_BLOCK,
+                ],
+            },
+        ]
+        tagged, registry, next_id = tag_images_in_messages(msgs)
+        assert next_id == 1
+        types = [b.get("type") for b in tagged[0]["content"]]
+        assert "thinking" in types
+        assert "image_url" not in types
+
+    def test_does_not_mutate_input(self):
+        original = [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": "look"},
+                    copy.deepcopy(_IMG_PNG_BLOCK),
+                ],
+            },
+        ]
+        snapshot = copy.deepcopy(original)
+        tag_images_in_messages(original)
+        assert original == snapshot
+
+
+class TestScanSurvivingImageIds:
+    def test_finds_tags(self):
+        entries = {
+            0: '{"role":"user","content":"see [img:0] and [img:3]"}',
+            1: '{"role":"assistant","content":"noted [img:0]"}',
+        }
+        assert _scan_surviving_image_ids(entries) == {0, 3}
+
+    def test_no_tags(self):
+        entries = {0: '{"role":"user","content":"no images here"}'}
+        assert _scan_surviving_image_ids(entries) == set()
+
+    def test_empty_entries(self):
+        assert _scan_surviving_image_ids({}) == set()
+
+    def test_tag_removed_not_in_result(self):
+        entries = {
+            0: '{"content":"kept [img:1]"}',
+            1: '{"content":"this had img:2 but tag was stripped"}',
+        }
+        assert _scan_surviving_image_ids(entries) == {1}
+
+
+# ── Eval tests: image-aware compress_messages ─────────────────────────────────
+
+
+def _build_image_conversation() -> tuple[list[dict], dict[int, dict]]:
+    """Build a tagged conversation with images and its registry."""
+    msgs = [
+        {"role": "user", "content": "What do you see in these screenshots?"},
+        {
+            "role": "assistant",
+            "content": None,
+            "tool_calls": [
+                {
+                    "id": "call_1",
+                    "type": "function",
+                    "function": {
+                        "name": "analyze_image",
+                        "arguments": '{"image": "[img:0]"}',
+                    },
+                },
+            ],
+        },
+        {
+            "role": "tool",
+            "tool_call_id": "call_1",
+            "name": "analyze_image",
+            "content": (
+                "The image [img:0] shows a detailed dashboard with multiple "
+                "charts, KPI metrics, and a navigation sidebar. The main chart "
+                "displays revenue over time with a clear upward trend. There are "
+                "also pie charts for market segmentation and a table of top "
+                "customers sorted by lifetime value."
+            ),
+        },
+        {
+            "role": "assistant",
+            "content": (
+                "I can see a business dashboard in [img:0]. It shows revenue "
+                "trending upward with market segmentation data."
+            ),
+        },
+        {"role": "user", "content": "OK, now look at this error screenshot."},
+        {
+            "role": "assistant",
+            "content": None,
+            "tool_calls": [
+                {
+                    "id": "call_2",
+                    "type": "function",
+                    "function": {
+                        "name": "analyze_image",
+                        "arguments": '{"image": "[img:1]"}',
+                    },
+                },
+            ],
+        },
+        {
+            "role": "tool",
+            "tool_call_id": "call_2",
+            "name": "analyze_image",
+            "content": (
+                "The image [img:1] shows a browser console with a JavaScript "
+                "TypeError: Cannot read properties of undefined (reading 'map'). "
+                "The stack trace points to Dashboard.tsx line 142."
+            ),
+        },
+        {
+            "role": "assistant",
+            "content": (
+                "The error in [img:1] is a TypeError in Dashboard.tsx line 142 "
+                "where it tries to call .map() on an undefined value. This is "
+                "likely because the data array hasn't loaded yet."
+            ),
+        },
+        {
+            "role": "user",
+            "content": "Great, I fixed the bug. Now just focus on the revenue data from the dashboard.",
+        },
+        {
+            "role": "assistant",
+            "content": (
+                "Based on the dashboard in [img:0], the revenue shows a clear "
+                "upward trend. The error screenshot [img:1] is no longer "
+                "relevant since you've fixed the bug."
+            ),
+        },
+    ]
+    registry = {
+        0: _IMG_PNG_BLOCK,
+        1: _IMG_PNG_BLOCK_2,
+    }
+    return msgs, registry
+
+
+@pytest.mark.eval
+@pytest.mark.asyncio
+@_handle_project
+async def test_image_aware_compression_keeps_relevant(llm_config):
+    """The compression LLM should keep [img:0] (still relevant) and may remove [img:1] (bug fixed)."""
+    msgs, registry = _build_image_conversation()
+    result = await compress_messages(
+        msgs,
+        llm_config["model"],
+        image_blocks=registry,
+    )
+    assert len(result.messages) == len(msgs)
+    assert (
+        0 in result.surviving_image_ids
+    ), "img:0 (dashboard) should survive — it's still actively referenced"
+
+
+@pytest.mark.eval
+@pytest.mark.asyncio
+@_handle_project
+async def test_image_aware_multi_pass_accumulates(llm_config):
+    """Multi-pass image compression: pass 2 sees surviving images from pass 1 plus new ones."""
+    pass1_msgs, pass1_registry = _build_image_conversation()
+
+    result1 = await compress_messages(
+        pass1_msgs,
+        llm_config["model"],
+        image_blocks=pass1_registry,
+    )
+    assert len(result1.messages) == len(pass1_msgs)
+
+    prior_entries = [(i, msg.content) for i, msg in enumerate(result1.messages)]
+
+    pass2_msgs = [
+        {"role": "user", "content": "Here is an updated dashboard screenshot."},
+        {
+            "role": "assistant",
+            "content": (
+                "I can see the updated dashboard in [img:2]. Revenue is now "
+                "even higher than in the previous screenshot [img:0]."
+            ),
+        },
+    ]
+    pass2_registry = {2: _IMG_PNG_BLOCK}
+
+    all_live = {
+        iid: block
+        for iid, block in {**pass1_registry, **pass2_registry}.items()
+        if iid in result1.surviving_image_ids or iid in pass2_registry
+    }
+
+    pass2_base = len(pass1_msgs)
+    pass2_indices = list(range(pass2_base, pass2_base + len(pass2_msgs)))
+
+    result2 = await compress_messages(
+        pass2_msgs,
+        llm_config["model"],
+        image_blocks=all_live,
+        prior_entries=prior_entries,
+        raw_archives=[pass1_msgs],
+        new_indices=pass2_indices,
+    )
+
+    assert len(result2.messages) == len(prior_entries) + len(pass2_msgs)
+    assert (
+        2 in result2.surviving_image_ids
+    ), "img:2 (new dashboard) should survive — it's actively referenced"
