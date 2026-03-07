@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import copy
 import json
 import re
+from dataclasses import dataclass, field
 
 import unillm
 from pydantic import BaseModel
@@ -16,6 +18,29 @@ def context_over_threshold(
     max_input_tokens: int,
 ) -> bool:
     return n_tokens >= max_input_tokens * threshold
+
+
+_COMPRESSED_HEADER = "## Compressed Prior Context\n"
+
+
+@dataclass
+class CompressionState:
+    """Mutable state tracked across compression passes."""
+
+    raw_archives: list[list[dict]] = field(default_factory=list)
+    entries: list[tuple[int, str]] = field(default_factory=list)
+    count: int = 0
+    image_registry: dict[int, dict] = field(default_factory=dict)
+    live_image_ids: set[int] = field(default_factory=set)
+    next_image_id: int = 0
+
+
+@dataclass
+class RebuildResult:
+    """Everything the handle needs to restart a loop after compression."""
+
+    system_msgs: list[dict]
+    tools: dict[str, callable]
 
 
 COMPRESSION_PROMPT = (
@@ -122,39 +147,6 @@ def compress_context() -> str:
     running tools first.
     """
     return "compression acknowledged"
-
-
-def prepare_messages_for_compression(messages: list[dict]) -> list[dict]:
-    """Strip expensive binary content before sending to the compression LLM.
-
-    Replaces image blocks (``image`` / ``image_url``) with text placeholders.
-    All other content (including thinking blocks) is preserved.
-    """
-    result: list[dict] = []
-    for msg in messages:
-        content = msg.get("content")
-        if not isinstance(content, list):
-            result.append(msg)
-            continue
-
-        image_count = 0
-        new_blocks: list[dict] = []
-        for block in content:
-            btype = block.get("type", "")
-            if btype in ("image", "image_url"):
-                image_count += 1
-            else:
-                new_blocks.append(block)
-
-        if image_count:
-            label = f"[{image_count} image(s) provided]"
-            new_blocks.append({"type": "text", "text": label})
-
-        new_msg = {k: v for k, v in msg.items() if k != "content"}
-        new_msg["content"] = new_blocks
-        result.append(new_msg)
-
-    return result
 
 
 def tag_images_in_messages(
@@ -339,21 +331,19 @@ def _make_update_tool(entries: dict[int, str], endpoint: str) -> callable:
     return update
 
 
-def _make_get_raw_tool(raw_archives: list[list[dict]]) -> callable:
-    """Build the ``get_raw`` tool closure over raw message archives."""
+def _make_archive_lookup_tool(
+    raw_archives: list[list[dict]],
+    *,
+    for_compression: bool = False,
+) -> callable:
+    """Build an archive-lookup tool closure over raw message archives.
 
-    def get_raw(index: int, n: int = 1) -> str:
-        """Retrieve the original uncompressed content of a message.
+    When ``for_compression`` is True the docstring is tailored for the
+    compression sub-loop (``get_raw``).  When False it is tailored for
+    the restarted main loop (``unpack_messages``).
+    """
 
-        Use this to inspect what a previously-compressed entry looked
-        like before compression.  Helpful when re-evaluating whether
-        an old compression decision was too aggressive or when the
-        conversation focus has shifted.
-
-        Args:
-            index: The [N] index of the message.
-            n: Number of consecutive messages to retrieve (default 1).
-        """
+    def _lookup(index: int, n: int = 1) -> str:
         flat = [msg for archive in raw_archives for msg in archive]
         if index < 0 or index >= len(flat):
             return json.dumps(
@@ -362,7 +352,30 @@ def _make_get_raw_tool(raw_archives: list[list[dict]]) -> callable:
         end = min(index + n, len(flat))
         return json.dumps(flat[index:end], default=str)
 
-    return get_raw
+    if for_compression:
+        _lookup.__name__ = "get_raw"
+        _lookup.__doc__ = (
+            "Retrieve the original uncompressed content of a message.\n\n"
+            "Use this to inspect what a previously-compressed entry looked "
+            "like before compression.  Helpful when re-evaluating whether "
+            "an old compression decision was too aggressive or when the "
+            "conversation focus has shifted.\n\n"
+            "Args:\n"
+            "    index: The [N] index of the message.\n"
+            "    n: Number of consecutive messages to retrieve (default 1)."
+        )
+    else:
+        _lookup.__name__ = "unpack_messages"
+        _lookup.__doc__ = (
+            "Retrieve one or more uncompressed messages by index.\n\n"
+            "``index`` corresponds to the ``[N]`` label in the compressed "
+            "context summary.  Returns up to ``n`` consecutive original "
+            "messages as a JSON array.\n\n"
+            "Args:\n"
+            "    index: The [N] index of the message.\n"
+            "    n: Number of consecutive messages to retrieve (default 1)."
+        )
+    return _lookup
 
 
 async def compress_messages(
@@ -376,11 +389,10 @@ async def compress_messages(
 ) -> CompressedMessages:
     """Compact a message list using a tool-loop that surgically edits entries.
 
-    When ``image_blocks`` is *None* (legacy path), images are stripped via
-    ``prepare_messages_for_compression``.  When ``image_blocks`` is provided,
-    messages are assumed to already contain ``[img:N]`` tags and the image
-    content blocks are delivered inline as multimodal content so the
-    compression LLM can reason about which images to keep or remove.
+    Messages should already have images replaced by ``[img:N]`` tags via
+    ``tag_images_in_messages``.  When ``image_blocks`` is provided, the
+    tagged image content blocks are delivered inline as multimodal content
+    so the compression LLM can reason about which images to keep or remove.
 
     For multi-pass compression, ``prior_entries`` provides already-compressed
     entries from previous passes (as ``(global_index, content)`` tuples),
@@ -389,15 +401,10 @@ async def compress_messages(
     """
     from unity.common.async_tool_loop import start_async_tool_loop
 
-    if image_blocks is None:
-        prepared = prepare_messages_for_compression(messages)
-    else:
-        prepared = messages
-
-    if new_indices is not None and len(new_indices) != len(prepared):
+    if new_indices is not None and len(new_indices) != len(messages):
         raise ValueError(
             f"new_indices length ({len(new_indices)}) must match "
-            f"messages length ({len(prepared)})",
+            f"messages length ({len(messages)})",
         )
 
     # Build entries dict: prior entries + new messages
@@ -406,8 +413,8 @@ async def compress_messages(
         for idx, content in prior_entries:
             entries[idx] = content
 
-    indices = new_indices if new_indices is not None else list(range(len(prepared)))
-    for i, msg in enumerate(prepared):
+    indices = new_indices if new_indices is not None else list(range(len(messages)))
+    for i, msg in enumerate(messages):
         entries[indices[i]] = json.dumps(msg, default=str)
 
     serialized = "\n\n".join(f"[{idx}] {e}" for idx, e in sorted(entries.items()))
@@ -416,7 +423,10 @@ async def compress_messages(
     tools: dict[str, callable] = {"update": update_tool}
 
     if prior_entries and raw_archives:
-        tools["get_raw"] = _make_get_raw_tool(raw_archives)
+        tools["get_raw"] = _make_archive_lookup_tool(
+            raw_archives,
+            for_compression=True,
+        )
 
     initial_usage = _compute_token_usage(entries, endpoint)
 
@@ -483,20 +493,131 @@ async def compress_messages(
     )
 
 
-def render_compressed_context(
-    compressed: CompressedMessages,
-    index_offset: int = 0,
-) -> str:
-    """Render compressed messages into compact indexed lines.
+async def compress_and_rebuild(
+    state: CompressionState,
+    all_messages: list[dict],
+    endpoint: str,
+    original_tools: dict[str, callable],
+) -> RebuildResult:
+    """Archive messages, compress, and prepare everything for a loop restart.
 
-    Returns only the message lines (no header).  The caller is responsible
-    for prepending ``## Compressed Prior Context`` when assembling the
-    final system-message block.
-
-    ``index_offset`` shifts every ``[N]`` label so that multiple renders
-    can be concatenated with continuous numbering.
+    Mutates *state* in place (archives, entries, image registry, counters).
+    Returns the rebuilt system messages and augmented tools dict needed to
+    start a new loop iteration.
     """
-    lines: list[str] = []
-    for i, msg in enumerate(compressed.messages):
-        lines.append(f"[{i + index_offset}] {msg.content}")
-    return "\n".join(lines)
+    # 1. Archive messages for raw access.
+    all_messages = copy.deepcopy(all_messages)
+    state.raw_archives.append(all_messages)
+    archive_base = sum(len(a) for a in state.raw_archives[:-1])
+
+    # 2. Separate new messages (skip the compressed-context system message
+    #    which is already represented via prior entries) and assign global
+    #    indices for continuous numbering across passes.
+    new_messages: list[dict] = []
+    new_msg_global_indices: list[int] = []
+    for i, msg in enumerate(all_messages):
+        if msg.get("_compressed_message"):
+            continue
+        new_messages.append(msg)
+        new_msg_global_indices.append(archive_base + i)
+
+    # 3. Tag images in new messages and accumulate to the registry.
+    tagged_messages, new_image_blocks, next_id = tag_images_in_messages(
+        new_messages,
+        start_id=state.next_image_id,
+    )
+    state.next_image_id = next_id
+    state.image_registry.update(new_image_blocks)
+    state.live_image_ids.update(new_image_blocks.keys())
+
+    live_images = (
+        {iid: state.image_registry[iid] for iid in state.live_image_ids}
+        if state.live_image_ids
+        else None
+    )
+
+    # 4. Compress with prior entries visible alongside new messages.
+    compressed = await compress_messages(
+        tagged_messages,
+        endpoint,
+        image_blocks=live_images,
+        prior_entries=state.entries or None,
+        raw_archives=state.raw_archives,
+        new_indices=new_msg_global_indices,
+    )
+
+    if live_images:
+        state.live_image_ids = compressed.surviving_image_ids
+
+    # 5. Split results: first N are re-compressed prior, rest map to new.
+    n_prior = len(state.entries)
+    prior_results = compressed.messages[:n_prior]
+    new_results = compressed.messages[n_prior:]
+
+    conversation_entries: list[tuple[int, str]] = []
+    system_msgs: list[dict] = []
+
+    for (orig_idx, _), comp in zip(state.entries, prior_results):
+        conversation_entries.append((orig_idx, comp.content))
+
+    for global_idx, orig_msg, comp in zip(
+        new_msg_global_indices,
+        new_messages,
+        new_results,
+    ):
+        if orig_msg.get("role") == "system":
+            new_msg = dict(orig_msg)
+            try:
+                compressed_dict = json.loads(comp.content)
+                new_msg["content"] = compressed_dict.get(
+                    "content",
+                    comp.content,
+                )
+            except (json.JSONDecodeError, TypeError):
+                new_msg["content"] = comp.content
+            system_msgs.append(new_msg)
+        else:
+            conversation_entries.append((global_idx, comp.content))
+
+    state.entries = conversation_entries
+
+    # 6. Render compressed-context system message.
+    body = "\n".join(f"[{idx}] {content}" for idx, content in state.entries)
+    combined = _COMPRESSED_HEADER + body
+
+    _instructions = (
+        "When you need details from a compressed message, call "
+        "`unpack_messages(index)` with its `[N]` index to "
+        "retrieve the full original content. Pass `n` to "
+        "retrieve a range of consecutive messages."
+    )
+
+    if state.live_image_ids:
+        content_blocks: list[dict] = [
+            {"type": "text", "text": f"{combined}\n\n{_instructions}"},
+        ]
+        for img_id in sorted(state.live_image_ids):
+            if img_id in state.image_registry:
+                content_blocks.append(
+                    {"type": "text", "text": f"[img:{img_id}]"},
+                )
+                content_blocks.append(state.image_registry[img_id])
+        compressed_content: str | list[dict] = content_blocks
+    else:
+        compressed_content = f"{combined}\n\n{_instructions}"
+
+    system_msgs.append(
+        {
+            "role": "system",
+            "_compressed_message": True,
+            "content": compressed_content,
+        },
+    )
+
+    # 7. Build augmented tools dict: original tools + unpack_messages.
+    tools = dict(original_tools)
+    tools["unpack_messages"] = _make_archive_lookup_tool(state.raw_archives)
+
+    state.count += 1
+
+    return RebuildResult(system_msgs=system_msgs, tools=tools)

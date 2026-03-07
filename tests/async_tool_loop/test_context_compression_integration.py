@@ -8,7 +8,7 @@ import json
 import pytest
 
 import unity.common._async_tool.loop as _loop_mod
-import unity.common.async_tool_loop as _atl_mod
+import unity.common._async_tool.context_compression as _cc_mod
 from unity.common._async_tool.context_compression import (
     CompressedMessage,
     CompressedMessages,
@@ -92,7 +92,7 @@ def _msg_contains(client, snippet):
 
 async def _wait_compression(handle, timeout=60):
     async def _done():
-        return handle._compression_count >= 1
+        return handle._compression.count >= 1
 
     await _wait_for_condition(_done, poll=0.1, timeout=timeout)
 
@@ -111,7 +111,7 @@ async def test_handle_state_preserved_after_compression(llm_config, monkeypatch)
         reset()
         return await _mock_compress(messages, endpoint)
 
-    monkeypatch.setattr(_atl_mod, "compress_messages", _compress_and_reset)
+    monkeypatch.setattr(_cc_mod, "compress_messages", _compress_and_reset)
 
     add = _make_add(trigger)
     client = new_llm_client(**llm_config)
@@ -132,7 +132,7 @@ async def test_handle_state_preserved_after_compression(llm_config, monkeypatch)
 
     result = await handle.result()
 
-    assert handle._compression_count >= 1
+    assert handle._compression.count >= 1
     assert handle._queue is orig_queue
     assert handle._pause_event is orig_pause
     assert handle._cancel_event is orig_cancel
@@ -151,7 +151,7 @@ async def test_nested_inner_compression_outer_unaffected(llm_config, monkeypatch
         reset()
         return await _mock_compress(messages, endpoint)
 
-    monkeypatch.setattr(_atl_mod, "compress_messages", _compress_and_reset)
+    monkeypatch.setattr(_cc_mod, "compress_messages", _compress_and_reset)
 
     inner_refs: dict = {}
     add = _make_add(trigger)
@@ -187,7 +187,7 @@ async def test_nested_inner_compression_outer_unaffected(llm_config, monkeypatch
 
     inner_h = inner_refs.get("handle")
     assert inner_h is not None
-    assert inner_h._compression_count >= 1
+    assert inner_h._compression.count >= 1
 
 
 @pytest.mark.asyncio
@@ -201,7 +201,7 @@ async def test_compression_blocked_while_tool_in_flight(llm_config, monkeypatch)
         reset()
         return await _mock_compress(messages, endpoint)
 
-    monkeypatch.setattr(_atl_mod, "compress_messages", _compress_and_reset)
+    monkeypatch.setattr(_cc_mod, "compress_messages", _compress_and_reset)
 
     add = _make_add(trigger)
     gate, raw_gated = make_gated_async_tool(return_value="gated-done")
@@ -241,7 +241,7 @@ async def test_compression_blocked_while_tool_in_flight(llm_config, monkeypatch)
 
     result = await result_task
     assert result is not None
-    assert handle._compression_count >= 1
+    assert handle._compression.count >= 1
 
 
 @pytest.mark.asyncio
@@ -255,7 +255,7 @@ async def test_no_new_tools_when_threshold_triggered(llm_config, monkeypatch):
         reset()
         return await _mock_compress(messages, endpoint)
 
-    monkeypatch.setattr(_atl_mod, "compress_messages", _compress_and_reset)
+    monkeypatch.setattr(_cc_mod, "compress_messages", _compress_and_reset)
 
     add = _make_add(trigger)
     client = new_llm_client(**llm_config)
@@ -270,9 +270,9 @@ async def test_no_new_tools_when_threshold_triggered(llm_config, monkeypatch):
     )
 
     result = await handle.result()
-    assert handle._compression_count >= 1
+    assert handle._compression.count >= 1
 
-    archived = handle._raw_message_archives[0]
+    archived = handle._compression.raw_archives[0]
     threshold_idx = next(
         (
             i
@@ -311,7 +311,7 @@ async def test_pause_carries_over_during_compression(llm_config, monkeypatch):
         reset()
         return await _mock_compress(messages, endpoint)
 
-    monkeypatch.setattr(_atl_mod, "compress_messages", _compress_with_pause)
+    monkeypatch.setattr(_cc_mod, "compress_messages", _compress_with_pause)
 
     add = _make_add(trigger)
     client = new_llm_client(**llm_config)
@@ -353,7 +353,7 @@ async def test_stop_carries_over_during_compression(llm_config, monkeypatch):
         reset()
         return await _mock_compress(messages, endpoint)
 
-    monkeypatch.setattr(_atl_mod, "compress_messages", _compress_with_stop)
+    monkeypatch.setattr(_cc_mod, "compress_messages", _compress_with_stop)
 
     add = _make_add(trigger)
     client = new_llm_client(**llm_config)
@@ -370,7 +370,7 @@ async def test_stop_carries_over_during_compression(llm_config, monkeypatch):
 
     result = await handle.result()
     assert result is not None
-    assert handle._compression_count >= 1
+    assert handle._compression.count >= 1
 
 
 @pytest.mark.asyncio
@@ -390,7 +390,7 @@ async def test_interjection_carries_over_during_compression(llm_config, monkeypa
         reset()
         return await _mock_compress(messages, endpoint)
 
-    monkeypatch.setattr(_atl_mod, "compress_messages", _compress_with_interjection)
+    monkeypatch.setattr(_cc_mod, "compress_messages", _compress_with_interjection)
 
     add = _make_add(trigger)
     client = new_llm_client(**llm_config)
