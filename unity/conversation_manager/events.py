@@ -392,6 +392,30 @@ class EmailSent(Event):
 
 
 @dataclass
+class ApiMessageReceived(Event):
+    """A programmatic message received via the REST API."""
+
+    topic: ClassVar[str | None] = "app:comms:api_message_message"
+    content_logged: ClassVar[bool] = True
+
+    contact: dict
+    content: str
+    api_message_id: str = ""
+
+
+@dataclass
+class ApiMessageSent(Event):
+    """A response sent back to the developer via the REST API."""
+
+    topic: ClassVar[str | None] = "app:comms:api_message_sent"
+    content_logged: ClassVar[bool] = True
+
+    contact: dict
+    content: str
+    api_message_id: str = ""
+
+
+@dataclass
 class UnknownContactCreated(Event):
     """A new contact was automatically created from an unknown inbound message.
 

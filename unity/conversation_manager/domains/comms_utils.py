@@ -112,6 +112,28 @@ async def send_unify_message(
         return {"success": False, "error": str(e)}
 
 
+async def complete_api_message(
+    api_message_id: str,
+    response: str | None = None,
+) -> dict:
+    """Mark an API message as completed in Orchestra, optionally with a response."""
+    orchestra_url = SETTINGS.ORCHESTRA_URL
+    async with aiohttp.ClientSession() as session:
+        async with session.put(
+            f"{orchestra_url}/admin/messages/{api_message_id}/complete",
+            headers=headers,
+            json={"response": response},
+        ) as resp:
+            try:
+                resp.raise_for_status()
+            except Exception as e:
+                LOGGER.error(
+                    f"{ICONS['comms_outbound']} Failed to complete API message: {e}",
+                )
+                return {"success": False}
+            return {"success": True}
+
+
 async def publish_assistant_desktop_ready(
     desktop_url: str,
     liveview_url: str,
