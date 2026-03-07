@@ -92,6 +92,7 @@ events_map: dict[str, Event] = {
     "msg": SMSReceived,
     "email": EmailReceived,
     "unify_message": UnifyMessageReceived,
+    "api_message": ApiMessageReceived,
 }
 
 
@@ -554,6 +555,22 @@ class CommsManager:
                         LOGGER.error(
                             f"{DEFAULT_ICON} Failed scheduling attachment download: {e}",
                         )
+
+                elif thread == "api_message":
+                    target_contact_id = event.get("contact_id", 1)
+                    contact = next(
+                        (c for c in contacts if c["contact_id"] == target_contact_id),
+                        contacts[0] if contacts else {},
+                    )
+                    api_message_id = event.get("api_message_id", "")
+                    self._publish_from_callback(
+                        f"app:comms:{thread}_message",
+                        events_map[thread](
+                            content=content,
+                            contact=contact,
+                            api_message_id=api_message_id,
+                        ).to_json(),
+                    )
 
                 else:
                     # SMS message (thread == "msg")

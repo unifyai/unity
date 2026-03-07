@@ -620,6 +620,8 @@ def _push_email_to_all_contacts(
         EmailReceived,
         UnifyMessageSent,
         UnifyMessageReceived,
+        ApiMessageSent,
+        ApiMessageReceived,
     ),
 )
 async def _(event, cm: "ConversationManager", *args, **kwargs):
@@ -758,6 +760,28 @@ async def _(event, cm: "ConversationManager", *args, **kwargs):
                 "unify_message_received",
                 f"Message from {sender_name}: {event.content}",
             )
+        case ApiMessageSent():
+            medium = Medium.API_MESSAGE
+            message_content = event.content
+            notif_content = f"API response sent to {sender_name}"
+            role = "assistant"
+            event_trace = getattr(cm, "_current_event_trace", None) or {}
+            cm._session_logger.info(
+                "api_message_sent",
+                f"API response to {sender_name}: {event.content}",
+            )
+        case ApiMessageReceived():
+            medium = Medium.API_MESSAGE
+            message_content = event.content
+            notif_content = f"API message from {sender_name}"
+            role = "user"
+            event_trace = getattr(cm, "_current_event_trace", None) or {}
+            cm._session_logger.info(
+                "api_message_received",
+                f"API message from {sender_name}: {event.content}",
+            )
+            if event.api_message_id:
+                cm._pending_api_message_id = event.api_message_id
 
     # Non-email messages: push to single contact only
     if contact_id is not None:
