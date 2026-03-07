@@ -9,6 +9,7 @@ import pytest
 
 import unity.common._async_tool.loop as _loop_mod
 import unity.common._async_tool.context_compression as _cc_mod
+import unity.common.async_tool_loop as _atl_mod
 from unity.common._async_tool.context_compression import (
     CompressedMessage,
     CompressedMessages,
@@ -423,3 +424,59 @@ async def test_interjection_carries_over_during_compression(llm_config, monkeypa
 
     result = await result_task
     assert result is not None
+
+
+@pytest.mark.asyncio
+@_handle_project
+async def test_enable_compression_false(llm_config, monkeypatch):
+    """enable_compression=False suppresses all compression machinery."""
+    monkeypatch.setattr(_loop_mod, "context_over_threshold", lambda *a, **kw: True)
+
+    def add(a: int, b: int) -> str:
+        """Add two numbers."""
+        return str(a + b)
+
+    client = new_llm_client(**llm_config)
+    client.set_system_message(_SYS)
+
+    handle = start_async_tool_loop(
+        client=client,
+        message="Add the numbers",
+        tools={"add": add},
+        timeout=120,
+        max_parallel_tool_calls=1,
+        enable_compression=False,
+    )
+
+    result = await handle.result()
+    assert result is not None
+    assert handle._compression.count == 0
+
+
+@pytest.mark.asyncio
+@_handle_project
+async def test_compression_failure_returns_gracefully(llm_config, monkeypatch):
+    """When compress_and_rebuild raises, result() returns gracefully."""
+    trigger, reset, check = _make_threshold_trigger()
+    monkeypatch.setattr(_loop_mod, "context_over_threshold", check)
+
+    async def _boom(*args, **kwargs):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(_atl_mod, "compress_and_rebuild", _boom)
+
+    add = _make_add(trigger)
+    client = new_llm_client(**llm_config)
+    client.set_system_message(_SYS)
+
+    handle = start_async_tool_loop(
+        client=client,
+        message="Add the numbers",
+        tools={"add": add},
+        timeout=120,
+        max_parallel_tool_calls=1,
+    )
+
+    result = await handle.result()
+    assert isinstance(result, str)
+    assert handle._compression.count == 0
