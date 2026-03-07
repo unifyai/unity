@@ -453,9 +453,27 @@ async def test_compress_preserves_image_placeholders(llm_config):
     assert "image" in result.messages[0].content.lower()
 
 
+_VERBOSE_TRACEBACK = (
+    "Traceback (most recent call last):\n"
+    '  File "/app/services/contact_service.py", line 287, in search_contacts\n'
+    "    results = await self._database.query(params)\n"
+    '  File "/app/database/postgres.py", line 154, in query\n'
+    "    validated = self._validate_params(params)\n"
+    '  File "/app/database/postgres.py", line 89, in _validate_params\n'
+    "    for key, value in params.items():\n"
+    '  File "/app/database/validators.py", line 42, in validate_field\n'
+    "    raise ValueError(\n"
+    "ValueError: invalid search parameter 'email'. "
+    "Supported parameters are: 'name', 'id', 'phone'. "
+    "The 'email' field is not indexed and cannot be used as a search key. "
+    "Please use one of the supported parameters listed above."
+)
+
+
 @pytest.mark.asyncio
 @_handle_project
 async def test_compress_compacts_verbose_errors(llm_config):
+    error_content = json.dumps({"error": _VERBOSE_TRACEBACK})
     messages = [
         {"role": "user", "content": "Search for John"},
         {
@@ -476,7 +494,7 @@ async def test_compress_compacts_verbose_errors(llm_config):
             "role": "tool",
             "tool_call_id": "call_1",
             "name": "search",
-            "content": '{"error": "invalid parameter email, use name or id. Traceback (most recent call last): File search.py line 42 in search raise ValueError(...) ValueError: invalid parameter"}',
+            "content": error_content,
         },
         {
             "role": "assistant",
@@ -507,7 +525,7 @@ async def test_compress_compacts_verbose_errors(llm_config):
     assert len(result.messages) == 6
     original_json = json.dumps(messages[2], default=str)
     error_msg = result.messages[2]
-    assert len(error_msg.content) < len(original_json)
+    assert len(error_msg.content) < len(original_json) * 0.5
 
 
 class TestRenderCompressedContext:
