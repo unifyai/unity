@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import re
 
 import unillm
@@ -19,12 +20,14 @@ def context_over_threshold(
 
 COMPRESSION_PROMPT = (
     "You are a context compactor with surgical editing tools. You receive a "
-    "conversation transcript and must compress it by selectively editing the "
-    "most verbose entries.\n"
+    "conversation transcript as a sequence of JSON-serialized messages, each "
+    "prefixed with an `[N]` index. You must compress it by selectively editing "
+    "the most verbose entries.\n"
     "\n"
     "## Strategy\n"
     "- Focus on the LARGEST and most verbose entries first — large tool results, "
-    "full tracebacks, verbose assistant reasoning. These yield the most savings.\n"
+    "full tracebacks, verbose assistant reasoning, extended thinking blocks. "
+    "These yield the most savings.\n"
     "- Leave concise messages untouched. They cost nothing.\n"
     "- You may issue multiple `update` calls per turn (they execute in parallel).\n"
     "- Each tool response includes the current token usage as a percentage of "
@@ -39,31 +42,32 @@ COMPRESSION_PROMPT = (
     "- Tool results: keep only data that was actually used or referenced later. "
     "Discard decorative formatting, repeated schema keys, and unreferenced fields.\n"
     '- Image placeholders (e.g. "[2 image(s) provided]"): keep as-is.\n'
-    "- Assistant messages with tool_calls: compact to tool names and key arguments, "
-    'e.g. search(name="John"), filter(field="city").\n'
+    "- Thinking blocks: compress extended reasoning to key conclusions and "
+    "decisions. Remove exploratory tangents that didn't affect the outcome.\n"
+    "- Assistant messages with tool_calls: compact to tool names and key arguments.\n"
     '- Narration-only assistant text ("Let me look that up"): replace with the '
     "tool call summary. Keep reasoning text only if it informs later steps.\n"
-    '- Every entry must remain non-empty after transformation. Use "ok" for '
-    'acknowledgements, "error" for failures.\n'
+    "- Every entry must remain non-empty after transformation.\n"
     "- Do NOT invent information that was not in the original message.\n"
     "\n"
     "## `update` Tool — Transformation Code\n"
-    "The `transformation` argument is Python code that transforms the message "
-    "content. The variable `x` holds the current content string. The final "
-    "value of `x` after execution becomes the new content.\n"
+    "The `transformation` argument is Python code that transforms the message. "
+    "The variable `x` holds the full JSON string of the message. The final "
+    "value of `x` after execution becomes the new entry.\n"
     "\n"
     "Patterns:\n"
-    '- Overwrite: `x = "error: connection timeout"`\n'
     '- Surgical replace: `x = x.replace("verbose section", "summary")`\n'
-    '- Keep first line: `x = x.split("\\n")[0]`\n'
-    '- Regex: `x = re.sub(r"Traceback[\\s\\S]*", "traceback omitted", x)`\n'
-    "  (`re` is available in the execution environment)\n"
-    "- Truncate: `x = x[:200]`\n"
-    "- Multi-line logic:\n"
+    '- Regex: `x = re.sub(r"Traceback[\\s\\S]*?", "traceback omitted", x)`\n'
+    "- Truncate: `x = x[:500]`\n"
+    "- Parse and rebuild:\n"
     "  ```\n"
-    "  lines = x.split('\\n')\n"
-    "  x = '\\n'.join(line for line in lines if 'ERROR' not in line)\n"
-    "  ```"
+    "  msg = json.loads(x)\n"
+    '  msg["content"] = "error: connection timeout"\n'
+    "  x = json.dumps(msg)\n"
+    "  ```\n"
+    "- String operations work directly on the JSON string — no need to\n"
+    "  parse/serialize for simple replacements.\n"
+    "  (`re` and `json` are available in the execution environment)"
 )
 
 
@@ -90,9 +94,8 @@ def compress_context() -> str:
 def prepare_messages_for_compression(messages: list[dict]) -> list[dict]:
     """Strip expensive binary content before sending to the compression LLM.
 
-    Handles two categories:
-    1. Image blocks (``image`` / ``image_url``) -> ``[N image(s) provided]``
-    2. Thinking blocks -> removed entirely
+    Replaces image blocks (``image`` / ``image_url``) with text placeholders.
+    All other content (including thinking blocks) is preserved.
     """
     result: list[dict] = []
     for msg in messages:
@@ -107,8 +110,6 @@ def prepare_messages_for_compression(messages: list[dict]) -> list[dict]:
             btype = block.get("type", "")
             if btype in ("image", "image_url"):
                 image_count += 1
-            elif btype == "thinking":
-                continue
             else:
                 new_blocks.append(block)
 
@@ -124,76 +125,11 @@ def prepare_messages_for_compression(messages: list[dict]) -> list[dict]:
 
 
 class CompressedMessage(BaseModel):
-    role: str
     content: str
 
 
 class CompressedMessages(BaseModel):
     messages: list[CompressedMessage]
-
-
-def _serialize_messages_for_prompt(messages: list[dict]) -> str:
-    """Serialize messages into a compact text representation for the LLM."""
-    lines: list[str] = []
-    for i, msg in enumerate(messages):
-        role = msg.get("role", "unknown")
-        content = msg.get("content")
-        tool_calls = msg.get("tool_calls")
-
-        parts: list[str] = []
-        if content is not None:
-            if isinstance(content, list):
-                text_parts = [
-                    b.get("text", "") for b in content if b.get("type") == "text"
-                ]
-                parts.append(" ".join(text_parts))
-            elif isinstance(content, str):
-                parts.append(content)
-
-        if tool_calls:
-            tc_strs: list[str] = []
-            for tc in tool_calls:
-                fn = tc.get("function", {})
-                name = fn.get("name", "?")
-                args = fn.get("arguments", "")
-                short_id = tc.get("id", "")[-6:]
-                if short_id:
-                    tc_strs.append(f"{name}[{short_id}]({args})")
-                else:
-                    tc_strs.append(f"{name}({args})")
-            parts.append("[tool_calls: " + ", ".join(tc_strs) + "]")
-
-        extra = ""
-        if "tool_call_id" in msg:
-            short_id = msg["tool_call_id"][-6:]
-            extra = f":{short_id}" if short_id else ""
-
-        lines.append(
-            f"[{i}] [{role}{extra}]: {' | '.join(parts) if parts else '(empty)'}",
-        )
-
-    return "\n".join(lines)
-
-
-_ENTRY_RE = re.compile(r"^\[(\d+)\]\s+\[([^\]]*)\]:\s?(.*)", re.DOTALL)
-
-
-def _parse_serialized_entries(serialized: str) -> list[dict]:
-    """Parse the output of ``_serialize_messages_for_prompt`` into mutable entries.
-
-    Each entry is ``{"role": str, "content": str}`` matching the
-    ``CompressedMessage`` schema so the list can be directly wrapped
-    into ``CompressedMessages`` after mutations.
-    """
-    entries: list[dict] = []
-    for line in serialized.split("\n"):
-        m = _ENTRY_RE.match(line)
-        if m:
-            role_raw = m.group(2)
-            # Strip tool_call_id suffix (e.g. "tool:abc123" → "tool")
-            role = role_raw.split(":")[0] if ":" in role_raw else role_raw
-            entries.append({"role": role, "content": m.group(3)})
-    return entries
 
 
 _SANDBOX_GLOBALS = None
@@ -202,13 +138,15 @@ _SANDBOX_GLOBALS = None
 def _get_sandbox_globals() -> dict:
     """Lazy-init sandbox globals for transformation exec.
 
-    Extends ``create_base_globals()`` with ``re`` for regex support.
-    The result is cached at module level for reuse.
+    Extends ``create_base_globals()`` with ``re`` and ``json`` for
+    regex and JSON operations. The result is cached at module level
+    for reuse.
     """
     global _SANDBOX_GLOBALS
     if _SANDBOX_GLOBALS is None:
         g = create_base_globals()
         g["re"] = re
+        g["json"] = json
         _SANDBOX_GLOBALS = g
     return _SANDBOX_GLOBALS
 
@@ -246,9 +184,9 @@ def _eval_transformation(transformation_str: str, content: str) -> str:
     return result
 
 
-def _compute_token_usage(entries: list[dict], endpoint: str) -> str:
-    """Compute token usage of all entry content as a percentage of the context window."""
-    total_text = "\n".join(e["content"] for e in entries)
+def _compute_token_usage(entries: list[str], endpoint: str) -> str:
+    """Compute token usage of all entries as a percentage of the context window."""
+    total_text = "\n".join(entries)
     tokens = count_tokens(total_text)
     max_input = unillm.get_max_input_tokens(endpoint) or 0
     if max_input > 0:
@@ -257,7 +195,7 @@ def _compute_token_usage(entries: list[dict], endpoint: str) -> str:
     return f"[{tokens:,} tokens]"
 
 
-def _make_update_tool(entries: list[dict], endpoint: str) -> callable:
+def _make_update_tool(entries: list[str], endpoint: str) -> callable:
     """Build the ``update`` tool closure over a mutable entries list."""
 
     def update(index: int, transformation: str) -> str:
@@ -265,28 +203,28 @@ def _make_update_tool(entries: list[dict], endpoint: str) -> callable:
 
         Args:
             index: The [N] index of the message to transform.
-            transformation: Python code that transforms the message content.
-                The variable ``x`` holds the current content string. The
-                final value of ``x`` after execution becomes the new content.
+            transformation: Python code that transforms the message.
+                The variable ``x`` holds the full JSON string of the
+                message. The final value of ``x`` after execution becomes
+                the new entry.
 
-                Single-line examples:
-                  x = "error: timeout"
+                String operations (work directly on the JSON string):
                   x = x.replace("verbose section", "summary")
-                  x = x.split("\\n")[0]
                   x = re.sub(r"Traceback[\\s\\S]*", "omitted", x)
-                  x = x[:200]
+                  x = x[:500]
+
+                Structured operations (parse, modify, serialize):
+                  msg = json.loads(x)
+                  msg["content"] = "error: timeout"
+                  x = json.dumps(msg)
 
                 A bare expression (no ``=``) is auto-assigned to ``x``:
                   x.replace("verbose", "short")
 
-                Multi-line code (must assign to ``x``):
-                  lines = x.split("\\n")
-                  x = "\\n".join(l for l in lines if "ERROR" not in l)
-
-                ``re`` is available for regex operations.
+                ``re`` and ``json`` are available.
 
         Returns:
-            The new content after transformation, followed by current
+            The new entry after transformation, followed by current
             token usage of the compressed context.
         """
         if index < 0 or index >= len(entries):
@@ -294,13 +232,13 @@ def _make_update_tool(entries: list[dict], endpoint: str) -> callable:
         try:
             new_content = _eval_transformation(
                 transformation,
-                entries[index]["content"],
+                entries[index],
             )
         except Exception as exc:
             return f"Error applying transformation: {type(exc).__name__}: {exc}"
         if not new_content:
             new_content = "(empty)"
-        entries[index]["content"] = new_content
+        entries[index] = new_content
         usage = _compute_token_usage(entries, endpoint)
         return f"{new_content}\n{usage}"
 
@@ -313,24 +251,17 @@ async def compress_messages(
 ) -> CompressedMessages:
     """Compact a message list using a tool-loop that surgically edits entries.
 
-    1. Strips images and thinking blocks via ``prepare_messages_for_compression``
-    2. Serializes into indexed ``[N] [role]: content`` format
+    1. Strips images via ``prepare_messages_for_compression``
+    2. JSON-serializes each message into indexed ``[N] {json}`` format
     3. Starts a short-lived async tool loop where the LLM calls ``update``
-       to compress individual entries via lambda transformations
+       to compress individual entries via Python transformations
     4. Wraps the mutated entries as ``CompressedMessages``
     """
     from unity.common.async_tool_loop import start_async_tool_loop
 
     prepared = prepare_messages_for_compression(messages)
-    serialized = _serialize_messages_for_prompt(prepared)
-    entries = _parse_serialized_entries(serialized)
-
-    if len(entries) != len(messages):
-        raise ValueError(
-            f"Serialization produced {len(entries)} entries but expected "
-            f"{len(messages)} — _serialize_messages_for_prompt / "
-            f"_parse_serialized_entries mismatch",
-        )
+    entries = [json.dumps(msg, default=str) for msg in prepared]
+    serialized = "\n\n".join(f"[{i}] {e}" for i, e in enumerate(entries))
 
     update_tool = _make_update_tool(entries, endpoint)
     tools = {"update": update_tool}
@@ -360,9 +291,7 @@ async def compress_messages(
     await handle.result()
 
     return CompressedMessages(
-        messages=[
-            CompressedMessage(role=e["role"], content=e["content"]) for e in entries
-        ],
+        messages=[CompressedMessage(content=e) for e in entries],
     )
 
 
@@ -381,5 +310,5 @@ def render_compressed_context(
     """
     lines: list[str] = []
     for i, msg in enumerate(compressed.messages):
-        lines.append(f"[{i + index_offset}] [{msg.role}]: {msg.content}")
+        lines.append(f"[{i + index_offset}] {msg.content}")
     return "\n".join(lines)
