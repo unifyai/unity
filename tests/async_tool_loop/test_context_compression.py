@@ -5,6 +5,8 @@ import inspect
 
 import pytest
 
+import json
+
 from tests.helpers import _handle_project
 from unity.common._async_tool.context_compression import (
     CompressedMessage,
@@ -14,8 +16,6 @@ from unity.common._async_tool.context_compression import (
     prepare_messages_for_compression,
     render_compressed_context,
     _eval_transformation,
-    _parse_serialized_entries,
-    _serialize_messages_for_prompt,
     _make_update_tool,
 )
 
@@ -89,7 +89,7 @@ class TestPrepareMessagesForCompression:
             full_text = content
         assert "3 image" in full_text.lower()
 
-    def test_strips_thinking_blocks(self):
+    def test_preserves_thinking_blocks(self):
         messages = [
             {
                 "role": "assistant",
@@ -105,14 +105,11 @@ class TestPrepareMessagesForCompression:
         ]
         result = prepare_messages_for_compression(messages)
         content = result[0]["content"]
-        if isinstance(content, list):
-            types = [b.get("type") for b in content]
-            assert "thinking" not in types
-            texts = [b["text"] for b in content if b.get("type") == "text"]
-            assert "Here is the answer." in texts
-        else:
-            assert "thinking" not in content.lower() or "Here is the answer" in content
-        assert "signature" not in str(content)
+        assert isinstance(content, list)
+        types = [b.get("type") for b in content]
+        assert "thinking" in types
+        texts = [b["text"] for b in content if b.get("type") == "text"]
+        assert "Here is the answer." in texts
 
     def test_preserves_text_only_messages(self):
         messages = [
@@ -145,19 +142,16 @@ class TestPrepareMessagesForCompression:
         ]
         result = prepare_messages_for_compression(messages)
         content = result[0]["content"]
-        if isinstance(content, list):
-            types = [b.get("type") for b in content]
-            assert "thinking" not in types
-            assert "image_url" not in types
-            assert "image" not in types
-            texts = [b.get("text", "") for b in content if b.get("type") == "text"]
-            full = " ".join(texts)
-            assert "Here is what I see." in full
-            assert "The image shows a cat." in full
-            assert "1 image" in full.lower()
-        else:
-            assert "base64" not in content
-            assert "signature" not in content
+        assert isinstance(content, list)
+        types = [b.get("type") for b in content]
+        assert "thinking" in types
+        assert "image_url" not in types
+        assert "image" not in types
+        texts = [b.get("text", "") for b in content if b.get("type") == "text"]
+        full = " ".join(texts)
+        assert "Here is what I see." in full
+        assert "The image shows a cat." in full
+        assert "1 image" in full.lower()
 
     def test_does_not_mutate_input(self):
         original_content = [
@@ -252,155 +246,98 @@ class TestEvalTransformation:
             _eval_transformation("x = 1 // 0", "content")
 
 
-class TestParseSerializedEntries:
-    def test_roundtrip_basic(self):
-        messages = [
-            {"role": "user", "content": "Hello"},
-            {"role": "assistant", "content": "Hi there"},
-        ]
-        serialized = _serialize_messages_for_prompt(messages)
-        entries = _parse_serialized_entries(serialized)
-        assert len(entries) == 2
-        assert entries[0]["role"] == "user"
-        assert entries[0]["content"] == "Hello"
-        assert entries[1]["role"] == "assistant"
-        assert entries[1]["content"] == "Hi there"
-
-    def test_tool_message_strips_call_id_suffix(self):
-        messages = [
-            {
-                "role": "tool",
-                "tool_call_id": "call_abc123",
-                "content": "result data",
-            },
-        ]
-        serialized = _serialize_messages_for_prompt(messages)
-        entries = _parse_serialized_entries(serialized)
-        assert len(entries) == 1
-        assert entries[0]["role"] == "tool"
-
-    def test_tool_call_message(self):
-        messages = [
-            {
-                "role": "assistant",
-                "content": None,
-                "tool_calls": [
-                    {
-                        "id": "call_1",
-                        "type": "function",
-                        "function": {
-                            "name": "search",
-                            "arguments": '{"name": "John"}',
-                        },
-                    },
-                ],
-            },
-        ]
-        serialized = _serialize_messages_for_prompt(messages)
-        entries = _parse_serialized_entries(serialized)
-        assert len(entries) == 1
-        assert entries[0]["role"] == "assistant"
-        assert "search" in entries[0]["content"]
-
-    def test_empty_content(self):
-        messages = [
-            {"role": "user", "content": ""},
-        ]
-        serialized = _serialize_messages_for_prompt(messages)
-        entries = _parse_serialized_entries(serialized)
-        assert len(entries) == 1
-
-    def test_preserves_message_count(self):
-        messages = [
-            {"role": "user", "content": "a"},
-            {"role": "assistant", "content": "b"},
-            {"role": "tool", "tool_call_id": "c1", "content": "c"},
-            {"role": "user", "content": "d"},
-        ]
-        serialized = _serialize_messages_for_prompt(messages)
-        entries = _parse_serialized_entries(serialized)
-        assert len(entries) == len(messages)
-
-
 class TestMakeUpdateTool:
     _ENDPOINT = "gpt-4o@openai"
 
     def test_overwrite_entry(self):
         entries = [
-            {"role": "user", "content": "original"},
-            {"role": "assistant", "content": "keep this"},
+            json.dumps({"role": "user", "content": "original"}),
+            json.dumps({"role": "assistant", "content": "keep this"}),
         ]
         update = _make_update_tool(entries, self._ENDPOINT)
         result = update(0, 'x = "replaced"')
         assert "replaced" in result
-        assert entries[0]["content"] == "replaced"
-        assert entries[1]["content"] == "keep this"
+        assert entries[0] == "replaced"
+        assert "keep this" in entries[1]
 
     def test_response_includes_token_usage(self):
-        entries = [{"role": "user", "content": "some content here"}]
+        entries = [json.dumps({"role": "user", "content": "some content here"})]
         update = _make_update_tool(entries, self._ENDPOINT)
         result = update(0, 'x = "short"')
         assert "tokens" in result
         assert "%" in result
 
     def test_surgical_replace(self):
-        entries = [{"role": "tool", "content": "verbose error with traceback details"}]
+        entries = [
+            json.dumps(
+                {"role": "tool", "content": "verbose error with traceback details"},
+            ),
+        ]
         update = _make_update_tool(entries, self._ENDPOINT)
         result = update(
             0,
             'x = x.replace("verbose error with traceback details", "error")',
         )
         assert "error" in result
-        assert entries[0]["content"] == "error"
+        assert "verbose" not in entries[0]
 
     def test_out_of_range_returns_error(self):
-        entries = [{"role": "user", "content": "only one"}]
+        entries = [json.dumps({"role": "user", "content": "only one"})]
         update = _make_update_tool(entries, self._ENDPOINT)
         result = update(5, 'x = "y"')
         assert "Error" in result
         assert "out of range" in result
 
     def test_invalid_code_returns_error(self):
-        entries = [{"role": "user", "content": "content"}]
+        entries = [json.dumps({"role": "user", "content": "content"})]
+        original = entries[0]
         update = _make_update_tool(entries, self._ENDPOINT)
         result = update(0, "def def def")
         assert "Error" in result
-        assert entries[0]["content"] == "content"
+        assert entries[0] == original
 
     def test_empty_result_becomes_marker(self):
-        entries = [{"role": "user", "content": "something"}]
+        entries = [json.dumps({"role": "user", "content": "something"})]
         update = _make_update_tool(entries, self._ENDPOINT)
         result = update(0, 'x = ""')
         assert "(empty)" in result
-        assert entries[0]["content"] == "(empty)"
+        assert entries[0] == "(empty)"
 
     def test_multiple_updates(self):
         entries = [
-            {"role": "user", "content": "first"},
-            {"role": "assistant", "content": "second"},
-            {"role": "tool", "content": "third"},
+            json.dumps({"role": "user", "content": "first"}),
+            json.dumps({"role": "assistant", "content": "second"}),
+            json.dumps({"role": "tool", "content": "third"}),
         ]
         update = _make_update_tool(entries, self._ENDPOINT)
         update(0, 'x = "1"')
         update(2, 'x = "3"')
-        assert entries[0]["content"] == "1"
-        assert entries[1]["content"] == "second"
-        assert entries[2]["content"] == "3"
+        assert entries[0] == "1"
+        assert "second" in entries[1]
+        assert entries[2] == "3"
 
     def test_bare_expression(self):
-        entries = [{"role": "user", "content": "hello world"}]
+        entries = [json.dumps({"role": "user", "content": "hello world"})]
         update = _make_update_tool(entries, self._ENDPOINT)
         result = update(0, 'x.replace("hello", "hi")')
         assert "hi world" in result
-        assert entries[0]["content"] == "hi world"
+        assert "hi world" in entries[0]
 
-    def test_multiline_transformation(self):
-        entries = [{"role": "tool", "content": "line1\nERROR line2\nline3"}]
+    def test_structured_transformation(self):
+        entries = [
+            json.dumps({"role": "tool", "content": "line1\nERROR line2\nline3"}),
+        ]
         update = _make_update_tool(entries, self._ENDPOINT)
-        code = "lines = x.split('\\n')\nx = '\\n'.join(l for l in lines if 'ERROR' not in l)"
+        code = (
+            "msg = json.loads(x)\n"
+            "lines = msg['content'].split('\\n')\n"
+            "msg['content'] = '\\n'.join(l for l in lines if 'ERROR' not in l)\n"
+            "x = json.dumps(msg)"
+        )
         result = update(0, code)
         assert "line1" in result
-        assert "ERROR" not in entries[0]["content"]
+        parsed = json.loads(entries[0])
+        assert "ERROR" not in parsed["content"]
 
 
 @pytest.mark.asyncio
@@ -489,7 +426,6 @@ async def test_compress_compacts_tool_call_messages(llm_config):
     result = await compress_messages(messages, llm_config["model"])
     assert len(result.messages) == 3
     tool_call_msg = result.messages[1]
-    assert tool_call_msg.role == "assistant"
     assert "search" in tool_call_msg.content.lower()
 
 
@@ -569,32 +505,44 @@ async def test_compress_compacts_verbose_errors(llm_config):
     ]
     result = await compress_messages(messages, llm_config["model"])
     assert len(result.messages) == 6
+    original_json = json.dumps(messages[2], default=str)
     error_msg = result.messages[2]
-    assert len(error_msg.content) < len(messages[2]["content"])
+    assert len(error_msg.content) < len(original_json)
 
 
 class TestRenderCompressedContext:
     def test_basic_format(self):
         compressed = CompressedMessages(
             messages=[
-                CompressedMessage(role="user", content="Find John"),
-                CompressedMessage(role="assistant", content='search(name="John")'),
-                CompressedMessage(role="tool", content="John,j@test.com,+123"),
-                CompressedMessage(role="assistant", content="John: j@test.com, +123"),
+                CompressedMessage(
+                    content=json.dumps({"role": "user", "content": "Find John"}),
+                ),
+                CompressedMessage(
+                    content=json.dumps(
+                        {"role": "assistant", "content": 'search(name="John")'},
+                    ),
+                ),
+                CompressedMessage(
+                    content=json.dumps(
+                        {"role": "tool", "content": "John,j@test.com,+123"},
+                    ),
+                ),
             ],
         )
         rendered = render_compressed_context(compressed)
-        assert "[0] [user]: Find John" in rendered
-        assert '[1] [assistant]: search(name="John")' in rendered
-        assert "[2] [tool]: John,j@test.com,+123" in rendered
-        assert "[3] [assistant]: John: j@test.com, +123" in rendered
+        assert rendered.startswith("[0] ")
+        assert "[1] " in rendered
+        assert "[2] " in rendered
+        assert "Find John" in rendered
+        assert "search" in rendered
+        assert "j@test.com" in rendered
 
     def test_one_line_per_message(self):
         compressed = CompressedMessages(
             messages=[
-                CompressedMessage(role="user", content="a"),
-                CompressedMessage(role="assistant", content="b"),
-                CompressedMessage(role="tool", content="c"),
+                CompressedMessage(content="a"),
+                CompressedMessage(content="b"),
+                CompressedMessage(content="c"),
             ],
         )
         rendered = render_compressed_context(compressed)

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 
 import pytest
 
@@ -53,8 +54,12 @@ async def _mock_compress(messages, endpoint):
     return CompressedMessages(
         messages=[
             CompressedMessage(
-                role=m.get("role", "user"),
-                content=f"[c] {str(m.get('content', ''))[:40]}",
+                content=json.dumps(
+                    {
+                        "role": m.get("role", "user"),
+                        "content": f"[c] {str(m.get('content', ''))[:40]}",
+                    },
+                ),
             )
             for m in messages
         ],
