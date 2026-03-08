@@ -46,7 +46,12 @@ logger = logging.getLogger(__name__)
 SupportedShellLanguage = Literal["bash", "zsh", "sh", "powershell"]
 SupportedLanguage = Literal["python", "bash", "zsh", "sh", "powershell"]
 StateMode = Literal["stateful", "read_only", "stateless"]
-SessionKey = Tuple[str, Optional[int], int]  # (language, venv_id, session_id)
+SessionKey = Tuple[
+    str,
+    Optional[int],
+    Optional[int],
+    int,
+]  # (language, venv_id, shell_env_id, session_id)
 
 
 # ---------------------------------------------------------------------------
@@ -203,7 +208,12 @@ def _validate_execution_params(
                     venv_id=venv_id,
                 )
         else:
-            resolved_language, resolved_venv_id, resolved_session_id = key
+            (
+                resolved_language,
+                resolved_venv_id,
+                _resolved_shell_env_id,
+                resolved_session_id,
+            ) = key
             if (
                 resolved_language != language
                 or resolved_venv_id != venv_id
@@ -755,6 +765,7 @@ class SessionExecutor:
         state_mode: StateMode,
         session_id: int | None,
         venv_id: int | None,
+        shell_env_id: int | None = None,
         primitives: Any = None,
         computer_primitives: Any = None,
     ) -> Dict[str, Any]:
@@ -1000,15 +1011,32 @@ class SessionExecutor:
             )
 
         # ─── Shell ─────────────────────────────────────────────────────────
+        # Resolve shell env -> PATH overrides (mirrors FunctionManager._execute_shell_function)
+        import os as _se_os
+
+        env_overrides: Optional[Dict[str, str]] = None
+        if shell_env_id is not None and self._function_manager is not None:
+            bin_dir = await self._function_manager.prepare_shell_env(
+                shell_env_id=shell_env_id,
+            )
+            env_overrides = {
+                "PATH": f"{bin_dir}:{_se_os.environ.get('PATH', '')}",
+            }
+
         # Stateless: ephemeral subprocess (no pool/session).
         if state_mode == "stateless":
-            out = await _execute_shell_stateless(language=language, command=code)
+            out = await _execute_shell_stateless(
+                language=language,
+                command=code,
+                env=env_overrides,
+            )
             return {
                 **out,
                 "language": language,
                 "state_mode": state_mode,
                 "session_id": None,
                 "venv_id": None,
+                "shell_env_id": shell_env_id,
                 "session_created": False,
                 "duration_ms": int(
                     (datetime.now(timezone.utc).timestamp() - t0) * 1000,
@@ -1031,6 +1059,7 @@ class SessionExecutor:
                 command=code,
                 session_id=int(session_id),
                 timeout=self._timeout,
+                env=env_overrides,
             )
             return {
                 "stdout": res.stdout,
@@ -1041,6 +1070,7 @@ class SessionExecutor:
                 "state_mode": state_mode,
                 "session_id": session_id,
                 "venv_id": None,
+                "shell_env_id": shell_env_id,
                 "session_created": not existed_before,
                 "duration_ms": int(
                     (datetime.now(timezone.utc).timestamp() - t0) * 1000,
@@ -1056,7 +1086,7 @@ class SessionExecutor:
                 session_id=int(session_id),
             )
             snap = await sess.snapshot_state()
-            tmp = ShellSession(language=language)  # type: ignore[arg-type]
+            tmp = ShellSession(language=language, env=env_overrides)  # type: ignore[arg-type]
             await tmp.start()
             try:
                 restore_res = await tmp.restore_state(snap)
@@ -1070,6 +1100,7 @@ class SessionExecutor:
                         "state_mode": state_mode,
                         "session_id": session_id,
                         "venv_id": None,
+                        "shell_env_id": shell_env_id,
                         "session_created": False,
                         "duration_ms": int(
                             (datetime.now(timezone.utc).timestamp() - t0) * 1000,
@@ -1085,6 +1116,7 @@ class SessionExecutor:
                     "state_mode": state_mode,
                     "session_id": session_id,
                     "venv_id": None,
+                    "shell_env_id": shell_env_id,
                     "session_created": False,
                     "duration_ms": int(
                         (datetime.now(timezone.utc).timestamp() - t0) * 1000,
@@ -1121,9 +1153,13 @@ async def _execute_shell_stateless(
     *,
     language: SupportedLanguage,
     command: str,
+    env: Optional[Dict[str, str]] = None,
 ) -> Dict[str, Any]:
     """
     Execute shell code in an ephemeral subprocess (stateless).
+
+    When *env* is provided, it is merged into a copy of ``os.environ``
+    and passed to the subprocess (used for shell env PATH injection).
     """
     if language == "python":
         raise ValueError("Shell stateless executor called with language='python'")
@@ -1140,12 +1176,20 @@ async def _execute_shell_stateless(
     else:
         raise ValueError(f"Unsupported shell language: {language}")
 
+    import os as _os
+
+    merged_env: Optional[Dict[str, str]] = None
+    if env is not None:
+        merged_env = _os.environ.copy()
+        merged_env.update(env)
+
     try:
         proc = await asyncio.create_subprocess_exec(
             *argv,
             stdin=asyncio.subprocess.DEVNULL,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
+            env=merged_env,
         )
         stdout_b, stderr_b = await proc.communicate()
         return {

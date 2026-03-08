@@ -167,6 +167,7 @@ def _default_tool_policy(
 class _ResolvedSession(NamedTuple):
     language: str
     venv_id: Optional[int]
+    shell_env_id: Optional[int]
     session_id: Optional[int]
     error: Optional[Dict[str, Any]]  # validation error dict, or None
 
@@ -2079,13 +2080,13 @@ class CodeActActor(BaseCodeActActor):
             timeout=timeout,
         )
 
-        # Session name registry: name -> (language, venv_id, session_id)
+        # Session name registry: name -> (language, venv_id, shell_env_id, session_id)
         self._session_names: Dict[str, SessionKey] = {}
-        # Reverse map: (language, venv_id, session_id) -> set(names)
+        # Reverse map: SessionKey -> set(names)
         self._session_names_rev: Dict[SessionKey, set[str]] = {}
         # Actor-level session cap (global across languages for this actor instance).
         self._max_sessions_total: int = 20
-        self._next_session_id: dict[tuple[str, Optional[int]], int] = {}
+        self._next_session_id: dict[tuple[str, Optional[int], Optional[int]], int] = {}
 
         self.can_compose: bool = bool(can_compose)
         self.can_store: bool = bool(can_store)
@@ -2117,9 +2118,10 @@ class CodeActActor(BaseCodeActActor):
         name: str,
         language: str,
         venv_id: int | None,
+        shell_env_id: int | None = None,
         session_id: int,
     ) -> None:
-        key: SessionKey = (language, venv_id, int(session_id))
+        key: SessionKey = (language, venv_id, shell_env_id, int(session_id))
         existing = self._session_names.get(name)
         if existing is not None and existing != key:
             raise ValueError(
@@ -2136,9 +2138,10 @@ class CodeActActor(BaseCodeActActor):
         *,
         language: str,
         venv_id: int | None,
+        shell_env_id: int | None = None,
         session_id: int,
     ) -> str | None:
-        key: SessionKey = (language, venv_id, int(session_id))
+        key: SessionKey = (language, venv_id, shell_env_id, int(session_id))
         names = self._session_names_rev.get(key)
         if not names:
             return None
@@ -2248,6 +2251,7 @@ class CodeActActor(BaseCodeActActor):
         session_id: int | None,
         session_name: str | None,
         venv_id: int | None,
+        shell_env_id: int | None = None,
     ) -> _ResolvedSession:
         """Resolve/allocate a session and validate execution params.
 
@@ -2267,11 +2271,12 @@ class CodeActActor(BaseCodeActActor):
             if session_name:
                 resolved = self._resolve_session_name(session_name)
                 if resolved is not None:
-                    language, venv_id, session_id = resolved
+                    language, venv_id, shell_env_id, session_id = resolved
                 elif session_id is None:
                     key = (
                         str(language),
                         int(venv_id) if venv_id is not None else None,
+                        int(shell_env_id) if shell_env_id is not None else None,
                     )
                     next_id = self._next_session_id.get(key, 1)
                     session_id = next_id
@@ -2280,6 +2285,7 @@ class CodeActActor(BaseCodeActActor):
                         name=session_name,
                         language=str(language),
                         venv_id=venv_id,
+                        shell_env_id=shell_env_id,
                         session_id=int(session_id),
                     )
             elif session_id is None:
@@ -2292,6 +2298,7 @@ class CodeActActor(BaseCodeActActor):
                     name=session_name,
                     language=str(language),
                     venv_id=venv_id,
+                    shell_env_id=shell_env_id,
                     session_id=int(session_id),
                 )
 
@@ -2307,6 +2314,7 @@ class CodeActActor(BaseCodeActActor):
         return _ResolvedSession(
             language=str(language),
             venv_id=venv_id,
+            shell_env_id=shell_env_id,
             session_id=session_id,
             error=err,
         )
@@ -2358,6 +2366,7 @@ class CodeActActor(BaseCodeActActor):
             session_id: int | None = None,
             session_name: str | None = None,
             venv_id: int | None = None,
+            shell_env_id: int | None = None,
             _notification_up_q: asyncio.Queue[dict] | None = None,
             _parent_chat_context: list[dict] | None = None,
         ) -> Any:
@@ -2380,6 +2389,13 @@ class CodeActActor(BaseCodeActActor):
                 always available.
               - "stateful": persistent session; state accumulates across calls
               - "read_only": reads from an existing session but does not persist changes
+            - **venv_id**: For Python, run in an isolated virtual environment with
+              pre-installed packages. Discover available venvs via
+              ``FunctionManager_list_venvs``.
+            - **shell_env_id**: For shell languages, load a stored shell environment
+              so its CLI tool binaries are available on PATH. Discover available
+              environments via ``FunctionManager_list_shell_envs``. Not needed if the
+              tools are already installed system-wide.
             - **session_id/session_name**:
               - only meaningful for stateful/read_only
               - for stateful: if omitted, defaults to **session_id=0** (the default session)
@@ -2433,6 +2449,7 @@ class CodeActActor(BaseCodeActActor):
                     "session_id": session_id,
                     "session_name": session_name,
                     "venv_id": venv_id,
+                    "shell_env_id": shell_env_id,
                     "session_created": False,
                     "duration_ms": 0,
                 }
@@ -2487,10 +2504,12 @@ class CodeActActor(BaseCodeActActor):
                     session_id=session_id,
                     session_name=session_name,
                     venv_id=venv_id,
+                    shell_env_id=shell_env_id,
                 )
-                language, venv_id, session_id = (
+                language, venv_id, shell_env_id, session_id = (
                     _rs.language,
                     _rs.venv_id,
+                    _rs.shell_env_id,
                     _rs.session_id,
                 )
                 if _rs.error is not None:
@@ -2526,6 +2545,7 @@ class CodeActActor(BaseCodeActActor):
                             state_mode=state_mode,  # type: ignore[arg-type]
                             session_id=session_id,
                             venv_id=venv_id,
+                            shell_env_id=shell_env_id,
                             primitives=primitives,
                             computer_primitives=computer_primitives,
                         )
@@ -2947,6 +2967,7 @@ class CodeActActor(BaseCodeActActor):
                 session_id: int | None = None,
                 session_name: str | None = None,
                 venv_id: int | None = None,
+                shell_env_id: int | None = None,
                 _notification_up_q: asyncio.Queue[dict] | None = None,
                 _parent_chat_context: list[dict] | None = None,
             ) -> Any:
@@ -3111,10 +3132,12 @@ class CodeActActor(BaseCodeActActor):
                         session_id=session_id,
                         session_name=session_name,
                         venv_id=venv_id,
+                        shell_env_id=shell_env_id,
                     )
-                    language, venv_id, session_id = (
+                    language, venv_id, shell_env_id, session_id = (
                         _rs.language,
                         _rs.venv_id,
+                        _rs.shell_env_id,
                         _rs.session_id,
                     )
                     if _rs.error is not None:
@@ -3153,6 +3176,7 @@ class CodeActActor(BaseCodeActActor):
                                 state_mode=state_mode,  # type: ignore[arg-type]
                                 session_id=session_id,
                                 venv_id=venv_id,
+                                shell_env_id=shell_env_id,
                                 primitives=primitives,
                                 computer_primitives=computer_primitives,
                             )
@@ -3329,10 +3353,21 @@ class CodeActActor(BaseCodeActActor):
             try:
                 for s in self._shell_pool.get_all_sessions():
                     s = dict(s)
+                    lang = str(s.get("language"))
+                    sid = int(s["session_id"])
+                    # Look up shell_env_id from the name registry by trying
+                    # all registered keys for this (language, session_id).
+                    matched_env_id: int | None = None
+                    for key in self._session_names_rev:
+                        if key[0] == lang and key[3] == sid and key[2] is not None:
+                            matched_env_id = key[2]
+                            break
+                    s["shell_env_id"] = matched_env_id
                     s["session_name"] = self._get_session_name(
-                        language=str(s.get("language")),
+                        language=lang,
                         venv_id=None,
-                        session_id=int(s["session_id"]),
+                        shell_env_id=matched_env_id,
+                        session_id=sid,
                     )
                     sessions.append(s)
             except Exception:
@@ -3418,7 +3453,7 @@ class CodeActActor(BaseCodeActActor):
                         "error_type": "validation",
                     }
             elif session_id is not None and language is not None:
-                resolved = (str(language), venv_id, int(session_id))
+                resolved = (str(language), venv_id, None, int(session_id))
 
             # Default: current sandbox.
             if resolved is None:
@@ -3468,7 +3503,7 @@ class CodeActActor(BaseCodeActActor):
                     "state": state_obj,
                 }
 
-            lang, resolved_venv_id, sid = resolved
+            lang, resolved_venv_id, _resolved_shell_env_id, sid = resolved
 
             # Python venv-backed
             if lang == "python" and resolved_venv_id is not None:
@@ -3599,7 +3634,7 @@ class CodeActActor(BaseCodeActActor):
                         },
                     }
             elif session_id is not None and language is not None:
-                resolved = (str(language), venv_id, int(session_id))
+                resolved = (str(language), venv_id, None, int(session_id))
             else:
                 return {
                     "closed": False,
@@ -3607,7 +3642,7 @@ class CodeActActor(BaseCodeActActor):
                     "error": "Must provide session_name or (language + session_id).",
                 }
 
-            lang, resolved_venv_id, sid = resolved
+            lang, resolved_venv_id, resolved_shell_env_id, sid = resolved
             closed = False
 
             if lang == "python" and resolved_venv_id is not None:
@@ -3625,7 +3660,7 @@ class CodeActActor(BaseCodeActActor):
 
             # Unregister all aliases for this session.
             self._unregister_all_names_for_session(
-                key=(str(lang), resolved_venv_id, int(sid)),
+                key=(str(lang), resolved_venv_id, resolved_shell_env_id, int(sid)),
             )
 
             return {
@@ -3638,6 +3673,7 @@ class CodeActActor(BaseCodeActActor):
                     or self._get_session_name(
                         language=str(lang),
                         venv_id=resolved_venv_id,
+                        shell_env_id=resolved_shell_env_id,
                         session_id=int(sid),
                     ),
                 },

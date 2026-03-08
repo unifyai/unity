@@ -71,3 +71,64 @@ async def test_session_tools_close_all_sessions():
         _CURRENT_SANDBOX.reset(token)
         await sandbox.close()
         await actor.close()
+
+
+@pytest.mark.asyncio
+async def test_list_sessions_includes_shell_env_id():
+    """Shell sessions created with shell_env_id show it in list_sessions output."""
+    actor = CodeActActor(environments=[StateManagerEnvironment()])
+
+    sandbox = PythonExecutionSession(
+        environments=actor.environments,
+        venv_pool=actor._venv_pool,
+        shell_pool=actor._shell_pool,
+    )
+    token = _CURRENT_SANDBOX.set(sandbox)
+
+    try:
+        tools = actor.get_tools("act")
+
+        await actor._shell_pool.execute(
+            language="bash",
+            command="echo test",
+            session_id=0,
+        )
+        actor._register_session_name(
+            name="jq_session",
+            language="bash",
+            venv_id=None,
+            shell_env_id=42,
+            session_id=0,
+        )
+
+        sessions = await tools["list_sessions"](detail="summary")
+        bash_sessions = [s for s in sessions["sessions"] if s.get("language") == "bash"]
+        assert len(bash_sessions) >= 1
+        assert bash_sessions[0].get("shell_env_id") == 42
+        assert bash_sessions[0].get("session_name") == "jq_session"
+    finally:
+        _CURRENT_SANDBOX.reset(token)
+        await sandbox.close()
+        await actor.close()
+
+
+@pytest.mark.asyncio
+async def test_session_name_resolves_with_shell_env_id():
+    """Session name registered with shell_env_id resolves to the full 4-tuple key."""
+    actor = CodeActActor()
+
+    actor._register_session_name(
+        name="cloud_tools",
+        language="bash",
+        venv_id=None,
+        shell_env_id=99,
+        session_id=5,
+    )
+
+    resolved = actor._resolve_session_name("cloud_tools")
+    assert resolved is not None
+    lang, venv_id, shell_env_id, session_id = resolved
+    assert lang == "bash"
+    assert venv_id is None
+    assert shell_env_id == 99
+    assert session_id == 5
