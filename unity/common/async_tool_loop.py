@@ -956,8 +956,7 @@ def start_async_tool_loop(
     time_awareness: bool = False,
     extra_ask_tools: Optional[Dict[str, Callable]] = None,
     enable_compression: bool = True,
-    pre_compression_threshold: Optional[float] = None,
-    pre_compression_tool_names: Optional[list[str]] = None,
+    extra_compression_tools: Optional[list[str]] = None,
 ) -> AsyncToolLoopHandle:
     """
     Kick off `_async_tool_use_loop_inner` in its own task and give the caller
@@ -1081,8 +1080,7 @@ def start_async_tool_loop(
                 time_awareness=time_awareness,
                 extra_ask_tools=extra_ask_tools,
                 enable_compression=enable_compression,
-                pre_compression_threshold=pre_compression_threshold,
-                pre_compression_tool_names=pre_compression_tool_names,
+                extra_compression_tools=extra_compression_tools,
             )
         except asyncio.CancelledError:
             raise
@@ -1158,8 +1156,7 @@ def start_async_tool_loop(
         "time_awareness": time_awareness,
         "extra_ask_tools": extra_ask_tools,
         "enable_compression": enable_compression,
-        "pre_compression_threshold": pre_compression_threshold,
-        "pre_compression_tool_names": pre_compression_tool_names,
+        "extra_compression_tools": extra_compression_tools,
     }
 
     # Attach lineage to handle for optional external inspection
