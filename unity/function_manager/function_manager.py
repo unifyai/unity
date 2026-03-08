@@ -5420,6 +5420,9 @@ if __name__ == "__main__":
 
         # Extract RPC-bridgeable namespaces for subprocess execution paths.
         primitives = extra_namespaces.get("primitives")
+        computer_primitives = (
+            getattr(primitives, "computer", None) if primitives else None
+        )
 
         # Handle execution based on venv and state_mode
         if exec_venv_id is None:
