@@ -165,6 +165,24 @@ class TestExternalAppIntegration:
 
 
 # ---------------------------------------------------------------------------
+# Tests – proactive meeting offers
+# ---------------------------------------------------------------------------
+
+
+class TestProactiveMeetingOffers:
+    """The prompt encourages proactive meeting/screenshare suggestions."""
+
+    def test_proactive_meeting_section_present(self):
+        prompt = _build()
+        assert "Proactive meeting offers" in prompt
+        assert "screen sharing" in prompt.lower()
+
+    def test_proactive_meeting_absent_in_demo_mode(self):
+        prompt = _build(demo_mode=True)
+        assert "Proactive meeting offers" not in prompt
+
+
+# ---------------------------------------------------------------------------
 # Tests – demo mode adapts
 # ---------------------------------------------------------------------------
 

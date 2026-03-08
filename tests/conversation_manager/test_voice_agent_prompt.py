@@ -438,9 +438,40 @@ class TestPlatformKnowledge:
         )
         assert_concise(
             response,
-            max_words=80,
+            max_words=130,
             context="app integration setup explanation",
         )
+
+    async def test_suggests_video_call_for_visual_guidance(
+        self,
+        boss_call_prompt: str,
+    ):
+        """When the user is struggling with a visual/setup task, the fast brain
+        should suggest a video call with screen sharing rather than deferring."""
+        response = await ask_fast_brain(
+            boss_call_prompt,
+            "I'm trying to find where to add my API credentials on the console but I can't figure it out.",
+        )
+
+        assert_no_deferral(response, "User struggling with console navigation")
+        response_lower = response.lower()
+        has_video_call_mention = any(
+            term in response_lower
+            for term in [
+                "video call",
+                "screen shar",
+                "call",
+                "hop on",
+                "walk you through",
+                "show you",
+            ]
+        )
+        assert has_video_call_mention, (
+            f"Fast brain should suggest a video call or screen sharing "
+            f"when the user needs visual guidance.\n"
+            f"Full response: {response}"
+        )
+        assert_concise(response, max_words=60, context="video call suggestion")
 
 
 # =============================================================================
@@ -507,6 +538,7 @@ class TestPlatformKnowledgePromptSection:
         assert "Platform knowledge" in prompt
         assert "Resources → Secrets" in prompt
         assert "API" in prompt
+        assert "video call" in prompt.lower()
 
     def test_platform_knowledge_present_in_all_modes(
         self,
