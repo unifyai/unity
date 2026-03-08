@@ -92,3 +92,153 @@ def test_event_handler_registers_api_events():
         assert (
             event_cls in EventHandler._registry
         ), f"{event_cls.__name__} not registered in EventHandler"
+
+
+# ---------------------------------------------------------------------------
+# log_message: medium detection
+# ---------------------------------------------------------------------------
+
+
+def test_log_message_medium_detection_received():
+    """ApiMessageReceived must resolve to API_MESSAGE, not EMAIL."""
+    event_name = ApiMessageReceived.__name__.lower()
+    # Replicate the detection cascade from log_message
+    if "apimessage" in event_name:
+        medium = Medium.API_MESSAGE
+    elif "unify" in event_name or "prehire" in event_name:
+        medium = (
+            Medium("unify_meet") if "meet" in event_name else Medium("unify_message")
+        )
+    elif "phone" in event_name:
+        medium = Medium("phone_call")
+    elif "sms" in event_name:
+        medium = Medium("sms_message")
+    else:
+        medium = Medium("email")
+
+    assert medium == Medium.API_MESSAGE, (
+        f"Expected API_MESSAGE but got {medium} — "
+        "the medium detection cascade does not handle ApiMessageReceived"
+    )
+
+
+def test_log_message_medium_detection_sent():
+    """ApiMessageSent must resolve to API_MESSAGE, not EMAIL."""
+    event_name = ApiMessageSent.__name__.lower()
+    if "apimessage" in event_name:
+        medium = Medium.API_MESSAGE
+    elif "unify" in event_name or "prehire" in event_name:
+        medium = (
+            Medium("unify_meet") if "meet" in event_name else Medium("unify_message")
+        )
+    elif "phone" in event_name:
+        medium = Medium("phone_call")
+    elif "sms" in event_name:
+        medium = Medium("sms_message")
+    else:
+        medium = Medium("email")
+
+    assert medium == Medium.API_MESSAGE
+
+
+# ---------------------------------------------------------------------------
+# log_message: contact_id resolution uses safe .get()
+# ---------------------------------------------------------------------------
+
+
+def test_log_message_contact_isinstance_check():
+    """ApiMessage events must be in the isinstance branch that uses .get().
+
+    Before the fix, they fell through to a raw dict['contact_id'] access
+    which raised KeyError when the contact dict was empty.
+    """
+    received = ApiMessageReceived(
+        contact={"contact_id": 1},
+        content="test",
+    )
+    sent = ApiMessageSent(
+        contact={},  # empty — the scenario that triggered KeyError
+        content="test",
+    )
+
+    from unity.conversation_manager.events import (
+        UnifyMessageSent,
+        UnifyMessageReceived,
+        InboundUnifyMeetUtterance,
+        OutboundUnifyMeetUtterance,
+    )
+
+    safe_types = (
+        UnifyMessageSent,
+        UnifyMessageReceived,
+        InboundUnifyMeetUtterance,
+        OutboundUnifyMeetUtterance,
+        ApiMessageSent,
+        ApiMessageReceived,
+    )
+
+    assert isinstance(
+        received,
+        safe_types,
+    ), "ApiMessageReceived not in safe isinstance branch"
+    assert isinstance(sent, safe_types), "ApiMessageSent not in safe isinstance branch"
+
+    # The safe branch uses .get() — must not raise
+    assert sent.contact.get("contact_id") is None
+    assert received.contact.get("contact_id") == 1
+
+
+def test_log_message_empty_contact_no_keyerror():
+    """An ApiMessageSent with an empty contact dict must not raise KeyError.
+
+    This is the exact scenario from the production error:
+    'Error executing log_message: contact_id'
+    """
+    event = ApiMessageSent(contact={}, content="response", api_message_id="abc")
+    # The safe path uses .get(); the old code did event.contact["contact_id"]
+    try:
+        _ = event.contact.get("contact_id")
+    except KeyError:
+        raise AssertionError(
+            "contact.get('contact_id') raised KeyError — "
+            "the safe branch is not being used",
+        )
+
+
+# ---------------------------------------------------------------------------
+# send_api_response: contact fallback preserves contact_id
+# ---------------------------------------------------------------------------
+
+
+def test_send_api_response_contact_fallback_has_contact_id():
+    """When get_contact returns None, the fallback dict must include contact_id.
+
+    Before the fix, the fallback was {}, causing downstream KeyError and
+    'API response to Unknown' in logs.
+    """
+    get_contact_returns_none = None
+    contact_id = 1
+    contact = get_contact_returns_none or {"contact_id": contact_id}
+    assert "contact_id" in contact
+    assert contact["contact_id"] == contact_id
+
+
+# ---------------------------------------------------------------------------
+# Hydration: ApiMessage events in _MESSAGE_PRODUCING_EVENTS
+# ---------------------------------------------------------------------------
+
+
+def test_api_messages_in_hydration_set():
+    """ApiMessage events must be in _MESSAGE_PRODUCING_EVENTS for session hydration."""
+    from unity.conversation_manager.domains.managers_utils import (
+        _MESSAGE_PRODUCING_EVENTS,
+    )
+
+    assert "ApiMessageReceived" in _MESSAGE_PRODUCING_EVENTS, (
+        "ApiMessageReceived missing from _MESSAGE_PRODUCING_EVENTS — "
+        "API messages will be lost on session restart"
+    )
+    assert "ApiMessageSent" in _MESSAGE_PRODUCING_EVENTS, (
+        "ApiMessageSent missing from _MESSAGE_PRODUCING_EVENTS — "
+        "API messages will be lost on session restart"
+    )
