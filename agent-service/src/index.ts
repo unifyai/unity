@@ -485,12 +485,13 @@ const startDesktop = async (): Promise<BrowserAgent> => {
   }
 }
 
-const startBrowser = async (headless: boolean): Promise<BrowserAgent> => {
+const startBrowser = async (headless: boolean, urlMappings?: Record<string, string>): Promise<BrowserAgent> => {
   try {
     const agent = await startBrowserAgent({
       url: "https://www.google.com/",
       browser: getLaunchOptions(headless, defaultBrowserPaths.downloadsPath, defaultBrowserPaths.tracesDir),
       narrate: true,
+      urlMappings,
       // Route LLM calls through Orchestra/UniLLM proxy for billing and caching
       llm: {
         provider: 'openai-generic',
@@ -513,7 +514,7 @@ const startBrowser = async (headless: boolean): Promise<BrowserAgent> => {
   }
 }
 
-const startBrowserOnVm = async (): Promise<BrowserAgent> => {
+const startBrowserOnVm = async (urlMappings?: Record<string, string>): Promise<BrowserAgent> => {
   try {
     const agent = await startBrowserAgent({
       url: "https://www.google.com/",
@@ -531,6 +532,7 @@ const startBrowserOnVm = async (): Promise<BrowserAgent> => {
         contextOptions: { viewport: null },
       },
       narrate: true,
+      urlMappings,
       llm: {
         provider: 'openai-generic',
         options: {
@@ -554,7 +556,7 @@ const startBrowserOnVm = async (): Promise<BrowserAgent> => {
 
 // --- API Endpoints ---
 app.post('/start', async (req: Request, res: Response) => {
-  const { headless, mode, label } = req.body;
+  const { headless, mode, label, urlMappings } = req.body;
   if (!mode || !['desktop', 'web', 'web-vm'].includes(mode)) {
     return res.status(400).json({
       error: 'bad_request',
@@ -583,12 +585,13 @@ app.post('/start', async (req: Request, res: Response) => {
   console.log(`[start] BEGIN mode=${mode} sessionId=${sessionId}`);
   try {
     let agent: BrowserAgent;
+    const mappings = urlMappings && typeof urlMappings === 'object' ? urlMappings as Record<string, string> : undefined;
     if (mode === "desktop") {
       agent = await startDesktop();
     } else if (mode === "web-vm") {
-      agent = await startBrowserOnVm();
+      agent = await startBrowserOnVm(mappings);
     } else {
-      agent = await startBrowser(headless ?? false);
+      agent = await startBrowser(headless ?? false, mappings);
     }
     console.log(`[start] agent_created=${Date.now() - t0}ms mode=${mode}`);
 
