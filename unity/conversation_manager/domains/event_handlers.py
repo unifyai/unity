@@ -629,6 +629,7 @@ async def _(event, cm: "ConversationManager", *args, **kwargs):
 
     message_content = None
     attachments = None
+    tags = None
     notif_content = None
 
     # Get contact info from ContactManager, fallback to event.contact
@@ -763,6 +764,8 @@ async def _(event, cm: "ConversationManager", *args, **kwargs):
         case ApiMessageSent():
             medium = Medium.API_MESSAGE
             message_content = event.content
+            attachments = event.attachments
+            tags = event.tags
             notif_content = f"API response sent to {sender_name}"
             role = "assistant"
             event_trace = getattr(cm, "_current_event_trace", None) or {}
@@ -773,6 +776,8 @@ async def _(event, cm: "ConversationManager", *args, **kwargs):
         case ApiMessageReceived():
             medium = Medium.API_MESSAGE
             message_content = event.content
+            attachments = event.attachments
+            tags = event.tags
             notif_content = f"API message from {sender_name}"
             role = "user"
             event_trace = getattr(cm, "_current_event_trace", None) or {}
@@ -782,6 +787,7 @@ async def _(event, cm: "ConversationManager", *args, **kwargs):
             )
             if event.api_message_id:
                 cm._pending_api_message_id = event.api_message_id
+                cm._pending_api_message_tags = event.tags
 
     # Non-email messages: push to single contact only
     if contact_id is not None:
@@ -793,6 +799,7 @@ async def _(event, cm: "ConversationManager", *args, **kwargs):
             attachments=attachments,
             timestamp=event.timestamp,
             role=role,
+            tags=tags,
         )
     cm.notifications_bar.push_notif("comms", notif_content, event.timestamp)
 

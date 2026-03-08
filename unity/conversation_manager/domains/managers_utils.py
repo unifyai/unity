@@ -192,6 +192,8 @@ async def hydrate_global_thread(cm: "ConversationManager") -> None:
                     message_content=cm_event.content,
                     role="user",
                     timestamp=ts,
+                    attachments=getattr(cm_event, "attachments", None),
+                    tags=getattr(cm_event, "tags", None),
                 )
             case "ApiMessageSent":
                 entry = cm.contact_index.build_message(
@@ -201,6 +203,8 @@ async def hydrate_global_thread(cm: "ConversationManager") -> None:
                     message_content=cm_event.content,
                     role="assistant",
                     timestamp=ts,
+                    attachments=getattr(cm_event, "attachments", None),
+                    tags=getattr(cm_event, "tags", None),
                 )
 
             # --- Email ---
