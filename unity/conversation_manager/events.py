@@ -393,7 +393,12 @@ class EmailSent(Event):
 
 @dataclass
 class ApiMessageReceived(Event):
-    """A programmatic message received via the REST API."""
+    """A programmatic message received via the REST API.
+
+    Attachments are uploaded to GCS. Each attachment is a dict with keys:
+    id, filename, gs_url, content_type, size_bytes.
+    Tags are opaque strings supplied by the developer for routing and context.
+    """
 
     topic: ClassVar[str | None] = "app:comms:api_message_message"
     content_logged: ClassVar[bool] = True
@@ -401,11 +406,18 @@ class ApiMessageReceived(Event):
     contact: dict
     content: str
     api_message_id: str = ""
+    attachments: list[dict] = field(default_factory=list)
+    tags: list[str] = field(default_factory=list)
 
 
 @dataclass
 class ApiMessageSent(Event):
-    """A response sent back to the developer via the REST API."""
+    """A response sent back to the developer via the REST API.
+
+    Attachments are uploaded to GCS. Each attachment is a dict with keys:
+    id, filename, gs_url, content_type, size_bytes.
+    Tags are typically echoed from the inbound message for routing.
+    """
 
     topic: ClassVar[str | None] = "app:comms:api_message_sent"
     content_logged: ClassVar[bool] = True
@@ -413,6 +425,8 @@ class ApiMessageSent(Event):
     contact: dict
     content: str
     api_message_id: str = ""
+    attachments: list[dict] = field(default_factory=list)
+    tags: list[str] = field(default_factory=list)
 
 
 @dataclass

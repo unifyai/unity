@@ -242,3 +242,212 @@ def test_api_messages_in_hydration_set():
         "ApiMessageSent missing from _MESSAGE_PRODUCING_EVENTS — "
         "API messages will be lost on session restart"
     )
+
+
+# ---------------------------------------------------------------------------
+# Attachments and tags support
+# ---------------------------------------------------------------------------
+
+
+def test_api_message_received_default_attachments_and_tags():
+    """New fields default to empty lists for backward compatibility."""
+    event = ApiMessageReceived(
+        contact={"contact_id": 1},
+        content="test",
+        api_message_id="msg-1",
+    )
+    assert event.attachments == []
+    assert event.tags == []
+
+
+def test_api_message_sent_default_attachments_and_tags():
+    event = ApiMessageSent(
+        contact={"contact_id": 1},
+        content="response",
+        api_message_id="msg-1",
+    )
+    assert event.attachments == []
+    assert event.tags == []
+
+
+def test_api_message_received_with_attachments_and_tags():
+    attachments = [
+        {"id": "att-1", "filename": "report.pdf", "gs_url": "gs://bucket/report.pdf"},
+    ]
+    tags = ["source:slack", "channel:#general"]
+    event = ApiMessageReceived(
+        contact={"contact_id": 1},
+        content="See attached",
+        api_message_id="msg-2",
+        attachments=attachments,
+        tags=tags,
+    )
+    assert len(event.attachments) == 1
+    assert event.attachments[0]["filename"] == "report.pdf"
+    assert event.tags == ["source:slack", "channel:#general"]
+
+
+def test_api_message_sent_with_attachments_and_tags():
+    attachments = [
+        {
+            "id": "resp-att-1",
+            "filename": "analysis.xlsx",
+            "gs_url": "gs://bucket/analysis.xlsx",
+        },
+    ]
+    tags = ["source:slack"]
+    event = ApiMessageSent(
+        contact={"contact_id": 1},
+        content="Done",
+        api_message_id="msg-3",
+        attachments=attachments,
+        tags=tags,
+    )
+    assert len(event.attachments) == 1
+    assert event.attachments[0]["filename"] == "analysis.xlsx"
+    assert event.tags == ["source:slack"]
+
+
+def test_api_message_roundtrip_with_attachments_and_tags():
+    """Attachments and tags survive serialization round-trip."""
+    attachments = [{"id": "a1", "filename": "data.csv", "gs_url": "gs://b/data.csv"}]
+    tags = ["env:prod", "priority:high"]
+
+    event = ApiMessageReceived(
+        contact={"contact_id": 1, "first_name": "Boss"},
+        content="Process this",
+        api_message_id="msg-rt-1",
+        attachments=attachments,
+        tags=tags,
+    )
+    serialized = event.to_json()
+    deserialized = Event.from_json(serialized)
+
+    assert isinstance(deserialized, ApiMessageReceived)
+    assert deserialized.attachments == attachments
+    assert deserialized.tags == tags
+
+
+def test_api_message_sent_roundtrip_with_attachments_and_tags():
+    attachments = [{"id": "r1", "filename": "out.pdf", "gs_url": "gs://b/out.pdf"}]
+    tags = ["env:prod"]
+
+    event = ApiMessageSent(
+        contact={"contact_id": 1},
+        content="Here you go",
+        api_message_id="msg-rt-2",
+        attachments=attachments,
+        tags=tags,
+    )
+    serialized = event.to_json()
+    deserialized = Event.from_json(serialized)
+
+    assert isinstance(deserialized, ApiMessageSent)
+    assert deserialized.attachments == attachments
+    assert deserialized.tags == tags
+
+
+# ---------------------------------------------------------------------------
+# ApiMessage CommsMessage type
+# ---------------------------------------------------------------------------
+
+
+def test_api_message_comms_type_exists():
+    from unity.conversation_manager.domains.contact_index import ApiMessage
+
+    msg = ApiMessage(
+        name="Boss",
+        content="hello",
+        timestamp=ApiMessageReceived(
+            contact={},
+            content="",
+        ).timestamp,
+        role="user",
+        attachments=[{"id": "a1", "filename": "f.txt"}],
+        tags=["source:api"],
+    )
+    assert msg.attachments[0]["filename"] == "f.txt"
+    assert msg.tags == ["source:api"]
+
+
+def test_api_message_in_message_type_to_medium():
+    from unity.conversation_manager.domains.contact_index import (
+        ApiMessage,
+        _MESSAGE_TYPE_TO_MEDIUM,
+    )
+
+    assert ApiMessage in _MESSAGE_TYPE_TO_MEDIUM
+    assert _MESSAGE_TYPE_TO_MEDIUM[ApiMessage] == Medium.API_MESSAGE
+
+
+def test_build_message_creates_api_message_type():
+    """build_message with API_MESSAGE medium creates an ApiMessage, not generic Message."""
+    from unity.conversation_manager.domains.contact_index import (
+        ApiMessage,
+        ContactIndex,
+    )
+
+    ci = ContactIndex()
+    ci.get_or_create_conversation(1)
+    entry = ci.build_message(
+        contact_id=1,
+        sender_name="Boss",
+        thread_name=Medium.API_MESSAGE,
+        message_content="hello",
+        role="user",
+        tags=["tag1"],
+        attachments=[{"id": "a1", "filename": "f.pdf"}],
+    )
+    assert isinstance(entry.message, ApiMessage)
+    assert entry.message.tags == ["tag1"]
+    assert entry.message.attachments == [{"id": "a1", "filename": "f.pdf"}]
+    assert entry.medium == Medium.API_MESSAGE
+
+
+# ---------------------------------------------------------------------------
+# Renderer: ApiMessage rendering
+# ---------------------------------------------------------------------------
+
+
+def test_renderer_renders_api_message_with_tags_and_attachments():
+    """The renderer should include [Tags: ...] and [Attachments: ...] for ApiMessage."""
+    from unity.conversation_manager.domains.contact_index import ApiMessage
+    from unity.conversation_manager.domains.renderer import Renderer
+
+    from datetime import datetime
+
+    renderer = Renderer()
+    msg = ApiMessage(
+        name="Boss",
+        content="See attached report",
+        timestamp=datetime(2026, 3, 8, 12, 0),
+        role="user",
+        attachments=[{"id": "a1", "filename": "report.pdf"}],
+        tags=["source:slack", "channel:#ops"],
+    )
+
+    rendered = renderer.render_message(msg, last_snapshot=datetime(2026, 3, 7))
+    assert "report.pdf" in rendered
+    assert "source:slack" in rendered
+    assert "channel:#ops" in rendered
+    assert "[Tags:" in rendered
+    assert "[Attachments:" in rendered
+
+
+def test_renderer_renders_api_message_without_tags():
+    from unity.conversation_manager.domains.contact_index import ApiMessage
+    from unity.conversation_manager.domains.renderer import Renderer
+    from datetime import datetime
+
+    renderer = Renderer()
+    msg = ApiMessage(
+        name="You",
+        content="Just text",
+        timestamp=datetime(2026, 3, 8, 12, 0),
+        role="assistant",
+    )
+
+    rendered = renderer.render_message(msg, last_snapshot=datetime(2026, 3, 7))
+    assert "Just text" in rendered
+    assert "[Tags:" not in rendered
+    assert "[Attachments:" not in rendered
