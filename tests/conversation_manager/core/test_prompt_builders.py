@@ -137,6 +137,34 @@ class TestCommunicationGuidelinesAdapt:
 
 
 # ---------------------------------------------------------------------------
+# Tests – external app integration
+# ---------------------------------------------------------------------------
+
+
+class TestExternalAppIntegration:
+    """The prompt includes guidance for external app integration via credentials + SDK."""
+
+    def test_onboarding_has_app_integration_qa(self):
+        prompt = _build()
+        assert "Can you help me manage my apps and online services?" in prompt
+        assert "Resources → Secrets" in prompt
+        assert "service's SDK" in prompt
+
+    def test_act_capabilities_has_external_apps_bullet(self):
+        prompt = _build()
+        assert "**External apps & services**" in prompt
+        assert "stored credentials and the service's Python SDK" in prompt
+
+    def test_onboarding_qa_present_in_demo_mode(self):
+        prompt = _build(demo_mode=True)
+        assert "Can you help me manage my apps and online services?" in prompt
+
+    def test_act_capabilities_absent_in_demo_mode(self):
+        prompt = _build(demo_mode=True)
+        assert "**External apps & services**" not in prompt
+
+
+# ---------------------------------------------------------------------------
 # Tests – demo mode adapts
 # ---------------------------------------------------------------------------
 

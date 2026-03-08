@@ -408,6 +408,42 @@ class TestBrevity:
 
 
 # =============================================================================
+# Test Class: Platform Knowledge
+# =============================================================================
+
+
+@pytest.mark.asyncio
+class TestPlatformKnowledge:
+    """Tests that the fast brain can answer questions about external app
+    integration directly using the platform knowledge in its prompt."""
+
+    async def test_answers_app_integration_setup_directly(self, boss_call_prompt: str):
+        """When asked HOW to set up an external app integration, the fast brain
+        answers directly (no deferral) and mentions sharing credentials/tokens."""
+        response = await ask_fast_brain(
+            boss_call_prompt,
+            "I want you to manage my Google Drive going forward. What do I need to do to set that up?",
+        )
+
+        assert_no_deferral(response, "Asked how to set up an external app integration")
+        response_lower = response.lower()
+        has_credential_mention = any(
+            term in response_lower
+            for term in ["credential", "token", "api", "secret", "access", "key"]
+        )
+        assert has_credential_mention, (
+            f"Fast brain should mention credentials/tokens/secrets/API access "
+            f"when explaining how to set up an integration.\n"
+            f"Full response: {response}"
+        )
+        assert_concise(
+            response,
+            max_words=80,
+            context="app integration setup explanation",
+        )
+
+
+# =============================================================================
 # Test Class: Screen Sharing Prompt Section
 # =============================================================================
 
@@ -449,3 +485,58 @@ class TestScreenSharingPromptSection:
 
         for prompt in (boss_prompt, contact_prompt):
             assert "Screen sharing" in prompt
+
+
+# =============================================================================
+# Test Class: Platform Knowledge Prompt Section
+# =============================================================================
+
+
+class TestPlatformKnowledgePromptSection:
+    """Tests that the fast brain prompt includes the platform knowledge section."""
+
+    def test_prompt_contains_platform_knowledge(
+        self,
+        base_prompt_kwargs: dict,
+    ):
+        prompt = build_voice_agent_prompt(
+            **base_prompt_kwargs,
+            is_boss_user=True,
+        ).flatten()
+
+        assert "Platform knowledge" in prompt
+        assert "Resources → Secrets" in prompt
+        assert "API" in prompt
+
+    def test_platform_knowledge_present_in_all_modes(
+        self,
+        base_prompt_kwargs: dict,
+    ):
+        """Platform knowledge is present for both boss and contact calls."""
+        boss_prompt = build_voice_agent_prompt(
+            **base_prompt_kwargs,
+            is_boss_user=True,
+        ).flatten()
+
+        contact_prompt = build_voice_agent_prompt(
+            **base_prompt_kwargs,
+            is_boss_user=False,
+            contact_first_name="Alice",
+            contact_surname="Smith",
+        ).flatten()
+
+        for prompt in (boss_prompt, contact_prompt):
+            assert "Platform knowledge" in prompt
+
+    def test_platform_knowledge_present_in_demo_mode(
+        self,
+        base_prompt_kwargs: dict,
+    ):
+        """Platform knowledge is present even in demo mode."""
+        prompt = build_voice_agent_prompt(
+            **base_prompt_kwargs,
+            is_boss_user=True,
+            demo_mode=True,
+        ).flatten()
+
+        assert "Platform knowledge" in prompt
