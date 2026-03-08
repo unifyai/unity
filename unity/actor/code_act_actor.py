@@ -427,6 +427,30 @@ _STORAGE_WHAT_CAN_BE_STORED = (
     "when the dependency overlap is high — update an existing venv "
     "with `FunctionManager_update_venv` to add extra packages "
     "instead.\n\n"
+    "### Shell tool dependencies\n\n"
+    "If a shell function depends on CLI tools that are not part of "
+    "the base system (e.g. `jq`, `yq`, `ffmpeg`), those tools should "
+    "be saved to a **shell environment** so they are available on "
+    "future runs.\n\n"
+    "Workflow:\n"
+    "1. Install the tool (e.g. via `brew install jq`, `curl`, "
+    "or `apt-get`).\n"
+    "2. Find the binary path (e.g. `which jq`).\n"
+    "3. Check existing shell envs with "
+    "`FunctionManager_list_shell_envs` — if one already contains "
+    "the needed tools, reuse it.\n"
+    "4. If no suitable shell env exists, create one with "
+    "`FunctionManager_add_shell_env`. Pass the binary paths:\n\n"
+    "```python\n"
+    "env_id = FunctionManager_add_shell_env(\n"
+    '    name="data-tools",\n'
+    '    tool_paths=["/usr/local/bin/jq", "/usr/local/bin/yq"],\n'
+    ")\n"
+    "```\n\n"
+    "5. Pass the returned `shell_env_id` to "
+    "`FunctionManager_add_functions(shell_env_id=<id>)`.\n\n"
+    "Multiple shell functions that share the same tool set should "
+    "share a single shell env.\n\n"
 )
 
 _STORAGE_TWO_STORES = (
@@ -451,9 +475,17 @@ _STORAGE_TWO_STORES = (
     "(`FunctionManager_list_venvs`), update "
     "(`FunctionManager_update_venv`), or delete "
     "(`FunctionManager_delete_venv`) virtual environments for "
-    "functions with third-party dependencies. Link a function to a "
-    "venv via `FunctionManager_set_function_venv` or pass `venv_id` "
-    "directly to `FunctionManager_add_functions`.\n\n"
+    "Python functions with third-party dependencies. Link a function "
+    "to a venv via `FunctionManager_set_function_venv` or pass "
+    "`venv_id` directly to `FunctionManager_add_functions`.\n"
+    "- **Manage shell envs**: create (`FunctionManager_add_shell_env`), "
+    "list (`FunctionManager_list_shell_envs`), update "
+    "(`FunctionManager_update_shell_env`), or delete "
+    "(`FunctionManager_delete_shell_env`) shell environments for "
+    "shell functions that depend on non-system CLI tools. Link a "
+    "function to a shell env via "
+    "`FunctionManager_set_function_shell_env` or pass "
+    "`shell_env_id` directly to `FunctionManager_add_functions`.\n\n"
     "Do NOT store trivial one-liners, test scaffolding, or functions "
     "that are too task-specific to be reusable.\n\n"
     "### Guidance Store — the *how*\n\n"
@@ -622,12 +654,14 @@ def _build_storage_tools(
         language: str = "python",
         overwrite: bool = False,
         venv_id: Optional[int] = None,
+        shell_env_id: Optional[int] = None,
     ) -> Any:
         return fm.add_functions(
             implementations=implementations,
             language=language,
             overwrite=bool(overwrite),
             venv_id=venv_id,
+            shell_env_id=shell_env_id,
         )
 
     FunctionManager_add_functions.__doc__ = BaseFunctionManager.add_functions.__doc__
@@ -781,6 +815,155 @@ def _build_storage_tools(
         """
         return fm.get_function_venv(function_id=function_id)
 
+    # ── FunctionManager shell env tools ───────────────────────────────
+
+    async def FunctionManager_add_shell_env(
+        tool_paths: list[str],
+        *,
+        name: Optional[str] = None,
+    ) -> int:
+        """Snapshot CLI tool binaries into a persistent shell environment.
+
+        Call this **after** installing CLI tools (via brew, curl, apt, etc.)
+        to save the binaries so they are available for future shell function
+        executions.  The returned ``shell_env_id`` is passed to
+        ``FunctionManager_add_functions(shell_env_id=...)`` so the function
+        runs with those tools on ``PATH``.
+
+        Parameters
+        ----------
+        tool_paths : list[str]
+            Absolute paths to the binary executables to include
+            (e.g. ``["/usr/local/bin/jq", "/usr/local/bin/yq"]``).
+        name : str | None
+            Human-readable name for the environment (e.g. ``"data-tools"``).
+
+        Returns
+        -------
+        int
+            The auto-assigned ``shell_env_id``.
+        """
+        return fm.add_shell_env(name=name, tool_paths=tool_paths)
+
+    async def FunctionManager_list_shell_envs() -> Any:
+        """List all shell environments (metadata only, no binary blobs).
+
+        Use this to check whether a suitable shell env already exists
+        before creating a new one.
+
+        Returns
+        -------
+        list[dict]
+            Each dict contains ``shell_env_id``, ``name``, ``platform``,
+            and ``tools`` (JSON list of tool metadata).
+        """
+        return fm.list_shell_envs()
+
+    async def FunctionManager_get_shell_env(
+        shell_env_id: int,
+    ) -> Any:
+        """Get a shell environment by ID (metadata only).
+
+        Parameters
+        ----------
+        shell_env_id : int
+            The shell env to retrieve.
+
+        Returns
+        -------
+        dict | None
+            Dict with metadata, or ``None`` if not found.
+        """
+        return fm.get_shell_env(shell_env_id=shell_env_id)
+
+    async def FunctionManager_update_shell_env(
+        shell_env_id: int,
+        *,
+        name: Optional[str] = None,
+        tool_paths: Optional[list[str]] = None,
+    ) -> bool:
+        """Update an existing shell environment.
+
+        Parameters
+        ----------
+        shell_env_id : int
+            The shell env to update.
+        name : str | None
+            New name (if provided).
+        tool_paths : list[str] | None
+            New tool paths to replace existing binaries (if provided).
+
+        Returns
+        -------
+        bool
+            ``True`` if updated, ``False`` if not found.
+        """
+        return fm.update_shell_env(
+            shell_env_id=shell_env_id,
+            name=name,
+            tool_paths=tool_paths,
+        )
+
+    async def FunctionManager_delete_shell_env(
+        shell_env_id: int,
+    ) -> bool:
+        """Delete a shell environment.
+
+        Functions referencing this shell env will have their
+        ``shell_env_id`` set to ``None``.
+
+        Parameters
+        ----------
+        shell_env_id : int
+            The shell env to delete.
+
+        Returns
+        -------
+        bool
+            ``True`` if deleted, ``False`` if not found.
+        """
+        return fm.delete_shell_env(shell_env_id=shell_env_id)
+
+    async def FunctionManager_set_function_shell_env(
+        function_id: int,
+        shell_env_id: Optional[int],
+    ) -> bool:
+        """Link or unlink a function to/from a shell environment.
+
+        Parameters
+        ----------
+        function_id : int
+            The function to update.
+        shell_env_id : int | None
+            The shell env to associate, or ``None`` to clear.
+
+        Returns
+        -------
+        bool
+            ``True`` if updated, ``False`` if the function was not found.
+        """
+        return fm.set_function_shell_env(
+            function_id=function_id,
+            shell_env_id=shell_env_id,
+        )
+
+    async def FunctionManager_get_function_shell_env(
+        function_id: int,
+    ) -> Any:
+        """Get the shell environment associated with a function.
+
+        Parameters
+        ----------
+        function_id : int
+            The function to query.
+
+        Returns
+        -------
+        dict | None
+            The shell env dict if the function has one, ``None`` otherwise.
+        """
+        return fm.get_function_shell_env(function_id=function_id)
+
     # ── GuidanceManager tools (bound methods, no wrappers needed) ────
 
     tools: Dict[str, Callable] = {
@@ -796,6 +979,13 @@ def _build_storage_tools(
         "FunctionManager_delete_venv": FunctionManager_delete_venv,
         "FunctionManager_set_function_venv": FunctionManager_set_function_venv,
         "FunctionManager_get_function_venv": FunctionManager_get_function_venv,
+        "FunctionManager_add_shell_env": FunctionManager_add_shell_env,
+        "FunctionManager_list_shell_envs": FunctionManager_list_shell_envs,
+        "FunctionManager_get_shell_env": FunctionManager_get_shell_env,
+        "FunctionManager_update_shell_env": FunctionManager_update_shell_env,
+        "FunctionManager_delete_shell_env": FunctionManager_delete_shell_env,
+        "FunctionManager_set_function_shell_env": FunctionManager_set_function_shell_env,
+        "FunctionManager_get_function_shell_env": FunctionManager_get_function_shell_env,
         **methods_to_tool_dict(
             gm.search,
             gm.filter,

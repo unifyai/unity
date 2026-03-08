@@ -113,6 +113,17 @@ class Function(BaseModel):
         ),
     )
 
+    shell_env_id: Optional[int] = Field(
+        None,
+        description=(
+            "Optional reference to a ShellEnv.shell_env_id specifying which shell "
+            "environment (set of CLI tool binaries) to make available when executing "
+            "this function. Only applicable for shell languages (bash, zsh, sh, "
+            "powershell). The shell env's bin/ directory is prepended to PATH at "
+            "execution time. If None, the function runs with only the system PATH."
+        ),
+    )
+
     windows_os_required: bool = Field(
         False,
         description=(
