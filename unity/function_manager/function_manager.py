@@ -2735,6 +2735,7 @@ class FunctionManager(BaseFunctionManager):
                 verify=verify,
                 overwrite=overwrite,
                 raise_on_error=raise_on_error,
+                shell_env_id=shell_env_id,
             )
 
         # Python-specific parsing and validation
@@ -2939,6 +2940,7 @@ class FunctionManager(BaseFunctionManager):
         verify: Dict[str, bool],
         overwrite: bool,
         raise_on_error: bool = True,
+        shell_env_id: Optional[int] = None,
     ) -> Dict[str, str]:
         """
         Add shell script functions (bash, zsh, sh, powershell).
@@ -3020,11 +3022,14 @@ class FunctionManager(BaseFunctionManager):
                     "docstring": docstring,
                     "implementation": source,
                     "language": lang,
-                    "depends_on": [],  # Shell scripts don't have auto-detected dependencies
+                    "depends_on": [],
                     "embedding_text": embedding_text,
                     "precondition": precondition,
                     "verify": should_verify,
                 }
+
+                if shell_env_id is not None:
+                    entry_data["shell_env_id"] = shell_env_id
 
                 if name in existing_to_update:
                     # Update existing function
