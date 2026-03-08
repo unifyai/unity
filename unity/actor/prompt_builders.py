@@ -108,6 +108,15 @@ _EXECUTION_RULES = textwrap.dedent("""
     do so. Only reach for `execute_code` when you genuinely need to
     compose multiple steps or write conditional/iterative logic.
 
+    **Python-first principle:** When a task can be accomplished with
+    either a Python package or a shell CLI tool, prefer Python.  Python
+    packages are installed via `install_python_packages` with full
+    environment management (isolated venvs, automatic dependency
+    resolution).  Shell tools lack equivalent isolation — there is no
+    `install_shell_packages` and nothing prevents dependency conflicts.
+    Reserve shell for tasks that genuinely require it (system commands,
+    file operations, running existing shell scripts).
+
     ### Execution Rules
 
     1. **Session-Based Execution**:
