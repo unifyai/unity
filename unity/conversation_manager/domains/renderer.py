@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING
 
 from unity.common._async_tool.utils import get_handle_paused_state
 from unity.conversation_manager.domains.contact_index import (
+    ApiMessage,
     Message,
     EmailMessage,
     UnifyMessage,
@@ -88,14 +89,12 @@ def _get_assistant_timezone() -> str | None:
             return cached_val
 
     import unify as _unify
+    from unity.session_details import SESSION_DETAILS
 
     result: str | None = None
-    try:
-        _ctxs = _unify.get_active_context()
-        _read_ctx = _ctxs.get("read")
-    except Exception:
-        _read_ctx = None
-    _contacts_ctx = f"{_read_ctx}/Contacts" if _read_ctx else "Contacts"
+    _contacts_ctx = (
+        f"{SESSION_DETAILS.user_context}/{SESSION_DETAILS.assistant_context}/Contacts"
+    )
 
     try:
         rows = _unify.get_logs(
@@ -975,7 +974,7 @@ class Renderer:
 
     def render_message(
         self,
-        message: Message | EmailMessage | UnifyMessage | GuidanceMessage,
+        message: Message | EmailMessage | UnifyMessage | ApiMessage | GuidanceMessage,
         last_snapshot: datetime = None,
         contact_index: ContactIndex | None = None,
         contact_name: str | None = None,
@@ -1086,6 +1085,45 @@ class Renderer:
                     tz_block_line = f"\n{tz_block}"
 
             return f"{new_marker}[{message.name} @ {timestamp_str}]: {message.content}{attachments_line}{tz_block_line}"
+
+        if isinstance(message, ApiMessage):
+            attachments_line = ""
+            if message.attachments:
+
+                def get_filename(att):
+                    if isinstance(att, dict):
+                        return att.get(
+                            "filename",
+                            f"attachment_{att.get('id', 'unknown')}",
+                        )
+                    return att
+
+                if message.name == "You":
+                    attachment_details = [
+                        f"{get_filename(att)} (attached)" for att in message.attachments
+                    ]
+                else:
+                    attachment_details = [
+                        f"{get_filename(att)} (auto-downloaded to Downloads/{get_filename(att)})"
+                        for att in message.attachments
+                    ]
+                attachments_line = f" [Attachments: {', '.join(attachment_details)}]"
+
+            tags_line = ""
+            if message.tags:
+                tags_line = f" [Tags: {', '.join(message.tags)}]"
+
+            tz_block_line = ""
+            if contact_name:
+                tz_block = _get_message_timezone_block(
+                    contact_name,
+                    contact_timezone,
+                    assistant_timezone,
+                )
+                if tz_block:
+                    tz_block_line = f"\n{tz_block}"
+
+            return f"{new_marker}[{message.name} @ {timestamp_str}]: {message.content}{attachments_line}{tags_line}{tz_block_line}"
 
         if isinstance(message, GuidanceMessage):
             return f"{new_marker}[{message.name} @ {timestamp_str}]: {message.content}"

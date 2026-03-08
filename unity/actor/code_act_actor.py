@@ -43,6 +43,7 @@ from unity.common.async_tool_loop import (
 from unity.common.clarification_tools import add_clarification_tool_with_events
 from unity.common.llm_client import new_llm_client
 from unity.common.llm_helpers import methods_to_tool_dict
+from unity.common.tool_spec import ToolSpec
 from unity.function_manager.base import BaseFunctionManager
 from unity.function_manager.primitives import ComputerPrimitives
 from unity.actor.prompt_builders import build_code_act_prompt
@@ -2253,8 +2254,11 @@ class CodeActActor(BaseCodeActActor):
             return overlay.install(packages)
 
         tools: Dict[str, Callable[..., Awaitable[Any]]] = {
-            "execute_code": execute_code,
-            "install_python_packages": install_python_packages,
+            "execute_code": ToolSpec(fn=execute_code, display_label="Running code"),
+            "install_python_packages": ToolSpec(
+                fn=install_python_packages,
+                display_label="Installing Python packages",
+            ),
         }
 
         # FunctionManager read tools: thin wrappers that inject callables
@@ -2347,9 +2351,18 @@ class CodeActActor(BaseCodeActActor):
                 BaseFunctionManager.list_functions.__doc__
             )
 
-            tools["FunctionManager_search_functions"] = FunctionManager_search_functions
-            tools["FunctionManager_filter_functions"] = FunctionManager_filter_functions
-            tools["FunctionManager_list_functions"] = FunctionManager_list_functions
+            tools["FunctionManager_search_functions"] = ToolSpec(
+                fn=FunctionManager_search_functions,
+                display_label="Searching for relevant skills",
+            )
+            tools["FunctionManager_filter_functions"] = ToolSpec(
+                fn=FunctionManager_filter_functions,
+                display_label="Filtering saved skills",
+            )
+            tools["FunctionManager_list_functions"] = ToolSpec(
+                fn=FunctionManager_list_functions,
+                display_label="Listing existing skills",
+            )
 
         # GuidanceManager tools: bound methods registered directly via
         # methods_to_tool_dict (no custom wrappers needed — unlike FM, GM
@@ -2358,11 +2371,20 @@ class CodeActActor(BaseCodeActActor):
             gm = self.guidance_manager
             tools.update(
                 methods_to_tool_dict(
-                    gm.search,
-                    gm.filter,
-                    gm.add_guidance,
-                    gm.update_guidance,
-                    gm.delete_guidance,
+                    ToolSpec(
+                        fn=gm.search,
+                        display_label="Searching for relevant guidance",
+                    ),
+                    ToolSpec(fn=gm.filter, display_label="Filtering saved guidance"),
+                    ToolSpec(fn=gm.add_guidance, display_label="Saving new guidance"),
+                    ToolSpec(
+                        fn=gm.update_guidance,
+                        display_label="Updating saved guidance",
+                    ),
+                    ToolSpec(
+                        fn=gm.delete_guidance,
+                        display_label="Deleting saved guidance",
+                    ),
                     include_class_name=True,
                 ),
             )
@@ -2794,7 +2816,10 @@ class CodeActActor(BaseCodeActActor):
                     except Exception:
                         pass
 
-            tools["execute_function"] = execute_function
+            tools["execute_function"] = ToolSpec(
+                fn=execute_function,
+                display_label="Running a saved function",
+            )
 
         # ───────────────────────── Session management tools ────────────────── #
 
@@ -3262,10 +3287,22 @@ class CodeActActor(BaseCodeActActor):
                 "details": closed_counts,
             }
 
-        tools["list_sessions"] = list_sessions
-        tools["inspect_state"] = inspect_state
-        tools["close_session"] = close_session
-        tools["close_all_sessions"] = close_all_sessions
+        tools["list_sessions"] = ToolSpec(
+            fn=list_sessions,
+            display_label="Listing active sessions",
+        )
+        tools["inspect_state"] = ToolSpec(
+            fn=inspect_state,
+            display_label="Inspecting session state",
+        )
+        tools["close_session"] = ToolSpec(
+            fn=close_session,
+            display_label="Closing a session",
+        )
+        tools["close_all_sessions"] = ToolSpec(
+            fn=close_all_sessions,
+            display_label="Closing all sessions",
+        )
 
         # ───────────────────── Package installation tool ───────────────── #
 
@@ -3324,7 +3361,10 @@ class CodeActActor(BaseCodeActActor):
                 }
             return overlay.install(packages)
 
-        tools["install_python_packages"] = install_python_packages
+        tools["install_python_packages"] = ToolSpec(
+            fn=install_python_packages,
+            display_label="Installing Python packages",
+        )
 
         return tools
 
@@ -3621,7 +3661,8 @@ class CodeActActor(BaseCodeActActor):
         # execute_code references from execute_function's docstring so the
         # LLM has no awareness that a code sandbox exists.
         if "execute_function" in base_tools and "execute_code" not in base_tools:
-            base_tools["execute_function"].__doc__ = (
+            _ef = base_tools["execute_function"]
+            (_ef.fn if isinstance(_ef, ToolSpec) else _ef).__doc__ = (
                 "Execute a known function by name and return its result.\n"
                 "\n"
                 "The function is resolved from the sandbox namespace or looked up\n"
@@ -3761,6 +3802,7 @@ class CodeActActor(BaseCodeActActor):
             preprocess_msgs=self._preprocess_msgs,
             prompt_caching=self._prompt_caching,
             extra_ask_tools=self._get_extra_ask_tools(),
+            extra_compression_tools=(["store_skills"] if effective_can_store else None),
         )
         logger.debug(
             f"⏱️ [CodeActActor.act +{_act_ms()}] loop started, returning handle",

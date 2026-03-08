@@ -242,6 +242,14 @@ _STORAGE_DEFERRED_NOTICE = textwrap.dedent("""
     `GuidanceManager_add_guidance` as part of the current task. `store_skills`
     is for extracting reusable function implementations and compositional
     strategies from the execution trajectory.
+
+    **Before compression**: when the context window is approaching capacity,
+    `store_skills` and `compress_context` will be the only tools available.
+    If the current trajectory contains unstored skills worth preserving,
+    call `store_skills` first (with a specific request describing what to
+    store), then `compress_context`. If nothing new is worth storing — or
+    you have already called `store_skills` for the valuable parts — go
+    straight to `compress_context`.
 """).strip()
 
 

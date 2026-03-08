@@ -34,6 +34,7 @@ class Medium(StrEnum):
     EMAIL = "email"
     SMS_MESSAGE = "sms_message"
     PHONE_CALL = "phone_call"
+    API_MESSAGE = "api_message"
 
     @property
     def info(self) -> MediumInfo:
@@ -77,6 +78,11 @@ MEDIUM_REGISTRY: dict[Medium, MediumInfo] = {
         value=Medium.PHONE_CALL,
         description="A standard telephonic voice call.",
         mode=Mode.CALL,
+    ),
+    Medium.API_MESSAGE: MediumInfo(
+        value=Medium.API_MESSAGE,
+        description="A programmatic message sent via the REST API.",
+        mode=Mode.TEXT,
     ),
 }
 

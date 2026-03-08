@@ -23,7 +23,7 @@ from functools import cached_property
 
 from ..settings import SETTINGS
 from ..common.embed_utils import ensure_vector_column
-from ..common.tool_spec import read_only
+from ..common.tool_spec import read_only, ToolSpec
 from ..common.llm_helpers import (
     methods_to_tool_dict,
     short_id,
@@ -165,16 +165,22 @@ class TaskScheduler(BaseTaskScheduler):
         # Query-only helpers – safe, read-only operations.  Include the *external* contact lookup
         ask_tools = {
             **methods_to_tool_dict(
-                self._filter_tasks,
-                self._search_tasks,
-                self._get_queue,
-                self._get_queue_for_task,
-                self._reduce,
-                include_class_name=False,  # redundant, all same class (this one)
+                ToolSpec(fn=self._filter_tasks, display_label="Filtering tasks"),
+                ToolSpec(fn=self._search_tasks, display_label="Searching tasks"),
+                ToolSpec(fn=self._get_queue, display_label="Viewing a task queue"),
+                ToolSpec(
+                    fn=self._get_queue_for_task,
+                    display_label="Finding queue for a task",
+                ),
+                ToolSpec(fn=self._reduce, display_label="Summarising tasks"),
+                include_class_name=False,
             ),
             **methods_to_tool_dict(
-                self._contact_manager.ask,
-                include_class_name=True,  # Retain originating class so name is ContactManager.ask
+                ToolSpec(
+                    fn=self._contact_manager.ask,
+                    display_label="Looking up contact details",
+                ),
+                include_class_name=True,
             ),
         }
         # Persist a stable copy for simulated mirroring / prompt-build stability.
@@ -186,32 +192,52 @@ class TaskScheduler(BaseTaskScheduler):
         update_tools = {
             **methods_to_tool_dict(
                 # Ask
-                self.ask,
+                ToolSpec(fn=self.ask, display_label="Querying tasks"),
                 # Read-only task discovery (useful for update flows too)
-                self._filter_tasks,
-                self._search_tasks,
+                ToolSpec(fn=self._filter_tasks, display_label="Filtering tasks"),
+                ToolSpec(fn=self._search_tasks, display_label="Searching tasks"),
                 # Creation / deletion / cancellation
-                self._create_tasks,
-                self._create_task,
-                self._delete_task,
-                self._cancel_tasks,
+                ToolSpec(
+                    fn=self._create_tasks,
+                    display_label="Creating multiple tasks",
+                ),
+                ToolSpec(fn=self._create_task, display_label="Creating a new task"),
+                ToolSpec(fn=self._delete_task, display_label="Deleting a task"),
+                ToolSpec(fn=self._cancel_tasks, display_label="Cancelling tasks"),
                 # Queue manipulation
-                # Multi-queue helpers
-                self._list_queues,
-                self._get_queue,
-                self._get_queue_for_task,
-                self._reorder_queue,
-                self._move_tasks_to_queue,
-                self._partition_queue,
+                ToolSpec(fn=self._list_queues, display_label="Listing all task queues"),
+                ToolSpec(fn=self._get_queue, display_label="Viewing a task queue"),
+                ToolSpec(
+                    fn=self._get_queue_for_task,
+                    display_label="Finding queue for a task",
+                ),
+                ToolSpec(
+                    fn=self._reorder_queue,
+                    display_label="Reordering a task queue",
+                ),
+                ToolSpec(
+                    fn=self._move_tasks_to_queue,
+                    display_label="Moving tasks between queues",
+                ),
+                ToolSpec(
+                    fn=self._partition_queue,
+                    display_label="Splitting a task queue",
+                ),
                 # Reintegration
-                self._reinstate_task_to_previous_queue,
+                ToolSpec(
+                    fn=self._reinstate_task_to_previous_queue,
+                    display_label="Reinstating a task",
+                ),
                 # Attribute mutations (single general-purpose updater)
-                self._update_task,
-                include_class_name=False,  # redundant, all same class (this one)
+                ToolSpec(fn=self._update_task, display_label="Updating a task"),
+                include_class_name=False,
             ),
             **methods_to_tool_dict(
-                self._contact_manager.ask,
-                include_class_name=True,  # Retain originating class so name is ContactManager.ask
+                ToolSpec(
+                    fn=self._contact_manager.ask,
+                    display_label="Looking up contact details",
+                ),
+                include_class_name=True,
             ),
         }
         # Persist a stable copy for simulated mirroring / prompt-build stability.
@@ -486,13 +512,34 @@ class TaskScheduler(BaseTaskScheduler):
         # Merge these helpers into the update toolset
         tools.update(
             methods_to_tool_dict(
-                self.validate_queue_plan,
-                self.apply_queue_plan,
-                self.checkpoint_queue_state,
-                self.revert_to_checkpoint,
-                self.get_latest_checkpoint,
-                self._set_queue,
-                self._set_schedules_atomic,
+                ToolSpec(
+                    fn=self.validate_queue_plan,
+                    display_label="Validating queue changes",
+                ),
+                ToolSpec(
+                    fn=self.apply_queue_plan,
+                    display_label="Applying queue changes",
+                ),
+                ToolSpec(
+                    fn=self.checkpoint_queue_state,
+                    display_label="Saving a queue checkpoint",
+                ),
+                ToolSpec(
+                    fn=self.revert_to_checkpoint,
+                    display_label="Reverting to a checkpoint",
+                ),
+                ToolSpec(
+                    fn=self.get_latest_checkpoint,
+                    display_label="Retrieving latest checkpoint",
+                ),
+                ToolSpec(
+                    fn=self._set_queue,
+                    display_label="Setting task queue directly",
+                ),
+                ToolSpec(
+                    fn=self._set_schedules_atomic,
+                    display_label="Updating task schedules",
+                ),
                 include_class_name=False,
             ),
         )

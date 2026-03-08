@@ -53,18 +53,34 @@ MAX_CONV_MANAGER_MSGS = 50
 def _render_action_context(
     in_flight_actions: dict,
     completed_actions: dict,
+    notifications: list | None = None,
 ) -> str | None:
-    """Build a concise action-status summary for proactive speech."""
+    """Build an action-status summary with recent progress for proactive speech."""
     lines: list[str] = []
     for handle_data in in_flight_actions.values():
         query = handle_data.get("query", "unknown")
-        lines.append(f"- EXECUTING (in-flight): {query}")
+        action_type = handle_data.get("action_type", "act")
+        lines.append(f"- EXECUTING ({action_type}): {query}")
+        for entry in handle_data.get("handle_actions", [])[-5:]:
+            name = entry.get("action_name", "")
+            if name in ("act_started", "desktop_act_started", "web_act_started"):
+                continue
+            detail = str(entry.get("query", ""))[:200]
+            ts = entry.get("timestamp", "")
+            lines.append(f"    [{ts}] {name}: {detail}")
     for handle_data in completed_actions.values():
         query = handle_data.get("query", "unknown")
         lines.append(f"- COMPLETED: {query}")
+    if notifications:
+        recent = [n for n in notifications[-5:] if n.type not in ("Meet",)]
+        if recent:
+            lines.append("")
+            lines.append("Recent system events:")
+            for n in recent:
+                lines.append(f"  - [{n.type}] {n.content[:150]}")
     if not lines:
         return None
-    header = "[action status] The following actions are currently in progress or recently completed:"
+    header = "[action status] Current actions and recent progress:"
     return f"{header}\n" + "\n".join(lines)
 
 
@@ -123,7 +139,7 @@ class ConversationManager(metaclass=SingletonABCMeta):
         self.project_name = project_name
 
         # inactivity & shutdown
-        self.inactivity_timeout = 900  # 15 minutes in seconds
+        self.inactivity_timeout = 300  # 5 minutes in seconds
         self.inactivity_check_interval = 30  # seconds
         self.last_activity_time = self.loop.time()
         self.stop = stop
@@ -673,6 +689,9 @@ class ConversationManager(metaclass=SingletonABCMeta):
 
     async def interject_or_run(self, content: str):
         """Interject the ask handle or run the LLM"""
+        prev_utterance = getattr(self, "_last_inbound_utterance", None)
+        self._last_inbound_utterance = content
+
         if self.active_ask_handle and not self.active_ask_handle.done():
             await self.active_ask_handle.interject(content)
         else:
@@ -692,13 +711,18 @@ class ConversationManager(metaclass=SingletonABCMeta):
             ):
                 stale_task = self.debouncer.running_task
                 asyncio.create_task(
-                    self._evaluate_speech_urgency(content, stale_task),
+                    self._evaluate_speech_urgency(
+                        content,
+                        stale_task,
+                        prev_utterance,
+                    ),
                 )
 
     async def _evaluate_speech_urgency(
         self,
         utterance: str,
         stale_task: asyncio.Task,
+        previous_utterance: str | None = None,
     ) -> None:
         """Concurrent sidecar: evaluate whether *utterance* should preempt the slow brain."""
         from unity.conversation_manager.domains.speech_urgency import (
@@ -724,6 +748,7 @@ class ConversationManager(metaclass=SingletonABCMeta):
             origin_event=origin_event,
             elapsed_seconds=elapsed,
             actions_summary=actions_summary,
+            previous_utterance=previous_utterance,
         )
 
         self._session_logger.debug(
@@ -847,7 +872,8 @@ class ConversationManager(metaclass=SingletonABCMeta):
                 f"Slow-brain run started run_id={run_id} "
                 f"request_id={request_id or '-'} "
                 f"origin_event_id={origin_event_id or '-'} "
-                f"origin_event={origin_event_name or '-'} mode={self.mode}"
+                f"origin_event={origin_event_name or '-'} "
+                f"was_queued={self.debouncer.was_queued} mode={self.mode}"
             ),
         )
 
@@ -1246,7 +1272,6 @@ class ConversationManager(metaclass=SingletonABCMeta):
         self.voice_provider = payload["voice_provider"]
         self.voice_id = payload["voice_id"]
         self.desktop_mode = payload.get("desktop_mode", "ubuntu")
-        self.desktop_url = payload.get("desktop_url")
         self.user_desktop_mode = payload.get("user_desktop_mode")
         self.user_desktop_filesys_sync = payload.get("user_desktop_filesys_sync", False)
         self.user_desktop_url = payload.get("user_desktop_url")
@@ -1278,7 +1303,6 @@ class ConversationManager(metaclass=SingletonABCMeta):
             voice_provider=self.voice_provider,
             voice_id=self.voice_id,
             desktop_mode=self.desktop_mode,
-            desktop_url=self.desktop_url,
             user_desktop_mode=self.user_desktop_mode,
             user_desktop_filesys_sync=self.user_desktop_filesys_sync,
             user_desktop_url=self.user_desktop_url,
@@ -1506,6 +1530,7 @@ class ConversationManager(metaclass=SingletonABCMeta):
             action_context = _render_action_context(
                 self.in_flight_actions,
                 self.completed_actions,
+                notifications=self.notifications_bar.notifications,
             )
 
             decision, llm_log_path = await self.proactive_speech.decide(

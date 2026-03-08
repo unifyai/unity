@@ -14,6 +14,7 @@ from ..common.llm_helpers import (
     methods_to_tool_dict,
     make_request_clarification_tool,
 )
+from ..common.tool_spec import ToolSpec
 from ..common.async_tool_loop import (
     start_async_tool_loop,
     SteerableToolHandle,
@@ -63,20 +64,35 @@ class SecretManager(BaseSecretManager):
         # Public tools
         ask_tools: Dict[str, Callable] = {
             **methods_to_tool_dict(
-                self._list_columns,
-                self._filter_secrets,
-                self._search_secrets,
-                self._list_secret_keys,
+                ToolSpec(
+                    fn=self._list_columns,
+                    display_label="Listing credential fields",
+                ),
+                ToolSpec(
+                    fn=self._filter_secrets,
+                    display_label="Filtering credentials",
+                ),
+                ToolSpec(
+                    fn=self._search_secrets,
+                    display_label="Searching credentials",
+                ),
+                ToolSpec(
+                    fn=self._list_secret_keys,
+                    display_label="Listing credential names",
+                ),
                 include_class_name=False,
             ),
         }
         self.add_tools("ask", ask_tools)
         update_tools: Dict[str, Callable] = {
             **methods_to_tool_dict(
-                self.ask,
-                self._create_secret,
-                self._update_secret,
-                self._delete_secret,
+                ToolSpec(fn=self.ask, display_label="Querying credentials"),
+                ToolSpec(
+                    fn=self._create_secret,
+                    display_label="Storing a new credential",
+                ),
+                ToolSpec(fn=self._update_secret, display_label="Updating a credential"),
+                ToolSpec(fn=self._delete_secret, display_label="Deleting a credential"),
                 include_class_name=False,
             ),
         }

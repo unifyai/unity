@@ -71,7 +71,7 @@ RUN cd packages/magnitude-core && npx baml-cli generate && npx pkgroll
 
 # Build agent-service
 WORKDIR /app/agent-service
-RUN npm ci
+RUN npm ci && npx tsc --skipLibCheck
 WORKDIR /app
 
 # Set environment variables

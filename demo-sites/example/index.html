@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Pawsome Dog Rescue</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body { font-family: system-ui, -apple-system, sans-serif; background: #fef9f0; color: #333; }
+        header { background: #8B4513; color: white; padding: 24px 40px; }
+        header h1 { font-size: 2rem; }
+        header p { opacity: 0.9; margin-top: 4px; }
+        nav { background: #A0522D; padding: 12px 40px; display: flex; gap: 24px; }
+        nav a { color: white; text-decoration: none; font-weight: 500; }
+        nav a:hover { text-decoration: underline; }
+        main { max-width: 900px; margin: 32px auto; padding: 0 24px; }
+        .hero { text-align: center; margin-bottom: 40px; }
+        .hero h2 { font-size: 1.8rem; color: #8B4513; margin-bottom: 12px; }
+        .dogs { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 24px; }
+        .dog-card { background: white; border-radius: 12px; padding: 24px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); }
+        .dog-card h3 { color: #8B4513; margin-bottom: 8px; font-size: 1.3rem; }
+        .dog-card .breed { color: #A0522D; font-weight: 500; margin-bottom: 8px; }
+        .dog-card .desc { color: #555; line-height: 1.5; }
+        .stats { display: flex; gap: 32px; justify-content: center; margin: 32px 0; }
+        .stat { text-align: center; }
+        .stat .number { font-size: 2rem; font-weight: bold; color: #8B4513; }
+        .stat .label { color: #666; }
+        footer { text-align: center; padding: 24px; color: #888; border-top: 1px solid #ddd; margin-top: 48px; }
+    </style>
+</head>
+<body>
+    <header>
+        <h1>Pawsome Dog Rescue</h1>
+        <p>Finding forever homes for furry friends since 2019</p>
+    </header>
+    <nav>
+        <a href="/">Home</a>
+        <a href="/adopt">Adopt</a>
+        <a href="/volunteer">Volunteer</a>
+        <a href="/donate">Donate</a>
+        <a href="/about">About Us</a>
+    </nav>
+    <main>
+        <div class="hero">
+            <h2>Meet Our Adorable Dogs Available for Adoption</h2>
+            <p>Every dog deserves a loving home. Browse our current residents below.</p>
+        </div>
+        <div class="stats">
+            <div class="stat">
+                <div class="number">847</div>
+                <div class="label">Dogs Rescued</div>
+            </div>
+            <div class="stat">
+                <div class="number">723</div>
+                <div class="label">Dogs Adopted</div>
+            </div>
+            <div class="stat">
+                <div class="number">52</div>
+                <div class="label">Available Now</div>
+            </div>
+        </div>
+        <div class="dogs">
+            <div class="dog-card">
+                <h3>Biscuit</h3>
+                <div class="breed">Golden Retriever, 3 years</div>
+                <div class="desc">Biscuit is a gentle, playful golden who loves belly rubs and swimming. Great with kids and other dogs.</div>
+            </div>
+            <div class="dog-card">
+                <h3>Luna</h3>
+                <div class="breed">Border Collie Mix, 2 years</div>
+                <div class="desc">Luna is incredibly smart and energetic. She knows over 20 tricks and excels at agility courses.</div>
+            </div>
+            <div class="dog-card">
+                <h3>Thunderpaws</h3>
+                <div class="breed">Great Dane, 4 years</div>
+                <div class="desc">Despite his enormous size, Thunderpaws is the gentlest giant you will ever meet. A true couch potato who thinks he is a lap dog.</div>
+            </div>
+        </div>
+    </main>
+    <footer>
+        <p>&copy; 2024 Pawsome Dog Rescue. All rights reserved.</p>
+    </footer>
+</body>
+</html>

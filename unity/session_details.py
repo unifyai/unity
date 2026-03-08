@@ -283,7 +283,6 @@ class SessionDetails:
         voice_provider: str = "",
         voice_id: str = "",
         desktop_mode: str = "ubuntu",
-        desktop_url: str | None = None,
         user_desktop_mode: str | None = None,
         user_desktop_filesys_sync: bool = False,
         user_desktop_url: str | None = None,
@@ -303,7 +302,6 @@ class SessionDetails:
         self.assistant.email = assistant_email
         self.assistant.contact_id = assistant_contact_id
         self.assistant.desktop_mode = desktop_mode
-        self.assistant.desktop_url = desktop_url
         self.assistant.user_desktop_mode = user_desktop_mode
         self.assistant.user_desktop_filesys_sync = user_desktop_filesys_sync
         self.assistant.user_desktop_url = user_desktop_url

@@ -28,6 +28,7 @@ from unity.conversation_manager.domains import comms_utils
 from unity.conversation_manager.domains import managers_utils
 from unity.conversation_manager.event_broker import get_event_broker
 from unity.conversation_manager.events import (
+    ApiMessageSent,
     SMSSent,
     UnifyMessageSent,
     EmailSent,
@@ -594,6 +595,114 @@ class ConversationManagerBrainActionTools:
             "Failed to send unify message",
             _unify_topic,
             **_unify_err,
+        )
+
+    async def send_api_response(
+        self,
+        *,
+        content: str,
+        contact_id: int | str = 1,
+        attachment_filepaths: list[str] | None = None,
+        tags: list[str] | None = None,
+    ) -> dict[str, Any]:
+        """
+        Send a response back to the developer who sent a programmatic API message.
+
+        Use this when the most recent inbound message arrived via the REST API
+        (medium ``api_message``) and you want the developer to receive your
+        reply through the same polling endpoint they are waiting on.
+
+        If no API message is pending, this call is a no-op (the developer is
+        not waiting for a response on this channel).
+
+        Args:
+            content: The response text to send back to the developer.
+            contact_id: The contact_id of the recipient.
+            attachment_filepaths: Optional list of workspace-relative file
+                paths to upload and attach to the response.
+            tags: Tags for the response. When omitted, the tags from the
+                inbound API message are echoed back automatically so the
+                sender's tag-based routing receives the reply.
+        """
+        contact_id = _coerce_contact_id(contact_id)
+        api_message_id = getattr(self._cm, "_pending_api_message_id", None)
+        if not api_message_id:
+            return {"status": "ok", "note": "no pending api message"}
+
+        contact = self._cm.contact_index.get_contact(contact_id) or {
+            "contact_id": contact_id,
+        }
+        _api_topic = "app:comms:api_message_sent"
+        _api_err = dict(contact_id=contact_id, medium=Medium.API_MESSAGE)
+
+        # Default to echoing inbound tags when the caller doesn't specify.
+        if tags is None:
+            tags = getattr(self._cm, "_pending_api_message_tags", None) or []
+
+        # Upload attachments (same pattern as send_unify_message).
+        import os
+
+        uploaded_attachments: list[dict] = []
+        if attachment_filepaths:
+            for filepath in attachment_filepaths:
+                try:
+                    from unity.file_manager.filesystem_adapters.local_adapter import (
+                        LocalFileSystemAdapter,
+                    )
+
+                    adapter = LocalFileSystemAdapter()
+                    adapter.get_file(filepath)
+                    abs_path = adapter._abspath(filepath)
+                    with open(abs_path, "rb") as f:
+                        file_contents = f.read()
+
+                    upload_result = await comms_utils.upload_unify_attachment(
+                        file_content=file_contents,
+                        filename=os.path.basename(filepath),
+                    )
+                    if "error" in upload_result:
+                        return await self._surface_comms_error(
+                            f"Failed to upload attachment: {upload_result['error']}",
+                            _api_topic,
+                            **_api_err,
+                        )
+                    uploaded_attachments.append(upload_result)
+                except FileNotFoundError:
+                    return await self._surface_comms_error(
+                        f"File not found: {filepath}",
+                        _api_topic,
+                        **_api_err,
+                    )
+                except Exception as e:
+                    return await self._surface_comms_error(
+                        f"Failed to read file: {e}",
+                        _api_topic,
+                        **_api_err,
+                    )
+
+        result = await comms_utils.complete_api_message(
+            api_message_id=api_message_id,
+            response=content,
+            attachments=uploaded_attachments or None,
+            tags=tags or None,
+        )
+        if result["success"]:
+            event = ApiMessageSent(
+                contact=contact,
+                content=content,
+                api_message_id=api_message_id,
+                attachments=uploaded_attachments,
+                tags=tags,
+            )
+            await self._event_broker.publish(_api_topic, event.to_json())
+            self._cm._pending_api_message_id = None
+            self._cm._pending_api_message_tags = None
+            return {"status": "ok"}
+
+        return await self._surface_comms_error(
+            "Failed to send API response",
+            _api_topic,
+            **_api_err,
         )
 
     async def send_email(
@@ -1853,6 +1962,7 @@ class ConversationManagerBrainActionTools:
 
         tools: dict[str, Callable[..., Any]] = {
             "send_unify_message": self.send_unify_message,
+            "send_api_response": self.send_api_response,
             "wait": self.wait,
         }
         if self._cm.assistant_number:
