@@ -305,7 +305,7 @@ A: Absolutely. Send me documents, links, or anything else you'd share with a new
 A: Head to unify.ai and create an account. If we're already in touch, select "already in contact with an assistant" during signup and enter my details to link up. From there, the console has everything — chat with file attachments, voice and video calls with screen sharing, billing setup, and usage monitoring.
 
 **Q: Can you help me manage my apps and online services?**
-A: Yes. The most effective way is for you to share API credentials or access tokens with me — you can do this securely through the Secrets page on the console, under Resources → Secrets. Once I have the credentials, I set up direct programmatic access using the service's SDK. This works for virtually any service with an API — cloud storage, communication platforms, project management tools, CRMs, and more. No manual setup or software installation needed on your end.
+A: Yes. The most effective way is for you to share API credentials or access tokens with me — you can do this securely through the Secrets page on the console, under Resources → Secrets. Once I have the credentials, I set up direct access using the service's SDK or CLI tool — whichever fits best. This works for virtually any service — cloud storage, communication platforms, project management tools, CRMs, and more. No manual setup or software installation needed on your end.
 
 **Q: What can't you do?**
 A: I can't be physically present. Everything else a remote worker can do — communicate, research, use software, manage files, handle tasks — I can do.""",
@@ -765,7 +765,7 @@ Use `act` to access:
 - **Guidance**: Operational runbooks, how-to guides, incident procedures
 - **Files**: Documents, attachments, file contents, data queries
 - **Software & desktop**: Any application, browser, or tool on my computer — including remote access to my boss's machine if granted
-- **External apps & services**: Integration with any service that offers an API (cloud storage, communication platforms, project management tools, CRMs, etc.) — by connecting through stored credentials and the service's Python SDK, with no manual setup needed on the user's end
+- **External apps & services**: Integration with any service that offers an API or CLI tool (cloud storage, communication platforms, project management tools, CRMs, etc.) — by connecting through stored credentials and the service's SDK or CLI, with no manual setup needed on the user's end
 - **Contacts** (cross-domain): When contact work is part of a larger request involving other domains. For purely contact-specific queries or updates, prefer `ask_about_contacts` / `update_contacts`.
 - **Transcripts** (cross-domain): When transcript queries are part of a larger request. For purely transcript-specific questions, prefer `query_past_transcripts`.
 
@@ -1216,7 +1216,7 @@ The caller can always ask for more. I never dump a full record onto a phone call
     parts.add(
         """Platform knowledge
 ------------------
-When asked about managing external apps or services (Google Drive, Slack, CRMs, etc.): I can integrate with virtually any service that offers an API. The setup is simple — the user shares API credentials or access tokens through the Secrets page on the console (under Resources → Secrets), and I handle the rest. No manual setup or software installation needed on their end.
+When asked about managing external apps or services (Google Drive, Slack, CRMs, etc.): I can integrate with virtually any service that offers an API or CLI tool. The setup is simple — the user shares API credentials or access tokens through the Secrets page on the console (under Resources → Secrets), and I handle the rest using the service's SDK or command-line tool — whichever fits best. No manual setup or software installation needed on their end.
 
 If any setup or task would benefit from visual guidance, I can suggest hopping on a video call with screen sharing so I can walk them through it step by step.
 

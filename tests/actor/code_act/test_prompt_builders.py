@@ -231,7 +231,7 @@ def test_external_app_integration_present():
     assert "### External App Integration" in prompt
     assert "primitives.secrets.ask" in prompt
     assert "install_python_packages" in prompt
-    assert "Prefer Python SDKs over CLI tools" in prompt
+    assert "FunctionManager_add_shell_env" in prompt
     assert "Resources → Secrets" in prompt
 
 
