@@ -265,26 +265,32 @@ _EXTERNAL_APP_INTEGRATION = textwrap.dedent("""
        If not, inform the caller and explain they can add them via the
        console's Secrets page (Resources → Secrets).
 
-    2. **Install the SDK**: Use `install_python_packages` to install the
-       service's official Python SDK (e.g., `google-cloud-storage` for Google
-       Cloud, `slack-sdk` for Slack, `boto3` for AWS, `stripe` for Stripe).
+    2. **Install dependencies**: Choose the right approach for the service:
+       - **Python SDK**: Use `install_python_packages` to install the
+         service's official Python SDK (e.g., `google-cloud-storage`,
+         `slack-sdk`, `boto3`, `stripe`).
+       - **CLI tool**: Use `execute_code` with `language="bash"` to download
+         and install the CLI tool. After installation, identify the binary
+         path from the output — you will need it to persist the tool via
+         `FunctionManager_add_shell_env` in the storage step.
 
-    3. **Integrate**: Write Python code that uses the SDK with the stored
-       credentials to interact with the service. Credentials are synced to
-       environment variables via the `.env` file managed by SecretManager —
-       use `os.environ` to access them after confirming their names via
-       `primitives.secrets.ask(...)`.
+    3. **Integrate**: Write code that uses the SDK or CLI tool with the
+       stored credentials to interact with the service. Credentials are
+       synced to environment variables via the `.env` file managed by
+       SecretManager — use `os.environ` to access them after confirming
+       their names via `primitives.secrets.ask(...)`.
 
     4. **Store for reuse**: After a successful integration, store reusable
        functions via `store_skills` and document the setup via
        `GuidanceManager_add_guidance` so future interactions can reuse the
        integration without rediscovery.
 
-    **Prefer Python SDKs over CLI tools.** Python packages benefit from full
-    environment management (isolated venvs, dependency resolution via
-    `install_python_packages`). Shell CLI tools have no equivalent dependency
-    management. Most services offer Python SDKs that are more reliable and
-    composable for programmatic use.
+    Both Python SDKs and CLI tools have full environment management.
+    Python packages use isolated venvs (`install_python_packages` →
+    `FunctionManager_add_venv`). CLI tools use shell environments
+    (`FunctionManager_add_shell_env` snapshots binaries so they are
+    available on PATH for future runs). Choose whichever fits the
+    service and the user's preference.
 """).strip()
 
 
