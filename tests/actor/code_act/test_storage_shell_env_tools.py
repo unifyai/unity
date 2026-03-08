@@ -398,3 +398,36 @@ def test_add_functions_wrapper_accepts_language_and_shell_env_id():
     sig = inspect.signature(add_fn)
     assert "language" in sig.parameters
     assert "shell_env_id" in sig.parameters
+
+
+def test_storage_prompt_standalone_environments():
+    """The prompt encourages storing environments without corresponding functions."""
+    from unity.actor.code_act_actor import _STORAGE_WHAT_CAN_BE_STORED
+
+    assert "standalone environment" in _STORAGE_WHAT_CAN_BE_STORED.lower()
+    assert "not an anti-pattern" in _STORAGE_WHAT_CAN_BE_STORED.lower()
+    assert "first-class" in _STORAGE_WHAT_CAN_BE_STORED.lower()
+
+
+def test_storage_prompt_standalone_venv_example():
+    """The prompt gives a concrete Python venv example (scientific-visualization)."""
+    from unity.actor.code_act_actor import _STORAGE_WHAT_CAN_BE_STORED
+
+    assert "scientific-visualization" in _STORAGE_WHAT_CAN_BE_STORED
+    assert "matplotlib" in _STORAGE_WHAT_CAN_BE_STORED
+
+
+def test_storage_prompt_standalone_shell_env_example():
+    """The prompt gives a concrete shell env example (cloud-integrations)."""
+    from unity.actor.code_act_actor import _STORAGE_WHAT_CAN_BE_STORED
+
+    assert "cloud-integrations" in _STORAGE_WHAT_CAN_BE_STORED
+    assert "gcloud" in _STORAGE_WHAT_CAN_BE_STORED
+
+
+def test_storage_prompt_descriptive_env_naming():
+    """The prompt guides toward domain-oriented environment naming."""
+    from unity.actor.code_act_actor import _STORAGE_WHAT_CAN_BE_STORED
+
+    assert "descriptive" in _STORAGE_WHAT_CAN_BE_STORED.lower()
+    assert "data-science" in _STORAGE_WHAT_CAN_BE_STORED
