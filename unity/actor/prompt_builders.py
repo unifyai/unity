@@ -270,9 +270,13 @@ _EXTERNAL_APP_INTEGRATION = textwrap.dedent("""
          service's official Python SDK (e.g., `google-cloud-storage`,
          `slack-sdk`, `boto3`, `stripe`).
        - **CLI tool**: Use `execute_code` with `language="bash"` to download
-         and install the CLI tool. After installation, identify the binary
-         path from the output — you will need it to persist the tool via
-         `FunctionManager_add_shell_env` in the storage step.
+         and install the CLI tool (e.g., `curl`, `brew install`, `apt-get`).
+         After installation, print the binary path (e.g., `which gcloud`).
+         Then call `store_skills` to persist the binary into a shell
+         environment — the storage reviewer will snapshot it via
+         `FunctionManager_add_shell_env` so it is available on PATH for
+         future runs. For subsequent `execute_code` shell calls in the
+         current task, the tool is already installed and usable immediately.
 
     3. **Integrate**: Write code that uses the SDK or CLI tool with the
        stored credentials to interact with the service. Credentials are
@@ -288,7 +292,7 @@ _EXTERNAL_APP_INTEGRATION = textwrap.dedent("""
     Both Python SDKs and CLI tools have full environment management.
     Python packages use isolated venvs (`install_python_packages` →
     `FunctionManager_add_venv`). CLI tools use shell environments
-    (`FunctionManager_add_shell_env` snapshots binaries so they are
+    (persisted via `store_skills`, which snapshots binaries so they are
     available on PATH for future runs). Choose whichever fits the
     service and the user's preference.
 """).strip()

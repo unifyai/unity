@@ -236,6 +236,25 @@ def test_external_app_integration_present():
 
 
 @pytest.mark.timeout(30)
+def test_external_app_integration_cli_workflow():
+    """The CLI tool workflow uses store_skills as the bridge to shell env persistence."""
+    actor = CodeActActor()
+    prompt = build_code_act_prompt(
+        environments=_real_envs_mixed(),
+        tools=dict(actor.get_tools("act")),
+    )
+
+    section_start = prompt.index("### External App Integration")
+    next_section = prompt.index("###", section_start + 1)
+    section = prompt[section_start:next_section]
+
+    assert "store_skills" in section
+    assert "bash" in section
+    assert "binary path" in section
+    assert "which" in section
+
+
+@pytest.mark.timeout(30)
 def test_external_app_integration_absent_without_execute_code():
     """The section is absent when execute_code is not available (discovery-only mode)."""
     actor = CodeActActor()

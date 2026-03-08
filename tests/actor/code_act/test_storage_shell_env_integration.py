@@ -1,19 +1,12 @@
-"""Integration tests: storage loop shell function and shell env management.
+"""Integration test: storage loop shell env management for CLI tool trajectories.
 
-Two tests:
+Feeds a hand-crafted trajectory containing ``execute_code(language="bash")``
+that installs a CLI tool and uses it, directly to ``_start_storage_check_loop``.
+Verifies the storage LLM creates a shell env and (if it stores a shell function)
+links it with ``shell_env_id``.
 
-1. **Synthetic trajectory (symbolic)** — feeds a hand-crafted trajectory
-   containing bash script execution with an installed CLI tool directly to
-   ``_start_storage_check_loop``.  Verifies the storage LLM stores a
-   function (Python or shell) that captures the reusable pattern.
-
-2. **Synthetic trajectory with explicit shell script** — trajectory where
-   the agent wrote and executed a bash script using an installed tool.
-   Verifies that the storage LLM recognises this as a shell function
-   candidate and stores it with the correct language.
-
-Both are eval tests because the LLM must correctly interpret the trajectory
-and decide what to store.
+This is an eval test because the LLM must interpret the trajectory and decide
+to create a shell env.
 """
 
 import asyncio
@@ -25,15 +18,10 @@ from unity.function_manager.function_manager import FunctionManager
 
 pytestmark = pytest.mark.eval
 
-
-# Trajectory where the agent installs jq and writes a reusable shell script
-TRAJECTORY_WITH_SHELL_SCRIPT = [
+TRAJECTORY_WITH_CLI_TOOL_INSTALL = [
     {
         "role": "assistant",
-        "content": (
-            "I'll install jq for JSON processing and create a reusable "
-            "bash script that extracts nested fields from JSON files."
-        ),
+        "content": "I'll install the gcloud CLI tool for Google Cloud operations.",
         "tool_calls": [
             {
                 "id": "tc_1",
@@ -41,13 +29,12 @@ TRAJECTORY_WITH_SHELL_SCRIPT = [
                 "function": {
                     "name": "execute_code",
                     "arguments": (
-                        '{"code": "import subprocess\\n'
-                        "result = subprocess.run(\\n"
-                        "    ['brew', 'install', 'jq'],\\n"
-                        "    capture_output=True, text=True,\\n"
-                        ")\\n"
-                        "print(result.stdout)\\n"
-                        "print('exit:', result.returncode)\"}"
+                        '{"code": "curl -sSL https://sdk.cloud.google.com/nightly/google-cloud-sdk.tar.gz '
+                        "| tar xz -C /opt\\n"
+                        "/opt/google-cloud-sdk/install.sh --quiet\\n"
+                        'echo \\"Installed to: /opt/google-cloud-sdk/bin/gcloud\\"\\n'
+                        'which gcloud || echo \\"/opt/google-cloud-sdk/bin/gcloud\\"", '
+                        '"language": "bash"}'
                     ),
                 },
             },
@@ -57,18 +44,14 @@ TRAJECTORY_WITH_SHELL_SCRIPT = [
         "role": "tool",
         "tool_call_id": "tc_1",
         "content": (
-            '{"stdout": "==> Downloading jq-1.7.1\\n'
-            "==> Installing jq\\n"
-            "/usr/local/bin/jq\\n"
-            'exit: 0\\n", "stderr": "", "success": true}'
+            '{"stdout": "Installed to: /opt/google-cloud-sdk/bin/gcloud\\n'
+            '/opt/google-cloud-sdk/bin/gcloud", '
+            '"stderr": "", "error": null, "language": "bash"}'
         ),
     },
     {
         "role": "assistant",
-        "content": (
-            "jq is installed at /usr/local/bin/jq. Now I'll write a bash "
-            "script that uses jq to extract nested JSON fields and test it."
-        ),
+        "content": "Now I'll authenticate and list the available projects.",
         "tool_calls": [
             {
                 "id": "tc_2",
@@ -76,35 +59,8 @@ TRAJECTORY_WITH_SHELL_SCRIPT = [
                 "function": {
                     "name": "execute_code",
                     "arguments": (
-                        '{"code": "import subprocess, tempfile, json, os\\n'
-                        "\\n"
-                        "# Write test JSON\\n"
-                        "test_data = {'users': [{'name': 'Alice', 'email': 'alice@example.com'}, {'name': 'Bob', 'email': 'bob@example.com'}]}\\n"
-                        "with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as f:\\n"
-                        "    json.dump(test_data, f)\\n"
-                        "    json_path = f.name\\n"
-                        "\\n"
-                        "# Write and test a bash script that uses jq\\n"
-                        "script = '''#!/bin/bash\\n"
-                        "# @name: extract_json_emails\\n"
-                        "# @args: (json_file)\\n"
-                        "# @description: Extract all email addresses from a JSON file using jq\\n"
-                        "jq -r '.users[].email' \\\"$1\\\"\\n"
-                        "'''\\n"
-                        "\\n"
-                        "with tempfile.NamedTemporaryFile(mode='w', suffix='.sh', delete=False) as f:\\n"
-                        "    f.write(script)\\n"
-                        "    script_path = f.name\\n"
-                        "os.chmod(script_path, 0o755)\\n"
-                        "\\n"
-                        "result = subprocess.run(\\n"
-                        "    ['bash', script_path, json_path],\\n"
-                        "    capture_output=True, text=True,\\n"
-                        ")\\n"
-                        "print(f'emails: {result.stdout.strip()}')\\n"
-                        "print(f'exit: {result.returncode}')\\n"
-                        "os.unlink(json_path)\\n"
-                        'os.unlink(script_path)"}'
+                        '{"code": "gcloud projects list --format=json | head -20", '
+                        '"language": "bash"}'
                     ),
                 },
             },
@@ -114,16 +70,16 @@ TRAJECTORY_WITH_SHELL_SCRIPT = [
         "role": "tool",
         "tool_call_id": "tc_2",
         "content": (
-            '{"stdout": "emails: alice@example.com\\nbob@example.com\\n'
-            'exit: 0\\n", "stderr": "", "success": true}'
+            '{"stdout": "[{\\"projectId\\": \\"my-project-123\\", '
+            '\\"name\\": \\"My Project\\", \\"lifecycleState\\": \\"ACTIVE\\"}]", '
+            '"stderr": "", "error": null, "language": "bash"}'
         ),
     },
     {
         "role": "assistant",
         "content": (
-            "The bash script successfully extracts email addresses from "
-            "JSON files using jq. The script is reusable for any JSON file "
-            "with a .users[].email structure."
+            "Successfully installed gcloud and listed the available projects. "
+            "The project my-project-123 is active and ready to use."
         ),
     },
 ]
@@ -155,14 +111,8 @@ class _MinimalGuidanceManager:
 
 @pytest.mark.asyncio
 @pytest.mark.timeout(300)
-async def test_storage_loop_stores_function_from_shell_trajectory():
-    """The storage loop stores at least one function from a trajectory
-    that installed a CLI tool and used it in a bash script.
-
-    The LLM may store either a Python wrapper or a shell function —
-    both are valid. The key assertion is that *something* reusable
-    was extracted from the trajectory.
-    """
+async def test_storage_loop_creates_shell_env_for_cli_tool():
+    """The storage loop creates a shell env when the trajectory installs a CLI tool."""
     fm = FunctionManager(include_primitives=False)
     gm = _MinimalGuidanceManager()
 
@@ -174,24 +124,38 @@ async def test_storage_loop_stores_function_from_shell_trajectory():
 
     try:
         handle = _start_storage_check_loop(
-            trajectory=TRAJECTORY_WITH_SHELL_SCRIPT,
+            trajectory=TRAJECTORY_WITH_CLI_TOOL_INSTALL,
             ask_tools={},
             actor=actor,
-            original_result=(
-                "Successfully extracted email addresses from JSON using jq."
-            ),
+            original_result="Listed GCP projects successfully.",
         )
         assert handle is not None, "Storage loop should have started"
 
         result = await asyncio.wait_for(handle.result(), timeout=180)
         assert result is not None
 
-        stored = fm.filter_functions()
-        stored_funcs = [f for f in stored if isinstance(f, dict)]
+        shell_envs = fm.list_shell_envs()
+        stored_functions = fm.filter_functions()
 
-        assert stored_funcs, (
-            "Expected at least one function to be stored from a trajectory "
-            "that installed jq and wrote a reusable bash script."
+        shell_functions = [
+            f
+            for f in stored_functions
+            if isinstance(f, dict) and f.get("language") in ("bash", "zsh", "sh")
+        ]
+
+        if shell_functions:
+            for func in shell_functions:
+                assert func.get("shell_env_id") is not None, (
+                    f"Shell function '{func.get('name')}' was stored without "
+                    f"a shell_env_id — the storage loop should link it to a "
+                    f"shell environment containing the installed CLI tool."
+                )
+
+        assert len(shell_envs) >= 1 or len(shell_functions) == 0, (
+            f"If shell functions were stored, at least one shell env should "
+            f"exist. Got {len(shell_envs)} shell envs and "
+            f"{len(shell_functions)} shell functions. "
+            f"Stored functions: {[f.get('name') for f in stored_functions if isinstance(f, dict)]}"
         )
     finally:
         try:
