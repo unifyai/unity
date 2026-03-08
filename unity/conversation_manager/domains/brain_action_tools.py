@@ -622,7 +622,9 @@ class ConversationManagerBrainActionTools:
         if not api_message_id:
             return {"status": "ok", "note": "no pending api message"}
 
-        contact = self._cm.contact_index.get_contact(contact_id) or {}
+        contact = self._cm.contact_index.get_contact(contact_id) or {
+            "contact_id": contact_id,
+        }
         _api_topic = "app:comms:api_message_sent"
 
         result = await comms_utils.complete_api_message(
