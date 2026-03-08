@@ -215,6 +215,41 @@ def test_computer_environment_prompt_context_from_registry():
 
 
 # ────────────────────────────────────────────────────────────────────────────
+# External app integration section
+# ────────────────────────────────────────────────────────────────────────────
+
+
+@pytest.mark.timeout(30)
+def test_external_app_integration_present():
+    """The external app integration section is included when execute_code is available."""
+    actor = CodeActActor()
+    prompt = build_code_act_prompt(
+        environments=_real_envs_mixed(),
+        tools=dict(actor.get_tools("act")),
+    )
+
+    assert "### External App Integration" in prompt
+    assert "primitives.secrets.ask" in prompt
+    assert "install_python_packages" in prompt
+    assert "Prefer Python SDKs over CLI tools" in prompt
+    assert "Resources → Secrets" in prompt
+
+
+@pytest.mark.timeout(30)
+def test_external_app_integration_absent_without_execute_code():
+    """The section is absent when execute_code is not available (discovery-only mode)."""
+    actor = CodeActActor()
+    all_tools = dict(actor.get_tools("act"))
+    tools = {k: v for k, v in all_tools.items() if k != "execute_code"}
+    prompt = build_code_act_prompt(
+        environments={},
+        tools=tools,
+    )
+
+    assert "### External App Integration" not in prompt
+
+
+# ────────────────────────────────────────────────────────────────────────────
 # Guidelines composition (constructor baseline + per-invocation overlay)
 # ────────────────────────────────────────────────────────────────────────────
 
