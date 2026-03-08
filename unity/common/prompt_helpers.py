@@ -94,14 +94,11 @@ def now(time_only: bool = False, as_string: bool = True) -> "str | datetime":
     from datetime import datetime, timezone as dt_timezone
     from zoneinfo import ZoneInfo
     import unify as _unify
+    from unity.session_details import SESSION_DETAILS
 
-    # Resolve Contacts context for the active project
-    try:
-        _ctxs = _unify.get_active_context()
-        _read_ctx = _ctxs.get("read")
-    except Exception:
-        _read_ctx = None
-    _contacts_ctx = f"{_read_ctx}/Contacts" if _read_ctx else "Contacts"
+    _contacts_ctx = (
+        f"{SESSION_DETAILS.user_context}/{SESSION_DETAILS.assistant_context}/Contacts"
+    )
 
     # Default to UTC if assistant row/field is unavailable
     tz_name: str = "UTC"

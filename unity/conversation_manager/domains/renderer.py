@@ -88,14 +88,12 @@ def _get_assistant_timezone() -> str | None:
             return cached_val
 
     import unify as _unify
+    from unity.session_details import SESSION_DETAILS
 
     result: str | None = None
-    try:
-        _ctxs = _unify.get_active_context()
-        _read_ctx = _ctxs.get("read")
-    except Exception:
-        _read_ctx = None
-    _contacts_ctx = f"{_read_ctx}/Contacts" if _read_ctx else "Contacts"
+    _contacts_ctx = (
+        f"{SESSION_DETAILS.user_context}/{SESSION_DETAILS.assistant_context}/Contacts"
+    )
 
     try:
         rows = _unify.get_logs(
