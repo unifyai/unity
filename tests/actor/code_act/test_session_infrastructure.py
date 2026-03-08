@@ -48,7 +48,7 @@ from unity.function_manager.shell_pool import ShellPool
                 session_name="repo_nav",
                 language="bash",
                 resolve_session_name=lambda n: (
-                    ("bash", None, None, 0) if n == "repo_nav" else None
+                    ("bash", None, 0) if n == "repo_nav" else None
                 ),
             ),
             "refer to different sessions",
@@ -327,65 +327,3 @@ async def test_session_executor_isolation_between_python_sessions():
         assert "2" in parts_to_text(b2["stdout"])
     finally:
         await ex.close()
-
-
-# ────────────────────────────────────────────────────────────────────────────
-# _resolve_session with shell_env_id
-# ────────────────────────────────────────────────────────────────────────────
-
-from unity.actor.code_act_actor import CodeActActor
-
-
-def test_resolve_session_includes_shell_env_id():
-    """_resolve_session returns shell_env_id in the resolved tuple."""
-    actor = CodeActActor()
-    rs = actor._resolve_session(
-        state_mode="stateless",
-        language="bash",
-        session_id=None,
-        session_name=None,
-        venv_id=None,
-        shell_env_id=7,
-    )
-    assert rs.shell_env_id == 7
-    assert rs.language == "bash"
-
-
-def test_resolve_session_shell_env_id_none_by_default():
-    """shell_env_id defaults to None when not specified."""
-    actor = CodeActActor()
-    rs = actor._resolve_session(
-        state_mode="stateless",
-        language="bash",
-        session_id=None,
-        session_name=None,
-        venv_id=None,
-    )
-    assert rs.shell_env_id is None
-
-
-def test_session_key_distinguishes_shell_env():
-    """Sessions with different shell_env_id get independent session IDs."""
-    actor = CodeActActor()
-    rs1 = actor._resolve_session(
-        state_mode="stateful",
-        language="bash",
-        session_id=None,
-        session_name="env_a",
-        venv_id=None,
-        shell_env_id=1,
-    )
-    rs2 = actor._resolve_session(
-        state_mode="stateful",
-        language="bash",
-        session_id=None,
-        session_name="env_b",
-        venv_id=None,
-        shell_env_id=2,
-    )
-    assert rs1.session_id is not None
-    assert rs2.session_id is not None
-    # Both should get session_id=1 (first allocation in their respective namespace)
-    assert rs1.session_id == rs2.session_id == 1
-    # But they resolve to different session names
-    assert rs1.shell_env_id != rs2.shell_env_id

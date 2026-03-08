@@ -108,6 +108,15 @@ _EXECUTION_RULES = textwrap.dedent("""
     do so. Only reach for `execute_code` when you genuinely need to
     compose multiple steps or write conditional/iterative logic.
 
+    **Python-first principle:** When a task can be accomplished with
+    either a Python package or a shell CLI tool, prefer Python.  Python
+    packages are installed via `install_python_packages` with full
+    environment management (isolated venvs, automatic dependency
+    resolution).  Shell tools lack equivalent isolation — there is no
+    `install_shell_packages` and nothing prevents dependency conflicts.
+    Reserve shell for tasks that genuinely require it (system commands,
+    file operations, running existing shell scripts).
+
     ### Execution Rules
 
     1. **Session-Based Execution**:
@@ -265,36 +274,26 @@ _EXTERNAL_APP_INTEGRATION = textwrap.dedent("""
        If not, inform the caller and explain they can add them via the
        console's Secrets page (Resources → Secrets).
 
-    2. **Install dependencies**: Choose the right approach for the service:
-       - **Python SDK**: Use `install_python_packages` to install the
-         service's official Python SDK (e.g., `google-cloud-storage`,
-         `slack-sdk`, `boto3`, `stripe`).
-       - **CLI tool**: Use `execute_code` with `language="bash"` to download
-         and install the CLI tool (e.g., `curl`, `brew install`, `apt-get`).
-         After installation, print the binary path (e.g., `which gcloud`).
-         Then call `store_skills` to persist the binary into a shell
-         environment — the storage reviewer will snapshot it via
-         `FunctionManager_add_shell_env` so it is available on PATH for
-         future runs. For subsequent `execute_code` shell calls in the
-         current task, the tool is already installed and usable immediately.
+    2. **Install the SDK**: Use `install_python_packages` to install the
+       service's official Python SDK (e.g., `google-cloud-storage` for Google
+       Cloud, `slack-sdk` for Slack, `boto3` for AWS, `stripe` for Stripe).
 
-    3. **Integrate**: Write code that uses the SDK or CLI tool with the
-       stored credentials to interact with the service. Credentials are
-       synced to environment variables via the `.env` file managed by
-       SecretManager — use `os.environ` to access them after confirming
-       their names via `primitives.secrets.ask(...)`.
+    3. **Integrate**: Write Python code that uses the SDK with the stored
+       credentials to interact with the service. Credentials are synced to
+       environment variables via the `.env` file managed by SecretManager —
+       use `os.environ` to access them after confirming their names via
+       `primitives.secrets.ask(...)`.
 
     4. **Store for reuse**: After a successful integration, store reusable
        functions via `store_skills` and document the setup via
        `GuidanceManager_add_guidance` so future interactions can reuse the
        integration without rediscovery.
 
-    Both Python SDKs and CLI tools have full environment management.
-    Python packages use isolated venvs (`install_python_packages` →
-    `FunctionManager_add_venv`). CLI tools use shell environments
-    (persisted via `store_skills`, which snapshots binaries so they are
-    available on PATH for future runs). Choose whichever fits the
-    service and the user's preference.
+    **Prefer Python SDKs over CLI tools.** Python packages benefit from full
+    environment management (isolated venvs, dependency resolution via
+    `install_python_packages`). Shell CLI tools have no equivalent dependency
+    management. Most services offer Python SDKs that are more reliable and
+    composable for programmatic use.
 """).strip()
 
 

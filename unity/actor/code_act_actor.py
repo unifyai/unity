@@ -167,7 +167,6 @@ def _default_tool_policy(
 class _ResolvedSession(NamedTuple):
     language: str
     venv_id: Optional[int]
-    shell_env_id: Optional[int]
     session_id: Optional[int]
     error: Optional[Dict[str, Any]]  # validation error dict, or None
 
@@ -350,25 +349,14 @@ class _CodeActEntrypointHandle(SteerableToolHandle):  # type: ignore[abstract-me
 _STORAGE_WHAT_CAN_BE_STORED = (
     "## What Can Be Stored\n\n"
     "Any code that executed successfully in `execute_code` during "
-    "this trajectory can be stored as a function — both **Python** "
-    "and **shell scripts** (bash, zsh, sh, powershell).\n\n"
-    "For **Python functions**, environment-provided "
+    "this trajectory can be stored as a function. Environment-provided "
     "namespaces (`primitives`, `primitives.computer`, `primitives.actor`) and "
     "other stored functions referenced in the code are automatically "
     "detected from the source and injected at runtime — you do not "
     "need to add imports or worry about whether these names will be "
-    "available when the function runs later.\n\n"
-    "For **shell functions**, pass `language='bash'` (or `'zsh'`, "
-    "`'sh'`, `'powershell'`) to `FunctionManager_add_functions`. "
-    "Shell scripts must include metadata comments at the top:\n\n"
-    "```bash\n"
-    "# @name: extract_yaml_field\n"
-    "# @args: (yaml_file field_path)\n"
-    "# @description: Extract a field from a YAML file using yq\n"
-    'yq "$2" "$1"\n'
-    "```\n\n"
-    "Focus on whether a pattern is *worth* reusing, not whether it "
-    "is *technically executable* in isolation.\n\n"
+    "available when the function runs later. Focus on whether a "
+    "pattern is *worth* reusing, not whether it is *technically "
+    "executable* in isolation.\n\n"
     "### Wrapping to bake in configuration\n\n"
     "Stored functions should NOT be verbatim copies of code blocks "
     "from the trajectory. During execution, the agent discovered the "
@@ -439,60 +427,6 @@ _STORAGE_WHAT_CAN_BE_STORED = (
     "when the dependency overlap is high — update an existing venv "
     "with `FunctionManager_update_venv` to add extra packages "
     "instead.\n\n"
-    "### Shell tool dependencies\n\n"
-    "If the trajectory installed CLI tools (via `brew install`, "
-    "`curl`, `apt-get`, `pip install`, etc.) and a shell function "
-    "depends on those tools, the tools must be saved to a **shell "
-    "environment** so they are available on future runs.\n\n"
-    "Look for tool installation commands in the trajectory output to "
-    "identify which binary paths were installed (e.g. "
-    "`/usr/local/bin/jq`, `/opt/homebrew/bin/yq`). The installation "
-    "output often prints the installed path.\n\n"
-    "Workflow:\n"
-    "1. Check existing shell envs with "
-    "`FunctionManager_list_shell_envs` — if one already contains "
-    "the needed tools, reuse it.\n"
-    "2. If no suitable shell env exists, create one with "
-    "`FunctionManager_add_shell_env`. Pass the binary paths from "
-    "the trajectory:\n\n"
-    "```python\n"
-    "env_id = FunctionManager_add_shell_env(\n"
-    '    name="data-tools",\n'
-    '    tool_paths=["/usr/local/bin/jq", "/usr/local/bin/yq"],\n'
-    ")\n"
-    "```\n\n"
-    "3. Pass the returned `shell_env_id` to "
-    "`FunctionManager_add_functions(shell_env_id=<id>, "
-    "language='bash')`.\n\n"
-    "Multiple shell functions that share the same tool set should "
-    "share a single shell env. Similarly, if the trajectory uses a "
-    "non-standard CLI tool from within a Python function (via "
-    "`subprocess.run` or `os.system`), the same shell env workflow "
-    "applies — snapshot the binary and link it.\n\n"
-    "### Standalone environments (no function required)\n\n"
-    "Environments are **first-class artifacts** — storing a venv or "
-    "shell env *without* a corresponding function is actively "
-    "encouraged, not an anti-pattern.\n\n"
-    "If the trajectory installed packages or CLI tools that form a "
-    "coherent capability — even if no single reusable function "
-    "emerged — store the environment anyway. This makes the "
-    "dependencies discoverable and instantly available for future "
-    "runs without reinstallation.\n\n"
-    "**Python venvs as capability bundles:** If the trajectory "
-    "installed `matplotlib`, `numpy`, and `scipy`, create a venv "
-    'named `"scientific-visualization"` with those dependencies. '
-    "Future tasks that need plotting or numerical work can load "
-    "this venv immediately instead of re-running "
-    "`install_python_packages`.\n\n"
-    "**Shell envs as tool kits:** If the trajectory used `gcloud` "
-    "and `gh` for cloud/GitHub operations, snapshot those binaries "
-    'into a shell env named `"cloud-integrations"`. Future shell '
-    "scripts can reference this env to get both tools on PATH.\n\n"
-    "Give environments descriptive, domain-oriented names that "
-    "capture *what capability they provide* rather than listing "
-    'individual packages (e.g. `"data-science"` not '
-    '`"numpy-pandas-scipy"`, `"web-scraping"` not '
-    '`"requests-beautifulsoup"`).\n\n'
 )
 
 _STORAGE_TWO_STORES = (
@@ -516,21 +450,10 @@ _STORAGE_TWO_STORES = (
     "- **Manage venvs**: create (`FunctionManager_add_venv`), list "
     "(`FunctionManager_list_venvs`), update "
     "(`FunctionManager_update_venv`), or delete "
-    "(`FunctionManager_delete_venv`) virtual environments. "
-    "Required for Python functions with third-party dependencies, "
-    "but also valuable as standalone capability bundles (see "
-    '"Standalone environments" above). Link a function to a venv '
-    "via `FunctionManager_set_function_venv` or pass `venv_id` "
-    "directly to `FunctionManager_add_functions`.\n"
-    "- **Manage shell envs**: create (`FunctionManager_add_shell_env`), "
-    "list (`FunctionManager_list_shell_envs`), update "
-    "(`FunctionManager_update_shell_env`), or delete "
-    "(`FunctionManager_delete_shell_env`) shell environments. "
-    "Required for shell functions that depend on non-system CLI "
-    "tools, but also valuable as standalone tool kits. Link a "
-    "function to a shell env via "
-    "`FunctionManager_set_function_shell_env` or pass "
-    "`shell_env_id` directly to `FunctionManager_add_functions`.\n\n"
+    "(`FunctionManager_delete_venv`) virtual environments for "
+    "functions with third-party dependencies. Link a function to a "
+    "venv via `FunctionManager_set_function_venv` or pass `venv_id` "
+    "directly to `FunctionManager_add_functions`.\n\n"
     "Do NOT store trivial one-liners, test scaffolding, or functions "
     "that are too task-specific to be reusable.\n\n"
     "### Guidance Store — the *how*\n\n"
@@ -699,14 +622,12 @@ def _build_storage_tools(
         language: str = "python",
         overwrite: bool = False,
         venv_id: Optional[int] = None,
-        shell_env_id: Optional[int] = None,
     ) -> Any:
         return fm.add_functions(
             implementations=implementations,
             language=language,
             overwrite=bool(overwrite),
             venv_id=venv_id,
-            shell_env_id=shell_env_id,
         )
 
     FunctionManager_add_functions.__doc__ = BaseFunctionManager.add_functions.__doc__
@@ -860,155 +781,6 @@ def _build_storage_tools(
         """
         return fm.get_function_venv(function_id=function_id)
 
-    # ── FunctionManager shell env tools ───────────────────────────────
-
-    async def FunctionManager_add_shell_env(
-        tool_paths: list[str],
-        *,
-        name: Optional[str] = None,
-    ) -> int:
-        """Snapshot CLI tool binaries into a persistent shell environment.
-
-        Call this **after** installing CLI tools (via brew, curl, apt, etc.)
-        to save the binaries so they are available for future shell function
-        executions.  The returned ``shell_env_id`` is passed to
-        ``FunctionManager_add_functions(shell_env_id=...)`` so the function
-        runs with those tools on ``PATH``.
-
-        Parameters
-        ----------
-        tool_paths : list[str]
-            Absolute paths to the binary executables to include
-            (e.g. ``["/usr/local/bin/jq", "/usr/local/bin/yq"]``).
-        name : str | None
-            Human-readable name for the environment (e.g. ``"data-tools"``).
-
-        Returns
-        -------
-        int
-            The auto-assigned ``shell_env_id``.
-        """
-        return fm.add_shell_env(name=name, tool_paths=tool_paths)
-
-    async def FunctionManager_list_shell_envs() -> Any:
-        """List all shell environments (metadata only, no binary blobs).
-
-        Use this to check whether a suitable shell env already exists
-        before creating a new one.
-
-        Returns
-        -------
-        list[dict]
-            Each dict contains ``shell_env_id``, ``name``, ``platform``,
-            and ``tools`` (JSON list of tool metadata).
-        """
-        return fm.list_shell_envs()
-
-    async def FunctionManager_get_shell_env(
-        shell_env_id: int,
-    ) -> Any:
-        """Get a shell environment by ID (metadata only).
-
-        Parameters
-        ----------
-        shell_env_id : int
-            The shell env to retrieve.
-
-        Returns
-        -------
-        dict | None
-            Dict with metadata, or ``None`` if not found.
-        """
-        return fm.get_shell_env(shell_env_id=shell_env_id)
-
-    async def FunctionManager_update_shell_env(
-        shell_env_id: int,
-        *,
-        name: Optional[str] = None,
-        tool_paths: Optional[list[str]] = None,
-    ) -> bool:
-        """Update an existing shell environment.
-
-        Parameters
-        ----------
-        shell_env_id : int
-            The shell env to update.
-        name : str | None
-            New name (if provided).
-        tool_paths : list[str] | None
-            New tool paths to replace existing binaries (if provided).
-
-        Returns
-        -------
-        bool
-            ``True`` if updated, ``False`` if not found.
-        """
-        return fm.update_shell_env(
-            shell_env_id=shell_env_id,
-            name=name,
-            tool_paths=tool_paths,
-        )
-
-    async def FunctionManager_delete_shell_env(
-        shell_env_id: int,
-    ) -> bool:
-        """Delete a shell environment.
-
-        Functions referencing this shell env will have their
-        ``shell_env_id`` set to ``None``.
-
-        Parameters
-        ----------
-        shell_env_id : int
-            The shell env to delete.
-
-        Returns
-        -------
-        bool
-            ``True`` if deleted, ``False`` if not found.
-        """
-        return fm.delete_shell_env(shell_env_id=shell_env_id)
-
-    async def FunctionManager_set_function_shell_env(
-        function_id: int,
-        shell_env_id: Optional[int],
-    ) -> bool:
-        """Link or unlink a function to/from a shell environment.
-
-        Parameters
-        ----------
-        function_id : int
-            The function to update.
-        shell_env_id : int | None
-            The shell env to associate, or ``None`` to clear.
-
-        Returns
-        -------
-        bool
-            ``True`` if updated, ``False`` if the function was not found.
-        """
-        return fm.set_function_shell_env(
-            function_id=function_id,
-            shell_env_id=shell_env_id,
-        )
-
-    async def FunctionManager_get_function_shell_env(
-        function_id: int,
-    ) -> Any:
-        """Get the shell environment associated with a function.
-
-        Parameters
-        ----------
-        function_id : int
-            The function to query.
-
-        Returns
-        -------
-        dict | None
-            The shell env dict if the function has one, ``None`` otherwise.
-        """
-        return fm.get_function_shell_env(function_id=function_id)
-
     # ── GuidanceManager tools (bound methods, no wrappers needed) ────
 
     tools: Dict[str, Callable] = {
@@ -1024,13 +796,6 @@ def _build_storage_tools(
         "FunctionManager_delete_venv": FunctionManager_delete_venv,
         "FunctionManager_set_function_venv": FunctionManager_set_function_venv,
         "FunctionManager_get_function_venv": FunctionManager_get_function_venv,
-        "FunctionManager_add_shell_env": FunctionManager_add_shell_env,
-        "FunctionManager_list_shell_envs": FunctionManager_list_shell_envs,
-        "FunctionManager_get_shell_env": FunctionManager_get_shell_env,
-        "FunctionManager_update_shell_env": FunctionManager_update_shell_env,
-        "FunctionManager_delete_shell_env": FunctionManager_delete_shell_env,
-        "FunctionManager_set_function_shell_env": FunctionManager_set_function_shell_env,
-        "FunctionManager_get_function_shell_env": FunctionManager_get_function_shell_env,
         **methods_to_tool_dict(
             gm.search,
             gm.filter,
@@ -2080,13 +1845,13 @@ class CodeActActor(BaseCodeActActor):
             timeout=timeout,
         )
 
-        # Session name registry: name -> (language, venv_id, shell_env_id, session_id)
+        # Session name registry: name -> (language, venv_id, session_id)
         self._session_names: Dict[str, SessionKey] = {}
-        # Reverse map: SessionKey -> set(names)
+        # Reverse map: (language, venv_id, session_id) -> set(names)
         self._session_names_rev: Dict[SessionKey, set[str]] = {}
         # Actor-level session cap (global across languages for this actor instance).
         self._max_sessions_total: int = 20
-        self._next_session_id: dict[tuple[str, Optional[int], Optional[int]], int] = {}
+        self._next_session_id: dict[tuple[str, Optional[int]], int] = {}
 
         self.can_compose: bool = bool(can_compose)
         self.can_store: bool = bool(can_store)
@@ -2118,10 +1883,9 @@ class CodeActActor(BaseCodeActActor):
         name: str,
         language: str,
         venv_id: int | None,
-        shell_env_id: int | None = None,
         session_id: int,
     ) -> None:
-        key: SessionKey = (language, venv_id, shell_env_id, int(session_id))
+        key: SessionKey = (language, venv_id, int(session_id))
         existing = self._session_names.get(name)
         if existing is not None and existing != key:
             raise ValueError(
@@ -2138,10 +1902,9 @@ class CodeActActor(BaseCodeActActor):
         *,
         language: str,
         venv_id: int | None,
-        shell_env_id: int | None = None,
         session_id: int,
     ) -> str | None:
-        key: SessionKey = (language, venv_id, shell_env_id, int(session_id))
+        key: SessionKey = (language, venv_id, int(session_id))
         names = self._session_names_rev.get(key)
         if not names:
             return None
@@ -2251,7 +2014,6 @@ class CodeActActor(BaseCodeActActor):
         session_id: int | None,
         session_name: str | None,
         venv_id: int | None,
-        shell_env_id: int | None = None,
     ) -> _ResolvedSession:
         """Resolve/allocate a session and validate execution params.
 
@@ -2271,12 +2033,11 @@ class CodeActActor(BaseCodeActActor):
             if session_name:
                 resolved = self._resolve_session_name(session_name)
                 if resolved is not None:
-                    language, venv_id, shell_env_id, session_id = resolved
+                    language, venv_id, session_id = resolved
                 elif session_id is None:
                     key = (
                         str(language),
                         int(venv_id) if venv_id is not None else None,
-                        int(shell_env_id) if shell_env_id is not None else None,
                     )
                     next_id = self._next_session_id.get(key, 1)
                     session_id = next_id
@@ -2285,7 +2046,6 @@ class CodeActActor(BaseCodeActActor):
                         name=session_name,
                         language=str(language),
                         venv_id=venv_id,
-                        shell_env_id=shell_env_id,
                         session_id=int(session_id),
                     )
             elif session_id is None:
@@ -2298,7 +2058,6 @@ class CodeActActor(BaseCodeActActor):
                     name=session_name,
                     language=str(language),
                     venv_id=venv_id,
-                    shell_env_id=shell_env_id,
                     session_id=int(session_id),
                 )
 
@@ -2314,7 +2073,6 @@ class CodeActActor(BaseCodeActActor):
         return _ResolvedSession(
             language=str(language),
             venv_id=venv_id,
-            shell_env_id=shell_env_id,
             session_id=session_id,
             error=err,
         )
@@ -2366,7 +2124,6 @@ class CodeActActor(BaseCodeActActor):
             session_id: int | None = None,
             session_name: str | None = None,
             venv_id: int | None = None,
-            shell_env_id: int | None = None,
             _notification_up_q: asyncio.Queue[dict] | None = None,
             _parent_chat_context: list[dict] | None = None,
         ) -> Any:
@@ -2389,15 +2146,6 @@ class CodeActActor(BaseCodeActActor):
                 always available.
               - "stateful": persistent session; state accumulates across calls
               - "read_only": reads from an existing session but does not persist changes
-            - **venv_id**: For Python, run in an isolated virtual environment with
-              pre-installed packages (runs in a separate subprocess — variables from
-              the default session are not accessible). Discover available venvs via
-              ``FunctionManager_list_venvs``.
-            - **shell_env_id**: For shell languages, load a stored shell environment
-              so its CLI tool binaries are available on PATH. Stored shell
-              environments are created by the skill-storage system (via
-              ``store_skills``). Not needed if the tools are already installed
-              system-wide or were installed earlier in this task.
             - **session_id/session_name**:
               - only meaningful for stateful/read_only
               - for stateful: if omitted, defaults to **session_id=0** (the default session)
@@ -2451,7 +2199,6 @@ class CodeActActor(BaseCodeActActor):
                     "session_id": session_id,
                     "session_name": session_name,
                     "venv_id": venv_id,
-                    "shell_env_id": shell_env_id,
                     "session_created": False,
                     "duration_ms": 0,
                 }
@@ -2506,12 +2253,10 @@ class CodeActActor(BaseCodeActActor):
                     session_id=session_id,
                     session_name=session_name,
                     venv_id=venv_id,
-                    shell_env_id=shell_env_id,
                 )
-                language, venv_id, shell_env_id, session_id = (
+                language, venv_id, session_id = (
                     _rs.language,
                     _rs.venv_id,
-                    _rs.shell_env_id,
                     _rs.session_id,
                 )
                 if _rs.error is not None:
@@ -2547,7 +2292,6 @@ class CodeActActor(BaseCodeActActor):
                             state_mode=state_mode,  # type: ignore[arg-type]
                             session_id=session_id,
                             venv_id=venv_id,
-                            shell_env_id=shell_env_id,
                             primitives=primitives,
                             computer_primitives=computer_primitives,
                         )
@@ -2969,7 +2713,6 @@ class CodeActActor(BaseCodeActActor):
                 session_id: int | None = None,
                 session_name: str | None = None,
                 venv_id: int | None = None,
-                shell_env_id: int | None = None,
                 _notification_up_q: asyncio.Queue[dict] | None = None,
                 _parent_chat_context: list[dict] | None = None,
             ) -> Any:
@@ -3134,12 +2877,10 @@ class CodeActActor(BaseCodeActActor):
                         session_id=session_id,
                         session_name=session_name,
                         venv_id=venv_id,
-                        shell_env_id=shell_env_id,
                     )
-                    language, venv_id, shell_env_id, session_id = (
+                    language, venv_id, session_id = (
                         _rs.language,
                         _rs.venv_id,
-                        _rs.shell_env_id,
                         _rs.session_id,
                     )
                     if _rs.error is not None:
@@ -3178,7 +2919,6 @@ class CodeActActor(BaseCodeActActor):
                                 state_mode=state_mode,  # type: ignore[arg-type]
                                 session_id=session_id,
                                 venv_id=venv_id,
-                                shell_env_id=shell_env_id,
                                 primitives=primitives,
                                 computer_primitives=computer_primitives,
                             )
@@ -3355,21 +3095,10 @@ class CodeActActor(BaseCodeActActor):
             try:
                 for s in self._shell_pool.get_all_sessions():
                     s = dict(s)
-                    lang = str(s.get("language"))
-                    sid = int(s["session_id"])
-                    # Look up shell_env_id from the name registry by trying
-                    # all registered keys for this (language, session_id).
-                    matched_env_id: int | None = None
-                    for key in self._session_names_rev:
-                        if key[0] == lang and key[3] == sid and key[2] is not None:
-                            matched_env_id = key[2]
-                            break
-                    s["shell_env_id"] = matched_env_id
                     s["session_name"] = self._get_session_name(
-                        language=lang,
+                        language=str(s.get("language")),
                         venv_id=None,
-                        shell_env_id=matched_env_id,
-                        session_id=sid,
+                        session_id=int(s["session_id"]),
                     )
                     sessions.append(s)
             except Exception:
@@ -3455,7 +3184,7 @@ class CodeActActor(BaseCodeActActor):
                         "error_type": "validation",
                     }
             elif session_id is not None and language is not None:
-                resolved = (str(language), venv_id, None, int(session_id))
+                resolved = (str(language), venv_id, int(session_id))
 
             # Default: current sandbox.
             if resolved is None:
@@ -3505,7 +3234,7 @@ class CodeActActor(BaseCodeActActor):
                     "state": state_obj,
                 }
 
-            lang, resolved_venv_id, _resolved_shell_env_id, sid = resolved
+            lang, resolved_venv_id, sid = resolved
 
             # Python venv-backed
             if lang == "python" and resolved_venv_id is not None:
@@ -3636,7 +3365,7 @@ class CodeActActor(BaseCodeActActor):
                         },
                     }
             elif session_id is not None and language is not None:
-                resolved = (str(language), venv_id, None, int(session_id))
+                resolved = (str(language), venv_id, int(session_id))
             else:
                 return {
                     "closed": False,
@@ -3644,7 +3373,7 @@ class CodeActActor(BaseCodeActActor):
                     "error": "Must provide session_name or (language + session_id).",
                 }
 
-            lang, resolved_venv_id, resolved_shell_env_id, sid = resolved
+            lang, resolved_venv_id, sid = resolved
             closed = False
 
             if lang == "python" and resolved_venv_id is not None:
@@ -3662,7 +3391,7 @@ class CodeActActor(BaseCodeActActor):
 
             # Unregister all aliases for this session.
             self._unregister_all_names_for_session(
-                key=(str(lang), resolved_venv_id, resolved_shell_env_id, int(sid)),
+                key=(str(lang), resolved_venv_id, int(sid)),
             )
 
             return {
@@ -3675,7 +3404,6 @@ class CodeActActor(BaseCodeActActor):
                     or self._get_session_name(
                         language=str(lang),
                         venv_id=resolved_venv_id,
-                        shell_env_id=resolved_shell_env_id,
                         session_id=int(sid),
                     ),
                 },
