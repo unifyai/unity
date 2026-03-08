@@ -3802,10 +3802,7 @@ class CodeActActor(BaseCodeActActor):
             preprocess_msgs=self._preprocess_msgs,
             prompt_caching=self._prompt_caching,
             extra_ask_tools=self._get_extra_ask_tools(),
-            pre_compression_threshold=0.6 if effective_can_store else None,
-            pre_compression_tool_names=(
-                ["store_skills"] if effective_can_store else None
-            ),
+            extra_compression_tools=(["store_skills"] if effective_can_store else None),
         )
         logger.debug(
             f"⏱️ [CodeActActor.act +{_act_ms()}] loop started, returning handle",

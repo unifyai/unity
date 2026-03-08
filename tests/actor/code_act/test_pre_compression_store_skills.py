@@ -1,17 +1,16 @@
-"""Pre-compression skill storage: store_skills before compress_context.
+"""Extra compression tools: store_skills alongside compress_context at 70%.
 
-When token usage enters the pre-compression window (60-70%), the async tool
-loop restricts tools to only ``store_skills`` and ``compress_context``.  The
-prompt guides the LLM to call ``store_skills`` first **if** the trajectory
-contains unstored skills worth preserving, then ``compress_context``.  The
-LLM may skip ``store_skills`` if it judges there is nothing new to store.
+When the context window hits the 70% threshold and ``extra_compression_tools``
+is configured, the loop exposes those tools alongside ``compress_context``
+(with ``tool_choice="required"``).  The prompt guides the LLM to call
+``store_skills`` first **if** the trajectory contains unstored skills worth
+preserving, then ``compress_context``.  The LLM may skip ``store_skills``
+if it judges there is nothing new to store.
 
-This module contains:
-
-1. A **symbolic** test verifying that the pre-compression tool restriction
-   infrastructure exposes exactly the right tools.
-2. An **eval** test with a rich trajectory verifying that the LLM calls
-   ``store_skills`` before ``compress_context`` when the work warrants it.
+This test monkeypatches ``context_over_threshold`` to simulate reaching the
+70% threshold after the LLM has executed non-trivial code, and verifies
+that the infrastructure works and that ordering is correct when both tools
+are called.
 """
 
 import asyncio
@@ -51,15 +50,13 @@ class _StubGuidanceManager:
 
 
 def _make_delayed_threshold(trigger_after: int = 2):
-    """Build a ``context_over_threshold`` replacement that triggers the 60%
-    pre-compression window only after the LLM has completed *trigger_after*
-    turns of real work (giving it enough trajectory to store)."""
+    """Build a ``context_over_threshold`` replacement that triggers the 70%
+    threshold only after *trigger_after* checks (giving the LLM enough
+    turns to build a meaningful trajectory)."""
     _check_count = [0]
 
     def _fake(n_tokens: int, threshold: float, max_input_tokens: int) -> bool:
         if threshold >= 0.7:
-            return False
-        if threshold >= 0.55:
             _check_count[0] += 1
             return _check_count[0] > trigger_after
         return False
@@ -67,20 +64,14 @@ def _make_delayed_threshold(trigger_after: int = 2):
     return _fake
 
 
-# ---------------------------------------------------------------------------
-# 1. Symbolic: pre-compression restricts to store_skills + compress_context
-# ---------------------------------------------------------------------------
-
-
 @pytest.mark.asyncio
 @pytest.mark.timeout(180)
-async def test_pre_compression_restricts_tools_and_compress_is_called():
-    """When the pre-compression threshold is reached, the loop restricts
-    visible tools to ``store_skills`` + ``compress_context``, and the LLM
-    eventually calls ``compress_context`` (regardless of whether it decides
-    to call ``store_skills`` first).
+async def test_compress_threshold_exposes_extra_tools_and_compress_is_called():
+    """When the 70% threshold fires with ``extra_compression_tools``, the
+    loop exposes ``store_skills`` + ``compress_context``, and the LLM
+    eventually calls ``compress_context``.
 
-    If the LLM does call both, ``store_skills`` must precede
+    If the LLM also calls ``store_skills``, it must precede
     ``compress_context``."""
 
     fm = FunctionManager(include_primitives=False)
