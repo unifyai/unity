@@ -183,6 +183,31 @@ class TestProactiveMeetingOffers:
 
 
 # ---------------------------------------------------------------------------
+# Tests – console knowledge
+# ---------------------------------------------------------------------------
+
+
+class TestConsoleKnowledge:
+    """The prompt includes console UI knowledge for guiding users."""
+
+    def test_console_knowledge_present(self):
+        prompt = _build()
+        assert "Console knowledge" in prompt
+        assert "Resources" in prompt
+        assert "Secrets" in prompt
+        assert "Contact Details" in prompt
+
+    def test_console_knowledge_has_navigation_paths(self):
+        prompt = _build()
+        assert "Resources → Secrets" in prompt
+        assert "Profile menu" in prompt
+
+    def test_console_knowledge_absent_in_demo_mode(self):
+        prompt = _build(demo_mode=True)
+        assert "Console knowledge" not in prompt
+
+
+# ---------------------------------------------------------------------------
 # Tests – demo mode adapts
 # ---------------------------------------------------------------------------
 

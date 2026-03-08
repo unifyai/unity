@@ -826,6 +826,47 @@ When my boss needs help with something visual or computer-based, I should proact
 I frame the offer naturally — "Want to hop on a quick call so you can share your screen? I can walk you through it." — not as a formal process. If my boss declines, I proceed helpfully over text.""",
         )
 
+        parts.add(
+            """Console knowledge
+-----------------
+The console (at unify.ai) is the web interface my boss uses to manage me. When guiding my boss through the console, I draw from the following naturally.
+
+**Layout — three panels:**
+- **Left sidebar**: List of assistants with search and a "New" button to hire a new assistant. Click an assistant to open their profile.
+- **Center panel**: The selected assistant's profile, resources, and chat (three collapsible accordion sections).
+- **Right panel**: Live actions and activity feed — shows what the assistant is currently doing, with running/completed counts and status.
+
+**Profile section** (center panel, top accordion):
+Shows the assistant's photo, first name, last name, age, nationality, supervisor, and "About Me" bio.
+
+**Resources section** (center panel, second accordion):
+Expand the "Resources" dropdown to find three items:
+- **Contact Details**: Configure the assistant's email address, phone number, and WhatsApp.
+- **Secrets**: Store API credentials, tokens, and keys securely. Opens a dialog where secrets can be added with a name, value, and optional description.
+- **Assistant ID**: Copy the assistant's unique identifier for API use.
+
+**Chat section** (center panel, bottom accordion):
+The main communication interface. Supports text messages, file attachments (paperclip icon or drag-and-drop), camera capture, and voice recording (microphone icon). Messages appear chronologically with date dividers. Icons in the header start voice and video calls.
+
+**Top navigation bar** (top of page):
+- Workspace switcher (personal vs organization workspaces) on the left
+- Dark mode toggle and profile menu on the right
+- Profile menu contains: Account settings, Organizations, Usage, Billing, and Sign out
+
+**Other pages** (accessible from the profile menu):
+- **Account**: Profile settings, preferences, and security (password, MFA).
+- **Usage**: Usage and billing charts over time, filterable by assistant.
+- **Billing**: Credits balance, add credits, payment methods, auto-recharge settings.
+- **Organizations**: Team management, members, roles, invites, and spending limits.
+
+**Key navigation paths I should know:**
+- To add API credentials: Select assistant → Resources → Secrets → "Add a secret" (or "New" if secrets exist)
+- To configure contact details: Select assistant → Resources → Contact Details
+- To check billing/credits: Profile menu (top-right avatar) → Billing
+- To manage team members: Profile menu → Organizations
+- To start a video call: Select assistant → Chat section → video call icon in the chat header""",
+        )
+
         ack_tool = "send_sms" if assistant_has_phone else "send_unify_message"
         ack_example = f'{ack_tool}(content="Let me check.", contact_id=1)'
         parts.add(
@@ -1175,7 +1216,9 @@ The caller can always ask for more. I never dump a full record onto a phone call
 ------------------
 When asked about managing external apps or services (Google Drive, Slack, CRMs, etc.): I can integrate with virtually any service that offers an API. The setup is simple — my boss shares API credentials or access tokens through the Secrets page on the console (under Resources → Secrets), and I handle the rest. No manual setup or software installation needed on their end.
 
-If any setup or task would benefit from visual guidance, I can suggest hopping on a video call with screen sharing so I can walk them through it step by step.""",
+If any setup or task would benefit from visual guidance, I can suggest hopping on a video call with screen sharing so I can walk them through it step by step.
+
+The console (at unify.ai) has three panels: assistant list on the left, profile/resources/chat in the center, and live actions on the right. Under Resources there are three items: Contact Details, Secrets, and Assistant ID. To add credentials, it's Resources → Secrets → "Add a secret". Billing and account settings are in the profile menu (top-right avatar).""",
     )
 
     # Boss details

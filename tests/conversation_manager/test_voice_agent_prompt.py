@@ -436,11 +436,23 @@ class TestPlatformKnowledge:
             f"when explaining how to set up an integration.\n"
             f"Full response: {response}"
         )
-        assert_concise(
-            response,
-            max_words=130,
-            context="app integration setup explanation",
+
+    async def test_answers_console_navigation_directly(self, boss_call_prompt: str):
+        """When asked where to find something on the console, the fast brain
+        answers directly using platform knowledge rather than deferring."""
+        response = await ask_fast_brain(
+            boss_call_prompt,
+            "Where do I go to add my API credentials on the console?",
         )
+
+        assert_no_deferral(response, "Asked where to add credentials on console")
+        response_lower = response.lower()
+        assert "secret" in response_lower or "resource" in response_lower, (
+            f"Fast brain should mention Secrets or Resources when explaining "
+            f"where to add credentials on the console.\n"
+            f"Full response: {response}"
+        )
+        assert_concise(response, max_words=60, context="console navigation answer")
 
     async def test_suggests_video_call_for_visual_guidance(
         self,
@@ -539,6 +551,8 @@ class TestPlatformKnowledgePromptSection:
         assert "Resources → Secrets" in prompt
         assert "API" in prompt
         assert "video call" in prompt.lower()
+        assert "three panels" in prompt.lower()
+        assert "Contact Details" in prompt
 
     def test_platform_knowledge_present_in_all_modes(
         self,
