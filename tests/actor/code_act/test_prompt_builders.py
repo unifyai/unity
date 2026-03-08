@@ -129,6 +129,34 @@ def test_incremental_execution_present_and_execution_rules_not_duplicated():
 
 
 @pytest.mark.timeout(30)
+def test_python_first_principle_present():
+    """The Python-first principle is included in the execution rules."""
+    actor = CodeActActor()
+    prompt = build_code_act_prompt(
+        environments=_real_envs_mixed(),
+        tools=dict(actor.get_tools("act")),
+    )
+
+    assert "Python-first principle" in prompt
+    assert "install_python_packages" in prompt
+    assert "install_shell_packages" in prompt
+
+
+@pytest.mark.timeout(30)
+def test_python_first_principle_absent_without_execute_code():
+    """The principle is absent when execute_code is not available."""
+    actor = CodeActActor()
+    all_tools = dict(actor.get_tools("act"))
+    tools = {k: v for k, v in all_tools.items() if k != "execute_code"}
+    prompt = build_code_act_prompt(
+        environments={},
+        tools=tools,
+    )
+
+    assert "Python-first principle" not in prompt
+
+
+@pytest.mark.timeout(30)
 def test_custom_environment_prompt_context_included():
     """Custom environments (not computer_primitives/primitives) should have their
     prompt context included in the generated prompt."""
