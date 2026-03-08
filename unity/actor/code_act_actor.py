@@ -2390,7 +2390,8 @@ class CodeActActor(BaseCodeActActor):
               - "stateful": persistent session; state accumulates across calls
               - "read_only": reads from an existing session but does not persist changes
             - **venv_id**: For Python, run in an isolated virtual environment with
-              pre-installed packages. Discover available venvs via
+              pre-installed packages (runs in a separate subprocess — variables from
+              the default session are not accessible). Discover available venvs via
               ``FunctionManager_list_venvs``.
             - **shell_env_id**: For shell languages, load a stored shell environment
               so its CLI tool binaries are available on PATH. Discover available
