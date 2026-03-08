@@ -43,6 +43,7 @@ from .dependency_analysis import (
 )
 from .types.function import Function
 from .types.meta import FunctionsMeta
+from .types.shell_env import ShellEnv, ShellEnvBinary
 from .types.venv import VirtualEnv
 from .base import BaseFunctionManager
 from ..common.model_to_fields import model_to_fields
@@ -1533,6 +1534,28 @@ class FunctionManager(BaseFunctionManager):
                 auto_counting={"venv_id": None},
             ),
             TableContext(
+                name="Functions/ShellEnvs",
+                description="Shell environment configurations (tool metadata).",
+                fields=model_to_fields(ShellEnv),
+                unique_keys={"shell_env_id": "int"},
+                auto_counting={"shell_env_id": None},
+            ),
+            TableContext(
+                name="Functions/ShellEnvBinaries",
+                description="Binary blobs for shell environment tools.",
+                fields=model_to_fields(ShellEnvBinary),
+                unique_keys={"binary_id": "int"},
+                auto_counting={"binary_id": None},
+                foreign_keys=[
+                    {
+                        "name": "shell_env_id",
+                        "references": "Functions/ShellEnvs.shell_env_id",
+                        "on_delete": "CASCADE",
+                        "on_update": "CASCADE",
+                    },
+                ],
+            ),
+            TableContext(
                 name="Functions/Compositional",
                 description="User-defined functions with auto-incrementing IDs.",
                 fields=model_to_fields(Function),
@@ -1548,6 +1571,12 @@ class FunctionManager(BaseFunctionManager):
                     {
                         "name": "venv_id",
                         "references": "Functions/VirtualEnvs.venv_id",
+                        "on_delete": "SET NULL",
+                        "on_update": "CASCADE",
+                    },
+                    {
+                        "name": "shell_env_id",
+                        "references": "Functions/ShellEnvs.shell_env_id",
                         "on_delete": "SET NULL",
                         "on_update": "CASCADE",
                     },
@@ -1606,6 +1635,14 @@ class FunctionManager(BaseFunctionManager):
         self._next_id: Optional[int] = None
 
         self._venvs_ctx = ContextRegistry.get_context(self, "Functions/VirtualEnvs")
+        self._shell_envs_ctx = ContextRegistry.get_context(
+            self,
+            "Functions/ShellEnvs",
+        )
+        self._shell_env_binaries_ctx = ContextRegistry.get_context(
+            self,
+            "Functions/ShellEnvBinaries",
+        )
         self._compositional_ctx = ContextRegistry.get_context(
             self,
             "Functions/Compositional",
@@ -1905,6 +1942,8 @@ class FunctionManager(BaseFunctionManager):
         unify.delete_context(self._compositional_ctx)
         unify.delete_context(self._primitives_ctx)
         unify.delete_context(self._venvs_ctx)
+        unify.delete_context(self._shell_env_binaries_ctx)
+        unify.delete_context(self._shell_envs_ctx)
         unify.delete_context(self._meta_ctx)
 
         # Reset any manager-local counters or caches
@@ -1920,6 +1959,8 @@ class FunctionManager(BaseFunctionManager):
 
         # Force re-provisioning
         ContextRegistry.refresh(self, "Functions/VirtualEnvs")
+        ContextRegistry.refresh(self, "Functions/ShellEnvs")
+        ContextRegistry.refresh(self, "Functions/ShellEnvBinaries")
         ContextRegistry.refresh(self, "Functions/Compositional")
         ContextRegistry.refresh(self, "Functions/Primitives")
         ContextRegistry.refresh(self, "Functions/Meta")
@@ -2654,6 +2695,7 @@ class FunctionManager(BaseFunctionManager):
         overwrite: bool = False,
         raise_on_error: bool = True,
         venv_id: Optional[int] = None,
+        shell_env_id: Optional[int] = None,
     ) -> Dict[str, str]:
         """
         Add or update functions in batch.
@@ -2812,6 +2854,9 @@ class FunctionManager(BaseFunctionManager):
 
                 if venv_id is not None:
                     entry_data["venv_id"] = venv_id
+
+                if shell_env_id is not None:
+                    entry_data["shell_env_id"] = shell_env_id
 
                 if name in existing_to_update:
                     # Update existing function
@@ -3574,6 +3619,7 @@ class FunctionManager(BaseFunctionManager):
                 "guidance_ids": ent.get("guidance_ids", []),
                 "verify": ent.get("verify", True),
                 "venv_id": ent.get("venv_id"),
+                "shell_env_id": ent.get("shell_env_id"),
                 "third_party_imports": ent.get("third_party_imports", []),
                 "is_primitive": ent.get("is_primitive", False),
             }
@@ -4353,6 +4399,517 @@ class FunctionManager(BaseFunctionManager):
         if venv_id is None:
             return None
         return self.get_venv(venv_id=venv_id)
+
+    # ------------------------------------------------------------------ #
+    #  Shell Environment CRUD                                            #
+    # ------------------------------------------------------------------ #
+
+    def _safe_get_shell_env_logs(
+        self,
+        *,
+        context: Optional[str] = None,
+        filter: Optional[str] = None,
+        limit: Optional[int] = None,
+        exclude_fields: Optional[List[str]] = None,
+        from_fields: Optional[List[str]] = None,
+    ) -> List[unify.Log]:
+        """Best-effort shell env reads; treat missing contexts as empty."""
+        import time as _time
+
+        ctx = context or self._shell_envs_ctx
+        last_exc: Exception | None = None
+        for delay in (0.0, 0.05, 0.15):
+            if delay:
+                _time.sleep(delay)
+            try:
+                return unify.get_logs(
+                    context=ctx,
+                    filter=filter,
+                    limit=limit,
+                    exclude_fields=exclude_fields,
+                    from_fields=from_fields,
+                )
+            except _UnifyRequestError as e:
+                status = getattr(getattr(e, "response", None), "status_code", None)
+                if status == 404:
+                    last_exc = e
+                    continue
+                raise
+            except Exception as e:
+                last_exc = e
+                break
+
+        if isinstance(last_exc, _UnifyRequestError):
+            status = getattr(getattr(last_exc, "response", None), "status_code", None)
+            if status == 404:
+                return []
+        if last_exc is not None:
+            raise last_exc
+        return []
+
+    def add_shell_env(
+        self,
+        *,
+        name: Optional[str] = None,
+        tool_paths: List[str],
+    ) -> int:
+        """
+        Create a new shell environment by snapshotting binaries from disk.
+
+        Reads each binary from the provided filesystem paths, base64-encodes it,
+        and stores both the metadata (in Functions/ShellEnvs) and the binary blobs
+        (in Functions/ShellEnvBinaries). Also copies binaries to the local managed
+        directory for immediate use.
+
+        Args:
+            name: Human-readable name for the shell environment.
+            tool_paths: List of absolute paths to binary executables to include.
+
+        Returns:
+            The auto-assigned shell_env_id.
+        """
+        import base64 as _b64
+        import hashlib as _hashlib
+        import platform as _platform
+
+        # Determine platform
+        machine = _platform.machine()
+        system = _platform.system().lower()
+        plat = f"{system}-{machine}"
+
+        # Read and hash each binary
+        tool_meta_list: List[Dict[str, Any]] = []
+        binary_payloads: List[Dict[str, Any]] = []
+        for path_str in tool_paths:
+            p = Path(path_str)
+            if not p.exists():
+                raise FileNotFoundError(f"Binary not found: {path_str}")
+            if not p.is_file():
+                raise ValueError(f"Not a file: {path_str}")
+            raw = p.read_bytes()
+            sha = _hashlib.sha256(raw).hexdigest()
+            tool_meta_list.append(
+                {
+                    "name": p.name,
+                    "size": len(raw),
+                    "sha256": sha,
+                },
+            )
+            binary_payloads.append(
+                {
+                    "tool_name": p.name,
+                    "data": _b64.b64encode(raw).decode("utf-8"),
+                },
+            )
+
+        tools_json = json.dumps(tool_meta_list)
+
+        # Create the ShellEnv metadata row
+        result = unity_create_logs(
+            context=self._shell_envs_ctx,
+            entries=[
+                {
+                    "name": name,
+                    "platform": plat,
+                    "tools": tools_json,
+                },
+            ],
+            add_to_all_context=self.include_in_multi_assistant_table,
+        )
+
+        # Extract the auto-assigned shell_env_id (mirrors add_venv pattern)
+        shell_env_id: Optional[int] = None
+        if isinstance(result, list) and len(result) > 0:
+            log = result[0]
+            if hasattr(log, "entries"):
+                shell_env_id = log.entries.get("shell_env_id")
+                if shell_env_id is not None:
+                    shell_env_id = int(shell_env_id)
+        elif isinstance(result, dict):
+            log_ids = result.get("log_event_ids", [])
+            if log_ids:
+                logs = self._safe_get_shell_env_logs(
+                    filter=f"id == {log_ids[0]}",
+                    limit=1,
+                )
+                if logs and hasattr(logs[0], "entries"):
+                    shell_env_id = logs[0].entries.get("shell_env_id")
+                    if shell_env_id is not None:
+                        shell_env_id = int(shell_env_id)
+
+        # Fallback: query all entries and pick the highest shell_env_id
+        if shell_env_id is None:
+            import time as _time
+
+            for _delay in (0.1, 0.3, 0.5):
+                _time.sleep(_delay)
+                all_envs = self._safe_get_shell_env_logs(
+                    exclude_fields=list_private_fields(self._shell_envs_ctx),
+                )
+                for lg in all_envs:
+                    cand = lg.entries.get("shell_env_id")
+                    if cand is not None:
+                        cand_int = int(cand)
+                        if shell_env_id is None or cand_int > shell_env_id:
+                            shell_env_id = cand_int
+                if shell_env_id is not None:
+                    break
+
+        if shell_env_id is None:
+            raise RuntimeError("Failed to retrieve shell_env_id after creation")
+
+        # Store each binary blob
+        for payload in binary_payloads:
+            payload["shell_env_id"] = shell_env_id
+            unity_create_logs(
+                context=self._shell_env_binaries_ctx,
+                entries=[payload],
+                add_to_all_context=self.include_in_multi_assistant_table,
+            )
+
+        # Eagerly populate the local managed directory
+        bin_dir = self._get_shell_env_bin_dir(shell_env_id)
+        bin_dir.mkdir(parents=True, exist_ok=True)
+        for i, path_str in enumerate(tool_paths):
+            dest = bin_dir / Path(path_str).name
+            dest.write_bytes(Path(path_str).read_bytes())
+            dest.chmod(0o755)
+
+        # Write local manifest for cache validation
+        manifest = {m["name"]: m["sha256"] for m in tool_meta_list}
+        (self._get_shell_env_dir(shell_env_id) / ".manifest.json").write_text(
+            json.dumps(manifest),
+        )
+
+        return shell_env_id
+
+    def get_shell_env(self, *, shell_env_id: int) -> Optional[Dict[str, Any]]:
+        """
+        Get a shell environment by its ID (metadata only, no binary blobs).
+
+        Args:
+            shell_env_id: The unique identifier of the shell environment.
+
+        Returns:
+            Dict with shell_env_id, name, platform, tools, or None if not found.
+        """
+        logs = self._safe_get_shell_env_logs(
+            filter=f"shell_env_id == {shell_env_id}",
+            limit=1,
+            exclude_fields=list_private_fields(self._shell_envs_ctx),
+        )
+        if not logs:
+            return None
+        return logs[0].entries
+
+    def list_shell_envs(self) -> List[Dict[str, Any]]:
+        """
+        List all shell environments (metadata only).
+
+        Returns:
+            List of dicts, each with shell_env_id, name, platform, tools.
+        """
+        logs = self._safe_get_shell_env_logs(
+            exclude_fields=list_private_fields(self._shell_envs_ctx),
+        )
+        return [lg.entries for lg in logs]
+
+    def delete_shell_env(self, *, shell_env_id: int) -> bool:
+        """
+        Delete a shell environment by its ID.
+
+        Binary blobs cascade-delete via the FK. Functions referencing this env
+        will have their shell_env_id set to None via the FK cascade.
+
+        Args:
+            shell_env_id: The unique identifier of the shell environment.
+
+        Returns:
+            True if deleted, False if not found.
+        """
+        logs = self._safe_get_shell_env_logs(
+            filter=f"shell_env_id == {shell_env_id}",
+            limit=1,
+        )
+        if not logs:
+            return False
+        unify.delete_logs(
+            context=self._shell_envs_ctx,
+            logs=[logs[0].id],
+        )
+        return True
+
+    def update_shell_env(
+        self,
+        *,
+        shell_env_id: int,
+        name: Optional[str] = None,
+        tool_paths: Optional[List[str]] = None,
+    ) -> bool:
+        """
+        Update an existing shell environment.
+
+        Args:
+            shell_env_id: The shell env to update.
+            name: New name (if provided).
+            tool_paths: New tool paths to replace existing binaries (if provided).
+
+        Returns:
+            True if updated, False if not found.
+        """
+        import base64 as _b64
+        import hashlib as _hashlib
+
+        logs = self._safe_get_shell_env_logs(
+            filter=f"shell_env_id == {shell_env_id}",
+            limit=1,
+        )
+        if not logs:
+            return False
+
+        updates: Dict[str, Any] = {}
+        if name is not None:
+            updates["name"] = name
+
+        if tool_paths is not None:
+            # Delete existing binaries
+            existing_bins = self._safe_get_shell_env_logs(
+                context=self._shell_env_binaries_ctx,
+                filter=f"shell_env_id == {shell_env_id}",
+            )
+            if existing_bins:
+                unify.delete_logs(
+                    context=self._shell_env_binaries_ctx,
+                    logs=[lg.id for lg in existing_bins],
+                )
+
+            # Read and store new binaries
+            tool_meta_list: List[Dict[str, Any]] = []
+            for path_str in tool_paths:
+                p = Path(path_str)
+                if not p.exists():
+                    raise FileNotFoundError(f"Binary not found: {path_str}")
+                raw = p.read_bytes()
+                sha = _hashlib.sha256(raw).hexdigest()
+                tool_meta_list.append(
+                    {
+                        "name": p.name,
+                        "size": len(raw),
+                        "sha256": sha,
+                    },
+                )
+                unity_create_logs(
+                    context=self._shell_env_binaries_ctx,
+                    entries=[
+                        {
+                            "shell_env_id": shell_env_id,
+                            "tool_name": p.name,
+                            "data": _b64.b64encode(raw).decode("utf-8"),
+                        },
+                    ],
+                    add_to_all_context=self.include_in_multi_assistant_table,
+                )
+
+            updates["tools"] = json.dumps(tool_meta_list)
+
+            # Refresh local managed directory
+            bin_dir = self._get_shell_env_bin_dir(shell_env_id)
+            if bin_dir.exists():
+                import shutil as _shutil
+
+                _shutil.rmtree(bin_dir)
+            bin_dir.mkdir(parents=True, exist_ok=True)
+            for path_str in tool_paths:
+                dest = bin_dir / Path(path_str).name
+                dest.write_bytes(Path(path_str).read_bytes())
+                dest.chmod(0o755)
+            manifest = {m["name"]: m["sha256"] for m in tool_meta_list}
+            (self._get_shell_env_dir(shell_env_id) / ".manifest.json").write_text(
+                json.dumps(manifest),
+            )
+
+        if updates:
+            unify.update_logs(
+                context=self._shell_envs_ctx,
+                logs=[logs[0].id],
+                entries=updates,
+                overwrite=True,
+            )
+        return True
+
+    def set_function_shell_env(
+        self,
+        *,
+        function_id: int,
+        shell_env_id: Optional[int],
+    ) -> bool:
+        """
+        Set the shell environment for a function.
+
+        Args:
+            function_id: The function to update.
+            shell_env_id: The shell_env_id to associate, or None to clear.
+
+        Returns:
+            True if updated, False if function not found.
+        """
+        log = self._get_log_by_function_id(
+            function_id=function_id,
+            raise_if_missing=False,
+        )
+        if log is None:
+            return False
+        unify.update_logs(
+            context=self._compositional_ctx,
+            logs=[log.id],
+            entries={"shell_env_id": shell_env_id},
+            overwrite=True,
+        )
+        return True
+
+    def get_function_shell_env(self, *, function_id: int) -> Optional[Dict[str, Any]]:
+        """
+        Get the shell environment associated with a function.
+
+        Args:
+            function_id: The function to query.
+
+        Returns:
+            The shell env dict if the function has one, None if not set.
+        """
+        log = self._get_log_by_function_id(
+            function_id=function_id,
+            raise_if_missing=True,
+        )
+        shell_env_id = log.entries.get("shell_env_id")
+        if shell_env_id is None:
+            return None
+        return self.get_shell_env(shell_env_id=shell_env_id)
+
+    # ------------------------------------------------------------------ #
+    #  Shell Environment Execution Support                               #
+    # ------------------------------------------------------------------ #
+
+    def _get_shell_env_base_dir(self) -> Path:
+        """Get the base directory for all shell envs.
+
+        The path includes the Unify context name to ensure isolation between
+        different assistants/users and during parallel test runs.
+        """
+        from unity.file_manager.settings import get_local_root
+
+        ctx = unify.get_active_context()
+        ctx_name = ctx.get("read") or ctx.get("write") or "default"
+        safe_ctx = ctx_name.replace("/", "_").replace("\\", "_")
+        return Path(get_local_root()) / ".unity" / "shell_envs" / safe_ctx
+
+    def _get_shell_env_dir(self, shell_env_id: int) -> Path:
+        """Get the directory for a specific shell env."""
+        return self._get_shell_env_base_dir() / str(shell_env_id)
+
+    def _get_shell_env_bin_dir(self, shell_env_id: int) -> Path:
+        """Get the bin directory for a specific shell env."""
+        return self._get_shell_env_dir(shell_env_id) / "bin"
+
+    def is_shell_env_ready(self, *, shell_env_id: int) -> bool:
+        """
+        Check if a shell environment is ready for execution.
+
+        Args:
+            shell_env_id: The shell env to check.
+
+        Returns:
+            True if the local bin dir exists and matches the stored manifest.
+        """
+        env_data = self.get_shell_env(shell_env_id=shell_env_id)
+        if env_data is None:
+            return False
+
+        env_dir = self._get_shell_env_dir(shell_env_id)
+        bin_dir = self._get_shell_env_bin_dir(shell_env_id)
+        manifest_path = env_dir / ".manifest.json"
+
+        if not bin_dir.exists() or not manifest_path.exists():
+            return False
+
+        try:
+            stored_tools = json.loads(env_data["tools"])
+            expected_manifest = {t["name"]: t["sha256"] for t in stored_tools}
+            local_manifest = json.loads(manifest_path.read_text())
+            return local_manifest == expected_manifest
+        except Exception:
+            return False
+
+    async def prepare_shell_env(self, *, shell_env_id: int) -> Path:
+        """
+        Ensure a shell environment's binaries are available locally.
+
+        Idempotent: if the local bin dir already matches the DB manifest,
+        returns immediately. Otherwise, downloads binary blobs from the DB
+        and writes them to the local managed directory.
+
+        Args:
+            shell_env_id: The shell env to prepare.
+
+        Returns:
+            Path to the bin/ directory containing the tool binaries.
+
+        Raises:
+            ValueError: If the shell_env_id does not exist.
+        """
+        import base64 as _b64
+
+        env_data = self.get_shell_env(shell_env_id=shell_env_id)
+        if env_data is None:
+            raise ValueError(f"ShellEnv with ID {shell_env_id} not found")
+
+        env_dir = self._get_shell_env_dir(shell_env_id)
+        bin_dir = self._get_shell_env_bin_dir(shell_env_id)
+        manifest_path = env_dir / ".manifest.json"
+
+        stored_tools = json.loads(env_data["tools"])
+        expected_manifest = {t["name"]: t["sha256"] for t in stored_tools}
+
+        # Check if local cache is current
+        needs_restore = False
+        if manifest_path.exists() and bin_dir.exists():
+            try:
+                local_manifest = json.loads(manifest_path.read_text())
+                if local_manifest != expected_manifest:
+                    needs_restore = True
+            except Exception:
+                needs_restore = True
+        else:
+            needs_restore = True
+
+        if needs_restore:
+            bin_dir.mkdir(parents=True, exist_ok=True)
+
+            # Fetch binary blobs from DB
+            bin_logs = self._safe_get_shell_env_logs(
+                context=self._shell_env_binaries_ctx,
+                filter=f"shell_env_id == {shell_env_id}",
+                exclude_fields=list_private_fields(self._shell_env_binaries_ctx),
+            )
+
+            for bl in bin_logs:
+                entries = bl.entries
+                tool_name = entries.get("tool_name")
+                data_b64 = entries.get("data")
+                if not tool_name or not data_b64:
+                    continue
+                raw = _b64.b64decode(data_b64)
+                dest = bin_dir / tool_name
+                dest.write_bytes(raw)
+                dest.chmod(0o755)
+
+            manifest_path.write_text(json.dumps(expected_manifest))
+            logger.info(
+                f"ShellEnv {shell_env_id}: restored {len(bin_logs)} binaries "
+                f"to {bin_dir}",
+            )
+
+        return bin_dir
 
     # ------------------------------------------------------------------ #
     #  Virtual Environment Execution Support                             #
@@ -5507,17 +6064,29 @@ if __name__ == "__main__":
         For shell functions:
         - "stateless": Uses execute_shell_script (fresh subprocess each time)
         - "stateful": Uses ShellPool for persistent sessions
-        - "read_only": Not yet implemented (requires state snapshot/restore)
+        - "read_only": Snapshots state from persistent session, runs in ephemeral
+
+        If the function has a shell_env_id, the corresponding shell env's bin/
+        directory is prepended to PATH before execution.
         """
         from .shell_pool import ShellPool  # noqa: F811
 
         language = func_data.get("language", "bash")
 
+        # Resolve shell environment and build env overrides for PATH injection
+        shell_env_id = func_data.get("shell_env_id")
+        env_overrides: Optional[Dict[str, str]] = None
+        if shell_env_id is not None:
+            bin_dir = await self.prepare_shell_env(shell_env_id=shell_env_id)
+            env_overrides = {
+                "PATH": f"{bin_dir}:{os.environ.get('PATH', '')}",
+            }
+
         if state_mode == "stateless":
-            # Use existing execute_shell_script (fresh subprocess each time)
             return await self.execute_shell_script(
                 implementation=implementation,
                 language=language,
+                env=env_overrides,
                 primitives=extra_namespaces.get("primitives"),
             )
 
@@ -5528,22 +6097,21 @@ if __name__ == "__main__":
                     "Either provide shell_pool or use state_mode='stateless'.",
                 )
 
-            # Execute in persistent session via ShellPool
             result = await shell_pool.execute(
                 language=language,
                 command=implementation,
                 session_id=session_id,
+                env=env_overrides,
             )
 
             return {
-                "result": result.exit_code,  # For shell, "result" is exit code
+                "result": result.exit_code,
                 "error": result.error,
                 "stdout": result.stdout,
                 "stderr": result.stderr,
             }
 
         elif state_mode == "read_only":
-            # Get state from persistent session, execute in ephemeral session
             if shell_pool is None:
                 raise ValueError(
                     "state_mode='read_only' requires shell_pool to read existing state. "
@@ -5552,15 +6120,13 @@ if __name__ == "__main__":
 
             from .shell_session import ShellSession
 
-            # Get current state from the persistent session
             session = await shell_pool.get_session(
                 language=language,
                 session_id=session_id,
             )
             state = await session.snapshot_state()
 
-            # Execute in fresh ephemeral session with restored state
-            ephemeral = ShellSession(language=language)
+            ephemeral = ShellSession(language=language, env=env_overrides)
             try:
                 await ephemeral.start()
                 restore_result = await ephemeral.restore_state(state)
@@ -5572,7 +6138,6 @@ if __name__ == "__main__":
                         "stderr": "",
                     }
 
-                # Execute the command in ephemeral session
                 result = await ephemeral.execute(implementation)
 
                 return {

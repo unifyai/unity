@@ -52,6 +52,7 @@ class BaseFunctionManager(BaseStateManager):
         verify: Optional[Dict[str, bool]] = None,
         raise_on_error: bool = True,
         venv_id: Optional[int] = None,
+        shell_env_id: Optional[int] = None,
     ) -> Dict[str, str]:
         """
         Validate, compile and persist one or more function implementations.
@@ -66,6 +67,7 @@ class BaseFunctionManager(BaseStateManager):
             verify: dict[str, bool] | None = None,
             raise_on_error: bool = True,
             venv_id: int | None = None,
+            shell_env_id: int | None = None,
         ) -> dict[str, str]
 
         Parameters
@@ -98,6 +100,13 @@ class BaseFunctionManager(BaseStateManager):
             environment).  Create a venv first via ``add_venv`` and pass the
             returned ID here.  If ``None`` and the function body contains
             third-party imports, ``add_functions`` raises ``ValueError``.
+        shell_env_id : int | None, default ``None``
+            Shell environment to associate with the stored functions.  Only
+            applicable for shell languages (bash, zsh, sh, powershell).  The
+            shell env's ``bin/`` directory is prepended to ``PATH`` at
+            execution time, making the snapshotted CLI tools available.
+            Create a shell env first via ``add_shell_env`` and pass the
+            returned ID here.
 
         Returns
         -------
@@ -421,6 +430,10 @@ class BaseFunctionManager(BaseStateManager):
             than they were originally associated with. The caller is responsible
             for ensuring the target venv has the required packages.
             Ignored for shell functions.
+
+            Shell functions use ``shell_env_id`` instead (stored on the function
+            record). If set, the shell env's ``bin/`` directory is automatically
+            prepended to ``PATH`` at execution time for all state modes.
         state_mode : Literal["stateful", "read_only", "stateless"], default ``"stateless"``
             Controls how global state is handled during execution:
             - ``"stateless"``: Executes with fresh globals/no inherited state.
