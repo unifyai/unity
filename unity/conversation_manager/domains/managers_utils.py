@@ -1147,11 +1147,15 @@ def _init_managers(
             )
             from unity.function_manager.primitives import ComputerPrimitives
 
+            cp = ComputerPrimitives()
+            if resolved.config.url_mappings:
+                cp.url_mappings = resolved.config.url_mappings
+
             cm.actor = ManagerRegistry.get_actor(
                 description="production deployment",
                 environments=[
                     StateManagerEnvironment(),
-                    ComputerEnvironment(ComputerPrimitives()),
+                    ComputerEnvironment(cp),
                     ActorEnvironment(),
                 ],
                 resolved=resolved,

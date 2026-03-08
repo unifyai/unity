@@ -241,13 +241,15 @@ def _merge_configs(configs: list[ActorConfig]) -> ActorConfig:
 
     For scalar fields, the last non-None value wins (more specific overrides
     less specific).  For ``guidelines``, all non-None values are concatenated
-    with newlines (additive).
+    with newlines (additive).  For ``url_mappings``, dicts are merged
+    additively (more specific origins override less specific ones).
     """
     if not configs:
         return ActorConfig()
 
     merged: dict = {}
     guidelines_parts: list[str] = []
+    url_mappings_merged: dict[str, str] = {}
 
     for cfg in configs:
         for field_name in cfg.model_fields:
@@ -256,11 +258,15 @@ def _merge_configs(configs: list[ActorConfig]) -> ActorConfig:
                 continue
             if field_name == "guidelines":
                 guidelines_parts.append(value)
+            elif field_name == "url_mappings":
+                url_mappings_merged.update(value)
             else:
                 merged[field_name] = value
 
     if guidelines_parts:
         merged["guidelines"] = "\n".join(guidelines_parts)
+    if url_mappings_merged:
+        merged["url_mappings"] = url_mappings_merged
 
     return ActorConfig(**merged)
 
