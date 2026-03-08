@@ -1,13 +1,19 @@
-"""Integration test: storage loop creates a venv for functions with third-party imports.
+"""Integration tests: storage loop venv management for third-party imports.
 
-When the trajectory contains ``install_python_packages`` calls and the
-stored function imports those packages, the storage loop must:
+Two tests:
 
-1. Attempt ``FunctionManager_add_functions`` (which rejects without ``venv_id``).
-2. Recover by creating a venv via ``FunctionManager_add_venv``.
-3. Retry with the ``venv_id``.
+1. **Synthetic trajectory** — feeds a hand-crafted trajectory containing
+   ``install_python_packages`` + ``execute_code`` with third-party imports
+   directly to ``_start_storage_check_loop``.  Verifies the storage LLM
+   creates a venv and stores the function with ``venv_id`` set.
 
-This is an eval test because the LLM must correctly interpret the rejection
+2. **Full act() end-to-end** — calls ``actor.act()`` with ``can_store=True``
+   on a task that requires ``install_python_packages`` and writes a reusable
+   function.  The doing loop installs the package, executes code, and the
+   ``_StorageCheckHandle`` fires the storage review automatically.  Verifies
+   the stored function has ``venv_id`` set and at least one venv was created.
+
+Both are eval tests because the LLM must correctly interpret the rejection
 error and decide to create a venv.
 """
 
@@ -240,6 +246,97 @@ async def test_storage_loop_creates_venv_for_third_party_function():
         assert (
             len(venvs) >= 1
         ), f"Expected at least one venv to be created, got {len(venvs)}"
+    finally:
+        try:
+            await actor.close()
+        except Exception:
+            pass
+
+
+# ---------------------------------------------------------------------------
+# Full act() end-to-end: doing loop installs package, storage loop creates venv
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+@pytest.mark.timeout(600)
+async def test_act_with_package_install_stores_function_with_venv():
+    """Full end-to-end: act() installs a package, writes a function, and the
+    storage check loop creates a venv and links it.
+
+    The task is deliberately designed so the doing loop must:
+    1. ``install_python_packages(["humanize"])``
+    2. Write and execute a reusable function that ``import humanize``
+    3. Complete successfully
+
+    Then the implicit ``_StorageCheckHandle`` fires and the storage librarian
+    must recognise the third-party dependency, create a venv, and store the
+    function with ``venv_id`` set.
+
+    ``humanize`` is a lightweight, pure-Python package that installs fast and
+    has a distinctive API (``humanize.naturalsize``, ``humanize.naturaltime``)
+    making the function clearly non-trivial and worth storing.
+    """
+    fm = FunctionManager(include_primitives=False)
+    gm = _MinimalGuidanceManager()
+
+    actor = CodeActActor(
+        function_manager=fm,
+        guidance_manager=gm,
+        timeout=180,
+    )
+    try:
+        handle = await actor.act(
+            "Install the `humanize` Python package, then write and execute a "
+            "reusable function called `format_data_size` that:\n\n"
+            "1. Takes `size_bytes: int` and an optional `gnu: bool = False`\n"
+            "2. Uses `humanize.naturalsize` to format the byte count into a "
+            "human-readable string (e.g. '1.5 GB', '45.2 kB')\n"
+            "3. When `gnu=True`, uses GNU-style units (GiB, MiB)\n"
+            "4. Handles edge cases: negative sizes (format absolute value "
+            "with a '-' prefix), zero (returns '0 Bytes')\n"
+            "5. Returns the formatted string\n\n"
+            "Test it with these inputs:\n"
+            "- 0 -> '0 Bytes'\n"
+            "- 1024 -> should contain 'kB' or 'KB'\n"
+            "- 1073741824 -> should contain 'GB' or 'GiB'\n"
+            "- -500 -> should start with '-'\n\n"
+            "Make sure the function is correct before finishing.",
+            can_store=True,
+            persist=False,
+            clarification_enabled=False,
+        )
+        result = await asyncio.wait_for(handle.result(), timeout=300)
+        assert result is not None
+
+        deadline = asyncio.get_event_loop().time() + 180
+        while not handle.done():
+            if asyncio.get_event_loop().time() > deadline:
+                raise TimeoutError("Storage loop did not complete in time")
+            await asyncio.sleep(0.5)
+
+        stored = fm.filter_functions()
+        stored_with_tp = [
+            f for f in stored if isinstance(f, dict) and f.get("third_party_imports")
+        ]
+        assert stored_with_tp, (
+            f"Expected at least one function with third_party_imports to be "
+            f"stored after a full act() that installed humanize. "
+            f"All stored: {[f.get('name') for f in stored if isinstance(f, dict)]}"
+        )
+
+        for func in stored_with_tp:
+            assert func.get("venv_id") is not None, (
+                f"Function '{func.get('name')}' has third-party imports "
+                f"{func.get('third_party_imports')} but venv_id is None — "
+                f"the storage loop failed to create and link a venv."
+            )
+
+        venvs = fm.list_venvs()
+        assert len(venvs) >= 1, (
+            f"Expected at least one venv to be created by the storage loop, "
+            f"got {len(venvs)}"
+        )
     finally:
         try:
             await actor.close()
