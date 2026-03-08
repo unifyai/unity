@@ -468,6 +468,30 @@ _STORAGE_WHAT_CAN_BE_STORED = (
     "non-standard CLI tool from within a Python function (via "
     "`subprocess.run` or `os.system`), the same shell env workflow "
     "applies — snapshot the binary and link it.\n\n"
+    "### Standalone environments (no function required)\n\n"
+    "Environments are **first-class artifacts** — storing a venv or "
+    "shell env *without* a corresponding function is actively "
+    "encouraged, not an anti-pattern.\n\n"
+    "If the trajectory installed packages or CLI tools that form a "
+    "coherent capability — even if no single reusable function "
+    "emerged — store the environment anyway. This makes the "
+    "dependencies discoverable and instantly available for future "
+    "runs without reinstallation.\n\n"
+    "**Python venvs as capability bundles:** If the trajectory "
+    "installed `matplotlib`, `numpy`, and `scipy`, create a venv "
+    'named `"scientific-visualization"` with those dependencies. '
+    "Future tasks that need plotting or numerical work can load "
+    "this venv immediately instead of re-running "
+    "`install_python_packages`.\n\n"
+    "**Shell envs as tool kits:** If the trajectory used `gcloud` "
+    "and `gh` for cloud/GitHub operations, snapshot those binaries "
+    'into a shell env named `"cloud-integrations"`. Future shell '
+    "scripts can reference this env to get both tools on PATH.\n\n"
+    "Give environments descriptive, domain-oriented names that "
+    "capture *what capability they provide* rather than listing "
+    'individual packages (e.g. `"data-science"` not '
+    '`"numpy-pandas-scipy"`, `"web-scraping"` not '
+    '`"requests-beautifulsoup"`).\n\n'
 )
 
 _STORAGE_TWO_STORES = (
@@ -491,15 +515,18 @@ _STORAGE_TWO_STORES = (
     "- **Manage venvs**: create (`FunctionManager_add_venv`), list "
     "(`FunctionManager_list_venvs`), update "
     "(`FunctionManager_update_venv`), or delete "
-    "(`FunctionManager_delete_venv`) virtual environments for "
-    "Python functions with third-party dependencies. Link a function "
-    "to a venv via `FunctionManager_set_function_venv` or pass "
-    "`venv_id` directly to `FunctionManager_add_functions`.\n"
+    "(`FunctionManager_delete_venv`) virtual environments. "
+    "Required for Python functions with third-party dependencies, "
+    "but also valuable as standalone capability bundles (see "
+    '"Standalone environments" above). Link a function to a venv '
+    "via `FunctionManager_set_function_venv` or pass `venv_id` "
+    "directly to `FunctionManager_add_functions`.\n"
     "- **Manage shell envs**: create (`FunctionManager_add_shell_env`), "
     "list (`FunctionManager_list_shell_envs`), update "
     "(`FunctionManager_update_shell_env`), or delete "
-    "(`FunctionManager_delete_shell_env`) shell environments for "
-    "shell functions that depend on non-system CLI tools. Link a "
+    "(`FunctionManager_delete_shell_env`) shell environments. "
+    "Required for shell functions that depend on non-system CLI "
+    "tools, but also valuable as standalone tool kits. Link a "
     "function to a shell env via "
     "`FunctionManager_set_function_shell_env` or pass "
     "`shell_env_id` directly to `FunctionManager_add_functions`.\n\n"
