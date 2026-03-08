@@ -1309,6 +1309,12 @@ I use this context to personalize the conversation, but I don't explicitly refer
         )
 
     parts.add(
+        """Unify Meet controls
+-------------------
+Bottom bar: "Share your screen" (shares the user's own screen with me), "Show assistant screen" (shows my desktop to the user; once visible, "Enable mouse and keyboard control" lets them operate it directly). Mic and camera toggles are bottom-left; settings and text chat are bottom-right. Top-right: fullscreen (opens a new tab) and the glove icon (undocks the window so it can be dragged).""",
+    )
+
+    parts.add(
         """Screen sharing & webcam
 ------------------------
 During screen sharing or when the user's webcam is on, I receive visual frames paired with what the user said at that moment. Multiple sources may be active simultaneously — my desktop, the user's screen, and the user's webcam. The most recent frame from each source is shown as an actual image I can see; older frames are listed by filepath only.
