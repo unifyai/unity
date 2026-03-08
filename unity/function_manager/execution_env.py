@@ -32,6 +32,19 @@ except ImportError:
     HAS_PYDANTIC = False
 
 
+ENVIRONMENT_MODULES: frozenset[str] = frozenset(
+    {
+        "primitives",
+        "pydantic",
+    },
+)
+"""Non-stdlib module names that the function execution environment provides.
+
+Used by ``detect_third_party_imports`` to distinguish between packages that
+need a venv and packages that the runtime already supplies.
+"""
+
+
 def create_base_globals() -> Dict[str, Any]:
     """
     Creates a dictionary of safe global functions for code execution.
