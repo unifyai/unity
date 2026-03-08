@@ -2061,7 +2061,6 @@ class FunctionManager(BaseFunctionManager):
                 context=self._primitives_ctx,
                 entries=entries,
                 batched=True,
-                add_to_all_context=self.include_in_multi_assistant_table,
             )
             logger.debug(f"Inserted {len(entries)} primitives")
         except Exception as e:

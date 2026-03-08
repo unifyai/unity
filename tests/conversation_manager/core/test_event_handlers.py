@@ -906,8 +906,8 @@ class TestActorEventHandlers:
         assert len(mock_cm.notifications_bar.notifications) == 0
 
     @pytest.mark.asyncio
-    async def test_actor_handle_started_requests_llm_run(self, mock_cm):
-        """ActorHandleStarted requests an LLM run."""
+    async def test_actor_handle_started_does_not_trigger_slow_brain(self, mock_cm):
+        """ActorHandleStarted is a no-op (fast brain handles acknowledgement)."""
         event = ActorHandleStarted(
             action_name="task",
             handle_id=1,
@@ -916,7 +916,7 @@ class TestActorEventHandlers:
 
         await EventHandler.handle_event(event, mock_cm)
 
-        mock_cm.request_llm_run.assert_called()
+        mock_cm.request_llm_run.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_actor_result_moves_action_to_completed(self, mock_cm):
@@ -1183,9 +1183,9 @@ class TestMeetInteractionEventHandlers:
         mock_cm.schedule_proactive_speech.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_webcam_events_trigger_brain_step_after_meet_started(self, mock_cm):
-        """Once the meeting is live (Mode.MEET), webcam events should wake
-        the slow brain as usual."""
+    async def test_webcam_events_set_state_without_slow_brain(self, mock_cm):
+        """Webcam events set the state flag but don't trigger a slow-brain
+        run (fast brain handles via silent notification injection)."""
         mock_cm.mode = Mode.MEET
         mock_cm.user_webcam_active = False
 
@@ -1193,8 +1193,7 @@ class TestMeetInteractionEventHandlers:
         await EventHandler.handle_event(event, mock_cm)
 
         assert mock_cm.user_webcam_active is True
-        mock_cm.request_llm_run.assert_called()
-        mock_cm.schedule_proactive_speech.assert_called()
+        mock_cm.request_llm_run.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_meet_interaction_pushes_notification(self, mock_cm):
@@ -1216,8 +1215,8 @@ class TestMeetInteractionEventHandlers:
         assert "screen sharing" in notification.content.lower()
 
     @pytest.mark.asyncio
-    async def test_meet_interaction_triggers_llm_run(self, mock_cm):
-        """Meet interaction events trigger an LLM run."""
+    async def test_meet_interaction_does_not_trigger_slow_brain(self, mock_cm):
+        """Meet interaction events are handled by the fast brain; no slow-brain run."""
         mock_cm.assistant_screen_share_active = False
         mock_cm.user_screen_share_active = False
         mock_cm.user_remote_control_active = False
@@ -1227,7 +1226,7 @@ class TestMeetInteractionEventHandlers:
         )
         await EventHandler.handle_event(event, mock_cm)
 
-        mock_cm.request_llm_run.assert_called()
+        mock_cm.request_llm_run.assert_not_called()
 
     # --------------------------------------------------------------------- #
     # Screenshot capture on utterance

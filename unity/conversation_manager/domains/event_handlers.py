@@ -620,6 +620,8 @@ def _push_email_to_all_contacts(
         EmailReceived,
         UnifyMessageSent,
         UnifyMessageReceived,
+        ApiMessageSent,
+        ApiMessageReceived,
     ),
 )
 async def _(event, cm: "ConversationManager", *args, **kwargs):
@@ -627,6 +629,7 @@ async def _(event, cm: "ConversationManager", *args, **kwargs):
 
     message_content = None
     attachments = None
+    tags = None
     notif_content = None
 
     # Get contact info from ContactManager, fallback to event.contact
@@ -758,6 +761,33 @@ async def _(event, cm: "ConversationManager", *args, **kwargs):
                 "unify_message_received",
                 f"Message from {sender_name}: {event.content}",
             )
+        case ApiMessageSent():
+            medium = Medium.API_MESSAGE
+            message_content = event.content
+            attachments = event.attachments
+            tags = event.tags
+            notif_content = f"API response sent to {sender_name}"
+            role = "assistant"
+            event_trace = getattr(cm, "_current_event_trace", None) or {}
+            cm._session_logger.info(
+                "api_message_sent",
+                f"API response to {sender_name}: {event.content}",
+            )
+        case ApiMessageReceived():
+            medium = Medium.API_MESSAGE
+            message_content = event.content
+            attachments = event.attachments
+            tags = event.tags
+            notif_content = f"API message from {sender_name}"
+            role = "user"
+            event_trace = getattr(cm, "_current_event_trace", None) or {}
+            cm._session_logger.info(
+                "api_message_received",
+                f"API message from {sender_name}: {event.content}",
+            )
+            if event.api_message_id:
+                cm._pending_api_message_id = event.api_message_id
+                cm._pending_api_message_tags = event.tags
 
     # Non-email messages: push to single contact only
     if contact_id is not None:
@@ -769,6 +799,7 @@ async def _(event, cm: "ConversationManager", *args, **kwargs):
             attachments=attachments,
             timestamp=event.timestamp,
             role=role,
+            tags=tags,
         )
     cm.notifications_bar.push_notif("comms", notif_content, event.timestamp)
 
@@ -1198,8 +1229,6 @@ async def _(
         f"VM ready: {event.vm_type} at {desktop_url}",
     )
 
-    _vm_ready.set()
-
     if desktop_url:
         SESSION_DETAILS.assistant.desktop_url = desktop_url
 
@@ -1210,6 +1239,8 @@ async def _(
         cm.user_id,
         liveview_url,
     )
+
+    _vm_ready.set()
 
     asyncio.ensure_future(_ensure_desktop_session(cm))
     await managers_utils._start_file_sync()

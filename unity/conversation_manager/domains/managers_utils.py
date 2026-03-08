@@ -79,6 +79,8 @@ _MESSAGE_PRODUCING_EVENTS = {
     "PhoneCallStarted",
     "UnifyMeetStarted",
     "PhoneCallNotAnswered",
+    "ApiMessageReceived",
+    "ApiMessageSent",
 }
 
 
@@ -179,6 +181,30 @@ async def hydrate_global_thread(cm: "ConversationManager") -> None:
                     role="assistant",
                     timestamp=ts,
                     attachments=getattr(cm_event, "attachments", None),
+                )
+
+            # --- API Messages ---
+            case "ApiMessageReceived":
+                entry = cm.contact_index.build_message(
+                    contact_id=contact_id,
+                    sender_name=sender_name,
+                    thread_name=Medium.API_MESSAGE,
+                    message_content=cm_event.content,
+                    role="user",
+                    timestamp=ts,
+                    attachments=getattr(cm_event, "attachments", None),
+                    tags=getattr(cm_event, "tags", None),
+                )
+            case "ApiMessageSent":
+                entry = cm.contact_index.build_message(
+                    contact_id=contact_id,
+                    sender_name=sender_name,
+                    thread_name=Medium.API_MESSAGE,
+                    message_content=cm_event.content,
+                    role="assistant",
+                    timestamp=ts,
+                    attachments=getattr(cm_event, "attachments", None),
+                    tags=getattr(cm_event, "tags", None),
                 )
 
             # --- Email ---
@@ -483,7 +509,9 @@ async def log_message(
     event_name = event.__class__.__name__
     LOGGER.debug(f"{DEFAULT_ICON} publishing transcript {event_name}")
     event_name = event_name.lower()
-    if "unify" in event_name or "prehire" in event_name:
+    if "apimessage" in event_name:
+        medium = Medium.API_MESSAGE
+    elif "unify" in event_name or "prehire" in event_name:
         medium = Medium.UNIFY_MEET if "meet" in event_name else Medium.UNIFY_MESSAGE
     elif "phone" in event_name:
         medium = Medium.PHONE_CALL
@@ -510,6 +538,8 @@ async def log_message(
             UnifyMessageReceived,
             InboundUnifyMeetUtterance,
             OutboundUnifyMeetUtterance,
+            ApiMessageSent,
+            ApiMessageReceived,
         ),
     ):
         # Use contact from event - contact_id must be valid, no silent fallback
@@ -517,8 +547,6 @@ async def log_message(
         if cm.contact_index.get_contact(contact_id=evt_contact_id):
             contact_id = evt_contact_id
         else:
-            # Log error but use the provided contact_id anyway since the event
-            # already contains the full contact dict from the source
             LOGGER.warning(
                 f"{DEFAULT_ICON} contact_id {evt_contact_id} not in contact_index, "
                 f"using contact from event",
@@ -1123,11 +1151,15 @@ def _init_managers(
             )
             from unity.function_manager.primitives import ComputerPrimitives
 
+            cp = ComputerPrimitives()
+            if resolved.config.url_mappings:
+                cp.url_mappings = resolved.config.url_mappings
+
             cm.actor = ManagerRegistry.get_actor(
                 description="production deployment",
                 environments=[
                     StateManagerEnvironment(),
-                    ComputerEnvironment(ComputerPrimitives()),
+                    ComputerEnvironment(cp),
                     ActorEnvironment(),
                 ],
                 resolved=resolved,

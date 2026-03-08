@@ -40,7 +40,7 @@ in the queue.
 ## New user utterance
 
 "{utterance}"
-
+{previous_utterance_section}
 ## Mark as URGENT when
 
 - The user is giving a **new actionable directive** that requires immediate execution \
@@ -62,6 +62,15 @@ time-sensitive — let it finish rather than restarting.
 - The utterance is **conversational filler** or a **partial thought** that does not \
 constitute a standalone directive.
 
+## Continuation awareness
+
+A short or fragmentary utterance may be the **second half of something the user was \
+already saying** in the previous turn. If a previous utterance is shown, consider whether \
+the new utterance completes, corrects, or extends it. A continuation that carries \
+critical information (e.g., the rest of a dictated value, a spelled-out credential, \
+the second half of an address) is urgent — the slow brain is currently processing only \
+the first half and will make a wrong or incomplete decision without the rest.
+
 Output JSON matching the SpeechUrgency schema.\
 """
 
@@ -82,6 +91,7 @@ class SpeechUrgencyEvaluator:
         origin_event: str,
         elapsed_seconds: float,
         actions_summary: str,
+        previous_utterance: str | None = None,
     ) -> SpeechUrgency:
         """Classify whether *utterance* warrants preempting the slow brain.
 
@@ -93,11 +103,19 @@ class SpeechUrgencyEvaluator:
                 origin="FastBrain.speech_urgency",
             )
             client.set_response_format(SpeechUrgency)
+            if previous_utterance:
+                prev_section = (
+                    f"\n## Previous user utterance (for context)\n\n"
+                    f'"{previous_utterance}"\n\n'
+                )
+            else:
+                prev_section = ""
             system_content = SPEECH_URGENCY_PROMPT.format(
                 origin_event=origin_event or "unknown",
                 elapsed=elapsed_seconds,
                 actions_summary=actions_summary or "none",
                 utterance=utterance,
+                previous_utterance_section=prev_section,
             )
             messages = [{"role": "system", "content": system_content}]
             response = await client.generate(messages=messages)

@@ -186,7 +186,19 @@ def methods_to_tool_dict(
             ret[key] = fn
         else:
             # Preserve the metadata but *bind* the function correctly.
-            ret[key] = ToolSpec(fn=fn, max_concurrent=spec.max_concurrent)
+            ret[key] = ToolSpec(
+                fn=fn,
+                max_concurrent=spec.max_concurrent,
+                max_total_calls=spec.max_total_calls,
+                read_only=(
+                    spec.read_only
+                    if spec.read_only is not None
+                    else getattr(fn, "_tool_spec_read_only", None)
+                ),
+                manager_tool=spec.manager_tool
+                or getattr(fn, "_tool_spec_manager_tool", False),
+                display_label=spec.display_label,
+            )
     return ret
 
 

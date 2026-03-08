@@ -209,7 +209,7 @@
       "targets": [
         {
           "promQLQuery": {
-            "expr": "sum(increase(adapter_job_demand_total{service_name=\"unity-adapters\"}[5m]))",
+            "expr": "sum(max_over_time(adapter_job_demand{service_name=\"unity-adapters\"}[5m]) - min_over_time(adapter_job_demand{service_name=\"unity-adapters\"}[5m]))",
             "projectName": "responsive-city-458413-a2",
             "step": "5m"
           },
@@ -1438,9 +1438,9 @@
     "to": "now"
   },
   "timepicker": {},
-  "timezone": "browser",
+  "timezone": "",
   "title": "Main",
   "uid": "afeslsolm30n4c",
-  "version": 7,
+  "version": 8,
   "weekStart": ""
 }

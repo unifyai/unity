@@ -33,6 +33,8 @@ from tests.conversation_manager.conftest import (
     HELPFUL_RESPONSE_POLICY,
 )
 from unity.conversation_manager.events import (
+    ApiMessageReceived,
+    ApiMessageSent,
     EmailReceived,
     EmailSent,
     InboundPhoneUtterance,
@@ -546,6 +548,118 @@ async def test_unify_message_to_phone_call(initialized_cm):
     assert_has_one(result.output_events, PhoneCallSent)
     call = filter_events_by_type(result.output_events, PhoneCallSent)[0]
     assert call.contact["phone_number"] == contact["phone_number"]
+
+
+# ---------------------------------------------------------------------------
+#  API message tests
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+@_handle_project
+async def test_api_message_to_api_response(initialized_cm):
+    """API message request for joke -> reply via send_api_response."""
+    cm = initialized_cm
+    contact = TEST_CONTACTS[0]
+
+    cm.cm._pending_api_message_id = "test-api-msg-001"
+
+    result = await cm.step_until_wait(
+        ApiMessageReceived(
+            contact=contact,
+            content="Tell me a joke",
+            api_message_id="test-api-msg-001",
+        ),
+    )
+
+    assert_has_one(result.output_events, ApiMessageSent)
+    api_resp = filter_events_by_type(result.output_events, ApiMessageSent)[0]
+    assert api_resp.contact["contact_id"] == contact["contact_id"]
+    assert api_resp.content
+    assert api_resp.api_message_id == "test-api-msg-001"
+
+
+@pytest.mark.asyncio
+@_handle_project
+async def test_api_message_to_sms(initialized_cm):
+    """API message requesting joke via SMS -> should send SMS."""
+    cm = initialized_cm
+    contact = TEST_CONTACTS[0]
+
+    result = await cm.step_until_wait(
+        ApiMessageReceived(
+            contact=contact,
+            content="Tell me a joke via SMS",
+            api_message_id="test-api-msg-002",
+        ),
+    )
+
+    assert_has_one(result.output_events, SMSSent)
+    sms = filter_events_by_type(result.output_events, SMSSent)[0]
+    assert sms.contact["phone_number"] == contact["phone_number"]
+    assert sms.content
+
+
+@pytest.mark.asyncio
+@_handle_project
+async def test_api_message_tags_echoed_in_response(initialized_cm):
+    """API message with tags -> send_api_response should echo tags back."""
+    cm = initialized_cm
+    contact = TEST_CONTACTS[0]
+
+    cm.cm._pending_api_message_id = "test-api-msg-tags"
+
+    result = await cm.step_until_wait(
+        ApiMessageReceived(
+            contact=contact,
+            content="Tell me a joke",
+            api_message_id="test-api-msg-tags",
+            tags=["source:slack", "channel:#general"],
+        ),
+    )
+
+    assert_has_one(result.output_events, ApiMessageSent)
+    api_resp = filter_events_by_type(result.output_events, ApiMessageSent)[0]
+    assert api_resp.content
+    assert api_resp.tags == [
+        "source:slack",
+        "channel:#general",
+    ], f"Expected tags to be echoed, got {api_resp.tags}"
+
+
+@pytest.mark.asyncio
+@_handle_project
+async def test_api_message_with_attachment_visible(initialized_cm):
+    """API message with attachment -> assistant confirms receipt."""
+    cm = initialized_cm
+    contact = TEST_CONTACTS[0]
+
+    cm.cm._pending_api_message_id = "test-api-msg-att"
+
+    result = await cm.step_until_wait(
+        ApiMessageReceived(
+            contact=contact,
+            content="I've attached the quarterly report. Can you confirm you received it?",
+            api_message_id="test-api-msg-att",
+            attachments=[{"id": "att-1", "filename": "quarterly_report.pdf"}],
+        ),
+    )
+
+    assert_has_one(result.output_events, ApiMessageSent)
+    msg = filter_events_by_type(result.output_events, ApiMessageSent)[0]
+    content_lower = msg.content.lower()
+    assert any(
+        term in content_lower
+        for term in [
+            "received",
+            "see",
+            "got",
+            "attachment",
+            "quarterly",
+            "report",
+            "pdf",
+        ]
+    ), f"Expected reply to confirm attachment receipt, got: {msg.content}"
 
 
 # ---------------------------------------------------------------------------

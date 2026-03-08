@@ -308,16 +308,18 @@ max({__name__="workload.googleapis.com/unity_running_job_count", monitored_resou
 ### Live Assistants (Demand)
 
 Number of inbound requests that required starting a new container (i.e., no
-container was already running for that assistant).
+container was already running for that assistant). The metric is a Gauge used
+as a monotonic counter so we can compute exact deltas with
+`max_over_time - min_over_time` instead of `increase()` (which extrapolates).
 
 ```promql
-sum(increase(adapter_job_demand_total{service_name="$SVC_ADAPTERS"}[5m]))
+sum(max_over_time(adapter_job_demand{service_name="$SVC_ADAPTERS"}[5m]) - min_over_time(adapter_job_demand{service_name="$SVC_ADAPTERS"}[5m]))
 ```
 
 By channel:
 
 ```promql
-sum by (channel) (increase(adapter_job_demand_total{service_name="$SVC_ADAPTERS"}[5m]))
+sum by (channel) (max_over_time(adapter_job_demand{service_name="$SVC_ADAPTERS"}[5m]) - min_over_time(adapter_job_demand{service_name="$SVC_ADAPTERS"}[5m]))
 ```
 
 ### Average Session Duration (minutes)

@@ -43,9 +43,8 @@ steps:
     ADAPTERS=https://unity-adapters-staging-ky4ja5fxna-uc.a.run.app
     AUTH="Authorization: Bearer $$ORCHESTRA_ADMIN_KEY"
 
-    echo "Creating 2 fresh idle jobs..."
-    curl -sf -X POST -H "$${AUTH}" "$${ADAPTERS}/scheduled/jobs/create" && echo
-    curl -sf -X POST -H "$${AUTH}" "$${ADAPTERS}/scheduled/jobs/create" && echo
+    echo "Refreshing idle jobs with new image..."
+    curl -sf -X POST -H "$${AUTH}" "$${ADAPTERS}/scheduled/jobs/create?refresh=true" && echo
 
     echo "Waiting 30s for jobs to register as idle..."
     sleep 30

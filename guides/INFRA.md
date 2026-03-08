@@ -278,10 +278,10 @@ Detailed flow:
 
 If there's no idle container when a startup message is published:
 1. The message sits in the Pub/Sub queue (messages are retained for up to 7 days by default)
-2. As soon as a new idle container spins up (from the scheduled hourly job creation), it subscribes to the startup topic
-3. The container receives the queued startup message and goes live
+2. The adapter's reactive replenishment has already triggered `/scheduled/jobs/create`, which will spin up new containers to meet the target
+3. As soon as a new idle container starts (~25-30s), it subscribes to the startup topic and picks up the queued message
 
-This means there may be a delay (up to an hour in worst case) if all idle containers are exhausted. The hourly job creation minimizes this risk.
+In the worst case (e.g., GKE node provisioning required), this delay can be 30-60 seconds. The `UNITY_MIN_IDLE_JOBS` floor is the primary defense against this: set it to cover your expected maximum concurrent burst within that window.
 
 ### Supported Inbound Channels
 
@@ -333,22 +333,72 @@ When a container hits the inactivity timeout:
 
 **Important**: Any ongoing work is lost when the container shuts down. The assistant does not persist state between sessions. If the user contacts the assistant again, a new container is engaged and starts fresh (though conversation history is available via Unify logs).
 
+### Idle Job Management Strategy
+
+The system maintains a demand-aware pool of "warm" containers using three coordinated mechanisms:
+
+#### Demand-Aware Target Calculation
+
+All three mechanisms share a single function (`get_target_idle_count` in `adapters/helpers.py`) to determine how many idle jobs should exist:
+
+```
+target = max(UNITY_MIN_IDLE_JOBS, live_count // UNITY_IDLE_JOB_DEMAND_FACTOR)
+```
+
+| Env Var | Default | Purpose |
+|---------|---------|---------|
+| `UNITY_MIN_IDLE_JOBS` | `3` | Absolute floor — guarantees this many warm containers regardless of traffic |
+| `UNITY_IDLE_JOB_DEMAND_FACTOR` | `5` | Proportional scaling — 1 idle job per N live assistants (e.g., 5 = 20% buffer) |
+
+At small scale the floor dominates (e.g., 10 live assistants → target is 3). At larger scale the proportional buffer takes over (e.g., 100 live assistants with factor 5 → target is 20).
+
+#### Inventory Discovery
+
+Both the creator and cleaner use `get_unity_jobs_inventory()` (in `adapters/helpers.py`) which fetches all active Unity jobs in a **single GKE API call** using the label selector `app=unity,unity-status!=done`. The response includes the `labels` dict for each job, allowing categorization into `live` and `idle` buckets without additional requests.
+
+#### 1. Reactive Replenishment (On Every Inbound) — Fill Mode
+- **Trigger**: Any inbound event (SMS, call, email, Unify message, hiring wakeup) that engages an idle container.
+- **Purpose**: **Immediate Pool Recovery**. As soon as an idle job is consumed, `build_webhook_context` calls `create_job()` which hits `/scheduled/jobs/create` (without `?refresh`). The endpoint checks inventory, calculates the gap to the target, and spins up only as many jobs as needed to fill the gap.
+- **Why**: Ensures the pool is topped up at the exact moment it's most vulnerable — right after a job was consumed. Does not create redundant jobs if the pool is already healthy.
+
+#### 2. Deployment-Triggered Refresh (CloudBuild) — Refresh Mode
+- **Trigger**: Every successful build in `cloudbuild.yaml` or `cloudbuild-staging.yaml`.
+- **Purpose**: **Image Freshness**. Ensures the idle pool picks up the latest `SHORT_SHA` image.
+- **Action**: Calls `/scheduled/jobs/create?refresh=true` which always creates `target` new jobs regardless of how many idle jobs already exist. After 30s (for the new jobs to register as idle), calls `/scheduled/jobs/cleanup` which retains only the newest idle jobs (< 11 min old) up to the target count and deletes all older ones. This effectively rotates the entire pool to the latest image.
+
+#### 3. Scheduled Maintenance (Hourly Cron) — Refresh Mode
+- **Trigger**: Cloud Scheduler hits `/scheduled/jobs/create?refresh=true` hourly.
+- **Purpose**: **Pool Health, Self-Healing & Container Rotation**.
+  - **Self-Healing**: Replenishes the pool if containers have crashed or been consumed by high traffic between deployments.
+  - **Container Rotation**: Even without a deployment, creates fresh containers every hour so idle jobs don't accumulate stale state or memory leaks. The subsequent cleanup (10 min later) deletes the older idle containers, keeping only the freshly-created ones.
+
+#### Fill vs Refresh Modes
+
+The `/scheduled/jobs/create` endpoint supports a `?refresh=true` query parameter:
+
+| Mode | When Used | Behaviour |
+|------|-----------|-----------|
+| **Fill** (default) | Reactive replenishment from `build_webhook_context` | Only creates jobs if `current_idle < target`. No-ops if pool is healthy. |
+| **Refresh** (`?refresh=true`) | Hourly cron, CloudBuild deployments | Always creates `target` new jobs. The cleanup (10 min later) deletes the old ones, rotating the pool. |
+
 ### Idle Job Creator
 - **Adapter**: `/scheduled/jobs/create`
-- **Schedule**: Runs hourly
-- **Purpose**:
-  - Keeps the cluster updated with newer versions of the image
-  - Handles contingencies if existing containers crash
-  - Ensures there's always an idle container ready
+- **Schedule**: Runs hourly (refresh), during deployments (refresh), and reactively on every inbound engagement (fill)
+- **Logic**:
+  1. Fetches current inventory via `get_unity_jobs_inventory()` (single GKE request)
+  2. Calculates the target via `get_target_idle_count(live_count)`
+  3. **Fill mode**: If `current_idle >= target`, returns early ("pool is healthy"). Otherwise creates `target - current_idle` new jobs.
+  4. **Refresh mode**: Always creates `target` new jobs using the latest image, regardless of current pool size.
 
 ### Idle Job Cleaner
 - **Adapter**: `/scheduled/jobs/cleanup`
 - **Schedule**: Runs 10 minutes after idle job creation
-- **Process**:
-  1. Fetches all jobs currently on GKE
-  2. Checks logs for ping-related activity (idle containers)
-  3. Deletes older idle containers
-  4. Retains only the latest idle container (sorted by timestamp)
+- **Logic**:
+  1. Fetches current inventory via `get_unity_jobs_inventory()` (single GKE request)
+  2. Calculates the retention target via `get_target_idle_count(live_count)`
+  3. Separates recently-created idle jobs (< 11 min old) from older ones
+  4. Retains the N most recent idle jobs (where N = target), deletes the rest
+  5. Uses `required_labels: {"unity-status": "idle"}` to guard against race conditions where a job transitions to live between the fetch and the delete
 - **Important**: Does NOT delete jobs that were live at some point, even if they hit inactivity. This preserves logs for debugging.
 
 ### Why Retain Inactive Live Jobs?
@@ -585,8 +635,8 @@ orchestra/
 |---------|-------|---------|
 | Inactivity timeout | 6 minutes (360s) | Shuts down inactive containers |
 | Ping interval | 30 seconds | Keeps idle containers alive |
-| Idle job creation | Hourly | Creates fresh idle containers |
-| Idle job cleanup | 10 min after creation | Removes old idle containers |
+| Idle job creation | Hourly + on every inbound + on deploy | Fill mode (reactive) or refresh mode (cron/deploy) |
+| Idle job cleanup | 10 min after creation | Trims pool back to target |
 | Microsoft token refresh | Every 30-45 min | Keeps OAuth tokens fresh |
 | Teams subscriptions | Every 30-45 min | Renews before 60-min expiry |
 | Wildcard TLS cert renewal | 1st of month, 3 AM UTC | Renews *.vm.unify.ai if <30 days to expiry |

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import List, Optional
+from typing import Dict, List, Optional
 
 from pydantic import BaseModel, Field
 
@@ -44,6 +44,14 @@ class ActorConfig(BaseModel):
     guidelines: Optional[str] = Field(
         default=None,
         description="Persistent behavioral guidelines applied to every act() invocation.",
+    )
+    url_mappings: Optional[Dict[str, str]] = Field(
+        default=None,
+        description=(
+            "URL origin mappings for demo mode. Keys are original origins "
+            "(e.g. 'https://www.zoho.com'), values are local replacements "
+            "(e.g. 'http://localhost:4001'). Applied via Playwright context.route()."
+        ),
     )
 
     def to_post_json(self) -> dict:

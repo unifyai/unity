@@ -92,6 +92,7 @@ events_map: dict[str, Event] = {
     "msg": SMSReceived,
     "email": EmailReceived,
     "unify_message": UnifyMessageReceived,
+    "api_message": ApiMessageReceived,
 }
 
 
@@ -326,7 +327,6 @@ class CommsManager:
                     "voice_provider": event["voice_provider"],
                     "voice_id": event["voice_id"],
                     "desktop_mode": event.get("desktop_mode", "ubuntu"),
-                    "desktop_url": event.get("desktop_url"),
                     "user_desktop_mode": event.get("user_desktop_mode"),
                     "user_desktop_filesys_sync": event.get(
                         "user_desktop_filesys_sync",
@@ -554,6 +554,40 @@ class CommsManager:
                     except Exception as e:
                         LOGGER.error(
                             f"{DEFAULT_ICON} Failed scheduling attachment download: {e}",
+                        )
+
+                elif thread == "api_message":
+                    target_contact_id = event.get("contact_id", 1)
+                    contact = next(
+                        (c for c in contacts if c["contact_id"] == target_contact_id),
+                        contacts[0] if contacts else {},
+                    )
+                    api_message_id = event.get("api_message_id", "")
+                    attachments = event.get("attachments") or []
+                    tags = event.get("tags") or []
+
+                    self._publish_from_callback(
+                        f"app:comms:{thread}_message",
+                        events_map[thread](
+                            content=content,
+                            contact=contact,
+                            api_message_id=api_message_id,
+                            attachments=attachments,
+                            tags=tags,
+                        ).to_json(),
+                    )
+
+                    # Download attachments (if any) to Downloads — reuse the
+                    # same helper used by unify_message.
+                    try:
+                        if attachments:
+                            asyncio.run_coroutine_threadsafe(
+                                add_unify_message_attachments(attachments),
+                                self.loop,
+                            )
+                    except Exception as e:
+                        LOGGER.error(
+                            f"{DEFAULT_ICON} Failed scheduling api_message attachment download: {e}",
                         )
 
                 else:

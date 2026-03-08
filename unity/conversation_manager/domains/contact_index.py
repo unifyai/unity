@@ -78,6 +78,22 @@ class UnifyMessage(CommsMessage):
 
 
 @dataclass
+class ApiMessage(CommsMessage):
+    """A programmatic API message, optionally with attachments and developer-supplied tags.
+
+    Each attachment is a dict with keys: id, filename, gs_url, content_type, size_bytes.
+    Tags are opaque strings chosen by the developer for routing and context.
+    """
+
+    name: str
+    content: str
+    timestamp: datetime
+    role: str  # "user" or "assistant"
+    attachments: list[dict] = field(default_factory=list)
+    tags: list[str] = field(default_factory=list)
+
+
+@dataclass
 class GuidanceMessage:
     """Internal orchestration message (not an actual communication).
 
@@ -95,6 +111,7 @@ class GuidanceMessage:
 _MESSAGE_TYPE_TO_MEDIUM: dict[type, Medium] = {
     EmailMessage: Medium.EMAIL,
     UnifyMessage: Medium.UNIFY_MESSAGE,
+    ApiMessage: Medium.API_MESSAGE,
 }
 
 
@@ -342,6 +359,7 @@ class ContactIndex:
         cc: list[str] | None = None,
         bcc: list[str] | None = None,
         contact_role: str | None = None,
+        tags: list[str] | None = None,
     ) -> "GlobalThreadEntry":
         """
         Build a GlobalThreadEntry without appending it to the global thread.
@@ -388,6 +406,15 @@ class ContactIndex:
                 role=role,
                 attachments=attachments or [],
             )
+        elif thread_name == Medium.API_MESSAGE:
+            message = ApiMessage(
+                name=name,
+                content=message_content or "",
+                timestamp=timestamp,
+                role=role,
+                attachments=attachments or [],
+                tags=tags or [],
+            )
         else:
             self._next_local_message_id += 1
             message = Message(
@@ -420,6 +447,7 @@ class ContactIndex:
         cc: list[str] | None = None,
         bcc: list[str] | None = None,
         contact_role: str | None = None,
+        tags: list[str] | None = None,
     ) -> int:
         """
         Build a message and append it to the shared global thread.
@@ -441,6 +469,7 @@ class ContactIndex:
             cc=cc,
             bcc=bcc,
             contact_role=contact_role,
+            tags=tags,
         )
         self.global_thread.append(entry)
         msg = entry.message

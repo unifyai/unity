@@ -572,6 +572,10 @@ class ComputerPrimitives(metaclass=SingletonABCMeta):
                 MockComputerBackend,
             )
 
+            fresh_url = self._resolve_container_url(None)
+            if fresh_url != DEFAULT_AGENT_SERVER_URL:
+                self._computer_kwargs_map["magnitude"]["container_url"] = fresh_url
+
             if self._computer_mode == "magnitude":
                 self._backend = MagnitudeBackend(
                     **self._computer_kwargs_map["magnitude"],
@@ -584,6 +588,24 @@ class ComputerPrimitives(metaclass=SingletonABCMeta):
                 raise ValueError(f"Unknown computer_mode: '{self._computer_mode}'.")
             self._backend._on_session_closed = self._invalidate_web_session
         return self._backend
+
+    @property
+    def url_mappings(self) -> dict[str, str] | None:
+        return self.backend._url_mappings
+
+    @url_mappings.setter
+    def url_mappings(self, mappings: dict[str, str] | None) -> None:
+        self.backend._url_mappings = mappings
+
+    @staticmethod
+    def mark_ready() -> None:
+        """Signal that the agent-service is available and ready for requests.
+
+        In production this is called by the VM startup sequence after the
+        managed container boots.  Tests or sandboxes that manage their own
+        agent-service should call this after the service is listening.
+        """
+        _vm_ready.set()
 
     def _invalidate_web_session(self, agent_session_id: str) -> None:
         """Mark the WebSessionHandle matching the agent-service UUID as inactive."""

@@ -197,7 +197,18 @@ class ComputerEnvironment(BaseEnvironment):
             "display(await primitives.computer.desktop.get_screenshot())\n\n"
             "# Web session\n"
             "display(await session.get_screenshot())\n"
-            "```",
+            "```\n\n"
+            "**Coordinate spaces are NOT interchangeable.**  Desktop screenshots "
+            "capture the full physical display (including browser chrome, address "
+            "bar, taskbar, window decorations).  Web session screenshots capture "
+            "only the page viewport inside the browser.  The same element appears "
+            "at different pixel coordinates in each.\n\n"
+            "- To `session.click(x, y)` on a web session, read coordinates from "
+            "`session.get_screenshot()` -- never from "
+            "`primitives.computer.desktop.get_screenshot()`.\n"
+            "- To `primitives.computer.desktop.click(x, y)`, read coordinates "
+            "from `primitives.computer.desktop.get_screenshot()`.\n\n"
+            "Mixing coordinate spaces causes systematic misclicks.",
         )
 
         parts.append(

@@ -926,6 +926,7 @@ class MockComputerBackend(ComputerBackend):
         self._seq = 0
 
         self._on_session_closed = None
+        self._url_mappings: dict[str, str] | None = None
 
     @property
     def backend(self) -> "MockComputerBackend":
@@ -1509,6 +1510,7 @@ class MagnitudeBackend(ComputerBackend):
         self.agent_base_url = container_url or local_url or "http://localhost:3000"
 
         self._on_session_closed = None
+        self._url_mappings: dict[str, str] | None = None
 
         logger.info(
             f"🔗 MagnitudeBackend initialized (container={self._container_url}, local={self._local_url})",
@@ -1542,6 +1544,8 @@ class MagnitudeBackend(ComputerBackend):
         params = dict(self._MODE_START_PARAMS[mode])
         if label is not None:
             params["label"] = label
+        if self._url_mappings:
+            params["urlMappings"] = self._url_mappings
         auth_key = SESSION_DETAILS.unify_key
         headers = {"authorization": f"Bearer {auth_key}"}
         use_ssl = self._vm_ssl if mode in ("desktop", "web-vm") else None
@@ -1558,12 +1562,13 @@ class MagnitudeBackend(ComputerBackend):
             ) as resp:
                 _cs_ms = (_cs_time.perf_counter() - _cs_t0) * 1000
                 if resp.status >= 400:
+                    body = await resp.text()
                     logger.debug(
                         f"⏱️ [MagnitudeBackend._create_session] POST /start FAILED "
                         f"({_cs_ms:.0f}ms, status={resp.status})",
                     )
                     raise RuntimeError(
-                        f"Failed to create {mode} session: {resp.status}",
+                        f"Failed to create {mode} session: {resp.status} {body}",
                     )
                 data = await resp.json()
         _cs_ms = (_cs_time.perf_counter() - _cs_t0) * 1000
