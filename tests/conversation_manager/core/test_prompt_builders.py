@@ -153,7 +153,7 @@ class TestExternalAppIntegration:
     def test_act_capabilities_has_external_apps_bullet(self):
         prompt = _build()
         assert "**External apps & services**" in prompt
-        assert "stored credentials and the service's SDK or CLI" in prompt
+        assert "stored credentials and the service's Python SDK" in prompt
 
     def test_onboarding_qa_present_in_demo_mode(self):
         prompt = _build(demo_mode=True)

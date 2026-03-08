@@ -143,7 +143,6 @@ async def test_add_functions_wrapper_forwards_venv_id():
         language="python",
         overwrite=False,
         venv_id=42,
-        shell_env_id=None,
     )
 
 
