@@ -113,3 +113,30 @@ async def test_additional_context_for_in_progress_work(evaluator):
         actions_summary="act: 'open the browser'",
     )
     assert decision.urgent is False
+
+
+# ---- Continuation-with-context scenarios ----
+
+
+@pytest.mark.asyncio
+async def test_continuation_utterance_urgent_with_context(evaluator):
+    """A fragment that looks like filler in isolation is clearly a continuation
+    when the previous utterance is provided.
+
+    Scenario: boss is dictating a venue address during a guided walkthrough.
+    The slow brain started processing "the postcode is B one five" and the user
+    continues with "three Q R" — completing the postcode B15 3QR.  Without context
+    "three Q R" looks like random syllables; with context it's the critical second
+    half of a dictation that should be processed together with the first half.
+    """
+    decision = await evaluator.evaluate(
+        utterance="three Q R",
+        origin_event="InboundUnifyMeetUtterance",
+        elapsed_seconds=5.0,
+        actions_summary="act: 'Boss is walking me through entering a venue booking in the CRM. He is dictating details for me to type into the form.'",
+        previous_utterance="the postcode is B one five",
+    )
+    assert decision.urgent is True, (
+        f"Expected urgent=True for a continuation of a dictated postcode, "
+        f"got urgent=False: {decision.reasoning}"
+    )
