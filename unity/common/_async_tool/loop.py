@@ -247,6 +247,8 @@ async def async_tool_loop_inner(
     time_awareness: bool = False,
     extra_ask_tools: Optional[Dict[str, Callable]] = None,
     enable_compression: bool = True,
+    pre_compression_threshold: Optional[float] = None,
+    pre_compression_tool_names: Optional[list[str]] = None,
 ) -> str:
     r"""
     Orchestrate an *interactive* "function-calling" dialogue between an LLM
@@ -683,6 +685,7 @@ async def async_tool_loop_inner(
 
     _max_input_tokens = unillm.get_max_input_tokens(client.endpoint)
     _over_threshold = False
+    _pre_compression_reached = False
     _full_completion: Any = None
 
     # Pre-compute whether tool_policy accepts a third positional arg
@@ -2042,6 +2045,48 @@ async def async_tool_loop_inner(
                     await _msg_dispatcher.append_msgs(
                         [{"role": "user", "content": _threshold_msg}],
                     )
+            elif (
+                _pre_compression_reached
+                and enable_compression
+                and pre_compression_tool_names
+                and not _has_pending_tools
+            ):
+                # Pre-compression window (e.g. 60-70%): restrict to the
+                # caller-specified tools plus compress_context so the LLM
+                # can store skills before compression discards context.
+                # Pull from the full tool set (tools_data.normalized) rather
+                # than policy_tools_norm so this overrides any active policy
+                # gate (e.g. discovery-first) -- same pattern as the 70%
+                # override above.
+                visible_base_tools_schema = [
+                    method_to_schema(
+                        spec.fn,
+                        name,
+                        expose_context_control=(
+                            propagate_chat_context == ChatContextPropagation.LLM_DECIDES
+                        ),
+                        has_parent_context=bool(parent_chat_context),
+                    )
+                    for name, spec in tools_data.normalized.items()
+                    if name in pre_compression_tool_names
+                ]
+                if _compress_schema is not None:
+                    visible_base_tools_schema.append(_compress_schema)
+                tool_choice_mode = "required"
+                _pre_msg = (
+                    "Context window is filling up. "
+                    "If the trajectory contains unstored skills worth preserving, "
+                    "call `store_skills` first, then `compress_context`. "
+                    "Otherwise call `compress_context` directly."
+                )
+                if log_steps == "full":
+                    logger.info(
+                        f"Pre-compression threshold reached: {_pre_msg}",
+                        prefix=ICONS["summarize"],
+                    )
+                await _msg_dispatcher.append_msgs(
+                    [{"role": "user", "content": _pre_msg}],
+                )
             else:
                 visible_base_tools_schema = [
                     method_to_schema(
@@ -2524,6 +2569,12 @@ async def async_tool_loop_inner(
                             0.7,
                             _max_input_tokens,
                         )
+                        if pre_compression_threshold is not None:
+                            _pre_compression_reached = context_over_threshold(
+                                _usage.prompt_tokens,
+                                pre_compression_threshold,
+                                _max_input_tokens,
+                            )
 
             # LLM responded - reset the activity-based timeout. The timeout is
             # designed to catch hung tools, not slow LLM inference. LLM providers
