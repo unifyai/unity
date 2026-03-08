@@ -2394,9 +2394,10 @@ class CodeActActor(BaseCodeActActor):
               the default session are not accessible). Discover available venvs via
               ``FunctionManager_list_venvs``.
             - **shell_env_id**: For shell languages, load a stored shell environment
-              so its CLI tool binaries are available on PATH. Discover available
-              environments via ``FunctionManager_list_shell_envs``. Not needed if the
-              tools are already installed system-wide.
+              so its CLI tool binaries are available on PATH. Stored shell
+              environments are created by the skill-storage system (via
+              ``store_skills``). Not needed if the tools are already installed
+              system-wide or were installed earlier in this task.
             - **session_id/session_name**:
               - only meaningful for stateful/read_only
               - for stateful: if omitted, defaults to **session_id=0** (the default session)
