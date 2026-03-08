@@ -193,7 +193,10 @@ def _filter_kwargs_for_callable(fn: Any, kwargs: dict[str, Any]) -> dict[str, An
     try:
         import inspect as _inspect
 
-        sig = _inspect.signature(fn)
+        # Unwrap ToolSpec (or similar wrappers) so we inspect the actual
+        # function signature rather than the passthrough __call__(**kw).
+        target = getattr(fn, "fn", fn)
+        sig = _inspect.signature(target)
         # If fn accepts **kwargs, keep all.
         for p in sig.parameters.values():
             if p.kind == _inspect.Parameter.VAR_KEYWORD:
