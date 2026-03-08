@@ -4,6 +4,9 @@ Verifies that:
 1. All venv CRUD tools appear in ``_build_storage_tools`` output.
 2. ``FunctionManager_add_functions`` wrapper accepts ``venv_id``.
 3. The wrappers correctly delegate to the underlying FunctionManager methods.
+4. The ``FunctionManager_add_functions`` wrapper surfaces the third-party
+   rejection ``ValueError`` when called with a real FunctionManager and
+   code that imports non-stdlib packages without a ``venv_id``.
 """
 
 import inspect
@@ -12,6 +15,9 @@ from unittest.mock import MagicMock
 import pytest
 
 from unity.actor.code_act_actor import _build_storage_tools, CodeActActor
+from unity.function_manager.function_manager import FunctionManager
+from unity.common.context_registry import ContextRegistry
+from tests.helpers import _handle_project
 
 
 class _MinimalGuidanceManager:
@@ -222,3 +228,124 @@ def test_venv_tools_have_docstrings():
         assert (
             doc and len(doc) > 20
         ), f"Tool '{name}' should have a meaningful docstring, got: {doc!r}"
+
+
+# ---------------------------------------------------------------------------
+# Symbolic: rejection surfaces through the storage tool wrapper with real FM
+# ---------------------------------------------------------------------------
+
+FUNCTION_WITH_REQUESTS = '''
+async def fetch_json(url: str, timeout: int = 30) -> dict:
+    """Fetch JSON from a URL."""
+    import requests
+    response = requests.get(url, timeout=timeout)
+    response.raise_for_status()
+    return response.json()
+'''.strip()
+
+FUNCTION_WITHOUT_THIRD_PARTY = '''
+async def add(a: int, b: int) -> int:
+    """Add two numbers."""
+    return a + b
+'''.strip()
+
+
+@pytest.fixture
+def real_function_manager_factory():
+    """Create a real FunctionManager for symbolic rejection tests."""
+    managers = []
+
+    def _create():
+        ContextRegistry.forget(FunctionManager, "Functions/VirtualEnvs")
+        ContextRegistry.forget(FunctionManager, "Functions/Compositional")
+        ContextRegistry.forget(FunctionManager, "Functions/Primitives")
+        ContextRegistry.forget(FunctionManager, "Functions/Meta")
+        fm = FunctionManager(include_primitives=False)
+        managers.append(fm)
+        return fm
+
+    yield _create
+
+    for fm in managers:
+        try:
+            fm.clear()
+        except Exception:
+            pass
+
+
+def _make_actor_with_real_fm(fm):
+    """Build a storage tool dict using a real FunctionManager."""
+    gm = _MinimalGuidanceManager()
+    actor = MagicMock(spec=CodeActActor)
+    actor.function_manager = fm
+    actor.guidance_manager = gm
+    return actor
+
+
+@_handle_project
+@pytest.mark.asyncio
+async def test_add_functions_tool_rejects_third_party_without_venv(
+    real_function_manager_factory,
+):
+    """Calling the FunctionManager_add_functions storage tool with code that
+    imports a third-party package and no venv_id raises ValueError.
+
+    This is the critical symbolic test: the rejection that the LLM sees as a
+    tool error *must* surface through the async wrapper, not get swallowed.
+    """
+    fm = real_function_manager_factory()
+    actor = _make_actor_with_real_fm(fm)
+    tools, _ = _build_storage_tools(actor=actor, ask_tools={})
+
+    add_fn = tools["FunctionManager_add_functions"]
+
+    with pytest.raises(ValueError, match="third-party packages"):
+        await add_fn(FUNCTION_WITH_REQUESTS)
+
+    stored = fm.list_functions()
+    assert not stored, "Function should not have been persisted after rejection"
+
+
+@_handle_project
+@pytest.mark.asyncio
+async def test_add_functions_tool_accepts_third_party_with_venv(
+    real_function_manager_factory,
+):
+    """Calling FunctionManager_add_functions with a venv_id succeeds for
+    code that imports third-party packages."""
+    fm = real_function_manager_factory()
+    actor = _make_actor_with_real_fm(fm)
+    tools, _ = _build_storage_tools(actor=actor, ask_tools={})
+
+    venv_id = await tools["FunctionManager_add_venv"](
+        venv=(
+            '[project]\nname = "test"\nversion = "0.1.0"\n'
+            'requires-python = ">=3.11"\n'
+            'dependencies = ["requests>=2.28.0"]'
+        ),
+    )
+
+    result = await tools["FunctionManager_add_functions"](
+        FUNCTION_WITH_REQUESTS,
+        venv_id=venv_id,
+    )
+    assert result.get("fetch_json") == "added"
+
+    stored = fm.list_functions()
+    assert "fetch_json" in stored
+    assert stored["fetch_json"]["venv_id"] == venv_id
+    assert "requests" in stored["fetch_json"].get("third_party_imports", [])
+
+
+@_handle_project
+@pytest.mark.asyncio
+async def test_add_functions_tool_no_rejection_for_stdlib_only(
+    real_function_manager_factory,
+):
+    """No rejection when the function only uses stdlib imports."""
+    fm = real_function_manager_factory()
+    actor = _make_actor_with_real_fm(fm)
+    tools, _ = _build_storage_tools(actor=actor, ask_tools={})
+
+    result = await tools["FunctionManager_add_functions"](FUNCTION_WITHOUT_THIRD_PARTY)
+    assert result.get("add") == "added"
