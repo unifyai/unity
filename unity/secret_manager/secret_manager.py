@@ -196,6 +196,30 @@ class SecretManager(BaseSecretManager):
 
         return _os.path.join(get_local_root(), ".env")
 
+    def _sync_dotenv(self) -> None:
+        """Fetch all secrets from the backend and merge into the local .env file.
+
+        Ensures that secrets added externally (e.g. via the Console UI, which
+        writes directly to Orchestra) are available as environment variables
+        for code executed via ``os.environ``.
+        """
+        try:
+            rows = unify.get_logs(context=self._ctx)
+        except Exception:
+            rows = []
+        name_to_value: Dict[str, str] = {}
+        for lg in rows:
+            try:
+                nm = (lg.entries or {}).get("name")
+                val = (lg.entries or {}).get("value")
+                if isinstance(nm, str) and nm and isinstance(val, str):
+                    name_to_value[nm] = val
+            except Exception:
+                continue
+
+        if name_to_value:
+            self._env_merge_and_write(add_or_update=name_to_value, remove_keys=None)
+
     def _ensure_dotenv_synced_on_init(self) -> None:
         """Create .env if missing and merge existing Unify secrets into it."""
         path = self._dotenv_path()
@@ -209,23 +233,7 @@ class SecretManager(BaseSecretManager):
             with open(path, "w", encoding="utf-8") as fh:
                 fh.write("")
 
-        # Build name->value map from current storage
-        try:
-            rows = unify.get_logs(context=self._ctx)
-        except Exception:
-            rows = []
-        existing: Dict[str, str] = {}
-        for lg in rows:
-            try:
-                nm = (lg.entries or {}).get("name")
-                val = (lg.entries or {}).get("value")
-                if isinstance(nm, str) and nm and isinstance(val, str):
-                    existing[nm] = val
-            except Exception:
-                continue
-
-        if existing:
-            self._env_merge_and_write(add_or_update=existing, remove_keys=None)
+        self._sync_dotenv()
 
     @staticmethod
     def _parse_env_lines(lines: List[str]) -> Dict[str, int]:
@@ -373,6 +381,13 @@ class SecretManager(BaseSecretManager):
         _clarification_down_q: Optional[asyncio.Queue[str]] = None,
         _call_id: Optional[str] = None,
     ) -> SteerableToolHandle:
+        # Sync .env so externally-added secrets (e.g. via Console UI) are
+        # available through os.environ before the Actor's code reads them.
+        try:
+            self._sync_dotenv()
+        except Exception:
+            pass
+
         # First, replace any known raw secret values with placeholders
         try:
             text = await self.to_placeholder(text)
