@@ -51,6 +51,7 @@ class BaseFunctionManager(BaseStateManager):
         preconditions: Optional[Dict[str, Dict]] = None,
         verify: Optional[Dict[str, bool]] = None,
         raise_on_error: bool = True,
+        venv_id: Optional[int] = None,
     ) -> Dict[str, str]:
         """
         Validate, compile and persist one or more function implementations.
@@ -64,6 +65,7 @@ class BaseFunctionManager(BaseStateManager):
             preconditions: dict[str, dict] | None = None,
             verify: dict[str, bool] | None = None,
             raise_on_error: bool = True,
+            venv_id: int | None = None,
         ) -> dict[str, str]
 
         Parameters
@@ -89,6 +91,13 @@ class BaseFunctionManager(BaseStateManager):
             If ``True``, raises ``ValueError`` when any function fails to add
             (parse error, validation error, etc.). If ``False``, errors are
             returned in the result dictionary instead of raising.
+        venv_id : int | None, default ``None``
+            Virtual environment to associate with the stored functions.
+            **Required** when any function imports third-party packages (i.e.
+            packages not in the Python standard library or the execution
+            environment).  Create a venv first via ``add_venv`` and pass the
+            returned ID here.  If ``None`` and the function body contains
+            third-party imports, ``add_functions`` raises ``ValueError``.
 
         Returns
         -------
@@ -101,6 +110,8 @@ class BaseFunctionManager(BaseStateManager):
         ValueError
             If ``raise_on_error=True`` and any function fails to add. The
             exception message contains the failed function names and errors.
+            Also raised when third-party imports are detected but no
+            ``venv_id`` is provided.
 
         Notes
         -----
