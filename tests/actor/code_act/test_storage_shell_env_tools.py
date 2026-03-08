@@ -5,6 +5,7 @@ Verifies that:
 2. ``FunctionManager_add_functions`` wrapper accepts ``shell_env_id``.
 3. The wrappers correctly delegate to the underlying FunctionManager methods.
 4. Shell env tools have docstrings for LLM consumption.
+5. Storage loop prompts include shell function guidance.
 """
 
 import inspect
@@ -337,3 +338,63 @@ my_tool
     env = fm.get_function_shell_env(function_id=func_id)
     assert env is not None
     assert env["shell_env_id"] == env_id
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# Storage prompt content tests
+# ────────────────────────────────────────────────────────────────────────────
+
+
+def test_storage_prompt_mentions_shell_functions():
+    """The _STORAGE_WHAT_CAN_BE_STORED prompt mentions shell scripts as storable."""
+    from unity.actor.code_act_actor import _STORAGE_WHAT_CAN_BE_STORED
+
+    assert "shell" in _STORAGE_WHAT_CAN_BE_STORED.lower()
+    assert "language=" in _STORAGE_WHAT_CAN_BE_STORED
+    assert "bash" in _STORAGE_WHAT_CAN_BE_STORED
+
+
+def test_storage_prompt_shell_metadata_format():
+    """The prompt shows the required shell metadata comment format."""
+    from unity.actor.code_act_actor import _STORAGE_WHAT_CAN_BE_STORED
+
+    assert "# @name:" in _STORAGE_WHAT_CAN_BE_STORED
+    assert "# @args:" in _STORAGE_WHAT_CAN_BE_STORED
+    assert "# @description:" in _STORAGE_WHAT_CAN_BE_STORED
+
+
+def test_storage_prompt_shell_env_workflow():
+    """The prompt describes the shell env workflow for CLI tool dependencies."""
+    from unity.actor.code_act_actor import _STORAGE_WHAT_CAN_BE_STORED
+
+    assert "FunctionManager_add_shell_env" in _STORAGE_WHAT_CAN_BE_STORED
+    assert "FunctionManager_list_shell_envs" in _STORAGE_WHAT_CAN_BE_STORED
+    assert "shell_env_id" in _STORAGE_WHAT_CAN_BE_STORED
+
+
+def test_storage_prompt_shell_env_in_two_stores():
+    """The _STORAGE_TWO_STORES prompt mentions shell env management."""
+    from unity.actor.code_act_actor import _STORAGE_TWO_STORES
+
+    assert "shell env" in _STORAGE_TWO_STORES.lower()
+    assert "FunctionManager_add_shell_env" in _STORAGE_TWO_STORES
+    assert "FunctionManager_set_function_shell_env" in _STORAGE_TWO_STORES
+
+
+def test_storage_prompt_references_trajectory_paths():
+    """The shell env prompt guides the LLM to extract tool paths from trajectory output."""
+    from unity.actor.code_act_actor import _STORAGE_WHAT_CAN_BE_STORED
+
+    assert "trajectory" in _STORAGE_WHAT_CAN_BE_STORED.lower()
+    assert "tool_paths" in _STORAGE_WHAT_CAN_BE_STORED
+
+
+def test_add_functions_wrapper_accepts_language_and_shell_env_id():
+    """FunctionManager_add_functions accepts both language and shell_env_id params."""
+    actor, fm = _make_actor_with_mocks()
+    tools, _ = _build_storage_tools(actor=actor, ask_tools={})
+
+    add_fn = tools["FunctionManager_add_functions"]
+    sig = inspect.signature(add_fn)
+    assert "language" in sig.parameters
+    assert "shell_env_id" in sig.parameters
