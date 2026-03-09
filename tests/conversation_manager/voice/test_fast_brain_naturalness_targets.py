@@ -81,14 +81,15 @@ class TestNaturalnessTargets:
         work may take minutes — not imply near-instant completion with "one moment"
         or "just a second". Data lookups are genuinely quick and short deferrals
         are fine for those (covered by test_fast_brain_deferral.py), but action
-        requests like sending emails or creating records take several minutes.
+        requests like creating records or researching topics take several minutes.
         """
         prompt = _build_target_prompt()
         conversation = [
             {
                 "role": "user",
                 "content": (
-                    "Can you draft and send an email to Sarah about the Q3 report?"
+                    "Can you research the top five competitors in our space "
+                    "and create a summary document?"
                 ),
             },
         ]
