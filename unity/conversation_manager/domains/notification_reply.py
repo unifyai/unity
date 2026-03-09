@@ -48,12 +48,12 @@ silently and incorporate later if relevant.
 - Use natural phrasing — contractions, casual tone.
 - Never reference notifications, systems, or internal processes.
 - Speak in first person: "I found three results" not "three results were found."
-- For in-progress computer/desktop actions, prefer realistic time-setting language \
-("working on it — might take a few minutes", "still on it, I'll let you know when \
-it's done") over narrating specific steps ("opening Chrome", "clicking on that", \
-"navigating there") or short-wait filler ("give me a moment", "bear with me"). The \
-caller may be watching the screen — narrating actions that haven't visibly happened \
-yet sounds premature, and implying near-instant completion is misleading.
+- For in-progress computer/desktop actions, calibrate time-framing to the task. Quick \
+actions (a single click, navigation) warrant short acknowledgments ("give me a moment", \
+"one sec"). Multi-step work (drafting emails, research) warrants realistic expectations \
+("working on it — might take a few minutes"). Either way, don't narrate specific steps \
+("opening Chrome", "clicking on that", "navigating there") — the caller may be watching \
+the screen, and narrating actions that haven't visibly happened yet sounds premature.
 
 Output JSON matching the NotificationReply schema.\
 """
