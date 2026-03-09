@@ -428,6 +428,52 @@ class _WebSessionFactory:
             result = [h for h in result if h.active]
         return list(result)
 
+    def get_session(
+        self,
+        session_id: int,
+        *,
+        active_only: bool = True,
+    ) -> WebSessionHandle:
+        """Return an existing web session handle by numeric ID.
+
+        This is the ergonomic reattachment API for browser sessions created in
+        earlier turns or by other actors.  The ``session_id`` matches the
+        handle's numeric ``session_id`` property and the IDs shown in
+        ``<active_web_sessions>`` snapshots.
+
+        Parameters
+        ----------
+        session_id : int
+            Numeric session identifier (0, 1, 2, ...).
+        active_only : bool, default True
+            When True, only return sessions that have not been stopped.
+
+        Returns
+        -------
+        WebSessionHandle
+            The existing matching session handle.
+
+        Raises
+        ------
+        ValueError
+            If no matching session exists, or if the matching session is
+            inactive while ``active_only`` is True.
+        """
+        for handle in self._handles:
+            if handle.session_id != session_id:
+                continue
+            if active_only and not handle.active:
+                raise ValueError(
+                    f"Web session {session_id} exists but is inactive. "
+                    "Use list_sessions(active_only=True) to discover reusable sessions.",
+                )
+            return handle
+
+        raise ValueError(
+            f"No web session with id {session_id}. "
+            "Use list_sessions() to inspect the available handles.",
+        )
+
     async def list_sessions_with_metadata(
         self,
         visible_only: bool = False,
@@ -470,7 +516,9 @@ class ComputerPrimitives(metaclass=SingletonABCMeta):
       ``query``, ``navigate``, ``get_links``, and ``get_screenshot``.
     - ``primitives.computer.web`` -- factory for independent browser sessions.
       Call ``new_session(visible=True/False)`` to create a session handle with
-      the desktop method set plus ``get_content()`` and ``stop()``.
+      the desktop method set plus ``get_content()`` and ``stop()``.  Use
+      ``get_session(session_id)`` or ``list_sessions()`` to reattach to an
+      existing browser session.
 
     Singleton via ``SingletonABCMeta`` / ``ManagerRegistry``.  All actors
     (including nested sub-agents) share the same backend connection.
@@ -632,7 +680,9 @@ class ComputerPrimitives(metaclass=SingletonABCMeta):
     def web(self) -> _WebSessionFactory:
         """Factory for independent browser sessions.
 
-        Call ``new_session(visible=True/False)`` to create a session.
+        Call ``new_session(visible=True/False)`` to create a session, or
+        ``get_session(session_id)`` / ``list_sessions()`` to reattach to an
+        existing one.
         """
         if self._web_factory is None:
             self._web_factory = _WebSessionFactory(self)
