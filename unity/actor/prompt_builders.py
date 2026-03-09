@@ -139,14 +139,15 @@ _EXECUTION_RULES = textwrap.dedent("""
          For single-primitive calls, use `execute_function` — the outer loop
          handles progress automatically via the adopted handle.
        - When composing multiple primitives in `execute_code`, emit notifications
-         at meaningful milestones (start of a major step, completion, measurable progress).
+         at meaningful milestones — before starting a step or when crossing a
+         measurable progress boundary.
 
        **What makes a strong notification**
-       - Concrete: include useful details like counts, batch indexes, item names, or completed step names.
-       - Specific: report what changed since the last update, not generic activity.
+       - Concrete: include useful details like counts, batch indexes, item names, or step descriptions.
+       - Specific: report what is happening or what changed since the last update, not generic activity.
        - Informative: help the user understand remaining work and current status.
        - User-facing: explain progress in plain language the end user can understand.
-       - High-level: summarize outcomes and next steps, not internal implementation details.
+       - High-level: summarize what is underway, not internal implementation details.
 
        **Anti-patterns to avoid**
        - Wrapping a single primitive call in `execute_code` just to add `notify()` around it — use `execute_function` instead.
@@ -154,11 +155,11 @@ _EXECUTION_RULES = textwrap.dedent("""
        - Repeating the same update without new information.
        - Over-notifying for trivial operations that complete almost immediately.
        - Dumping low-level internals (stack traces, call IDs, schema/debug metadata) into user progress updates.
+       - Using `notify()` to announce the final result or completion of the current turn — your response text is automatically surfaced when you yield control. `notify()` is for updates *during* active work, not for summarizing what you just finished.
 
        **Example payloads**
        - Progress: `{"type": "progress", "message": "...", "step": 2, "total": 5}`
-       - Step completion: `{"type": "step_complete", "step_name": "...", "result_summary": "..."}`
-       - Custom: any dict schema that communicates real progress clearly.
+       - Custom: any dict schema that communicates real in-progress status clearly.
 
        **Display Helper (`display`)**
        - `display(obj)` emits rich output (text or PIL images) to stdout.
