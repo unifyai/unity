@@ -348,6 +348,7 @@ async def entrypoint(ctx: agents.JobContext):
     user_is_speaking = False
     _queued_speech: list[tuple[str, str, str]] = []  # (text, notification_id, source)
     _say_meta_queue: list[dict] = []
+    _pending_speech: list[str] = []
     generation_seq = 0
     user_state_seq = 0
     _was_quiescent = True
@@ -585,6 +586,8 @@ async def entrypoint(ctx: agents.JobContext):
                 if match_say_meta(candidate, text):
                     say_meta = _say_meta_queue.pop(i)
                     break
+        if role == "assistant" and text in _pending_speech:
+            _pending_speech.remove(text)
         if role == "user":
             if not assistant._user_speech_logged:
                 _log.user_speech(text)
@@ -783,6 +786,7 @@ async def entrypoint(ctx: agents.JobContext):
             content=[notification_message],
         )
         _log.notification_say(text, notification_source=notification_source)
+        _pending_speech.append(text)
         session.say(text, allow_interruptions=True, add_to_chat_ctx=True)
 
     def _extract_chat_messages(ctx) -> list[dict]:
@@ -829,6 +833,8 @@ async def entrypoint(ctx: agents.JobContext):
             model=SETTINGS.conversation.FAST_BRAIN_MODEL,
         )
         chat_messages = _extract_chat_messages(session._chat_ctx)
+        for text in _pending_speech:
+            chat_messages.append({"role": "assistant", "content": text})
         decision, log_path = await evaluator.evaluate(
             chat_history=chat_messages,
             system_prompt=system_prompt,
@@ -848,6 +854,7 @@ async def entrypoint(ctx: agents.JobContext):
                 decision.content,
                 notification_source="notification_reply",
             )
+            _pending_speech.append(decision.content)
             session.say(
                 decision.content,
                 allow_interruptions=True,
