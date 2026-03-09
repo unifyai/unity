@@ -1206,6 +1206,30 @@ def render_participant_comms(event_json: str, participant_ids: set[int]) -> str 
     return None
 
 
+def _render_actor_result(event) -> str:
+    """Render an ActorResult into an honest, detail-bearing notification.
+
+    When the result carries no concrete data (e.g. the action ran out of
+    context budget), the notification says so explicitly rather than
+    emitting a bare "Action completed successfully" that the fast brain
+    could misinterpret as a meaningful outcome.
+    """
+    if not event.success:
+        detail = event.error or event.result or ""
+        if isinstance(detail, dict):
+            detail = detail.get("summary", str(detail))
+        snippet = str(detail)[:200]
+        return f"Action failed: {snippet}" if snippet else "Action failed"
+
+    detail = event.result or ""
+    if isinstance(detail, dict):
+        detail = detail.get("summary", str(detail))
+    snippet = str(detail)[:200]
+    if snippet:
+        return f"Action completed: {snippet}"
+    return "Action finished with no results returned"
+
+
 def render_event_for_fast_brain(event_json: str) -> str | None:
     """Render an actor lifecycle event as a human-readable string.
 
@@ -1225,12 +1249,7 @@ def render_event_for_fast_brain(event_json: str) -> str | None:
     if isinstance(event, ActorResult):
         if getattr(event, "action_type", "") in ("desktop_act", "web_act"):
             return None
-        status = "completed successfully" if event.success else "failed"
-        detail = event.result or event.error or ""
-        if isinstance(detail, dict):
-            detail = detail.get("summary", str(detail))
-        snippet = str(detail)[:200]
-        return f"Action {status}: {snippet}" if snippet else f"Action {status}"
+        return _render_actor_result(event)
     if isinstance(event, ActorHandleStarted):
         return f"Action started: {event.action_name} — {event.query}"
     if isinstance(event, ActorHandleResponse):
@@ -1322,12 +1341,7 @@ def _render_history_event(
         if isinstance(event, ActorNotification):
             return f"Action progress: {event.response}"
         if isinstance(event, ActorResult):
-            status = "completed successfully" if event.success else "failed"
-            detail = event.result or event.error or ""
-            if isinstance(detail, dict):
-                detail = detail.get("summary", str(detail))
-            snippet = str(detail)[:200]
-            return f"Action {status}: {snippet}" if snippet else f"Action {status}"
+            return _render_actor_result(event)
         if isinstance(event, ActorHandleStarted):
             return f"Action started: {event.action_name} — {event.query}"
         if isinstance(event, ActorSessionResponse):
