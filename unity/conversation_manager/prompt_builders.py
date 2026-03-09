@@ -996,6 +996,7 @@ def build_voice_agent_prompt(
     contact_rolling_summary: str | None = None,
     participants: list[dict] | None = None,
     demo_mode: bool = False,
+    channel: str = "phone",
 ) -> PromptParts:
     """Build the system prompt for the Voice Agent (fast brain).
 
@@ -1038,6 +1039,9 @@ def build_voice_agent_prompt(
         When provided, these are shown instead of the single contact block.
     demo_mode : bool
         Whether the assistant is operating in demo mode (pre-signup).
+    channel : str
+        Voice session medium: ``"phone"`` for a regular phone call,
+        ``"meet"`` for a Unify Meet video call.
 
     Returns
     -------
@@ -1075,8 +1079,11 @@ def build_voice_agent_prompt(
     parts = PromptParts()
 
     # Context
+    call_description = (
+        "a Unify Meet video call" if channel == "meet" else "a phone call"
+    )
     parts.add(
-        f"""{name_intro} a phone call with {caller_description}. The call is live — anything I say is heard by the caller immediately.
+        f"""{name_intro} {call_description} with {caller_description}. The call is live — anything I say is heard by the caller immediately.
 I never reference internal systems, backends, or notifications.
 I match the caller's language.""",
     )
@@ -1316,14 +1323,21 @@ This is a summary of my past conversations with the person on this call:
 I use this context to personalize the conversation, but I don't explicitly reference "my records" or "our past conversations" unless natural to do so.""",
         )
 
-    parts.add(
-        """Unify Meet controls
+    if channel == "meet":
+        parts.add(
+            """Unify Meet controls
 -------------------
 Bottom bar: "Share your screen" (shares the user's own screen with me), "Show assistant screen" (shows my desktop to the user; once visible, "Enable mouse and keyboard control" lets them operate it directly). Mic and camera toggles are bottom-left; settings and text chat are bottom-right. Top-right: the glove icon (undocks the window so it can be dragged).""",
-    )
+        )
 
-    parts.add(
-        """Screen sharing & webcam
+        parts.add(
+            """Meet window layout
+------------------
+The Meet window opens as a large overlay that covers most of the console. By default, the user can only see the Meet — the rest of the console (Profile, Resources, Chat, etc.) is hidden behind it. When I need to direct the user to any console feature, I first guide them to **undock the Meet window** by clicking the glove icon in the top-right corner, then dragging it to one side of the screen. Once undocked, the console is fully visible alongside the Meet. I never refer the user to console UI elements without first making sure they can see the console — if there's any doubt, I tell them about the glove icon.""",
+        )
+
+        parts.add(
+            """Screen sharing & webcam
 ------------------------
 During screen sharing or when the user's webcam is on, I receive visual frames paired with what the user said at that moment. Multiple sources may be active simultaneously — my desktop, the user's screen, and the user's webcam. The most recent frame from each source is shown as an actual image I can see; older frames are listed by filepath only.
 
@@ -1332,7 +1346,7 @@ During screen sharing or when the user's webcam is on, I receive visual frames p
 I use the visual context naturally: if the user says "click on that" while sharing their screen, I look at the screenshot to understand what "that" refers to. If my own desktop is shared, I can see what the user sees — and so can they. This means narrating actions prematurely ("opening the browser now") when the desktop visibly hasn't changed is immediately obvious and erodes trust. I let visible progress speak for itself and acknowledge the wait honestly instead. If the user's webcam is on, I can see them. I describe what I see concisely and accurately. I NEVER fabricate visual details that aren't in the captured frame.
 
 **Visual context is reference material, not an instruction to speak.** Screenshot messages persist across turns so I can reference them when needed — like having a document open on my desk. Their presence does not mean I should describe them. I only describe visual content when the caller's most recent utterance is specifically asking about what's visible. If the conversation has moved on to a different topic — or the caller's last message was an acknowledgment, a new question, or a `[notification]` about something else — I respond to that topic, not the screenshots. Re-describing what I already described is like a person repeating themselves unprompted.""",
-    )
+        )
 
     # Participant comms: on all calls (not just boss)
     if not demo_mode:
