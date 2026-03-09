@@ -188,6 +188,7 @@ def log_manager_call(
     *,
     call_id_kw: str = "_call_id",
     display_label: str | None = None,
+    forward_kwargs: tuple[str, ...] = (),
 ):
     """Decorator factory that publishes an incoming ManagerMethod event and
     wraps the returned handle so subsequent interactions are logged.
@@ -242,6 +243,12 @@ def log_manager_call(
                 f"{manager_name}.{method_name}({suffix})",
             ]
 
+            extra_fields: dict[str, Any] = {}
+            for fk in forward_kwargs:
+                fv = kwargs.get(fk)
+                if fv is not None:
+                    extra_fields[fk] = fv
+
             suffix_token = _PENDING_LOOP_SUFFIX.set(suffix)
             try:
                 await publish_manager_method_event(
@@ -252,6 +259,7 @@ def log_manager_call(
                     display_label=display_label,
                     hierarchy=hierarchy,
                     **{payload_key: payload_value},
+                    **extra_fields,
                 )
 
                 # Inject call_id only when the wrapped method declares it
