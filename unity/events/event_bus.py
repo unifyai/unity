@@ -806,14 +806,16 @@ class EventBus:
         now = _time.monotonic()
         prev = EventBus.last_publish_monotonic
         EventBus.last_publish_monotonic = now
-        if prev > 0 and 25 < (now - prev) < 35:
+        gap = now - prev
+        if prev > 0 and gap > 20:
             import traceback as _tb
 
-            LOGGER.info(
-                "EventBus.publish after %.1fs gap: type=%s caller:\n%s",
-                now - prev,
+            LOGGER.debug(
+                "EventBus.publish after %.1fs gap: type=%s event_id=%s caller:\n%s",
+                gap,
                 event.type,
-                "".join(_tb.format_stack()[-4:-1]),
+                event.event_id,
+                "".join(_tb.format_stack()[-6:-1]),
             )
 
         # Initialize publishing flag from settings if not already done

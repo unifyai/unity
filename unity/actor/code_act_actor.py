@@ -396,6 +396,37 @@ _STORAGE_WHAT_CAN_BE_STORED = (
     "principle applies to any code pattern — whenever some parameters "
     "represent reusable configuration and others represent per-call "
     "input, wrap to bake in the former and expose the latter.\n\n"
+    "### Third-party package dependencies\n\n"
+    "If the trajectory used `install_python_packages` and the function "
+    "you want to store imports any of those packages (anything beyond "
+    "the Python standard library and the environment-provided "
+    "namespaces `primitives` and `pydantic`), the function **requires "
+    "a virtual environment**. `FunctionManager_add_functions` will "
+    "reject the function if third-party imports are detected without "
+    "a `venv_id`.\n\n"
+    "Workflow:\n"
+    "1. Check existing venvs with `FunctionManager_list_venvs` — if "
+    "one already declares the needed packages, reuse it.\n"
+    "2. If no suitable venv exists, create one with "
+    "`FunctionManager_add_venv`. Pass a minimal `pyproject.toml` "
+    "string declaring only the packages the function actually "
+    "imports. Example:\n\n"
+    "```\n"
+    "[project]\n"
+    'name = "google-cloud-tools"\n'
+    'version = "0.1.0"\n'
+    'requires-python = ">=3.11"\n'
+    "dependencies = [\n"
+    '    "google-cloud-storage>=2.0.0",\n'
+    "]\n"
+    "```\n\n"
+    "3. Pass the returned `venv_id` to "
+    "`FunctionManager_add_functions(venv_id=<id>)`.\n\n"
+    "Multiple functions that share the same dependency set should "
+    "share a single venv. Do not create a separate venv per function "
+    "when the dependency overlap is high — update an existing venv "
+    "with `FunctionManager_update_venv` to add extra packages "
+    "instead.\n\n"
 )
 
 _STORAGE_TWO_STORES = (
@@ -407,14 +438,22 @@ _STORAGE_TWO_STORES = (
     "single callable with a clear name, docstring, and implementation.\n\n"
     "Actions:\n"
     "- **Add** a genuinely new, reusable function "
-    "(`FunctionManager_add_functions`).\n"
+    "(`FunctionManager_add_functions`). If the function imports "
+    "third-party packages, you **must** supply `venv_id`.\n"
     "- **Update** an existing function with a better implementation "
     "(`FunctionManager_add_functions` with `overwrite=True`).\n"
     "- **Merge** overlapping functions into one general-purpose function: "
     "add the merged version, then delete the old entries "
     "(`FunctionManager_delete_functions`).\n"
     "- **Delete** functions that are redundant or superseded "
-    "(`FunctionManager_delete_functions`).\n\n"
+    "(`FunctionManager_delete_functions`).\n"
+    "- **Manage venvs**: create (`FunctionManager_add_venv`), list "
+    "(`FunctionManager_list_venvs`), update "
+    "(`FunctionManager_update_venv`), or delete "
+    "(`FunctionManager_delete_venv`) virtual environments for "
+    "functions with third-party dependencies. Link a function to a "
+    "venv via `FunctionManager_set_function_venv` or pass `venv_id` "
+    "directly to `FunctionManager_add_functions`.\n\n"
     "Do NOT store trivial one-liners, test scaffolding, or functions "
     "that are too task-specific to be reusable.\n\n"
     "### Guidance Store — the *how*\n\n"
@@ -582,11 +621,13 @@ def _build_storage_tools(
         *,
         language: str = "python",
         overwrite: bool = False,
+        venv_id: Optional[int] = None,
     ) -> Any:
         return fm.add_functions(
             implementations=implementations,
             language=language,
             overwrite=bool(overwrite),
+            venv_id=venv_id,
         )
 
     FunctionManager_add_functions.__doc__ = BaseFunctionManager.add_functions.__doc__
@@ -600,6 +641,146 @@ def _build_storage_tools(
         BaseFunctionManager.delete_function.__doc__
     )
 
+    # ── FunctionManager venv tools ────────────────────────────────────
+
+    async def FunctionManager_add_venv(
+        venv: str,
+    ) -> int:
+        """Create a new virtual environment from a pyproject.toml specification.
+
+        Call this **before** storing a function that imports third-party
+        packages.  The returned ``venv_id`` is passed to
+        ``FunctionManager_add_functions(venv_id=...)`` so the function runs
+        in an isolated environment with its dependencies.
+
+        Parameters
+        ----------
+        venv : str
+            Full ``pyproject.toml`` content declaring the project name,
+            Python version constraint, and ``dependencies`` list.
+
+        Returns
+        -------
+        int
+            The auto-assigned ``venv_id``.
+        """
+        return fm.add_venv(venv=venv)
+
+    async def FunctionManager_list_venvs() -> Any:
+        """List all virtual environments.
+
+        Use this to check whether a suitable venv already exists before
+        creating a new one.  Prefer reusing an existing venv when its
+        dependency set is a superset of what the new function needs.
+
+        Returns
+        -------
+        list[dict]
+            Each dict contains ``venv_id`` and ``venv`` (the pyproject.toml
+            content).
+        """
+        return fm.list_venvs()
+
+    async def FunctionManager_get_venv(
+        venv_id: int,
+    ) -> Any:
+        """Get a virtual environment by ID.
+
+        Parameters
+        ----------
+        venv_id : int
+            The venv to retrieve.
+
+        Returns
+        -------
+        dict | None
+            Dict with ``venv_id`` and ``venv`` content, or ``None`` if
+            not found.
+        """
+        return fm.get_venv(venv_id=venv_id)
+
+    async def FunctionManager_update_venv(
+        venv_id: int,
+        venv: str,
+    ) -> bool:
+        """Update an existing virtual environment's pyproject.toml.
+
+        Use this to add dependencies to a venv that multiple functions
+        share, rather than creating a new venv for each function.
+
+        Parameters
+        ----------
+        venv_id : int
+            The venv to update.
+        venv : str
+            The new pyproject.toml content.
+
+        Returns
+        -------
+        bool
+            ``True`` if updated, ``False`` if not found.
+        """
+        return fm.update_venv(venv_id=venv_id, venv=venv)
+
+    async def FunctionManager_delete_venv(
+        venv_id: int,
+    ) -> bool:
+        """Delete a virtual environment.
+
+        Functions referencing this venv will fall back to the default
+        environment (``venv_id`` set to ``None``).
+
+        Parameters
+        ----------
+        venv_id : int
+            The venv to delete.
+
+        Returns
+        -------
+        bool
+            ``True`` if deleted, ``False`` if not found.
+        """
+        return fm.delete_venv(venv_id=venv_id)
+
+    async def FunctionManager_set_function_venv(
+        function_id: int,
+        venv_id: Optional[int],
+    ) -> bool:
+        """Link or unlink a function to/from a virtual environment.
+
+        Parameters
+        ----------
+        function_id : int
+            The function to update.
+        venv_id : int | None
+            The venv to associate, or ``None`` to revert to the default
+            environment.
+
+        Returns
+        -------
+        bool
+            ``True`` if updated, ``False`` if the function was not found.
+        """
+        return fm.set_function_venv(function_id=function_id, venv_id=venv_id)
+
+    async def FunctionManager_get_function_venv(
+        function_id: int,
+    ) -> Any:
+        """Get the virtual environment associated with a function.
+
+        Parameters
+        ----------
+        function_id : int
+            The function to query.
+
+        Returns
+        -------
+        dict | None
+            The venv dict if the function has one, ``None`` if using the
+            default environment.
+        """
+        return fm.get_function_venv(function_id=function_id)
+
     # ── GuidanceManager tools (bound methods, no wrappers needed) ────
 
     tools: Dict[str, Callable] = {
@@ -608,6 +789,13 @@ def _build_storage_tools(
         "FunctionManager_list_functions": FunctionManager_list_functions,
         "FunctionManager_add_functions": FunctionManager_add_functions,
         "FunctionManager_delete_functions": FunctionManager_delete_functions,
+        "FunctionManager_add_venv": FunctionManager_add_venv,
+        "FunctionManager_list_venvs": FunctionManager_list_venvs,
+        "FunctionManager_get_venv": FunctionManager_get_venv,
+        "FunctionManager_update_venv": FunctionManager_update_venv,
+        "FunctionManager_delete_venv": FunctionManager_delete_venv,
+        "FunctionManager_set_function_venv": FunctionManager_set_function_venv,
+        "FunctionManager_get_function_venv": FunctionManager_get_function_venv,
         **methods_to_tool_dict(
             gm.search,
             gm.filter,

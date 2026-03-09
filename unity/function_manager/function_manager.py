@@ -36,8 +36,11 @@ from unify.utils.http import RequestError as _UnifyRequestError
 from ..common.log_utils import create_logs as unity_create_logs
 from ..common.embed_utils import ensure_vector_column, list_private_fields
 from ..common.search_utils import table_search_top_k
-from .execution_env import create_base_globals
-from .dependency_analysis import collect_dependencies_from_function_node
+from .execution_env import ENVIRONMENT_MODULES, create_base_globals
+from .dependency_analysis import (
+    collect_dependencies_from_function_node,
+    detect_third_party_imports,
+)
 from .types.function import Function
 from .types.meta import FunctionsMeta
 from .types.venv import VirtualEnv
@@ -2650,6 +2653,7 @@ class FunctionManager(BaseFunctionManager):
         verify: Optional[Dict[str, bool]] = None,
         overwrite: bool = False,
         raise_on_error: bool = True,
+        venv_id: Optional[int] = None,
     ) -> Dict[str, str]:
         """
         Add or update functions in batch.
@@ -2662,12 +2666,15 @@ class FunctionManager(BaseFunctionManager):
             overwrite: If True, update existing functions; if False, skip duplicates.
             raise_on_error: If True (default), raise ValueError when any function
                 fails to add. If False, errors are returned in the result dict.
+            venv_id: Virtual environment to associate with the functions. Required
+                when any function imports third-party packages.
 
         Returns:
             Dictionary mapping function names to status ("added", "updated", "skipped", or "error").
 
         Raises:
-            ValueError: If raise_on_error=True and any function fails to add.
+            ValueError: If raise_on_error=True and any function fails to add,
+                or if third-party imports are detected without a venv_id.
         """
 
         if preconditions is None:
@@ -2765,6 +2772,21 @@ class FunctionManager(BaseFunctionManager):
                 )
                 dependencies_list = sorted(list(dependencies))
 
+                tp_imports = detect_third_party_imports(
+                    node,
+                    environment_modules=ENVIRONMENT_MODULES,
+                )
+                if tp_imports and venv_id is None:
+                    raise ValueError(
+                        f"Function '{name}' imports third-party packages "
+                        f"{sorted(tp_imports)} but no venv_id was provided. "
+                        f"Create a virtual environment with "
+                        f"FunctionManager_add_venv first, then pass the "
+                        f"returned venv_id to FunctionManager_add_functions "
+                        f"(or link it afterwards with "
+                        f"FunctionManager_set_function_venv).",
+                    )
+
                 all_calls = self._collect_function_calls(node)
                 self._validate_function_calls(name, all_calls, temp_names)
                 namespace = create_base_globals()
@@ -2782,10 +2804,14 @@ class FunctionManager(BaseFunctionManager):
                     "docstring": docstring,
                     "implementation": source,
                     "depends_on": dependencies_list,
+                    "third_party_imports": sorted(tp_imports),
                     "embedding_text": embedding_text,
                     "precondition": precondition,
                     "verify": should_verify,
                 }
+
+                if venv_id is not None:
+                    entry_data["venv_id"] = venv_id
 
                 if name in existing_to_update:
                     # Update existing function
@@ -3548,6 +3574,7 @@ class FunctionManager(BaseFunctionManager):
                 "guidance_ids": ent.get("guidance_ids", []),
                 "verify": ent.get("verify", True),
                 "venv_id": ent.get("venv_id"),
+                "third_party_imports": ent.get("third_party_imports", []),
                 "is_primitive": ent.get("is_primitive", False),
             }
             if include_implementations:
@@ -5393,6 +5420,9 @@ if __name__ == "__main__":
 
         # Extract RPC-bridgeable namespaces for subprocess execution paths.
         primitives = extra_namespaces.get("primitives")
+        computer_primitives = (
+            getattr(primitives, "computer", None) if primitives else None
+        )
 
         # Handle execution based on venv and state_mode
         if exec_venv_id is None:
