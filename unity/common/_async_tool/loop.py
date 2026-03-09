@@ -396,6 +396,7 @@ async def async_tool_loop_inner(
             # Also expose the resolved lineage list so event payloads can include the full
             # parent->child stack even when called outside the tool loop ContextVar scope.
             setattr(outer_handle_container[0], "_log_hierarchy", list(cfg.lineage))
+            setattr(outer_handle_container[0], "_loop_cfg", cfg)
     logger = LoopLogger(cfg, log_steps)
 
     # Wire inline log-file pointers: when UNILLM_LOG_DIR is set, each LLM call
