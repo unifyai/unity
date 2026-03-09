@@ -129,6 +129,95 @@ class TestNaturalnessTargets:
         )
 
     @pytest.mark.asyncio
+    async def test_simple_action_uses_short_deferral(self):
+        """For simple single-step actions (clicking a button, opening a page),
+        the fast brain should use short-timeframe language. Saying "give me a
+        few minutes" for clicking a button sounds absurd — the action completes
+        in moments and the user knows it.
+        """
+        prompt = _build_target_prompt()
+        conversation = [
+            {
+                "role": "user",
+                "content": "Can you click on the Settings button for me?",
+            },
+        ]
+
+        response = await get_fast_brain_response(prompt, conversation, model=MODEL_TTS)
+        response_lower = response.lower()
+
+        multi_minute_markers = [
+            "few minutes",
+            "several minutes",
+            "a while",
+            "take some time",
+            "let you know when",
+            "when it's done",
+            "when i'm done",
+            "when it's ready",
+            "update you when",
+            "circle back",
+            "get back to you",
+        ]
+
+        uses_multi_minute = any(m in response_lower for m in multi_minute_markers)
+
+        assert not uses_multi_minute, (
+            "For simple single-step actions (clicking a button), the fast brain "
+            "should use short-timeframe language ('one moment', 'sure'), not "
+            "multi-minute expectations.\n"
+            f"Response: {response}"
+        )
+
+    @pytest.mark.asyncio
+    async def test_meet_simple_action_uses_short_deferral(self):
+        """During a live Unify Meet where the user can see the assistant's
+        screen, simple actions like clicking a button are visibly quick.
+        Multi-minute language is especially jarring here.
+        """
+        prompt = build_voice_agent_prompt(
+            bio="A helpful and efficient assistant.",
+            assistant_name="Alex",
+            boss_first_name="Yusha",
+            boss_surname="Arif",
+            boss_phone_number="+19294608302",
+            boss_email_address="yusha@unify.ai",
+            boss_bio="Founder and engineer.",
+            is_boss_user=True,
+            contact_rolling_summary=None,
+            channel="meet",
+        ).flatten()
+
+        conversation = [
+            {
+                "role": "user",
+                "content": "Open Google for me.",
+            },
+        ]
+
+        response = await get_fast_brain_response(prompt, conversation, model=MODEL_TTS)
+        response_lower = response.lower()
+
+        multi_minute_markers = [
+            "few minutes",
+            "several minutes",
+            "a while",
+            "take some time",
+            "let you know when",
+            "when it's done",
+            "when i'm done",
+            "when it's ready",
+        ]
+
+        uses_multi_minute = any(m in response_lower for m in multi_minute_markers)
+
+        assert not uses_multi_minute, (
+            "During a live Meet, simple actions like opening a page should use "
+            "short-timeframe language, not multi-minute expectations.\n"
+            f"Response: {response}"
+        )
+
+    @pytest.mark.asyncio
     async def test_redundant_checking_guidance_avoids_same_deferral_phrase(self):
         prompt = _build_target_prompt()
         conversation = [
