@@ -98,6 +98,97 @@ class TestDesktopNamespace:
         assert "content" in result
 
 
+class TestObserveBypassDomProcessing:
+    """Mode-aware observe() payloads for the real ComputerSession."""
+
+    @pytest.mark.asyncio
+    async def test_desktop_observe_forces_bypass_dom_processing(self, monkeypatch):
+        from unity.function_manager.computer_backends import ComputerSession
+
+        session = ComputerSession(
+            session_id="desktop-session",
+            mode="desktop",
+            agent_base_url="http://example.com",
+        )
+        captured: dict[str, object] = {}
+
+        async def fake_request(method, endpoint, payload=None):
+            captured["method"] = method
+            captured["endpoint"] = endpoint
+            captured["payload"] = payload
+            return {"data": "desktop observation"}
+
+        monkeypatch.setattr(session, "_request", fake_request)
+
+        result = await session.observe("What is on the screen?")
+
+        assert result == "desktop observation"
+        assert captured["method"] == "POST"
+        assert captured["endpoint"] == "/extract"
+        assert captured["payload"]["bypassDomProcessing"] is True
+
+    @pytest.mark.asyncio
+    async def test_web_observe_does_not_force_bypass_dom_processing(
+        self,
+        monkeypatch,
+    ):
+        from unity.function_manager.computer_backends import ComputerSession
+
+        session = ComputerSession(
+            session_id="web-session",
+            mode="web-vm",
+            agent_base_url="http://example.com",
+        )
+        captured: dict[str, object] = {}
+
+        async def fake_request(method, endpoint, payload=None):
+            captured["method"] = method
+            captured["endpoint"] = endpoint
+            captured["payload"] = payload
+            return {"data": "web observation"}
+
+        monkeypatch.setattr(session, "_request", fake_request)
+
+        result = await session.observe("What is on the page?")
+
+        assert result == "web observation"
+        assert captured["method"] == "POST"
+        assert captured["endpoint"] == "/extract"
+        assert "bypassDomProcessing" not in captured["payload"]
+
+    @pytest.mark.asyncio
+    async def test_web_observe_allows_explicit_bypass_dom_processing(
+        self,
+        monkeypatch,
+    ):
+        from unity.function_manager.computer_backends import ComputerSession
+
+        session = ComputerSession(
+            session_id="web-session",
+            mode="web",
+            agent_base_url="http://example.com",
+        )
+        captured: dict[str, object] = {}
+
+        async def fake_request(method, endpoint, payload=None):
+            captured["method"] = method
+            captured["endpoint"] = endpoint
+            captured["payload"] = payload
+            return {"data": "web observation"}
+
+        monkeypatch.setattr(session, "_request", fake_request)
+
+        result = await session.observe(
+            "What is on the page?",
+            bypass_dom_processing=True,
+        )
+
+        assert result == "web observation"
+        assert captured["method"] == "POST"
+        assert captured["endpoint"] == "/extract"
+        assert captured["payload"]["bypassDomProcessing"] is True
+
+
 # ── Web session factory ───────────────────────────────────────────────
 
 
