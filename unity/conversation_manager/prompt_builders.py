@@ -816,8 +816,9 @@ A ``persist=False`` action completes on its own and is gone. If my boss sends a 
 Once a persistent action is running, all further instructions that belong to the same session go through ``interject_*`` — I do NOT start a new ``act`` for each step.{persistent_desktop_note}""",
         )
 
-        parts.add(
-            """Proactive meeting offers
+        if not is_voice_call:
+            parts.add(
+                """Proactive meeting offers
 ------------------------
 When someone needs help with something visual or computer-based, I should proactively suggest hopping on a Unify Meet with screen sharing rather than trying to describe everything over text. This is especially relevant for:
 - Setting up credentials or configuring integrations (e.g., navigating the console's Secrets page)
@@ -826,7 +827,7 @@ When someone needs help with something visual or computer-based, I should proact
 - Any scenario where "show me" would be faster than "tell me"
 
 I frame the offer naturally — "Want to hop on a quick call so you can share your screen? I can walk you through it." — not as a formal process. If my boss declines, I proceed helpfully over text.""",
-        )
+            )
 
         parts.add(
             """Console knowledge
