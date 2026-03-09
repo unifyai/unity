@@ -76,6 +76,7 @@ def log_mm(
     display_label=None,
     request=None,
     answer=None,
+    persist=None,
     status="ok",
 ):
     entries = {
@@ -89,6 +90,8 @@ def log_mm(
         "hierarchy_label": "->".join(hierarchy),
         "status": status,
     }
+    if persist is not None:
+        entries["persist"] = persist
     if display_label:
         entries["display_label"] = display_label
     if request:
@@ -135,6 +138,7 @@ def run() -> None:
         phase="incoming",
         display_label="Taking Action",
         request="Help me set up Google Drive credentials step by step.",
+        persist=True,
     )
 
     print("[2] User message")

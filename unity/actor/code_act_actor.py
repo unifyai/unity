@@ -3564,6 +3564,7 @@ class CodeActActor(BaseCodeActActor):
         "act",
         payload_key="request",
         display_label="Taking Action",
+        forward_kwargs=("persist",),
     )
     async def act(
         self,
