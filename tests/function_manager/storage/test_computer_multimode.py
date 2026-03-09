@@ -51,10 +51,13 @@ class TestDesktopNamespace:
             "query",
             "navigate",
             "get_links",
-            "get_content",
             "get_screenshot",
         ):
             assert callable(getattr(ns, name)), f"desktop.{name} should be callable"
+
+    def test_desktop_does_not_expose_get_content(self):
+        cp = _make_primitives()
+        assert not hasattr(cp.desktop, "get_content")
 
     @pytest.mark.asyncio
     async def test_desktop_act(self):
@@ -90,12 +93,6 @@ class TestDesktopNamespace:
         cp = _make_primitives()
         result = await cp.desktop.get_links()
         assert "links" in result
-
-    @pytest.mark.asyncio
-    async def test_desktop_get_content(self):
-        cp = _make_primitives()
-        result = await cp.desktop.get_content()
-        assert "content" in result
 
 
 class TestObserveBypassDomProcessing:
@@ -377,11 +374,18 @@ class TestEnvironmentToolDiscovery:
             "query",
             "navigate",
             "get_links",
-            "get_content",
             "get_screenshot",
         ):
             fq = f"primitives.computer.desktop.{method}"
             assert fq in tools, f"Expected tool {fq} in get_tools()"
+
+    def test_get_tools_excludes_desktop_get_content(self):
+        from unity.actor.environments.computer import ComputerEnvironment
+
+        cp = _make_primitives()
+        env = ComputerEnvironment(cp)
+        tools = env.get_tools()
+        assert "primitives.computer.desktop.get_content" not in tools
 
     def test_get_tools_includes_web_factory(self):
         from unity.actor.environments.computer import ComputerEnvironment

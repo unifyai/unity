@@ -83,6 +83,9 @@ _COMPUTER_METHODS = (
     "execute_actions",
 )
 
+_DESKTOP_METHODS = tuple(name for name in _COMPUTER_METHODS if name != "get_content")
+_WEB_SESSION_METHODS = _COMPUTER_METHODS
+
 
 def _publish_desktop_invoked(method_name: str) -> None:
     """Fire-and-forget EventBus publish for desktop primitive invocations."""
@@ -270,17 +273,19 @@ class _ComputerNamespace:
         async def _resolve():
             return await owner.backend.get_session(mode)
 
-        for name in _COMPUTER_METHODS:
+        methods = _DESKTOP_METHODS if mode == "desktop" else _WEB_SESSION_METHODS
+        for name in methods:
             setattr(self, name, _make_session_method(name, owner, _resolve, mode=mode))
 
 
 class WebSessionHandle:
     """Wrapped browser session returned by ``primitives.computer.web.new_session()``.
 
-    Has the same method set as ``primitives.computer.desktop``: ``act``,
-    ``observe``, ``query``, ``navigate``, ``get_links``, ``get_content``,
-    ``get_screenshot``.  Additionally exposes ``stop()`` for explicit
-    lifecycle management.
+    Exposes ``act``, ``observe``, ``query``, ``navigate``, ``get_links``,
+    ``get_content``, and ``get_screenshot`` plus ``stop()`` for explicit
+    lifecycle management.  Unlike ``primitives.computer.desktop``, web
+    sessions retain ``get_content()`` because they operate on real browser
+    pages rather than the noVNC viewer surface.
     """
 
     def __init__(
@@ -302,7 +307,7 @@ class WebSessionHandle:
         async def _resolve():
             return self._session
 
-        for name in _COMPUTER_METHODS:
+        for name in _WEB_SESSION_METHODS:
             setattr(
                 self,
                 name,
@@ -462,11 +467,10 @@ class ComputerPrimitives(metaclass=SingletonABCMeta):
 
     - ``primitives.computer.desktop`` -- singleton namespace for full desktop
       control (mouse/keyboard via noVNC).  Methods: ``act``, ``observe``,
-      ``query``, ``navigate``, ``get_links``, ``get_content``,
-      ``get_screenshot``.
+      ``query``, ``navigate``, ``get_links``, and ``get_screenshot``.
     - ``primitives.computer.web`` -- factory for independent browser sessions.
       Call ``new_session(visible=True/False)`` to create a session handle with
-      the same method set as the desktop namespace, plus ``stop()``.
+      the desktop method set plus ``get_content()`` and ``stop()``.
 
     Singleton via ``SingletonABCMeta`` / ``ManagerRegistry``.  All actors
     (including nested sub-agents) share the same backend connection.
