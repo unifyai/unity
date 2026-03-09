@@ -1101,6 +1101,45 @@ class TestProactiveSpeechLLMBehavior:
             decision.should_speak is False
         ), f"Should NOT speak during goodbye. Decision: {decision}"
 
+    async def test_decide_stays_silent_when_time_expectation_already_set(self):
+        """When the assistant already told the caller it'll take a few minutes
+        and an action is still in-flight, proactive speech should NOT fire with
+        filler reassurance. The caller was told to expect a wait — repeating
+        "bear with me" or "shouldn't be too much longer" adds no value.
+        """
+        ps = ProactiveSpeech()
+
+        chat_history = [
+            {
+                "role": "user",
+                "content": "Can you send an email to Sarah about the Q3 report?",
+            },
+            {
+                "role": "assistant",
+                "content": (
+                    "Working on that now — it might take a few minutes. "
+                    "I'll let you know when it's done."
+                ),
+            },
+        ]
+        system_prompt = "You are a helpful assistant."
+        action_context = (
+            "[action status]\n"
+            "IN-FLIGHT: Send email to Sarah about Q3 report (started 30s ago)\n"
+        )
+
+        decision, _ = await ps.decide(
+            chat_history=chat_history,
+            system_prompt=system_prompt,
+            action_context=action_context,
+        )
+
+        assert decision.should_speak is False, (
+            "Assistant already set a multi-minute time expectation and an action "
+            "is still in-flight. Proactive speech should stay silent rather than "
+            f"repeating filler.\nDecision: {decision}"
+        )
+
 
 @pytest.mark.asyncio
 class TestProactiveSpeechConcurrentScheduling:

@@ -76,6 +76,59 @@ class TestNaturalnessTargets:
         )
 
     @pytest.mark.asyncio
+    async def test_action_request_sets_realistic_time_expectation(self):
+        """For multi-step action requests, the fast brain should signal that the
+        work may take minutes — not imply near-instant completion with "one moment"
+        or "just a second". Data lookups are genuinely quick and short deferrals
+        are fine for those (covered by test_fast_brain_deferral.py), but action
+        requests like sending emails or creating records take several minutes.
+        """
+        prompt = _build_target_prompt()
+        conversation = [
+            {
+                "role": "user",
+                "content": (
+                    "Can you draft and send an email to Sarah about the Q3 report?"
+                ),
+            },
+        ]
+
+        response = await get_fast_brain_response(prompt, conversation, model=MODEL_TTS)
+        response_lower = response.lower()
+
+        short_wait_only = [
+            "one moment",
+            "just a second",
+            "just a sec",
+            "one sec",
+            "give me a second",
+            "bear with me",
+        ]
+        long_wait_markers = [
+            "minute",
+            "a while",
+            "a bit",
+            "take a little",
+            "let you know",
+            "when i'm done",
+            "when it's done",
+            "when it's ready",
+            "update you",
+            "circle back",
+            "get back to you",
+        ]
+
+        uses_short_wait = any(p in response_lower for p in short_wait_only)
+        sets_expectation = any(m in response_lower for m in long_wait_markers)
+
+        assert not uses_short_wait or sets_expectation, (
+            "For multi-step action requests, the fast brain should set realistic "
+            "time expectations (minutes, not seconds). Short-wait filler like "
+            "'one moment' is misleading for tasks that take several minutes.\n"
+            f"Response: {response}"
+        )
+
+    @pytest.mark.asyncio
     async def test_redundant_checking_guidance_avoids_same_deferral_phrase(self):
         prompt = _build_target_prompt()
         conversation = [
