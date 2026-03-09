@@ -324,6 +324,7 @@ async def entrypoint(ctx: agents.JobContext):
         is_boss_user=contact.get("contact_id") == 1,
         contact_rolling_summary=contact.get("rolling_summary", ""),
         demo_mode=SETTINGS.DEMO_MODE,
+        channel=channel,
     ).flatten()
     _log.config(f"System prompt ({len(system_prompt)} chars)")
 
