@@ -150,12 +150,27 @@ def run() -> None:
         },
     )
 
-    print("[3] Assistant tool call")
+    print("[3] Assistant thinking + tool call")
     log_tl(
         h,
         {
             "role": "assistant",
             "content": None,
+            "reasoning_content": (
+                "The user needs to set up Google Drive API credentials. "
+                "I should search for the most current process since cloud console UIs change frequently. "
+                "Let me use the web search tool to find a 2026 guide."
+            ),
+            "thinking_blocks": [
+                {
+                    "type": "thinking",
+                    "thinking": (
+                        "The user needs to set up Google Drive API credentials. "
+                        "I should search for the most current process since cloud console UIs change frequently. "
+                        "Let me use the web search tool to find a 2026 guide."
+                    ),
+                },
+            ],
             "tool_calls": [
                 {
                     "id": "tc1",
