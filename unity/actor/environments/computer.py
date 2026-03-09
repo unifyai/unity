@@ -61,13 +61,12 @@ class ComputerEnvironment(BaseEnvironment):
 
     def get_tools(self) -> Dict[str, ToolMetadata]:
         impure = {"navigate", "act", "new_session"}
-        tool_names = [
+        desktop_tool_names = [
             "navigate",
             "act",
             "observe",
             "query",
             "get_links",
-            "get_content",
             "get_screenshot",
         ]
 
@@ -76,7 +75,7 @@ class ComputerEnvironment(BaseEnvironment):
 
         # Desktop namespace -- singleton, full method set
         desktop_ns = self._computer_primitives.desktop
-        for name in tool_names:
+        for name in desktop_tool_names:
             fq_name = f"{self.NAMESPACE}.{self.MANAGER_ALIAS}.desktop.{name}"
             if (
                 self._allowed_methods is not None
@@ -140,13 +139,13 @@ class ComputerEnvironment(BaseEnvironment):
             "The VM desktop is accessed through a VNC connection.  The "
             "`primitives.computer.desktop` namespace drives the desktop via a "
             "headless Playwright browser connected to the noVNC VNC viewer.  "
-            "This means methods like `navigate()`, `get_links()`, and "
-            "`get_content()` operate on this headless browser (the VNC viewer "
-            "page), not on the X11 desktop itself.  `observe()` on the desktop "
-            "uses screenshot-only visual extraction, which is the correct way "
-            "to verify what is currently visible on the desktop.  `get_content()` "
-            "returns the noVNC viewer page DOM and is usually not useful for "
-            "desktop workflows.\n\n"
+            "This means desktop interactions are mediated through the noVNC "
+            "viewer page rather than the X11 desktop directly.  `observe()` on "
+            "the desktop uses screenshot-only visual extraction, which is the "
+            "correct way to verify what is currently visible on the desktop.  "
+            "`get_content()` is intentionally not exposed on the desktop "
+            "namespace because the noVNC viewer DOM is not a useful or safe "
+            "representation of desktop state.\n\n"
             "Two interfaces for controlling the desktop:\n\n"
             "#### `primitives.computer.desktop` -- Desktop Control (singleton)\n\n"
             "Sends mouse and keyboard actions to the VM desktop through the VNC "
