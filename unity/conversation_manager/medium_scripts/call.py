@@ -1109,7 +1109,10 @@ async def entrypoint(ctx: agents.JobContext):
         origin="fast_brain_greeting",
         reasoning_effort="low",
     )
-    greeting_messages = _extract_chat_messages(session._chat_ctx)
+    greeting_messages = [
+        {"role": "system", "content": system_prompt},
+        *_extract_chat_messages(session._chat_ctx),
+    ]
     greeting_text = await greeting_client.generate(messages=greeting_messages)
 
     if channel != "phone":

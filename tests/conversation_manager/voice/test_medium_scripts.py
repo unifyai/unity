@@ -838,8 +838,13 @@ class TestFastBrainGuidanceFlow:
 
                 return _done().__await__()
 
+        class _FakeLocalParticipant:
+            async def publish_data(self, *args, **kwargs):
+                pass
+
         class _FakeRoom:
             name = "fake-room"
+            local_participant = _FakeLocalParticipant()
 
             def on(self, *args, **kwargs):
                 return lambda fn: fn
@@ -966,9 +971,22 @@ class TestFastBrainGuidanceFlow:
         monkeypatch.setattr(call_script, "STT", object())
         monkeypatch.setattr(call_script, "VAD", object())
 
+        import unity.common.llm_client as _llm_mod
+
+        class _FakeGreetingClient:
+            async def generate(self, **kwargs):
+                return "Hello!"
+
+        monkeypatch.setattr(
+            _llm_mod,
+            "new_llm_client",
+            lambda *a, **kw: _FakeGreetingClient(),
+        )
+
         await call_script.entrypoint(_FakeJobContext())
 
         session = fake_session_holder["session"]
+        session.say_calls.clear()
 
         # Send notify-only guidance (should_speak=False, no response_text)
         guidance_cb = fake_broker.callbacks["app:call:notification"]
@@ -1032,8 +1050,13 @@ class TestFastBrainGuidanceFlow:
 
                 return _done().__await__()
 
+        class _FakeLocalParticipant:
+            async def publish_data(self, *args, **kwargs):
+                pass
+
         class _FakeRoom:
             name = "fake-room"
+            local_participant = _FakeLocalParticipant()
 
             def on(self, *args, **kwargs):
                 return lambda fn: fn
@@ -1160,9 +1183,22 @@ class TestFastBrainGuidanceFlow:
         monkeypatch.setattr(call_script, "STT", object())
         monkeypatch.setattr(call_script, "VAD", object())
 
+        import unity.common.llm_client as _llm_mod
+
+        class _FakeGreetingClient:
+            async def generate(self, **kwargs):
+                return "Hello!"
+
+        monkeypatch.setattr(
+            _llm_mod,
+            "new_llm_client",
+            lambda *a, **kw: _FakeGreetingClient(),
+        )
+
         await call_script.entrypoint(_FakeJobContext())
 
         session = fake_session_holder["session"]
+        session.say_calls.clear()
         assistant = session.current_agent
 
         # User is speaking — guidance will be queued but not spoken yet
@@ -1316,8 +1352,13 @@ class TestFastBrainGuidanceFlow:
 
                 return _done().__await__()
 
+        class _FakeLocalParticipant:
+            async def publish_data(self, *args, **kwargs):
+                pass
+
         class _FakeRoom:
             name = "fake-room"
+            local_participant = _FakeLocalParticipant()
 
             def on(self, *args, **kwargs):
                 return lambda fn: fn
@@ -1444,9 +1485,22 @@ class TestFastBrainGuidanceFlow:
         monkeypatch.setattr(call_script, "STT", object())
         monkeypatch.setattr(call_script, "VAD", object())
 
+        import unity.common.llm_client as _llm_mod
+
+        class _FakeGreetingClient:
+            async def generate(self, **kwargs):
+                return "Hello!"
+
+        monkeypatch.setattr(
+            _llm_mod,
+            "new_llm_client",
+            lambda *a, **kw: _FakeGreetingClient(),
+        )
+
         await call_script.entrypoint(_FakeJobContext())
 
         session = fake_session_holder["session"]
+        session.say_calls.clear()
         guidance_cb = fake_broker.callbacks["app:call:notification"]
         agent_state_cb = session._events["agent_state_changed"]
 
@@ -1512,8 +1566,13 @@ class TestFastBrainGuidanceFlow:
 
                 return _done().__await__()
 
+        class _FakeLocalParticipant:
+            async def publish_data(self, *args, **kwargs):
+                pass
+
         class _FakeRoom:
             name = "fake-room"
+            local_participant = _FakeLocalParticipant()
 
             def on(self, *args, **kwargs):
                 return lambda fn: fn
@@ -1640,9 +1699,22 @@ class TestFastBrainGuidanceFlow:
         monkeypatch.setattr(call_script, "STT", object())
         monkeypatch.setattr(call_script, "VAD", object())
 
+        import unity.common.llm_client as _llm_mod
+
+        class _FakeGreetingClient:
+            async def generate(self, **kwargs):
+                return "Hello!"
+
+        monkeypatch.setattr(
+            _llm_mod,
+            "new_llm_client",
+            lambda *a, **kw: _FakeGreetingClient(),
+        )
+
         await call_script.entrypoint(_FakeJobContext())
 
         session = fake_session_holder["session"]
+        session.say_calls.clear()
         guidance_cb = fake_broker.callbacks["app:call:notification"]
         agent_state_cb = session._events["agent_state_changed"]
 
