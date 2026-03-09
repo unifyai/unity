@@ -205,6 +205,7 @@ def run() -> None:
         h,
         {
             "role": "user",
+            "_interjection": True,
             "content": "Done! I'm on the Service Accounts page. What's next?",
         },
     )
@@ -223,6 +224,7 @@ def run() -> None:
         h,
         {
             "role": "user",
+            "_interjection": True,
             "content": "Hold on, I need to check something. Can you pause?",
         },
     )
@@ -263,6 +265,7 @@ def run() -> None:
         h,
         {
             "role": "user",
+            "_interjection": True,
             "content": "Yes, all done. Credentials saved. You can stop now.",
         },
     )

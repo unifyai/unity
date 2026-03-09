@@ -1757,7 +1757,13 @@ async def async_tool_loop_inner(
                         if time_ctx is not None
                         else _msg_text
                     )
-                    msgs_to_append.append({"role": "user", "content": _user_content})
+                    msgs_to_append.append(
+                        {
+                            "role": "user",
+                            "_interjection": True,
+                            "content": _user_content,
+                        },
+                    )
                 if msgs_to_append:
                     await _msg_dispatcher.append_msgs(msgs_to_append)
                 # Update history only if there was user message content
