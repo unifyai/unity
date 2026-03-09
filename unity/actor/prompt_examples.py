@@ -560,6 +560,25 @@ def get_computer_session_execution_example() -> str:
 """
 
 
+def get_computer_session_reattachment_example() -> str:
+    """Example: reattach to an existing visible browser session by ID."""
+
+    return """
+# Example: Reusing an existing visible browser session
+async def continue_existing_browser() -> str:
+    # The current state or surrounding system may already tell you that
+    # Web session 0 is active. Reattach to it instead of opening a duplicate.
+    session = primitives.computer.web.get_session(0)
+
+    # Verify the current state before acting.
+    display(await session.get_screenshot())
+
+    await session.act("Click the Continue button on the current page.")
+    confirmation = await session.observe("Confirm the next step is now visible.")
+    return confirmation
+"""
+
+
 def get_computer_stateful_workflow_example() -> str:
     """Example: stateful computation with helper functions persisting across turns."""
 
@@ -1732,6 +1751,7 @@ def get_computer_examples() -> str:
         get_computer_multistep_example().strip(),
         get_computer_screenshot_driven_example().strip(),
         get_computer_session_execution_example().strip(),
+        get_computer_session_reattachment_example().strip(),
         get_computer_stateful_workflow_example().strip(),
         get_computer_interactive_workflow_example().strip(),
     ]
