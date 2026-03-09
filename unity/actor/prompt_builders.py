@@ -108,6 +108,15 @@ _EXECUTION_RULES = textwrap.dedent("""
     do so. Only reach for `execute_code` when you genuinely need to
     compose multiple steps or write conditional/iterative logic.
 
+    **Python-first principle:** When a task can be accomplished with
+    either a Python package or a shell CLI tool, prefer Python.  Python
+    packages are installed via `install_python_packages` with full
+    environment management (isolated venvs, automatic dependency
+    resolution).  Shell tools lack equivalent isolation — there is no
+    `install_shell_packages` and nothing prevents dependency conflicts.
+    Reserve shell for tasks that genuinely require it (system commands,
+    file operations, running existing shell scripts).
+
     ### Execution Rules
 
     1. **Session-Based Execution**:
@@ -250,6 +259,41 @@ _STORAGE_DEFERRED_NOTICE = textwrap.dedent("""
     store), then `compress_context`. If nothing new is worth storing — or
     you have already called `store_skills` for the valuable parts — go
     straight to `compress_context`.
+""").strip()
+
+
+_EXTERNAL_APP_INTEGRATION = textwrap.dedent("""
+    ### External App Integration
+
+    When integrating with external services (cloud storage, communication
+    platforms, project management tools, CRMs, accounting software, etc.),
+    follow this pattern:
+
+    1. **Check for credentials**: Use `primitives.secrets.ask(...)` to check
+       if API credentials, tokens, or keys for the service are already stored.
+       If not, inform the caller and explain they can add them via the
+       console's Secrets page (Resources → Secrets).
+
+    2. **Install the SDK**: Use `install_python_packages` to install the
+       service's official Python SDK (e.g., `google-cloud-storage` for Google
+       Cloud, `slack-sdk` for Slack, `boto3` for AWS, `stripe` for Stripe).
+
+    3. **Integrate**: Write Python code that uses the SDK with the stored
+       credentials to interact with the service. Credentials are synced to
+       environment variables via the `.env` file managed by SecretManager —
+       use `os.environ` to access them after confirming their names via
+       `primitives.secrets.ask(...)`.
+
+    4. **Store for reuse**: After a successful integration, store reusable
+       functions via `store_skills` and document the setup via
+       `GuidanceManager_add_guidance` so future interactions can reuse the
+       integration without rediscovery.
+
+    **Prefer Python SDKs over CLI tools.** Python packages benefit from full
+    environment management (isolated venvs, dependency resolution via
+    `install_python_packages`). Shell CLI tools have no equivalent dependency
+    management. Most services offer Python SDKs that are more reliable and
+    composable for programmatic use.
 """).strip()
 
 
@@ -540,6 +584,7 @@ def build_code_act_prompt(
 
         parts.append(_EXECUTION_RULES)
         parts.append(_INCREMENTAL_EXECUTION)
+        parts.append(_EXTERNAL_APP_INTEGRATION)
 
         if has_fm_tools or has_gm_tools:
             parts.append(_FUNCTION_AND_GUIDANCE_LIBRARY)

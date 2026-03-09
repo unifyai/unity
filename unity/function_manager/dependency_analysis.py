@@ -21,7 +21,10 @@ is passed in as
 from __future__ import annotations
 
 import ast
+import sys
 from typing import FrozenSet, Optional, Set
+
+_STDLIB_MODULE_NAMES: frozenset[str] = frozenset(sys.stdlib_module_names)
 
 
 class DependencyVisitor(ast.NodeVisitor):
@@ -223,4 +226,59 @@ def collect_dependencies_from_source(
         node,
         known_function_names,
         environment_namespaces=environment_namespaces,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Third-party import detection
+# ---------------------------------------------------------------------------
+
+
+def detect_third_party_imports(
+    fn_node: ast.FunctionDef | ast.AsyncFunctionDef,
+    *,
+    environment_modules: FrozenSet[str] = frozenset(),
+) -> Set[str]:
+    """Return the set of third-party top-level module names imported in
+    *fn_node*'s body.
+
+    Walks the function body for ``import X`` and ``from X import Y``
+    statements, extracts the root module name, and returns those that are
+    **not** in ``sys.stdlib_module_names`` and **not** in
+    *environment_modules* (modules already provided by the execution
+    environment, e.g. ``primitives``, ``pydantic``, ``typing``).
+    """
+    third_party: Set[str] = set()
+    for node in ast.walk(fn_node):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                root = alias.name.split(".")[0]
+                if root not in _STDLIB_MODULE_NAMES and root not in environment_modules:
+                    third_party.add(root)
+        elif isinstance(node, ast.ImportFrom):
+            if node.module is not None:
+                root = node.module.split(".")[0]
+                if root not in _STDLIB_MODULE_NAMES and root not in environment_modules:
+                    third_party.add(root)
+    return third_party
+
+
+def detect_third_party_imports_from_source(
+    source: str,
+    *,
+    environment_modules: FrozenSet[str] = frozenset(),
+) -> Set[str]:
+    """Convenience wrapper: parse source and detect third-party imports."""
+    try:
+        tree = ast.parse(source)
+    except Exception:
+        return set()
+    if len(tree.body) != 1 or not isinstance(
+        tree.body[0],
+        (ast.FunctionDef, ast.AsyncFunctionDef),
+    ):
+        return set()
+    return detect_third_party_imports(
+        tree.body[0],
+        environment_modules=environment_modules,
     )

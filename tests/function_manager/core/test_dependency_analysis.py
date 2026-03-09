@@ -4,6 +4,7 @@ Tests for dependency_analysis module.
 
 from unity.function_manager.dependency_analysis import (
     collect_dependencies_from_source,
+    detect_third_party_imports_from_source,
 )
 
 
@@ -241,3 +242,123 @@ def main():
             environment_namespaces=frozenset({"primitives"}),
         )
         assert "primitives.contacts.ask" in deps
+
+
+class TestDetectThirdPartyImports:
+    """Tests for detect_third_party_imports / detect_third_party_imports_from_source."""
+
+    def test_no_imports(self):
+        source = """
+def compute(a, b):
+    return a + b
+"""
+        assert detect_third_party_imports_from_source(source) == set()
+
+    def test_stdlib_only(self):
+        source = """
+def do_stuff():
+    import os
+    import json
+    from pathlib import Path
+    return os.getcwd()
+"""
+        assert detect_third_party_imports_from_source(source) == set()
+
+    def test_third_party_import(self):
+        source = """
+def process():
+    import pandas
+    return pandas.DataFrame()
+"""
+        result = detect_third_party_imports_from_source(source)
+        assert result == {"pandas"}
+
+    def test_third_party_from_import(self):
+        source = """
+def upload():
+    from google.cloud import storage
+    client = storage.Client()
+    return client
+"""
+        result = detect_third_party_imports_from_source(source)
+        assert result == {"google"}
+
+    def test_mixed_imports(self):
+        source = """
+def analyze():
+    import json
+    import os
+    import numpy as np
+    from scipy.stats import norm
+    data = json.loads('{}')
+    return np.array([norm.rvs()])
+"""
+        result = detect_third_party_imports_from_source(source)
+        assert result == {"numpy", "scipy"}
+
+    def test_environment_module_excluded(self):
+        source = """
+async def my_func():
+    import pydantic
+    from pydantic import BaseModel
+    class M(BaseModel):
+        x: int
+    return M(x=1)
+"""
+        result = detect_third_party_imports_from_source(
+            source,
+            environment_modules=frozenset({"pydantic", "primitives"}),
+        )
+        assert result == set()
+
+    def test_primitives_namespace_excluded(self):
+        """The 'primitives' namespace is accessed as a name, not imported,
+        but if someone writes 'import primitives' it should still be excluded."""
+        source = """
+async def my_func():
+    import primitives
+    return await primitives.contacts.ask("hi")
+"""
+        result = detect_third_party_imports_from_source(
+            source,
+            environment_modules=frozenset({"primitives"}),
+        )
+        assert result == set()
+
+    def test_multiple_third_party(self):
+        source = """
+async def pipeline():
+    import requests
+    import boto3
+    from google.cloud import bigquery
+    resp = requests.get("https://example.com")
+    return resp.text
+"""
+        result = detect_third_party_imports_from_source(source)
+        assert result == {"requests", "boto3", "google"}
+
+    def test_nested_import_in_conditional(self):
+        source = """
+def conditional_import():
+    if True:
+        import pandas
+    return None
+"""
+        result = detect_third_party_imports_from_source(source)
+        assert result == {"pandas"}
+
+    def test_async_function(self):
+        source = """
+async def fetch_data():
+    import aiohttp
+    async with aiohttp.ClientSession() as session:
+        return await session.get("https://example.com")
+"""
+        result = detect_third_party_imports_from_source(source)
+        assert result == {"aiohttp"}
+
+    def test_invalid_source_returns_empty(self):
+        assert detect_third_party_imports_from_source("not valid python {{") == set()
+
+    def test_non_function_source_returns_empty(self):
+        assert detect_third_party_imports_from_source("x = 1") == set()

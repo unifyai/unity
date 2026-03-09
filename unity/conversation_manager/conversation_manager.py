@@ -1221,10 +1221,19 @@ class ConversationManager(metaclass=SingletonABCMeta):
         Activity is detected from two sources:
         - External pubsub messages (updated by wait_for_events via last_activity_time)
         - Internal EventBus publishes (LLM calls, tool-loop turns, manager methods)
+
+        Ghost-publish detection: if pubsub is idle past the timeout but
+        eventbus_idle stays suspiciously low for many consecutive checks,
+        something is periodically resetting last_publish_monotonic without real
+        user-facing activity. After ``_GHOST_PUBLISH_CHECKS`` consecutive such
+        observations we shut down to prevent indefinite hangs.
         """
         import time as _time
 
         from unity.events.event_bus import EventBus
+
+        _GHOST_PUBLISH_CHECKS = 20  # 20 * 30s = 10 minutes
+        ghost_counter = 0
 
         while True:
             await asyncio.sleep(self.inactivity_check_interval)
@@ -1233,20 +1242,38 @@ class ConversationManager(metaclass=SingletonABCMeta):
             eventbus_idle = _time.monotonic() - EventBus.last_publish_monotonic
             idle_seconds = min(pubsub_idle, eventbus_idle)
 
-            # important to know the idle times from the event bus and pubsub
-            # Log every 3 minutes (180s) instead of every check interval (30s)
-            # to make the terminal logs less verbose.
+            if (
+                pubsub_idle > self.inactivity_timeout
+                and eventbus_idle < self.inactivity_timeout
+            ):
+                ghost_counter += 1
+            else:
+                ghost_counter = 0
+
+            ghost_publish = ghost_counter >= _GHOST_PUBLISH_CHECKS
+
             if int(current_time) % 180 < self.inactivity_check_interval:
+                extra = ""
+                if ghost_counter > 0:
+                    extra = f" ghost_count={ghost_counter}/{_GHOST_PUBLISH_CHECKS}"
                 self._session_logger.info(
                     "inactivity_check",
                     f"Idle check: pubsub_idle={pubsub_idle:.1f}s, "
                     f"eventbus_idle={eventbus_idle:.1f}s, "
                     f"min_idle={idle_seconds:.1f}s, "
-                    f"timeout={self.inactivity_timeout}s",
+                    f"timeout={self.inactivity_timeout}s{extra}",
                 )
 
-            if idle_seconds > self.inactivity_timeout:
-                log_str = f"Inactivity timeout reached ({self.inactivity_timeout}s), requesting shutdown"
+            if idle_seconds > self.inactivity_timeout or ghost_publish:
+                if ghost_publish:
+                    log_str = (
+                        f"Ghost-publish shutdown: pubsub_idle={pubsub_idle:.0f}s "
+                        f"but eventbus_idle stuck at {eventbus_idle:.1f}s "
+                        f"for {ghost_counter} consecutive checks "
+                        f"(timeout={self.inactivity_timeout}s)"
+                    )
+                else:
+                    log_str = f"Inactivity timeout reached ({self.inactivity_timeout}s), requesting shutdown"
                 LOGGER.info(f"{DEFAULT_ICON} {log_str}")
                 self._session_logger.info("session_end", log_str)
                 self.stop.set()

@@ -408,6 +408,85 @@ class TestBrevity:
 
 
 # =============================================================================
+# Test Class: Platform Knowledge
+# =============================================================================
+
+
+@pytest.mark.asyncio
+class TestPlatformKnowledge:
+    """Tests that the fast brain can answer questions about external app
+    integration directly using the platform knowledge in its prompt."""
+
+    async def test_answers_app_integration_setup_directly(self, boss_call_prompt: str):
+        """When asked HOW to set up an external app integration, the fast brain
+        answers directly (no deferral) and mentions sharing credentials/tokens."""
+        response = await ask_fast_brain(
+            boss_call_prompt,
+            "I want you to manage my Google Drive going forward. What do I need to do to set that up?",
+        )
+
+        assert_no_deferral(response, "Asked how to set up an external app integration")
+        response_lower = response.lower()
+        has_credential_mention = any(
+            term in response_lower
+            for term in ["credential", "token", "api", "secret", "access", "key"]
+        )
+        assert has_credential_mention, (
+            f"Fast brain should mention credentials/tokens/secrets/API access "
+            f"when explaining how to set up an integration.\n"
+            f"Full response: {response}"
+        )
+
+    async def test_answers_console_navigation_directly(self, boss_call_prompt: str):
+        """When asked where to find something on the console, the fast brain
+        answers directly using platform knowledge rather than deferring."""
+        response = await ask_fast_brain(
+            boss_call_prompt,
+            "Where do I go to add my API credentials on the console?",
+        )
+
+        assert_no_deferral(response, "Asked where to add credentials on console")
+        response_lower = response.lower()
+        assert "secret" in response_lower or "resource" in response_lower, (
+            f"Fast brain should mention Secrets or Resources when explaining "
+            f"where to add credentials on the console.\n"
+            f"Full response: {response}"
+        )
+        assert_concise(response, max_words=60, context="console navigation answer")
+
+    async def test_suggests_video_call_for_visual_guidance(
+        self,
+        boss_call_prompt: str,
+    ):
+        """When the user is struggling with a visual/setup task, the fast brain
+        should suggest a video call with screen sharing rather than deferring."""
+        response = await ask_fast_brain(
+            boss_call_prompt,
+            "I'm trying to find where to add my API credentials on the console but I can't figure it out.",
+        )
+
+        assert_no_deferral(response, "User struggling with console navigation")
+        response_lower = response.lower()
+        has_video_call_mention = any(
+            term in response_lower
+            for term in [
+                "video call",
+                "screen shar",
+                "call",
+                "hop on",
+                "walk you through",
+                "show you",
+            ]
+        )
+        assert has_video_call_mention, (
+            f"Fast brain should suggest a video call or screen sharing "
+            f"when the user needs visual guidance.\n"
+            f"Full response: {response}"
+        )
+        assert_concise(response, max_words=60, context="video call suggestion")
+
+
+# =============================================================================
 # Test Class: Screen Sharing Prompt Section
 # =============================================================================
 
@@ -449,3 +528,61 @@ class TestScreenSharingPromptSection:
 
         for prompt in (boss_prompt, contact_prompt):
             assert "Screen sharing" in prompt
+
+
+# =============================================================================
+# Test Class: Platform Knowledge Prompt Section
+# =============================================================================
+
+
+class TestPlatformKnowledgePromptSection:
+    """Tests that the fast brain prompt includes the platform knowledge section."""
+
+    def test_prompt_contains_platform_knowledge(
+        self,
+        base_prompt_kwargs: dict,
+    ):
+        prompt = build_voice_agent_prompt(
+            **base_prompt_kwargs,
+            is_boss_user=True,
+        ).flatten()
+
+        assert "Platform knowledge" in prompt
+        assert "Resources → Secrets" in prompt
+        assert "API" in prompt
+        assert "video call" in prompt.lower()
+        assert "three panels" in prompt.lower()
+        assert "Contact Details" in prompt
+
+    def test_platform_knowledge_present_in_all_modes(
+        self,
+        base_prompt_kwargs: dict,
+    ):
+        """Platform knowledge is present for both boss and contact calls."""
+        boss_prompt = build_voice_agent_prompt(
+            **base_prompt_kwargs,
+            is_boss_user=True,
+        ).flatten()
+
+        contact_prompt = build_voice_agent_prompt(
+            **base_prompt_kwargs,
+            is_boss_user=False,
+            contact_first_name="Alice",
+            contact_surname="Smith",
+        ).flatten()
+
+        for prompt in (boss_prompt, contact_prompt):
+            assert "Platform knowledge" in prompt
+
+    def test_platform_knowledge_present_in_demo_mode(
+        self,
+        base_prompt_kwargs: dict,
+    ):
+        """Platform knowledge is present even in demo mode."""
+        prompt = build_voice_agent_prompt(
+            **base_prompt_kwargs,
+            is_boss_user=True,
+            demo_mode=True,
+        ).flatten()
+
+        assert "Platform knowledge" in prompt

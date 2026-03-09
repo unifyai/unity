@@ -137,6 +137,77 @@ class TestCommunicationGuidelinesAdapt:
 
 
 # ---------------------------------------------------------------------------
+# Tests – external app integration
+# ---------------------------------------------------------------------------
+
+
+class TestExternalAppIntegration:
+    """The prompt includes guidance for external app integration via credentials + SDK."""
+
+    def test_onboarding_has_app_integration_qa(self):
+        prompt = _build()
+        assert "Can you help me manage my apps and online services?" in prompt
+        assert "Resources → Secrets" in prompt
+        assert "service's SDK" in prompt
+
+    def test_act_capabilities_has_external_apps_bullet(self):
+        prompt = _build()
+        assert "**External apps & services**" in prompt
+        assert "stored credentials and the service's Python SDK" in prompt
+
+    def test_onboarding_qa_present_in_demo_mode(self):
+        prompt = _build(demo_mode=True)
+        assert "Can you help me manage my apps and online services?" in prompt
+
+    def test_act_capabilities_absent_in_demo_mode(self):
+        prompt = _build(demo_mode=True)
+        assert "**External apps & services**" not in prompt
+
+
+# ---------------------------------------------------------------------------
+# Tests – proactive meeting offers
+# ---------------------------------------------------------------------------
+
+
+class TestProactiveMeetingOffers:
+    """The prompt encourages proactive meeting/screenshare suggestions."""
+
+    def test_proactive_meeting_section_present(self):
+        prompt = _build()
+        assert "Proactive meeting offers" in prompt
+        assert "screen sharing" in prompt.lower()
+
+    def test_proactive_meeting_absent_in_demo_mode(self):
+        prompt = _build(demo_mode=True)
+        assert "Proactive meeting offers" not in prompt
+
+
+# ---------------------------------------------------------------------------
+# Tests – console knowledge
+# ---------------------------------------------------------------------------
+
+
+class TestConsoleKnowledge:
+    """The prompt includes console UI knowledge for guiding users."""
+
+    def test_console_knowledge_present(self):
+        prompt = _build()
+        assert "Console knowledge" in prompt
+        assert "Resources" in prompt
+        assert "Secrets" in prompt
+        assert "Contact Details" in prompt
+
+    def test_console_knowledge_has_navigation_paths(self):
+        prompt = _build()
+        assert "Resources → Secrets" in prompt
+        assert "Profile menu" in prompt
+
+    def test_console_knowledge_absent_in_demo_mode(self):
+        prompt = _build(demo_mode=True)
+        assert "Console knowledge" not in prompt
+
+
+# ---------------------------------------------------------------------------
 # Tests – demo mode adapts
 # ---------------------------------------------------------------------------
 
