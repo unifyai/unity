@@ -172,7 +172,41 @@ def wrap_handle_with_logging(
     display_label: str | None = None,
     hierarchy: list[str] | None = None,
 ) -> SteerableToolHandle:
-    """No-op passthrough — steering events are now emitted by the concrete handle."""
+    """Monkey-patch result() to publish the outgoing ManagerMethod event on completion."""
+    _orig_result = inner.result
+    _hierarchy = list(hierarchy) if hierarchy else []
+
+    async def _result_with_outgoing():
+        try:
+            ans = await _orig_result()
+        except Exception as exc:
+            import traceback as _tb
+
+            await publish_manager_method_event(
+                call_id,
+                manager_name,
+                method_name,
+                phase="outgoing",
+                status="error",
+                error=str(exc),
+                error_type=type(exc).__name__,
+                traceback=_tb.format_exc()[:2000],
+                display_label=display_label,
+                hierarchy=_hierarchy,
+            )
+            raise
+        await publish_manager_method_event(
+            call_id,
+            manager_name,
+            method_name,
+            phase="outgoing",
+            answer=_coerce_text_value(ans),
+            display_label=display_label,
+            hierarchy=_hierarchy,
+        )
+        return ans
+
+    inner.result = _result_with_outgoing  # type: ignore[attr-defined]
     return inner
 
 
