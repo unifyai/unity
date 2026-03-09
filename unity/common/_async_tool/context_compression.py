@@ -475,7 +475,6 @@ async def compress_messages(
         user_prompt,
         tools,
         loop_id="compress_messages",
-        max_steps=50,
         timeout=120,
         log_steps=True,
         enable_compression=False,
