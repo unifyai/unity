@@ -396,12 +396,15 @@ def _build_filesystem_context() -> str:
 
 def _build_tool_signatures(tool_dict: Dict[str, Callable]) -> str:
     """Builds a JSON string of tool signatures via introspection."""
+    from unity.common.prompt_helpers import unwrap_tool_callable
+
     tool_info = {}
     for name, fn in tool_dict.items():
-        prefix = "async def " if inspect.iscoroutinefunction(fn) else "def "
+        target = unwrap_tool_callable(fn)
+        prefix = "async def " if inspect.iscoroutinefunction(target) else "def "
         tool_info[name] = {
-            "signature": f"{prefix}{name}{inspect.signature(fn)}",
-            "docstring": inspect.getdoc(fn) or "No docstring available.",
+            "signature": f"{prefix}{name}{inspect.signature(target)}",
+            "docstring": inspect.getdoc(target) or "No docstring available.",
         }
     return json.dumps(tool_info, indent=4)
 
