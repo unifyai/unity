@@ -15,6 +15,8 @@ from __future__ import annotations
 from datetime import datetime
 import os
 import signal
+import subprocess
+import sys
 import time
 from typing import TYPE_CHECKING
 
@@ -321,6 +323,27 @@ async def main(project_name: str = "Assistants"):
     await shutdown_metrics()
 
     LOGGER.debug(f"{ICONS['lifecycle']} Shutdown finished")
+
+    # Upload pod logs to GCS so they survive pod termination.
+    # This runs here (not in entrypoint.sh) so it executes on all exit paths:
+    # both SIGTERM from Kubernetes and self-initiated inactivity shutdown.
+    _upload_script = os.path.normpath(
+        os.path.join(
+            os.path.dirname(os.path.abspath(__file__)),
+            "..",
+            "..",
+            "scripts",
+            "upload_pod_logs.py",
+        ),
+    )
+    if os.path.isfile(_upload_script):
+        LOGGER.info(f"{ICONS['lifecycle']} Uploading pod logs to GCS...")
+        try:
+            subprocess.run([sys.executable, _upload_script], timeout=120)
+        except Exception as e:
+            LOGGER.warning(
+                f"{ICONS['lifecycle']} Pod log upload failed (non-fatal): {e}",
+            )
 
     # Final hard exit to ensure the pod is deallocated.
     # sys.exit() can hang if there are non-daemon threads (e.g. from OTel or PubSub)
