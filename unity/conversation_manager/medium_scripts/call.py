@@ -1091,11 +1091,38 @@ async def entrypoint(ctx: agents.JobContext):
             )
         pending_notifications.clear()
 
-    await trigger_generate_reply(
-        reason="session_start",
-        source_id="startup",
+    # Pre-generate the opening greeting via a direct sidecar LLM call so that
+    # the full LLM latency is absorbed before audio playback begins.
+    # - Meet: hides the delay behind the "waiting for assistant" spinner, then
+    #   signals "ready_to_speak" so the avatar appears right before speech.
+    # - Phone (inbound): eliminates dead air after the call connects.
+    # - Phone (outbound): waits for the callee to answer first, then generates.
+    if outbound:
+        _log.info("Outbound call — waiting for callee to answer…")
+        await call_answered_flag.wait()
+        _log.call_status("call_answered — generating greeting")
+
+    from unity.common.llm_client import new_llm_client
+
+    greeting_client = new_llm_client(
+        model=SETTINGS.conversation.FAST_BRAIN_MODEL,
+        origin="fast_brain_greeting",
+        reasoning_effort="low",
+    )
+    greeting_messages = _extract_chat_messages(session._chat_ctx)
+    greeting_text = await greeting_client.generate(messages=greeting_messages)
+
+    if channel != "phone":
+        await ctx.room.local_participant.publish_data(
+            json.dumps({"type": "ready_to_speak"}).encode(),
+            topic="agent_status",
+            reliable=True,
+        )
+
+    session.say(
+        greeting_text,
         allow_interruptions=True,
-        wait_for_completion=True,
+        add_to_chat_ctx=True,
     )
 
 
