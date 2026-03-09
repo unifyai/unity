@@ -407,19 +407,19 @@ DEFAULT_INACTIVITY_TIMEOUT = 300  # 5 minutes
 async def publish_call_started(contact: dict, channel: str) -> None:
     event = (
         PhoneCallStarted(contact=contact)
-        if channel == "phone"
+        if channel == "phone_call"
         else UnifyMeetStarted(contact=contact)
     )
-    await event_broker.publish(f"app:comms:{channel}_call_started", event.to_json())
+    await event_broker.publish(event.topic, event.to_json())
 
 
 async def publish_call_ended(contact: dict, channel: str) -> None:
     event = (
         PhoneCallEnded(contact=contact)
-        if channel == "phone"
+        if channel == "phone_call"
         else UnifyMeetEnded(contact=contact)
     )
-    await event_broker.publish(f"app:comms:{channel}_call_ended", event.to_json())
+    await event_broker.publish(event.topic, event.to_json())
 
 
 def create_end_call(

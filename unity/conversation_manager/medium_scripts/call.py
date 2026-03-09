@@ -111,10 +111,14 @@ class Assistant(Agent):
         self.boss = boss
         self.channel = channel
         self.utterance_event = (
-            InboundPhoneUtterance if channel == "phone" else InboundUnifyMeetUtterance
+            InboundPhoneUtterance
+            if channel == "phone_call"
+            else InboundUnifyMeetUtterance
         )
         self.assistant_utterance_event = (
-            OutboundPhoneUtterance if channel == "phone" else OutboundUnifyMeetUtterance
+            OutboundPhoneUtterance
+            if channel == "phone_call"
+            else OutboundUnifyMeetUtterance
         )
         self.call_received = not outbound
         self._user_speech_logged = False
@@ -433,7 +437,7 @@ async def entrypoint(ctx: agents.JobContext):
             user_input,
         )
 
-    if channel == "phone":
+    if channel == "phone_call":
         user_utterance_event = InboundPhoneUtterance
         assistant_utterance_event = OutboundPhoneUtterance
     else:
