@@ -56,6 +56,13 @@ DEFERRAL_PATTERNS = [
     r"i('ll| will) need to",  # "I'll need to look into that"
     r"need to (check|look|find)",
     r"would need to (check|look|verify)",
+    # Longer time-expectation language (for action requests that take minutes)
+    r"(a |few |couple( of)? )?minutes",
+    r"take a (little )?(while|bit)",
+    r"i'll (let you know|update you|circle back|get back to you)",
+    r"when (it's|i'm|i am) (done|ready|finished)",
+    r"might take",
+    r"(i'll|let me) (work|get) on that",
 ]
 
 # Patterns indicating hallucinated data (should NOT appear)
