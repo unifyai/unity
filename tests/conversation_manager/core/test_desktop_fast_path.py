@@ -536,3 +536,64 @@ def test_render_event_for_fast_brain_computer_act_completed():
     assert result is not None
     assert "Computer action completed" in result
     assert "Clicked the Submit button" in result
+
+
+def test_render_actor_result_empty_success_not_misleading():
+    """An ActorResult with success=True but no result must NOT say
+    'completed successfully' — it must clearly indicate no results were
+    returned so the fast brain doesn't fabricate a positive outcome.
+
+    Regression: in production the Actor exhausted its context budget,
+    returned success=True with result=None, and the fast brain received
+    'Action completed successfully' which it interpreted as 'Drive is
+    connected and ready' — a hallucination.
+    """
+    from unity.conversation_manager.events import ActorResult
+    from unity.conversation_manager.medium_scripts.common import (
+        render_event_for_fast_brain,
+    )
+
+    event = ActorResult(handle_id=1, success=True, result=None, error=None)
+    text = render_event_for_fast_brain(event.to_json())
+
+    assert text is not None
+    assert "completed successfully" not in text
+    assert "no results" in text.lower()
+
+
+def test_render_actor_result_with_data():
+    """An ActorResult with actual data should include the data snippet."""
+    from unity.conversation_manager.events import ActorResult
+    from unity.conversation_manager.medium_scripts.common import (
+        render_event_for_fast_brain,
+    )
+
+    event = ActorResult(
+        handle_id=1,
+        success=True,
+        result="Found 3 files in Drive",
+    )
+    text = render_event_for_fast_brain(event.to_json())
+
+    assert text is not None
+    assert "Found 3 files in Drive" in text
+    assert "no results" not in text.lower()
+
+
+def test_render_actor_result_failure():
+    """A failed ActorResult should clearly say 'failed'."""
+    from unity.conversation_manager.events import ActorResult
+    from unity.conversation_manager.medium_scripts.common import (
+        render_event_for_fast_brain,
+    )
+
+    event = ActorResult(
+        handle_id=1,
+        success=False,
+        error="Credentials not found",
+    )
+    text = render_event_for_fast_brain(event.to_json())
+
+    assert text is not None
+    assert "failed" in text.lower()
+    assert "Credentials not found" in text
