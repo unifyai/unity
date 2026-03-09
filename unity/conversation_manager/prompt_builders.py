@@ -1081,7 +1081,7 @@ def build_voice_agent_prompt(
 
     # Context
     call_description = (
-        "a Unify Meet video call" if channel == "meet" else "a phone call"
+        "a Unify Meet video call" if channel == "unify_meet" else "a phone call"
     )
     parts.add(
         f"""{name_intro} {call_description} with {caller_description}. The call is live — anything I say is heard by the caller immediately.
@@ -1328,7 +1328,7 @@ This is a summary of my past conversations with the person on this call:
 I use this context to personalize the conversation, but I don't explicitly reference "my records" or "our past conversations" unless natural to do so.""",
         )
 
-    if channel == "meet":
+    if channel == "unify_meet":
         parts.add(
             """Unify Meet controls
 -------------------
