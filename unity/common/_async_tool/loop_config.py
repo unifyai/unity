@@ -1,4 +1,5 @@
 from secrets import token_hex
+from typing import Any, Callable, Dict, Union
 from ..llm_helpers import short_id
 from contextvars import ContextVar
 
@@ -53,7 +54,9 @@ class LoopConfig:
         self._label = (
             "->".join(self._lineage) if self._lineage else f"{self._loop_id}({_suffix})"
         )
-        self._tool_alias_lookup: dict[str, str] | None = None
+        self._tool_alias_lookup: (
+            Dict[str, Union[str, Callable[[Dict[str, Any]], str]]] | None
+        ) = None
 
     @property
     def loop_id(self):
@@ -68,9 +71,14 @@ class LoopConfig:
         return self._label
 
     @property
-    def tool_alias_lookup(self) -> dict[str, str] | None:
+    def tool_alias_lookup(
+        self,
+    ) -> Dict[str, Union[str, Callable[[Dict[str, Any]], str]]] | None:
         return self._tool_alias_lookup
 
     @tool_alias_lookup.setter
-    def tool_alias_lookup(self, value: dict[str, str] | None):
+    def tool_alias_lookup(
+        self,
+        value: Dict[str, Union[str, Callable[[Dict[str, Any]], str]]] | None,
+    ):
         self._tool_alias_lookup = value

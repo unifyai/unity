@@ -2443,7 +2443,7 @@ class CodeActActor(BaseCodeActActor):
             return overlay.install(packages)
 
         tools: Dict[str, Callable[..., Awaitable[Any]]] = {
-            "execute_code": ToolSpec(fn=execute_code, display_label="Running code"),
+            "execute_code": ToolSpec(fn=execute_code),
             "install_python_packages": ToolSpec(
                 fn=install_python_packages,
                 display_label="Installing Python packages",
@@ -3006,9 +3006,16 @@ class CodeActActor(BaseCodeActActor):
                     except Exception:
                         pass
 
+            def _ef_display_label(tc: dict) -> str:
+                try:
+                    args = json.loads(tc.get("function", {}).get("arguments", "{}"))
+                    return args.get("function_name", "execute_function")
+                except Exception:
+                    return "execute_function"
+
             tools["execute_function"] = ToolSpec(
                 fn=execute_function,
-                display_label="Running a saved function",
+                display_label=_ef_display_label,
             )
 
         # ───────────────────────── Session management tools ────────────────── #

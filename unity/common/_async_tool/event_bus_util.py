@@ -37,7 +37,8 @@ async def to_event_bus(
             for tc in _tool_calls:
                 name = (tc.get("function") or {}).get("name", "")
                 if name in _lookup:
-                    _sparse[name] = _lookup[name]
+                    val = _lookup[name]
+                    _sparse[name] = val(tc) if callable(val) else val
             _aliases = _sparse or None
 
         payload = ToolLoopPayload(

@@ -189,7 +189,7 @@ def run() -> None:
                 },
             ],
         },
-        tool_aliases={"execute_function": "Searching the web"},
+        tool_aliases={"execute_function": "primitives.web.ask"},
     )
 
     print("[4] Tool result")
