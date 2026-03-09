@@ -59,6 +59,7 @@ from sandboxes.conversation_manager.ipc_protocol import (
     create_message,
     parse_message,
 )
+from unity.common.tool_spec import ToolSpec
 from unity.events.types.manager_method import ManagerMethodPayload
 
 LG = logging.getLogger("conversation_manager_sandbox")
@@ -206,6 +207,20 @@ def _filter_kwargs_for_callable(fn: Any, kwargs: dict[str, Any]) -> dict[str, An
     except Exception:
         # Conservative fallback: drop private keys.
         return {k: v for k, v in kwargs.items() if not str(k).startswith("_")}
+
+
+def _wrap_tool_preserving_metadata(tool: Any, wrapped_fn: Any) -> Any:
+    """Return ``wrapped_fn`` with any existing ``ToolSpec`` metadata preserved."""
+    if isinstance(tool, ToolSpec):
+        return ToolSpec(
+            fn=wrapped_fn,
+            max_concurrent=tool.max_concurrent,
+            max_total_calls=tool.max_total_calls,
+            read_only=tool.read_only,
+            manager_tool=tool.manager_tool,
+            display_label=tool.display_label,
+        )
+    return wrapped_fn
 
 
 @dataclass
@@ -947,8 +962,9 @@ async def _run_worker(*, ui_to_worker, worker_to_ui, config: dict) -> None:
             if isinstance(tools, dict):
                 exec_fn = tools.get("execute_code")
             if callable(exec_fn):
+                target_fn = getattr(exec_fn, "fn", exec_fn)
 
-                @functools.wraps(exec_fn)
+                @functools.wraps(target_fn)
                 async def _wrapped_execute_code(*a: Any, **kw: Any) -> Any:
                     # Best-effort extraction of code for display.
                     code = ""
@@ -960,8 +976,8 @@ async def _run_worker(*, ui_to_worker, worker_to_ui, config: dict) -> None:
                     except Exception:
                         code = ""
                     # Drop internal/private kwargs injected by tool-loop plumbing.
-                    kw2 = _filter_kwargs_for_callable(exec_fn, dict(kw))
-                    res = await exec_fn(*a, **kw2)  # type: ignore[misc]
+                    kw2 = _filter_kwargs_for_callable(target_fn, dict(kw))
+                    res = await target_fn(*a, **kw2)  # type: ignore[misc]
                     try:
                         simp = _simplify_execute_code_result(res)
                         # Avoid emitting noisy/empty placeholder trace entries.
@@ -991,7 +1007,12 @@ async def _run_worker(*, ui_to_worker, worker_to_ui, config: dict) -> None:
 
                 # Patch the underlying tool table so the LLM uses our wrapped function.
                 try:
-                    actor._tools["act"]["execute_code"] = _wrapped_execute_code  # type: ignore[attr-defined]
+                    actor._tools["act"][
+                        "execute_code"
+                    ] = _wrap_tool_preserving_metadata(
+                        exec_fn,
+                        _wrapped_execute_code,
+                    )  # type: ignore[attr-defined]
                     setattr(actor, "_sandbox_trace_wrapped", True)
                 except Exception:
                     pass

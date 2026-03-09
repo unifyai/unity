@@ -66,6 +66,8 @@ def test_code_act_prompt_has_primary_execute_code_and_session_tools_and_no_legac
     assert "inspect_state" in prompt
     assert "close_session" in prompt
     assert "close_all_sessions" in prompt
+    assert '"signature": "async def execute_code(thought:' in prompt
+    assert "Execute arbitrary code in a specified language and state mode." in prompt
 
     # Introspection-based docstring snippet from the actual tool implementation.
     assert "multi-step composition" in prompt.lower()
