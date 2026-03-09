@@ -2294,6 +2294,7 @@ class CodeActActor(BaseCodeActActor):
                             venv_id=venv_id,
                             primitives=primitives,
                             computer_primitives=computer_primitives,
+                            notification_q=notification_q,
                         )
                     except Exception as e:
                         exec_exc = e
@@ -2921,6 +2922,7 @@ class CodeActActor(BaseCodeActActor):
                                 venv_id=venv_id,
                                 primitives=primitives,
                                 computer_primitives=computer_primitives,
+                                notification_q=notification_q,
                             )
                             _ef_log.debug(
                                 f"⏱️ [execute_function +{_ef_ms()}] sandbox.execute done",
