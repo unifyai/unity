@@ -2,8 +2,10 @@
 """
 Upload pod log directories to GCS on shutdown.
 
-Called from entrypoint.sh during cleanup. Compresses and uploads
-/var/log/{unity,unify,unillm} to gs://unity-pod-logs/{job_name}/.
+Called from main.py's shutdown sequence (via subprocess) so it runs on all exit
+paths — both SIGTERM from Kubernetes and self-initiated inactivity shutdown.
+Compresses /var/log/{unity,unify,unillm,magnitude} into a tar.gz and uploads
+to gs://unity-pod-logs/{namespace}/{job_name}/.
 
 The bucket has a 7-day lifecycle policy — logs are auto-deleted after a week.
 
@@ -12,8 +14,8 @@ Usage:
     python3 scripts/upload_pod_logs.py --dry-run
 
 Environment:
-    JOB_NAME    Required. The K8s job name (e.g., unity-2026-02-28-12-00-09-staging).
-    GCS_LOG_BUCKET  Optional. Override bucket name (default: unity-pod-logs).
+    UNITY_CONVERSATION_JOB_NAME  Required. The K8s job name (e.g., unity-2026-02-28-12-00-09-staging).
+    GCS_LOG_BUCKET               Optional. Override bucket name (default: unity-pod-logs).
 """
 
 import os
