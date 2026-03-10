@@ -3590,7 +3590,7 @@ class CodeActActor(BaseCodeActActor):
         "CodeActActor",
         "act",
         payload_key="request",
-        display_label="Taking Action",
+        display_label=lambda kw: "Session" if kw.get("persist") else "Taking Action",
         forward_kwargs=("persist",),
     )
     async def act(

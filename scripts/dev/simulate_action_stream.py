@@ -159,7 +159,7 @@ def build_steps():
                     cid,
                     h,
                     phase="incoming",
-                    display_label="Taking Action",
+                    display_label="Session",
                     request="Help me set up Google Drive credentials for the unify-production project.",
                     persist=True,
                 ),
@@ -1034,7 +1034,7 @@ def build_steps():
                     cid,
                     h,
                     phase="outgoing",
-                    display_label="Taking Action",
+                    display_label="Session",
                     answer=(
                         "Set up Google Drive API credentials for project unify-prod-2026. "
                         "Created service account 'unify-drive-access', enabled Drive API, "

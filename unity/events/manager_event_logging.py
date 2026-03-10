@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Callable
 import functools
 from uuid import uuid4
 import json
@@ -221,7 +221,7 @@ def log_manager_call(
     payload_key: str,
     *,
     call_id_kw: str = "_call_id",
-    display_label: str | None = None,
+    display_label: str | Callable[..., str] | None = None,
     forward_kwargs: tuple[str, ...] = (),
 ):
     """Decorator factory that publishes an incoming ManagerMethod event and
@@ -235,7 +235,8 @@ def log_manager_call(
 
     ``display_label`` is a user-friendly phrase (e.g. "Checking Contact Book")
     that gets attached to every event in the lifecycle so the frontend can
-    render it directly without maintaining its own mapping.
+    render it directly without maintaining its own mapping.  May also be a
+    callable ``(kwargs) -> str`` for labels that depend on runtime arguments.
     """
 
     def _decorator(func):
@@ -258,6 +259,10 @@ def log_manager_call(
                 payload_value = args[0]
             else:
                 payload_value = ""
+
+            resolved_label = (
+                display_label(kwargs) if callable(display_label) else display_label
+            )
 
             call_id = new_call_id()
 
@@ -290,7 +295,7 @@ def log_manager_call(
                     manager_name,
                     method_name,
                     phase="incoming",
-                    display_label=display_label,
+                    display_label=resolved_label,
                     hierarchy=hierarchy,
                     **{payload_key: payload_value},
                     **extra_fields,
@@ -308,7 +313,7 @@ def log_manager_call(
                 call_id,
                 manager_name,
                 method_name,
-                display_label=display_label,
+                display_label=resolved_label,
                 hierarchy=hierarchy,
             )
 
