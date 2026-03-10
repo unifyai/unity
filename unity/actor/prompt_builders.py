@@ -160,13 +160,22 @@ _EXECUTION_RULES = textwrap.dedent("""
        - User-facing: explain progress in plain language the end user can understand.
        - High-level: summarize what is underway, not internal implementation details.
 
+       **User visibility rule**
+
+       Your internal reasoning, screenshots, and turn-completion text are
+       *not* visible to the end user. The user only hears what is
+       explicitly sent through `notify()` or `send_notification`. If you
+       encounter something the user needs to be aware of or act on — a
+       blocker, an unexpected redirect, a state requiring their input, a
+       decision point — you must notify. Otherwise the user will hear
+       nothing about it.
+
        **Anti-patterns to avoid**
        - Wrapping a single primitive call in `execute_code` just to add `notify()` around it — use `send_notification` before the `execute_function` call instead.
        - Generic filler text with no signal (for example: "working on it", "still processing", "please wait").
        - Repeating the same update without new information.
        - Over-notifying for trivial operations that complete almost immediately.
        - Dumping low-level internals (stack traces, call IDs, schema/debug metadata) into user progress updates.
-       - Using notifications to announce the final result or completion of the current turn — your response text is automatically surfaced when you yield control. Notifications are for updates *during* active work, not for summarizing what you just finished.
 
        **Display Helper (`display`)**
        - `display(obj)` emits rich output (text or PIL images) to stdout.
