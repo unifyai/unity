@@ -1,7 +1,20 @@
 #!/usr/bin/env python3
-"""Simulate a CodeActActor.act(persist=True) session for the Console action pane.
+"""Simulate CodeActActor.act sessions for the Console action pane.
 
-Two modes:
+Scenarios:
+
+  persistent (default)  A long-running act(persist=True) session with discovery,
+                        nested WebSearcher.ask, clarification, interjections,
+                        pause/resume/stop, and parallel tool completion.
+
+  single_action         A one-shot act(persist=False) action that delegates to a
+                        sub-agent via execute_function(primitives.actor.act). The
+                        sub-agent runs its own CodeActActor with nested
+                        ContactManager.ask, demonstrating the full sub-agent
+                        hierarchy (root → execute_function → sub-agent → inner
+                        execute_function → manager tool loop).
+
+Delivery modes:
 
   stream (default)  POST events to the Console's local SSE push endpoint with
                     realistic delays so you can watch them unpack in real time.
@@ -12,23 +25,17 @@ Two modes:
   upload            Write all events to Orchestra's log API at once (historical
                     path). Refresh the console to see the full session.
 
-The trajectory follows the real CodeActActor flow:
-  1. Discovery phase (tool_choice=required): GuidanceManager_search +
-     FunctionManager_search_functions are gated before any doing tools.
-  2. Doing phase: execute_function / execute_code become available.
-  3. Nested inner tool loops (WebSearcher.ask with _search + _extract).
-  4. Interjections, notifications, clarification requests, pause/resume/stop.
-
 Prerequisites:
     stream mode:           Console running (http://localhost:3333)
     stream --persist mode: Console + local Orchestra (http://127.0.0.1:8000)
     upload mode:           Local Orchestra running (http://127.0.0.1:8000)
 
 Usage:
-    .venv/bin/python scripts/dev/simulate_action_stream.py                   # stream only
-    .venv/bin/python scripts/dev/simulate_action_stream.py --persist         # stream + persist
-    .venv/bin/python scripts/dev/simulate_action_stream.py upload            # upload only
-    .venv/bin/python scripts/dev/simulate_action_stream.py --speed 2         # 2x faster
+    .venv/bin/python scripts/dev/simulate_action_stream.py                            # persistent, stream
+    .venv/bin/python scripts/dev/simulate_action_stream.py --scenario single_action   # single action, stream
+    .venv/bin/python scripts/dev/simulate_action_stream.py --persist                  # persistent, stream + persist
+    .venv/bin/python scripts/dev/simulate_action_stream.py upload                     # persistent, upload
+    .venv/bin/python scripts/dev/simulate_action_stream.py --speed 2                  # 2x faster
 """
 
 from __future__ import annotations
@@ -109,8 +116,8 @@ def _thinking(text, tool_calls=None):
 # We build the canonical event data once and both modes consume it.
 
 
-def build_steps():
-    """Return the full event trajectory as a list of steps.
+def build_persistent_steps():
+    """Persistent session: act(persist=True) with interjections and steering.
 
     Each step: {"label": str, "delay": float, "events": [dict, ...]}
     Each event dict has two representations populated by the builder:
@@ -1048,6 +1055,686 @@ def build_steps():
     return steps
 
 
+def build_single_action_steps():
+    """Single action: act(persist=False) that delegates to a sub-agent.
+
+    Hierarchy structure (5 nesting levels):
+      CodeActActor.act(root)
+        → execute_function(primitives.actor.act)(ef1)
+          → CodeActActor.act(sub)           [sub-agent]
+            → execute_function(primitives.contacts.ask)(ef2)
+              → ContactManager.ask(cm)      [inner tool loop]
+    """
+    cid = str(uuid4())
+    h = [f"CodeActActor.act({cid[:4]})"]
+
+    # Sub-agent dispatch: execute_function(primitives.actor.act)
+    ef1_suffix = "d7e8"
+    ef1_h = [*h, f"execute_function(primitives.actor.act)({ef1_suffix})"]
+    ef1_cid = str(uuid4())
+
+    # Sub-agent's own CodeActActor.act
+    sa_cid = str(uuid4())
+    sa_h = [*ef1_h, f"CodeActActor.act({sa_cid[:4]})"]
+
+    # Sub-agent's inner call: execute_function(primitives.contacts.ask)
+    ef2_suffix = "f9a0"
+    ef2_h = [*sa_h, f"execute_function(primitives.contacts.ask)({ef2_suffix})"]
+    ef2_cid = str(uuid4())
+
+    # ContactManager.ask inside the sub-agent
+    cm_suffix = "b1c2"
+    cm_h = [*ef2_h, f"ContactManager.ask({cm_suffix})"]
+    cm_cid = str(uuid4())
+    cm_method = "ContactManager.ask"
+
+    def mm(calling_id, hierarchy, **kwargs):
+        return {
+            "kind": "mm",
+            "calling_id": calling_id,
+            "hierarchy": hierarchy,
+            "kwargs": kwargs,
+        }
+
+    def tl(hierarchy, message, **kwargs):
+        return {
+            "kind": "tl",
+            "hierarchy": hierarchy,
+            "message": message,
+            "kwargs": kwargs,
+        }
+
+    steps = [
+        # ── 1. Root ManagerMethod incoming ──
+        {
+            "label": "ManagerMethod incoming (persist=False)",
+            "delay": 0,
+            "events": [
+                mm(
+                    cid,
+                    h,
+                    phase="incoming",
+                    display_label="Taking Action",
+                    request="Find the main contact at Acme Corp and draft a follow-up email about the Q1 partnership review.",
+                ),
+            ],
+        },
+        # ── 2. User message ──
+        {
+            "label": "User message",
+            "delay": 0.5,
+            "events": [
+                tl(
+                    h,
+                    {
+                        "role": "user",
+                        "content": "Find the main contact at Acme Corp and draft a follow-up email about the Q1 partnership review.",
+                    },
+                ),
+            ],
+        },
+        # ── 3. Discovery ──
+        {
+            "label": "LLM thinking (in flight)",
+            "delay": 0.5,
+            "events": [tl(h, {"role": "assistant", "_thinking_in_flight": True})],
+        },
+        {
+            "label": "Discovery: GuidanceManager_search + FunctionManager_search_functions",
+            "delay": 3.0,
+            "events": [
+                tl(
+                    h,
+                    _thinking(
+                        "The user wants to find a contact at Acme Corp and draft a follow-up email. "
+                        "Let me check for any relevant guidance or saved functions first.",
+                        tool_calls=[
+                            _tc(
+                                "tc_gm",
+                                "GuidanceManager_search",
+                                {"query": "email drafting follow-up partnership"},
+                            ),
+                            _tc(
+                                "tc_fm",
+                                "FunctionManager_search_functions",
+                                {"query": "draft email contact lookup"},
+                            ),
+                        ],
+                    ),
+                    tool_aliases={
+                        "GuidanceManager_search": "Searching for relevant guidance",
+                        "FunctionManager_search_functions": "Searching for relevant skills",
+                    },
+                ),
+            ],
+        },
+        # ── 4. Discovery results ──
+        {
+            "label": "GuidanceManager_search result",
+            "delay": 1.5,
+            "events": [
+                tl(
+                    h,
+                    _tool_result(
+                        "tc_gm",
+                        "GuidanceManager_search",
+                        {
+                            "results": [
+                                {
+                                    "id": 17,
+                                    "title": "Professional Email Templates",
+                                    "summary": "Standard templates for follow-up, introduction, "
+                                    "and partnership review emails. Includes tone guidelines.",
+                                },
+                            ],
+                        },
+                    ),
+                ),
+            ],
+        },
+        {
+            "label": "LLM thinking (in flight, cancelled by next tool)",
+            "delay": 0.3,
+            "events": [tl(h, {"role": "assistant", "_thinking_in_flight": True})],
+        },
+        {
+            "label": "FunctionManager_search_functions result",
+            "delay": 0.7,
+            "events": [
+                tl(
+                    h,
+                    _tool_result(
+                        "tc_fm",
+                        "FunctionManager_search_functions",
+                        {"results": [], "message": "No matching functions found."},
+                    ),
+                ),
+            ],
+        },
+        # ── 5. Delegate to sub-agent ──
+        {
+            "label": "LLM thinking (in flight)",
+            "delay": 0.5,
+            "events": [tl(h, {"role": "assistant", "_thinking_in_flight": True})],
+        },
+        {
+            "label": "Doing: execute_function(primitives.actor.act) — spawn sub-agent",
+            "delay": 4.0,
+            "events": [
+                tl(
+                    h,
+                    _thinking(
+                        "I found email templates guidance. Now I need to look up the Acme Corp "
+                        "contact. This is a self-contained research task — let me delegate it to "
+                        "a sub-agent so it can focus on the contact lookup while I prepare the "
+                        "email structure.",
+                        tool_calls=[
+                            _tc(
+                                "tc_subagent",
+                                "execute_function",
+                                {
+                                    "function_name": "primitives.actor.act",
+                                    "call_kwargs": {
+                                        "request": "Find the main contact person at Acme Corp. "
+                                        "I need their full name, role, and email address.",
+                                    },
+                                },
+                            ),
+                        ],
+                    ),
+                    tool_aliases={"execute_function": "primitives.actor.act"},
+                ),
+            ],
+        },
+        # ── 6. execute_function(primitives.actor.act) boundary incoming ──
+        {
+            "label": "execute_function(primitives.actor.act) — boundary incoming",
+            "delay": 0.5,
+            "events": [
+                mm(
+                    ef1_cid,
+                    ef1_h,
+                    phase="incoming",
+                    manager="CodeActActor",
+                    method="execute_function",
+                    display_label="Running: primitives.actor.act",
+                ),
+            ],
+        },
+        # ── 7. Sub-agent CodeActActor.act incoming ──
+        {
+            "label": "Sub-agent CodeActActor.act — ManagerMethod incoming",
+            "delay": 0.5,
+            "events": [
+                mm(
+                    sa_cid,
+                    sa_h,
+                    phase="incoming",
+                    display_label="Taking Action",
+                    request="Find the main contact person at Acme Corp. "
+                    "I need their full name, role, and email address.",
+                ),
+            ],
+        },
+        # ── 8. Sub-agent ToolLoop: user message ──
+        {
+            "label": "Sub-agent: user message",
+            "delay": 0.5,
+            "events": [
+                tl(
+                    sa_h,
+                    {
+                        "role": "user",
+                        "content": "Find the main contact person at Acme Corp. "
+                        "I need their full name, role, and email address.",
+                    },
+                ),
+            ],
+        },
+        # ── 9. Sub-agent: discovery (skipped for brevity — sub-agents
+        #       inherit scoped discovery from parent) ──
+        # ── 10. Sub-agent: thinking + contacts.ask ──
+        {
+            "label": "Sub-agent: LLM thinking (in flight)",
+            "delay": 0.5,
+            "events": [
+                tl(sa_h, {"role": "assistant", "_thinking_in_flight": True}),
+            ],
+        },
+        {
+            "label": "Sub-agent: thinking + execute_function(primitives.contacts.ask)",
+            "delay": 3.0,
+            "events": [
+                tl(
+                    sa_h,
+                    _thinking(
+                        "I need to look up the main contact at Acme Corp in the contact book. "
+                        "Let me search for them.",
+                        tool_calls=[
+                            _tc(
+                                "tc_sa_contacts",
+                                "execute_function",
+                                {
+                                    "function_name": "primitives.contacts.ask",
+                                    "call_kwargs": {
+                                        "text": "Who is the main contact at Acme Corp?",
+                                    },
+                                },
+                            ),
+                        ],
+                    ),
+                    tool_aliases={"execute_function": "primitives.contacts.ask"},
+                ),
+            ],
+        },
+        # ── 11. Sub-agent's contacts.ask boundary incoming ──
+        {
+            "label": "Sub-agent: contacts.ask — boundary incoming",
+            "delay": 0.3,
+            "events": [
+                mm(
+                    ef2_cid,
+                    ef2_h,
+                    phase="incoming",
+                    manager="CodeActActor",
+                    method="execute_function",
+                    display_label="Running: primitives.contacts.ask",
+                ),
+            ],
+        },
+        # ── 12. ContactManager.ask incoming ──
+        {
+            "label": "ContactManager.ask — ManagerMethod incoming",
+            "delay": 0.3,
+            "events": [
+                mm(
+                    cm_cid,
+                    cm_h,
+                    phase="incoming",
+                    manager="ContactManager",
+                    method="ask",
+                    display_label="Checking Contact Book",
+                    request="Who is the main contact at Acme Corp?",
+                ),
+            ],
+        },
+        # ── 13. ContactManager.ask inner ToolLoop ──
+        {
+            "label": "ContactManager.ask: user message",
+            "delay": 0.3,
+            "events": [
+                tl(
+                    cm_h,
+                    {
+                        "role": "user",
+                        "content": "Who is the main contact at Acme Corp?",
+                    },
+                    method=cm_method,
+                ),
+            ],
+        },
+        {
+            "label": "ContactManager.ask: LLM thinking (in flight)",
+            "delay": 0.5,
+            "events": [
+                tl(
+                    cm_h,
+                    {"role": "assistant", "_thinking_in_flight": True},
+                    method=cm_method,
+                ),
+            ],
+        },
+        {
+            "label": "ContactManager.ask: thinking + _filter tool call",
+            "delay": 2.0,
+            "events": [
+                tl(
+                    cm_h,
+                    _thinking(
+                        "Let me search the contacts database for anyone associated with Acme Corp.",
+                        tool_calls=[
+                            _tc(
+                                "tc_cm_filter",
+                                "_filter",
+                                {
+                                    "filter_expression": "company == 'Acme Corp'",
+                                    "columns": ["name", "role", "email", "company"],
+                                },
+                            ),
+                        ],
+                    ),
+                    method=cm_method,
+                    tool_aliases={"_filter": "Filtering contacts"},
+                ),
+            ],
+        },
+        {
+            "label": "ContactManager.ask: _filter result",
+            "delay": 1.5,
+            "events": [
+                tl(
+                    cm_h,
+                    _tool_result(
+                        "tc_cm_filter",
+                        "_filter",
+                        {
+                            "rows": [
+                                {
+                                    "name": "Rachel Torres",
+                                    "role": "VP of Partnerships",
+                                    "email": "r.torres@acmecorp.com",
+                                    "company": "Acme Corp",
+                                },
+                                {
+                                    "name": "David Kim",
+                                    "role": "Account Manager",
+                                    "email": "d.kim@acmecorp.com",
+                                    "company": "Acme Corp",
+                                },
+                            ],
+                            "total": 2,
+                        },
+                    ),
+                    method=cm_method,
+                ),
+            ],
+        },
+        {
+            "label": "ContactManager.ask: LLM thinking (in flight)",
+            "delay": 0.5,
+            "events": [
+                tl(
+                    cm_h,
+                    {"role": "assistant", "_thinking_in_flight": True},
+                    method=cm_method,
+                ),
+            ],
+        },
+        {
+            "label": "ContactManager.ask: final response",
+            "delay": 2.5,
+            "events": [
+                tl(
+                    cm_h,
+                    {
+                        "role": "assistant",
+                        "content": (
+                            "Found 2 contacts at Acme Corp. The main contact for partnerships is "
+                            "Rachel Torres (VP of Partnerships, r.torres@acmecorp.com). "
+                            "There's also David Kim (Account Manager, d.kim@acmecorp.com)."
+                        ),
+                    },
+                    method=cm_method,
+                ),
+            ],
+        },
+        # ── 14. ContactManager.ask outgoing ──
+        {
+            "label": "ContactManager.ask — ManagerMethod outgoing",
+            "delay": 0.3,
+            "events": [
+                mm(
+                    cm_cid,
+                    cm_h,
+                    phase="outgoing",
+                    manager="ContactManager",
+                    method="ask",
+                    display_label="Checking Contact Book",
+                    answer=(
+                        "Rachel Torres — VP of Partnerships at Acme Corp (r.torres@acmecorp.com). "
+                        "Also David Kim — Account Manager (d.kim@acmecorp.com)."
+                    ),
+                ),
+            ],
+        },
+        # ── 15. Sub-agent's contacts.ask boundary outgoing ──
+        {
+            "label": "Sub-agent: contacts.ask — boundary outgoing",
+            "delay": 0.3,
+            "events": [
+                mm(
+                    ef2_cid,
+                    ef2_h,
+                    phase="outgoing",
+                    manager="CodeActActor",
+                    method="execute_function",
+                    display_label="Running: primitives.contacts.ask",
+                    answer="Found Rachel Torres (VP of Partnerships) and David Kim (Account Manager) at Acme Corp.",
+                ),
+            ],
+        },
+        # ── 16. Sub-agent: tool result ──
+        {
+            "label": "Sub-agent: contacts.ask tool result",
+            "delay": 0.5,
+            "events": [
+                tl(
+                    sa_h,
+                    _tool_result(
+                        "tc_sa_contacts",
+                        "execute_function",
+                        {
+                            "answer": (
+                                "Rachel Torres — VP of Partnerships at Acme Corp (r.torres@acmecorp.com). "
+                                "Also David Kim — Account Manager (d.kim@acmecorp.com)."
+                            ),
+                        },
+                    ),
+                ),
+            ],
+        },
+        # ── 17. Sub-agent: final response ──
+        {
+            "label": "Sub-agent: LLM thinking (in flight)",
+            "delay": 0.5,
+            "events": [
+                tl(sa_h, {"role": "assistant", "_thinking_in_flight": True}),
+            ],
+        },
+        {
+            "label": "Sub-agent: final response",
+            "delay": 3.0,
+            "events": [
+                tl(
+                    sa_h,
+                    {
+                        "role": "assistant",
+                        "content": (
+                            "The main contact at Acme Corp is **Rachel Torres**, VP of Partnerships.\n\n"
+                            "- **Name:** Rachel Torres\n"
+                            "- **Role:** VP of Partnerships\n"
+                            "- **Email:** r.torres@acmecorp.com\n\n"
+                            "There's also David Kim (Account Manager, d.kim@acmecorp.com) "
+                            "as a secondary contact."
+                        ),
+                    },
+                ),
+            ],
+        },
+        # ── 18. Sub-agent CodeActActor.act outgoing ──
+        {
+            "label": "Sub-agent CodeActActor.act — ManagerMethod outgoing",
+            "delay": 0.3,
+            "events": [
+                mm(
+                    sa_cid,
+                    sa_h,
+                    phase="outgoing",
+                    display_label="Taking Action",
+                    answer=(
+                        "Main contact: Rachel Torres, VP of Partnerships at Acme Corp "
+                        "(r.torres@acmecorp.com). Secondary: David Kim, Account Manager "
+                        "(d.kim@acmecorp.com)."
+                    ),
+                ),
+            ],
+        },
+        # ── 19. execute_function(primitives.actor.act) boundary outgoing ──
+        {
+            "label": "execute_function(primitives.actor.act) — boundary outgoing",
+            "delay": 0.3,
+            "events": [
+                mm(
+                    ef1_cid,
+                    ef1_h,
+                    phase="outgoing",
+                    manager="CodeActActor",
+                    method="execute_function",
+                    display_label="Running: primitives.actor.act",
+                    answer="Found contact details for Acme Corp.",
+                ),
+            ],
+        },
+        # ── 20. Parent: sub-agent tool result ──
+        {
+            "label": "Parent: sub-agent tool result",
+            "delay": 0.5,
+            "events": [
+                tl(
+                    h,
+                    _tool_result(
+                        "tc_subagent",
+                        "execute_function",
+                        {
+                            "answer": (
+                                "Main contact: Rachel Torres, VP of Partnerships at Acme Corp "
+                                "(r.torres@acmecorp.com). Secondary: David Kim, Account Manager "
+                                "(d.kim@acmecorp.com)."
+                            ),
+                        },
+                    ),
+                ),
+            ],
+        },
+        # ── 21. Parent: draft email via execute_code ──
+        {
+            "label": "LLM thinking (in flight)",
+            "delay": 0.5,
+            "events": [tl(h, {"role": "assistant", "_thinking_in_flight": True})],
+        },
+        {
+            "label": "Doing: execute_code — draft follow-up email",
+            "delay": 4.0,
+            "events": [
+                tl(
+                    h,
+                    _thinking(
+                        "The sub-agent found Rachel Torres as the main contact. Now I have the "
+                        "email template guidance and the contact info. Let me draft the follow-up "
+                        "email about the Q1 partnership review and notify the user.",
+                        tool_calls=[
+                            _tc(
+                                "tc_code",
+                                "execute_code",
+                                {
+                                    "code": (
+                                        "email_draft = {\n"
+                                        '    "to": "r.torres@acmecorp.com",\n'
+                                        '    "subject": "Q1 Partnership Review Follow-Up",\n'
+                                        '    "body": (\n'
+                                        '        "Hi Rachel,\\n\\n"\n'
+                                        '        "Thank you for your time during our Q1 partnership review. "\n'
+                                        '        "I wanted to follow up on the key action items we discussed:\\n\\n"\n'
+                                        '        "1. Integration timeline for the shared analytics dashboard\\n"\n'
+                                        '        "2. Updated SLA terms for the enterprise tier\\n"\n'
+                                        '        "3. Joint marketing campaign planning for Q2\\n\\n"\n'
+                                        '        "Could we schedule a 30-minute call next week to finalize these items?\\n\\n"\n'
+                                        '        "Best regards"\n'
+                                        "    ),\n"
+                                        "}\n"
+                                        'notify({"type": "progress", "message": "Email draft ready for review."})\n'
+                                        "email_draft"
+                                    ),
+                                    "language": "python",
+                                },
+                            ),
+                        ],
+                    ),
+                ),
+            ],
+        },
+        # ── 22. execute_code result ──
+        {
+            "label": "execute_code result",
+            "delay": 2.0,
+            "events": [
+                tl(
+                    h,
+                    _tool_result(
+                        "tc_code",
+                        "execute_code",
+                        {
+                            "result": {
+                                "to": "r.torres@acmecorp.com",
+                                "subject": "Q1 Partnership Review Follow-Up",
+                                "body": "Hi Rachel,\n\nThank you for your time...",
+                            },
+                            "notification_sent": True,
+                        },
+                    ),
+                ),
+            ],
+        },
+        # ── 23. Final response ──
+        {
+            "label": "LLM thinking (in flight)",
+            "delay": 0.5,
+            "events": [tl(h, {"role": "assistant", "_thinking_in_flight": True})],
+        },
+        {
+            "label": "Response: email draft ready",
+            "delay": 4.0,
+            "events": [
+                tl(
+                    h,
+                    {
+                        "role": "assistant",
+                        "content": (
+                            "Here's the draft follow-up email for Rachel Torres at Acme Corp:\n\n"
+                            "**To:** r.torres@acmecorp.com\n"
+                            "**Subject:** Q1 Partnership Review Follow-Up\n\n"
+                            "---\n\n"
+                            "Hi Rachel,\n\n"
+                            "Thank you for your time during our Q1 partnership review. "
+                            "I wanted to follow up on the key action items we discussed:\n\n"
+                            "1. Integration timeline for the shared analytics dashboard\n"
+                            "2. Updated SLA terms for the enterprise tier\n"
+                            "3. Joint marketing campaign planning for Q2\n\n"
+                            "Could we schedule a 30-minute call next week to finalize these items?\n\n"
+                            "Best regards"
+                        ),
+                    },
+                ),
+            ],
+        },
+        # ── 24. ManagerMethod outgoing ──
+        {
+            "label": "ManagerMethod outgoing",
+            "delay": 0.5,
+            "events": [
+                mm(
+                    cid,
+                    h,
+                    phase="outgoing",
+                    display_label="Taking Action",
+                    answer=(
+                        "Drafted follow-up email to Rachel Torres (VP of Partnerships, Acme Corp) "
+                        "regarding the Q1 partnership review action items."
+                    ),
+                ),
+            ],
+        },
+    ]
+
+    return steps
+
+
+SCENARIOS = {
+    "persistent": build_persistent_steps,
+    "single_action": build_single_action_steps,
+}
+
+
 # =============================================================================
 # Orchestra Helpers (used by both stream and upload modes)
 # =============================================================================
@@ -1188,10 +1875,18 @@ def push_to_console(assistant_id: str, sse_event: dict) -> None:
         print(f"    PUSH ERROR: {r.status_code} {r.text[:200]}")
 
 
-def run_stream(speed: float, persist: bool = False) -> None:
-    total_time = sum(s["delay"] for s in build_steps()) / speed
+def run_stream(
+    steps_builder: callable,
+    scenario_name: str,
+    speed: float,
+    persist: bool = False,
+) -> None:
+    steps = steps_builder()
+    total_time = sum(s["delay"] for s in steps) / speed
     mode_label = "stream + persist" if persist else "stream"
-    print(f"\n=== {mode_label} (speed={speed}x, ~{total_time:.0f}s total) ===\n")
+    print(
+        f"\n=== {scenario_name} / {mode_label} (speed={speed}x, ~{total_time:.0f}s total) ===\n",
+    )
 
     try:
         requests.get(f"{CONSOLE_BASE}", timeout=3)
@@ -1204,8 +1899,6 @@ def run_stream(speed: float, persist: bool = False) -> None:
     # load doesn't 404 (which blocks SSE connection setup).
     setup_orchestra()
     print()
-
-    steps = build_steps()
 
     for i, step in enumerate(steps, 1):
         delay = step["delay"] / speed
@@ -1239,12 +1932,12 @@ def run_stream(speed: float, persist: bool = False) -> None:
 # =============================================================================
 
 
-def run_upload() -> None:
+def run_upload(steps_builder: callable, scenario_name: str) -> None:
     print("\n--- Setup ---")
     setup_orchestra()
 
-    steps = build_steps()
-    print(f"\n=== Uploading {len(steps)} steps to Orchestra ===\n")
+    steps = steps_builder()
+    print(f"\n=== Uploading {len(steps)} steps ({scenario_name}) to Orchestra ===\n")
 
     for i, step in enumerate(steps, 1):
         for event in step["events"]:
@@ -1283,6 +1976,14 @@ def main():
         "upload: write all events to Orchestra at once.",
     )
     parser.add_argument(
+        "--scenario",
+        default="persistent",
+        choices=list(SCENARIOS.keys()),
+        help="persistent (default): long-running act(persist=True) session with "
+        "interjections, pause/resume/stop. "
+        "single_action: one-shot act(persist=False) with sub-agent delegation.",
+    )
+    parser.add_argument(
         "--speed",
         type=float,
         default=1.0,
@@ -1297,10 +1998,12 @@ def main():
     )
     args = parser.parse_args()
 
+    steps_builder = SCENARIOS[args.scenario]
+
     if args.mode == "upload":
-        run_upload()
+        run_upload(steps_builder, args.scenario)
     else:
-        run_stream(args.speed, persist=args.persist)
+        run_stream(steps_builder, args.scenario, args.speed, persist=args.persist)
 
 
 if __name__ == "__main__":
