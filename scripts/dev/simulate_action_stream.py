@@ -502,14 +502,23 @@ def run() -> None:
         },
     )
 
-    # ── 21. Execute function: store key location in knowledge ─────────────
-    print("[20] Doing: execute_function(primitives.knowledge.update) — store key info")
+    # ── 21. send_notification + execute_function (parallel tool calls) ────
+    print(
+        "[20] Doing: send_notification + execute_function(primitives.knowledge.update)",
+    )
     log_tl(
         h,
         _thinking(
-            "The user has the JSON key and wants the path stored. Let me update the "
-            "knowledge base with the credential file location and storage policy.",
+            "The user has the JSON key and wants the path stored. Let me notify them "
+            "that I'm updating the knowledge base, and do the update in parallel.",
             tool_calls=[
+                _tc(
+                    "tc_notif",
+                    "send_notification",
+                    {
+                        "message": "Storing credential details and DevOps policy in knowledge base...",
+                    },
+                ),
                 _tc(
                     "tc_kb",
                     "execute_function",
@@ -527,10 +536,20 @@ def run() -> None:
                 ),
             ],
         ),
-        tool_aliases={"execute_function": "primitives.knowledge.update"},
+        tool_aliases={
+            "send_notification": "Sending notification",
+            "execute_function": "primitives.knowledge.update",
+        },
     )
 
-    # ── 22. Child ManagerMethod for knowledge update ──────────────────────
+    # ── 22. send_notification result ──────────────────────────────────────
+    print("[21] send_notification result")
+    log_tl(
+        h,
+        _tool_result("tc_notif", "send_notification", "Notification sent."),
+    )
+
+    # ── 23. Child ManagerMethod for knowledge update ──────────────────────
     kb_suffix = "c3d4"
     kb_h = [*h, f"execute_function(primitives.knowledge.update)({kb_suffix})"]
     kb_cid = str(uuid4())
@@ -552,8 +571,8 @@ def run() -> None:
         answer="Knowledge base updated with credential details.",
     )
 
-    # ── 23. Knowledge update result ───────────────────────────────────────
-    print("[21] Knowledge update result")
+    # ── 24. Knowledge update result ───────────────────────────────────────
+    print("[22] Knowledge update result")
     log_tl(
         h,
         _tool_result(
@@ -563,8 +582,8 @@ def run() -> None:
         ),
     )
 
-    # ── 24. Final response ────────────────────────────────────────────────
-    print("[22] Response: setup complete")
+    # ── 25. Final response ────────────────────────────────────────────────
+    print("[23] Response: setup complete")
     log_tl(
         h,
         {
@@ -582,8 +601,8 @@ def run() -> None:
         },
     )
 
-    # ── 25. User confirms done ────────────────────────────────────────────
-    print("[23] Interjection: user confirms done")
+    # ── 26. User confirms done ────────────────────────────────────────────
+    print("[24] Interjection: user confirms done")
     log_tl(
         h,
         {
@@ -593,8 +612,8 @@ def run() -> None:
         },
     )
 
-    # ── 26. Steering: stop ────────────────────────────────────────────────
-    print("[24] Steering: stop")
+    # ── 27. Steering: stop ────────────────────────────────────────────────
+    print("[25] Steering: stop")
     log_tl(
         h,
         {
@@ -605,8 +624,8 @@ def run() -> None:
         },
     )
 
-    # ── 27. ManagerMethod outgoing ────────────────────────────────────────
-    print("[25] ManagerMethod outgoing")
+    # ── 28. ManagerMethod outgoing ────────────────────────────────────────
+    print("[26] ManagerMethod outgoing")
     log_mm(
         cid,
         h,
