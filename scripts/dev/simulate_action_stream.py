@@ -179,10 +179,15 @@ def build_steps():
                 ),
             ],
         },
-        # ── 3. Discovery: GuidanceManager_search + FunctionManager_search_functions ──
+        # ── 3. LLM thinking (in flight) + Discovery ──
+        {
+            "label": "LLM thinking (in flight)",
+            "delay": 0.5,
+            "events": [tl(h, {"role": "assistant", "_thinking_in_flight": True})],
+        },
         {
             "label": "Discovery: GuidanceManager_search + FunctionManager_search_functions",
-            "delay": 4.0,
+            "delay": 3.5,
             "events": [
                 tl(
                     h,
@@ -251,10 +256,15 @@ def build_steps():
                 ),
             ],
         },
-        # ── 6. Doing: execute_function(primitives.web.ask) ──
+        # ── 6. LLM thinking (in flight) + web search ──
+        {
+            "label": "LLM thinking (in flight)",
+            "delay": 0.5,
+            "events": [tl(h, {"role": "assistant", "_thinking_in_flight": True})],
+        },
         {
             "label": "Doing: execute_function(primitives.web.ask) — web search",
-            "delay": 5.0,
+            "delay": 4.5,
             "events": [
                 tl(
                     h,
@@ -325,10 +335,21 @@ def build_steps():
                 ),
             ],
         },
-        # ── 10. WebSearcher inner: thinking + _search ──
+        # ── 10. LLM thinking (in flight) + _search ──
+        {
+            "label": "LLM thinking (in flight)",
+            "delay": 0.5,
+            "events": [
+                tl(
+                    ws_h,
+                    {"role": "assistant", "_thinking_in_flight": True},
+                    method=ws_method,
+                ),
+            ],
+        },
         {
             "label": "WebSearcher inner: thinking + _search tool call",
-            "delay": 3.0,
+            "delay": 2.5,
             "events": [
                 tl(
                     ws_h,
@@ -384,10 +405,21 @@ def build_steps():
                 ),
             ],
         },
-        # ── 12. WebSearcher inner: thinking + _extract ──
+        # ── 12. LLM thinking (in flight) + _extract ──
+        {
+            "label": "LLM thinking (in flight)",
+            "delay": 0.5,
+            "events": [
+                tl(
+                    ws_h,
+                    {"role": "assistant", "_thinking_in_flight": True},
+                    method=ws_method,
+                ),
+            ],
+        },
         {
             "label": "WebSearcher inner: thinking + _extract tool call",
-            "delay": 4.0,
+            "delay": 3.5,
             "events": [
                 tl(
                     ws_h,
@@ -534,10 +566,15 @@ def build_steps():
                 ),
             ],
         },
-        # ── 18. Clarification: request_clarification ──
+        # ── 18. LLM thinking (in flight) + clarification ──
+        {
+            "label": "LLM thinking (in flight)",
+            "delay": 0.5,
+            "events": [tl(h, {"role": "assistant", "_thinking_in_flight": True})],
+        },
         {
             "label": "Doing: request_clarification — which project ID?",
-            "delay": 5.0,
+            "delay": 4.5,
             "events": [
                 tl(
                     h,
@@ -578,10 +615,15 @@ def build_steps():
                 ),
             ],
         },
-        # ── 20. Execute code: notify + knowledge update ──
+        # ── 20. LLM thinking (in flight) + execute_code ──
+        {
+            "label": "LLM thinking (in flight)",
+            "delay": 0.5,
+            "events": [tl(h, {"role": "assistant", "_thinking_in_flight": True})],
+        },
         {
             "label": "Doing: execute_code — notify + store credentials info",
-            "delay": 6.0,
+            "delay": 5.5,
             "events": [
                 tl(
                     h,
@@ -774,10 +816,15 @@ def build_steps():
                 ),
             ],
         },
-        # ── 30. Parallel: send_notification + execute_function ──
+        # ── 30. LLM thinking (in flight) + parallel tools ──
+        {
+            "label": "LLM thinking (in flight)",
+            "delay": 0.5,
+            "events": [tl(h, {"role": "assistant", "_thinking_in_flight": True})],
+        },
         {
             "label": "Doing: send_notification + execute_function(primitives.knowledge.update)",
-            "delay": 5.0,
+            "delay": 4.5,
             "events": [
                 tl(
                     h,
