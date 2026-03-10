@@ -129,7 +129,11 @@ def get_handle_mode_selection_example() -> str:
 #       print(result)
 #   ''')
 #   ^^^ This consumes the handle inside the code block. The outer loop
-#       loses steering and query access. Use execute_function instead.
+#       loses steering and query access. Use send_notification + execute_function instead.
+#
+# CORRECT — notification alongside execute_function (JSON tool calls):
+#   send_notification(message="Looking up contacts in Berlin...")
+#   execute_function(function_name="primitives.contacts.ask", call_kwargs={"text": "Find contacts in Berlin"})
 #
 # CORRECT — genuine multi-step composition requires execute_code:
 async def cross_reference_contacts_and_transcripts(city: str) -> str:
@@ -177,11 +181,12 @@ def get_notify_web_search_example() -> str:
     return """
 # Example: Single web search → execute_function (NOT execute_code)
 #
-# CORRECT (JSON tool call):
+# CORRECT (JSON tool calls — send_notification before execute_function):
+#   send_notification(message="Searching the web for weather in Berlin...")
 #   execute_function(function_name="primitives.web.ask",
 #                    call_kwargs={"text": "What is the weather in Berlin today?"})
 #
-# WRONG — wrapping a single web.ask in execute_code:
+# WRONG — wrapping a single web.ask in execute_code just to add notify():
 #   execute_code(code='''
 #       notify(...)
 #       handle = await primitives.web.ask("What is the weather in Berlin today?")

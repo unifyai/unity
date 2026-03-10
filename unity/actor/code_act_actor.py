@@ -40,7 +40,10 @@ from unity.common.async_tool_loop import (
     SteerableToolHandle,
     start_async_tool_loop,
 )
-from unity.common.clarification_tools import add_clarification_tool_with_events
+from unity.common.clarification_tools import (
+    add_clarification_tool_with_events,
+    add_notification_tool_with_events,
+)
 from unity.common.llm_client import new_llm_client
 from unity.common.llm_helpers import methods_to_tool_dict
 from unity.common.tool_spec import ToolSpec
@@ -3984,6 +3987,13 @@ class CodeActActor(BaseCodeActActor):
                 method="act",
                 call_id=_call_id,
             )
+
+        add_notification_tool_with_events(
+            tools,
+            manager="CodeActActor",
+            method="act",
+            call_id=_call_id,
+        )
 
         logger.debug(f"⏱️ [CodeActActor.act +{_act_ms()}] starting async tool loop")
         handle = start_async_tool_loop(
