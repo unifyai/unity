@@ -110,12 +110,12 @@ def log_mm(
     print(f"  ManagerMethod: {phase} [{manager}.{method}]")
 
 
-def log_tl(hierarchy, message, *, tool_aliases=None):
+def log_tl(hierarchy, message, *, method=None, tool_aliases=None):
     entries = {
         "event_id": str(uuid4()),
         "event_timestamp": now_iso(),
         "message": message,
-        "method": "CodeActActor.act",
+        "method": method or "CodeActActor.act",
         "hierarchy": hierarchy,
         "hierarchy_label": "->".join(hierarchy),
     }
@@ -271,7 +271,11 @@ def run() -> None:
         tool_aliases={"execute_function": "primitives.web.ask"},
     )
 
-    # ── 7. Child ManagerMethod for execute_function(primitives.web.ask) ───
+    # ── 7. execute_function boundary: incoming ──────────────────────────
+    # In production, execute_function() sets TOOL_LOOP_LINEAGE to ef_h,
+    # publishes a ManagerMethod incoming, then runs the sandbox code which
+    # calls primitives.web.ask → WebSearcher.ask (its own tool loop).
+    print("[7] execute_function(primitives.web.ask) — boundary incoming")
     ef_suffix = "a1b2"
     ef_h = [*h, f"execute_function(primitives.web.ask)({ef_suffix})"]
     ef_cid = str(uuid4())
@@ -283,6 +287,182 @@ def run() -> None:
         method="execute_function",
         display_label="Running: primitives.web.ask",
     )
+
+    # ── 8. WebSearcher.ask: ManagerMethod incoming ────────────────────────
+    # The @log_manager_call decorator on WebSearcher.ask reads TOOL_LOOP_LINEAGE
+    # (set to ef_h by execute_function) and appends its own suffixed segment.
+    print("[8] WebSearcher.ask — ManagerMethod incoming")
+    ws_suffix = "ws01"
+    ws_h = [*ef_h, f"WebSearcher.ask({ws_suffix})"]
+    ws_cid = str(uuid4())
+    log_mm(
+        ws_cid,
+        ws_h,
+        phase="incoming",
+        manager="WebSearcher",
+        method="ask",
+        display_label="Searching the Web",
+        request="Google Cloud service account setup with Drive API access 2026",
+    )
+
+    # ── 9–14. WebSearcher inner tool loop ─────────────────────────────────
+    # The inner start_async_tool_loop uses parent_lineage=TOOL_LOOP_LINEAGE
+    # and _PENDING_LOOP_SUFFIX bridges the suffix so LoopConfig produces
+    # lineage = ws_h. All inner ToolLoop events carry this hierarchy.
+    ws_method = "WebSearcher.ask"
+
+    print("[9] WebSearcher inner: user question")
+    log_tl(
+        ws_h,
+        {
+            "role": "user",
+            "content": "Google Cloud service account setup with Drive API access 2026",
+        },
+        method=ws_method,
+    )
+
+    print("[10] WebSearcher inner: thinking + _search tool call")
+    log_tl(
+        ws_h,
+        _thinking(
+            "I need to find current instructions for creating a GCP service account "
+            "with Drive API access. Let me search for the latest documentation.",
+            tool_calls=[
+                _tc(
+                    "tc_ws_search",
+                    "_search",
+                    {
+                        "query": "Google Cloud service account setup Drive API 2026",
+                        "max_results": 5,
+                    },
+                ),
+            ],
+        ),
+        method=ws_method,
+        tool_aliases={"_search": "Searching the web"},
+    )
+
+    print("[11] WebSearcher inner: _search result")
+    log_tl(
+        ws_h,
+        _tool_result(
+            "tc_ws_search",
+            "_search",
+            {
+                "answer": (
+                    "To create a GCP service account with Drive API access, go to "
+                    "IAM & Admin → Service Accounts in the Google Cloud Console."
+                ),
+                "results": [
+                    {
+                        "title": "Create a service account | IAM Documentation",
+                        "url": "https://cloud.google.com/iam/docs/service-accounts-create",
+                        "content": "Step-by-step guide for creating service accounts...",
+                    },
+                    {
+                        "title": "Enable Google Workspace APIs | Google for Developers",
+                        "url": "https://developers.google.com/workspace/guides/enable-apis",
+                        "content": "How to enable APIs including Google Drive API...",
+                    },
+                ],
+            },
+        ),
+        method=ws_method,
+    )
+
+    print("[12] WebSearcher inner: thinking + _extract tool call")
+    log_tl(
+        ws_h,
+        _thinking(
+            "The search gave a good overview but the IAM docs page likely has the most "
+            "up-to-date step-by-step procedure. Let me extract the full content.",
+            tool_calls=[
+                _tc(
+                    "tc_ws_extract",
+                    "_extract",
+                    {
+                        "urls": "https://cloud.google.com/iam/docs/service-accounts-create",
+                    },
+                ),
+            ],
+        ),
+        method=ws_method,
+        tool_aliases={"_extract": "Extracting page content"},
+    )
+
+    print("[13] WebSearcher inner: _extract result")
+    log_tl(
+        ws_h,
+        _tool_result(
+            "tc_ws_extract",
+            "_extract",
+            {
+                "results": [
+                    {
+                        "url": "https://cloud.google.com/iam/docs/service-accounts-create",
+                        "raw_content": (
+                            "Create a service account\n\n"
+                            "1. In the Google Cloud console, go to IAM & Admin > Service Accounts.\n"
+                            "2. Click Create service account.\n"
+                            "3. Enter a name and optional description, then click Create and continue.\n"
+                            "4. Grant roles: select the Google Drive API role.\n"
+                            "5. Click Done.\n"
+                            "6. Click the service account → Keys tab → Add Key → Create new key → JSON.\n"
+                            "7. Go to APIs & Services → Library, search 'Google Drive API', click Enable."
+                        ),
+                    },
+                ],
+                "failed_results": [],
+            },
+        ),
+        method=ws_method,
+    )
+
+    print("[14] WebSearcher inner: final response")
+    log_tl(
+        ws_h,
+        {
+            "role": "assistant",
+            "content": (
+                "As of March 2026, to create a GCP service account with Drive access:\n"
+                "1. Go to console.cloud.google.com\n"
+                "2. Select your project from the dropdown\n"
+                "3. Navigate to IAM & Admin → Service Accounts\n"
+                "4. Click 'Create Service Account'\n"
+                "5. Name it and grant 'Google Drive API' role\n"
+                "6. Create a JSON key under the Keys tab\n"
+                "7. Enable the Drive API under APIs & Services → Library\n\n"
+                "Source: https://cloud.google.com/iam/docs/service-accounts-create"
+            ),
+        },
+        method=ws_method,
+    )
+
+    # ── 15. WebSearcher.ask: ManagerMethod outgoing ───────────────────────
+    # wrap_handle_with_logging monkey-patches result() to publish this
+    # when the inner tool loop completes.
+    print("[15] WebSearcher.ask — ManagerMethod outgoing")
+    log_mm(
+        ws_cid,
+        ws_h,
+        phase="outgoing",
+        manager="WebSearcher",
+        method="ask",
+        display_label="Searching the Web",
+        answer=(
+            "As of March 2026, to create a GCP service account with Drive access:\n"
+            "1. Go to console.cloud.google.com\n"
+            "2. Select your project from the dropdown\n"
+            "3. Navigate to IAM & Admin → Service Accounts\n"
+            "4. Click 'Create Service Account'\n"
+            "5. Name it and grant 'Google Drive API' role\n"
+            "6. Create a JSON key under the Keys tab\n"
+            "7. Enable the Drive API under APIs & Services → Library"
+        ),
+    )
+
+    # ── 16. execute_function boundary: outgoing ──────────────────────────
+    print("[16] execute_function(primitives.web.ask) — boundary outgoing")
     log_mm(
         ef_cid,
         ef_h,
@@ -293,8 +473,8 @@ def run() -> None:
         answer="Found current GCP setup instructions.",
     )
 
-    # ── 8. Web search tool result ─────────────────────────────────────────
-    print("[7] Web search result")
+    # ── 17. Web search tool result (back in parent loop) ──────────────────
+    print("[17] Web search result (parent ToolLoop)")
     log_tl(
         h,
         _tool_result(
@@ -315,8 +495,8 @@ def run() -> None:
         ),
     )
 
-    # ── 9. Clarification: request_clarification tool call ────────────────
-    print("[8] Doing: request_clarification — which project ID?")
+    # ── 18. Clarification: request_clarification tool call ───────────────
+    print("[18] Doing: request_clarification — which project ID?")
     log_tl(
         h,
         _thinking(
@@ -340,8 +520,8 @@ def run() -> None:
         tool_aliases={"request_clarification": "Requesting clarification"},
     )
 
-    # ── 10. Clarification result (user answered via ConversationManager) ──
-    print("[9] Clarification result: user confirms project ID")
+    # ── 19. Clarification result (user answered via ConversationManager) ──
+    print("[19] Clarification result: user confirms project ID")
     log_tl(
         h,
         _tool_result(
@@ -351,8 +531,8 @@ def run() -> None:
         ),
     )
 
-    # ── 11. Execute code: notification + knowledge update ─────────────────
-    print("[10] Doing: execute_code — notify + store credentials info")
+    # ── 20. Execute code: notification + knowledge update ────────────────
+    print("[20] Doing: execute_code — notify + store credentials info")
     code_block = (
         'notify({"type": "progress", "message": "Starting service account setup for unify-prod-2026..."})\n'
         "\n"
@@ -377,8 +557,8 @@ def run() -> None:
         ),
     )
 
-    # ── 12. Execute code result ───────────────────────────────────────────
-    print("[11] execute_code result")
+    # ── 21. Execute code result ──────────────────────────────────────────
+    print("[21] execute_code result")
     log_tl(
         h,
         _tool_result(
@@ -388,8 +568,8 @@ def run() -> None:
         ),
     )
 
-    # ── 13. Response: step-by-step instructions ───────────────────────────
-    print("[12] Response: step-by-step instructions")
+    # ── 22. Response: step-by-step instructions ──────────────────────────
+    print("[22] Response: step-by-step instructions")
     log_tl(
         h,
         {
@@ -408,8 +588,8 @@ def run() -> None:
         },
     )
 
-    # ── 14. User completes step, asks for next ────────────────────────────
-    print("[13] Interjection: steps completed, what's next")
+    # ── 23. User completes step, asks for next ───────────────────────────
+    print("[23] Interjection: steps completed, what's next")
     log_tl(
         h,
         {
@@ -419,8 +599,8 @@ def run() -> None:
         },
     )
 
-    # ── 15. Response: grant role + create key ─────────────────────────────
-    print("[14] Response: grant role and create key")
+    # ── 24. Response: grant role + create key ────────────────────────────
+    print("[24] Response: grant role and create key")
     log_tl(
         h,
         {
@@ -443,8 +623,8 @@ def run() -> None:
         },
     )
 
-    # ── 16. User needs to pause ───────────────────────────────────────────
-    print("[15] Interjection: user pauses")
+    # ── 25. User needs to pause ──────────────────────────────────────────
+    print("[25] Interjection: user pauses")
     log_tl(
         h,
         {
@@ -454,8 +634,8 @@ def run() -> None:
         },
     )
 
-    # ── 17. Steering: pause ───────────────────────────────────────────────
-    print("[16] Steering: pause")
+    # ── 26. Steering: pause ──────────────────────────────────────────────
+    print("[26] Steering: pause")
     log_tl(
         h,
         {
@@ -466,8 +646,8 @@ def run() -> None:
         },
     )
 
-    # ── 18. Steering: resume ──────────────────────────────────────────────
-    print("[17] Steering: resume")
+    # ── 27. Steering: resume ─────────────────────────────────────────────
+    print("[27] Steering: resume")
     log_tl(
         h,
         {
@@ -478,8 +658,8 @@ def run() -> None:
         },
     )
 
-    # ── 19. Resume response ───────────────────────────────────────────────
-    print("[18] Response: welcome back")
+    # ── 28. Resume response ──────────────────────────────────────────────
+    print("[28] Response: welcome back")
     log_tl(
         h,
         {
@@ -488,8 +668,8 @@ def run() -> None:
         },
     )
 
-    # ── 20. User confirms, wants to store the key ─────────────────────────
-    print("[19] Interjection: user is back, wants to store key")
+    # ── 29. User confirms, wants to store the key ────────────────────────
+    print("[29] Interjection: user is back, wants to store key")
     log_tl(
         h,
         {
@@ -502,9 +682,9 @@ def run() -> None:
         },
     )
 
-    # ── 21. send_notification + execute_function (parallel tool calls) ────
+    # ── 30. send_notification + execute_function (parallel tool calls) ───
     print(
-        "[20] Doing: send_notification + execute_function(primitives.knowledge.update)",
+        "[30] Doing: send_notification + execute_function(primitives.knowledge.update)",
     )
     log_tl(
         h,
@@ -542,14 +722,14 @@ def run() -> None:
         },
     )
 
-    # ── 22. send_notification result ──────────────────────────────────────
-    print("[21] send_notification result")
+    # ── 31. send_notification result ─────────────────────────────────────
+    print("[31] send_notification result")
     log_tl(
         h,
         _tool_result("tc_notif", "send_notification", "Notification sent."),
     )
 
-    # ── 23. Child ManagerMethod for knowledge update ──────────────────────
+    # ── 32. Child ManagerMethod for knowledge update ─────────────────────
     kb_suffix = "c3d4"
     kb_h = [*h, f"execute_function(primitives.knowledge.update)({kb_suffix})"]
     kb_cid = str(uuid4())
@@ -571,8 +751,8 @@ def run() -> None:
         answer="Knowledge base updated with credential details.",
     )
 
-    # ── 24. Knowledge update result ───────────────────────────────────────
-    print("[22] Knowledge update result")
+    # ── 33. Knowledge update result ──────────────────────────────────────
+    print("[33] Knowledge update result")
     log_tl(
         h,
         _tool_result(
@@ -582,8 +762,8 @@ def run() -> None:
         ),
     )
 
-    # ── 25. Final response ────────────────────────────────────────────────
-    print("[23] Response: setup complete")
+    # ── 34. Final response ───────────────────────────────────────────────
+    print("[34] Response: setup complete")
     log_tl(
         h,
         {
@@ -601,8 +781,8 @@ def run() -> None:
         },
     )
 
-    # ── 26. User confirms done ────────────────────────────────────────────
-    print("[24] Interjection: user confirms done")
+    # ── 35. User confirms done ───────────────────────────────────────────
+    print("[35] Interjection: user confirms done")
     log_tl(
         h,
         {
@@ -612,8 +792,8 @@ def run() -> None:
         },
     )
 
-    # ── 27. Steering: stop ────────────────────────────────────────────────
-    print("[25] Steering: stop")
+    # ── 36. Steering: stop ───────────────────────────────────────────────
+    print("[36] Steering: stop")
     log_tl(
         h,
         {
@@ -624,8 +804,8 @@ def run() -> None:
         },
     )
 
-    # ── 28. ManagerMethod outgoing ────────────────────────────────────────
-    print("[26] ManagerMethod outgoing")
+    # ── 37. ManagerMethod outgoing ───────────────────────────────────────
+    print("[37] ManagerMethod outgoing")
     log_mm(
         cid,
         h,
