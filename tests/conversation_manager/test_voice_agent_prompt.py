@@ -169,6 +169,7 @@ def meet_prompt(base_prompt_kwargs: dict) -> str:
     return build_voice_agent_prompt(
         **base_prompt_kwargs,
         is_boss_user=True,
+        channel="unify_meet",
         participants=[
             {
                 "first_name": "Sarah",
@@ -503,6 +504,7 @@ class TestScreenSharingPromptSection:
         prompt = build_voice_agent_prompt(
             **base_prompt_kwargs,
             is_boss_user=True,
+            channel="unify_meet",
         ).flatten()
 
         assert "Screen sharing" in prompt
@@ -517,6 +519,7 @@ class TestScreenSharingPromptSection:
         boss_prompt = build_voice_agent_prompt(
             **base_prompt_kwargs,
             is_boss_user=True,
+            channel="unify_meet",
         ).flatten()
 
         contact_prompt = build_voice_agent_prompt(
@@ -524,6 +527,7 @@ class TestScreenSharingPromptSection:
             is_boss_user=False,
             contact_first_name="Alice",
             contact_surname="Smith",
+            channel="unify_meet",
         ).flatten()
 
         for prompt in (boss_prompt, contact_prompt):

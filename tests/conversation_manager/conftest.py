@@ -154,7 +154,7 @@ def pytest_configure(config):
     # Actor, ContactManager, and TranscriptManager are all simulated.
     # The brain tools route to these managers directly (ask_about_contacts,
     # update_contacts, query_past_transcripts), so they must be simulated
-    # to avoid real LLM calls and _LoggedHandle wrapping.
+    # to avoid real LLM calls.
     os.environ["UNITY_ACTOR_IMPL"] = "simulated"
     os.environ["UNITY_ACTOR_SIMULATED_STEPS"] = "0"  # Allows pause+resume interactions
     os.environ.setdefault("UNITY_CONTACT_IMPL", "simulated")

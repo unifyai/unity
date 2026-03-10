@@ -133,32 +133,40 @@ _EXECUTION_RULES = textwrap.dedent("""
 
     5. **Sandbox Helpers** (available only inside `execute_code` Python sessions):
 
-       **Progress Notifications (`notify`)**
-       - `notify(payload)` sends a non-blocking progress event (dict) to the outer handle.
-       - Notifications are only relevant inside **multi-step `execute_code` blocks**.
-         For single-primitive calls, use `execute_function` — the outer loop
-         handles progress automatically via the adopted handle.
-       - When composing multiple primitives in `execute_code`, emit notifications
-         at meaningful milestones (start of a major step, completion, measurable progress).
+       **Progress Notifications**
+
+       Two paths for sending progress notifications — both produce
+       identical notification events from the perspective of whatever
+       process invoked you. Choose whichever is most natural for the
+       context:
+
+       **Path 1: `send_notification(message)` tool** (direct, JSON tool call)
+       - A first-class tool you can call between any other tool calls.
+       - Best for general milestone updates alongside `execute_function`
+         calls, where in-code `notify()` is unavailable.
+       - Best when the notification is unconditional — a simple progress
+         marker between sequential steps.
+
+       **Path 2: `notify(payload)` sandbox helper** (inside `execute_code`)
+       - A Python function available inside `execute_code` sessions.
+       - Best when notifications are conditional on branching logic,
+         interleaved with computation, or need structured payloads beyond
+         a simple message string.
 
        **What makes a strong notification**
-       - Concrete: include useful details like counts, batch indexes, item names, or completed step names.
-       - Specific: report what changed since the last update, not generic activity.
+       - Concrete: include useful details like counts, batch indexes, item names, or step descriptions.
+       - Specific: report what is happening or what changed since the last update, not generic activity.
        - Informative: help the user understand remaining work and current status.
        - User-facing: explain progress in plain language the end user can understand.
-       - High-level: summarize outcomes and next steps, not internal implementation details.
+       - High-level: summarize what is underway, not internal implementation details.
 
        **Anti-patterns to avoid**
-       - Wrapping a single primitive call in `execute_code` just to add `notify()` around it — use `execute_function` instead.
+       - Wrapping a single primitive call in `execute_code` just to add `notify()` around it — use `send_notification` before the `execute_function` call instead.
        - Generic filler text with no signal (for example: "working on it", "still processing", "please wait").
        - Repeating the same update without new information.
        - Over-notifying for trivial operations that complete almost immediately.
        - Dumping low-level internals (stack traces, call IDs, schema/debug metadata) into user progress updates.
-
-       **Example payloads**
-       - Progress: `{"type": "progress", "message": "...", "step": 2, "total": 5}`
-       - Step completion: `{"type": "step_complete", "step_name": "...", "result_summary": "..."}`
-       - Custom: any dict schema that communicates real progress clearly.
+       - Using notifications to announce the final result or completion of the current turn — your response text is automatically surfaced when you yield control. Notifications are for updates *during* active work, not for summarizing what you just finished.
 
        **Display Helper (`display`)**
        - `display(obj)` emits rich output (text or PIL images) to stdout.
@@ -396,12 +404,15 @@ def _build_filesystem_context() -> str:
 
 def _build_tool_signatures(tool_dict: Dict[str, Callable]) -> str:
     """Builds a JSON string of tool signatures via introspection."""
+    from unity.common.prompt_helpers import unwrap_tool_callable
+
     tool_info = {}
     for name, fn in tool_dict.items():
-        prefix = "async def " if inspect.iscoroutinefunction(fn) else "def "
+        target = unwrap_tool_callable(fn)
+        prefix = "async def " if inspect.iscoroutinefunction(target) else "def "
         tool_info[name] = {
-            "signature": f"{prefix}{name}{inspect.signature(fn)}",
-            "docstring": inspect.getdoc(fn) or "No docstring available.",
+            "signature": f"{prefix}{name}{inspect.signature(target)}",
+            "docstring": inspect.getdoc(target) or "No docstring available.",
         }
     return json.dumps(tool_info, indent=4)
 

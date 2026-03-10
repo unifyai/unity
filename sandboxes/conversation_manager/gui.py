@@ -1933,6 +1933,7 @@ if _TEXTUAL_AVAILABLE:
                 try:
                     from sandboxes.conversation_manager.call_transcript import (
                         build_timeline,
+                        collect_magnitude_traces_from_docker,
                         format_timeline,
                         parse_cm_log,
                         parse_voice_log,
@@ -1941,6 +1942,62 @@ if _TEXTUAL_AVAILABLE:
                     voice_data = parse_voice_log(voice_log)
                     cm_log = _voice_root / ".logs_conversation_sandbox.txt"
                     cm_data = parse_cm_log(cm_log) if cm_log.exists() else None
+
+                    mag_traces, _mag_dir, _agent_log = (
+                        collect_magnitude_traces_from_docker()
+                    )
+                    if cm_data and mag_traces:
+                        import re as _re
+
+                        matched_ids: set[str] = set()
+                        for atc in cm_data.actor_tool_calls:
+                            if atc.event_type != "execute_code":
+                                continue
+                            m = _re.search(r"execute_code\((\w+)\)", atc.tool_name)
+                            if m and m.group(1) in mag_traces:
+                                atc.magnitude_trace = mag_traces[m.group(1)]
+                                matched_ids.add(m.group(1))
+                        from sandboxes.conversation_manager.call_transcript import (
+                            _attach_unmatched_magnitude_traces,
+                        )
+
+                        unmatched = [
+                            t
+                            for k, t in mag_traces.items()
+                            if k not in matched_ids and not t.lineage
+                        ]
+                        if unmatched:
+                            _attach_unmatched_magnitude_traces(
+                                voice_data.actor_notifications,
+                                unmatched,
+                            )
+                    if cm_data and _agent_log:
+                        from sandboxes.conversation_manager.call_transcript import (
+                            parse_agent_service_log,
+                        )
+
+                        direct_groups = parse_agent_service_log(_agent_log)
+                        if direct_groups:
+                            exec_codes = [
+                                atc
+                                for atc in cm_data.actor_tool_calls
+                                if atc.event_type == "execute_code"
+                                and not atc.magnitude_trace
+                                and not (atc.result_summary or "").startswith("ERROR:")
+                            ]
+                            group_idx = 0
+                            for atc in exec_codes:
+                                if group_idx >= len(direct_groups):
+                                    break
+                                if atc.code and (
+                                    "session.click" in atc.code
+                                    or "session.type_text" in atc.code
+                                    or "session.scroll" in atc.code
+                                    or "session.drag" in atc.code
+                                ):
+                                    atc.direct_actions = direct_groups[group_idx]
+                                    group_idx += 1
+
                     if voice_data.utterances:
                         timeline = build_timeline(voice_data, cm_data)
                         transcript_path = json_path.with_name(
@@ -1949,6 +2006,10 @@ if _TEXTUAL_AVAILABLE:
                         with open(transcript_path, "w") as f:
                             f.write(format_timeline(timeline, verbose=True))
                         result_lines.append(f"   Transcript: {transcript_path}")
+                        if mag_traces:
+                            result_lines.append(
+                                f"   Magnitude traces: {len(mag_traces)} acts included",
+                            )
                 except Exception as exc:
                     result_lines.append(f"   ⚠️ Transcript failed: {exc}")
 

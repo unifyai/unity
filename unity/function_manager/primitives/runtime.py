@@ -83,6 +83,9 @@ _COMPUTER_METHODS = (
     "execute_actions",
 )
 
+_DESKTOP_METHODS = tuple(name for name in _COMPUTER_METHODS if name != "get_content")
+_WEB_SESSION_METHODS = _COMPUTER_METHODS
+
 
 def _publish_desktop_invoked(method_name: str) -> None:
     """Fire-and-forget EventBus publish for desktop primitive invocations."""
@@ -270,17 +273,19 @@ class _ComputerNamespace:
         async def _resolve():
             return await owner.backend.get_session(mode)
 
-        for name in _COMPUTER_METHODS:
+        methods = _DESKTOP_METHODS if mode == "desktop" else _WEB_SESSION_METHODS
+        for name in methods:
             setattr(self, name, _make_session_method(name, owner, _resolve, mode=mode))
 
 
 class WebSessionHandle:
     """Wrapped browser session returned by ``primitives.computer.web.new_session()``.
 
-    Has the same method set as ``primitives.computer.desktop``: ``act``,
-    ``observe``, ``query``, ``navigate``, ``get_links``, ``get_content``,
-    ``get_screenshot``.  Additionally exposes ``stop()`` for explicit
-    lifecycle management.
+    Exposes ``act``, ``observe``, ``query``, ``navigate``, ``get_links``,
+    ``get_content``, and ``get_screenshot`` plus ``stop()`` for explicit
+    lifecycle management.  Unlike ``primitives.computer.desktop``, web
+    sessions retain ``get_content()`` because they operate on real browser
+    pages rather than the noVNC viewer surface.
     """
 
     def __init__(
@@ -302,7 +307,7 @@ class WebSessionHandle:
         async def _resolve():
             return self._session
 
-        for name in _COMPUTER_METHODS:
+        for name in _WEB_SESSION_METHODS:
             setattr(
                 self,
                 name,
@@ -423,6 +428,52 @@ class _WebSessionFactory:
             result = [h for h in result if h.active]
         return list(result)
 
+    def get_session(
+        self,
+        session_id: int,
+        *,
+        active_only: bool = True,
+    ) -> WebSessionHandle:
+        """Return an existing web session handle by numeric ID.
+
+        This is the ergonomic reattachment API for browser sessions created in
+        earlier turns or by other actors.  The ``session_id`` matches the
+        handle's numeric ``session_id`` property and the IDs shown in
+        ``<active_web_sessions>`` snapshots.
+
+        Parameters
+        ----------
+        session_id : int
+            Numeric session identifier (0, 1, 2, ...).
+        active_only : bool, default True
+            When True, only return sessions that have not been stopped.
+
+        Returns
+        -------
+        WebSessionHandle
+            The existing matching session handle.
+
+        Raises
+        ------
+        ValueError
+            If no matching session exists, or if the matching session is
+            inactive while ``active_only`` is True.
+        """
+        for handle in self._handles:
+            if handle.session_id != session_id:
+                continue
+            if active_only and not handle.active:
+                raise ValueError(
+                    f"Web session {session_id} exists but is inactive. "
+                    "Use list_sessions(active_only=True) to discover reusable sessions.",
+                )
+            return handle
+
+        raise ValueError(
+            f"No web session with id {session_id}. "
+            "Use list_sessions() to inspect the available handles.",
+        )
+
     async def list_sessions_with_metadata(
         self,
         visible_only: bool = False,
@@ -462,11 +513,12 @@ class ComputerPrimitives(metaclass=SingletonABCMeta):
 
     - ``primitives.computer.desktop`` -- singleton namespace for full desktop
       control (mouse/keyboard via noVNC).  Methods: ``act``, ``observe``,
-      ``query``, ``navigate``, ``get_links``, ``get_content``,
-      ``get_screenshot``.
+      ``query``, ``navigate``, ``get_links``, and ``get_screenshot``.
     - ``primitives.computer.web`` -- factory for independent browser sessions.
       Call ``new_session(visible=True/False)`` to create a session handle with
-      the same method set as the desktop namespace, plus ``stop()``.
+      the desktop method set plus ``get_content()`` and ``stop()``.  Use
+      ``get_session(session_id)`` or ``list_sessions()`` to reattach to an
+      existing browser session.
 
     Singleton via ``SingletonABCMeta`` / ``ManagerRegistry``.  All actors
     (including nested sub-agents) share the same backend connection.
@@ -628,7 +680,9 @@ class ComputerPrimitives(metaclass=SingletonABCMeta):
     def web(self) -> _WebSessionFactory:
         """Factory for independent browser sessions.
 
-        Call ``new_session(visible=True/False)`` to create a session.
+        Call ``new_session(visible=True/False)`` to create a session, or
+        ``get_session(session_id)`` / ``list_sessions()`` to reattach to an
+        existing one.
         """
         if self._web_factory is None:
             self._web_factory = _WebSessionFactory(self)
