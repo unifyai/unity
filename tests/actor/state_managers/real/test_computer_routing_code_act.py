@@ -100,7 +100,7 @@ async def test_desktop_app_uses_desktop_namespace():
     primitives.computer.desktop, not a web session factory."""
     async with _make_actor_with_computer() as actor:
         handle = await actor.act(
-            "Open the Terminal application on the desktop and run 'ls -la'.",
+            "Open the Terminal application on the desktop and run 'echo 'Hello, world!'.",
             clarification_enabled=False,
         )
         await handle.result()
