@@ -2289,6 +2289,11 @@ async def async_tool_loop_inner(
             if log_steps:
                 logger.begin_thinking()
 
+            await to_event_bus(
+                {"role": "assistant", "_thinking_in_flight": True},
+                cfg,
+            )
+
             if interrupt_llm_with_interjections:
                 # ––––– new *pre-emptive* mode ––––––––––––––––––––––––––––
                 # ➊ start the LLM step …
