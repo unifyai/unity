@@ -1251,12 +1251,12 @@ def render_event_for_fast_brain(event_json: str) -> str | None:
             return None
         return _render_actor_result(event)
     if isinstance(event, ActorHandleStarted):
-        return f"Action started: {event.action_name} — {event.query}"
+        return None
     if isinstance(event, ActorHandleResponse):
         answer = event.response if event.response else "(no answer)"
         return f"Ask answered ({event.query[:100]}): {answer}"
     if isinstance(event, ActorSessionResponse):
-        return f"Action update: {event.content}"
+        return None
     if isinstance(event, NotificationInjectedEvent):
         return event.content
     if isinstance(event, ActorClarificationRequest):
@@ -1343,9 +1343,9 @@ def _render_history_event(
         if isinstance(event, ActorResult):
             return _render_actor_result(event)
         if isinstance(event, ActorHandleStarted):
-            return f"Action started: {event.action_name} — {event.query}"
+            return None
         if isinstance(event, ActorSessionResponse):
-            return f"Action update: {event.content}"
+            return None
 
     return None
 
