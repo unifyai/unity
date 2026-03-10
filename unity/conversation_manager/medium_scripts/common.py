@@ -852,40 +852,34 @@ class ScreenshotHistory:
     def build_visual_context_content(self) -> list:
         """Build a content list for a visual context chat message.
 
-        Returns ``list[str | ImageContent]``: for each source the most recent
-        entry gets a ``str`` label **plus** an ``ImageContent`` block; all
-        older entries from that source get only a ``str`` filepath label.
+        Returns only the latest screenshot from each source with a clear
+        structural label.  Historical entries are omitted — the fast brain
+        needs a snapshot of *now*, not a timeline.
         """
         from livekit.agents.llm import ImageContent
 
         if not self._entries:
             return []
 
-        latest_idx_by_source: dict[str, int] = {}
-        for i, (entry, _) in enumerate(self._entries):
-            latest_idx_by_source[entry.source] = i
+        latest_by_source: dict[str, "ScreenshotEntry"] = {}
+        for entry, _ in self._entries:
+            latest_by_source[entry.source] = entry
 
         source_labels = {
-            "assistant": "Assistant's Screen",
-            "user": "User's Screen",
-            "webcam": "User's Webcam",
+            "assistant": "=== YOUR SCREEN (this is what YOUR machine currently shows) ===",
+            "user": "=== USER'S SCREEN (this is THEIR machine, not yours) ===",
+            "webcam": "=== USER'S WEBCAM ===",
         }
 
         parts: list = []
-        for i, (entry, filepath) in enumerate(self._entries):
-            label = source_labels.get(entry.source, "Screenshot")
-            text = (
-                f"[{label} at {entry.timestamp.strftime('%H:%M:%S')} "
-                f"-- {filepath}] "
-                f'User said: "{entry.utterance}"'
+        for source in ("assistant", "user", "webcam"):
+            entry = latest_by_source.get(source)
+            if entry is None:
+                continue
+            parts.append(source_labels.get(source, "=== SCREENSHOT ==="))
+            parts.append(
+                ImageContent(image=f"data:image/jpeg;base64,{entry.b64}"),
             )
-            parts.append(text)
-            if i == latest_idx_by_source.get(entry.source):
-                parts.append(
-                    ImageContent(
-                        image=f"data:image/jpeg;base64,{entry.b64}",
-                    ),
-                )
 
         return parts
 
