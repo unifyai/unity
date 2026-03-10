@@ -218,6 +218,7 @@ def build_steps():
             ],
         },
         # ── 4. GuidanceManager_search result ──
+        # First parallel tool completes. The loop eagerly starts an LLM call.
         {
             "label": "GuidanceManager_search result",
             "delay": 2.0,
@@ -241,10 +242,17 @@ def build_steps():
                 ),
             ],
         },
+        # Eager LLM call starts (will be cancelled by second tool completing)
+        {
+            "label": "LLM thinking (in flight, cancelled by next tool)",
+            "delay": 0.3,
+            "events": [tl(h, {"role": "assistant", "_thinking_in_flight": True})],
+        },
         # ── 5. FunctionManager_search_functions result ──
+        # Second parallel tool completes → cancels the in-flight LLM call.
         {
             "label": "FunctionManager_search_functions result",
-            "delay": 1.0,
+            "delay": 0.7,
             "events": [
                 tl(
                     h,
@@ -257,6 +265,7 @@ def build_steps():
             ],
         },
         # ── 6. LLM thinking (in flight) + web search ──
+        # Now both results are in, LLM restarts with full context.
         {
             "label": "LLM thinking (in flight)",
             "delay": 0.5,
@@ -864,6 +873,7 @@ def build_steps():
             ],
         },
         # ── 31. send_notification result ──
+        # First parallel tool completes. The loop eagerly starts an LLM call.
         {
             "label": "send_notification result",
             "delay": 0.5,
@@ -874,10 +884,17 @@ def build_steps():
                 ),
             ],
         },
+        # Eager LLM call starts (will be cancelled by knowledge update completing)
+        {
+            "label": "LLM thinking (in flight, cancelled by next tool)",
+            "delay": 0.3,
+            "events": [tl(h, {"role": "assistant", "_thinking_in_flight": True})],
+        },
         # ── 32. Child ManagerMethod for knowledge update ──
+        # Second parallel tool completes → cancels the in-flight LLM call.
         {
             "label": "Child ManagerMethod: primitives.knowledge.update",
-            "delay": 2.0,
+            "delay": 1.7,
             "events": [
                 mm(
                     kb_cid,
