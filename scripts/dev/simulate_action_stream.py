@@ -483,10 +483,21 @@ def build_steps():
                 ),
             ],
         },
-        # ── 14. WebSearcher inner: final response ──
+        # ── 14. LLM thinking (in flight) + WebSearcher final response ──
+        {
+            "label": "LLM thinking (in flight)",
+            "delay": 0.5,
+            "events": [
+                tl(
+                    ws_h,
+                    {"role": "assistant", "_thinking_in_flight": True},
+                    method=ws_method,
+                ),
+            ],
+        },
         {
             "label": "WebSearcher inner: final response",
-            "delay": 5.0,
+            "delay": 4.5,
             "events": [
                 tl(
                     ws_h,
@@ -679,10 +690,15 @@ def build_steps():
                 ),
             ],
         },
-        # ── 22. Response: step-by-step instructions ──
+        # ── 22. LLM thinking (in flight) + response ──
+        {
+            "label": "LLM thinking (in flight)",
+            "delay": 0.5,
+            "events": [tl(h, {"role": "assistant", "_thinking_in_flight": True})],
+        },
         {
             "label": "Response: step-by-step instructions",
-            "delay": 6.0,
+            "delay": 5.5,
             "events": [
                 tl(
                     h,
@@ -718,10 +734,15 @@ def build_steps():
                 ),
             ],
         },
-        # ── 24. Response: grant role + create key ──
+        # ── 24. LLM thinking (in flight) + response ──
+        {
+            "label": "LLM thinking (in flight)",
+            "delay": 0.5,
+            "events": [tl(h, {"role": "assistant", "_thinking_in_flight": True})],
+        },
         {
             "label": "Response: grant role and create key",
-            "delay": 7.0,
+            "delay": 6.5,
             "events": [
                 tl(
                     h,
@@ -761,10 +782,15 @@ def build_steps():
                 ),
             ],
         },
-        # ── 26. Steering: pause ──
+        # ── 26. LLM thinking (in flight) → decides to pause ──
+        {
+            "label": "LLM thinking (in flight)",
+            "delay": 0.5,
+            "events": [tl(h, {"role": "assistant", "_thinking_in_flight": True})],
+        },
         {
             "label": "Steering: pause",
-            "delay": 0.5,
+            "delay": 2.0,
             "events": [
                 tl(
                     h,
@@ -793,10 +819,15 @@ def build_steps():
                 ),
             ],
         },
-        # ── 28. Response: welcome back ──
+        # ── 28. LLM thinking (in flight) + response ──
+        {
+            "label": "LLM thinking (in flight)",
+            "delay": 0.5,
+            "events": [tl(h, {"role": "assistant", "_thinking_in_flight": True})],
+        },
         {
             "label": "Response: welcome back",
-            "delay": 3.0,
+            "delay": 2.5,
             "events": [
                 tl(
                     h,
@@ -930,10 +961,15 @@ def build_steps():
                 ),
             ],
         },
-        # ── 34. Final response ──
+        # ── 34. LLM thinking (in flight) + final response ──
+        {
+            "label": "LLM thinking (in flight)",
+            "delay": 0.5,
+            "events": [tl(h, {"role": "assistant", "_thinking_in_flight": True})],
+        },
         {
             "label": "Response: setup complete",
-            "delay": 6.0,
+            "delay": 5.5,
             "events": [
                 tl(
                     h,
@@ -968,10 +1004,15 @@ def build_steps():
                 ),
             ],
         },
-        # ── 36. Steering: stop ──
+        # ── 36. LLM thinking (in flight) → decides to stop ──
+        {
+            "label": "LLM thinking (in flight)",
+            "delay": 0.5,
+            "events": [tl(h, {"role": "assistant", "_thinking_in_flight": True})],
+        },
         {
             "label": "Steering: stop",
-            "delay": 1.0,
+            "delay": 0.5,
             "events": [
                 tl(
                     h,
