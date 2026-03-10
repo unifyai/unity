@@ -608,7 +608,7 @@ def run() -> None:
         {
             "role": "user",
             "_interjection": True,
-            "content": "Perfect, that's everything. Thanks!",
+            "content": "Perfect, that's *everything*. Thanks!",
         },
     )
 
