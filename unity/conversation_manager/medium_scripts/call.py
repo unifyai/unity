@@ -111,10 +111,14 @@ class Assistant(Agent):
         self.boss = boss
         self.channel = channel
         self.utterance_event = (
-            InboundPhoneUtterance if channel == "phone" else InboundUnifyMeetUtterance
+            InboundPhoneUtterance
+            if channel == "phone_call"
+            else InboundUnifyMeetUtterance
         )
         self.assistant_utterance_event = (
-            OutboundPhoneUtterance if channel == "phone" else OutboundUnifyMeetUtterance
+            OutboundPhoneUtterance
+            if channel == "phone_call"
+            else OutboundUnifyMeetUtterance
         )
         self.call_received = not outbound
         self._user_speech_logged = False
@@ -324,6 +328,7 @@ async def entrypoint(ctx: agents.JobContext):
         is_boss_user=contact.get("contact_id") == 1,
         contact_rolling_summary=contact.get("rolling_summary", ""),
         demo_mode=SETTINGS.DEMO_MODE,
+        channel=channel,
     ).flatten()
     _log.config(f"System prompt ({len(system_prompt)} chars)")
 
@@ -347,6 +352,7 @@ async def entrypoint(ctx: agents.JobContext):
     user_is_speaking = False
     _queued_speech: list[tuple[str, str, str]] = []  # (text, notification_id, source)
     _say_meta_queue: list[dict] = []
+    _pending_speech: list[str] = []
     generation_seq = 0
     user_state_seq = 0
     _was_quiescent = True
@@ -431,7 +437,7 @@ async def entrypoint(ctx: agents.JobContext):
             user_input,
         )
 
-    if channel == "phone":
+    if channel == "phone_call":
         user_utterance_event = InboundPhoneUtterance
         assistant_utterance_event = OutboundPhoneUtterance
     else:
@@ -584,6 +590,8 @@ async def entrypoint(ctx: agents.JobContext):
                 if match_say_meta(candidate, text):
                     say_meta = _say_meta_queue.pop(i)
                     break
+        if role == "assistant" and text in _pending_speech:
+            _pending_speech.remove(text)
         if role == "user":
             if not assistant._user_speech_logged:
                 _log.user_speech(text)
@@ -782,6 +790,7 @@ async def entrypoint(ctx: agents.JobContext):
             content=[notification_message],
         )
         _log.notification_say(text, notification_source=notification_source)
+        _pending_speech.append(text)
         session.say(text, allow_interruptions=True, add_to_chat_ctx=True)
 
     def _extract_chat_messages(ctx) -> list[dict]:
@@ -828,6 +837,8 @@ async def entrypoint(ctx: agents.JobContext):
             model=SETTINGS.conversation.FAST_BRAIN_MODEL,
         )
         chat_messages = _extract_chat_messages(session._chat_ctx)
+        for text in _pending_speech:
+            chat_messages.append({"role": "assistant", "content": text})
         decision, log_path = await evaluator.evaluate(
             chat_history=chat_messages,
             system_prompt=system_prompt,
@@ -847,6 +858,7 @@ async def entrypoint(ctx: agents.JobContext):
                 decision.content,
                 notification_source="notification_reply",
             )
+            _pending_speech.append(decision.content)
             session.say(
                 decision.content,
                 allow_interruptions=True,
@@ -1083,11 +1095,41 @@ async def entrypoint(ctx: agents.JobContext):
             )
         pending_notifications.clear()
 
-    await trigger_generate_reply(
-        reason="session_start",
-        source_id="startup",
+    # Pre-generate the opening greeting via a direct sidecar LLM call so that
+    # the full LLM latency is absorbed before audio playback begins.
+    # - Meet: hides the delay behind the "waiting for assistant" spinner, then
+    #   signals "ready_to_speak" so the avatar appears right before speech.
+    # - Phone (inbound): eliminates dead air after the call connects.
+    # - Phone (outbound): waits for the callee to answer first, then generates.
+    if outbound:
+        _log.info("Outbound call — waiting for callee to answer…")
+        await call_answered_flag.wait()
+        _log.call_status("call_answered — generating greeting")
+
+    from unity.common.llm_client import new_llm_client
+
+    greeting_client = new_llm_client(
+        model=SETTINGS.conversation.FAST_BRAIN_MODEL,
+        origin="fast_brain_greeting",
+        reasoning_effort="low",
+    )
+    greeting_messages = [
+        {"role": "system", "content": system_prompt},
+        *_extract_chat_messages(session._chat_ctx),
+    ]
+    greeting_text = await greeting_client.generate(messages=greeting_messages)
+
+    if channel != "phone":
+        await ctx.room.local_participant.publish_data(
+            json.dumps({"type": "ready_to_speak"}).encode(),
+            topic="agent_status",
+            reliable=True,
+        )
+
+    session.say(
+        greeting_text,
         allow_interruptions=True,
-        wait_for_completion=True,
+        add_to_chat_ctx=True,
     )
 
 

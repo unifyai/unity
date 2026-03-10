@@ -396,6 +396,7 @@ async def async_tool_loop_inner(
             # Also expose the resolved lineage list so event payloads can include the full
             # parent->child stack even when called outside the tool loop ContextVar scope.
             setattr(outer_handle_container[0], "_log_hierarchy", list(cfg.lineage))
+            setattr(outer_handle_container[0], "_loop_cfg", cfg)
     logger = LoopLogger(cfg, log_steps)
 
     # Wire inline log-file pointers: when UNILLM_LOG_DIR is set, each LLM call
@@ -1756,7 +1757,13 @@ async def async_tool_loop_inner(
                         if time_ctx is not None
                         else _msg_text
                     )
-                    msgs_to_append.append({"role": "user", "content": _user_content})
+                    msgs_to_append.append(
+                        {
+                            "role": "user",
+                            "_interjection": True,
+                            "content": _user_content,
+                        },
+                    )
                 if msgs_to_append:
                     await _msg_dispatcher.append_msgs(msgs_to_append)
                 # Update history only if there was user message content

@@ -11,17 +11,7 @@ export CONTAINER_START_TIME_MS=$(date +%s%3N)
 MAIN_PID=""
 AGENT_PID=""
 
-# Function to handle graceful shutdown
-cleanup() {
-    echo "$(date '+%Y-%m-%d %H:%M:%S.%3N') - [ENTRYPOINT] Received shutdown signal, cleaning up..."
-
-    # Stop the main application
-    if [ ! -z "$MAIN_PID" ]; then
-        echo "Stopping main application (PID: $MAIN_PID)..."
-        kill -TERM $MAIN_PID 2>/dev/null || true
-        wait $MAIN_PID 2>/dev/null || true
-    fi
-
+stop_agent_service() {
     if [ ! -z "$AGENT_PID" ]; then
         echo "Stopping agent-service (PID: $AGENT_PID)..."
         kill -TERM $AGENT_PID 2>/dev/null || true
@@ -30,19 +20,25 @@ cleanup() {
         echo "Stopping agent-service..."
         pkill -f "ts-node" 2>/dev/null || true
     fi
+}
 
-    # Upload logs to GCS before the pod filesystem is destroyed
-    if [ ! -z "$UNITY_CONVERSATION_JOB_NAME" ]; then
-        echo "Uploading logs to GCS..."
-        python3 /app/scripts/upload_pod_logs.py || echo "[ENTRYPOINT] Log upload failed (non-fatal)"
+# Signal handler: forward SIGTERM to the Python process and wait for it to
+# finish its own shutdown sequence (which now includes the GCS log upload).
+on_signal() {
+    echo "$(date '+%Y-%m-%d %H:%M:%S.%3N') - [ENTRYPOINT] Received shutdown signal, cleaning up..."
+
+    if [ ! -z "$MAIN_PID" ]; then
+        echo "Stopping main application (PID: $MAIN_PID)..."
+        kill -TERM $MAIN_PID 2>/dev/null || true
+        wait $MAIN_PID 2>/dev/null || true
     fi
 
+    stop_agent_service
     echo "Cleanup complete"
     exit 0
 }
 
-# Set up signal handlers
-trap cleanup SIGTERM SIGINT
+trap on_signal SIGTERM SIGINT
 
 # Create log directories for file-based traces in background
 mkdir -p /var/log/unity /var/log/unify /var/log/unillm &
@@ -89,5 +85,7 @@ python3 unity/conversation_manager/main.py &
 MAIN_PID=$!
 echo "⬥ Main application started with PID: $MAIN_PID"
 
-# Wait for main process
-wait $MAIN_PID
+# Wait for the main process to exit (inactivity timeout or other self-initiated shutdown).
+# The SIGTERM path is handled by the on_signal trap above and never reaches here.
+wait $MAIN_PID || true
+stop_agent_service

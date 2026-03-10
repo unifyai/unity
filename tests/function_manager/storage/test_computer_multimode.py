@@ -51,10 +51,13 @@ class TestDesktopNamespace:
             "query",
             "navigate",
             "get_links",
-            "get_content",
             "get_screenshot",
         ):
             assert callable(getattr(ns, name)), f"desktop.{name} should be callable"
+
+    def test_desktop_does_not_expose_get_content(self):
+        cp = _make_primitives()
+        assert not hasattr(cp.desktop, "get_content")
 
     @pytest.mark.asyncio
     async def test_desktop_act(self):
@@ -91,11 +94,96 @@ class TestDesktopNamespace:
         result = await cp.desktop.get_links()
         assert "links" in result
 
+
+class TestObserveBypassDomProcessing:
+    """Mode-aware observe() payloads for the real ComputerSession."""
+
     @pytest.mark.asyncio
-    async def test_desktop_get_content(self):
-        cp = _make_primitives()
-        result = await cp.desktop.get_content()
-        assert "content" in result
+    async def test_desktop_observe_forces_bypass_dom_processing(self, monkeypatch):
+        from unity.function_manager.computer_backends import ComputerSession
+
+        session = ComputerSession(
+            session_id="desktop-session",
+            mode="desktop",
+            agent_base_url="http://example.com",
+        )
+        captured: dict[str, object] = {}
+
+        async def fake_request(method, endpoint, payload=None):
+            captured["method"] = method
+            captured["endpoint"] = endpoint
+            captured["payload"] = payload
+            return {"data": "desktop observation"}
+
+        monkeypatch.setattr(session, "_request", fake_request)
+
+        result = await session.observe("What is on the screen?")
+
+        assert result == "desktop observation"
+        assert captured["method"] == "POST"
+        assert captured["endpoint"] == "/extract"
+        assert captured["payload"]["bypassDomProcessing"] is True
+
+    @pytest.mark.asyncio
+    async def test_web_observe_does_not_force_bypass_dom_processing(
+        self,
+        monkeypatch,
+    ):
+        from unity.function_manager.computer_backends import ComputerSession
+
+        session = ComputerSession(
+            session_id="web-session",
+            mode="web-vm",
+            agent_base_url="http://example.com",
+        )
+        captured: dict[str, object] = {}
+
+        async def fake_request(method, endpoint, payload=None):
+            captured["method"] = method
+            captured["endpoint"] = endpoint
+            captured["payload"] = payload
+            return {"data": "web observation"}
+
+        monkeypatch.setattr(session, "_request", fake_request)
+
+        result = await session.observe("What is on the page?")
+
+        assert result == "web observation"
+        assert captured["method"] == "POST"
+        assert captured["endpoint"] == "/extract"
+        assert "bypassDomProcessing" not in captured["payload"]
+
+    @pytest.mark.asyncio
+    async def test_web_observe_allows_explicit_bypass_dom_processing(
+        self,
+        monkeypatch,
+    ):
+        from unity.function_manager.computer_backends import ComputerSession
+
+        session = ComputerSession(
+            session_id="web-session",
+            mode="web",
+            agent_base_url="http://example.com",
+        )
+        captured: dict[str, object] = {}
+
+        async def fake_request(method, endpoint, payload=None):
+            captured["method"] = method
+            captured["endpoint"] = endpoint
+            captured["payload"] = payload
+            return {"data": "web observation"}
+
+        monkeypatch.setattr(session, "_request", fake_request)
+
+        result = await session.observe(
+            "What is on the page?",
+            bypass_dom_processing=True,
+        )
+
+        assert result == "web observation"
+        assert captured["method"] == "POST"
+        assert captured["endpoint"] == "/extract"
+        assert captured["payload"]["bypassDomProcessing"] is True
 
 
 # ── Web session factory ───────────────────────────────────────────────
@@ -115,6 +203,10 @@ class TestWebSessionFactory:
     def test_factory_has_new_session(self):
         cp = _make_primitives()
         assert callable(cp.web.new_session)
+
+    def test_factory_has_get_session(self):
+        cp = _make_primitives()
+        assert callable(cp.web.get_session)
 
     def test_factory_has_no_act_or_navigate(self):
         """The factory itself should NOT have convenience methods."""
@@ -286,11 +378,18 @@ class TestEnvironmentToolDiscovery:
             "query",
             "navigate",
             "get_links",
-            "get_content",
             "get_screenshot",
         ):
             fq = f"primitives.computer.desktop.{method}"
             assert fq in tools, f"Expected tool {fq} in get_tools()"
+
+    def test_get_tools_excludes_desktop_get_content(self):
+        from unity.actor.environments.computer import ComputerEnvironment
+
+        cp = _make_primitives()
+        env = ComputerEnvironment(cp)
+        tools = env.get_tools()
+        assert "primitives.computer.desktop.get_content" not in tools
 
     def test_get_tools_includes_web_factory(self):
         from unity.actor.environments.computer import ComputerEnvironment
@@ -340,6 +439,14 @@ class TestEnvironmentToolDiscovery:
         tools = env.get_tools()
         assert "primitives.computer.web.list_sessions" in tools
 
+    def test_get_tools_includes_get_session(self):
+        from unity.actor.environments.computer import ComputerEnvironment
+
+        cp = _make_primitives()
+        env = ComputerEnvironment(cp)
+        tools = env.get_tools()
+        assert "primitives.computer.web.get_session" in tools
+
     def test_list_sessions_tool_has_docstring(self):
         from unity.actor.environments.computer import ComputerEnvironment
 
@@ -351,6 +458,17 @@ class TestEnvironmentToolDiscovery:
         assert "visible_only" in meta.docstring
         assert "active_only" in meta.docstring
 
+    def test_get_session_tool_has_docstring(self):
+        from unity.actor.environments.computer import ComputerEnvironment
+
+        cp = _make_primitives()
+        env = ComputerEnvironment(cp)
+        tools = env.get_tools()
+        meta = tools["primitives.computer.web.get_session"]
+        assert meta.docstring is not None
+        assert "session_id" in meta.docstring
+        assert "reattach" in meta.docstring.lower()
+
     def test_prompt_context_mentions_both_interfaces(self):
         from unity.actor.environments.computer import ComputerEnvironment
 
@@ -359,15 +477,16 @@ class TestEnvironmentToolDiscovery:
         ctx = env.get_prompt_context()
         assert "primitives.computer.desktop" in ctx
         assert "primitives.computer.web.new_session" in ctx
+        assert "get_session(0)" in ctx
         assert "visible" in ctx
         assert "stop()" in ctx
 
 
-# ── list_sessions ─────────────────────────────────────────────────────
+# ── Session registry ──────────────────────────────────────────────────
 
 
-class TestListSessions:
-    """primitives.computer.web.list_sessions() returns handles from the global registry."""
+class TestSessionRegistry:
+    """Session lookup and enumeration over the global web session registry."""
 
     def test_list_sessions_empty_initially(self):
         cp = _make_primitives()
@@ -423,6 +542,41 @@ class TestListSessions:
         sessions = cp.web.list_sessions()
         assert sessions[0] is s1
         assert sessions[1] is s2
+
+    @pytest.mark.asyncio
+    async def test_get_session_returns_created_handle(self):
+        cp = _make_primitives()
+        s1 = await cp.web.new_session()
+        s2 = await cp.web.new_session()
+        assert cp.web.get_session(s1.session_id) is s1
+        assert cp.web.get_session(s2.session_id) is s2
+
+    @pytest.mark.asyncio
+    async def test_get_session_reuses_same_handle_object(self):
+        cp = _make_primitives()
+        created = await cp.web.new_session(visible=True)
+        reused = cp.web.get_session(created.session_id)
+        assert reused is created
+
+    def test_get_session_unknown_id_raises_helpful_error(self):
+        cp = _make_primitives()
+        with pytest.raises(ValueError, match="No web session with id 99"):
+            cp.web.get_session(99)
+
+    @pytest.mark.asyncio
+    async def test_get_session_inactive_raises_by_default(self):
+        cp = _make_primitives()
+        session = await cp.web.new_session()
+        await session.stop()
+        with pytest.raises(ValueError, match="exists but is inactive"):
+            cp.web.get_session(session.session_id)
+
+    @pytest.mark.asyncio
+    async def test_get_session_can_return_inactive_when_requested(self):
+        cp = _make_primitives()
+        session = await cp.web.new_session()
+        await session.stop()
+        assert cp.web.get_session(session.session_id, active_only=False) is session
 
     @pytest.mark.asyncio
     async def test_handle_visible_property(self):

@@ -1751,13 +1751,7 @@ class ConversationManagerBrainActionTools:
 
         async def _resolve():
             if session_id is not None:
-                for h in cp.web.list_sessions():
-                    if h.session_id == session_id and h.active:
-                        return h, False
-                raise ValueError(
-                    f"No active web session with id {session_id}. "
-                    f"Check <active_web_sessions> for valid IDs.",
-                )
+                return cp.web.get_session(session_id), False
             handle = await cp.web.new_session(visible=True)
             return handle, True
 
@@ -1818,15 +1812,16 @@ class ConversationManagerBrainActionTools:
             session_id: The numeric ID of the web session to close.
         """
         cp = self._cm.computer_primitives
-        for h in cp.web.list_sessions():
-            if h.session_id == session_id and h.active:
-                await h.stop()
-                return {"status": "closed", "session_id": session_id}
-        return {
-            "status": "not_found",
-            "session_id": session_id,
-            "error": "No active web session with that ID.",
-        }
+        try:
+            handle = cp.web.get_session(session_id)
+        except ValueError:
+            return {
+                "status": "not_found",
+                "session_id": session_id,
+                "error": "No active web session with that ID.",
+            }
+        await handle.stop()
+        return {"status": "closed", "session_id": session_id}
 
     async def set_boss_details(
         self,

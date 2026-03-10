@@ -1335,9 +1335,17 @@ class ComputerSession(_LowLevelActionsMixin):
             screenshot=response.get("screenshot", ""),
         )
 
-    async def observe(self, query: str, response_format: Any = str) -> Any:
+    async def observe(
+        self,
+        query: str,
+        response_format: Any = str,
+        *,
+        bypass_dom_processing: bool = False,
+    ) -> Any:
         """Observe and extract information from the current page/screen."""
         payload = {"instructions": query}
+        if bypass_dom_processing or self._mode == "desktop":
+            payload["bypassDomProcessing"] = True
         if inspect.isclass(response_format) and issubclass(response_format, BaseModel):
             try:
                 schema = response_format.model_json_schema()

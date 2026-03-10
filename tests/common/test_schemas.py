@@ -8,6 +8,7 @@ pytest tests for the helper utilities:
 
 from __future__ import annotations
 
+import functools
 import json
 from datetime import date, datetime, time, UTC
 from enum import Enum
@@ -22,6 +23,7 @@ from unity.common.model_to_fields import model_to_fields
 from unity.transcript_manager.types.message import Message
 
 import unity.common.llm_helpers as llmh
+from unity.common.tool_spec import ToolSpec
 
 # --------------------------------------------------------------------------- #
 #  UNIT TESTS: model_to_fields                                                #
@@ -273,6 +275,45 @@ def test_schema_includes_enum():
     assert params["a"]["type"] == "string"
     # Enum must appear with *exact* allowed literals
     assert params["col"]["enum"] == ["str", "int"]
+
+
+async def _wrapped_schema_target(
+    thought: str,
+    code: str | None = None,
+    *,
+    language: str,
+    state_mode: str = "stateless",
+    _notification_up_q=None,
+):
+    """Execute arbitrary code in a specified language and state mode."""
+    return None
+
+
+def test_method_to_schema_preserves_wrapped_execute_code_signature():
+    original = ToolSpec(fn=_wrapped_schema_target, display_label="Running code")
+
+    @functools.wraps(original.fn)
+    async def wrapped_execute_code(*a, **kw):
+        return await original.fn(*a, **kw)
+
+    wrapped = ToolSpec(
+        fn=wrapped_execute_code,
+        display_label=original.display_label,
+    )
+
+    schema = llmh.method_to_schema(wrapped.fn, "execute_code")
+    params = schema["function"]["parameters"]["properties"]
+    required = schema["function"]["parameters"]["required"]
+    desc = schema["function"]["description"]
+
+    assert "thought" in params
+    assert "code" in params
+    assert "language" in params
+    assert "state_mode" in params
+    assert "_notification_up_q" not in params
+    assert "thought" in required
+    assert "language" in required
+    assert "Execute arbitrary code in a specified language and state mode." in desc
 
 
 # --------------------------------------------------------------------------- #

@@ -25,6 +25,12 @@ def test_toolspec_display_label_stored():
     assert spec.display_label == "Running code"
 
 
+def test_toolspec_display_label_callable():
+    label_fn = lambda tc: tc.get("function", {}).get("name", "?")
+    spec = ToolSpec(fn=lambda: None, display_label=label_fn)
+    assert callable(spec.display_label)
+
+
 # ============================================================================
 #  normalise_tools preserves display_label
 # ============================================================================
@@ -171,7 +177,8 @@ def _build_sparse_aliases(lookup, message):
     for tc in tool_calls:
         name = (tc.get("function") or {}).get("name", "")
         if name in lookup:
-            sparse[name] = lookup[name]
+            val = lookup[name]
+            sparse[name] = val(tc) if callable(val) else val
     return sparse or None
 
 
@@ -242,6 +249,31 @@ def test_sparse_aliases_none_lookup():
         "tool_calls": [{"function": {"name": "x"}}],
     }
     assert _build_sparse_aliases(None, message) is None
+
+
+def test_sparse_aliases_callable_label():
+    import json
+
+    def dynamic_label(tc):
+        args = json.loads(tc.get("function", {}).get("arguments", "{}"))
+        return args.get("function_name", "unknown")
+
+    lookup = {"execute_function": dynamic_label}
+    message = {
+        "role": "assistant",
+        "tool_calls": [
+            {
+                "function": {
+                    "name": "execute_function",
+                    "arguments": json.dumps({"function_name": "primitives.web.ask"}),
+                },
+                "id": "call_1",
+            },
+        ],
+    }
+    assert _build_sparse_aliases(lookup, message) == {
+        "execute_function": "primitives.web.ask",
+    }
 
 
 def test_sparse_aliases_mixed_known_and_unknown():

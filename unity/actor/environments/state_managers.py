@@ -183,10 +183,11 @@ and only await when same-block composition truly requires it.
   - Treat `primitives.*` calls as potentially long-running by default.
   - Emit `notify({...})` before each primitives call so the outer loop can surface progress.
   - If you await a primitives call and continue with additional steps, emit another \
-`notify({...})` with concrete completion details.
+`notify({...})` describing what comes next.
   - If you return a handle directly, send one kickoff notification before returning \
 the handle.
   - Keep notifications user-facing and high-level; avoid internal diagnostics.
+  - Do not use `notify()` to announce the final result — your response text handles that.
 
   **SteerableToolHandle API:**
 

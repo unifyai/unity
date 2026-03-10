@@ -566,8 +566,6 @@ class _ActorRunner:
         )
 
         # Attach inner actor cleanup to the handle's lifecycle.
-        # The handle may be wrapped by a logging proxy (_LoggedHandle)
-        # with __slots__, so inspect the unwrapped inner handle.
         _unwrapped = getattr(handle, "__wrapped__", handle)
 
         if hasattr(_unwrapped, "_lifecycle_task"):

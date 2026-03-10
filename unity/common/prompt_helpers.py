@@ -1,5 +1,6 @@
 from typing import Callable, Dict, Any, List, Optional, Sequence, Tuple, Type, Union
 from dataclasses import dataclass, field
+from datetime import datetime
 import json
 
 from pydantic import BaseModel
@@ -7,6 +8,7 @@ from pydantic import BaseModel
 __all__ = [
     "clarification_guidance",
     "sig_dict",
+    "unwrap_tool_callable",
     "now",
     "tool_name",
     "require_tools",
@@ -31,6 +33,23 @@ __all__ = [
     "images_extras_for_transcripts",
     "images_first_ask_for_tasks",
 ]
+
+
+def unwrap_tool_callable(fn: Callable) -> Callable:
+    """Return the underlying callable for prompt/schema introspection.
+
+    Tool tables often store ``ToolSpec`` wrappers, and sandbox instrumentation can
+    introduce ``functools.wraps`` layers around the real callable. Prompt builders
+    should inspect the original function signature/docstring rather than the
+    wrapper metadata.
+    """
+    import inspect
+
+    target = getattr(fn, "fn", fn)
+    try:
+        return inspect.unwrap(target)
+    except Exception:
+        return target
 
 
 def clarification_guidance(tools: Dict[str, Callable]) -> str:
@@ -70,7 +89,10 @@ def sig_dict(tools: Dict[str, Callable]) -> Dict[str, str]:
         # sentinel defaults (e.g., "<object object at 0x...>") to a stable marker.
         return re.sub(r"<object object at 0x[0-9a-fA-F]+>", "<UNSET>", sig_str)
 
-    return {name: _stable(str(inspect.signature(fn))) for name, fn in tools.items()}
+    return {
+        name: _stable(str(inspect.signature(unwrap_tool_callable(fn))))
+        for name, fn in tools.items()
+    }
 
 
 def now(time_only: bool = False, as_string: bool = True) -> "str | datetime":

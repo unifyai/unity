@@ -19,6 +19,7 @@ from unity.common.hierarchical_logger import ICONS
 from .llm_helpers import short_id
 from ._async_tool.loop_config import TOOL_LOOP_LINEAGE, _PENDING_LOOP_SUFFIX
 from ._async_tool.messages import forward_handle_call
+from ._async_tool.event_bus_util import to_event_bus
 from ._async_tool.loop import async_tool_loop_inner
 from ._async_tool.propagation_mode import ChatContextPropagation
 from ._async_tool.context_compression import (
@@ -275,6 +276,7 @@ class AsyncToolLoopHandle(SteerableToolHandle):
         # This is populated by the inner loop as soon as it constructs LoopConfig.
         # Until then, fall back to the bare loop_id.
         self._log_label: str = loop_id
+        self._loop_cfg: Optional[Any] = None
         # Only the top-level handle should emit the public stop log.
         # Nested/adopted handles will inherit False to avoid duplicate logging.
         self._is_root_handle: bool = False
@@ -345,6 +347,19 @@ class AsyncToolLoopHandle(SteerableToolHandle):
                 fallback_positional_keys=fallback,
             )
         return None
+
+    async def _emit_steering_event(self, action: str, content: str = "") -> None:
+        cfg = getattr(self, "_loop_cfg", None)
+        if cfg is None:
+            return
+        msg = {
+            "role": "system",
+            "_steering": True,
+            "_steering_action": action,
+            "content": content,
+        }
+        with suppress(Exception):
+            await to_event_bus(msg, cfg)
 
     async def ask(
         self,
@@ -660,7 +675,7 @@ class AsyncToolLoopHandle(SteerableToolHandle):
         if self._cancel_event.is_set():
             return
 
-        # Stop request is logged centrally in the loop via mirror path
+        await self._emit_steering_event("stop", reason or "")
 
         # Ensure the loop is not paused so the inner loop can observe and process the stop immediately
         with suppress(Exception):
@@ -690,6 +705,7 @@ class AsyncToolLoopHandle(SteerableToolHandle):
     async def pause(self, **kwargs) -> None:
         _label = getattr(self, "_log_label", None) or self._loop_id
         LOGGER.info(f"{ICONS['pause']} [{_label}] Pause requested")
+        await self._emit_steering_event("pause")
 
         # Immediately toggle pause_event for base (non-steerable) tools.
         # Steerable handles (h is not None) are intentionally skipped here;
@@ -731,6 +747,7 @@ class AsyncToolLoopHandle(SteerableToolHandle):
     async def resume(self, **kwargs) -> None:
         _label = getattr(self, "_log_label", None) or self._loop_id
         LOGGER.info(f"{ICONS['resume']} [{_label}] Resume requested")
+        await self._emit_steering_event("resume")
         # Immediately toggle pause_event for base (non-steerable) tools.
         # Steerable handles are resumed via the mirror path below (see the
         # symmetric comment in pause() for the full rationale). Direct

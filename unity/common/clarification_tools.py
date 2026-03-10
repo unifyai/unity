@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Callable, Dict, Optional
 
 from ..events.event_bus import EVENT_BUS, Event
-from .llm_helpers import make_request_clarification_tool
+from .llm_helpers import make_request_clarification_tool, make_send_notification_tool
 
 
 def add_clarification_tool_with_events(
@@ -59,4 +59,38 @@ def add_clarification_tool_with_events(
         down_q,
         on_request=_on_request,
         on_answer=_on_answer,
+    )
+
+
+def add_notification_tool_with_events(
+    tools: Dict[str, Callable],
+    *,
+    manager: str,
+    method: str,
+    call_id: Optional[str],
+) -> None:
+    """
+    Add a `send_notification` tool to the tools dict that publishes
+    ManagerMethod events for each notification.
+    """
+
+    async def _on_notify(message: str):
+        try:
+            await EVENT_BUS.publish(
+                Event(
+                    type="ManagerMethod",
+                    calling_id=call_id,
+                    payload={
+                        "manager": manager,
+                        "method": method,
+                        "action": "notification",
+                        "message": message,
+                    },
+                ),
+            )
+        except Exception:
+            pass
+
+    tools["send_notification"] = make_send_notification_tool(
+        on_notify=_on_notify,
     )

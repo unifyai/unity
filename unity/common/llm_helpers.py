@@ -779,3 +779,52 @@ def make_request_clarification_tool(
         return answer
 
     return _request
+
+
+def make_send_notification_tool(
+    *,
+    on_notify: Optional[Callable[[str], Awaitable[None] | None]] = None,
+):
+    """Return an async tool that sends a progress notification to the caller.
+
+    The returned function accepts ``_notification_up_q`` as a hidden parameter
+    (injected by the async tool loop) so it participates in the standard
+    notification pipeline.  From the caller's perspective, the notification is
+    identical to one emitted by ``notify()`` inside ``execute_code``.
+    """
+
+    async def _send(
+        message: str,
+        *,
+        _notification_up_q: "asyncio.Queue[dict] | None" = None,
+    ) -> str:
+        """Send a progress notification to the user.
+
+        Use this to report meaningful milestones during active work — e.g.
+        before starting a significant step, after completing a batch, or when
+        crossing a measurable progress boundary.  The notification is
+        fire-and-forget: execution continues immediately.
+
+        Parameters
+        ----------
+        message : str
+            A concise, user-facing progress update.
+
+        Returns
+        -------
+        str
+            Acknowledgement that the notification was sent.
+        """
+        if _notification_up_q is None:
+            return "Notification channel not available in this context."
+        payload = {"type": "notification", "message": message}
+        await _notification_up_q.put(payload)
+
+        if on_notify is not None:
+            maybe = on_notify(message)
+            if asyncio.iscoroutine(maybe):
+                await maybe
+
+        return "Notification sent."
+
+    return _send

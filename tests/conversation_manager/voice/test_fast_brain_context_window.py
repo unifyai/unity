@@ -320,7 +320,7 @@ class TestRenderHistoryEvent:
     def test_actor_result_success(self):
         ev = ActorResult(handle_id=1, success=True, result="Done!")
         result = _render_history_event(ev, {1}, True, ASSISTANT_NAME)
-        assert result == "Action completed successfully: Done!"
+        assert result == "Action completed: Done!"
 
     def test_actor_result_failure(self):
         ev = ActorResult(handle_id=1, success=False, error="Timeout")

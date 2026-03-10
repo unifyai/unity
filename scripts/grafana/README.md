@@ -401,6 +401,35 @@ sum(rate(mark_job_running_duration_seconds_sum{status="success", service_name="$
 sum(rate(mark_job_running_duration_seconds_count{status="success", service_name="$SVC_ADAPTERS"}[5m]))
 ```
 
+### Stale Jobs Expired (daily sweep)
+
+Number of AssistantJobs logs that were still `running=True` after 24 hours and
+force-expired by the daily sweep (`/scheduled/jobs/expire-stale`, runs at
+01:00 UTC). A non-zero value indicates a race condition left orphaned jobs.
+
+Requires `PROMETHEUS_MULTIPROC_DIR` to be set on the Cloud Run service so the
+gauge value written by the sweep worker is visible to whichever worker handles
+the Prometheus scrape.
+
+Current value (stat panel — `max` collapses across instances so only the
+non-zero instance is shown):
+
+```promql
+max(stale_jobs_last_sweep_count{service_name="$SVC_ADAPTERS"})
+```
+
+Worst day in the last week (to detect spikes):
+
+```promql
+max(max_over_time(stale_jobs_last_sweep_count{service_name="$SVC_ADAPTERS"}[7d]))
+```
+
+Daily trend over the last 30 days:
+
+```promql
+max(max_over_time(stale_jobs_last_sweep_count{service_name="$SVC_ADAPTERS"}[1d]))
+```
+
 ### Adapter Request Latency (seconds)
 
 Per-route request latency for the adapters service. Useful for identifying

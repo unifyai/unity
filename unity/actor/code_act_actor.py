@@ -40,7 +40,10 @@ from unity.common.async_tool_loop import (
     SteerableToolHandle,
     start_async_tool_loop,
 )
-from unity.common.clarification_tools import add_clarification_tool_with_events
+from unity.common.clarification_tools import (
+    add_clarification_tool_with_events,
+    add_notification_tool_with_events,
+)
 from unity.common.llm_client import new_llm_client
 from unity.common.llm_helpers import methods_to_tool_dict
 from unity.common.tool_spec import ToolSpec
@@ -2294,6 +2297,7 @@ class CodeActActor(BaseCodeActActor):
                             venv_id=venv_id,
                             primitives=primitives,
                             computer_primitives=computer_primitives,
+                            notification_q=notification_q,
                         )
                     except Exception as e:
                         exec_exc = e
@@ -2442,7 +2446,7 @@ class CodeActActor(BaseCodeActActor):
             return overlay.install(packages)
 
         tools: Dict[str, Callable[..., Awaitable[Any]]] = {
-            "execute_code": ToolSpec(fn=execute_code, display_label="Running code"),
+            "execute_code": ToolSpec(fn=execute_code),
             "install_python_packages": ToolSpec(
                 fn=install_python_packages,
                 display_label="Installing Python packages",
@@ -2921,6 +2925,7 @@ class CodeActActor(BaseCodeActActor):
                                 venv_id=venv_id,
                                 primitives=primitives,
                                 computer_primitives=computer_primitives,
+                                notification_q=notification_q,
                             )
                             _ef_log.debug(
                                 f"⏱️ [execute_function +{_ef_ms()}] sandbox.execute done",
@@ -3004,9 +3009,16 @@ class CodeActActor(BaseCodeActActor):
                     except Exception:
                         pass
 
+            def _ef_display_label(tc: dict) -> str:
+                try:
+                    args = json.loads(tc.get("function", {}).get("arguments", "{}"))
+                    return args.get("function_name", "execute_function")
+                except Exception:
+                    return "execute_function"
+
             tools["execute_function"] = ToolSpec(
                 fn=execute_function,
-                display_label="Running a saved function",
+                display_label=_ef_display_label,
             )
 
         # ───────────────────────── Session management tools ────────────────── #
@@ -3562,6 +3574,7 @@ class CodeActActor(BaseCodeActActor):
         "act",
         payload_key="request",
         display_label="Taking Action",
+        forward_kwargs=("persist",),
     )
     async def act(
         self,
@@ -3974,6 +3987,13 @@ class CodeActActor(BaseCodeActActor):
                 method="act",
                 call_id=_call_id,
             )
+
+        add_notification_tool_with_events(
+            tools,
+            manager="CodeActActor",
+            method="act",
+            call_id=_call_id,
+        )
 
         logger.debug(f"⏱️ [CodeActActor.act +{_act_ms()}] starting async tool loop")
         handle = start_async_tool_loop(
