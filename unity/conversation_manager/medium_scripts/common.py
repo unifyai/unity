@@ -1239,7 +1239,8 @@ def render_event_for_fast_brain(event_json: str) -> str | None:
         return None
 
     if isinstance(event, ActorNotification):
-        return f"Action progress: {event.response}"
+        prefix = "Action completed" if event.completed else "Action in progress"
+        return f"{prefix}: {event.response}"
     if isinstance(event, ActorResult):
         if getattr(event, "action_type", "") in ("desktop_act", "web_act"):
             return None
@@ -1333,7 +1334,8 @@ def _render_history_event(
     # -- Boss-only: Actor events --
     if is_boss_user:
         if isinstance(event, ActorNotification):
-            return f"Action progress: {event.response}"
+            prefix = "Action completed" if event.completed else "Action in progress"
+            return f"{prefix}: {event.response}"
         if isinstance(event, ActorResult):
             return _render_actor_result(event)
         if isinstance(event, ActorHandleStarted):

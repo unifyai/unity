@@ -463,11 +463,17 @@ async def actor_watch_notifications(
             else:
                 msg = str(notif)
 
+            completed = (
+                bool(notif.get("completed", False))
+                if isinstance(notif, dict)
+                else False
+            )
             await event_broker.publish(
                 "app:actor:notification",
                 ActorNotification(
                     handle_id=handle_id,
                     response=msg,
+                    completed=completed,
                 ).to_json(),
             )
 
