@@ -411,10 +411,12 @@ For communication tools, provide the contact_id when the contact is in the activ
                 "the appropriate computer fast-path tool (faster than interjecting)"
             )
             computer_interject_caveat = (
-                " **Exception:** For single atomic computer actions (click, type, "
-                "scroll, navigate) when fast-path tools are available, prefer "
-                "`web_act` or `desktop_act` over `interject_*` — they are "
-                "significantly faster. The in-flight `act` session is automatically "
+                " **Exception:** For single-interaction computer actions (one click, "
+                "one text entry, one scroll, one navigation) when fast-path tools "
+                "are available, prefer `web_act` or `desktop_act` over `interject_*` "
+                "— they are significantly faster. If the task requires more than one "
+                "interaction (e.g. click then type then click again), use `interject_*` "
+                "instead. The in-flight `act` session is automatically "
                 "interjected with both the request and the result, so it stays "
                 "fully in sync."
             )
@@ -716,18 +718,28 @@ Examples of requests that should use the direct tools:
             parts.add(
                 """Computer fast-path tools
 ------------------------
-`web_act` and `desktop_act` give the user an **instant visible response** for single atomic actions during a screen-share session. They bypass the full `act` pathway and execute directly.
+`web_act` and `desktop_act` give the user an **instant visible response** for single-interaction actions during a screen-share session. They bypass the full `act` pathway and execute directly.
 
-**Always pair with `act(persist=True)` when no act session exists.** Fast-path tools handle single atomic actions only — they have no access to stored functions, guidance, secrets, or multi-step planning. The full `act` pathway provides all of this. Therefore:
+**Critical constraint — one interaction per call.** Each `web_act` or `desktop_act` call executes exactly **one browser/desktop interaction**: one click, one text entry, one scroll, or one navigation. The underlying agent performs a single action and returns. It cannot chain interactions within a single call. A task that *conceptually* feels like "one thing" (e.g. "rename a file" = right-click → click Rename → type name → press Enter) is actually multiple interactions and **will fail or only complete the first step** if sent as a single fast-path call.
+
+**The test:** mentally decompose the task into the physical interactions required (clicks, keystrokes, scrolls). If it requires **more than one**, use `interject_*` or `act` instead. Examples:
+- "Click the Submit button" → 1 interaction → `web_act` ✓
+- "Scroll down on the page" → 1 interaction → `web_act` ✓
+- "Navigate to example.com" → 1 interaction → `web_act` ✓
+- "Add an item to the cart and proceed to checkout" → click Add + click Checkout = 2+ interactions → `interject_*`
+- "Clear the search box and type a new query" → clear + type = 2 interactions → `interject_*`
+- "Open the dropdown, select an option, and confirm" → click open + click option + click confirm = 3 interactions → `interject_*`
+
+**Always pair with `act(persist=True)` when no act session exists.** Fast-path tools have no access to stored functions, guidance, secrets, or multi-step planning. The full `act` pathway provides all of this. Therefore:
 
 - **If NO `act` session is currently in-flight** (check `in_flight_actions`): call `act(persist=True)` **in the same response** as the fast-path tool. The fast path handles the immediate action; the `act` session loads guidance, functions, and skills for subsequent work. The `act` query should describe the session context (e.g. "Desktop session is active with screen sharing. The user is conducting an interactive tutorial. Establish context, load relevant guidance, and stay available for subsequent instructions.").
 - **If an `act` session IS already in-flight:** just use the fast-path tool directly. The in-flight session is automatically interjected with both the request and the result.
 
-**Priority over interject_*:** For single atomic actions, prefer the fast-path tool — it is faster. The in-flight `act` session stays in sync automatically.
+**Priority over interject_*:** For single-interaction actions, prefer the fast-path tool — it is faster. The in-flight `act` session stays in sync automatically.
 
 **Route to `interject_*` (not fast paths) when ANY of these apply:**
+- The task requires **more than one browser/desktop interaction** (see decomposition test above)
 - The request involves **credentials, secrets, or stored passwords** (fast paths have no access to Secret Manager or `${SECRET_NAME}` injection)
-- The request requires **multiple sequential steps** ("log in", "fill the form and submit", "copy data from one page to another")
 - The request references **known procedures, workflows, or guidance** that the in-flight `act` session has loaded
 - The request requires **reasoning about what to do** rather than a single explicit action with a clear target
 - The request involves **extracting or processing data** from the page
