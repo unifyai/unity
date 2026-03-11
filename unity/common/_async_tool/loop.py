@@ -23,6 +23,7 @@ from .propagation_mode import ChatContextPropagation
 from .context_tracker import LoopContextState
 from .utils import maybe_await
 from .event_bus_util import to_event_bus
+from ...events.types.tool_loop import ToolLoopKind
 from .messages import (
     find_unreplied_assistant_entries,
     generate_with_preprocess,
@@ -1043,7 +1044,11 @@ async def async_tool_loop_inner(
                 }
                 await _msg_dispatcher.append_msgs([assistant_msg])
                 with suppress(Exception):
-                    await to_event_bus(assistant_msg, cfg)
+                    await to_event_bus(
+                        assistant_msg,
+                        cfg,
+                        kind=ToolLoopKind.STEERING_HELPER,
+                    )
                 assistant_meta[id(assistant_msg)] = {"results_count": 0}
                 # Ack
                 with suppress(Exception):
@@ -1123,7 +1128,7 @@ async def async_tool_loop_inner(
         assistant_msg = {"role": "assistant", "content": "", "tool_calls": tool_calls}
         await _msg_dispatcher.append_msgs([assistant_msg])
         with suppress(Exception):
-            await to_event_bus(assistant_msg, cfg)
+            await to_event_bus(assistant_msg, cfg, kind=ToolLoopKind.STEERING_HELPER)
         assistant_meta[id(assistant_msg)] = {"results_count": 0}
 
         # Insert ack tool messages and forward steering immediately to target handles
