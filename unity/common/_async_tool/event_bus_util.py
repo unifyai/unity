@@ -7,22 +7,26 @@ async def to_event_bus(
     messages: Union[Dict, List[Dict]],
     loop_cfg: LoopConfig,
     origin: str | None = None,
+    kind: str | None = None,
 ) -> None:
     """
     Emit *messages* to the shared EventBus (if configured).
 
-    Every `ToolLoop` event now carries **both** the raw chat *message*
-    and the *public method* that spawned the loop so downstream
-    subscribers can easily group / filter events.
+    Every ``ToolLoop`` event carries the raw chat *message*, the *public
+    method* that spawned the loop, and a *kind* discriminator so downstream
+    subscribers can filter/render without re-inspecting ad-hoc flags.
 
-    Uses the typed ToolLoopPayload model for schema consistency.
+    Parameters
+    ----------
+    kind:
+        Explicit :class:`ToolLoopKind` value.  When *None* (the common
+        case), the kind is auto-classified from the message dict.
     """
-    # Import lazily to avoid import-time cycles with `unity.events.event_bus`.
     from ...events.event_bus import (
         Event,
         EVENT_BUS,
-    )  # local import to break circular dependency
-    from ...events.types.tool_loop import ToolLoopPayload
+    )
+    from ...events.types.tool_loop import ToolLoopPayload, classify_tool_loop_message
 
     if not EVENT_BUS:
         return
@@ -41,7 +45,10 @@ async def to_event_bus(
                     _sparse[name] = val(tc) if callable(val) else val
             _aliases = _sparse or None
 
+        _kind = kind if kind is not None else classify_tool_loop_message(message)
+
         payload = ToolLoopPayload(
+            kind=_kind,
             message=message,
             method=loop_cfg.loop_id,
             hierarchy=list(loop_cfg.lineage),

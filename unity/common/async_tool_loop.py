@@ -20,6 +20,7 @@ from .llm_helpers import short_id
 from ._async_tool.loop_config import TOOL_LOOP_LINEAGE, _PENDING_LOOP_SUFFIX
 from ._async_tool.messages import forward_handle_call
 from ._async_tool.event_bus_util import to_event_bus
+from ..events.types.tool_loop import ToolLoopKind
 from ._async_tool.loop import async_tool_loop_inner
 from ._async_tool.propagation_mode import ChatContextPropagation
 from ._async_tool.context_compression import (
@@ -39,6 +40,12 @@ from ._async_tool.tagging import tag_message_with_request
 
 if TYPE_CHECKING:
     from unillm.types import PromptCacheParam
+
+_STEERING_ACTION_KIND: dict[str, str] = {
+    "pause": ToolLoopKind.STEERING_PAUSE,
+    "resume": ToolLoopKind.STEERING_RESUME,
+    "stop": ToolLoopKind.STEERING_STOP,
+}
 
 
 def _transform_inner_roles(messages: list[dict]) -> list[dict]:
@@ -358,8 +365,9 @@ class AsyncToolLoopHandle(SteerableToolHandle):
             "_steering_action": action,
             "content": content,
         }
+        _kind = _STEERING_ACTION_KIND.get(action)
         with suppress(Exception):
-            await to_event_bus(msg, cfg)
+            await to_event_bus(msg, cfg, kind=_kind)
 
     async def ask(
         self,
