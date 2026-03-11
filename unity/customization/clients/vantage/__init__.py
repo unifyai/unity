@@ -30,13 +30,13 @@ _VANTAGE_CONFIG = ActorConfig(
         "account. Check your secrets for the credentials needed to access "
         "her account via the Microsoft Graph API.\n\n"
         "There is also a community portal (Zoho Connect) at "
-        "https://mock.connect.zoho.com where members post questions and share "
+        "https://connect.zoho.com where members post questions and share "
         "knowledge. Check your secrets for the portal login credentials.\n\n"
         "The person chatting with you may be any member of the Vantage "
         "team — do not assume the person talking to you is Steph."
     ),
     url_mappings={
-        "https://mock.connect.zoho.com": "http://localhost:4002",
+        "https://connect.zoho.com": "http://localhost:4002",
     },
 )
 
