@@ -31,12 +31,13 @@ _HOOK_INSTALLED = False
 async def _update_cumulative_spend(billed_cost: float) -> None:
     """Update cumulative monthly spend after each LLM call.
 
-    This function atomically increments the cumulative_spend for the current
-    assistant and month. The spend is stored in the Assistants project in
-    a context path like: {user_id}/{assistant_id}/Spending/Monthly
+    Costs are attributed to the user(s) specified by the COST_ATTRIBUTION
+    ContextVar (set by ConversationManager / act tool).  When unset, falls
+    back to the assistant's supervisor (SESSION_DETAILS.user.id).
 
-    The log is also mirrored to All/Spending/Monthly for cross-assistant
-    and cross-user aggregation.
+    Each attributed user gets their own spending row keyed by
+    (_user_id, _assistant_id, month).  For multi-user attribution the cost
+    is split evenly.
 
     Parameters
     ----------
@@ -47,6 +48,7 @@ async def _update_cumulative_spend(billed_cost: float) -> None:
 
     from ..common.log_utils import atomic_upsert
     from ..session_details import SESSION_DETAILS
+    from .cost_attribution import COST_ATTRIBUTION
 
     # Skip if no billed cost
     if not billed_cost or billed_cost <= 0:
@@ -71,25 +73,32 @@ async def _update_cumulative_spend(billed_cost: float) -> None:
 
     context = f"{user_ctx}/{assistant_ctx}/Spending/Monthly"
 
-    try:
-        # Format billed_cost with fixed decimal notation (avoid scientific notation)
-        # Use enough precision to capture sub-cent costs
-        cost_str = f"{billed_cost:.10f}".rstrip("0").rstrip(".")
-        await atomic_upsert(
-            context=context,
-            unique_keys={"_assistant_id": "str", "month": "str"},
-            field="cumulative_spend",
-            operation=f"+{cost_str}",
-            initial_data={
-                "_assistant_id": str(assistant_id),
-                "month": month,
-            },
-            add_to_all_context=True,
-            project="Assistants",
-        )
-    except Exception as e:
-        # Best-effort: log error but don't fail the LLM call
-        logger.debug(f"Failed to update cumulative spend: {e}")
+    # Resolve attribution: per-user user_ids or fall back to supervisor
+    user_ids = COST_ATTRIBUTION.get() or [SESSION_DETAILS.user.id]
+    per_user_cost = billed_cost / len(user_ids)
+
+    for uid in user_ids:
+        try:
+            cost_str = f"{per_user_cost:.10f}".rstrip("0").rstrip(".")
+            await atomic_upsert(
+                context=context,
+                unique_keys={
+                    "_user_id": "str",
+                    "_assistant_id": "str",
+                    "month": "str",
+                },
+                field="cumulative_spend",
+                operation=f"+{cost_str}",
+                initial_data={
+                    "_assistant_id": str(assistant_id),
+                    "month": month,
+                },
+                data_overrides={"_user_id": uid},
+                add_to_all_context=True,
+                project="Assistants",
+            )
+        except Exception as e:
+            logger.debug(f"Failed to update cumulative spend for {uid}: {e}")
 
 
 def _llm_event_to_eventbus(event: "LLMEvent") -> None:

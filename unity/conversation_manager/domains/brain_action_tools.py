@@ -1199,6 +1199,7 @@ class ConversationManagerBrainActionTools:
         self,
         *,
         query: str,
+        requesting_contact_id: int,
         response_format: Optional[dict] = None,
         persist: bool = False,
         include_conversation_context: bool = True,
@@ -1224,6 +1225,11 @@ class ConversationManagerBrainActionTools:
 
         Args:
             query: Natural language request specifying what to do or find.
+            requesting_contact_id: The contact_id of the person whose request or
+                needs this action serves.  For responses to a contact's message,
+                use that contact's ID.  For proactive actions benefiting a
+                specific person, use their contact_id.  In ambiguous cases,
+                choose the contact who most directly benefits from the action.
             response_format: An optional structured schema describing the shape of
                 the result you need back.  When provided, the action is required to
                 return a JSON object conforming to this schema (via a dedicated
@@ -1294,6 +1300,29 @@ class ConversationManagerBrainActionTools:
 
         _bat_log = _bat_logging.getLogger("unity")
         _bat_log.debug(f"⏱️ [CM.act tool +{_bat_ms()}] entered")
+
+        # Override cost attribution for all nested LLM calls in this action.
+        # Only meaningful in org context (personal accounts have a single user).
+        from unity.events.cost_attribution import COST_ATTRIBUTION
+        from unity.session_details import SESSION_DETAILS
+
+        if SESSION_DETAILS.org_id is not None:
+            contact = self._cm.contact_index.get_contact(
+                contact_id=requesting_contact_id,
+            )
+            # Only trust user_id from system contacts (boss + provisioned org
+            # members).  A contact from another org could carry a platform
+            # user_id that doesn't belong to this org.
+            attributed_user_id = (
+                contact.get("user_id") if contact and contact.get("is_system") else None
+            )
+            COST_ATTRIBUTION.set(
+                (
+                    [attributed_user_id]
+                    if attributed_user_id
+                    else [SESSION_DETAILS.user.id]
+                ),
+            )
 
         # Pass the fresh rendered state snapshot as context for the Actor,
         # unless the LLM opted out.

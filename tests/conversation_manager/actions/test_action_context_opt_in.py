@@ -49,7 +49,7 @@ class TestActIncludeConversationContext:
 
         try:
             brain_tools = ConversationManagerBrainActionTools(cm)
-            await brain_tools.act(query="test query")
+            await brain_tools.act(query="test query", requesting_contact_id=1)
 
             assert len(captured) == 1
             assert captured[0] is not None
@@ -85,6 +85,7 @@ class TestActIncludeConversationContext:
             brain_tools = ConversationManagerBrainActionTools(cm)
             await brain_tools.act(
                 query="what time is it",
+                requesting_contact_id=1,
                 include_conversation_context=False,
             )
 
@@ -103,6 +104,7 @@ class TestActIncludeConversationContext:
         brain_tools = ConversationManagerBrainActionTools(cm)
         await brain_tools.act(
             query="simple lookup",
+            requesting_contact_id=1,
             include_conversation_context=False,
         )
 
@@ -117,7 +119,7 @@ class TestActIncludeConversationContext:
         cm = initialized_cm.cm
 
         brain_tools = ConversationManagerBrainActionTools(cm)
-        await brain_tools.act(query="find contacts in London")
+        await brain_tools.act(query="find contacts in London", requesting_contact_id=1)
 
         assert len(cm.in_flight_actions) == 1
         handle_data = next(iter(cm.in_flight_actions.values()))

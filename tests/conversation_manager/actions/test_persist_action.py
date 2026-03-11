@@ -113,7 +113,11 @@ class TestActPersistParameter:
         actor, captured = _make_fake_actor()
         mock_cm.actor = actor
 
-        await brain_action_tools.act(query="Guide onboarding", persist=True)
+        await brain_action_tools.act(
+            query="Guide onboarding",
+            requesting_contact_id=1,
+            persist=True,
+        )
 
         assert captured.get("persist") is True
 
@@ -127,7 +131,7 @@ class TestActPersistParameter:
         actor, captured = _make_fake_actor()
         mock_cm.actor = actor
 
-        await brain_action_tools.act(query="Find contacts")
+        await brain_action_tools.act(query="Find contacts", requesting_contact_id=1)
 
         assert captured.get("persist") is False
 
@@ -141,7 +145,11 @@ class TestActPersistParameter:
         actor, _ = _make_fake_actor()
         mock_cm.actor = actor
 
-        await brain_action_tools.act(query="Long session", persist=True)
+        await brain_action_tools.act(
+            query="Long session",
+            requesting_contact_id=1,
+            persist=True,
+        )
 
         assert len(mock_cm.in_flight_actions) == 1
         action_data = next(iter(mock_cm.in_flight_actions.values()))
@@ -157,7 +165,7 @@ class TestActPersistParameter:
         actor, _ = _make_fake_actor()
         mock_cm.actor = actor
 
-        await brain_action_tools.act(query="Quick task")
+        await brain_action_tools.act(query="Quick task", requesting_contact_id=1)
 
         action_data = next(iter(mock_cm.in_flight_actions.values()))
         assert action_data["persist"] is False

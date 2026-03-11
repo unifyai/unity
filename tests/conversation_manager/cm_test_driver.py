@@ -128,7 +128,7 @@ class CMStepDriver:
         # Patch request_llm_run to use our context var
         original_request = self._cm.request_llm_run
 
-        async def patched_request(delay=0, cancel_running=False) -> None:
+        async def patched_request(delay=0, cancel_running=False, **kwargs) -> None:
             requests = _step_llm_requests.get()
             if requests is not None:
                 requests.append((delay, cancel_running))
@@ -251,7 +251,7 @@ class CMStepDriver:
         # Patch request_llm_run to use our context var
         original_request = self._cm.request_llm_run
 
-        async def patched_request(delay=0, cancel_running=False) -> None:
+        async def patched_request(delay=0, cancel_running=False, **kwargs) -> None:
             requests = _step_llm_requests.get()
             if requests is not None:
                 requests.append((delay, cancel_running))
