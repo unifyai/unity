@@ -1160,10 +1160,10 @@ def build_persistent_steps():
             "delay": 0.3,
             "events": [tl(h, {"role": "assistant", "_thinking_in_flight": True})],
         },
-        # ── 32. Child: KnowledgeManager.update (quick, no inner loop) ──
+        # ── 32–35. Child: KnowledgeManager.update (with simple tool loop) ──
         # Second parallel tool completes → cancels the in-flight LLM call.
         {
-            "label": "Child: KnowledgeManager.update",
+            "label": "Child: KnowledgeManager.update incoming",
             "delay": 1.7,
             "events": [
                 mm(
@@ -1174,6 +1174,60 @@ def build_persistent_steps():
                     method="update",
                     display_label="Updating Knowledge Base",
                     request="Update credential details for unify-prod-2026.",
+                ),
+            ],
+        },
+        {
+            "label": "KB2 inner: user request",
+            "delay": 0.3,
+            "events": [
+                tl(
+                    kb_h,
+                    {
+                        "role": "user",
+                        "content": "Update credential details for unify-prod-2026.",
+                    },
+                    method="KnowledgeManager.update",
+                ),
+            ],
+        },
+        {
+            "label": "KB2 inner: thinking + _update",
+            "delay": 0.8,
+            "events": [
+                tl(
+                    kb_h,
+                    _thinking(
+                        "I need to update the existing credentials entry with the "
+                        "confirmed key storage details from DevOps.",
+                        tool_calls=[
+                            _tc(
+                                "tc_kb2_update",
+                                "_update",
+                                {
+                                    "table": "Credentials",
+                                    "filter": "project == 'unify-prod-2026'",
+                                    "set": {
+                                        "key_storage": "secrets manager",
+                                        "devops_approved": True,
+                                    },
+                                },
+                            ),
+                        ],
+                    ),
+                    method="KnowledgeManager.update",
+                    tool_aliases={"_update": "Updating row"},
+                ),
+            ],
+        },
+        {
+            "label": "KB2 inner: _update result → outgoing",
+            "delay": 1.0,
+            "events": [
+                tl(
+                    kb_h,
+                    _tool_result("tc_kb2_update", "_update", {"updated": 1}),
+                    method="KnowledgeManager.update",
                 ),
                 mm(
                     kb_cid,
