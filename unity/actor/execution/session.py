@@ -757,6 +757,7 @@ class SessionExecutor:
         venv_id: int | None,
         primitives: Any = None,
         computer_primitives: Any = None,
+        notification_q: asyncio.Queue[dict] | None = None,
     ) -> Dict[str, Any]:
         import time as _se_time
         import logging as _se_logging
@@ -779,6 +780,26 @@ class SessionExecutor:
         if computer_primitives is None:
             computer_primitives = self._computer_primitives
 
+        async def _execute_in_python_session(
+            sb: PythonExecutionSession,
+        ) -> Dict[str, Any]:
+            notification_sentinel = object()
+            previous_notification_q = sb.global_state.get(
+                "__notification_up_q__",
+                notification_sentinel,
+            )
+            if notification_q is not None:
+                sb.global_state["__notification_up_q__"] = notification_q
+            else:
+                sb.global_state.pop("__notification_up_q__", None)
+            try:
+                return await sb.execute(code)
+            finally:
+                if previous_notification_q is notification_sentinel:
+                    sb.global_state.pop("__notification_up_q__", None)
+                else:
+                    sb.global_state["__notification_up_q__"] = previous_notification_q
+
         # ─── Python ────────────────────────────────────────────────────────
         if language == "python":
             # Special-case: session 0 is the *current bound sandbox* when present.
@@ -789,7 +810,7 @@ class SessionExecutor:
                     _se_log.debug(
                         f"⏱️ [SessionExecutor.execute +{_se_ms()}] bound sandbox (session 0), executing",
                     )
-                    res = await sb0.execute(code)
+                    res = await _execute_in_python_session(sb0)
                     _se_log.debug(
                         f"⏱️ [SessionExecutor.execute +{_se_ms()}] bound sandbox done",
                     )
@@ -826,7 +847,7 @@ class SessionExecutor:
                     f"⏱️ [SessionExecutor.execute +{_se_ms()}] globals injected, executing code",
                 )
                 try:
-                    res = await sb.execute(code)
+                    res = await _execute_in_python_session(sb)
                     _se_log.debug(
                         f"⏱️ [SessionExecutor.execute +{_se_ms()}] code execution done",
                     )
@@ -944,7 +965,7 @@ class SessionExecutor:
                     }
                 sb = self._python_sessions[key]
                 self._inject_fm_globals(sb)
-                res = await sb.execute(code)
+                res = await _execute_in_python_session(sb)
                 meta = self._python_session_meta.get(key)
                 if meta is not None:
                     meta["last_used"] = datetime.now(timezone.utc).isoformat()
@@ -977,7 +998,7 @@ class SessionExecutor:
                     # Shallow copy globals to allow read access while avoiding persistence.
                     sb.global_state.update(dict(base.global_state))
                     self._inject_fm_globals(sb)
-                    res = await sb.execute(code)
+                    res = await _execute_in_python_session(sb)
                 finally:
                     try:
                         await sb.close()

@@ -728,7 +728,10 @@ class TestActQueuedBeforeInit:
             mock_get_broker.return_value = mock_broker
 
             tools = ConversationManagerBrainActionTools(mock_cm)
-            result = await tools.act(query="look up Alice's phone number")
+            result = await tools.act(
+                query="look up Alice's phone number",
+                requesting_contact_id=1,
+            )
 
         # act() should return immediately
         assert result["status"] == "acting"
@@ -779,7 +782,7 @@ class TestActQueuedBeforeInit:
             mock_get_broker.return_value = mock_broker
 
             tools = ConversationManagerBrainActionTools(mock_cm)
-            await tools.act(query="check calendar")
+            await tools.act(query="check calendar", requesting_contact_id=1)
 
         # Before processing: actor not called, in_flight_actions not yet populated
         mock_cm.actor.act.assert_not_called()

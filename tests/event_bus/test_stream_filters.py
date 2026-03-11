@@ -1,7 +1,7 @@
-"""Unit tests for unity.events.stream_filters.
+"""Unit tests for unity.events.stream_filters and ToolLoopKind classification.
 
-All tests are synchronous, zero-IO, and test the predicate functions directly.
-No EventBus, Pub/Sub, or project setup is needed.
+All tests are synchronous, zero-IO, and test the predicate/classifier
+functions directly.  No EventBus, Pub/Sub, or project setup is needed.
 """
 
 import json
@@ -9,155 +9,42 @@ import json
 from unity.events.stream_filters import (
     is_streaming_noise,
     is_suppressed_manager_tree,
-    is_synthetic_status_check,
-    is_placeholder_message,
-    is_runtime_context_header,
-    is_visibility_guidance,
+)
+from unity.events.types.tool_loop import (
+    ToolLoopKind,
+    classify_tool_loop_message,
 )
 
 # ============================================================================
-#  Synthetic check_status_* filtering
+#  classify_tool_loop_message — assistant messages
 # ============================================================================
 
 
-def test_check_status_assistant_stub_filtered():
+def test_classify_thinking_sentinel():
+    msg = {"role": "assistant", "_thinking_in_flight": True}
+    assert classify_tool_loop_message(msg) == ToolLoopKind.THINKING_SENTINEL
+
+
+def test_classify_thought_with_thinking_blocks():
+    msg = {"role": "assistant", "thinking_blocks": [{"text": "hmm"}], "content": ""}
+    assert classify_tool_loop_message(msg) == ToolLoopKind.THOUGHT
+
+
+def test_classify_thought_with_reasoning_content():
+    msg = {"role": "assistant", "reasoning_content": "Let me think...", "content": ""}
+    assert classify_tool_loop_message(msg) == ToolLoopKind.THOUGHT
+
+
+def test_classify_thought_with_provider_specific_thinking():
     msg = {
         "role": "assistant",
-        "content": None,
-        "tool_calls": [
-            {
-                "id": "toolu_abc123_completed",
-                "type": "function",
-                "function": {
-                    "name": "check_status_toolu_abc123",
-                    "arguments": "{}",
-                },
-            },
-        ],
+        "provider_specific_fields": {"thinking_blocks": [{"text": "..."}]},
+        "content": "",
     }
-    assert is_synthetic_status_check(msg) is True
-    assert is_streaming_noise("ToolLoop", {"message": msg}) is True
+    assert classify_tool_loop_message(msg) == ToolLoopKind.THOUGHT
 
 
-def test_check_status_tool_reply_filtered():
-    msg = {
-        "role": "tool",
-        "toolCallId": "toolu_abc123_completed",
-        "name": "check_status_toolu_abc123",
-        "content": '{"answer": "some result"}',
-    }
-    assert is_synthetic_status_check(msg) is True
-    assert is_streaming_noise("ToolLoop", {"message": msg}) is True
-
-
-# ============================================================================
-#  Placeholder message filtering
-# ============================================================================
-
-
-def test_placeholder_pending_filtered():
-    msg = {
-        "role": "tool",
-        "name": "some_tool",
-        "content": json.dumps({"_placeholder": "pending"}),
-    }
-    assert is_placeholder_message(msg) is True
-    assert is_streaming_noise("ToolLoop", {"message": msg}) is True
-
-
-def test_placeholder_progress_filtered():
-    msg = {
-        "role": "tool",
-        "name": "web_search",
-        "content": json.dumps(
-            {"_placeholder": "progress", "tool": "web_search", "partial": "..."},
-        ),
-    }
-    assert is_placeholder_message(msg) is True
-    assert is_streaming_noise("ToolLoop", {"message": msg}) is True
-
-
-def test_placeholder_completed_filtered():
-    msg = {
-        "role": "tool",
-        "name": "some_tool",
-        "content": json.dumps(
-            {
-                "_placeholder": "completed",
-                "status": "Tool completed. See check_status result below.",
-                "result_call_id": "toolu_abc_completed",
-            },
-        ),
-    }
-    assert is_placeholder_message(msg) is True
-
-
-def test_placeholder_nested_start_filtered():
-    msg = {
-        "role": "tool",
-        "name": "some_tool",
-        "content": json.dumps({"_placeholder": "nested_start"}),
-    }
-    assert is_placeholder_message(msg) is True
-
-
-def test_placeholder_non_json_content_passes():
-    """Tool reply with plain text content is NOT a placeholder."""
-    msg = {
-        "role": "tool",
-        "name": "web_search",
-        "content": "Here are the search results...",
-    }
-    assert is_placeholder_message(msg) is False
-
-
-def test_placeholder_json_without_key_passes():
-    """Tool reply with valid JSON but no _placeholder key passes through."""
-    msg = {
-        "role": "tool",
-        "name": "web_search",
-        "content": json.dumps({"answer": "The RTX 5070 costs $549"}),
-    }
-    assert is_placeholder_message(msg) is False
-
-
-# ============================================================================
-#  Runtime context header filtering
-# ============================================================================
-
-
-def test_runtime_context_header_filtered():
-    msg = {
-        "role": "system",
-        "_runtimeContext": True,
-        "_ctxHeader": True,
-        "content": "## Parent Chat Context\nYou received this request...",
-    }
-    assert is_runtime_context_header(msg) is True
-    assert is_streaming_noise("ToolLoop", {"message": msg}) is True
-
-
-# ============================================================================
-#  Visibility guidance filtering
-# ============================================================================
-
-
-def test_visibility_guidance_filtered():
-    msg = {
-        "role": "system",
-        "_visibility_guidance": True,
-        "content": "## User Visibility Context\nIMPORTANT: The end-user...",
-    }
-    assert is_visibility_guidance(msg) is True
-    assert is_streaming_noise("ToolLoop", {"message": msg}) is True
-
-
-# ============================================================================
-#  Pass-through cases (should NOT be filtered)
-# ============================================================================
-
-
-def test_normal_assistant_tool_call_passes():
+def test_classify_tool_call():
     msg = {
         "role": "assistant",
         "content": None,
@@ -165,48 +52,281 @@ def test_normal_assistant_tool_call_passes():
             {
                 "id": "toolu_xyz",
                 "type": "function",
-                "function": {
-                    "name": "web_search",
-                    "arguments": '{"query": "RTX 5070 price"}',
-                },
+                "function": {"name": "web_search", "arguments": "{}"},
             },
         ],
     }
-    assert is_streaming_noise("ToolLoop", {"message": msg}) is False
+    assert classify_tool_loop_message(msg) == ToolLoopKind.TOOL_CALL
 
 
-def test_normal_tool_reply_passes():
+def test_classify_response():
+    msg = {"role": "assistant", "content": "Here are the results..."}
+    assert classify_tool_loop_message(msg) == ToolLoopKind.RESPONSE
+
+
+def test_classify_empty_assistant_as_response():
+    msg = {"role": "assistant", "content": ""}
+    assert classify_tool_loop_message(msg) == ToolLoopKind.RESPONSE
+
+
+# ============================================================================
+#  classify_tool_loop_message — user messages
+# ============================================================================
+
+
+def test_classify_request():
+    msg = {"role": "user", "content": "What is the price?"}
+    assert classify_tool_loop_message(msg) == ToolLoopKind.REQUEST
+
+
+def test_classify_interjection():
+    msg = {"role": "user", "_interjection": True, "content": "Actually, also check..."}
+    assert classify_tool_loop_message(msg) == ToolLoopKind.INTERJECTION
+
+
+def test_classify_context_continuation():
+    msg = {"role": "user", "_ctx_header": True, "content": "## Parent Chat Context..."}
+    assert classify_tool_loop_message(msg) == ToolLoopKind.CONTEXT_CONTINUATION
+
+
+# ============================================================================
+#  classify_tool_loop_message — tool messages
+# ============================================================================
+
+
+def test_classify_tool_result():
+    msg = {"role": "tool", "name": "web_search", "content": '{"answer": "42"}'}
+    assert classify_tool_loop_message(msg) == ToolLoopKind.TOOL_RESULT
+
+
+def test_classify_status_check_tool():
     msg = {
         "role": "tool",
-        "toolCallId": "toolu_xyz",
-        "name": "web_search",
-        "content": '{"answer": "The RTX 5070 Super costs $549 at Best Buy"}',
+        "name": "check_status_toolu_abc123",
+        "content": '{"answer": "some result"}',
     }
-    assert is_streaming_noise("ToolLoop", {"message": msg}) is False
+    assert classify_tool_loop_message(msg) == ToolLoopKind.STATUS_CHECK
 
 
-def test_normal_system_message_passes():
-    msg = {
-        "role": "system",
-        "content": "You are a helpful assistant.",
-    }
-    assert is_streaming_noise("ToolLoop", {"message": msg}) is False
-
-
-def test_user_message_passes():
-    msg = {
-        "role": "user",
-        "content": "What is the price of the RTX 5070?",
-    }
-    assert is_streaming_noise("ToolLoop", {"message": msg}) is False
-
-
-def test_assistant_text_response_passes():
+def test_classify_status_check_assistant():
     msg = {
         "role": "assistant",
-        "content": "Based on my research, the RTX 5070 Super costs...",
+        "content": None,
+        "tool_calls": [
+            {
+                "id": "toolu_abc123_completed",
+                "type": "function",
+                "function": {"name": "check_status_toolu_abc123", "arguments": "{}"},
+            },
+        ],
     }
-    assert is_streaming_noise("ToolLoop", {"message": msg}) is False
+    # check_status assistant stubs are classified as regular tool_calls;
+    # the STATUS_CHECK kind only applies to the tool-role reply.
+    assert classify_tool_loop_message(msg) == ToolLoopKind.TOOL_CALL
+
+
+def test_classify_wait_noop():
+    msg = {"role": "tool", "name": "wait", "content": ""}
+    assert classify_tool_loop_message(msg) == ToolLoopKind.WAIT_NOOP
+
+
+def test_classify_placeholder_pending():
+    msg = {
+        "role": "tool",
+        "name": "some_tool",
+        "content": json.dumps({"_placeholder": "pending"}),
+    }
+    assert classify_tool_loop_message(msg) == ToolLoopKind.PLACEHOLDER
+
+
+def test_classify_placeholder_progress():
+    msg = {
+        "role": "tool",
+        "name": "web_search",
+        "content": json.dumps({"_placeholder": "progress", "tool": "web_search"}),
+    }
+    assert classify_tool_loop_message(msg) == ToolLoopKind.PLACEHOLDER
+
+
+def test_classify_placeholder_completed():
+    msg = {
+        "role": "tool",
+        "name": "some_tool",
+        "content": json.dumps(
+            {
+                "_placeholder": "completed",
+                "status": "Tool completed.",
+                "result_call_id": "toolu_abc_completed",
+            },
+        ),
+    }
+    assert classify_tool_loop_message(msg) == ToolLoopKind.PLACEHOLDER
+
+
+def test_classify_placeholder_nested_start():
+    msg = {
+        "role": "tool",
+        "name": "some_tool",
+        "content": json.dumps({"_placeholder": "nested_start"}),
+    }
+    assert classify_tool_loop_message(msg) == ToolLoopKind.PLACEHOLDER
+
+
+def test_classify_tool_non_json_content():
+    msg = {"role": "tool", "name": "web_search", "content": "Here are the results..."}
+    assert classify_tool_loop_message(msg) == ToolLoopKind.TOOL_RESULT
+
+
+def test_classify_tool_json_without_placeholder():
+    msg = {
+        "role": "tool",
+        "name": "web_search",
+        "content": json.dumps({"answer": "The RTX 5070 costs $549"}),
+    }
+    assert classify_tool_loop_message(msg) == ToolLoopKind.TOOL_RESULT
+
+
+# ============================================================================
+#  classify_tool_loop_message — system messages
+# ============================================================================
+
+
+def test_classify_steering_pause():
+    msg = {"role": "system", "_steering": True, "_steering_action": "pause"}
+    assert classify_tool_loop_message(msg) == ToolLoopKind.STEERING_PAUSE
+
+
+def test_classify_steering_resume():
+    msg = {"role": "system", "_steering": True, "_steering_action": "resume"}
+    assert classify_tool_loop_message(msg) == ToolLoopKind.STEERING_RESUME
+
+
+def test_classify_steering_stop():
+    msg = {
+        "role": "system",
+        "_steering": True,
+        "_steering_action": "stop",
+        "content": "reason",
+    }
+    assert classify_tool_loop_message(msg) == ToolLoopKind.STEERING_STOP
+
+
+def test_classify_runtime_context():
+    msg = {
+        "role": "system",
+        "_runtime_context": True,
+        "content": "## Parent Chat Context...",
+    }
+    assert classify_tool_loop_message(msg) == ToolLoopKind.RUNTIME_CONTEXT
+
+
+def test_classify_time_explanation():
+    msg = {
+        "role": "system",
+        "_time_explanation": True,
+        "_ctx_header": True,
+        "_runtime_context": True,
+        "content": "## Time Context...",
+    }
+    assert classify_tool_loop_message(msg) == ToolLoopKind.TIME_EXPLANATION
+
+
+def test_classify_visibility_guidance():
+    msg = {
+        "role": "system",
+        "_visibility_guidance": True,
+        "content": "## User Visibility Context...",
+    }
+    assert classify_tool_loop_message(msg) == ToolLoopKind.VISIBILITY_GUIDANCE
+
+
+def test_classify_generic_system_message():
+    msg = {"role": "system", "content": "You are a helpful assistant."}
+    assert classify_tool_loop_message(msg) == ToolLoopKind.SYSTEM_NOTICE
+
+
+# ============================================================================
+#  is_streaming_noise — kind-based filtering
+# ============================================================================
+
+
+def test_placeholder_noise():
+    assert is_streaming_noise("ToolLoop", {"kind": ToolLoopKind.PLACEHOLDER}) is True
+
+
+def test_runtime_context_noise():
+    assert (
+        is_streaming_noise("ToolLoop", {"kind": ToolLoopKind.RUNTIME_CONTEXT}) is True
+    )
+
+
+def test_time_explanation_noise():
+    assert (
+        is_streaming_noise("ToolLoop", {"kind": ToolLoopKind.TIME_EXPLANATION}) is True
+    )
+
+
+def test_visibility_guidance_noise():
+    assert (
+        is_streaming_noise("ToolLoop", {"kind": ToolLoopKind.VISIBILITY_GUIDANCE})
+        is True
+    )
+
+
+def test_status_check_not_noise():
+    """STATUS_CHECK is intentionally NOT stream noise — frontend needs them
+    to resolve pending parallel tool calls via resolvedToolCallIds."""
+    assert is_streaming_noise("ToolLoop", {"kind": ToolLoopKind.STATUS_CHECK}) is False
+
+
+def test_wait_noop_not_noise():
+    assert is_streaming_noise("ToolLoop", {"kind": ToolLoopKind.WAIT_NOOP}) is False
+
+
+# ============================================================================
+#  is_streaming_noise — user-facing kinds pass through
+# ============================================================================
+
+
+def test_tool_call_passes():
+    assert is_streaming_noise("ToolLoop", {"kind": ToolLoopKind.TOOL_CALL}) is False
+
+
+def test_tool_result_passes():
+    assert is_streaming_noise("ToolLoop", {"kind": ToolLoopKind.TOOL_RESULT}) is False
+
+
+def test_response_passes():
+    assert is_streaming_noise("ToolLoop", {"kind": ToolLoopKind.RESPONSE}) is False
+
+
+def test_request_passes():
+    assert is_streaming_noise("ToolLoop", {"kind": ToolLoopKind.REQUEST}) is False
+
+
+def test_interjection_passes():
+    assert is_streaming_noise("ToolLoop", {"kind": ToolLoopKind.INTERJECTION}) is False
+
+
+def test_thinking_sentinel_passes():
+    assert (
+        is_streaming_noise("ToolLoop", {"kind": ToolLoopKind.THINKING_SENTINEL})
+        is False
+    )
+
+
+def test_thought_passes():
+    assert is_streaming_noise("ToolLoop", {"kind": ToolLoopKind.THOUGHT}) is False
+
+
+def test_steering_passes():
+    for kind in (
+        ToolLoopKind.STEERING_PAUSE,
+        ToolLoopKind.STEERING_RESUME,
+        ToolLoopKind.STEERING_STOP,
+        ToolLoopKind.STEERING_HELPER,
+    ):
+        assert is_streaming_noise("ToolLoop", {"kind": kind}) is False
 
 
 # ============================================================================
@@ -217,32 +337,11 @@ def test_assistant_text_response_passes():
 def test_non_suppressed_manager_method_never_filtered():
     """ManagerMethod events for non-suppressed managers must NEVER be filtered."""
     payloads = [
-        {
-            "manager": "CodeActActor",
-            "message": {
-                "role": "assistant",
-                "tool_calls": [{"function": {"name": "check_status_fake"}}],
-            },
-        },
-        {
-            "manager": "ContactManager",
-            "message": {"role": "tool", "name": "check_status_fake", "content": "{}"},
-        },
-        {
-            "manager": "KnowledgeManager",
-            "message": {"role": "system", "_runtimeContext": True},
-        },
-        {
-            "manager": "WebSearcher",
-            "message": {"role": "system", "_visibility_guidance": True},
-        },
-        {
-            "manager": "TaskScheduler",
-            "message": {
-                "role": "tool",
-                "content": json.dumps({"_placeholder": "pending"}),
-            },
-        },
+        {"manager": "CodeActActor", "kind": ToolLoopKind.TOOL_CALL},
+        {"manager": "ContactManager", "kind": ToolLoopKind.STATUS_CHECK},
+        {"manager": "KnowledgeManager", "kind": ToolLoopKind.RUNTIME_CONTEXT},
+        {"manager": "WebSearcher", "kind": ToolLoopKind.VISIBILITY_GUIDANCE},
+        {"manager": "TaskScheduler", "kind": ToolLoopKind.PLACEHOLDER},
         {},
     ]
     for payload in payloads:
@@ -252,18 +351,11 @@ def test_non_suppressed_manager_method_never_filtered():
 
 
 def test_toolloop_noise_only_applies_to_toolloop_type():
-    """Per-message noise rules (check_status, placeholder, etc.) only apply
-    to ToolLoop events.  Non-ToolLoop/non-suppressed events always pass."""
-    noise_msg = {
-        "role": "assistant",
-        "content": None,
-        "tool_calls": [{"function": {"name": "check_status_x"}}],
-    }
-    assert is_streaming_noise("ToolLoop", {"message": noise_msg}) is True
+    """Kind-based noise rules only apply to ToolLoop events."""
     for event_type in ("Message", "Comms", "LLM", "DesktopPrimitive"):
         assert (
-            is_streaming_noise(event_type, {"message": noise_msg}) is False
-        ), f"Per-message noise rules should not apply to {event_type}"
+            is_streaming_noise(event_type, {"kind": ToolLoopKind.PLACEHOLDER}) is False
+        ), f"Kind-based noise rules should not apply to {event_type}"
 
 
 # ============================================================================
@@ -271,38 +363,14 @@ def test_toolloop_noise_only_applies_to_toolloop_type():
 # ============================================================================
 
 
-def test_missing_message_key_passes():
-    """Payload dict without a 'message' key should not be filtered."""
+def test_missing_kind_passes():
+    """Payload dict without a 'kind' key should not be filtered."""
     assert is_streaming_noise("ToolLoop", {}) is False
     assert is_streaming_noise("ToolLoop", {"method": "foo"}) is False
 
 
-def test_non_dict_message_passes():
-    """If message is not a dict, it should not be filtered."""
-    assert is_streaming_noise("ToolLoop", {"message": "just a string"}) is False
-    assert is_streaming_noise("ToolLoop", {"message": None}) is False
-    assert is_streaming_noise("ToolLoop", {"message": 42}) is False
-
-
-def test_empty_tool_calls_passes():
-    """Assistant message with empty tool_calls list passes through."""
-    msg = {"role": "assistant", "content": "thinking...", "tool_calls": []}
-    assert is_streaming_noise("ToolLoop", {"message": msg}) is False
-
-
-def test_check_status_mixed_tool_calls():
-    """Assistant message with one normal and one check_status tool call
-    should still be filtered (the check_status presence is sufficient)."""
-    msg = {
-        "role": "assistant",
-        "content": None,
-        "tool_calls": [
-            {"function": {"name": "web_search"}},
-            {"function": {"name": "check_status_toolu_abc"}},
-        ],
-    }
-    assert is_synthetic_status_check(msg) is True
-    assert is_streaming_noise("ToolLoop", {"message": msg}) is True
+def test_unknown_kind_passes():
+    assert is_streaming_noise("ToolLoop", {"kind": "something_new"}) is False
 
 
 # ============================================================================
@@ -337,6 +405,7 @@ def test_memory_manager_method_outgoing_filtered():
 def test_memory_manager_toolloop_root_filtered():
     """ToolLoop event whose hierarchy root is MemoryManager is suppressed."""
     payload = {
+        "kind": ToolLoopKind.RESPONSE,
         "message": {"role": "assistant", "content": "Analyzing transcript..."},
         "method": "MemoryManager.process_chunk",
         "hierarchy": ["MemoryManager.process_chunk(a1b2)"],
@@ -348,6 +417,7 @@ def test_memory_manager_toolloop_root_filtered():
 def test_memory_manager_nested_toolloop_filtered():
     """ToolLoop from an inner manager called BY MemoryManager is also suppressed."""
     payload = {
+        "kind": ToolLoopKind.TOOL_RESULT,
         "message": {"role": "tool", "name": "filter_contacts", "content": "[]"},
         "method": "ContactManager.ask",
         "hierarchy": [
@@ -400,6 +470,7 @@ def test_non_memory_manager_not_suppressed():
 def test_non_memory_manager_toolloop_not_suppressed():
     """ToolLoop events rooted in non-suppressed managers pass through."""
     payload = {
+        "kind": ToolLoopKind.RESPONSE,
         "message": {"role": "assistant", "content": "Searching..."},
         "method": "WebSearcher.ask",
         "hierarchy": [

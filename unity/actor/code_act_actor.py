@@ -40,7 +40,10 @@ from unity.common.async_tool_loop import (
     SteerableToolHandle,
     start_async_tool_loop,
 )
-from unity.common.clarification_tools import add_clarification_tool_with_events
+from unity.common.clarification_tools import (
+    add_clarification_tool_with_events,
+    add_notification_tool_with_events,
+)
 from unity.common.llm_client import new_llm_client
 from unity.common.llm_helpers import methods_to_tool_dict
 from unity.common.tool_spec import ToolSpec
@@ -396,6 +399,23 @@ _STORAGE_WHAT_CAN_BE_STORED = (
     "principle applies to any code pattern — whenever some parameters "
     "represent reusable configuration and others represent per-call "
     "input, wrap to bake in the former and expose the latter.\n\n"
+    "### Preserving user-facing communication points\n\n"
+    "When wrapping a workflow into a stored function, pay attention to "
+    "points where the original code depended on the user being "
+    "informed — especially states that block until the user takes an "
+    "external action. If the original trajectory included a step like "
+    '"notify the user about X, then wait for X to happen", the '
+    "`notify()` call must survive into the stored function. Stripping "
+    "it out creates a silent deadlock: the function blocks waiting for "
+    "a condition the user does not know about.\n\n"
+    "The general principle: a stored function inherits the execution "
+    "environment's `notify()` helper. Any workflow state where "
+    "progress depends on external human action (approving an auth "
+    "prompt, granting a permission, confirming a destructive "
+    "operation) must include a `notify()` call *before* entering the "
+    "wait. Without it, the function waits indefinitely for something "
+    "only the user can provide, and the user has no idea they need "
+    "to act.\n\n"
     "### Third-party package dependencies\n\n"
     "If the trajectory used `install_python_packages` and the function "
     "you want to store imports any of those packages (anything beyond "
@@ -1095,11 +1115,7 @@ def _start_storage_check_loop(
         f"{instructions}"
     )
 
-    client = new_llm_client(
-        actor._model,
-        reasoning_effort=None,
-        service_tier=None,
-    )
+    client = new_llm_client(actor._model)
     client.set_system_message(system_prompt)
 
     return start_async_tool_loop(
@@ -1206,11 +1222,7 @@ def _start_proactive_storage_loop(
         f"{instructions}"
     )
 
-    client = new_llm_client(
-        actor._model,
-        reasoning_effort=None,
-        service_tier=None,
-    )
+    client = new_llm_client(actor._model)
     client.set_system_message(system_prompt)
 
     return start_async_tool_loop(
@@ -1316,7 +1328,18 @@ class _StorageCheckHandle(SteerableToolHandle):
                 self._relay_notifications_from(self._inner),
             )
 
-            self._original_result = await self._inner.result()
+            try:
+                self._original_result = await self._inner.result()
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                self._original_result = (
+                    f"Error: inner task failed: {type(exc).__name__}: {exc}"
+                )
+                logger.error(
+                    f"_StorageCheckHandle: inner result raised "
+                    f"{type(exc).__name__}: {exc}",
+                )
             await self._cancel_relay()
             self._task_done_event.set()
 
@@ -2294,6 +2317,7 @@ class CodeActActor(BaseCodeActActor):
                             venv_id=venv_id,
                             primitives=primitives,
                             computer_primitives=computer_primitives,
+                            notification_q=notification_q,
                         )
                     except Exception as e:
                         exec_exc = e
@@ -2442,7 +2466,7 @@ class CodeActActor(BaseCodeActActor):
             return overlay.install(packages)
 
         tools: Dict[str, Callable[..., Awaitable[Any]]] = {
-            "execute_code": ToolSpec(fn=execute_code, display_label="Running code"),
+            "execute_code": ToolSpec(fn=execute_code),
             "install_python_packages": ToolSpec(
                 fn=install_python_packages,
                 display_label="Installing Python packages",
@@ -2921,6 +2945,7 @@ class CodeActActor(BaseCodeActActor):
                                 venv_id=venv_id,
                                 primitives=primitives,
                                 computer_primitives=computer_primitives,
+                                notification_q=notification_q,
                             )
                             _ef_log.debug(
                                 f"⏱️ [execute_function +{_ef_ms()}] sandbox.execute done",
@@ -3004,9 +3029,16 @@ class CodeActActor(BaseCodeActActor):
                     except Exception:
                         pass
 
+            def _ef_display_label(tc: dict) -> str:
+                try:
+                    args = json.loads(tc.get("function", {}).get("arguments", "{}"))
+                    return args.get("function_name", "execute_function")
+                except Exception:
+                    return "execute_function"
+
             tools["execute_function"] = ToolSpec(
                 fn=execute_function,
-                display_label="Running a saved function",
+                display_label=_ef_display_label,
             )
 
         # ───────────────────────── Session management tools ────────────────── #
@@ -3561,7 +3593,8 @@ class CodeActActor(BaseCodeActActor):
         "CodeActActor",
         "act",
         payload_key="request",
-        display_label="Taking Action",
+        display_label=lambda kw: "Session" if kw.get("persist") else "Taking Action",
+        forward_kwargs=("persist",),
     )
     async def act(
         self,
@@ -3955,11 +3988,7 @@ class CodeActActor(BaseCodeActActor):
             tool_policy = _wrapped_policy
 
         # Build an LLM client for this act() call
-        client = new_llm_client(
-            self._model,
-            reasoning_effort=None,
-            service_tier=None,
-        )
+        client = new_llm_client(self._model)
         if system_prompt:
             client.set_system_message(system_prompt)
 
@@ -3974,6 +4003,13 @@ class CodeActActor(BaseCodeActActor):
                 method="act",
                 call_id=_call_id,
             )
+
+        add_notification_tool_with_events(
+            tools,
+            manager="CodeActActor",
+            method="act",
+            call_id=_call_id,
+        )
 
         logger.debug(f"⏱️ [CodeActActor.act +{_act_ms()}] starting async tool loop")
         handle = start_async_tool_loop(

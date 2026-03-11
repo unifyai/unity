@@ -33,8 +33,14 @@ class _ImmediateAwaitable:
         return _done().__await__()
 
 
+class _FakeLocalParticipant:
+    async def publish_data(self, *args, **kwargs):
+        pass
+
+
 class _FakeRoom:
     name = "fake-room"
+    local_participant = _FakeLocalParticipant()
 
     def on(self, *args, **kwargs):
         return lambda fn: fn
@@ -195,9 +201,22 @@ async def fast_brain_env(monkeypatch):
     monkeypatch.setattr(call_script, "STT", object())
     monkeypatch.setattr(call_script, "VAD", object())
 
+    import unity.common.llm_client as _llm_mod
+
+    class _FakeGreetingClient:
+        async def generate(self, **kwargs):
+            return "Hello!"
+
+    monkeypatch.setattr(
+        _llm_mod,
+        "new_llm_client",
+        lambda *a, **kw: _FakeGreetingClient(),
+    )
+
     await call_script.entrypoint(_FakeJobContext())
 
     session = session_holder["session"]
+    session.say_calls.clear()
     yield session, fake_broker
 
 

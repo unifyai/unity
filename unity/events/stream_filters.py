@@ -9,9 +9,10 @@ Pub/Sub publishing path in ``EventBus.publish()``.
 
 Two categories of filtering exist:
 
-1. **ToolLoop noise** -- individual LLM messages (status checks, placeholders,
-   runtime context headers, visibility guidance) that are leaf content within
-   an action tree node.  Dropping them cannot orphan or corrupt the tree.
+1. **ToolLoop noise** -- identified by the ``kind`` field on
+   ``ToolLoopPayload``.  Events whose kind is in ``_STREAM_NOISE_KINDS``
+   are leaf content within an action tree node; dropping them cannot
+   orphan or corrupt the tree.
 
 2. **Disjoint tree suppression** -- entire trees spawned by background
    managers (currently ``MemoryManager``) that run asynchronously alongside
@@ -22,78 +23,23 @@ Two categories of filtering exist:
 
 from __future__ import annotations
 
-import json
-from typing import Callable
+from .types.tool_loop import ToolLoopKind
 
 # ---------------------------------------------------------------------------
-#  Individual noise-detection rules
+#  ToolLoop noise -- kinds that are internal bookkeeping
 # ---------------------------------------------------------------------------
-# Each rule takes a single ``msg: dict`` (the raw LLM message from
-# ``ToolLoopPayload.message``) and returns ``True`` when the message is
-# noise that should be suppressed.
+# ``STATUS_CHECK`` is intentionally excluded: the frontend needs those
+# events to resolve pending parallel tool calls via resolvedToolCallIds.
+# Display filtering is handled client-side by event-filters.ts.
 
-
-def is_synthetic_status_check(msg: dict) -> bool:
-    """Synthetic ``check_status_*`` completion pairs.
-
-    Injected by ``ToolsData._emit_completion_pair`` when an async tool
-    finishes out of order.  Always come in adjacent assistant+tool pairs.
-    """
-    for tc in msg.get("tool_calls") or []:
-        name = (tc.get("function") or {}).get("name", "")
-        if isinstance(name, str) and name.startswith("check_status_"):
-            return True
-    if msg.get("role") == "tool":
-        name = msg.get("name") or ""
-        if isinstance(name, str) and name.startswith("check_status_"):
-            return True
-    return False
-
-
-def is_placeholder_message(msg: dict) -> bool:
-    """Pending/progress/nested-start placeholder tool replies.
-
-    These are superseded by real content once the tool completes.
-    Known ``_placeholder`` values: ``"pending"``, ``"progress"``,
-    ``"completed"``, ``"nested_start"``.
-    """
-    if msg.get("role") != "tool":
-        return False
-    try:
-        parsed = json.loads(msg.get("content", ""))
-        return isinstance(parsed, dict) and "_placeholder" in parsed
-    except Exception:
-        return False
-
-
-def is_runtime_context_header(msg: dict) -> bool:
-    """Parent chat context blobs forwarded to inner loops.
-
-    Large system messages (often multi-KB) carrying ``_runtimeContext: true``.
-    Purely LLM-internal; never user-facing.
-    """
-    return msg.get("_runtimeContext") is True
-
-
-def is_visibility_guidance(msg: dict) -> bool:
-    """Interjection visibility guidance system prompt.
-
-    System message with ``_visibility_guidance: true`` explaining user
-    visibility to the LLM during interjections.  Purely LLM-internal.
-    """
-    return msg.get("_visibility_guidance") is True
-
-
-# ---------------------------------------------------------------------------
-#  ToolLoop noise rule registry -- append new per-message rules here
-# ---------------------------------------------------------------------------
-
-_STREAM_NOISE_RULES: list[Callable[[dict], bool]] = [
-    is_synthetic_status_check,
-    is_placeholder_message,
-    is_runtime_context_header,
-    is_visibility_guidance,
-]
+_STREAM_NOISE_KINDS: frozenset[str] = frozenset(
+    {
+        ToolLoopKind.PLACEHOLDER,
+        ToolLoopKind.RUNTIME_CONTEXT,
+        ToolLoopKind.TIME_EXPLANATION,
+        ToolLoopKind.VISIBILITY_GUIDANCE,
+    },
+)
 
 # ---------------------------------------------------------------------------
 #  Disjoint tree suppression -- managers whose entire event trees are hidden
@@ -117,7 +63,7 @@ def is_suppressed_manager_tree(event_type: str, payload_dict: dict) -> bool:
 
     ``MemoryManager`` methods fire asynchronously via EventBus callbacks and
     produce independent parallel trees with no hierarchy linkage to the
-    user-initiated action.  **All** events in the tree are suppressed —
+    user-initiated action.  **All** events in the tree are suppressed --
     ``ManagerMethod`` nodes, inner nested ``ManagerMethod`` nodes from
     sub-managers, and ``ToolLoop`` leaf messages alike.
 
@@ -149,8 +95,7 @@ def is_streaming_noise(event_type: str, payload_dict: dict) -> bool:
     1. **Disjoint tree suppression** -- entire trees from background managers
        (e.g. ``MemoryManager``) are dropped for both ``ManagerMethod`` *and*
        ``ToolLoop`` event types.
-    2. **ToolLoop noise** -- individual LLM messages matching the per-message
-       noise rules (status checks, placeholders, context headers, etc.).
+    2. **ToolLoop noise** -- events whose ``kind`` is in the noise set.
 
     Parameters
     ----------
@@ -165,7 +110,5 @@ def is_streaming_noise(event_type: str, payload_dict: dict) -> bool:
 
     if event_type != "ToolLoop":
         return False
-    msg = payload_dict.get("message")
-    if not isinstance(msg, dict):
-        return False
-    return any(rule(msg) for rule in _STREAM_NOISE_RULES)
+
+    return payload_dict.get("kind", "") in _STREAM_NOISE_KINDS

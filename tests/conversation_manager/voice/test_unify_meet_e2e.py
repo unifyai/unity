@@ -924,7 +924,7 @@ class TestRealLiveKitUnifyMeet:
                 else workspace_root
             )
 
-            # Spawn for Unify Meet (channel="unify")
+            # Spawn for Unify Meet (channel="unify_meet")
             args = [
                 sys.executable,
                 str(call_py),
@@ -933,7 +933,7 @@ class TestRealLiveKitUnifyMeet:
                 "cartesia",
                 "",
                 "False",
-                "unify",  # This is the key difference - "unify" for meets
+                "unify_meet",
                 json.dumps(sample_contact),
                 json.dumps(boss_contact),
                 "A test assistant for Unify Meet",

@@ -1199,6 +1199,7 @@ class ConversationManagerBrainActionTools:
         self,
         *,
         query: str,
+        requesting_contact_id: int,
         response_format: Optional[dict] = None,
         persist: bool = False,
         include_conversation_context: bool = True,
@@ -1224,6 +1225,11 @@ class ConversationManagerBrainActionTools:
 
         Args:
             query: Natural language request specifying what to do or find.
+            requesting_contact_id: The contact_id of the person whose request or
+                needs this action serves.  For responses to a contact's message,
+                use that contact's ID.  For proactive actions benefiting a
+                specific person, use their contact_id.  In ambiguous cases,
+                choose the contact who most directly benefits from the action.
             response_format: An optional structured schema describing the shape of
                 the result you need back.  When provided, the action is required to
                 return a JSON object conforming to this schema (via a dedicated
@@ -1294,6 +1300,29 @@ class ConversationManagerBrainActionTools:
 
         _bat_log = _bat_logging.getLogger("unity")
         _bat_log.debug(f"⏱️ [CM.act tool +{_bat_ms()}] entered")
+
+        # Override cost attribution for all nested LLM calls in this action.
+        # Only meaningful in org context (personal accounts have a single user).
+        from unity.events.cost_attribution import COST_ATTRIBUTION
+        from unity.session_details import SESSION_DETAILS
+
+        if SESSION_DETAILS.org_id is not None:
+            contact = self._cm.contact_index.get_contact(
+                contact_id=requesting_contact_id,
+            )
+            # Only trust user_id from system contacts (boss + provisioned org
+            # members).  A contact from another org could carry a platform
+            # user_id that doesn't belong to this org.
+            attributed_user_id = (
+                contact.get("user_id") if contact and contact.get("is_system") else None
+            )
+            COST_ATTRIBUTION.set(
+                (
+                    [attributed_user_id]
+                    if attributed_user_id
+                    else [SESSION_DETAILS.user.id]
+                ),
+            )
 
         # Pass the fresh rendered state snapshot as context for the Actor,
         # unless the LLM opted out.
@@ -1711,7 +1740,10 @@ class ConversationManagerBrainActionTools:
         *,
         instruction: str,
     ) -> dict[str, Any]:
-        """Execute a single atomic action on native desktop UI (non-browser).
+        """Execute a single desktop interaction on native UI (non-browser).
+
+        Each call performs exactly **one** desktop interaction — one click,
+        one keystroke, one window switch.
 
         **Only for interactions that cannot be done inside a web browser:**
         native application windows, terminal commands, file manager operations,
@@ -1728,12 +1760,12 @@ class ConversationManagerBrainActionTools:
         - "Right-click the desktop background"
         - "Click the system tray notification"
 
-        **Route through ``act`` instead** when the request requires reasoning
-        about *what* to do, involves multiple steps, or benefits from guidance
-        and compositional functions.
+        **Route through ``act`` or ``interject_*``** when the task requires
+        more than one interaction, reasoning about *what* to do, or benefits
+        from guidance and compositional functions.
 
         Args:
-            instruction: A concrete native desktop action to perform
+            instruction: A concrete single native desktop action to perform
                 (e.g. "Open the Terminal application").
         """
         cp = self._cm.computer_primitives
@@ -1751,13 +1783,7 @@ class ConversationManagerBrainActionTools:
 
         async def _resolve():
             if session_id is not None:
-                for h in cp.web.list_sessions():
-                    if h.session_id == session_id and h.active:
-                        return h, False
-                raise ValueError(
-                    f"No active web session with id {session_id}. "
-                    f"Check <active_web_sessions> for valid IDs.",
-                )
+                return cp.web.get_session(session_id), False
             handle = await cp.web.new_session(visible=True)
             return handle, True
 
@@ -1769,14 +1795,12 @@ class ConversationManagerBrainActionTools:
         request: str,
         session_id: int | None = None,
     ) -> dict[str, Any]:
-        """Execute a request in a visible web browser session.
+        """Execute a single browser interaction in a visible web session.
 
-        **This is the default fast-path tool for any task involving a web
-        browser** — opening a browser, navigating to a URL, searching the
-        web, clicking elements on a web page, typing into web forms, scrolling
-        web content, or reading a web page.  It bypasses the general ``act``
-        pathway and runs directly against a Chromium browser session visible
-        on the desktop.
+        Each call performs exactly **one** browser interaction — one click,
+        one text entry, one scroll, or one navigation.  It bypasses the
+        general ``act`` pathway and runs directly against a Chromium browser
+        session visible on the desktop.
 
         A new browser session is created automatically when ``session_id``
         is omitted.  Pass a numeric ``session_id`` from
@@ -1786,12 +1810,13 @@ class ConversationManagerBrainActionTools:
         that cannot be done inside a browser (terminal, file manager, native
         app windows, system dialogs).
 
-        **Use ``act`` instead** for complex multi-step work, cross-domain
-        reasoning, or anything requiring guidance / functions / knowledge.
+        **Use ``act`` or ``interject_*`` instead** when the task requires
+        more than one interaction (e.g. click a button then type a value
+        then click Save), or needs guidance / functions / knowledge.
 
         Args:
-            request: Natural language description of the browser task
-                (e.g. "Navigate to example.com", "Search Google for 'topic'").
+            request: Natural language description of a single browser action
+                (e.g. "Navigate to example.com", "Click the Submit button").
             session_id: Optional numeric ID of an existing active web session
                 to reuse.  When omitted a new visible session is created.
         """
@@ -1818,15 +1843,16 @@ class ConversationManagerBrainActionTools:
             session_id: The numeric ID of the web session to close.
         """
         cp = self._cm.computer_primitives
-        for h in cp.web.list_sessions():
-            if h.session_id == session_id and h.active:
-                await h.stop()
-                return {"status": "closed", "session_id": session_id}
-        return {
-            "status": "not_found",
-            "session_id": session_id,
-            "error": "No active web session with that ID.",
-        }
+        try:
+            handle = cp.web.get_session(session_id)
+        except ValueError:
+            return {
+                "status": "not_found",
+                "session_id": session_id,
+                "error": "No active web session with that ID.",
+            }
+        await handle.stop()
+        return {"status": "closed", "session_id": session_id}
 
     async def set_boss_details(
         self,

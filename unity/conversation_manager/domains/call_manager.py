@@ -255,7 +255,7 @@ class LivekitCallManager:
             return
 
         self.is_outbound = outbound
-        self._call_channel = "phone"
+        self._call_channel = "phone_call"
         self._disconnect_contact = contact
 
         await self._ensure_socket_server()
@@ -269,11 +269,11 @@ class LivekitCallManager:
         room_name = make_room_name(self.assistant_id, "phone")
 
         if self._worker_proc is not None and self._worker_proc.poll() is None:
-            await self._dispatch_job(room_name, "phone", contact, boss, outbound)
+            await self._dispatch_job(room_name, "phone_call", contact, boss, outbound)
         else:
             await self._start_call_subprocess(
                 room_name,
-                "phone",
+                "phone_call",
                 contact,
                 boss,
                 outbound,
@@ -312,7 +312,7 @@ class LivekitCallManager:
             return
 
         self.is_outbound = False
-        self._call_channel = "unify"
+        self._call_channel = "unify_meet"
         self._disconnect_contact = contact
 
         await self._ensure_socket_server()
@@ -327,11 +327,11 @@ class LivekitCallManager:
         self.room_name = room_name
 
         if self._worker_proc is not None and self._worker_proc.poll() is None:
-            await self._dispatch_job(room_name, "unify", contact, boss, False)
+            await self._dispatch_job(room_name, "unify_meet", contact, boss, False)
         else:
             await self._start_call_subprocess(
                 room_name,
-                "unify",
+                "unify_meet",
                 contact,
                 boss,
                 False,
@@ -390,10 +390,10 @@ class LivekitCallManager:
             return
 
         contact = self._disconnect_contact or {}
-        channel = self._call_channel or "phone"
+        channel = self._call_channel or "phone_call"
         event = (
             PhoneCallEnded(contact=contact)
-            if channel == "phone"
+            if channel == "phone_call"
             else UnifyMeetEnded(contact=contact)
         )
         LOGGER.debug(
@@ -402,7 +402,7 @@ class LivekitCallManager:
         )
         if self._event_broker:
             await self._event_broker.publish(
-                f"app:comms:{channel}_call_ended",
+                event.topic,
                 event.to_json(),
             )
 

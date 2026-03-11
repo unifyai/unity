@@ -139,7 +139,7 @@ class ConversationManager(metaclass=SingletonABCMeta):
         self.project_name = project_name
 
         # inactivity & shutdown
-        self.inactivity_timeout = 300  # 5 minutes in seconds
+        self.inactivity_timeout = 420  # 7 minutes in seconds
         self.inactivity_check_interval = 30  # seconds
         self.last_activity_time = self.loop.time()
         self.stop = stop
@@ -687,7 +687,11 @@ class ConversationManager(metaclass=SingletonABCMeta):
         except Exception:
             return messages
 
-    async def interject_or_run(self, content: str):
+    async def interject_or_run(
+        self,
+        content: str,
+        triggering_contact_id: int | None = None,
+    ):
         """Interject the ask handle or run the LLM"""
         prev_utterance = getattr(self, "_last_inbound_utterance", None)
         self._last_inbound_utterance = content
@@ -701,7 +705,11 @@ class ConversationManager(metaclass=SingletonABCMeta):
             # Text mode: cancel_running=True — rapid messages should get
             # fresh responses with the latest context.
             cancel_running = not self.mode.is_voice
-            await self.request_llm_run(delay=0, cancel_running=cancel_running)
+            await self.request_llm_run(
+                delay=0,
+                cancel_running=cancel_running,
+                triggering_contact_id=triggering_contact_id,
+            )
 
             if (
                 self.mode.is_voice
@@ -790,7 +798,12 @@ class ConversationManager(metaclass=SingletonABCMeta):
             trace_meta=trace_meta,
         )
 
-    async def request_llm_run(self, delay=0, cancel_running=False) -> None:
+    async def request_llm_run(
+        self,
+        delay=0,
+        cancel_running=False,
+        triggering_contact_id: int | None = None,
+    ) -> None:
         """Request an LLM run.
 
         The request is recorded and later scheduled by the event loop after
@@ -803,6 +816,7 @@ class ConversationManager(metaclass=SingletonABCMeta):
             "request_id": request_id,
             "origin_event_id": event_trace.get("event_id", ""),
             "origin_event_name": event_trace.get("event_name", ""),
+            "triggering_contact_id": triggering_contact_id,
         }
         self._pending_llm_requests.append((delay, cancel_running))
         self._pending_llm_request_meta.append(request_meta)
@@ -860,7 +874,27 @@ class ConversationManager(metaclass=SingletonABCMeta):
         # Capture when slow brain starts thinking (for guidance staleness detection)
         from datetime import datetime, timezone
 
+        from ..events.cost_attribution import COST_ATTRIBUTION
+
         trace_meta = trace_meta or {}
+
+        # Set cost attribution for the brain's own LLM calls based on who
+        # triggered this brain run.  Only meaningful in org context (personal
+        # accounts have a single user so all spend goes to the supervisor).
+        if SESSION_DETAILS.org_id is not None:
+            triggering_contact_id = trace_meta.get("triggering_contact_id")
+            attributed_user_id = None
+            if triggering_contact_id is not None:
+                contact = self.contact_index.get_contact(
+                    contact_id=triggering_contact_id,
+                )
+                if contact and contact.get("is_system"):
+                    attributed_user_id = contact.get("user_id")
+            if attributed_user_id:
+                COST_ATTRIBUTION.set([attributed_user_id])
+            else:
+                COST_ATTRIBUTION.set([SESSION_DETAILS.user.id])
+
         self._llm_gen += 1
         run_id = trace_meta.get("run_id", "llmrun-unknown")
         request_id = trace_meta.get("request_id", "")

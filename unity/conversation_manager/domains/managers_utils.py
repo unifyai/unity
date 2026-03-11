@@ -463,11 +463,17 @@ async def actor_watch_notifications(
             else:
                 msg = str(notif)
 
+            completed = (
+                bool(notif.get("completed", False))
+                if isinstance(notif, dict)
+                else False
+            )
             await event_broker.publish(
                 "app:actor:notification",
                 ActorNotification(
                     handle_id=handle_id,
                     response=msg,
+                    completed=completed,
                 ).to_json(),
             )
 
@@ -1153,6 +1159,9 @@ def _init_managers(
 
             cp = ComputerPrimitives()
             if resolved.config.url_mappings:
+                from unity.customization.demo_sites import ensure_demo_sites_running
+
+                ensure_demo_sites_running(resolved.config.url_mappings)
                 cp.url_mappings = resolved.config.url_mappings
 
             cm.actor = ManagerRegistry.get_actor(

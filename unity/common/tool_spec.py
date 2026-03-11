@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from typing import Callable, Optional, Dict, Union
+from typing import Any, Callable, Optional, Dict, Union
 
 # ─────────────────────────────────────────────────────────────────────────────
 # 0.  metadata wrapper - lets us attach `max_concurrent` to a tool
@@ -20,7 +20,7 @@ class ToolSpec:
     max_total_calls: Optional[int] = None
     read_only: Optional[bool] = None
     manager_tool: bool = False
-    display_label: Optional[str] = None
+    display_label: Optional[Union[str, Callable[[Dict[str, Any]], str]]] = None
 
     # Let a ToolSpec be invoked like the underlying callable (nice for tests)
     def __call__(self, *a, **kw):  # pragma: no cover

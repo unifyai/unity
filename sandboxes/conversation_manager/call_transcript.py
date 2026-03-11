@@ -1,17 +1,26 @@
 #!/usr/bin/env python3
-"""Post-hoc call transcript builder for ConversationManager sandbox runs.
+"""Post-hoc call transcript builder for ConversationManager runs.
 
-Parses .logs_voice_agent.txt (and optionally .logs_conversation_sandbox.txt)
-to produce a deterministic, source-traced call transcript with anomaly detection.
+Parses voice-agent and CM logs to produce a deterministic, source-traced
+call transcript with anomaly detection.
+
+Supports two input modes:
+
+1. **Local sandbox** — separate voice-agent and CM log files::
+
+    .venv/bin/python sandboxes/conversation_manager/call_transcript.py \\
+        .logs_voice_agent.txt --cm-log .logs_conversation_sandbox.txt
+
+2. **Staging / GKE** — single combined pod log (both voice-agent and CM
+   lines interleaved, ``HH:MM:SS.mmm`` timestamps)::
+
+    .venv/bin/python sandboxes/conversation_manager/call_transcript.py \\
+        --staging-log staging_assistant_log_dump.txt
 
 Every assistant utterance is traced to its source path:
   - Path 1: fast_brain (reply)
   - Path 2: proactive_speech
   - Path 3: slow_brain / actor_notification
-
-Usage:
-    .venv/bin/python sandboxes/conversation_manager/call_transcript.py .logs_voice_agent.txt
-    .venv/bin/python sandboxes/conversation_manager/call_transcript.py .logs_voice_agent.txt --cm-log .logs_conversation_sandbox.txt
 """
 
 from __future__ import annotations
@@ -125,6 +134,8 @@ class SlowBrainRun:
     action: str
     dispatch_utc: str = ""
     llm_log_path: str = ""
+    was_queued: bool = False
+    preempted: bool = False
 
 
 @dataclass
@@ -138,6 +149,38 @@ class ProactiveSpeechDecision:
 
 
 @dataclass
+class DirectActionEntry:
+    """A single low-level action executed via /execute-actions (click, type, etc.)."""
+
+    rendered: str  # e.g. "⊙ click (460, 412)"
+    execution_ms: int
+
+
+@dataclass
+class DirectActionGroup:
+    """A group of direct actions from a single execute_code block."""
+
+    actions: list[DirectActionEntry] = field(default_factory=list)
+
+    @property
+    def total_ms(self) -> int:
+        return sum(a.execution_ms for a in self.actions)
+
+
+@dataclass
+class MagnitudeTrace:
+    """A parsed magnitude act_trace.json for a single desktop/web act() call."""
+
+    act_id: str
+    task: str
+    total_ms: int
+    iterations: int
+    reasoning: str
+    action_traces: list[dict]
+    lineage: list[str] = field(default_factory=list)
+
+
+@dataclass
 class ActorToolCall:
     """A tool call within the CodeActActor execution loop."""
 
@@ -148,6 +191,11 @@ class ActorToolCall:
     duration_s: float | None = None
     llm_log_path: str = ""
     detail: str = ""
+    code: str = ""
+    thought: str = ""
+    result_summary: str = ""
+    magnitude_trace: MagnitudeTrace | None = None
+    direct_actions: DirectActionGroup | None = None
 
 
 @dataclass
@@ -158,6 +206,7 @@ class ActorNotification:
     notification_type: str  # "started", "update", "completed"
     content: str
     generation_id: str = ""
+    magnitude_traces: list[MagnitudeTrace] = field(default_factory=list)
 
 
 @dataclass
@@ -256,11 +305,22 @@ _TS_FULL_RE = re.compile(r"^(\d{4}-\d{2}-\d{2})\s+(\d{2}:\d{2}:\d{2})[,.](\d{3})
 
 
 def _extract_log_date(lines: list[str]) -> str:
-    """Extract YYYY-MM-DD from the first standard-format log line."""
+    """Extract YYYY-MM-DD from the first standard-format log line.
+
+    Handles both local sandbox format (``2026-02-26 11:24:34,275 ...``)
+    and staging/GKE format where the date appears in the job header
+    (``Found job: unity-2026-03-09-...`` or ``Started : 2026-03-09T...``).
+    """
     for raw in lines[:100]:
         m = _TS_FULL_RE.match(raw)
         if m:
             return m.group(1)
+        dm = re.search(r"Started\s*:\s*(\d{4}-\d{2}-\d{2})T", raw)
+        if dm:
+            return dm.group(1)
+        dm = re.search(r"unity-(\d{4}-\d{2}-\d{2})-", raw)
+        if dm:
+            return dm.group(1)
     return "2026-01-01"
 
 
@@ -566,34 +626,311 @@ def parse_voice_log(path: Path) -> VoiceLogData:
 _CM_TS_RE = re.compile(r"^(\d{4}-\d{2}-\d{2})\s+(\d{2}:\d{2}:\d{2})\s")
 
 
-def _parse_cm_ts(line: str) -> str:
-    """Extract UTC timestamp from a CM log line like '2026-02-26 11:24:34 [DEBUG]...'"""
+def _parse_cm_ts(line: str, log_date: str = "") -> str:
+    """Extract UTC timestamp from a CM log line.
+
+    Handles local sandbox format (``2026-02-26 11:24:34,275 ...``) and
+    staging format (``13:33:46.662 ...``) when *log_date* is provided.
+    """
     m = _TS_FULL_RE.match(line)
     if m:
         return f"{m.group(1)}T{m.group(2)}.{m.group(3)}+00:00"
     m2 = _CM_TS_RE.match(line)
     if m2:
         return f"{m2.group(1)}T{m2.group(2)}.000+00:00"
+    if log_date:
+        tm = _TS_MILLIS_RE.match(line)
+        if tm:
+            return f"{log_date}T{tm.group(1)}+00:00"
     return ""
 
 
-def parse_cm_log(path: Path) -> CMLogData:
-    """Parse slow-brain decisions, guidance decisions, and actor events from the CM log."""
+def parse_magnitude_traces(magnitude_dir: Path) -> dict[str, MagnitudeTrace]:
+    """Load all act_trace.json files and index by execute_code exec_id from lineage.
+
+    Returns a dict mapping exec_id (e.g. "6801") to the corresponding trace.
+    """
+    traces: dict[str, MagnitudeTrace] = {}
+    acts_dir = magnitude_dir / "acts"
+    if not acts_dir.is_dir():
+        return traces
+    for trace_file in acts_dir.glob("*/act_trace.json"):
+        try:
+            raw = json.loads(trace_file.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            continue
+        lineage = raw.get("lineage", [])
+        exec_id = ""
+        for segment in lineage:
+            m = re.search(r"execute_code\((\w+)\)", segment)
+            if m:
+                exec_id = m.group(1)
+                break
+        trace = MagnitudeTrace(
+            act_id=raw.get("actId", ""),
+            task=raw.get("task", ""),
+            total_ms=raw.get("totalMs", 0),
+            iterations=raw.get("iterations", 0),
+            reasoning=raw.get("reasoning", ""),
+            action_traces=raw.get("actionTraces", []),
+            lineage=lineage,
+        )
+        if exec_id:
+            traces[exec_id] = trace
+        else:
+            traces[trace.act_id] = trace
+    return traces
+
+
+_EXEC_ACTIONS_START_RE = re.compile(
+    r"\[execute-actions\] Executing (\d+) direct action\(s\) for session (\S+)",
+)
+_EXEC_ACTIONS_DONE_RE = re.compile(
+    r"\[execute-actions\] (\d+) action\(s\) executed \[(\d+)ms\]",
+)
+
+
+def parse_agent_service_log(path: Path) -> list[DirectActionGroup]:
+    """Parse [execute-actions] blocks from the agent-service supervisor log.
+
+    Returns a list of DirectActionGroup in chronological order.
+    """
+    text = path.read_text(encoding="utf-8", errors="replace")
+    lines = text.splitlines()
+
+    groups: list[DirectActionGroup] = []
+    current_group: DirectActionGroup | None = None
+    pending_rendered: str = ""
+
+    for line in lines:
+        m_start = _EXEC_ACTIONS_START_RE.search(line)
+        if m_start:
+            if current_group is None:
+                current_group = DirectActionGroup()
+            pending_rendered = ""
+            continue
+
+        m_done = _EXEC_ACTIONS_DONE_RE.search(line)
+        if m_done and current_group is not None:
+            ms = int(m_done.group(2))
+            current_group.actions.append(
+                DirectActionEntry(rendered=pending_rendered.strip(), execution_ms=ms),
+            )
+            pending_rendered = ""
+            # Peek ahead: if the next non-blank line isn't another [execute-actions],
+            # close the group.
+            continue
+
+        # Between start and done, the line is the rendered action (e.g. "  ⊙ click ...")
+        if current_group is not None and not line.startswith("["):
+            stripped = line.strip()
+            if stripped:
+                pending_rendered = stripped
+            continue
+
+        # Any non-execute-actions line after a group means the group is done
+        if current_group is not None and current_group.actions:
+            groups.append(current_group)
+            current_group = None
+
+    if current_group is not None and current_group.actions:
+        groups.append(current_group)
+
+    return groups
+
+
+def _collect_json_block(lines: list[str], start_idx: int) -> tuple[str, int]:
+    """Collect a multi-line JSON block starting from lines[start_idx].
+
+    The opening ``{`` is expected on lines[start_idx] (possibly after a log prefix).
+    Returns (json_string, end_idx) where end_idx is the line AFTER the closing ``}``.
+    """
+    first_line = lines[start_idx]
+    brace_pos = first_line.find("{")
+    if brace_pos < 0:
+        return "", start_idx + 1
+    collected = [first_line[brace_pos:]]
+    depth = first_line[brace_pos:].count("{") - first_line[brace_pos:].count("}")
+    idx = start_idx + 1
+    while idx < len(lines) and depth > 0:
+        raw = lines[idx]
+        collected.append(raw)
+        depth += raw.count("{") - raw.count("}")
+        idx += 1
+    return "\n".join(collected), idx
+
+
+def _extract_code_from_assistant_msg(json_str: str) -> dict[str, tuple[str, str]]:
+    """Extract execute_code arguments from an assistant tool-call JSON.
+
+    Returns ``{call_id: (code, thought)}`` for each execute_code tool call.
+    """
+    try:
+        msg = json.loads(json_str, strict=False)
+    except json.JSONDecodeError:
+        return {}
+    results: dict[str, tuple[str, str]] = {}
+    for tc in msg.get("tool_calls") or []:
+        fn = tc.get("function", {})
+        if fn.get("name") != "execute_code":
+            continue
+        args = fn.get("arguments", {})
+        code = args.get("code", "")
+        if isinstance(code, str):
+            code = re.sub(r"^\s*```\w*\n?", "", code)
+            code = re.sub(r"\n?\s*```\s*$", "", code)
+            import textwrap
+
+            code = textwrap.dedent(code).strip()
+        thought = args.get("thought", "")
+        call_id = tc.get("id", "")
+        results[call_id] = (code, thought)
+    return results
+
+
+def _extract_result_from_tool_msg(json_str: str) -> str:
+    """Extract a concise result summary from a ToolCall Completed JSON block."""
+    try:
+        msg = json.loads(json_str, strict=False)
+    except json.JSONDecodeError:
+        return ""
+    content = msg.get("content")
+    if not isinstance(content, list):
+        return ""
+
+    error = ""
+    result_val = ""
+    stdout_parts: list[str] = []
+    has_image = False
+
+    for part in content:
+        if not isinstance(part, dict):
+            continue
+        if part.get("type") == "image_url":
+            has_image = True
+            continue
+        if part.get("type") != "text":
+            continue
+        inner_text = part.get("text", "")
+        try:
+            inner = json.loads(inner_text)
+            if inner.get("error"):
+                err = str(inner["error"])
+                last_line = err.strip().splitlines()[-1] if err.strip() else err
+                error = f"ERROR: {last_line[:200]}"
+            if inner.get("result"):
+                rv = str(inner["result"])
+                if "base64" in rv[:100] or (len(rv) > 200 and rv[:20].isalnum()):
+                    result_val = "(screenshot captured)"
+                else:
+                    result_val = rv[:300]
+            if inner.get("stdout"):
+                stdout_parts.append(inner["stdout"].strip())
+        except json.JSONDecodeError:
+            text = inner_text.strip()
+            if text.startswith("--- stdout ---"):
+                text = text[len("--- stdout ---") :].strip()
+            if text:
+                stdout_parts.append(text[:200])
+
+    if error:
+        return error
+    if result_val:
+        return result_val
+    stdout_combined = "\n".join(stdout_parts).strip()
+    if stdout_combined:
+        if "iVBOR" in stdout_combined:
+            idx = stdout_combined.index("iVBOR")
+            return stdout_combined[:idx] + "(image data)..."
+        if "data:image/" in stdout_combined:
+            idx = stdout_combined.index("data:image/")
+            return stdout_combined[:idx] + "(image data)..."
+        return stdout_combined[:300]
+    if has_image:
+        return "(screenshot captured)"
+    return "(ok)"
+
+
+def parse_cm_log(path: Path, *, log_date: str = "") -> CMLogData:
+    """Parse slow-brain decisions, guidance decisions, and actor events from the CM log.
+
+    Handles both local sandbox format and staging/GKE combined log format.
+    When *log_date* is provided, it is used for ``HH:MM:SS.mmm`` lines that
+    lack a date prefix.
+    """
     text = path.read_text(encoding="utf-8", errors="replace")
     lines = text.splitlines()
     data = CMLogData()
 
+    if not log_date:
+        log_date = _extract_log_date(lines)
+
+    def _ts(line: str) -> str:
+        return _parse_cm_ts(line, log_date)
+
     run_meta: dict[str, dict[str, str]] = {}
     sb_llm_paths: dict[str, str] = {}
 
-    for line in lines:
+    pending_code: dict[str, tuple[str, str]] = {}
+
+    # Staging slow-brain reconstruction: track pending CM LLM thinking
+    _staging_sb_counter = 0
+    _pending_sb: dict | None = None  # {ts_utc, origin_event, llm_log_path, was_queued}
+
+    def _flush_pending_sb(action: str = "act") -> None:
+        nonlocal _pending_sb, _staging_sb_counter
+        if _pending_sb is None:
+            return
+        _staging_sb_counter += 1
+        data.slow_brain_runs.append(
+            SlowBrainRun(
+                ts_utc=_pending_sb["ts_utc"],
+                run_id=f"llmrun-stg{_staging_sb_counter:04d}",
+                request_id="",
+                origin_event=_pending_sb["origin_event"],
+                origin_event_id="",
+                thoughts="",
+                action=action,
+                dispatch_utc=_pending_sb["ts_utc"],
+                llm_log_path=_pending_sb.get("llm_log_path", ""),
+                was_queued=_pending_sb.get("was_queued", False),
+            ),
+        )
+        _pending_sb = None
+
+    i = 0
+    while i < len(lines):
+        line = lines[i]
         # Slow-brain LLM log path: [ConversationManager] LLM thinking… (...) → /path
         if "[ConversationManager] LLM thinking" in line and "\u2192 " in line:
             path_part = line.split("\u2192 ", 1)[1].strip()
             origin_match = re.search(r"\(([^)]+)\)", line.split("LLM thinking", 1)[1])
             if origin_match:
-                origin_key = _parse_cm_ts(line)
+                origin_key = _ts(line)
                 sb_llm_paths[origin_key] = path_part
+
+            # Staging: reconstruct slow-brain runs from LLM thinking lines
+            if origin_match and "run_id=" not in line:
+                _flush_pending_sb()
+                raw_origin = origin_match.group(1)
+                was_queued = "from queue" in raw_origin
+                origin_event = raw_origin.replace(", from queue", "").strip()
+                _pending_sb = {
+                    "ts_utc": _ts(line),
+                    "origin_event": origin_event,
+                    "llm_log_path": path_part,
+                    "was_queued": was_queued,
+                }
+
+        # Staging: explicit wait decision
+        if "[ConversationManager] Decided to wait" in line:
+            _flush_pending_sb(action="wait")
+
+        # Staging: fast-path dispatch
+        if "[FastPath]" in line and "completed" not in line.lower():
+            fp_match = re.search(r"\[FastPath\]\s+(\w+):\s+(.*)", line)
+            if fp_match:
+                _flush_pending_sb(action=f"fast_path_{fp_match.group(1)}")
 
         # Slow-brain dispatch: captures origin metadata per run_id
         if "Dispatching slow-brain" in line and "run_id=" in line:
@@ -610,8 +947,15 @@ def parse_cm_log(path: Path) -> CMLogData:
                     "origin_event",
                     "dropped_requests",
                 ),
-                "dispatch_utc": _parse_cm_ts(line),
+                "dispatch_utc": _ts(line),
+                "cancel_running": "cancel_running=True" in line,
             }
+
+        # Slow-brain run started: captures was_queued per run_id
+        if "Slow-brain run started" in line and "run_id=" in line:
+            run_id = _extract_field(line, "run_id", "request_id")
+            if run_id in run_meta:
+                run_meta[run_id]["was_queued"] = "was_queued=True" in line
 
         # Slow-brain thought + action decision
         # Format: run_id=llmrun-NNNNN thoughts: <text> | actions: ['wait']
@@ -624,7 +968,7 @@ def parse_cm_log(path: Path) -> CMLogData:
             actions_raw = parts[1].strip() if len(parts) > 1 else "[]"
             actions_list = re.findall(r"'([^']*)'", actions_raw)
             action = actions_list[0] if actions_list else ""
-            ts = _parse_cm_ts(line)
+            ts = _ts(line)
             meta = run_meta.get(run_id, {})
             llm_path = sb_llm_paths.get(ts, "")
             data.slow_brain_runs.append(
@@ -638,6 +982,8 @@ def parse_cm_log(path: Path) -> CMLogData:
                     action=action,
                     dispatch_utc=meta.get("dispatch_utc", ""),
                     llm_log_path=llm_path,
+                    was_queued=bool(meta.get("was_queued")),
+                    preempted=bool(meta.get("cancel_running")),
                 ),
             )
 
@@ -646,7 +992,7 @@ def parse_cm_log(path: Path) -> CMLogData:
             content = line.split("Interject requested:", 1)[1].strip()
             data.steering_contents.append(
                 SteeringContent(
-                    ts_utc=_parse_cm_ts(line),
+                    ts_utc=_ts(line),
                     kind="interject",
                     content=content,
                 ),
@@ -656,8 +1002,19 @@ def parse_cm_log(path: Path) -> CMLogData:
             content = line.split("Ask requested:", 1)[1].strip()
             data.steering_contents.append(
                 SteeringContent(
-                    ts_utc=_parse_cm_ts(line),
+                    ts_utc=_ts(line),
                     kind="ask",
+                    content=content,
+                ),
+            )
+
+        # Staging: interjection received by actor (no separate "Interject requested" line)
+        elif "Interjection received:" in line and "CodeActActor.act(" in line:
+            content = line.split("Interjection received:", 1)[1].strip()
+            data.steering_contents.append(
+                SteeringContent(
+                    ts_utc=_ts(line),
+                    kind="interject",
                     content=content,
                 ),
             )
@@ -697,7 +1054,7 @@ def parse_cm_log(path: Path) -> CMLogData:
                 )
             data.proactive_decisions.append(
                 ProactiveSpeechDecision(
-                    ts_utc=_parse_cm_ts(line),
+                    ts_utc=_ts(line),
                     should_speak=should_speak,
                     delay_s=delay_s,
                     content=content,
@@ -711,7 +1068,7 @@ def parse_cm_log(path: Path) -> CMLogData:
             detail = line.split("] Request:", 1)[1].strip()
             data.actor_tool_calls.append(
                 ActorToolCall(
-                    ts_utc=_parse_cm_ts(line),
+                    ts_utc=_ts(line),
                     actor_id=actor_id,
                     event_type="request",
                     tool_name="",
@@ -728,7 +1085,7 @@ def parse_cm_log(path: Path) -> CMLogData:
                 llm_path = line.split("\u2192 ", 1)[1].strip()
             data.actor_tool_calls.append(
                 ActorToolCall(
-                    ts_utc=_parse_cm_ts(line),
+                    ts_utc=_ts(line),
                     actor_id=actor_id,
                     event_type="llm_thinking",
                     tool_name="",
@@ -747,12 +1104,20 @@ def parse_cm_log(path: Path) -> CMLogData:
             )
             data.actor_tool_calls.append(
                 ActorToolCall(
-                    ts_utc=_parse_cm_ts(line),
+                    ts_utc=_ts(line),
                     actor_id=actor_id,
                     event_type="tool_scheduled",
                     tool_name=tool_name,
                 ),
             )
+
+        # Actor assistant message with code: 🤖 [CodeActActor.act(XXXX)] {
+        elif "\U0001f916 [CodeActActor.act(" in line and "{" in line:
+            json_str, end_idx = _collect_json_block(lines, i)
+            code_by_call_id = _extract_code_from_assistant_msg(json_str)
+            pending_code.update(code_by_call_id)
+            i = end_idx
+            continue
 
         # Actor execute_code: 🛠️ [CodeActActor.act(XXXX)->execute_code(YYYY)] Executing code...
         elif "->execute_code(" in line and "Executing code" in line:
@@ -760,30 +1125,47 @@ def parse_cm_log(path: Path) -> CMLogData:
             actor_id = aid_match.group(1) if aid_match else ""
             exec_match = re.search(r"execute_code\((\w+)\)", line)
             exec_id = exec_match.group(1) if exec_match else ""
+            sched_match = re.search(
+                r"ToolCall Scheduled.*?execute_code - (\S+)",
+                lines[i - 1] if i > 0 else "",
+            )
+            call_id = sched_match.group(1) if sched_match else ""
+            code, thought = pending_code.pop(call_id, ("", ""))
             data.actor_tool_calls.append(
                 ActorToolCall(
-                    ts_utc=_parse_cm_ts(line),
+                    ts_utc=_ts(line),
                     actor_id=actor_id,
                     event_type="execute_code",
                     tool_name=f"execute_code({exec_id})",
+                    code=code,
+                    thought=thought,
                 ),
             )
 
-        # Actor tool completed: ✅  ToolCall Completed [Ns] [CodeActActor.act(XXXX)] ...
+        # Actor tool completed: ✅  ToolCall Completed [Ns] [CodeActActor.act(XXXX)] {
         elif "ToolCall Completed" in line and "CodeActActor.act(" in line:
             aid_match = re.search(r"CodeActActor\.act\((\w+)\)", line)
             actor_id = aid_match.group(1) if aid_match else ""
             dur_match = re.search(r"ToolCall Completed \[(\d+\.?\d*)s\]", line)
             duration = float(dur_match.group(1)) if dur_match else None
+            result_summary = ""
+            if "{" in line:
+                json_str, end_idx = _collect_json_block(lines, i)
+                result_summary = _extract_result_from_tool_msg(json_str)
+                i = end_idx
+            else:
+                i += 1
             data.actor_tool_calls.append(
                 ActorToolCall(
-                    ts_utc=_parse_cm_ts(line),
+                    ts_utc=_ts(line),
                     actor_id=actor_id,
                     event_type="tool_completed",
                     tool_name="",
                     duration_s=duration,
+                    result_summary=result_summary,
                 ),
             )
+            continue
 
         # Actor persist wait: ⏸️ [CodeActActor.act(XXXX)] Persist mode: waiting...
         elif "Persist mode:" in line and "CodeActActor.act(" in line:
@@ -791,7 +1173,7 @@ def parse_cm_log(path: Path) -> CMLogData:
             actor_id = aid_match.group(1) if aid_match else ""
             data.actor_tool_calls.append(
                 ActorToolCall(
-                    ts_utc=_parse_cm_ts(line),
+                    ts_utc=_ts(line),
                     actor_id=actor_id,
                     event_type="persist_wait",
                     tool_name="",
@@ -805,13 +1187,37 @@ def parse_cm_log(path: Path) -> CMLogData:
             detail = line.split("] Request:", 1)[1].strip()
             data.actor_tool_calls.append(
                 ActorToolCall(
-                    ts_utc=_parse_cm_ts(line),
+                    ts_utc=_ts(line),
                     actor_id=actor_id,
                     event_type="storage_check",
                     tool_name="StorageCheck",
                     detail=detail,
                 ),
             )
+
+        i += 1
+
+    _flush_pending_sb()
+
+    # Merge tool_completed results back into their preceding execute_code entries.
+    last_exec: ActorToolCall | None = None
+    merged_completed_indices: set[int] = set()
+    for idx_atc, atc in enumerate(data.actor_tool_calls):
+        if atc.event_type == "execute_code":
+            last_exec = atc
+        elif atc.event_type == "tool_completed" and last_exec is not None:
+            last_exec.duration_s = atc.duration_s
+            last_exec.result_summary = atc.result_summary
+            merged_completed_indices.add(idx_atc)
+            last_exec = None
+        elif atc.event_type not in ("llm_thinking",):
+            last_exec = None
+    if merged_completed_indices:
+        data.actor_tool_calls = [
+            atc
+            for idx_atc, atc in enumerate(data.actor_tool_calls)
+            if idx_atc not in merged_completed_indices
+        ]
 
     return data
 
@@ -1185,6 +1591,14 @@ def _format_slow_brain(
         if an:
             origin_content = an.content
 
+    queue_tag = ""
+    if sb.preempted and sb.was_queued:
+        queue_tag = " [preempted previous, queued]"
+    elif sb.preempted:
+        queue_tag = " [preempted previous]"
+    elif sb.was_queued:
+        queue_tag = " [queued]"
+
     if is_wait:
         thought_preview = ""
         if sb.thoughts:
@@ -1196,13 +1610,13 @@ def _format_slow_brain(
             f"  \u00b7 {_short_utc(sb.ts_utc)} "
             f"SLOW BRAIN [{sb.run_id}] "
             f"\u2190 {sb.origin_event} "
-            f"\u2192 wait{thought_preview}",
+            f"\u2192 wait{queue_tag}{thought_preview}",
         )
     else:
         parts.append(
             f"  \u25c6 {_short_utc(sb.ts_utc)} "
             f"SLOW BRAIN [{sb.run_id}] "
-            f"\u2190 {sb.origin_event}",
+            f"\u2190 {sb.origin_event}{queue_tag}",
         )
         if sb.thoughts:
             text = sb.thoughts
@@ -1253,6 +1667,8 @@ def _format_actor_notification(
     parts.append(f"    {content}")
     if an.generation_id:
         parts.append(f"    \u2192 triggered fast brain {an.generation_id}")
+    for mt in an.magnitude_traces:
+        parts.extend(_format_magnitude_trace(mt, verbose=verbose))
     return parts
 
 
@@ -1276,6 +1692,50 @@ def _format_proactive_decision(
     ]
 
 
+def _format_direct_actions(dag: DirectActionGroup) -> list[str]:
+    """Render an inline direct-actions block under an execute_code entry."""
+    total_s = dag.total_ms / 1000.0
+    parts = [
+        f"      \u250c\u2500 DIRECT ACTIONS: {len(dag.actions)} actions [{total_s:.1f}s]",
+    ]
+    for a in dag.actions:
+        parts.append(f"      \u2502   {a.rendered:40s} [{a.execution_ms}ms]")
+    parts.append(f"      \u2514\u2500 done")
+    return parts
+
+
+def _format_magnitude_trace(mt: MagnitudeTrace, *, verbose: bool = False) -> list[str]:
+    """Render an inline magnitude trace block under an execute_code entry."""
+    task_preview = mt.task if verbose or len(mt.task) <= 80 else mt.task[:77] + "..."
+    total_s = mt.total_ms / 1000.0
+    header = (
+        f'      \u250c\u2500 MAGNITUDE: "{task_preview}" '
+        f"[{total_s:.1f}s, {mt.iterations} iter, {len(mt.action_traces)} actions]"
+    )
+    parts = [header]
+
+    reasoning_steps = [s.strip() for s in mt.reasoning.split("\n---\n") if s.strip()]
+    reasoning_by_iter: dict[int, str] = {}
+    for i, step in enumerate(reasoning_steps):
+        reasoning_by_iter[i] = step
+
+    last_iter = -1
+    for a in mt.action_traces:
+        iteration = a.get("iteration", 0)
+        if iteration != last_iter and iteration in reasoning_by_iter:
+            thought = reasoning_by_iter[iteration]
+            if not verbose and len(thought) > 150:
+                thought = thought[:147] + "..."
+            parts.append(f"      \u2502 \U0001f4ad {thought}")
+            last_iter = iteration
+        rendered = a.get("rendered", a.get("variant", "?"))
+        ms = a.get("executionMs", 0)
+        parts.append(f"      \u2502   {rendered:40s} [{ms}ms]")
+
+    parts.append(f"      \u2514\u2500 done")
+    return parts
+
+
 def _format_actor_tool_call(
     atc: ActorToolCall,
     *,
@@ -1292,14 +1752,59 @@ def _format_actor_tool_call(
         suffix = f" \u2192 {atc.llm_log_path}" if atc.llm_log_path else ""
         return [f"  \U0001f9e0 {ts} ACTOR [{atc.actor_id}] LLM thinking{suffix}"]
     elif atc.event_type == "tool_scheduled":
+        if atc.tool_name.startswith("execute_code"):
+            return []
         return [
             f"  \U0001f6e0\ufe0f  {ts} ACTOR [{atc.actor_id}] Tool: {atc.tool_name}",
         ]
     elif atc.event_type == "execute_code":
-        return [f"  \U0001f4bb {ts} ACTOR [{atc.actor_id}] {atc.tool_name}"]
+        dur = f" [{atc.duration_s:.1f}s]" if atc.duration_s is not None else ""
+        result_tag = ""
+        if atc.result_summary:
+            if atc.result_summary.startswith("ERROR:"):
+                result_tag = f"  \u274c {atc.result_summary}"
+            else:
+                result_tag = (
+                    f"  \u2192 {atc.result_summary}"
+                    if atc.result_summary != "(ok)"
+                    else ""
+                )
+        parts = [
+            f"  \U0001f4bb {ts} ACTOR [{atc.actor_id}] {atc.tool_name}{dur}{result_tag}",
+        ]
+        if atc.thought:
+            thought_preview = atc.thought
+            if not verbose and len(thought_preview) > 200:
+                thought_preview = thought_preview[:197] + "..."
+            parts.append(f"      \U0001f4ad {thought_preview}")
+        if atc.code:
+            code_preview = atc.code
+            if not verbose:
+                code_lines = code_preview.splitlines()
+                if len(code_lines) > 5:
+                    code_preview = "\n".join(code_lines[:5]) + "\n..."
+            for cl in code_preview.splitlines():
+                parts.append(
+                    (
+                        f"      code: {cl}"
+                        if parts[-1].endswith(result_tag or dur or atc.tool_name)
+                        else f"            {cl}"
+                    ),
+                )
+        if atc.magnitude_trace:
+            parts.extend(_format_magnitude_trace(atc.magnitude_trace, verbose=verbose))
+        if atc.direct_actions and atc.direct_actions.actions:
+            parts.extend(_format_direct_actions(atc.direct_actions))
+        return parts
     elif atc.event_type == "tool_completed":
         dur = f" [{atc.duration_s:.1f}s]" if atc.duration_s is not None else ""
-        return [f"  \u2705 {ts} ACTOR [{atc.actor_id}] Tool completed{dur}"]
+        line = f"  \u2705 {ts} ACTOR [{atc.actor_id}] Tool completed{dur}"
+        if atc.result_summary:
+            preview = atc.result_summary
+            if not verbose and len(preview) > 120:
+                preview = preview[:117] + "..."
+            line += f"  \u2192 {preview}"
+        return [line]
     elif atc.event_type == "persist_wait":
         return [
             f"  \u23f8\ufe0f  {ts} ACTOR [{atc.actor_id}] Persist mode \u2014 waiting for interjection",
@@ -1401,9 +1906,15 @@ def format_timeline(timeline: Timeline, *, verbose: bool = False) -> str:
             llm_count = sum(
                 1 for a in timeline.actor_tool_calls if a.event_type == "llm_thinking"
             )
+            mag_count = sum(
+                1
+                for a in timeline.actor_tool_calls
+                if a.event_type == "execute_code" and a.magnitude_trace
+            )
+            mag_suffix = f", {mag_count} magnitude acts" if mag_count else ""
             parts.append(
                 f"Actor internals: {llm_count} LLM calls, "
-                f"{exec_count} code executions",
+                f"{exec_count} code executions{mag_suffix}",
             )
         if timeline.proactive_decisions:
             speak = sum(1 for p in timeline.proactive_decisions if p.should_speak)
@@ -1718,6 +2229,91 @@ def _format_interleaved_transcript(
 # ─────────────────────────────────────────────────────────────────────────────
 
 
+def collect_magnitude_traces_from_docker(
+    container_name: str = "unity-desktop-sandbox",
+    remote_dir: str = "/var/log/magnitude",
+) -> tuple[dict[str, MagnitudeTrace], Path | None, Path | None]:
+    """Copy magnitude traces and agent-service log from a running Docker container.
+
+    Returns (traces_dict, local_dir, agent_service_log_path).
+    """
+    import subprocess
+    import tempfile
+
+    try:
+        result = subprocess.run(
+            ["docker", "inspect", "--format", "{{.State.Running}}", container_name],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        if result.returncode != 0 or "true" not in result.stdout.lower():
+            return {}, None, None
+    except Exception:
+        return {}, None, None
+
+    local_dir = Path(tempfile.mkdtemp(prefix="mag_traces_"))
+    try:
+        subprocess.run(
+            [
+                "docker",
+                "cp",
+                f"{container_name}:{remote_dir}/acts",
+                str(local_dir / "acts"),
+            ],
+            capture_output=True,
+            timeout=30,
+        )
+    except Exception:
+        pass
+
+    agent_log_path = local_dir / "agent-service.log"
+    try:
+        subprocess.run(
+            [
+                "docker",
+                "cp",
+                f"{container_name}:/var/log/supervisor/agent-service.log",
+                str(agent_log_path),
+            ],
+            capture_output=True,
+            timeout=30,
+        )
+    except Exception:
+        agent_log_path = None
+
+    traces: dict[str, MagnitudeTrace] = {}
+    if (local_dir / "acts").is_dir():
+        traces = parse_magnitude_traces(local_dir)
+
+    if agent_log_path and not agent_log_path.exists():
+        agent_log_path = None
+
+    return traces, local_dir, agent_log_path
+
+
+def _attach_unmatched_magnitude_traces(
+    actor_notifications: list[ActorNotification],
+    unmatched: list[MagnitudeTrace],
+) -> None:
+    """Attach fast-path magnitude traces to web_act/desktop_act ACTOR STARTED notifications by task match."""
+    started_notifs = [
+        n
+        for n in actor_notifications
+        if n.notification_type == "started"
+        and ("web_act" in n.content or "desktop_act" in n.content)
+    ]
+    for trace in unmatched:
+        task_lower = trace.task.lower()
+        for notif in started_notifs:
+            if (
+                task_lower in notif.content.lower()
+                or notif.content.lower().find(task_lower[:30]) >= 0
+            ):
+                notif.magnitude_traces.append(trace)
+                break
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="Build a source-traced call transcript from sandbox voice logs.",
@@ -1725,6 +2321,8 @@ def main() -> None:
     parser.add_argument(
         "voice_log",
         type=Path,
+        nargs="?",
+        default=None,
         help="Path to .logs_voice_agent.txt",
     )
     parser.add_argument(
@@ -1734,10 +2332,32 @@ def main() -> None:
         help="Path to .logs_conversation_sandbox.txt (optional, for CM cross-reference)",
     )
     parser.add_argument(
+        "--staging-log",
+        type=Path,
+        default=None,
+        help=(
+            "Path to a combined staging/GKE log file. When provided, both "
+            "voice-agent and CM data are extracted from this single file "
+            "(replaces voice_log and --cm-log)."
+        ),
+    )
+    parser.add_argument(
         "--verbose",
         "-v",
         action="store_true",
         help="Show full text for long utterances (default truncates at 300 chars)",
+    )
+    parser.add_argument(
+        "--magnitude-dir",
+        type=Path,
+        default=None,
+        help="Path to magnitude log directory (contains acts/ with act_trace.json files)",
+    )
+    parser.add_argument(
+        "--agent-service-log",
+        type=Path,
+        default=None,
+        help="Path to agent-service supervisor log (for direct-action traces)",
     )
     parser.add_argument(
         "--json",
@@ -1747,19 +2367,143 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    if not args.voice_log.exists():
-        print(f"Error: voice log not found: {args.voice_log}", file=sys.stderr)
-        sys.exit(1)
+    if args.staging_log:
+        if not args.staging_log.exists():
+            print(
+                f"Error: staging log not found: {args.staging_log}",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        log_path = args.staging_log
+    elif args.voice_log:
+        if not args.voice_log.exists():
+            print(
+                f"Error: voice log not found: {args.voice_log}",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        log_path = args.voice_log
+    else:
+        parser.error("Either voice_log or --staging-log is required")
 
-    data = parse_voice_log(args.voice_log)
+    data = parse_voice_log(log_path)
 
     if not data.utterances:
         print("No utterances found in voice log.", file=sys.stderr)
         sys.exit(1)
 
     cm_data: CMLogData | None = None
-    if args.cm_log and args.cm_log.exists():
+    if args.staging_log:
+        cm_data = parse_cm_log(args.staging_log)
+    elif args.cm_log and args.cm_log.exists():
         cm_data = parse_cm_log(args.cm_log)
+
+    # Auto-detect magnitude traces from staging log mirror directory.
+    # stream_logs.py prints "Mirroring container logs → <path>" and syncs
+    # /var/log/magnitude from the GKE container to <path>/magnitude/.
+    mag_dir: Path | None = args.magnitude_dir
+    agent_svc_log: Path | None = args.agent_service_log
+    if args.staging_log and (not mag_dir or not agent_svc_log):
+        staging_text = args.staging_log.read_text(
+            encoding="utf-8",
+            errors="replace",
+        )
+        mirror_match = re.search(
+            r"Mirroring container logs\s*→\s*(\S+)",
+            staging_text[:3000],
+        )
+        if mirror_match:
+            mirror_root = Path(mirror_match.group(1))
+            if not mag_dir:
+                candidate = mirror_root / "magnitude"
+                if candidate.is_dir():
+                    mag_dir = candidate
+                    print(
+                        f"Auto-detected magnitude traces: {candidate}",
+                        file=sys.stderr,
+                    )
+            if not agent_svc_log:
+                candidate = mirror_root / "agent-service.log"
+                if candidate.is_file():
+                    agent_svc_log = candidate
+                    print(
+                        f"Auto-detected agent-service log: {candidate}",
+                        file=sys.stderr,
+                    )
+        if not mag_dir and args.staging_log:
+            print(
+                "Hint: magnitude traces not found. Run stream_logs.py until "
+                "it completes the full sync (Ctrl+C), then re-run this script.",
+                file=sys.stderr,
+            )
+
+    docker_tmp_dir: Path | None = None
+    if not mag_dir and not args.staging_log:
+        docker_traces, docker_tmp_dir, docker_agent_log = (
+            collect_magnitude_traces_from_docker()
+        )
+        if docker_traces:
+            mag_dir = docker_tmp_dir
+            print(
+                f"Auto-detected magnitude traces from Docker container "
+                f"({len(docker_traces)} acts)",
+                file=sys.stderr,
+            )
+        if docker_agent_log and not agent_svc_log:
+            agent_svc_log = docker_agent_log
+            print(
+                f"Auto-detected agent-service log from Docker container",
+                file=sys.stderr,
+            )
+
+    mag_traces: dict[str, MagnitudeTrace] = {}
+    if mag_dir:
+        mag_traces = parse_magnitude_traces(mag_dir)
+        if cm_data and mag_traces:
+            matched_ids: set[str] = set()
+            for atc in cm_data.actor_tool_calls:
+                if atc.event_type != "execute_code":
+                    continue
+                exec_match = re.search(r"execute_code\((\w+)\)", atc.tool_name)
+                if exec_match:
+                    exec_id = exec_match.group(1)
+                    if exec_id in mag_traces:
+                        atc.magnitude_trace = mag_traces[exec_id]
+                        matched_ids.add(exec_id)
+            unmatched = [
+                t
+                for k, t in mag_traces.items()
+                if k not in matched_ids and not t.lineage
+            ]
+            if unmatched:
+                _attach_unmatched_magnitude_traces(
+                    data.actor_notifications,
+                    unmatched,
+                )
+
+    if agent_svc_log and agent_svc_log.exists() and cm_data:
+        direct_groups = parse_agent_service_log(agent_svc_log)
+        if direct_groups:
+            exec_codes = [
+                atc
+                for atc in cm_data.actor_tool_calls
+                if atc.event_type == "execute_code"
+                and not atc.magnitude_trace
+                and atc.result_summary not in ("",)
+                and not (atc.result_summary or "").startswith("ERROR:")
+            ]
+            group_idx = 0
+            for atc in exec_codes:
+                if group_idx >= len(direct_groups):
+                    break
+                if atc.code and (
+                    "session.click" in atc.code
+                    or "session.type_text" in atc.code
+                    or "session.scroll" in atc.code
+                    or "session.drag" in atc.code
+                ):
+                    atc.direct_actions = direct_groups[group_idx]
+                    group_idx += 1
 
     timeline = build_timeline(data, cm_data)
 
@@ -1793,9 +2537,20 @@ def main() -> None:
                 for e in timeline.entries
             ],
         }
-        print(json.dumps(summary, indent=2))
+        output = json.dumps(summary, indent=2)
     else:
-        print(format_timeline(timeline, verbose=args.verbose))
+        output = format_timeline(timeline, verbose=args.verbose)
+
+    print(output)
+
+    input_path = args.staging_log or args.voice_log
+    if input_path:
+        stem = input_path.stem
+        out_path = input_path.with_name(
+            f"{stem}_parsed_transcript{'.json' if args.json_only else '.txt'}",
+        )
+        out_path.write_text(output, encoding="utf-8")
+        print(f"Wrote transcript to {out_path}", file=sys.stderr)
 
 
 if __name__ == "__main__":

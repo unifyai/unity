@@ -98,14 +98,14 @@ class TestTTSAssistantClass:
         assistant = Assistant(
             contact=boss_contact,
             boss=boss_contact,
-            channel="phone",
+            channel="phone_call",
             instructions="Test instructions",
             outbound=False,
         )
 
         assert assistant.contact == boss_contact
         assert assistant.boss == boss_contact
-        assert assistant.channel == "phone"
+        assert assistant.channel == "phone_call"
         assert assistant.call_received is True  # inbound call, already received
 
     def test_assistant_initialization_unify_meet_channel(self, boss_contact):
@@ -115,12 +115,12 @@ class TestTTSAssistantClass:
         assistant = Assistant(
             contact=boss_contact,
             boss=boss_contact,
-            channel="meet",
+            channel="unify_meet",
             instructions="Test instructions",
             outbound=False,
         )
 
-        assert assistant.channel == "meet"
+        assert assistant.channel == "unify_meet"
         assert assistant.call_received is True
 
     def test_assistant_outbound_call_not_received_initially(self, boss_contact):
@@ -130,7 +130,7 @@ class TestTTSAssistantClass:
         assistant = Assistant(
             contact=boss_contact,
             boss=boss_contact,
-            channel="phone",
+            channel="phone_call",
             instructions="Test instructions",
             outbound=True,
         )
@@ -144,7 +144,7 @@ class TestTTSAssistantClass:
         assistant = Assistant(
             contact=boss_contact,
             boss=boss_contact,
-            channel="phone",
+            channel="phone_call",
             instructions="Test instructions",
             outbound=True,
         )
@@ -161,7 +161,7 @@ class TestTTSAssistantClass:
         assistant = Assistant(
             contact=boss_contact,
             boss=boss_contact,
-            channel="phone",
+            channel="phone_call",
             instructions="Test instructions",
         )
 
@@ -175,7 +175,7 @@ class TestTTSAssistantClass:
         assistant = Assistant(
             contact=boss_contact,
             boss=boss_contact,
-            channel="meet",
+            channel="unify_meet",
             instructions="Test instructions",
         )
 
@@ -189,7 +189,7 @@ class TestTTSAssistantClass:
         assistant = Assistant(
             contact=boss_contact,
             boss=boss_contact,
-            channel="phone",
+            channel="phone_call",
             instructions="Test instructions",
         )
 
@@ -203,7 +203,7 @@ class TestTTSAssistantClass:
         assistant = Assistant(
             contact=boss_contact,
             boss=boss_contact,
-            channel="meet",
+            channel="unify_meet",
             instructions="Test instructions",
         )
 
@@ -277,7 +277,7 @@ class TestEventPublishingHelpers:
         async with event_broker.pubsub() as pubsub:
             await pubsub.subscribe("app:comms:phone_call_started")
 
-            await common.publish_call_started(boss_contact, "phone")
+            await common.publish_call_started(boss_contact, "phone_call")
 
             msg = await pubsub.get_message(
                 timeout=2.0,
@@ -301,9 +301,9 @@ class TestEventPublishingHelpers:
         monkeypatch.setattr(common, "event_broker", event_broker)
 
         async with event_broker.pubsub() as pubsub:
-            await pubsub.subscribe("app:comms:meet_call_started")
+            await pubsub.subscribe("app:comms:unify_meet_started")
 
-            await common.publish_call_started(boss_contact, "meet")
+            await common.publish_call_started(boss_contact, "unify_meet")
 
             msg = await pubsub.get_message(
                 timeout=2.0,
@@ -329,7 +329,7 @@ class TestEventPublishingHelpers:
         async with event_broker.pubsub() as pubsub:
             await pubsub.subscribe("app:comms:phone_call_ended")
 
-            await common.publish_call_ended(boss_contact, "phone")
+            await common.publish_call_ended(boss_contact, "phone_call")
 
             msg = await pubsub.get_message(
                 timeout=2.0,
@@ -353,9 +353,9 @@ class TestEventPublishingHelpers:
         monkeypatch.setattr(common, "event_broker", event_broker)
 
         async with event_broker.pubsub() as pubsub:
-            await pubsub.subscribe("app:comms:meet_call_ended")
+            await pubsub.subscribe("app:comms:unify_meet_ended")
 
-            await common.publish_call_ended(boss_contact, "meet")
+            await common.publish_call_ended(boss_contact, "unify_meet")
 
             msg = await pubsub.get_message(
                 timeout=2.0,
@@ -393,7 +393,7 @@ class TestEndCallHelper:
         # Patch the event_broker in common module to use our test fixture
         monkeypatch.setattr(common, "event_broker", event_broker)
 
-        end_call = common.create_end_call(boss_contact, "phone")
+        end_call = common.create_end_call(boss_contact, "phone_call")
 
         async with event_broker.pubsub() as pubsub:
             await pubsub.subscribe("app:comms:phone_call_ended")
@@ -426,7 +426,7 @@ class TestEndCallHelper:
 
         end_call = common.create_end_call(
             boss_contact,
-            "phone",
+            "phone_call",
             pre_shutdown_callback=pre_shutdown,
         )
 
@@ -453,7 +453,7 @@ class TestEndCallHelper:
 
         end_call = common.create_end_call(
             boss_contact,
-            "phone",
+            "phone_call",
             pre_shutdown_callback=failing_callback,
         )
 
@@ -514,7 +514,7 @@ class TestCLIArgumentParsing:
                 "elevenlabs",
                 "voice123",
                 "True",
-                "phone",
+                "phone_call",
                 contact_json,
                 boss_json,
                 "Test assistant bio",
@@ -537,7 +537,7 @@ class TestCLIArgumentParsing:
         assert SESSION_DETAILS.voice.provider == "elevenlabs"
         assert SESSION_DETAILS.voice.id == "voice123"
         assert SESSION_DETAILS.voice_call.outbound is True
-        assert SESSION_DETAILS.voice_call.channel == "phone"
+        assert SESSION_DETAILS.voice_call.channel == "phone_call"
 
     def test_configure_from_cli_meet_room_name(self, monkeypatch):
         """configure_from_cli returns the canonical room name for UnifyMeet calls."""
@@ -561,7 +561,7 @@ class TestCLIArgumentParsing:
                 "cartesia",
                 "voice456",
                 "False",
-                "meet",
+                "unify_meet",
                 contact_json,
                 boss_json,
                 "Bio",
@@ -602,7 +602,7 @@ class TestCLIArgumentParsing:
                 "None",  # Voice provider as "None" string
                 "None",  # Voice ID as "None" string
                 "False",
-                "phone",
+                "phone_call",
                 contact_json,
                 boss_json,
                 "Bio",
@@ -838,8 +838,13 @@ class TestFastBrainGuidanceFlow:
 
                 return _done().__await__()
 
+        class _FakeLocalParticipant:
+            async def publish_data(self, *args, **kwargs):
+                pass
+
         class _FakeRoom:
             name = "fake-room"
+            local_participant = _FakeLocalParticipant()
 
             def on(self, *args, **kwargs):
                 return lambda fn: fn
@@ -922,7 +927,7 @@ class TestFastBrainGuidanceFlow:
             voice=SimpleNamespace(provider="cartesia", id=""),
             voice_call=SimpleNamespace(
                 outbound=False,
-                channel="meet",
+                channel="unify_meet",
                 contact_json=json.dumps(contact),
                 boss_json=json.dumps(boss),
             ),
@@ -966,9 +971,22 @@ class TestFastBrainGuidanceFlow:
         monkeypatch.setattr(call_script, "STT", object())
         monkeypatch.setattr(call_script, "VAD", object())
 
+        import unity.common.llm_client as _llm_mod
+
+        class _FakeGreetingClient:
+            async def generate(self, **kwargs):
+                return "Hello!"
+
+        monkeypatch.setattr(
+            _llm_mod,
+            "new_llm_client",
+            lambda *a, **kw: _FakeGreetingClient(),
+        )
+
         await call_script.entrypoint(_FakeJobContext())
 
         session = fake_session_holder["session"]
+        session.say_calls.clear()
 
         # Send notify-only guidance (should_speak=False, no response_text)
         guidance_cb = fake_broker.callbacks["app:call:notification"]
@@ -1032,8 +1050,13 @@ class TestFastBrainGuidanceFlow:
 
                 return _done().__await__()
 
+        class _FakeLocalParticipant:
+            async def publish_data(self, *args, **kwargs):
+                pass
+
         class _FakeRoom:
             name = "fake-room"
+            local_participant = _FakeLocalParticipant()
 
             def on(self, *args, **kwargs):
                 return lambda fn: fn
@@ -1116,7 +1139,7 @@ class TestFastBrainGuidanceFlow:
             voice=SimpleNamespace(provider="cartesia", id=""),
             voice_call=SimpleNamespace(
                 outbound=False,
-                channel="meet",
+                channel="unify_meet",
                 contact_json=json.dumps(contact),
                 boss_json=json.dumps(boss),
             ),
@@ -1160,9 +1183,22 @@ class TestFastBrainGuidanceFlow:
         monkeypatch.setattr(call_script, "STT", object())
         monkeypatch.setattr(call_script, "VAD", object())
 
+        import unity.common.llm_client as _llm_mod
+
+        class _FakeGreetingClient:
+            async def generate(self, **kwargs):
+                return "Hello!"
+
+        monkeypatch.setattr(
+            _llm_mod,
+            "new_llm_client",
+            lambda *a, **kw: _FakeGreetingClient(),
+        )
+
         await call_script.entrypoint(_FakeJobContext())
 
         session = fake_session_holder["session"]
+        session.say_calls.clear()
         assistant = session.current_agent
 
         # User is speaking — guidance will be queued but not spoken yet
@@ -1316,8 +1352,13 @@ class TestFastBrainGuidanceFlow:
 
                 return _done().__await__()
 
+        class _FakeLocalParticipant:
+            async def publish_data(self, *args, **kwargs):
+                pass
+
         class _FakeRoom:
             name = "fake-room"
+            local_participant = _FakeLocalParticipant()
 
             def on(self, *args, **kwargs):
                 return lambda fn: fn
@@ -1400,7 +1441,7 @@ class TestFastBrainGuidanceFlow:
             voice=SimpleNamespace(provider="cartesia", id=""),
             voice_call=SimpleNamespace(
                 outbound=False,
-                channel="meet",
+                channel="unify_meet",
                 contact_json=json.dumps(contact),
                 boss_json=json.dumps(boss),
             ),
@@ -1444,9 +1485,22 @@ class TestFastBrainGuidanceFlow:
         monkeypatch.setattr(call_script, "STT", object())
         monkeypatch.setattr(call_script, "VAD", object())
 
+        import unity.common.llm_client as _llm_mod
+
+        class _FakeGreetingClient:
+            async def generate(self, **kwargs):
+                return "Hello!"
+
+        monkeypatch.setattr(
+            _llm_mod,
+            "new_llm_client",
+            lambda *a, **kw: _FakeGreetingClient(),
+        )
+
         await call_script.entrypoint(_FakeJobContext())
 
         session = fake_session_holder["session"]
+        session.say_calls.clear()
         guidance_cb = fake_broker.callbacks["app:call:notification"]
         agent_state_cb = session._events["agent_state_changed"]
 
@@ -1512,8 +1566,13 @@ class TestFastBrainGuidanceFlow:
 
                 return _done().__await__()
 
+        class _FakeLocalParticipant:
+            async def publish_data(self, *args, **kwargs):
+                pass
+
         class _FakeRoom:
             name = "fake-room"
+            local_participant = _FakeLocalParticipant()
 
             def on(self, *args, **kwargs):
                 return lambda fn: fn
@@ -1596,7 +1655,7 @@ class TestFastBrainGuidanceFlow:
             voice=SimpleNamespace(provider="cartesia", id=""),
             voice_call=SimpleNamespace(
                 outbound=False,
-                channel="meet",
+                channel="unify_meet",
                 contact_json=json.dumps(contact),
                 boss_json=json.dumps(boss),
             ),
@@ -1640,9 +1699,22 @@ class TestFastBrainGuidanceFlow:
         monkeypatch.setattr(call_script, "STT", object())
         monkeypatch.setattr(call_script, "VAD", object())
 
+        import unity.common.llm_client as _llm_mod
+
+        class _FakeGreetingClient:
+            async def generate(self, **kwargs):
+                return "Hello!"
+
+        monkeypatch.setattr(
+            _llm_mod,
+            "new_llm_client",
+            lambda *a, **kw: _FakeGreetingClient(),
+        )
+
         await call_script.entrypoint(_FakeJobContext())
 
         session = fake_session_holder["session"]
+        session.say_calls.clear()
         guidance_cb = fake_broker.callbacks["app:call:notification"]
         agent_state_cb = session._events["agent_state_changed"]
 

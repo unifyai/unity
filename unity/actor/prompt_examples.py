@@ -129,30 +129,35 @@ def get_handle_mode_selection_example() -> str:
 #       print(result)
 #   ''')
 #   ^^^ This consumes the handle inside the code block. The outer loop
-#       loses steering and query access. Use execute_function instead.
+#       loses steering and query access. Use send_notification + execute_function instead.
+#
+# CORRECT — notification alongside execute_function (JSON tool calls):
+#   send_notification(message="Looking up contacts in Berlin...")
+#   execute_function(function_name="primitives.contacts.ask", call_kwargs={"text": "Find contacts in Berlin"})
+#
+# CORRECT — completion notification after work is done:
+#   send_notification(message="Done — found 3 contacts in Berlin.", completed=True)
 #
 # CORRECT — genuine multi-step composition requires execute_code:
 async def cross_reference_contacts_and_transcripts(city: str) -> str:
     notify({
-        "type": "progress",
-        "message": f"Step 1: Fetching contacts in {city}.",
-        "step": 1,
-        "total": 2
+        "message": f"Step 1/2: Fetching contacts in {city}.",
     })
     contacts_handle = await primitives.contacts.ask(f"List contacts in {city}.")
     contacts = await contacts_handle.result()
 
     notify({
-        "type": "progress",
-        "message": "Step 2: Summarizing recent interactions for those contacts.",
-        "step": 2,
-        "total": 2
+        "message": "Step 2/2: Summarizing recent interactions for those contacts.",
     })
     transcript_handle = await primitives.transcripts.ask(
         f"Summarize recent interactions for contacts in {city}."
     )
     summary = await transcript_handle.result()
 
+    notify({
+        "message": f"Done — cross-referenced contacts and interactions for {city}.",
+        "completed": True,
+    })
     return f"Contacts: {contacts}\\nInteractions: {summary}"
 """
 
@@ -177,11 +182,13 @@ def get_notify_web_search_example() -> str:
     return """
 # Example: Single web search → execute_function (NOT execute_code)
 #
-# CORRECT (JSON tool call):
+# CORRECT (JSON tool calls — send_notification before execute_function):
+#   send_notification(message="Searching the web for weather in Berlin...")
 #   execute_function(function_name="primitives.web.ask",
 #                    call_kwargs={"text": "What is the weather in Berlin today?"})
+#   send_notification(message="Done — found the current weather for Berlin.", completed=True)
 #
-# WRONG — wrapping a single web.ask in execute_code:
+# WRONG — wrapping a single web.ask in execute_code just to add notify():
 #   execute_code(code='''
 #       notify(...)
 #       handle = await primitives.web.ask("What is the weather in Berlin today?")
@@ -191,10 +198,7 @@ def get_notify_web_search_example() -> str:
 # Multi-step research (genuinely needs execute_code):
 async def gather_and_verify_role_openings(query: str) -> str:
     notify({
-        "type": "progress",
-        "message": "Searching public sources for relevant role listings.",
-        "step": 1,
-        "total": 2
+        "message": "Step 1/2: Searching public sources for relevant role listings.",
     })
 
     initial_handle = await primitives.web.ask(
@@ -203,10 +207,7 @@ async def gather_and_verify_role_openings(query: str) -> str:
     initial_results = await initial_handle.result()
 
     notify({
-        "type": "progress",
-        "message": "Validating listings against official company pages.",
-        "step": 2,
-        "total": 2,
+        "message": "Step 2/2: Validating listings against official company pages.",
     })
 
     verified_handle = await primitives.web.ask(
@@ -214,6 +215,10 @@ async def gather_and_verify_role_openings(query: str) -> str:
     )
     verified_results = await verified_handle.result()
 
+    notify({
+        "message": "Done — gathered and verified role openings.",
+        "completed": True,
+    })
     return verified_results
 """
 
@@ -226,10 +231,7 @@ def get_notify_multistep_workflow_example() -> str:
 # NOTE: If this were a single primitive call, use execute_function instead.
 async def build_contact_insights(city: str) -> str:
     notify({
-        "type": "progress",
-        "message": f"Fetching contacts for {city}.",
-        "step": 1,
-        "total": 3
+        "message": f"Step 1/3: Fetching contacts for {city}.",
     })
     contacts_handle = await primitives.contacts.ask(
         f"List contacts in {city} with role and company."
@@ -237,10 +239,7 @@ async def build_contact_insights(city: str) -> str:
     contacts = await contacts_handle.result()
 
     notify({
-        "type": "progress",
-        "message": "Summarizing recent interactions for matching contacts.",
-        "step": 2,
-        "total": 3
+        "message": "Step 2/3: Summarizing recent interactions for matching contacts.",
     })
     transcript_handle = await primitives.transcripts.ask(
         f"Summarize recent interactions for contacts in {city}."
@@ -248,16 +247,17 @@ async def build_contact_insights(city: str) -> str:
     interaction_summary = await transcript_handle.result()
 
     notify({
-        "type": "progress",
-        "message": "Persisting synthesized insights to the knowledge store.",
-        "step": 3,
-        "total": 3
+        "message": "Step 3/3: Persisting synthesized insights to the knowledge store.",
     })
     save_handle = await primitives.knowledge.update(
         f"Store structured contact insights for {city}: contacts={contacts}, summary={interaction_summary}"
     )
     save_result = await save_handle.result()
 
+    notify({
+        "message": f"Done — built and stored contact insights for {city}.",
+        "completed": True,
+    })
     return str(save_result)
 """
 
@@ -280,10 +280,7 @@ async def process_large_collection(records: list[dict]) -> dict:
         batch = records[start:end]
 
         notify({
-            "type": "progress",
             "message": f"Processing batch {index + 1}/{total_batches} ({processed} processed, {rejected} rejected so far).",
-            "step": index + 1,
-            "total": total_batches,
         })
 
         for item in batch:
@@ -292,12 +289,16 @@ async def process_large_collection(records: list[dict]) -> dict:
             else:
                 rejected += 1
 
-    # GOOD: specific, measurable updates
+    notify({
+        "message": f"Done — processed {processed} records ({rejected} rejected) out of {len(records)} total.",
+        "completed": True,
+    })
+    # GOOD: specific, measurable updates with completed=True at the end
     # BAD: generic filler messages with no new signal:
-    # notify({"type": "progress", "message": "Working on it..."})
-    # notify({"type": "progress", "message": "Still processing..."})
+    # notify({"message": "Working on it..."})
+    # notify({"message": "Still processing..."})
     # BAD: low-level internal diagnostics instead of user-facing progress:
-    # notify({"type": "progress", "message": "tool_call_id=abc123, state_mode=stateful, parser=ProductList"})
+    # notify({"message": "tool_call_id=abc123, state_mode=stateful, parser=ProductList"})
     return {"processed": processed, "rejected": rejected, "total": len(records)}
 """
 
@@ -429,11 +430,6 @@ async def fetch_product_price(product_url: str) -> float:
         "Extract product name, price, and stock status",
         response_format=ProductInfo
     )
-    notify({
-        "type": "step_complete",
-        "step_name": "extract_product_info",
-        "result_summary": f"Got pricing for {info.name}: ${info.price}."
-    })
     await session.stop()
     return info.price
 '''
@@ -457,13 +453,9 @@ async def complete_checkout(cart_items: list) -> str:
     if "no" in verification.lower():
         raise ValueError("Shipping address verification failed")
 
+    notify({"type": "progress", "message": "Placing the order now."})
     await session.act("Click 'Complete Order' button")
     confirmation = await session.observe("Extract order confirmation number")
-    notify({
-        "type": "step_complete",
-        "step_name": "checkout",
-        "result_summary": f"Order placed: {confirmation}."
-    })
     await session.stop()
     return f"Order placed: {confirmation}"
 '''
@@ -490,11 +482,6 @@ async def proceed_using_screenshot() -> str:
     display(await session.get_screenshot())
 
     result = await session.observe("Confirm we reached the next step.")
-    notify({
-        "type": "step_complete",
-        "step_name": "setup_navigation",
-        "result_summary": "Reached the next setup step."
-    })
     await session.stop()
     return result
 """
@@ -537,7 +524,7 @@ def get_computer_session_execution_example() -> str:
         "name": "execute_code",
         "arguments": {
           "thought": "Great, I can see the page. Now I\'ll extract the heading and paragraph text into a structured object for clarity. I\'ll define a Pydantic model right here in the sandbox.",
-          "code": "from pydantic import BaseModel, Field\\n\\nclass PageContent(BaseModel):\\n    heading: str = Field(description=\\"The main H1 heading of the page\\")\\n    first_paragraph: str = Field(description=\\"The text of the first paragraph under the heading\\")\\n\\nPageContent.model_rebuild()\\n\\npage_info = await session.observe(\\n    \\"Extract the main heading and the first paragraph.\\",\\n    response_format=PageContent\\n)\\nnotify({\\"type\\": \\"step_complete\\", \\"step_name\\": \\"extract_page_content\\", \\"result_summary\\": \\"Captured the heading and intro paragraph.\\"})\\n\\nprint(page_info.model_dump_json(indent=2))\\nawait session.stop()",
+          "code": "from pydantic import BaseModel, Field\\n\\nclass PageContent(BaseModel):\\n    heading: str = Field(description=\\"The main H1 heading of the page\\")\\n    first_paragraph: str = Field(description=\\"The text of the first paragraph under the heading\\")\\n\\nPageContent.model_rebuild()\\n\\npage_info = await session.observe(\\n    \\"Extract the main heading and the first paragraph.\\",\\n    response_format=PageContent\\n)\\nprint(page_info.model_dump_json(indent=2))\\nawait session.stop()",
           "language": "python",
           "state_mode": "stateful"
         }
@@ -557,6 +544,25 @@ def get_computer_session_execution_example() -> str:
 * **Thought**: I have successfully extracted the information. I will now provide the final answer to the user without using any tools.
 * **Final Answer (tool-less response)**:
     The main heading on playwright.dev is \'Playwright enables reliable end-to-end testing for modern web apps.\', and the first paragraph is \'Playwright is an open-source framework for web testing and automation. It allows testing Chromium, Firefox and WebKit with a single API.\'
+"""
+
+
+def get_computer_session_reattachment_example() -> str:
+    """Example: reattach to an existing visible browser session by ID."""
+
+    return """
+# Example: Reusing an existing visible browser session
+async def continue_existing_browser() -> str:
+    # The current state or surrounding system may already tell you that
+    # Web session 0 is active. Reattach to it instead of opening a duplicate.
+    session = primitives.computer.web.get_session(0)
+
+    # Verify the current state before acting.
+    display(await session.get_screenshot())
+
+    await session.act("Click the Continue button on the current page.")
+    confirmation = await session.observe("Confirm the next step is now visible.")
+    return confirmation
 """
 
 
@@ -650,7 +656,7 @@ def get_computer_interactive_workflow_example() -> str:
         "name": "execute_code",
         "arguments": {
           "thought": "I can see the contact page. I\'ll extract the support email using a Pydantic model for reliable structured extraction.",
-          "code": "from pydantic import BaseModel\\n\\nclass ContactInfo(BaseModel):\\n    support_email: str\\n    phone: str | None = None\\n\\nContactInfo.model_rebuild()\\n\\ninfo = await session.observe(\\n    \\"Extract the support email address and phone number from the contact page.\\",\\n    response_format=ContactInfo\\n)\\nnotify({\\"type\\": \\"step_complete\\", \\"step_name\\": \\"extract_support_contact\\", \\"result_summary\\": f\\"Found support email: {info.support_email}\\"})\\nprint(f\\"Support email: {info.support_email}\\")\\nawait session.stop()",
+          "code": "from pydantic import BaseModel\\n\\nclass ContactInfo(BaseModel):\\n    support_email: str\\n    phone: str | None = None\\n\\nContactInfo.model_rebuild()\\n\\ninfo = await session.observe(\\n    \\"Extract the support email address and phone number from the contact page.\\",\\n    response_format=ContactInfo\\n)\\nprint(f\\"Support email: {info.support_email}\\")\\nawait session.stop()",
           "language": "python",
           "state_mode": "stateful"
         }
@@ -786,11 +792,6 @@ async def execute_task_by_description_with_guidance(description: str) -> str:
 
     # Wait for completion
     result = await handle.result()
-    notify({
-        "type": "step_complete",
-        "step_name": "task_execution",
-        "result_summary": f"Task '{task_info.task_name}' finished."
-    })
     return result
 '''
 
@@ -821,11 +822,6 @@ async def execute_task_and_append(task_a_id: int, task_b_id: int) -> str:
 
     # Wait for completion (both tasks will execute in order)
     result = await handle.result()
-    notify({
-        "type": "step_complete",
-        "step_name": "queued_execution",
-        "result_summary": "Both queued tasks completed."
-    })
     return result
 '''
 
@@ -1038,12 +1034,6 @@ async def scrape_and_save_contact(linkedin_url: str) -> str:
     instruction = f"Create contact: {profile.name}, email {profile.email}, employer {profile.company}"
     handle = await primitives.contacts.update(instruction)
     result = await handle.result()
-    notify({
-        "type": "step_complete",
-        "step_name": "scrape_and_save",
-        "result_summary": f"Saved {profile.name} ({profile.company}) as a contact."
-    })
-
     return f"Saved contact: {result}"
 '''
 
@@ -1071,12 +1061,6 @@ async def gather_contact_info_concurrently(name: str, company_url: str) -> dict:
         contact_handle.result(),
         fetch_company_info()
     )
-    notify({
-        "type": "step_complete",
-        "step_name": "concurrent_research",
-        "result_summary": f"Found {name}'s details and company background."
-    })
-
     return {
         "contact": contact_result,
         "company": company_info
@@ -1107,12 +1091,6 @@ async def search_multiple_sources_with_correction(query: str) -> dict:
     # Wait for results (interjections handled by pane)
     contact_result = await contact_handle.result()
     transcript_result = await transcript_handle.result()
-    notify({
-        "type": "step_complete",
-        "step_name": "parallel_search",
-        "result_summary": "Parallel search results are ready."
-    })
-
     return {
         "contacts": contact_result,
         "transcripts": transcript_result
@@ -1732,6 +1710,7 @@ def get_computer_examples() -> str:
         get_computer_multistep_example().strip(),
         get_computer_screenshot_driven_example().strip(),
         get_computer_session_execution_example().strip(),
+        get_computer_session_reattachment_example().strip(),
         get_computer_stateful_workflow_example().strip(),
         get_computer_interactive_workflow_example().strip(),
     ]

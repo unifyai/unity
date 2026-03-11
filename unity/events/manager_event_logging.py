@@ -1,7 +1,6 @@
 from __future__ import annotations
 
-import asyncio
-from typing import Any
+from typing import Any, Callable
 import functools
 from uuid import uuid4
 import json
@@ -164,20 +163,6 @@ def _coerce_text_value(value: Any) -> str:
         return str(value)
 
 
-# ---------------------------------------------------------------------------
-#  2.  Generic SteerableToolHandle wrapper
-# ---------------------------------------------------------------------------
-
-# Steering methods whose first positional arg is user-facing text.
-# Maps method_name -> (param_name, payload_field) so the action event
-# carries the content in the semantically correct ManagerMethodPayload field.
-_ACTION_CONTENT_FIELDS: dict[str, tuple[str, str]] = {
-    "ask": ("question", "question"),
-    "interject": ("message", "instructions"),
-    "stop": ("reason", "instructions"),
-}
-
-
 def wrap_handle_with_logging(
     inner: SteerableToolHandle,
     call_id: str,
@@ -187,139 +172,42 @@ def wrap_handle_with_logging(
     display_label: str | None = None,
     hierarchy: list[str] | None = None,
 ) -> SteerableToolHandle:
-    """
-    Return a proxy that logs every callable on the inner handle generically (pre-call action,
-    post-call outgoing with sanitized return value) while preserving signatures/docs.
-    """
+    """Monkey-patch result() to publish the outgoing ManagerMethod event on completion."""
+    _orig_result = inner.result
+    _hierarchy = list(hierarchy) if hierarchy else []
 
-    import functools as _functools
-    import inspect as _inspect
+    async def _result_with_outgoing():
+        try:
+            ans = await _orig_result()
+        except Exception as exc:
+            import traceback as _tb
 
-    # Snapshot the hierarchy so proxy events always carry the correct lineage,
-    # even when the inner handle doesn't have _log_hierarchy (e.g., plain
-    # handles not spawned by a tool loop).
-    _proxy_hierarchy = list(hierarchy) if hierarchy else None
-
-    class _LoggedHandle:  # duck-typed proxy
-        __slots__ = ("_inner",)
-
-        def __init__(self, _h):
-            self._inner = _h
-
-        async def _publish(self, **payload):
-            if display_label is not None:
-                payload.setdefault("display_label", display_label)
-            # Attach the suffixed hierarchy so proxy events carry the correct
-            # lineage even though they run outside the tool loop's ContextVar
-            # scope.  Prefer the inner handle's _log_hierarchy (set by the tool
-            # loop), falling back to the hierarchy captured at wrap time.
-            try:
-                if "hierarchy" not in payload or not payload.get("hierarchy"):
-                    h = getattr(self._inner, "_log_hierarchy", None)
-                    if isinstance(h, list) and h:
-                        payload["hierarchy"] = list(h)
-                    elif _proxy_hierarchy:
-                        payload["hierarchy"] = list(_proxy_hierarchy)
-            except Exception:
-                pass
             await publish_manager_method_event(
                 call_id,
                 manager_name,
                 method_name,
-                **payload,
+                phase="outgoing",
+                status="error",
+                error=str(exc),
+                error_type=type(exc).__name__,
+                traceback=_tb.format_exc()[:2000],
+                display_label=display_label,
+                hierarchy=_hierarchy,
             )
+            raise
+        await publish_manager_method_event(
+            call_id,
+            manager_name,
+            method_name,
+            phase="outgoing",
+            answer=_coerce_text_value(ans),
+            display_label=display_label,
+            hierarchy=_hierarchy,
+        )
+        return ans
 
-        def __dir__(self):
-            try:
-                return sorted(set(dir(self._inner)) | set(super().__dir__()))
-            except Exception:
-                return super().__dir__()
-
-        @property
-        def __wrapped__(self):  # type: ignore[override]
-            return self._inner
-
-        def __getattribute__(self, name: str):
-            # Spoof class to look like the inner handle for reflection
-            if name == "__class__":
-                try:
-                    inner = object.__getattribute__(self, "_inner")
-                    return inner.__class__
-                except Exception:
-                    return object.__getattribute__(self, "__class__")
-
-            # Always try inner first (including private/dunder attributes);
-            # fall back to proxy attributes only if inner lookup fails.
-            target = None
-            try:
-                inner = object.__getattribute__(self, "_inner")
-                target = getattr(inner, name)
-            except Exception:
-                pass
-            if target is None:
-                return object.__getattribute__(self, name)
-
-            if not callable(target):
-                return target
-
-            is_async = _inspect.iscoroutinefunction(target)
-            if is_async:
-
-                @_functools.wraps(target)
-                async def _wrapped(*args, **kwargs):
-                    try:
-                        action_kw: dict[str, Any] = {"action": name}
-                        field_spec = _ACTION_CONTENT_FIELDS.get(name)
-                        if field_spec:
-                            param_name, payload_field = field_spec
-                            text = args[0] if args else kwargs.get(param_name)
-                            if isinstance(text, str):
-                                action_kw[payload_field] = text
-                        await self._publish(**action_kw)
-                    except Exception:
-                        pass
-                    result = await target(*args, **kwargs)
-                    try:
-                        outgoing_kw: dict[str, Any] = {"phase": "outgoing"}
-                        # Methods like ask() return sub-handles — omit answer
-                        # so the frontend receives answer=null (JSON null) and
-                        # doesn't overwrite real node content with a repr string.
-                        if not isinstance(result, SteerableToolHandle):
-                            outgoing_kw["answer"] = _coerce_text_value(result)
-                        await self._publish(**outgoing_kw)
-                    except Exception:
-                        pass
-                    return result
-
-            else:
-
-                @_functools.wraps(target)
-                def _wrapped(*args, **kwargs):
-                    try:
-                        action_kw: dict[str, Any] = {"action": name}
-                        field_spec = _ACTION_CONTENT_FIELDS.get(name)
-                        if field_spec:
-                            param_name, payload_field = field_spec
-                            text = args[0] if args else kwargs.get(param_name)
-                            if isinstance(text, str):
-                                action_kw[payload_field] = text
-                        asyncio.create_task(self._publish(**action_kw))
-                    except Exception:
-                        pass
-                    result = target(*args, **kwargs)
-                    try:
-                        outgoing_kw: dict[str, Any] = {"phase": "outgoing"}
-                        # See async branch comment above.
-                        if not isinstance(result, SteerableToolHandle):
-                            outgoing_kw["answer"] = _coerce_text_value(result)
-                        asyncio.create_task(self._publish(**outgoing_kw))
-                    except Exception:
-                        pass
-                    return result
-
-            return _wrapped
-
-    return _LoggedHandle(inner)
+    inner.result = _result_with_outgoing  # type: ignore[attr-defined]
+    return inner
 
 
 # ---------------------------------------------------------------------------
@@ -333,7 +221,8 @@ def log_manager_call(
     payload_key: str,
     *,
     call_id_kw: str = "_call_id",
-    display_label: str | None = None,
+    display_label: str | Callable[..., str] | None = None,
+    forward_kwargs: tuple[str, ...] = (),
 ):
     """Decorator factory that publishes an incoming ManagerMethod event and
     wraps the returned handle so subsequent interactions are logged.
@@ -346,7 +235,8 @@ def log_manager_call(
 
     ``display_label`` is a user-friendly phrase (e.g. "Checking Contact Book")
     that gets attached to every event in the lifecycle so the frontend can
-    render it directly without maintaining its own mapping.
+    render it directly without maintaining its own mapping.  May also be a
+    callable ``(kwargs) -> str`` for labels that depend on runtime arguments.
     """
 
     def _decorator(func):
@@ -370,6 +260,10 @@ def log_manager_call(
             else:
                 payload_value = ""
 
+            resolved_label = (
+                display_label(kwargs) if callable(display_label) else display_label
+            )
+
             call_id = new_call_id()
 
             # Generate a single suffix, embed it into the hierarchy leaf,
@@ -388,6 +282,12 @@ def log_manager_call(
                 f"{manager_name}.{method_name}({suffix})",
             ]
 
+            extra_fields: dict[str, Any] = {}
+            for fk in forward_kwargs:
+                fv = kwargs.get(fk)
+                if fv is not None:
+                    extra_fields[fk] = fv
+
             suffix_token = _PENDING_LOOP_SUFFIX.set(suffix)
             try:
                 await publish_manager_method_event(
@@ -395,9 +295,10 @@ def log_manager_call(
                     manager_name,
                     method_name,
                     phase="incoming",
-                    display_label=display_label,
+                    display_label=resolved_label,
                     hierarchy=hierarchy,
                     **{payload_key: payload_value},
+                    **extra_fields,
                 )
 
                 # Inject call_id only when the wrapped method declares it
@@ -412,7 +313,7 @@ def log_manager_call(
                 call_id,
                 manager_name,
                 method_name,
-                display_label=display_label,
+                display_label=resolved_label,
                 hierarchy=hierarchy,
             )
 

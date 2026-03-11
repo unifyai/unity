@@ -61,13 +61,12 @@ class ComputerEnvironment(BaseEnvironment):
 
     def get_tools(self) -> Dict[str, ToolMetadata]:
         impure = {"navigate", "act", "new_session"}
-        tool_names = [
+        desktop_tool_names = [
             "navigate",
             "act",
             "observe",
             "query",
             "get_links",
-            "get_content",
             "get_screenshot",
         ]
 
@@ -76,7 +75,7 @@ class ComputerEnvironment(BaseEnvironment):
 
         # Desktop namespace -- singleton, full method set
         desktop_ns = self._computer_primitives.desktop
-        for name in tool_names:
+        for name in desktop_tool_names:
             fq_name = f"{self.NAMESPACE}.{self.MANAGER_ALIAS}.desktop.{name}"
             if (
                 self._allowed_methods is not None
@@ -100,9 +99,9 @@ class ComputerEnvironment(BaseEnvironment):
                 function_context="primitive",
             )
 
-        # Web factory -- new_session() and list_sessions()
+        # Web factory -- new_session(), list_sessions(), and get_session()
         web_factory = self._computer_primitives.web
-        for factory_method_name in ("new_session", "list_sessions"):
+        for factory_method_name in ("new_session", "list_sessions", "get_session"):
             fq_name = f"{self.NAMESPACE}.{self.MANAGER_ALIAS}.web.{factory_method_name}"
             if (
                 self._allowed_methods is not None
@@ -140,11 +139,13 @@ class ComputerEnvironment(BaseEnvironment):
             "The VM desktop is accessed through a VNC connection.  The "
             "`primitives.computer.desktop` namespace drives the desktop via a "
             "headless Playwright browser connected to the noVNC VNC viewer.  "
-            "This means methods like `navigate()`, `get_links()`, and "
-            "`get_content()` operate on this headless browser (the VNC viewer "
-            "page), not on the X11 desktop itself.  Screenshots are captured "
-            "natively from the X11 display, so only changes visible on the "
-            "physical desktop surface appear in screenshots.\n\n"
+            "This means desktop interactions are mediated through the noVNC "
+            "viewer page rather than the X11 desktop directly.  `observe()` on "
+            "the desktop uses screenshot-only visual extraction, which is the "
+            "correct way to verify what is currently visible on the desktop.  "
+            "`get_content()` is intentionally not exposed on the desktop "
+            "namespace because the noVNC viewer DOM is not a useful or safe "
+            "representation of desktop state.\n\n"
             "Two interfaces for controlling the desktop:\n\n"
             "#### `primitives.computer.desktop` -- Desktop Control (singleton)\n\n"
             "Sends mouse and keyboard actions to the VM desktop through the VNC "
@@ -156,10 +157,11 @@ class ComputerEnvironment(BaseEnvironment):
             "await primitives.computer.desktop.act('Open the Terminal app')\n"
             "display(await primitives.computer.desktop.get_screenshot())\n"
             "```\n\n"
-            "#### `primitives.computer.web.new_session()` -- Web Sessions (factory)\n\n"
-            "Creates independent browser sessions.  Each session is an isolated "
-            "Chromium process with its own cookies, storage, and browsing context.  "
-            "Multiple sessions can run in parallel.  Always call `stop()` when done.\n\n"
+            "#### `primitives.computer.web` -- Web Sessions (factory + registry)\n\n"
+            "Creates independent browser sessions and lets you reattach to "
+            "existing ones.  Each session is an isolated Chromium process with "
+            "its own cookies, storage, and browsing context.  Multiple sessions "
+            "can run in parallel.  Always call `stop()` when done.\n\n"
             "```python\n"
             "session = await primitives.computer.web.new_session()  # visible=True by default\n"
             "await session.navigate('https://example.com')\n"
@@ -167,12 +169,25 @@ class ComputerEnvironment(BaseEnvironment):
             "display(await session.get_screenshot())\n"
             "await session.stop()\n"
             "```\n\n"
+            "To continue working in a browser that already exists, reattach by "
+            "session ID instead of opening a duplicate browser:\n\n"
+            "```python\n"
+            "session = primitives.computer.web.get_session(0)\n"
+            "display(await session.get_screenshot())\n"
+            "await session.act('Click the Continue button')\n"
+            "```\n\n"
+            "Use `primitives.computer.web.list_sessions(visible_only=True, active_only=True)` "
+            "when you need to discover reusable sessions programmatically.  In "
+            "voice/screen-share flows, visible session IDs are often surfaced in "
+            "`<active_web_sessions>` for direct reuse.\n\n"
             "The `visible` parameter controls where the browser runs:\n"
             "- `visible=True` (default): browser window appears on the VM desktop "
             "(user can see it via screen sharing / noVNC).  Controlled via CDP -- "
             "no mouse or keyboard involved.\n"
             "- `visible=False`: headless browser on the host.  Faster, but "
             "invisible to the user.\n\n"
+            "`new_session()` creates, `get_session()` reattaches by ID, and "
+            "`list_sessions()` enumerates existing handles.\n\n"
             "Session handles expose: "
             "`act`, `observe`, `query`, `navigate`, `get_links`, `get_content`, "
             "`get_screenshot`, plus `stop()`.\n\n"

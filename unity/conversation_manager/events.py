@@ -692,14 +692,18 @@ class ActorClarificationResponse(Event):
 
 @dataclass
 class ActorNotification(Event):
-    """Event to forward a progress notification from an Actor handle.
+    """Event to forward a notification from an Actor handle.
 
-    Notifications arrive while the actor is still working. They carry
-    status/progress updates and do not indicate turn completion.
+    Notifications carry status updates emitted explicitly by the actor via
+    ``send_notification`` or ``notify()``.  The ``completed`` flag
+    distinguishes a completion announcement from an in-progress update so
+    downstream consumers (e.g. the fast brain) can render them with
+    unambiguous prefixes.
     """
 
     handle_id: int
     response: str
+    completed: bool = False
 
 
 @dataclass

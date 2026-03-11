@@ -23,6 +23,7 @@ from .propagation_mode import ChatContextPropagation
 from .context_tracker import LoopContextState
 from .utils import maybe_await
 from .event_bus_util import to_event_bus
+from ...events.types.tool_loop import ToolLoopKind
 from .messages import (
     find_unreplied_assistant_entries,
     generate_with_preprocess,
@@ -396,6 +397,7 @@ async def async_tool_loop_inner(
             # Also expose the resolved lineage list so event payloads can include the full
             # parent->child stack even when called outside the tool loop ContextVar scope.
             setattr(outer_handle_container[0], "_log_hierarchy", list(cfg.lineage))
+            setattr(outer_handle_container[0], "_loop_cfg", cfg)
     logger = LoopLogger(cfg, log_steps)
 
     # Wire inline log-file pointers: when UNILLM_LOG_DIR is set, each LLM call
@@ -1042,7 +1044,11 @@ async def async_tool_loop_inner(
                 }
                 await _msg_dispatcher.append_msgs([assistant_msg])
                 with suppress(Exception):
-                    await to_event_bus(assistant_msg, cfg)
+                    await to_event_bus(
+                        assistant_msg,
+                        cfg,
+                        kind=ToolLoopKind.STEERING_HELPER,
+                    )
                 assistant_meta[id(assistant_msg)] = {"results_count": 0}
                 # Ack
                 with suppress(Exception):
@@ -1122,7 +1128,7 @@ async def async_tool_loop_inner(
         assistant_msg = {"role": "assistant", "content": "", "tool_calls": tool_calls}
         await _msg_dispatcher.append_msgs([assistant_msg])
         with suppress(Exception):
-            await to_event_bus(assistant_msg, cfg)
+            await to_event_bus(assistant_msg, cfg, kind=ToolLoopKind.STEERING_HELPER)
         assistant_meta[id(assistant_msg)] = {"results_count": 0}
 
         # Insert ack tool messages and forward steering immediately to target handles
@@ -1756,7 +1762,13 @@ async def async_tool_loop_inner(
                         if time_ctx is not None
                         else _msg_text
                     )
-                    msgs_to_append.append({"role": "user", "content": _user_content})
+                    msgs_to_append.append(
+                        {
+                            "role": "user",
+                            "_interjection": True,
+                            "content": _user_content,
+                        },
+                    )
                 if msgs_to_append:
                     await _msg_dispatcher.append_msgs(msgs_to_append)
                 # Update history only if there was user message content
@@ -2281,6 +2293,11 @@ async def async_tool_loop_inner(
             )
             if log_steps:
                 logger.begin_thinking()
+
+            await to_event_bus(
+                {"role": "assistant", "_thinking_in_flight": True},
+                cfg,
+            )
 
             if interrupt_llm_with_interjections:
                 # ––––– new *pre-emptive* mode ––––––––––––––––––––––––––––
@@ -2919,6 +2936,20 @@ async def async_tool_loop_inner(
                                 )
 
                                 _prune_wait(msg, call["id"], client=client)
+
+                            # The assistant message containing this wait() was
+                            # already published to EventBus before we could
+                            # inspect it.  Emit a matching tool result so the
+                            # frontend can resolve the pending tool-call row.
+                            with suppress(Exception):
+                                await to_event_bus(
+                                    create_tool_call_message(
+                                        "wait",
+                                        call["id"],
+                                        "",
+                                    ),
+                                    cfg,
+                                )
 
                             # After acknowledging a wait, do NOT grant an immediate LLM turn.
                             # The loop should now wait for any pending tools or interjections.

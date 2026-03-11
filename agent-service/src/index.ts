@@ -903,9 +903,13 @@ app.post('/extract', isAgentReady, async (req: Request, res: Response) => {
     try {
       const zodSchema = schema ? jsonSchemaToZod(schema) : z.string();
       const session = activeSessions.get(sessionId)!;
+      const shouldBypassDomProcessing =
+        bypassDomProcessing === true || session.mode === 'desktop';
 
-      // If bypassDomProcessing is true, use screenshot-only extraction
-      if (bypassDomProcessing === true) {
+      // Desktop sessions are rendered through the live noVNC iframe, so DOM
+      // expansion is both meaningless and destructive. Always use screenshot-
+      // only extraction there, even if the caller forgets to request it.
+      if (shouldBypassDomProcessing) {
         const screenshot = await session.agent.require(BrowserConnector).getHarness().screenshot();
         const data = await (session.agent.models as any).extract(instructions, zodSchema as ZodTypeAny, screenshot, '');
         return res.json({ data });

@@ -67,6 +67,65 @@ async def test_execute_code_notifications_with_notification_queue():
 
 
 @pytest.mark.asyncio
+@pytest.mark.timeout(60)
+async def test_execute_code_notifications_with_notification_queue_in_named_stateful_session():
+    """
+    Validate that notify({...}) also surfaces from executor-managed named
+    stateful Python sessions, not just the bound sandbox session 0 path.
+    """
+    from unity.actor.execution import _CURRENT_SANDBOX
+
+    notification_q: asyncio.Queue[dict] = asyncio.Queue()
+
+    actor = CodeActActor()
+
+    sandbox = PythonExecutionSession(
+        computer_primitives=actor._computer_primitives,
+        environments=actor.environments,
+        venv_pool=actor._venv_pool,
+        shell_pool=actor._shell_pool,
+    )
+    token = _CURRENT_SANDBOX.set(sandbox)
+
+    try:
+        tools = actor.get_tools("act")
+        execute_code = tools["execute_code"]
+
+        _ = await execute_code(
+            "emit notifications from named session",
+            "notify({'type': 'custom_progress', 'step': 1, 'message': 'named session'})\nprint('hi')",
+            language="python",
+            state_mode="stateful",
+            session_name="named_notify_session",
+            venv_id=None,
+            _notification_up_q=notification_q,
+        )
+
+        custom = await asyncio.wait_for(notification_q.get(), timeout=5)
+        assert custom.get("type") == "custom_progress"
+        assert custom.get("step") == 1
+        assert custom.get("message") == "named session"
+
+        assert (
+            notification_q.empty()
+        ), f"Expected no more notifications but queue has {notification_q.qsize()} item(s)"
+    finally:
+        try:
+            _CURRENT_SANDBOX.reset(token)
+        except Exception:
+            pass
+        try:
+            await sandbox.close()
+        except Exception:
+            pass
+        if actor:
+            try:
+                await actor.close()
+            except Exception:
+                pass
+
+
+@pytest.mark.asyncio
 @pytest.mark.timeout(120)
 async def test_tool_loop_handle_next_notification():
     """

@@ -81,7 +81,7 @@ def prewarm(_ctx=None):
     try:
         _log.info("Prewarm: initializing STT, VAD and turn detector…")
         STT = deepgram.STT(model="nova-3", language="en-GB")
-        VAD = silero.VAD.load(min_speech_duration=0.15)
+        VAD = silero.VAD.load(min_speech_duration=0.15, min_silence_duration=1.0)
         _log.info("Prewarm complete")
     except Exception as e:  # noqa: BLE001
         _log.error(f"Prewarm failed: {e}")
@@ -111,10 +111,14 @@ class Assistant(Agent):
         self.boss = boss
         self.channel = channel
         self.utterance_event = (
-            InboundPhoneUtterance if channel == "phone" else InboundUnifyMeetUtterance
+            InboundPhoneUtterance
+            if channel == "phone_call"
+            else InboundUnifyMeetUtterance
         )
         self.assistant_utterance_event = (
-            OutboundPhoneUtterance if channel == "phone" else OutboundUnifyMeetUtterance
+            OutboundPhoneUtterance
+            if channel == "phone_call"
+            else OutboundUnifyMeetUtterance
         )
         self.call_received = not outbound
         self._user_speech_logged = False
@@ -296,7 +300,7 @@ async def entrypoint(ctx: agents.JobContext):
     # Fallback for whenever pre-loading fails
     if STT is None:
         STT = deepgram.STT(model="nova-3", language="en-GB")
-        VAD = silero.VAD.load(min_speech_duration=0.15)
+        VAD = silero.VAD.load(min_speech_duration=0.15, min_silence_duration=1.0)
 
     from unity.settings import SETTINGS
 
@@ -324,6 +328,7 @@ async def entrypoint(ctx: agents.JobContext):
         is_boss_user=contact.get("contact_id") == 1,
         contact_rolling_summary=contact.get("rolling_summary", ""),
         demo_mode=SETTINGS.DEMO_MODE,
+        channel=channel,
     ).flatten()
     _log.config(f"System prompt ({len(system_prompt)} chars)")
 
@@ -342,6 +347,7 @@ async def entrypoint(ctx: agents.JobContext):
         ),
         vad=VAD,
         turn_detection=EnglishModel(),
+        min_endpointing_delay=0.75,
     )
 
     user_is_speaking = False
@@ -431,7 +437,7 @@ async def entrypoint(ctx: agents.JobContext):
             user_input,
         )
 
-    if channel == "phone":
+    if channel == "phone_call":
         user_utterance_event = InboundPhoneUtterance
         assistant_utterance_event = OutboundPhoneUtterance
     else:
@@ -1083,11 +1089,41 @@ async def entrypoint(ctx: agents.JobContext):
             )
         pending_notifications.clear()
 
-    await trigger_generate_reply(
-        reason="session_start",
-        source_id="startup",
+    # Pre-generate the opening greeting via a direct sidecar LLM call so that
+    # the full LLM latency is absorbed before audio playback begins.
+    # - Meet: hides the delay behind the "waiting for assistant" spinner, then
+    #   signals "ready_to_speak" so the avatar appears right before speech.
+    # - Phone (inbound): eliminates dead air after the call connects.
+    # - Phone (outbound): waits for the callee to answer first, then generates.
+    if outbound:
+        _log.info("Outbound call — waiting for callee to answer…")
+        await call_answered_flag.wait()
+        _log.call_status("call_answered — generating greeting")
+
+    from unity.common.llm_client import new_llm_client
+
+    greeting_client = new_llm_client(
+        model=SETTINGS.conversation.FAST_BRAIN_MODEL,
+        origin="fast_brain_greeting",
+        reasoning_effort="low",
+    )
+    greeting_messages = [
+        {"role": "system", "content": system_prompt},
+        *_extract_chat_messages(session._chat_ctx),
+    ]
+    greeting_text = await greeting_client.generate(messages=greeting_messages)
+
+    if channel != "phone":
+        await ctx.room.local_participant.publish_data(
+            json.dumps({"type": "ready_to_speak"}).encode(),
+            topic="agent_status",
+            reliable=True,
+        )
+
+    session.say(
+        greeting_text,
         allow_interruptions=True,
-        wait_for_completion=True,
+        add_to_chat_ctx=True,
     )
 
 

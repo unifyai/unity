@@ -113,7 +113,11 @@ class TestActPersistParameter:
         actor, captured = _make_fake_actor()
         mock_cm.actor = actor
 
-        await brain_action_tools.act(query="Guide onboarding", persist=True)
+        await brain_action_tools.act(
+            query="Guide onboarding",
+            requesting_contact_id=1,
+            persist=True,
+        )
 
         assert captured.get("persist") is True
 
@@ -127,7 +131,7 @@ class TestActPersistParameter:
         actor, captured = _make_fake_actor()
         mock_cm.actor = actor
 
-        await brain_action_tools.act(query="Find contacts")
+        await brain_action_tools.act(query="Find contacts", requesting_contact_id=1)
 
         assert captured.get("persist") is False
 
@@ -141,7 +145,11 @@ class TestActPersistParameter:
         actor, _ = _make_fake_actor()
         mock_cm.actor = actor
 
-        await brain_action_tools.act(query="Long session", persist=True)
+        await brain_action_tools.act(
+            query="Long session",
+            requesting_contact_id=1,
+            persist=True,
+        )
 
         assert len(mock_cm.in_flight_actions) == 1
         action_data = next(iter(mock_cm.in_flight_actions.values()))
@@ -157,7 +165,7 @@ class TestActPersistParameter:
         actor, _ = _make_fake_actor()
         mock_cm.actor = actor
 
-        await brain_action_tools.act(query="Quick task")
+        await brain_action_tools.act(query="Quick task", requesting_contact_id=1)
 
         action_data = next(iter(mock_cm.in_flight_actions.values()))
         assert action_data["persist"] is False
@@ -232,18 +240,18 @@ class TestActorNotificationHandler:
         assert "Processing 50%" in actions[0]["query"]
 
     @pytest.mark.asyncio
-    async def test_notification_wakes_brain(self, mock_cm):
-        """ActorNotification triggers an LLM run."""
+    async def test_notification_does_not_wake_brain(self, mock_cm):
+        """ActorNotification records progress silently without triggering an LLM run."""
         event = ActorNotification(handle_id=1, response="Working...")
 
         await EventHandler.handle_event(event, mock_cm)
 
-        mock_cm.request_llm_run.assert_called()
+        mock_cm.request_llm_run.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_notification_wakes_slow_brain_in_voice_mode(self, mock_cm):
-        """In voice mode, ActorNotification wakes the slow brain (no separate
-        articulator path — the slow brain decides whether to send guidance)."""
+    async def test_notification_silent_in_voice_mode(self, mock_cm):
+        """In voice mode, ActorNotification records progress without waking the
+        slow brain — the fast brain receives progress via channel forwarding."""
         mock_cm.mode = Mode.CALL
         mock_cm.in_flight_actions = {
             1: {"query": "Check something", "handle_actions": []},
@@ -252,11 +260,12 @@ class TestActorNotificationHandler:
 
         await EventHandler.handle_event(event, mock_cm)
 
-        mock_cm.request_llm_run.assert_called()
+        mock_cm.request_llm_run.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_notification_wakes_slow_brain_in_text_mode(self, mock_cm):
-        """In text mode, ActorNotification also wakes the slow brain."""
+    async def test_notification_silent_in_text_mode(self, mock_cm):
+        """In text mode, ActorNotification records progress without waking the
+        slow brain — it picks up accumulated progress on its next legitimate run."""
         mock_cm.mode = Mode.TEXT
         mock_cm.in_flight_actions = {
             1: {"query": "Check something", "handle_actions": []},
@@ -265,7 +274,7 @@ class TestActorNotificationHandler:
 
         await EventHandler.handle_event(event, mock_cm)
 
-        mock_cm.request_llm_run.assert_called()
+        mock_cm.request_llm_run.assert_not_called()
 
 
 # ═════════════════════════════════════════════════════════════════════════════
