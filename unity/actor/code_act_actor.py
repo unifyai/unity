@@ -1336,7 +1336,18 @@ class _StorageCheckHandle(SteerableToolHandle):
                 self._relay_notifications_from(self._inner),
             )
 
-            self._original_result = await self._inner.result()
+            try:
+                self._original_result = await self._inner.result()
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                self._original_result = (
+                    f"Error: inner task failed: {type(exc).__name__}: {exc}"
+                )
+                logger.error(
+                    f"_StorageCheckHandle: inner result raised "
+                    f"{type(exc).__name__}: {exc}",
+                )
             await self._cancel_relay()
             self._task_done_event.set()
 
