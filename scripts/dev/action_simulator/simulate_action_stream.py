@@ -1349,9 +1349,11 @@ def build_single_action_steps():
     cid = str(uuid4())
     h = [f"CodeActActor.act({cid[:4]})"]
 
-    # StorageCheck runs after the doing loop completes, as a child of root
+    # StorageCheck runs after the doing loop completes. TOOL_LOOP_LINEAGE
+    # is [] in act()'s context (the inner loop set it in its own task), so
+    # the StorageCheck is a root-level node, adjacent to the action.
     sc_suffix = "sc01"
-    sc_h = [*h, f"StorageCheck(CodeActActor.act)({sc_suffix})"]
+    sc_h = [f"StorageCheck(CodeActActor.act)({sc_suffix})"]
     sc_cid = str(uuid4())
     sc_method = "StorageCheck(CodeActActor.act)"
 
