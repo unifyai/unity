@@ -18,7 +18,7 @@ Delivery modes:
 
   stream (default)  POST events to the Console's local SSE push endpoint with
                     realistic delays so you can watch them unpack in real time.
-                    Pass --persist to also write events to Orchestra so that
+                    Pass --upload to also write events to Orchestra so that
                     historical data (child expansion, ToolLoop fetch on page
                     refresh) works too.
 
@@ -27,13 +27,13 @@ Delivery modes:
 
 Prerequisites:
     stream mode:           Console running (http://localhost:3333)
-    stream --persist mode: Console + local Orchestra (http://127.0.0.1:8000)
+    stream --upload mode:  Console + local Orchestra (http://127.0.0.1:8000)
     upload mode:           Local Orchestra running (http://127.0.0.1:8000)
 
 Usage:
     .venv/bin/python scripts/dev/simulate_action_stream.py                            # persistent, stream
     .venv/bin/python scripts/dev/simulate_action_stream.py --scenario single_action   # single action, stream
-    .venv/bin/python scripts/dev/simulate_action_stream.py --persist                  # persistent, stream + persist
+    .venv/bin/python scripts/dev/simulate_action_stream.py --upload                   # persistent, stream + upload
     .venv/bin/python scripts/dev/simulate_action_stream.py upload                     # persistent, upload
     .venv/bin/python scripts/dev/simulate_action_stream.py --speed 2                  # 2x faster
 """
@@ -2170,7 +2170,7 @@ def run_stream(
 ) -> None:
     steps = steps_builder()
     total_time = sum(s["delay"] for s in steps) / speed
-    mode_label = "stream + persist" if persist else "stream"
+    mode_label = "stream + upload" if persist else "stream"
     print(
         f"\n=== {scenario_name} / {mode_label} (speed={speed}x, ~{total_time:.0f}s total) ===\n",
     )
@@ -2278,10 +2278,10 @@ def main():
         "Use 2 for 2x faster, 0.5 for slower, etc.",
     )
     parser.add_argument(
-        "--persist",
+        "--upload",
         action="store_true",
         help="(stream mode) Also write events to Orchestra for historical "
-        "persistence (child expansion, ToolLoop fetch on page refresh).",
+        "data (child expansion, ToolLoop fetch on page refresh).",
     )
     parser.add_argument(
         "--clear",
@@ -2302,7 +2302,7 @@ def main():
     if args.mode == "upload":
         run_upload(steps_builder, args.scenario)
     else:
-        run_stream(steps_builder, args.scenario, args.speed, persist=args.persist)
+        run_stream(steps_builder, args.scenario, args.speed, persist=args.upload)
 
 
 if __name__ == "__main__":
