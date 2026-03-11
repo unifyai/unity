@@ -1996,7 +1996,26 @@ def build_single_action_steps():
                 ),
             ],
         },
-        # ── 24–30. StorageCheck: reviews trajectory, decides nothing to store ──
+        # ── 24. ManagerMethod outgoing (doing loop complete) ──
+        # The root result resolves before the StorageCheck starts — callers
+        # get the task result without waiting for storage.
+        {
+            "label": "ManagerMethod outgoing",
+            "delay": 0.5,
+            "events": [
+                mm(
+                    cid,
+                    h,
+                    phase="outgoing",
+                    display_label="Taking Action",
+                    answer=(
+                        "Drafted follow-up email to Rachel Torres (VP of Partnerships, Acme Corp) "
+                        "regarding the Q1 partnership review action items."
+                    ),
+                ),
+            ],
+        },
+        # ── 25–31. StorageCheck: reviews trajectory, decides nothing to store ──
         {
             "label": "StorageCheck incoming",
             "delay": 1.0,
@@ -2136,23 +2155,6 @@ def build_single_action_steps():
                     method="StorageCheck",
                     display_label="Storing Reusable Skills",
                     answer="Nothing worth storing.",
-                ),
-            ],
-        },
-        # ── 31. ManagerMethod outgoing ──
-        {
-            "label": "ManagerMethod outgoing",
-            "delay": 0.5,
-            "events": [
-                mm(
-                    cid,
-                    h,
-                    phase="outgoing",
-                    display_label="Taking Action",
-                    answer=(
-                        "Drafted follow-up email to Rachel Torres (VP of Partnerships, Acme Corp) "
-                        "regarding the Q1 partnership review action items."
-                    ),
                 ),
             ],
         },
