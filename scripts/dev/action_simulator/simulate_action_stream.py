@@ -1,41 +1,35 @@
 #!/usr/bin/env python3
 """Simulate CodeActActor.act sessions for the Console action pane.
 
-Scenarios:
+Scenarios (--scenario):
 
   persistent (default)  A long-running act(persist=True) session with discovery,
                         nested WebSearcher.ask, clarification, interjections,
                         pause/resume/stop, and parallel tool completion.
 
   single_action         A one-shot act(persist=False) action that delegates to a
-                        sub-agent via execute_function(primitives.actor.act). The
-                        sub-agent runs its own CodeActActor with nested
-                        ContactManager.ask, demonstrating the full sub-agent
-                        hierarchy (root → execute_function → sub-agent → inner
-                        execute_function → manager tool loop).
+                        sub-agent, with a post-completion StorageCheck phase.
 
-Delivery modes:
+Delivery (--stream / --save):
 
-  stream (default)  POST events to the Console's local SSE push endpoint with
-                    realistic delays so you can watch them unpack in real time.
-                    Pass --persist to also write events to Orchestra so that
-                    historical data (child expansion, ToolLoop fetch on page
-                    refresh) works too.
+  --stream    POST events via SSE to the Console with realistic delays.
+  --save      Write events to Orchestra for historical access / page refresh.
 
-  upload            Write all events to Orchestra's log API at once (historical
-                    path). Refresh the console to see the full session.
+  Both can be combined. If neither is given, --stream is the default.
+  --speed only applies when --stream is active.
 
 Prerequisites:
-    stream mode:           Console running (http://localhost:3333)
-    stream --persist mode: Console + local Orchestra (http://127.0.0.1:8000)
-    upload mode:           Local Orchestra running (http://127.0.0.1:8000)
+    --stream only:     Console running (http://localhost:3333)
+    --save only:       Local Orchestra running (http://127.0.0.1:8000)
+    --stream --save:   Both Console and Orchestra running
 
 Usage:
-    .venv/bin/python scripts/dev/simulate_action_stream.py                            # persistent, stream
-    .venv/bin/python scripts/dev/simulate_action_stream.py --scenario single_action   # single action, stream
-    .venv/bin/python scripts/dev/simulate_action_stream.py --persist                  # persistent, stream + persist
-    .venv/bin/python scripts/dev/simulate_action_stream.py upload                     # persistent, upload
-    .venv/bin/python scripts/dev/simulate_action_stream.py --speed 2                  # 2x faster
+    .venv/bin/python scripts/dev/action_simulator/simulate_action_stream.py                            # stream persistent
+    .venv/bin/python scripts/dev/action_simulator/simulate_action_stream.py --scenario single_action   # stream single action
+    .venv/bin/python scripts/dev/action_simulator/simulate_action_stream.py --save                     # save only (no streaming)
+    .venv/bin/python scripts/dev/action_simulator/simulate_action_stream.py --stream --save            # stream + save
+    .venv/bin/python scripts/dev/action_simulator/simulate_action_stream.py --speed 2                  # 2x faster streaming
+    .venv/bin/python scripts/dev/action_simulator/simulate_action_stream.py --clear                    # wipe old events first
 """
 
 from __future__ import annotations
@@ -45,6 +39,7 @@ import json
 import sys
 import time
 from datetime import datetime, timezone
+from pathlib import Path
 from uuid import uuid4
 
 import requests
@@ -127,17 +122,15 @@ def build_persistent_steps():
     cid = str(uuid4())
     h = [f"CodeActActor.act({cid[:4]})"]
 
-    ef_suffix = "a1b2"
-    ef_h = [*h, f"execute_function(primitives.web.ask)({ef_suffix})"]
-    ef_cid = str(uuid4())
-
+    # Inner managers share the root lineage — execute_function is just a tool,
+    # not a boundary. Nesting emerges from the managers' own events.
     ws_suffix = "ws01"
-    ws_h = [*ef_h, f"WebSearcher.ask({ws_suffix})"]
+    ws_h = [*h, f"WebSearcher.ask({ws_suffix})"]
     ws_cid = str(uuid4())
     ws_method = "WebSearcher.ask"
 
     kb_suffix = "c3d4"
-    kb_h = [*h, f"execute_function(primitives.knowledge.update)({kb_suffix})"]
+    kb_h = [*h, f"KnowledgeManager.update({kb_suffix})"]
     kb_cid = str(uuid4())
 
     # Inner primitives spawned by execute_code share the parent lineage
@@ -314,22 +307,7 @@ def build_persistent_steps():
                 ),
             ],
         },
-        # ── 7. execute_function boundary: incoming ──
-        {
-            "label": "execute_function(primitives.web.ask) — boundary incoming",
-            "delay": 0.5,
-            "events": [
-                mm(
-                    ef_cid,
-                    ef_h,
-                    phase="incoming",
-                    manager="CodeActActor",
-                    method="execute_function",
-                    display_label="Running: primitives.web.ask",
-                ),
-            ],
-        },
-        # ── 8. WebSearcher.ask: ManagerMethod incoming ──
+        # ── 7. WebSearcher.ask: ManagerMethod incoming ──
         {
             "label": "WebSearcher.ask — ManagerMethod incoming",
             "delay": 0.5,
@@ -560,23 +538,7 @@ def build_persistent_steps():
                 ),
             ],
         },
-        # ── 16. execute_function boundary: outgoing ──
-        {
-            "label": "execute_function(primitives.web.ask) — boundary outgoing",
-            "delay": 0.3,
-            "events": [
-                mm(
-                    ef_cid,
-                    ef_h,
-                    phase="outgoing",
-                    manager="CodeActActor",
-                    method="execute_function",
-                    display_label="Running: primitives.web.ask",
-                    answer="Found current GCP setup instructions.",
-                ),
-            ],
-        },
-        # ── 17. Web search result (parent ToolLoop) ──
+        # ── 16. Web search result (parent ToolLoop) ──
         {
             "label": "Web search result (parent ToolLoop)",
             "delay": 0.5,
@@ -693,12 +655,24 @@ def build_persistent_steps():
                 ),
             ],
         },
-        # ── 21–26. Inner primitive 1: KnowledgeManager.update (with tool loop) ──
-        # These share the root lineage — execute_code is just a tool, not a
-        # boundary. The pending-call fallback in findSpawningToolCallId
-        # correlates them to the in-flight execute_code tool call.
+        # ── 21–32. Concurrent: KnowledgeManager.update + ContactManager.update ──
+        # Both fire simultaneously and their inner events interleave, as they
+        # would in real concurrent tool execution.
+        #
+        # Timeline:
+        #   0.0s  KM incoming + CM incoming (both start)
+        #   0.3s  KM user request
+        #   0.5s  CM user request
+        #   0.8s  KM thinking + _filter
+        #   0.6s  CM thinking + _filter
+        #   0.8s  KM _filter result
+        #   0.5s  CM _filter result
+        #   0.6s  KM thinking + _insert
+        #   0.5s  CM thinking + _update
+        #   0.8s  KM _insert result → KM outgoing
+        #   0.6s  CM _update result → CM outgoing
         {
-            "label": "Inner: KnowledgeManager.update incoming",
+            "label": "Inner: KM + CM both incoming (concurrent start)",
             "delay": 1.5,
             "events": [
                 mm(
@@ -709,6 +683,15 @@ def build_persistent_steps():
                     method="update",
                     display_label="Updating Knowledge Base",
                     request="Store GCP project unify-prod-2026 credential details.",
+                ),
+                mm(
+                    ec_ct_cid,
+                    ec_ct_h,
+                    phase="incoming",
+                    manager="ContactManager",
+                    method="update",
+                    display_label="Updating Contacts",
+                    request="Update DevOps team contact with Drive credentials.",
                 ),
             ],
         },
@@ -727,8 +710,22 @@ def build_persistent_steps():
             ],
         },
         {
+            "label": "CM inner: user request",
+            "delay": 0.5,
+            "events": [
+                tl(
+                    ec_ct_h,
+                    {
+                        "role": "user",
+                        "content": "Update DevOps team contact with Drive credentials for unify-prod-2026.",
+                    },
+                    method="ContactManager.update",
+                ),
+            ],
+        },
+        {
             "label": "KM inner: thinking + _filter",
-            "delay": 1.0,
+            "delay": 0.8,
             "events": [
                 tl(
                     ec_kb_h,
@@ -752,8 +749,30 @@ def build_persistent_steps():
             ],
         },
         {
+            "label": "CM inner: thinking + _filter",
+            "delay": 0.6,
+            "events": [
+                tl(
+                    ec_ct_h,
+                    _thinking(
+                        "I need to find the DevOps team contact to update their record "
+                        "with the new credential information.",
+                        tool_calls=[
+                            _tc(
+                                "tc_cm_filter",
+                                "_filter",
+                                {"table": "Contacts", "filter": "team == 'DevOps'"},
+                            ),
+                        ],
+                    ),
+                    method="ContactManager.update",
+                    tool_aliases={"_filter": "Searching contacts"},
+                ),
+            ],
+        },
+        {
             "label": "KM inner: _filter result",
-            "delay": 1.0,
+            "delay": 0.8,
             "events": [
                 tl(
                     ec_kb_h,
@@ -763,8 +782,32 @@ def build_persistent_steps():
             ],
         },
         {
+            "label": "CM inner: _filter result",
+            "delay": 0.5,
+            "events": [
+                tl(
+                    ec_ct_h,
+                    _tool_result(
+                        "tc_cm_filter",
+                        "_filter",
+                        {
+                            "rows": [
+                                {
+                                    "name": "DevOps Team",
+                                    "email": "devops@unify.ai",
+                                    "role": "Infrastructure",
+                                },
+                            ],
+                            "count": 1,
+                        },
+                    ),
+                    method="ContactManager.update",
+                ),
+            ],
+        },
+        {
             "label": "KM inner: thinking + _insert",
-            "delay": 0.8,
+            "delay": 0.6,
             "events": [
                 tl(
                     ec_kb_h,
@@ -794,110 +837,8 @@ def build_persistent_steps():
             ],
         },
         {
-            "label": "KM inner: _insert result + final response",
-            "delay": 0.8,
-            "events": [
-                tl(
-                    ec_kb_h,
-                    _tool_result("tc_km_insert", "_insert", {"inserted": 1}),
-                    method="KnowledgeManager.update",
-                ),
-            ],
-        },
-        {
-            "label": "Inner: KnowledgeManager.update outgoing",
-            "delay": 0.3,
-            "events": [
-                mm(
-                    ec_kb_cid,
-                    ec_kb_h,
-                    phase="outgoing",
-                    manager="KnowledgeManager",
-                    method="update",
-                    display_label="Updating Knowledge Base",
-                    answer="Knowledge base updated with credential details.",
-                ),
-            ],
-        },
-        # ── 27–32. Inner primitive 2: ContactManager.update (with tool loop) ──
-        {
-            "label": "Inner: ContactManager.update incoming",
-            "delay": 0.5,
-            "events": [
-                mm(
-                    ec_ct_cid,
-                    ec_ct_h,
-                    phase="incoming",
-                    manager="ContactManager",
-                    method="update",
-                    display_label="Updating Contacts",
-                    request="Update DevOps team contact with Drive credentials.",
-                ),
-            ],
-        },
-        {
-            "label": "CM inner: user request",
-            "delay": 0.3,
-            "events": [
-                tl(
-                    ec_ct_h,
-                    {
-                        "role": "user",
-                        "content": "Update DevOps team contact with Drive credentials for unify-prod-2026.",
-                    },
-                    method="ContactManager.update",
-                ),
-            ],
-        },
-        {
-            "label": "CM inner: thinking + _filter",
-            "delay": 0.8,
-            "events": [
-                tl(
-                    ec_ct_h,
-                    _thinking(
-                        "I need to find the DevOps team contact to update their record "
-                        "with the new credential information.",
-                        tool_calls=[
-                            _tc(
-                                "tc_cm_filter",
-                                "_filter",
-                                {"table": "Contacts", "filter": "team == 'DevOps'"},
-                            ),
-                        ],
-                    ),
-                    method="ContactManager.update",
-                    tool_aliases={"_filter": "Searching contacts"},
-                ),
-            ],
-        },
-        {
-            "label": "CM inner: _filter result",
-            "delay": 0.8,
-            "events": [
-                tl(
-                    ec_ct_h,
-                    _tool_result(
-                        "tc_cm_filter",
-                        "_filter",
-                        {
-                            "rows": [
-                                {
-                                    "name": "DevOps Team",
-                                    "email": "devops@unify.ai",
-                                    "role": "Infrastructure",
-                                },
-                            ],
-                            "count": 1,
-                        },
-                    ),
-                    method="ContactManager.update",
-                ),
-            ],
-        },
-        {
             "label": "CM inner: thinking + _update",
-            "delay": 0.8,
+            "delay": 0.5,
             "events": [
                 tl(
                     ec_ct_h,
@@ -925,7 +866,27 @@ def build_persistent_steps():
             ],
         },
         {
-            "label": "CM inner: _update result",
+            "label": "KM inner: _insert result → KM outgoing",
+            "delay": 0.8,
+            "events": [
+                tl(
+                    ec_kb_h,
+                    _tool_result("tc_km_insert", "_insert", {"inserted": 1}),
+                    method="KnowledgeManager.update",
+                ),
+                mm(
+                    ec_kb_cid,
+                    ec_kb_h,
+                    phase="outgoing",
+                    manager="KnowledgeManager",
+                    method="update",
+                    display_label="Updating Knowledge Base",
+                    answer="Knowledge base updated with credential details.",
+                ),
+            ],
+        },
+        {
+            "label": "CM inner: _update result → CM outgoing",
             "delay": 0.6,
             "events": [
                 tl(
@@ -933,12 +894,6 @@ def build_persistent_steps():
                     _tool_result("tc_cm_update", "_update", {"updated": 1}),
                     method="ContactManager.update",
                 ),
-            ],
-        },
-        {
-            "label": "Inner: ContactManager.update outgoing",
-            "delay": 0.3,
-            "events": [
                 mm(
                     ec_ct_cid,
                     ec_ct_h,
@@ -1199,27 +1154,82 @@ def build_persistent_steps():
             "delay": 0.3,
             "events": [tl(h, {"role": "assistant", "_thinking_in_flight": True})],
         },
-        # ── 32. Child ManagerMethod for knowledge update ──
+        # ── 32–35. Child: KnowledgeManager.update (with simple tool loop) ──
         # Second parallel tool completes → cancels the in-flight LLM call.
         {
-            "label": "Child ManagerMethod: primitives.knowledge.update",
+            "label": "Child: KnowledgeManager.update incoming",
             "delay": 1.7,
             "events": [
                 mm(
                     kb_cid,
                     kb_h,
                     phase="incoming",
-                    manager="CodeActActor",
-                    method="execute_function",
-                    display_label="Running: primitives.knowledge.update",
+                    manager="KnowledgeManager",
+                    method="update",
+                    display_label="Updating Knowledge Base",
+                    request="Update credential details for unify-prod-2026.",
+                ),
+            ],
+        },
+        {
+            "label": "KB2 inner: user request",
+            "delay": 0.3,
+            "events": [
+                tl(
+                    kb_h,
+                    {
+                        "role": "user",
+                        "content": "Update credential details for unify-prod-2026.",
+                    },
+                    method="KnowledgeManager.update",
+                ),
+            ],
+        },
+        {
+            "label": "KB2 inner: thinking + _update",
+            "delay": 0.8,
+            "events": [
+                tl(
+                    kb_h,
+                    _thinking(
+                        "I need to update the existing credentials entry with the "
+                        "confirmed key storage details from DevOps.",
+                        tool_calls=[
+                            _tc(
+                                "tc_kb2_update",
+                                "_update",
+                                {
+                                    "table": "Credentials",
+                                    "filter": "project == 'unify-prod-2026'",
+                                    "set": {
+                                        "key_storage": "secrets manager",
+                                        "devops_approved": True,
+                                    },
+                                },
+                            ),
+                        ],
+                    ),
+                    method="KnowledgeManager.update",
+                    tool_aliases={"_update": "Updating row"},
+                ),
+            ],
+        },
+        {
+            "label": "KB2 inner: _update result → outgoing",
+            "delay": 1.0,
+            "events": [
+                tl(
+                    kb_h,
+                    _tool_result("tc_kb2_update", "_update", {"updated": 1}),
+                    method="KnowledgeManager.update",
                 ),
                 mm(
                     kb_cid,
                     kb_h,
                     phase="outgoing",
-                    manager="CodeActActor",
-                    method="execute_function",
-                    display_label="Running: primitives.knowledge.update",
+                    manager="KnowledgeManager",
+                    method="update",
+                    display_label="Updating Knowledge Base",
                     answer="Knowledge base updated with credential details.",
                 ),
             ],
@@ -1338,6 +1348,14 @@ def build_single_action_steps():
     """
     cid = str(uuid4())
     h = [f"CodeActActor.act({cid[:4]})"]
+
+    # StorageCheck runs after the doing loop completes. TOOL_LOOP_LINEAGE
+    # is [] in act()'s context (the inner loop set it in its own task), so
+    # the StorageCheck is a root-level node, adjacent to the action.
+    sc_suffix = "sc01"
+    sc_h = [f"StorageCheck(CodeActActor.act)({sc_suffix})"]
+    sc_cid = str(uuid4())
+    sc_method = "StorageCheck(CodeActActor.act)"
 
     # Sub-agent dispatch: execute_function(primitives.actor.act)
     ef1_suffix = "d7e8"
@@ -1978,7 +1996,9 @@ def build_single_action_steps():
                 ),
             ],
         },
-        # ── 24. ManagerMethod outgoing ──
+        # ── 24. ManagerMethod outgoing (doing loop complete) ──
+        # The root result resolves before the StorageCheck starts — callers
+        # get the task result without waiting for storage.
         {
             "label": "ManagerMethod outgoing",
             "delay": 0.5,
@@ -1992,6 +2012,149 @@ def build_single_action_steps():
                         "Drafted follow-up email to Rachel Torres (VP of Partnerships, Acme Corp) "
                         "regarding the Q1 partnership review action items."
                     ),
+                ),
+            ],
+        },
+        # ── 25–31. StorageCheck: reviews trajectory, decides nothing to store ──
+        {
+            "label": "StorageCheck incoming",
+            "delay": 1.0,
+            "events": [
+                mm(
+                    sc_cid,
+                    sc_h,
+                    phase="incoming",
+                    manager="CodeActActor",
+                    method="StorageCheck",
+                    display_label="Storing Reusable Skills",
+                    request="Review the trajectory and store any reusable functions and compositional guidance.",
+                ),
+            ],
+        },
+        {
+            "label": "SC inner: user request",
+            "delay": 0.3,
+            "events": [
+                tl(
+                    sc_h,
+                    {
+                        "role": "user",
+                        "content": "Review the trajectory and store any reusable functions and compositional guidance.",
+                    },
+                    method=sc_method,
+                ),
+            ],
+        },
+        {
+            "label": "SC inner: thinking + search existing functions",
+            "delay": 1.5,
+            "events": [
+                tl(
+                    sc_h,
+                    _thinking(
+                        "Let me check what functions and guidance already exist before "
+                        "deciding whether anything from this trajectory is worth storing.",
+                        tool_calls=[
+                            _tc(
+                                "tc_sc_list",
+                                "FunctionManager_list_functions",
+                                {"include_implementations": False},
+                            ),
+                        ],
+                    ),
+                    method=sc_method,
+                    tool_aliases={
+                        "FunctionManager_list_functions": "Listing existing functions",
+                    },
+                ),
+            ],
+        },
+        {
+            "label": "SC inner: list_functions result",
+            "delay": 1.5,
+            "events": [
+                tl(
+                    sc_h,
+                    _tool_result(
+                        "tc_sc_list",
+                        "FunctionManager_list_functions",
+                        {"functions": [], "count": 0},
+                    ),
+                    method=sc_method,
+                ),
+            ],
+        },
+        {
+            "label": "SC inner: thinking + search guidance",
+            "delay": 1.0,
+            "events": [
+                tl(
+                    sc_h,
+                    _thinking(
+                        "No existing functions. The trajectory involved looking up a contact "
+                        "and drafting an email — both are straightforward single-primitive calls "
+                        "with no reusable composition pattern. Let me check guidance too.",
+                        tool_calls=[
+                            _tc(
+                                "tc_sc_search_g",
+                                "GuidanceManager_search",
+                                {"query": "contact lookup email drafting"},
+                            ),
+                        ],
+                    ),
+                    method=sc_method,
+                    tool_aliases={
+                        "GuidanceManager_search": "Searching existing guidance",
+                    },
+                ),
+            ],
+        },
+        {
+            "label": "SC inner: search guidance result",
+            "delay": 1.0,
+            "events": [
+                tl(
+                    sc_h,
+                    _tool_result(
+                        "tc_sc_search_g",
+                        "GuidanceManager_search",
+                        {"results": [], "count": 0},
+                    ),
+                    method=sc_method,
+                ),
+            ],
+        },
+        {
+            "label": "SC inner: final response (nothing to store)",
+            "delay": 2.0,
+            "events": [
+                tl(
+                    sc_h,
+                    {
+                        "role": "assistant",
+                        "content": (
+                            "Nothing worth storing. The trajectory used two standard primitives "
+                            "(primitives.contacts.ask + execute_code for email drafting) in a "
+                            "straightforward sequence with no reusable composition pattern or "
+                            "non-obvious logic worth persisting as a function or guidance entry."
+                        ),
+                    },
+                    method=sc_method,
+                ),
+            ],
+        },
+        {
+            "label": "StorageCheck outgoing",
+            "delay": 0.5,
+            "events": [
+                mm(
+                    sc_cid,
+                    sc_h,
+                    phase="outgoing",
+                    manager="CodeActActor",
+                    method="StorageCheck",
+                    display_label="Storing Reusable Skills",
+                    answer="Nothing worth storing.",
                 ),
             ],
         },
@@ -2154,7 +2317,7 @@ def run_stream(
 ) -> None:
     steps = steps_builder()
     total_time = sum(s["delay"] for s in steps) / speed
-    mode_label = "stream + persist" if persist else "stream"
+    mode_label = "stream + save" if persist else "stream"
     print(
         f"\n=== {scenario_name} / {mode_label} (speed={speed}x, ~{total_time:.0f}s total) ===\n",
     )
@@ -2239,42 +2402,53 @@ def main():
         description="Simulate a CodeActActor.act session for the Console action pane",
     )
     parser.add_argument(
-        "mode",
-        nargs="?",
-        default="stream",
-        choices=["stream", "upload"],
-        help="stream (default): real-time SSE via Console push endpoint. "
-        "upload: write all events to Orchestra at once.",
-    )
-    parser.add_argument(
         "--scenario",
         default="persistent",
         choices=list(SCENARIOS.keys()),
-        help="persistent (default): long-running act(persist=True) session with "
-        "interjections, pause/resume/stop. "
-        "single_action: one-shot act(persist=False) with sub-agent delegation.",
+        help="Which scenario to simulate (default: persistent).",
+    )
+    parser.add_argument(
+        "--stream",
+        action="store_true",
+        default=False,
+        help="Push events via SSE to the Console with realistic delays.",
+    )
+    parser.add_argument(
+        "--save",
+        action="store_true",
+        default=False,
+        help="Write events to Orchestra for historical access / page refresh.",
     )
     parser.add_argument(
         "--speed",
         type=float,
         default=1.0,
-        help="Speed multiplier for stream mode (default: 1.0). "
-        "Use 2 for 2x faster, 0.5 for slower, etc.",
+        help="Delay multiplier for --stream (default: 1.0). "
+        "Use 2 for 2x faster, 0.5 for slower.",
     )
     parser.add_argument(
-        "--persist",
+        "--clear",
         action="store_true",
-        help="(stream mode) Also write events to Orchestra for historical "
-        "persistence (child expansion, ToolLoop fetch on page refresh).",
+        help="Wipe existing action events from Orchestra before starting.",
     )
     args = parser.parse_args()
 
+    if not args.stream and not args.save:
+        args.stream = True
+
+    if args.clear:
+        import subprocess
+
+        clear_script = Path(__file__).parent / "clear_action_events.sh"
+        subprocess.run(["bash", str(clear_script)], check=True)
+        input("\nRefresh the browser, then press Enter to continue...")
+
     steps_builder = SCENARIOS[args.scenario]
 
-    if args.mode == "upload":
-        run_upload(steps_builder, args.scenario)
+    if args.stream:
+        run_stream(steps_builder, args.scenario, args.speed, persist=args.save)
     else:
-        run_stream(steps_builder, args.scenario, args.speed, persist=args.persist)
+        run_upload(steps_builder, args.scenario)
 
 
 if __name__ == "__main__":

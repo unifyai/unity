@@ -1,17 +1,26 @@
 #!/usr/bin/env python3
-"""Post-hoc call transcript builder for ConversationManager sandbox runs.
+"""Post-hoc call transcript builder for ConversationManager runs.
 
-Parses .logs_voice_agent.txt (and optionally .logs_conversation_sandbox.txt)
-to produce a deterministic, source-traced call transcript with anomaly detection.
+Parses voice-agent and CM logs to produce a deterministic, source-traced
+call transcript with anomaly detection.
+
+Supports two input modes:
+
+1. **Local sandbox** — separate voice-agent and CM log files::
+
+    .venv/bin/python sandboxes/conversation_manager/call_transcript.py \\
+        .logs_voice_agent.txt --cm-log .logs_conversation_sandbox.txt
+
+2. **Staging / GKE** — single combined pod log (both voice-agent and CM
+   lines interleaved, ``HH:MM:SS.mmm`` timestamps)::
+
+    .venv/bin/python sandboxes/conversation_manager/call_transcript.py \\
+        --staging-log staging_assistant_log_dump.txt
 
 Every assistant utterance is traced to its source path:
   - Path 1: fast_brain (reply)
   - Path 2: proactive_speech
   - Path 3: slow_brain / actor_notification
-
-Usage:
-    .venv/bin/python sandboxes/conversation_manager/call_transcript.py .logs_voice_agent.txt
-    .venv/bin/python sandboxes/conversation_manager/call_transcript.py .logs_voice_agent.txt --cm-log .logs_conversation_sandbox.txt
 """
 
 from __future__ import annotations
@@ -296,11 +305,22 @@ _TS_FULL_RE = re.compile(r"^(\d{4}-\d{2}-\d{2})\s+(\d{2}:\d{2}:\d{2})[,.](\d{3})
 
 
 def _extract_log_date(lines: list[str]) -> str:
-    """Extract YYYY-MM-DD from the first standard-format log line."""
+    """Extract YYYY-MM-DD from the first standard-format log line.
+
+    Handles both local sandbox format (``2026-02-26 11:24:34,275 ...``)
+    and staging/GKE format where the date appears in the job header
+    (``Found job: unity-2026-03-09-...`` or ``Started : 2026-03-09T...``).
+    """
     for raw in lines[:100]:
         m = _TS_FULL_RE.match(raw)
         if m:
             return m.group(1)
+        dm = re.search(r"Started\s*:\s*(\d{4}-\d{2}-\d{2})T", raw)
+        if dm:
+            return dm.group(1)
+        dm = re.search(r"unity-(\d{4}-\d{2}-\d{2})-", raw)
+        if dm:
+            return dm.group(1)
     return "2026-01-01"
 
 
@@ -606,14 +626,22 @@ def parse_voice_log(path: Path) -> VoiceLogData:
 _CM_TS_RE = re.compile(r"^(\d{4}-\d{2}-\d{2})\s+(\d{2}:\d{2}:\d{2})\s")
 
 
-def _parse_cm_ts(line: str) -> str:
-    """Extract UTC timestamp from a CM log line like '2026-02-26 11:24:34 [DEBUG]...'"""
+def _parse_cm_ts(line: str, log_date: str = "") -> str:
+    """Extract UTC timestamp from a CM log line.
+
+    Handles local sandbox format (``2026-02-26 11:24:34,275 ...``) and
+    staging format (``13:33:46.662 ...``) when *log_date* is provided.
+    """
     m = _TS_FULL_RE.match(line)
     if m:
         return f"{m.group(1)}T{m.group(2)}.{m.group(3)}+00:00"
     m2 = _CM_TS_RE.match(line)
     if m2:
         return f"{m2.group(1)}T{m2.group(2)}.000+00:00"
+    if log_date:
+        tm = _TS_MILLIS_RE.match(line)
+        if tm:
+            return f"{log_date}T{tm.group(1)}+00:00"
     return ""
 
 
@@ -823,16 +851,52 @@ def _extract_result_from_tool_msg(json_str: str) -> str:
     return "(ok)"
 
 
-def parse_cm_log(path: Path) -> CMLogData:
-    """Parse slow-brain decisions, guidance decisions, and actor events from the CM log."""
+def parse_cm_log(path: Path, *, log_date: str = "") -> CMLogData:
+    """Parse slow-brain decisions, guidance decisions, and actor events from the CM log.
+
+    Handles both local sandbox format and staging/GKE combined log format.
+    When *log_date* is provided, it is used for ``HH:MM:SS.mmm`` lines that
+    lack a date prefix.
+    """
     text = path.read_text(encoding="utf-8", errors="replace")
     lines = text.splitlines()
     data = CMLogData()
+
+    if not log_date:
+        log_date = _extract_log_date(lines)
+
+    def _ts(line: str) -> str:
+        return _parse_cm_ts(line, log_date)
 
     run_meta: dict[str, dict[str, str]] = {}
     sb_llm_paths: dict[str, str] = {}
 
     pending_code: dict[str, tuple[str, str]] = {}
+
+    # Staging slow-brain reconstruction: track pending CM LLM thinking
+    _staging_sb_counter = 0
+    _pending_sb: dict | None = None  # {ts_utc, origin_event, llm_log_path, was_queued}
+
+    def _flush_pending_sb(action: str = "act") -> None:
+        nonlocal _pending_sb, _staging_sb_counter
+        if _pending_sb is None:
+            return
+        _staging_sb_counter += 1
+        data.slow_brain_runs.append(
+            SlowBrainRun(
+                ts_utc=_pending_sb["ts_utc"],
+                run_id=f"llmrun-stg{_staging_sb_counter:04d}",
+                request_id="",
+                origin_event=_pending_sb["origin_event"],
+                origin_event_id="",
+                thoughts="",
+                action=action,
+                dispatch_utc=_pending_sb["ts_utc"],
+                llm_log_path=_pending_sb.get("llm_log_path", ""),
+                was_queued=_pending_sb.get("was_queued", False),
+            ),
+        )
+        _pending_sb = None
 
     i = 0
     while i < len(lines):
@@ -842,8 +906,31 @@ def parse_cm_log(path: Path) -> CMLogData:
             path_part = line.split("\u2192 ", 1)[1].strip()
             origin_match = re.search(r"\(([^)]+)\)", line.split("LLM thinking", 1)[1])
             if origin_match:
-                origin_key = _parse_cm_ts(line)
+                origin_key = _ts(line)
                 sb_llm_paths[origin_key] = path_part
+
+            # Staging: reconstruct slow-brain runs from LLM thinking lines
+            if origin_match and "run_id=" not in line:
+                _flush_pending_sb()
+                raw_origin = origin_match.group(1)
+                was_queued = "from queue" in raw_origin
+                origin_event = raw_origin.replace(", from queue", "").strip()
+                _pending_sb = {
+                    "ts_utc": _ts(line),
+                    "origin_event": origin_event,
+                    "llm_log_path": path_part,
+                    "was_queued": was_queued,
+                }
+
+        # Staging: explicit wait decision
+        if "[ConversationManager] Decided to wait" in line:
+            _flush_pending_sb(action="wait")
+
+        # Staging: fast-path dispatch
+        if "[FastPath]" in line and "completed" not in line.lower():
+            fp_match = re.search(r"\[FastPath\]\s+(\w+):\s+(.*)", line)
+            if fp_match:
+                _flush_pending_sb(action=f"fast_path_{fp_match.group(1)}")
 
         # Slow-brain dispatch: captures origin metadata per run_id
         if "Dispatching slow-brain" in line and "run_id=" in line:
@@ -860,7 +947,7 @@ def parse_cm_log(path: Path) -> CMLogData:
                     "origin_event",
                     "dropped_requests",
                 ),
-                "dispatch_utc": _parse_cm_ts(line),
+                "dispatch_utc": _ts(line),
                 "cancel_running": "cancel_running=True" in line,
             }
 
@@ -881,7 +968,7 @@ def parse_cm_log(path: Path) -> CMLogData:
             actions_raw = parts[1].strip() if len(parts) > 1 else "[]"
             actions_list = re.findall(r"'([^']*)'", actions_raw)
             action = actions_list[0] if actions_list else ""
-            ts = _parse_cm_ts(line)
+            ts = _ts(line)
             meta = run_meta.get(run_id, {})
             llm_path = sb_llm_paths.get(ts, "")
             data.slow_brain_runs.append(
@@ -905,7 +992,7 @@ def parse_cm_log(path: Path) -> CMLogData:
             content = line.split("Interject requested:", 1)[1].strip()
             data.steering_contents.append(
                 SteeringContent(
-                    ts_utc=_parse_cm_ts(line),
+                    ts_utc=_ts(line),
                     kind="interject",
                     content=content,
                 ),
@@ -915,8 +1002,19 @@ def parse_cm_log(path: Path) -> CMLogData:
             content = line.split("Ask requested:", 1)[1].strip()
             data.steering_contents.append(
                 SteeringContent(
-                    ts_utc=_parse_cm_ts(line),
+                    ts_utc=_ts(line),
                     kind="ask",
+                    content=content,
+                ),
+            )
+
+        # Staging: interjection received by actor (no separate "Interject requested" line)
+        elif "Interjection received:" in line and "CodeActActor.act(" in line:
+            content = line.split("Interjection received:", 1)[1].strip()
+            data.steering_contents.append(
+                SteeringContent(
+                    ts_utc=_ts(line),
+                    kind="interject",
                     content=content,
                 ),
             )
@@ -956,7 +1054,7 @@ def parse_cm_log(path: Path) -> CMLogData:
                 )
             data.proactive_decisions.append(
                 ProactiveSpeechDecision(
-                    ts_utc=_parse_cm_ts(line),
+                    ts_utc=_ts(line),
                     should_speak=should_speak,
                     delay_s=delay_s,
                     content=content,
@@ -970,7 +1068,7 @@ def parse_cm_log(path: Path) -> CMLogData:
             detail = line.split("] Request:", 1)[1].strip()
             data.actor_tool_calls.append(
                 ActorToolCall(
-                    ts_utc=_parse_cm_ts(line),
+                    ts_utc=_ts(line),
                     actor_id=actor_id,
                     event_type="request",
                     tool_name="",
@@ -987,7 +1085,7 @@ def parse_cm_log(path: Path) -> CMLogData:
                 llm_path = line.split("\u2192 ", 1)[1].strip()
             data.actor_tool_calls.append(
                 ActorToolCall(
-                    ts_utc=_parse_cm_ts(line),
+                    ts_utc=_ts(line),
                     actor_id=actor_id,
                     event_type="llm_thinking",
                     tool_name="",
@@ -1006,7 +1104,7 @@ def parse_cm_log(path: Path) -> CMLogData:
             )
             data.actor_tool_calls.append(
                 ActorToolCall(
-                    ts_utc=_parse_cm_ts(line),
+                    ts_utc=_ts(line),
                     actor_id=actor_id,
                     event_type="tool_scheduled",
                     tool_name=tool_name,
@@ -1035,7 +1133,7 @@ def parse_cm_log(path: Path) -> CMLogData:
             code, thought = pending_code.pop(call_id, ("", ""))
             data.actor_tool_calls.append(
                 ActorToolCall(
-                    ts_utc=_parse_cm_ts(line),
+                    ts_utc=_ts(line),
                     actor_id=actor_id,
                     event_type="execute_code",
                     tool_name=f"execute_code({exec_id})",
@@ -1059,7 +1157,7 @@ def parse_cm_log(path: Path) -> CMLogData:
                 i += 1
             data.actor_tool_calls.append(
                 ActorToolCall(
-                    ts_utc=_parse_cm_ts(line),
+                    ts_utc=_ts(line),
                     actor_id=actor_id,
                     event_type="tool_completed",
                     tool_name="",
@@ -1075,7 +1173,7 @@ def parse_cm_log(path: Path) -> CMLogData:
             actor_id = aid_match.group(1) if aid_match else ""
             data.actor_tool_calls.append(
                 ActorToolCall(
-                    ts_utc=_parse_cm_ts(line),
+                    ts_utc=_ts(line),
                     actor_id=actor_id,
                     event_type="persist_wait",
                     tool_name="",
@@ -1089,7 +1187,7 @@ def parse_cm_log(path: Path) -> CMLogData:
             detail = line.split("] Request:", 1)[1].strip()
             data.actor_tool_calls.append(
                 ActorToolCall(
-                    ts_utc=_parse_cm_ts(line),
+                    ts_utc=_ts(line),
                     actor_id=actor_id,
                     event_type="storage_check",
                     tool_name="StorageCheck",
@@ -1098,6 +1196,8 @@ def parse_cm_log(path: Path) -> CMLogData:
             )
 
         i += 1
+
+    _flush_pending_sb()
 
     # Merge tool_completed results back into their preceding execute_code entries.
     last_exec: ActorToolCall | None = None
@@ -2221,6 +2321,8 @@ def main() -> None:
     parser.add_argument(
         "voice_log",
         type=Path,
+        nargs="?",
+        default=None,
         help="Path to .logs_voice_agent.txt",
     )
     parser.add_argument(
@@ -2228,6 +2330,16 @@ def main() -> None:
         type=Path,
         default=None,
         help="Path to .logs_conversation_sandbox.txt (optional, for CM cross-reference)",
+    )
+    parser.add_argument(
+        "--staging-log",
+        type=Path,
+        default=None,
+        help=(
+            "Path to a combined staging/GKE log file. When provided, both "
+            "voice-agent and CM data are extracted from this single file "
+            "(replaces voice_log and --cm-log)."
+        ),
     )
     parser.add_argument(
         "--verbose",
@@ -2255,23 +2367,98 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    if not args.voice_log.exists():
-        print(f"Error: voice log not found: {args.voice_log}", file=sys.stderr)
-        sys.exit(1)
+    if args.staging_log:
+        if not args.staging_log.exists():
+            print(
+                f"Error: staging log not found: {args.staging_log}",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        log_path = args.staging_log
+    elif args.voice_log:
+        if not args.voice_log.exists():
+            print(
+                f"Error: voice log not found: {args.voice_log}",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        log_path = args.voice_log
+    else:
+        parser.error("Either voice_log or --staging-log is required")
 
-    data = parse_voice_log(args.voice_log)
+    data = parse_voice_log(log_path)
 
     if not data.utterances:
         print("No utterances found in voice log.", file=sys.stderr)
         sys.exit(1)
 
     cm_data: CMLogData | None = None
-    if args.cm_log and args.cm_log.exists():
+    if args.staging_log:
+        cm_data = parse_cm_log(args.staging_log)
+    elif args.cm_log and args.cm_log.exists():
         cm_data = parse_cm_log(args.cm_log)
 
+    # Auto-detect magnitude traces from staging log mirror directory.
+    # stream_logs.py prints "Mirroring container logs → <path>" and syncs
+    # /var/log/magnitude from the GKE container to <path>/magnitude/.
+    mag_dir: Path | None = args.magnitude_dir
+    agent_svc_log: Path | None = args.agent_service_log
+    if args.staging_log and (not mag_dir or not agent_svc_log):
+        staging_text = args.staging_log.read_text(
+            encoding="utf-8",
+            errors="replace",
+        )
+        mirror_match = re.search(
+            r"Mirroring container logs\s*→\s*(\S+)",
+            staging_text[:3000],
+        )
+        if mirror_match:
+            mirror_root = Path(mirror_match.group(1))
+            if not mag_dir:
+                candidate = mirror_root / "magnitude"
+                if candidate.is_dir():
+                    mag_dir = candidate
+                    print(
+                        f"Auto-detected magnitude traces: {candidate}",
+                        file=sys.stderr,
+                    )
+            if not agent_svc_log:
+                candidate = mirror_root / "agent-service.log"
+                if candidate.is_file():
+                    agent_svc_log = candidate
+                    print(
+                        f"Auto-detected agent-service log: {candidate}",
+                        file=sys.stderr,
+                    )
+        if not mag_dir and args.staging_log:
+            print(
+                "Hint: magnitude traces not found. Run stream_logs.py until "
+                "it completes the full sync (Ctrl+C), then re-run this script.",
+                file=sys.stderr,
+            )
+
+    docker_tmp_dir: Path | None = None
+    if not mag_dir and not args.staging_log:
+        docker_traces, docker_tmp_dir, docker_agent_log = (
+            collect_magnitude_traces_from_docker()
+        )
+        if docker_traces:
+            mag_dir = docker_tmp_dir
+            print(
+                f"Auto-detected magnitude traces from Docker container "
+                f"({len(docker_traces)} acts)",
+                file=sys.stderr,
+            )
+        if docker_agent_log and not agent_svc_log:
+            agent_svc_log = docker_agent_log
+            print(
+                f"Auto-detected agent-service log from Docker container",
+                file=sys.stderr,
+            )
+
     mag_traces: dict[str, MagnitudeTrace] = {}
-    if args.magnitude_dir:
-        mag_traces = parse_magnitude_traces(args.magnitude_dir)
+    if mag_dir:
+        mag_traces = parse_magnitude_traces(mag_dir)
         if cm_data and mag_traces:
             matched_ids: set[str] = set()
             for atc in cm_data.actor_tool_calls:
@@ -2294,8 +2481,8 @@ def main() -> None:
                     unmatched,
                 )
 
-    if args.agent_service_log and args.agent_service_log.exists() and cm_data:
-        direct_groups = parse_agent_service_log(args.agent_service_log)
+    if agent_svc_log and agent_svc_log.exists() and cm_data:
+        direct_groups = parse_agent_service_log(agent_svc_log)
         if direct_groups:
             exec_codes = [
                 atc
@@ -2350,9 +2537,20 @@ def main() -> None:
                 for e in timeline.entries
             ],
         }
-        print(json.dumps(summary, indent=2))
+        output = json.dumps(summary, indent=2)
     else:
-        print(format_timeline(timeline, verbose=args.verbose))
+        output = format_timeline(timeline, verbose=args.verbose)
+
+    print(output)
+
+    input_path = args.staging_log or args.voice_log
+    if input_path:
+        stem = input_path.stem
+        out_path = input_path.with_name(
+            f"{stem}_parsed_transcript{'.json' if args.json_only else '.txt'}",
+        )
+        out_path.write_text(output, encoding="utf-8")
+        print(f"Wrote transcript to {out_path}", file=sys.stderr)
 
 
 if __name__ == "__main__":

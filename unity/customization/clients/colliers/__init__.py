@@ -246,17 +246,3 @@ register_team(
     guidance=_COLLIERS_GUIDANCE,
     secrets=_COLLIERS_SECRETS,
 )
-
-# ---------------------------------------------------------------------------
-# User-level registration (personal / org-less API keys)
-# ---------------------------------------------------------------------------
-
-_YASSER_USER_ID = "40144b2a-722f-4f41-8d9e-384c316ee19f"  # yasser@unify.ai on staging
-
-register_user(
-    _YASSER_USER_ID,
-    config=_COLLIERS_CONFIG,
-    function_dir=_COLLIERS_FUNCTION_DIR,
-    guidance=_COLLIERS_GUIDANCE,
-    secrets=_COLLIERS_SECRETS,
-)

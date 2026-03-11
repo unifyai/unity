@@ -1,0 +1,74 @@
+{% extends "base.html" %}
+{% block title %}Forums — Vantage Connect{% endblock %}
+{% block body %}
+<!-- Sidebar -->
+<div class="sidebar">
+    <div class="sidebar-logo">V</div>
+    <a href="/forums" class="sidebar-item" title="Home"><span class="sidebar-icon">&#8962;</span>Home</a>
+    <a href="/forums" class="sidebar-item" title="Feeds"><span class="sidebar-icon">&#9881;</span>Feeds</a>
+    <a href="/forums" class="sidebar-item active" title="Forums"><span class="sidebar-icon">&#9993;</span>Forums</a>
+    <a href="#" class="sidebar-item" title="Groups"><span class="sidebar-icon">&#9734;</span>Groups</a>
+    <a href="#" class="sidebar-item" title="Files"><span class="sidebar-icon">&#128196;</span>Files</a>
+</div>
+
+<!-- Top bar -->
+<div class="topbar">
+    <div class="topbar-search">
+        <input type="text" placeholder="Search in all apps">
+    </div>
+    <div class="topbar-user">
+        <div class="topbar-avatar">SH</div>
+    </div>
+</div>
+
+<!-- Left panel -->
+<div class="left-panel" style="margin-top: 50px;">
+    <h3>Forums</h3>
+    <a href="/forums" class="active">
+        <span class="group-dot" style="background: #7c5cbf;"></span>
+        All Discussions
+    </a>
+    <h3>Categories</h3>
+    {% for cat in categories %}
+    <a href="/forums?category={{ cat }}">
+        <span class="group-dot" style="background: {{ cat_colors.get(cat, '#888') }};"></span>
+        {{ cat }}
+    </a>
+    {% endfor %}
+    <h3>My Groups</h3>
+    <a href="#">
+        <span class="group-dot" style="background: #4caf50;"></span>
+        Carbon Club
+    </a>
+    <a href="#">
+        <span class="group-dot" style="background: #2196f3;"></span>
+        Executive Club
+    </a>
+    <a href="#">
+        <span class="group-dot" style="background: #ff9800;"></span>
+        Operations Club
+    </a>
+</div>
+
+<!-- Main content -->
+<div class="main content-area">
+    <h2>Forum Discussions</h2>
+    <div class="card">
+        {% for thread in threads %}
+        <a href="/forums/{{ thread.id }}" class="thread-item" style="display: flex;">
+            <div class="thread-avatar" style="background: {{ thread.color }};">{{ thread.initials }}</div>
+            <div class="thread-content">
+                <div class="thread-title">{{ thread.title }}</div>
+                <div class="thread-meta">
+                    {{ thread.op_name }} &middot; {{ thread.op_org }} &middot; {{ thread.date }}
+                    <span class="badge {{ thread.badge_class }}" style="margin-left: 8px;">{{ thread.category }}</span>
+                </div>
+            </div>
+            <div class="thread-replies">
+                &#128172; {{ thread.reply_count }} replies
+            </div>
+        </a>
+        {% endfor %}
+    </div>
+</div>
+{% endblock %}

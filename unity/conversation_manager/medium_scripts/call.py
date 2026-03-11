@@ -81,7 +81,7 @@ def prewarm(_ctx=None):
     try:
         _log.info("Prewarm: initializing STT, VAD and turn detector…")
         STT = deepgram.STT(model="nova-3", language="en-GB")
-        VAD = silero.VAD.load(min_speech_duration=0.15)
+        VAD = silero.VAD.load(min_speech_duration=0.15, min_silence_duration=1.0)
         _log.info("Prewarm complete")
     except Exception as e:  # noqa: BLE001
         _log.error(f"Prewarm failed: {e}")
@@ -300,7 +300,7 @@ async def entrypoint(ctx: agents.JobContext):
     # Fallback for whenever pre-loading fails
     if STT is None:
         STT = deepgram.STT(model="nova-3", language="en-GB")
-        VAD = silero.VAD.load(min_speech_duration=0.15)
+        VAD = silero.VAD.load(min_speech_duration=0.15, min_silence_duration=1.0)
 
     from unity.settings import SETTINGS
 
@@ -347,6 +347,7 @@ async def entrypoint(ctx: agents.JobContext):
         ),
         vad=VAD,
         turn_detection=EnglishModel(),
+        min_endpointing_delay=0.75,
     )
 
     user_is_speaking = False
