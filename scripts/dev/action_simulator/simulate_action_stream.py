@@ -661,12 +661,24 @@ def build_persistent_steps():
                 ),
             ],
         },
-        # ── 21–26. Inner primitive 1: KnowledgeManager.update (with tool loop) ──
-        # These share the root lineage — execute_code is just a tool, not a
-        # boundary. The pending-call fallback in findSpawningToolCallId
-        # correlates them to the in-flight execute_code tool call.
+        # ── 21–32. Concurrent: KnowledgeManager.update + ContactManager.update ──
+        # Both fire simultaneously and their inner events interleave, as they
+        # would in real concurrent tool execution.
+        #
+        # Timeline:
+        #   0.0s  KM incoming + CM incoming (both start)
+        #   0.3s  KM user request
+        #   0.5s  CM user request
+        #   0.8s  KM thinking + _filter
+        #   0.6s  CM thinking + _filter
+        #   0.8s  KM _filter result
+        #   0.5s  CM _filter result
+        #   0.6s  KM thinking + _insert
+        #   0.5s  CM thinking + _update
+        #   0.8s  KM _insert result → KM outgoing
+        #   0.6s  CM _update result → CM outgoing
         {
-            "label": "Inner: KnowledgeManager.update incoming",
+            "label": "Inner: KM + CM both incoming (concurrent start)",
             "delay": 1.5,
             "events": [
                 mm(
@@ -677,6 +689,15 @@ def build_persistent_steps():
                     method="update",
                     display_label="Updating Knowledge Base",
                     request="Store GCP project unify-prod-2026 credential details.",
+                ),
+                mm(
+                    ec_ct_cid,
+                    ec_ct_h,
+                    phase="incoming",
+                    manager="ContactManager",
+                    method="update",
+                    display_label="Updating Contacts",
+                    request="Update DevOps team contact with Drive credentials.",
                 ),
             ],
         },
@@ -695,8 +716,22 @@ def build_persistent_steps():
             ],
         },
         {
+            "label": "CM inner: user request",
+            "delay": 0.5,
+            "events": [
+                tl(
+                    ec_ct_h,
+                    {
+                        "role": "user",
+                        "content": "Update DevOps team contact with Drive credentials for unify-prod-2026.",
+                    },
+                    method="ContactManager.update",
+                ),
+            ],
+        },
+        {
             "label": "KM inner: thinking + _filter",
-            "delay": 1.0,
+            "delay": 0.8,
             "events": [
                 tl(
                     ec_kb_h,
@@ -720,8 +755,30 @@ def build_persistent_steps():
             ],
         },
         {
+            "label": "CM inner: thinking + _filter",
+            "delay": 0.6,
+            "events": [
+                tl(
+                    ec_ct_h,
+                    _thinking(
+                        "I need to find the DevOps team contact to update their record "
+                        "with the new credential information.",
+                        tool_calls=[
+                            _tc(
+                                "tc_cm_filter",
+                                "_filter",
+                                {"table": "Contacts", "filter": "team == 'DevOps'"},
+                            ),
+                        ],
+                    ),
+                    method="ContactManager.update",
+                    tool_aliases={"_filter": "Searching contacts"},
+                ),
+            ],
+        },
+        {
             "label": "KM inner: _filter result",
-            "delay": 1.0,
+            "delay": 0.8,
             "events": [
                 tl(
                     ec_kb_h,
@@ -731,8 +788,32 @@ def build_persistent_steps():
             ],
         },
         {
+            "label": "CM inner: _filter result",
+            "delay": 0.5,
+            "events": [
+                tl(
+                    ec_ct_h,
+                    _tool_result(
+                        "tc_cm_filter",
+                        "_filter",
+                        {
+                            "rows": [
+                                {
+                                    "name": "DevOps Team",
+                                    "email": "devops@unify.ai",
+                                    "role": "Infrastructure",
+                                },
+                            ],
+                            "count": 1,
+                        },
+                    ),
+                    method="ContactManager.update",
+                ),
+            ],
+        },
+        {
             "label": "KM inner: thinking + _insert",
-            "delay": 0.8,
+            "delay": 0.6,
             "events": [
                 tl(
                     ec_kb_h,
@@ -762,110 +843,8 @@ def build_persistent_steps():
             ],
         },
         {
-            "label": "KM inner: _insert result + final response",
-            "delay": 0.8,
-            "events": [
-                tl(
-                    ec_kb_h,
-                    _tool_result("tc_km_insert", "_insert", {"inserted": 1}),
-                    method="KnowledgeManager.update",
-                ),
-            ],
-        },
-        {
-            "label": "Inner: KnowledgeManager.update outgoing",
-            "delay": 0.3,
-            "events": [
-                mm(
-                    ec_kb_cid,
-                    ec_kb_h,
-                    phase="outgoing",
-                    manager="KnowledgeManager",
-                    method="update",
-                    display_label="Updating Knowledge Base",
-                    answer="Knowledge base updated with credential details.",
-                ),
-            ],
-        },
-        # ── 27–32. Inner primitive 2: ContactManager.update (with tool loop) ──
-        {
-            "label": "Inner: ContactManager.update incoming",
-            "delay": 0.5,
-            "events": [
-                mm(
-                    ec_ct_cid,
-                    ec_ct_h,
-                    phase="incoming",
-                    manager="ContactManager",
-                    method="update",
-                    display_label="Updating Contacts",
-                    request="Update DevOps team contact with Drive credentials.",
-                ),
-            ],
-        },
-        {
-            "label": "CM inner: user request",
-            "delay": 0.3,
-            "events": [
-                tl(
-                    ec_ct_h,
-                    {
-                        "role": "user",
-                        "content": "Update DevOps team contact with Drive credentials for unify-prod-2026.",
-                    },
-                    method="ContactManager.update",
-                ),
-            ],
-        },
-        {
-            "label": "CM inner: thinking + _filter",
-            "delay": 0.8,
-            "events": [
-                tl(
-                    ec_ct_h,
-                    _thinking(
-                        "I need to find the DevOps team contact to update their record "
-                        "with the new credential information.",
-                        tool_calls=[
-                            _tc(
-                                "tc_cm_filter",
-                                "_filter",
-                                {"table": "Contacts", "filter": "team == 'DevOps'"},
-                            ),
-                        ],
-                    ),
-                    method="ContactManager.update",
-                    tool_aliases={"_filter": "Searching contacts"},
-                ),
-            ],
-        },
-        {
-            "label": "CM inner: _filter result",
-            "delay": 0.8,
-            "events": [
-                tl(
-                    ec_ct_h,
-                    _tool_result(
-                        "tc_cm_filter",
-                        "_filter",
-                        {
-                            "rows": [
-                                {
-                                    "name": "DevOps Team",
-                                    "email": "devops@unify.ai",
-                                    "role": "Infrastructure",
-                                },
-                            ],
-                            "count": 1,
-                        },
-                    ),
-                    method="ContactManager.update",
-                ),
-            ],
-        },
-        {
             "label": "CM inner: thinking + _update",
-            "delay": 0.8,
+            "delay": 0.5,
             "events": [
                 tl(
                     ec_ct_h,
@@ -893,7 +872,27 @@ def build_persistent_steps():
             ],
         },
         {
-            "label": "CM inner: _update result",
+            "label": "KM inner: _insert result → KM outgoing",
+            "delay": 0.8,
+            "events": [
+                tl(
+                    ec_kb_h,
+                    _tool_result("tc_km_insert", "_insert", {"inserted": 1}),
+                    method="KnowledgeManager.update",
+                ),
+                mm(
+                    ec_kb_cid,
+                    ec_kb_h,
+                    phase="outgoing",
+                    manager="KnowledgeManager",
+                    method="update",
+                    display_label="Updating Knowledge Base",
+                    answer="Knowledge base updated with credential details.",
+                ),
+            ],
+        },
+        {
+            "label": "CM inner: _update result → CM outgoing",
             "delay": 0.6,
             "events": [
                 tl(
@@ -901,12 +900,6 @@ def build_persistent_steps():
                     _tool_result("tc_cm_update", "_update", {"updated": 1}),
                     method="ContactManager.update",
                 ),
-            ],
-        },
-        {
-            "label": "Inner: ContactManager.update outgoing",
-            "delay": 0.3,
-            "events": [
                 mm(
                     ec_ct_cid,
                     ec_ct_h,
