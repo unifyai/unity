@@ -45,8 +45,8 @@ def _start_site(site_dir: Path, port: int) -> subprocess.Popen | None:
                 str(port),
             ],
             cwd=str(site_dir),
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
         )
         return proc
 
@@ -55,8 +55,8 @@ def _start_site(site_dir: Path, port: int) -> subprocess.Popen | None:
         proc = subprocess.Popen(
             [sys.executable, "-m", "http.server", str(port)],
             cwd=str(site_dir),
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
         )
         return proc
 
@@ -150,8 +150,17 @@ def ensure_demo_sites_running(url_mappings: dict[str, str]) -> None:
                 proc.pid,
             )
         else:
+            stderr_output = ""
+            if proc.stderr:
+                try:
+                    stderr_output = proc.stderr.read1(4096).decode(errors="replace")
+                except Exception:
+                    pass
+            if proc.poll() is not None:
+                stderr_output += f" (exit code: {proc.returncode})"
             logger.error(
-                "Demo site %s failed to start on port %d within timeout",
+                "Demo site %s failed to start on port %d within timeout. stderr: %s",
                 matched_dir.name,
                 port,
+                stderr_output or "(no output)",
             )
