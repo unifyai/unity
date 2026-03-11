@@ -556,7 +556,7 @@ class TestActBeforeInitialization:
             # act() should return within 2 seconds (not block on init)
             try:
                 result = await asyncio.wait_for(
-                    tools.act(query="look up the weather"),
+                    tools.act(query="look up the weather", requesting_contact_id=1),
                     timeout=2.0,
                 )
             except asyncio.TimeoutError:

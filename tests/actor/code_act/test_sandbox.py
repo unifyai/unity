@@ -340,6 +340,44 @@ print("after")
     assert llm_content[2]["type"] == "text"
 
 
+@pytest.mark.asyncio
+@pytest.mark.timeout(30)
+async def test_display_compresses_oversized_image():
+    """display() must keep images within Anthropic's 5 MB base64 limit.
+
+    A 4032x3024 random-noise image produces ~48 MB as a lossless PNG.
+    Without compression, this silently passes through, the next LLM
+    inference call hits the API limit, and the tool loop crashes with
+    no feedback to the model.
+
+    The fix: display() falls back to JPEG with progressive quality
+    reduction when PNG exceeds the limit.
+    """
+    sandbox = PythonExecutionSession()
+
+    code = """
+import numpy as np
+from PIL import Image
+img = Image.fromarray(np.random.randint(0, 255, (3024, 4032, 3), dtype=np.uint8))
+display(img)
+"""
+    result = await sandbox.execute(code)
+    assert result["error"] is None, f"display() raised: {result['error']}"
+
+    stdout = result["stdout"]
+    images = [p for p in stdout if isinstance(p, ImagePart)]
+    assert len(images) == 1, f"Expected exactly 1 image, got {len(images)}"
+
+    img_part = images[0]
+    assert len(img_part.data) <= 5_242_880, (
+        f"display() produced a {len(img_part.data):,} byte base64 image "
+        f"(limit is 5,242,880). It should compress to fit."
+    )
+    assert (
+        img_part.mime == "image/jpeg"
+    ), f"Expected JPEG fallback for oversized image, got {img_part.mime}"
+
+
 def test_execution_result_implements_formatted_tool_result():
     """Tests that ExecutionResult implements the FormattedToolResult protocol."""
     # ExecutionResult should be recognized as a FormattedToolResult

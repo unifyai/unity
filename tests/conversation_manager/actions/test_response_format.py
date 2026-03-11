@@ -216,6 +216,7 @@ class TestActForwardsResponseFormat:
 
         await brain_action_tools.act(
             query="Find contacts",
+            requesting_contact_id=1,
             response_format={"name": "string", "email": "string"},
         )
 
@@ -249,7 +250,7 @@ class TestActForwardsResponseFormat:
         mock_cm.actor = MagicMock()
         mock_cm.actor.act = fake_act
 
-        await brain_action_tools.act(query="Find contacts")
+        await brain_action_tools.act(query="Find contacts", requesting_contact_id=1)
 
         assert captured_kwargs.get("response_format") is None
 
@@ -285,6 +286,7 @@ class TestStructuredResultPropagation:
 
         result = await brain_action_tools.act(
             query="Find Alice's contact info",
+            requesting_contact_id=1,
             response_format={"name": "string", "email": "string"},
         )
 
@@ -320,6 +322,7 @@ class TestStructuredResultPropagation:
 
         await brain_action_tools.act(
             query="Compute something",
+            requesting_contact_id=1,
             response_format={"x": "integer"},
         )
 

@@ -78,6 +78,21 @@ def _rebuild_multi_handle_content(template, results):
             return [_walk(v) for v in node]
         if isinstance(node, tuple):
             return tuple(_walk(v) for v in node)
+        try:
+            from pydantic import BaseModel
+
+            if isinstance(node, BaseModel):
+                updates = {}
+                changed = False
+                for field_name in node.model_fields:
+                    val = getattr(node, field_name)
+                    walked = _walk(val)
+                    if walked is not val:
+                        updates[field_name] = walked
+                        changed = True
+                return node.model_copy(update=updates) if changed else node
+        except ImportError:
+            pass
         return node
 
     return _walk(template)
@@ -763,6 +778,9 @@ class ToolsData:
                 label = info._multi_handle_label
                 mh_state.results[label] = raw
                 mh_state.update_placeholder()
+                await msg_dispatcher.publish_to_event_bus(
+                    [mh_state.placeholder_msg],
+                )
                 self.completed_results[call_id] = serialize_tool_content(
                     tool_name=name,
                     payload=raw,
@@ -829,6 +847,9 @@ class ToolsData:
                 error_tb = traceback.format_exc()
                 mh_state.results[label] = f"[{label}: error]\n{error_tb}"
                 mh_state.update_placeholder()
+                await msg_dispatcher.publish_to_event_bus(
+                    [mh_state.placeholder_msg],
+                )
                 self.completed_results[call_id] = error_tb
                 self._completed_tool_names[call_id] = name
                 consecutive_failures.increment_failures()

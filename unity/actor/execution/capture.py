@@ -137,6 +137,9 @@ def _ensure_stream_router_installed() -> None:
 # ---------------------------------------------------------------------------
 # Display function for rich output (images, etc.)
 # ---------------------------------------------------------------------------
+_IMAGE_BASE64_LIMIT = 5_242_880  # Anthropic's per-image limit (5 MB)
+
+
 def _make_display(
     parts_var: contextvars.ContextVar[List[Union[TextPart, ImagePart]]],
 ) -> Callable[[Any], None]:
@@ -151,16 +154,43 @@ def _make_display(
         parts = parts_var.get()
 
         if Image is not None and isinstance(obj, Image.Image):
-            buf = io.BytesIO()
-            obj.save(buf, format="PNG")
-            b64_data = base64.b64encode(buf.getvalue()).decode("ascii")
-            parts.append(ImagePart(mime="image/png", data=b64_data))
+            b64_data, mime = _encode_image_for_llm(obj)
+            parts.append(ImagePart(mime=mime, data=b64_data))
         elif isinstance(obj, str):
             parts.append(TextPart(text=obj + "\n"))
         else:
             parts.append(TextPart(text=str(obj) + "\n"))
 
     return display
+
+
+def _encode_image_for_llm(img: Any) -> tuple[str, str]:
+    """Encode a PIL Image to base64, ensuring it stays within the API size limit.
+
+    Tries PNG first for lossless quality.  If the result exceeds the limit,
+    falls back to JPEG with progressive quality reduction.  Raises if the
+    image cannot be brought under the limit.
+    """
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    b64_data = base64.b64encode(buf.getvalue()).decode("ascii")
+    if len(b64_data) <= _IMAGE_BASE64_LIMIT:
+        return b64_data, "image/png"
+
+    rgb_img = img.convert("RGB") if img.mode != "RGB" else img
+    for quality in (85, 60, 40, 20):
+        buf = io.BytesIO()
+        rgb_img.save(buf, format="JPEG", quality=quality)
+        b64_data = base64.b64encode(buf.getvalue()).decode("ascii")
+        if len(b64_data) <= _IMAGE_BASE64_LIMIT:
+            return b64_data, "image/jpeg"
+
+    raise ValueError(
+        f"Image too large for the LLM API even after JPEG compression "
+        f"(quality={quality}): {len(b64_data):,} bytes base64, "
+        f"limit is {_IMAGE_BASE64_LIMIT:,} bytes (5 MB). "
+        f"Resize the image to smaller dimensions before calling display().",
+    )
 
 
 # ---------------------------------------------------------------------------
