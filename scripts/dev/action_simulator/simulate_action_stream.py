@@ -1,41 +1,35 @@
 #!/usr/bin/env python3
 """Simulate CodeActActor.act sessions for the Console action pane.
 
-Scenarios:
+Scenarios (--scenario):
 
   persistent (default)  A long-running act(persist=True) session with discovery,
                         nested WebSearcher.ask, clarification, interjections,
                         pause/resume/stop, and parallel tool completion.
 
   single_action         A one-shot act(persist=False) action that delegates to a
-                        sub-agent via execute_function(primitives.actor.act). The
-                        sub-agent runs its own CodeActActor with nested
-                        ContactManager.ask, demonstrating the full sub-agent
-                        hierarchy (root → execute_function → sub-agent → inner
-                        execute_function → manager tool loop).
+                        sub-agent, with a post-completion StorageCheck phase.
 
-Delivery modes:
+Delivery (--stream / --save):
 
-  stream (default)  POST events to the Console's local SSE push endpoint with
-                    realistic delays so you can watch them unpack in real time.
-                    Pass --upload to also write events to Orchestra so that
-                    historical data (child expansion, ToolLoop fetch on page
-                    refresh) works too.
+  --stream    POST events via SSE to the Console with realistic delays.
+  --save      Write events to Orchestra for historical access / page refresh.
 
-  upload            Write all events to Orchestra's log API at once (historical
-                    path). Refresh the console to see the full session.
+  Both can be combined. If neither is given, --stream is the default.
+  --speed only applies when --stream is active.
 
 Prerequisites:
-    stream mode:           Console running (http://localhost:3333)
-    stream --upload mode:  Console + local Orchestra (http://127.0.0.1:8000)
-    upload mode:           Local Orchestra running (http://127.0.0.1:8000)
+    --stream only:     Console running (http://localhost:3333)
+    --save only:       Local Orchestra running (http://127.0.0.1:8000)
+    --stream --save:   Both Console and Orchestra running
 
 Usage:
-    .venv/bin/python scripts/dev/simulate_action_stream.py                            # persistent, stream
-    .venv/bin/python scripts/dev/simulate_action_stream.py --scenario single_action   # single action, stream
-    .venv/bin/python scripts/dev/simulate_action_stream.py --upload                   # persistent, stream + upload
-    .venv/bin/python scripts/dev/simulate_action_stream.py upload                     # persistent, upload
-    .venv/bin/python scripts/dev/simulate_action_stream.py --speed 2                  # 2x faster
+    .venv/bin/python scripts/dev/action_simulator/simulate_action_stream.py                            # stream persistent
+    .venv/bin/python scripts/dev/action_simulator/simulate_action_stream.py --scenario single_action   # stream single action
+    .venv/bin/python scripts/dev/action_simulator/simulate_action_stream.py --save                     # save only (no streaming)
+    .venv/bin/python scripts/dev/action_simulator/simulate_action_stream.py --stream --save            # stream + save
+    .venv/bin/python scripts/dev/action_simulator/simulate_action_stream.py --speed 2                  # 2x faster streaming
+    .venv/bin/python scripts/dev/action_simulator/simulate_action_stream.py --clear                    # wipe old events first
 """
 
 from __future__ import annotations
@@ -2319,7 +2313,7 @@ def run_stream(
 ) -> None:
     steps = steps_builder()
     total_time = sum(s["delay"] for s in steps) / speed
-    mode_label = "stream + upload" if persist else "stream"
+    mode_label = "stream + save" if persist else "stream"
     print(
         f"\n=== {scenario_name} / {mode_label} (speed={speed}x, ~{total_time:.0f}s total) ===\n",
     )
@@ -2404,40 +2398,39 @@ def main():
         description="Simulate a CodeActActor.act session for the Console action pane",
     )
     parser.add_argument(
-        "mode",
-        nargs="?",
-        default="stream",
-        choices=["stream", "upload"],
-        help="stream (default): real-time SSE via Console push endpoint. "
-        "upload: write all events to Orchestra at once.",
-    )
-    parser.add_argument(
         "--scenario",
         default="persistent",
         choices=list(SCENARIOS.keys()),
-        help="persistent (default): long-running act(persist=True) session with "
-        "interjections, pause/resume/stop. "
-        "single_action: one-shot act(persist=False) with sub-agent delegation.",
+        help="Which scenario to simulate (default: persistent).",
+    )
+    parser.add_argument(
+        "--stream",
+        action="store_true",
+        default=False,
+        help="Push events via SSE to the Console with realistic delays.",
+    )
+    parser.add_argument(
+        "--save",
+        action="store_true",
+        default=False,
+        help="Write events to Orchestra for historical access / page refresh.",
     )
     parser.add_argument(
         "--speed",
         type=float,
         default=1.0,
-        help="Speed multiplier for stream mode (default: 1.0). "
-        "Use 2 for 2x faster, 0.5 for slower, etc.",
-    )
-    parser.add_argument(
-        "--upload",
-        action="store_true",
-        help="(stream mode) Also write events to Orchestra for historical "
-        "data (child expansion, ToolLoop fetch on page refresh).",
+        help="Delay multiplier for --stream (default: 1.0). "
+        "Use 2 for 2x faster, 0.5 for slower.",
     )
     parser.add_argument(
         "--clear",
         action="store_true",
-        help="Clear existing action events from Orchestra before starting.",
+        help="Wipe existing action events from Orchestra before starting.",
     )
     args = parser.parse_args()
+
+    if not args.stream and not args.save:
+        args.stream = True
 
     if args.clear:
         import subprocess
@@ -2448,10 +2441,10 @@ def main():
 
     steps_builder = SCENARIOS[args.scenario]
 
-    if args.mode == "upload":
-        run_upload(steps_builder, args.scenario)
+    if args.stream:
+        run_stream(steps_builder, args.scenario, args.speed, persist=args.save)
     else:
-        run_stream(steps_builder, args.scenario, args.speed, persist=args.upload)
+        run_upload(steps_builder, args.scenario)
 
 
 if __name__ == "__main__":
