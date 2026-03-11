@@ -128,17 +128,15 @@ def build_persistent_steps():
     cid = str(uuid4())
     h = [f"CodeActActor.act({cid[:4]})"]
 
-    ef_suffix = "a1b2"
-    ef_h = [*h, f"execute_function(primitives.web.ask)({ef_suffix})"]
-    ef_cid = str(uuid4())
-
+    # Inner managers share the root lineage — execute_function is just a tool,
+    # not a boundary. Nesting emerges from the managers' own events.
     ws_suffix = "ws01"
-    ws_h = [*ef_h, f"WebSearcher.ask({ws_suffix})"]
+    ws_h = [*h, f"WebSearcher.ask({ws_suffix})"]
     ws_cid = str(uuid4())
     ws_method = "WebSearcher.ask"
 
     kb_suffix = "c3d4"
-    kb_h = [*h, f"execute_function(primitives.knowledge.update)({kb_suffix})"]
+    kb_h = [*h, f"KnowledgeManager.update({kb_suffix})"]
     kb_cid = str(uuid4())
 
     # Inner primitives spawned by execute_code share the parent lineage
@@ -315,22 +313,7 @@ def build_persistent_steps():
                 ),
             ],
         },
-        # ── 7. execute_function boundary: incoming ──
-        {
-            "label": "execute_function(primitives.web.ask) — boundary incoming",
-            "delay": 0.5,
-            "events": [
-                mm(
-                    ef_cid,
-                    ef_h,
-                    phase="incoming",
-                    manager="CodeActActor",
-                    method="execute_function",
-                    display_label="Running: primitives.web.ask",
-                ),
-            ],
-        },
-        # ── 8. WebSearcher.ask: ManagerMethod incoming ──
+        # ── 7. WebSearcher.ask: ManagerMethod incoming ──
         {
             "label": "WebSearcher.ask — ManagerMethod incoming",
             "delay": 0.5,
@@ -561,23 +544,7 @@ def build_persistent_steps():
                 ),
             ],
         },
-        # ── 16. execute_function boundary: outgoing ──
-        {
-            "label": "execute_function(primitives.web.ask) — boundary outgoing",
-            "delay": 0.3,
-            "events": [
-                mm(
-                    ef_cid,
-                    ef_h,
-                    phase="outgoing",
-                    manager="CodeActActor",
-                    method="execute_function",
-                    display_label="Running: primitives.web.ask",
-                    answer="Found current GCP setup instructions.",
-                ),
-            ],
-        },
-        # ── 17. Web search result (parent ToolLoop) ──
+        # ── 16. Web search result (parent ToolLoop) ──
         {
             "label": "Web search result (parent ToolLoop)",
             "delay": 0.5,
@@ -1200,27 +1167,28 @@ def build_persistent_steps():
             "delay": 0.3,
             "events": [tl(h, {"role": "assistant", "_thinking_in_flight": True})],
         },
-        # ── 32. Child ManagerMethod for knowledge update ──
+        # ── 32. Child: KnowledgeManager.update (quick, no inner loop) ──
         # Second parallel tool completes → cancels the in-flight LLM call.
         {
-            "label": "Child ManagerMethod: primitives.knowledge.update",
+            "label": "Child: KnowledgeManager.update",
             "delay": 1.7,
             "events": [
                 mm(
                     kb_cid,
                     kb_h,
                     phase="incoming",
-                    manager="CodeActActor",
-                    method="execute_function",
-                    display_label="Running: primitives.knowledge.update",
+                    manager="KnowledgeManager",
+                    method="update",
+                    display_label="Updating Knowledge Base",
+                    request="Update credential details for unify-prod-2026.",
                 ),
                 mm(
                     kb_cid,
                     kb_h,
                     phase="outgoing",
-                    manager="CodeActActor",
-                    method="execute_function",
-                    display_label="Running: primitives.knowledge.update",
+                    manager="KnowledgeManager",
+                    method="update",
+                    display_label="Updating Knowledge Base",
                     answer="Knowledge base updated with credential details.",
                 ),
             ],
