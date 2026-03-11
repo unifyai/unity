@@ -1711,7 +1711,10 @@ class ConversationManagerBrainActionTools:
         *,
         instruction: str,
     ) -> dict[str, Any]:
-        """Execute a single atomic action on native desktop UI (non-browser).
+        """Execute a single desktop interaction on native UI (non-browser).
+
+        Each call performs exactly **one** desktop interaction — one click,
+        one keystroke, one window switch.
 
         **Only for interactions that cannot be done inside a web browser:**
         native application windows, terminal commands, file manager operations,
@@ -1728,12 +1731,12 @@ class ConversationManagerBrainActionTools:
         - "Right-click the desktop background"
         - "Click the system tray notification"
 
-        **Route through ``act`` instead** when the request requires reasoning
-        about *what* to do, involves multiple steps, or benefits from guidance
-        and compositional functions.
+        **Route through ``act`` or ``interject_*``** when the task requires
+        more than one interaction, reasoning about *what* to do, or benefits
+        from guidance and compositional functions.
 
         Args:
-            instruction: A concrete native desktop action to perform
+            instruction: A concrete single native desktop action to perform
                 (e.g. "Open the Terminal application").
         """
         cp = self._cm.computer_primitives
@@ -1763,14 +1766,12 @@ class ConversationManagerBrainActionTools:
         request: str,
         session_id: int | None = None,
     ) -> dict[str, Any]:
-        """Execute a request in a visible web browser session.
+        """Execute a single browser interaction in a visible web session.
 
-        **This is the default fast-path tool for any task involving a web
-        browser** — opening a browser, navigating to a URL, searching the
-        web, clicking elements on a web page, typing into web forms, scrolling
-        web content, or reading a web page.  It bypasses the general ``act``
-        pathway and runs directly against a Chromium browser session visible
-        on the desktop.
+        Each call performs exactly **one** browser interaction — one click,
+        one text entry, one scroll, or one navigation.  It bypasses the
+        general ``act`` pathway and runs directly against a Chromium browser
+        session visible on the desktop.
 
         A new browser session is created automatically when ``session_id``
         is omitted.  Pass a numeric ``session_id`` from
@@ -1780,12 +1781,13 @@ class ConversationManagerBrainActionTools:
         that cannot be done inside a browser (terminal, file manager, native
         app windows, system dialogs).
 
-        **Use ``act`` instead** for complex multi-step work, cross-domain
-        reasoning, or anything requiring guidance / functions / knowledge.
+        **Use ``act`` or ``interject_*`` instead** when the task requires
+        more than one interaction (e.g. click a button then type a value
+        then click Save), or needs guidance / functions / knowledge.
 
         Args:
-            request: Natural language description of the browser task
-                (e.g. "Navigate to example.com", "Search Google for 'topic'").
+            request: Natural language description of a single browser action
+                (e.g. "Navigate to example.com", "Click the Submit button").
             session_id: Optional numeric ID of an existing active web session
                 to reuse.  When omitted a new visible session is created.
         """

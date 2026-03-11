@@ -70,10 +70,14 @@ def _find_latest_job_entry(
         limit=20,
     )
 
-    suffix = f"-{namespace}"
     for log in logs:
         job_name = log.entries.get("job_name")
-        if not (job_name and job_name.endswith(suffix)):
+        if not job_name:
+            continue
+        is_staging_job = job_name.endswith("-staging")
+        if namespace == "staging" and not is_staging_job:
+            continue
+        if namespace == "production" and is_staging_job:
             continue
         running = str(log.entries.get("running", "false")).lower() == "true"
         if running_only and not running:

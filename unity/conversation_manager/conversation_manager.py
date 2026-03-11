@@ -139,7 +139,7 @@ class ConversationManager(metaclass=SingletonABCMeta):
         self.project_name = project_name
 
         # inactivity & shutdown
-        self.inactivity_timeout = 300  # 5 minutes in seconds
+        self.inactivity_timeout = 420  # 7 minutes in seconds
         self.inactivity_check_interval = 30  # seconds
         self.last_activity_time = self.loop.time()
         self.stop = stop
