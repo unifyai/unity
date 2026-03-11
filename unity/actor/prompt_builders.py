@@ -417,7 +417,7 @@ def _build_filesystem_context() -> str:
         | Location | Purpose |
         |----------|---------|
         | `{resolved}/Downloads/` | **Inbound** — user-sent attachments are auto-saved here. |
-        | `{resolved}/Outputs/` | **Outbound** — save generated files here (reports, CSVs, images, etc.) so the caller can attach and send them to the user. May be auto-cleared between sessions. |
+        | `{resolved}/Outputs/` | **Outbound** — save generated files here (reports, CSVs, images, etc.) so the caller can attach and send them to the user. Persists across sessions. |
         | `{resolved}/Screenshots/User/` | Auto-captured frames from the user's screen share. Read-only, cleared between sessions. |
         | `{resolved}/Screenshots/Assistant/` | Auto-captured frames from the assistant's desktop. Read-only, cleared between sessions. |
         | `{resolved}/Screenshots/Webcam/` | Auto-captured frames from the user's webcam. Read-only, cleared between sessions. |
@@ -429,7 +429,11 @@ def _build_filesystem_context() -> str:
           Reference them with full paths (e.g. `{resolved}/Downloads/report.pdf`).
         - **Outbound**: Save files for the user to `{resolved}/Outputs/` and
           include the full path in your final answer
-          (e.g. `{resolved}/Outputs/summary.csv`).
+          (e.g. `{resolved}/Outputs/summary.csv`).  When creating a revised
+          version of an existing file, either overwrite the original (if the
+          old version is superseded) or create a numbered variant using
+          `{{name}}({{n}}).{{ext}}` (e.g. `report(2).csv`) when the user may
+          want to compare or reference previous versions.
         - **Screenshots**: Timestamped JPEGs auto-saved during screen sharing.
           Reference them for programmatic access (image analysis, OCR,
           comparison, etc.) using full paths
