@@ -318,11 +318,16 @@ async def test_llm_events_searchable_in_eventbus():
     await asyncio.sleep(0.1)
     EVENT_BUS.join_published()
 
-    # Search for LLM events
-    events = await EVENT_BUS.search(
-        filter='type == "LLM"',
-        limit=10,
-    )
+    # Retry search to account for Orchestra indexing latency
+    events = []
+    for _ in range(5):
+        events = await EVENT_BUS.search(
+            filter='type == "LLM"',
+            limit=10,
+        )
+        if events:
+            break
+        await asyncio.sleep(0.5)
 
     assert len(events) >= 1
     llm_events = [e for e in events if e.type == "LLM"]
