@@ -2248,7 +2248,7 @@ def main():
 
         clear_script = Path(__file__).parent / "clear_action_events.sh"
         subprocess.run(["bash", str(clear_script)], check=True)
-        print()
+        input("\nRefresh the browser, then press Enter to continue...")
 
     steps_builder = SCENARIOS[args.scenario]
 
