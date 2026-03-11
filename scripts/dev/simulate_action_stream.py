@@ -140,6 +140,15 @@ def build_persistent_steps():
     kb_h = [*h, f"execute_function(primitives.knowledge.update)({kb_suffix})"]
     kb_cid = str(uuid4())
 
+    # Inner primitives spawned by execute_code share the parent lineage
+    # (no intermediate execute_code boundary — code is just a tool).
+    ec_kb_suffix = "g7h8"
+    ec_kb_h = [*h, f"KnowledgeManager.update({ec_kb_suffix})"]
+    ec_kb_cid = str(uuid4())
+    ec_ct_suffix = "i9j0"
+    ec_ct_h = [*h, f"ContactManager.update({ec_ct_suffix})"]
+    ec_ct_cid = str(uuid4())
+
     def mm(calling_id, hierarchy, **kwargs):
         return {
             "kind": "mm",
@@ -642,33 +651,38 @@ def build_persistent_steps():
                 ),
             ],
         },
-        # ── 20. LLM thinking (in flight) + execute_code ──
+        # ── 20. LLM thinking (in flight) + execute_code (multi-child) ──
         {
             "label": "LLM thinking (in flight)",
             "delay": 0.5,
             "events": [tl(h, {"role": "assistant", "_thinking_in_flight": True})],
         },
         {
-            "label": "Doing: execute_code — notify + store credentials info",
+            "label": "Doing: execute_code — store credentials + update contacts",
             "delay": 5.5,
             "events": [
                 tl(
                     h,
                     _thinking(
-                        "The user confirmed the project ID is 'unify-prod-2026'. Let me send a progress "
-                        "notification and store this configuration detail in the knowledge base for future reference.",
+                        "The user confirmed the project ID is 'unify-prod-2026'. I need to store "
+                        "the configuration in the knowledge base AND update the contact record for "
+                        "the DevOps team with the new credential details. Let me do both in one block.",
                         tool_calls=[
                             _tc(
                                 "tc_code",
                                 "execute_code",
                                 {
                                     "code": (
-                                        'notify({"type": "progress", "message": "Starting service account setup for unify-prod-2026..."})\n'
+                                        "kb_result = await primitives.knowledge.update(\n"
+                                        '    instructions="Store the following: GCP project unify-prod-2026 '
+                                        "(display name: unify-production) is being configured with a Drive API "
+                                        'service account. Setup initiated on 2026-03-09."\n'
+                                        ")\n"
                                         "\n"
-                                        "result = await primitives.knowledge.update(\n"
-                                        '    instructions="Store the following: GCP project unify-prod-2026 (display name: '
-                                        "unify-production) is being configured with a Drive API service account. "
-                                        'Setup initiated on 2026-03-09."\n'
+                                        "ct_result = await primitives.contacts.update(\n"
+                                        '    instructions="Update the DevOps team contact with the new '
+                                        "Google Drive service account credentials for project "
+                                        'unify-prod-2026."\n'
                                         ")"
                                     ),
                                     "language": "python",
@@ -679,10 +693,267 @@ def build_persistent_steps():
                 ),
             ],
         },
-        # ── 21. Execute code result ──
+        # ── 21–26. Inner primitive 1: KnowledgeManager.update (with tool loop) ──
+        # These share the root lineage — execute_code is just a tool, not a
+        # boundary. The pending-call fallback in findSpawningToolCallId
+        # correlates them to the in-flight execute_code tool call.
+        {
+            "label": "Inner: KnowledgeManager.update incoming",
+            "delay": 1.5,
+            "events": [
+                mm(
+                    ec_kb_cid,
+                    ec_kb_h,
+                    phase="incoming",
+                    manager="KnowledgeManager",
+                    method="update",
+                    display_label="Updating Knowledge Base",
+                    request="Store GCP project unify-prod-2026 credential details.",
+                ),
+            ],
+        },
+        {
+            "label": "KM inner: user request",
+            "delay": 0.3,
+            "events": [
+                tl(
+                    ec_kb_h,
+                    {
+                        "role": "user",
+                        "content": "Store GCP project unify-prod-2026 credential details.",
+                    },
+                    method="KnowledgeManager.update",
+                ),
+            ],
+        },
+        {
+            "label": "KM inner: thinking + _filter",
+            "delay": 1.0,
+            "events": [
+                tl(
+                    ec_kb_h,
+                    _thinking(
+                        "I need to check if there's already an entry for this GCP project "
+                        "before inserting a new row.",
+                        tool_calls=[
+                            _tc(
+                                "tc_km_filter",
+                                "_filter",
+                                {
+                                    "table": "Credentials",
+                                    "filter": "project == 'unify-prod-2026'",
+                                },
+                            ),
+                        ],
+                    ),
+                    method="KnowledgeManager.update",
+                    tool_aliases={"_filter": "Searching knowledge base"},
+                ),
+            ],
+        },
+        {
+            "label": "KM inner: _filter result",
+            "delay": 1.0,
+            "events": [
+                tl(
+                    ec_kb_h,
+                    _tool_result("tc_km_filter", "_filter", {"rows": [], "count": 0}),
+                    method="KnowledgeManager.update",
+                ),
+            ],
+        },
+        {
+            "label": "KM inner: thinking + _insert",
+            "delay": 0.8,
+            "events": [
+                tl(
+                    ec_kb_h,
+                    _thinking(
+                        "No existing entry found. I'll insert a new credentials row.",
+                        tool_calls=[
+                            _tc(
+                                "tc_km_insert",
+                                "_insert",
+                                {
+                                    "table": "Credentials",
+                                    "row": {
+                                        "project": "unify-prod-2026",
+                                        "display_name": "unify-production",
+                                        "service_account": "unify-drive-access",
+                                        "api": "Google Drive",
+                                        "key_format": "JSON",
+                                        "status": "active",
+                                    },
+                                },
+                            ),
+                        ],
+                    ),
+                    method="KnowledgeManager.update",
+                    tool_aliases={"_insert": "Inserting row"},
+                ),
+            ],
+        },
+        {
+            "label": "KM inner: _insert result + final response",
+            "delay": 0.8,
+            "events": [
+                tl(
+                    ec_kb_h,
+                    _tool_result("tc_km_insert", "_insert", {"inserted": 1}),
+                    method="KnowledgeManager.update",
+                ),
+            ],
+        },
+        {
+            "label": "Inner: KnowledgeManager.update outgoing",
+            "delay": 0.3,
+            "events": [
+                mm(
+                    ec_kb_cid,
+                    ec_kb_h,
+                    phase="outgoing",
+                    manager="KnowledgeManager",
+                    method="update",
+                    display_label="Updating Knowledge Base",
+                    answer="Knowledge base updated with credential details.",
+                ),
+            ],
+        },
+        # ── 27–32. Inner primitive 2: ContactManager.update (with tool loop) ──
+        {
+            "label": "Inner: ContactManager.update incoming",
+            "delay": 0.5,
+            "events": [
+                mm(
+                    ec_ct_cid,
+                    ec_ct_h,
+                    phase="incoming",
+                    manager="ContactManager",
+                    method="update",
+                    display_label="Updating Contacts",
+                    request="Update DevOps team contact with Drive credentials.",
+                ),
+            ],
+        },
+        {
+            "label": "CM inner: user request",
+            "delay": 0.3,
+            "events": [
+                tl(
+                    ec_ct_h,
+                    {
+                        "role": "user",
+                        "content": "Update DevOps team contact with Drive credentials for unify-prod-2026.",
+                    },
+                    method="ContactManager.update",
+                ),
+            ],
+        },
+        {
+            "label": "CM inner: thinking + _filter",
+            "delay": 0.8,
+            "events": [
+                tl(
+                    ec_ct_h,
+                    _thinking(
+                        "I need to find the DevOps team contact to update their record "
+                        "with the new credential information.",
+                        tool_calls=[
+                            _tc(
+                                "tc_cm_filter",
+                                "_filter",
+                                {"table": "Contacts", "filter": "team == 'DevOps'"},
+                            ),
+                        ],
+                    ),
+                    method="ContactManager.update",
+                    tool_aliases={"_filter": "Searching contacts"},
+                ),
+            ],
+        },
+        {
+            "label": "CM inner: _filter result",
+            "delay": 0.8,
+            "events": [
+                tl(
+                    ec_ct_h,
+                    _tool_result(
+                        "tc_cm_filter",
+                        "_filter",
+                        {
+                            "rows": [
+                                {
+                                    "name": "DevOps Team",
+                                    "email": "devops@unify.ai",
+                                    "role": "Infrastructure",
+                                },
+                            ],
+                            "count": 1,
+                        },
+                    ),
+                    method="ContactManager.update",
+                ),
+            ],
+        },
+        {
+            "label": "CM inner: thinking + _update",
+            "delay": 0.8,
+            "events": [
+                tl(
+                    ec_ct_h,
+                    _thinking(
+                        "Found the DevOps team contact. I'll update their record with "
+                        "the new Google Drive credential details.",
+                        tool_calls=[
+                            _tc(
+                                "tc_cm_update",
+                                "_update",
+                                {
+                                    "table": "Contacts",
+                                    "filter": "team == 'DevOps'",
+                                    "set": {
+                                        "notes": "Google Drive service account (unify-drive-access) "
+                                        "configured for project unify-prod-2026. JSON key in secrets manager.",
+                                    },
+                                },
+                            ),
+                        ],
+                    ),
+                    method="ContactManager.update",
+                    tool_aliases={"_update": "Updating contact"},
+                ),
+            ],
+        },
+        {
+            "label": "CM inner: _update result",
+            "delay": 0.6,
+            "events": [
+                tl(
+                    ec_ct_h,
+                    _tool_result("tc_cm_update", "_update", {"updated": 1}),
+                    method="ContactManager.update",
+                ),
+            ],
+        },
+        {
+            "label": "Inner: ContactManager.update outgoing",
+            "delay": 0.3,
+            "events": [
+                mm(
+                    ec_ct_cid,
+                    ec_ct_h,
+                    phase="outgoing",
+                    manager="ContactManager",
+                    method="update",
+                    display_label="Updating Contacts",
+                    answer="DevOps team contact updated with new credential details.",
+                ),
+            ],
+        },
+        # ── 23. execute_code result (parent ToolLoop) ──
         {
             "label": "execute_code result",
-            "delay": 3.0,
+            "delay": 0.5,
             "events": [
                 tl(
                     h,
@@ -690,7 +961,7 @@ def build_persistent_steps():
                         "tc_code",
                         "execute_code",
                         {
-                            "result": "Knowledge updated successfully.",
+                            "result": "Knowledge updated and contacts updated successfully.",
                             "notification_sent": True,
                         },
                     ),
