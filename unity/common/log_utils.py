@@ -317,6 +317,7 @@ async def atomic_upsert(
     initial_data: Optional[Dict[str, Any]] = None,
     add_to_all_context: bool = False,
     project: Optional[str] = None,
+    data_overrides: Optional[Dict[str, Any]] = None,
 ) -> AtomicUpsertResult:
     """
     Atomically upsert a field value in a log entry.
@@ -346,6 +347,10 @@ async def atomic_upsert(
         If True, mirror the log to All/* archive context
     project : str, optional
         The project name. Defaults to the active project.
+    data_overrides : Dict[str, Any], optional
+        Values applied after private field injection to override specific
+        injected fields (e.g., ``{"_user_id": "..."}`` for per-user cost
+        attribution).
 
     Returns
     -------
@@ -364,6 +369,8 @@ async def atomic_upsert(
     if initial_data is None:
         initial_data = {}
     initial_data = _inject_private_fields(initial_data)
+    if data_overrides:
+        initial_data.update(data_overrides)
 
     # Build request payload
     payload = {

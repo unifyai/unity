@@ -266,6 +266,12 @@ def provision_user_contact(self, user_log) -> None:
     # Use fetched timezone if available, fallback to UTC
     base_fields["timezone"] = user_info.get("timezone") or "UTC"
 
+    # Store the platform user_id for cost attribution (contact_id -> user_id mapping)
+    from ..session_details import SESSION_DETAILS
+
+    if SESSION_DETAILS.is_initialized and SESSION_DETAILS.user.id:
+        base_fields["user_id"] = SESSION_DETAILS.user.id
+
     extra_fields = {
         k: v
         for k, v in user_info.items()
@@ -419,6 +425,7 @@ def provision_org_member_contacts(self) -> None:
                 fetched_bio = member.get("bio")
                 fetched_tz = member.get("timezone")
                 fetched_phone = member.get("phone_number")
+                fetched_user_id = member.get("user_id")
 
                 needs_is_system = not entries.get("is_system")
                 needs_bio = fetched_bio and entries.get("bio") != fetched_bio
@@ -426,8 +433,17 @@ def provision_org_member_contacts(self) -> None:
                 needs_phone = (
                     fetched_phone and entries.get("phone_number") != fetched_phone
                 )
+                needs_user_id = (
+                    fetched_user_id and entries.get("user_id") != fetched_user_id
+                )
 
-                if needs_is_system or needs_bio or needs_timezone or needs_phone:
+                if (
+                    needs_is_system
+                    or needs_bio
+                    or needs_timezone
+                    or needs_phone
+                    or needs_user_id
+                ):
                     update_kwargs: Dict[str, Any] = {
                         "contact_id": int(entries["contact_id"]),
                         "_log_id": log.id,
@@ -440,10 +456,12 @@ def provision_org_member_contacts(self) -> None:
                         update_kwargs["timezone"] = fetched_tz
                     if needs_phone:
                         update_kwargs["phone_number"] = fetched_phone
+                    if needs_user_id:
+                        update_kwargs["user_id"] = fetched_user_id
                     self.update_contact(**update_kwargs)
             else:
                 # Create new contact for org member
-                self._create_contact(
+                create_kwargs: Dict[str, Any] = dict(
                     first_name=first_name,
                     surname=surname,
                     email_address=email,
@@ -454,6 +472,9 @@ def provision_org_member_contacts(self) -> None:
                     should_respond=True,
                     response_policy="",
                 )
+                if member.get("user_id"):
+                    create_kwargs["user_id"] = member["user_id"]
+                self._create_contact(**create_kwargs)
         except Exception:
             # Best-effort: continue with other members
             continue
