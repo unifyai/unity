@@ -795,20 +795,26 @@ def make_send_notification_tool(
 
     async def _send(
         message: str,
+        completed: bool = False,
         *,
         _notification_up_q: "asyncio.Queue[dict] | None" = None,
     ) -> str:
-        """Send a progress notification to the user.
+        """Send a notification to the user.
 
-        Use this to report meaningful milestones during active work — e.g.
-        before starting a significant step, after completing a batch, or when
-        crossing a measurable progress boundary.  The notification is
-        fire-and-forget: execution continues immediately.
+        Use this to report meaningful milestones during active work and to
+        announce when a task finishes.  The notification is fire-and-forget:
+        execution continues immediately.
 
         Parameters
         ----------
         message : str
-            A concise, user-facing progress update.
+            A concise, user-facing update.
+        completed : bool
+            Set to True when the overall instruction is finished and you
+            are ready for the next one (e.g. "Done — email sent to 3
+            recipients").  Leave False (default) for in-progress updates
+            (e.g. "Sending the email now"), intermediate steps within a
+            multi-step workflow, or blockers awaiting user action.
 
         Returns
         -------
@@ -817,7 +823,11 @@ def make_send_notification_tool(
         """
         if _notification_up_q is None:
             return "Notification channel not available in this context."
-        payload = {"type": "notification", "message": message}
+        payload = {
+            "type": "notification",
+            "message": message,
+            "completed": completed,
+        }
         await _notification_up_q.put(payload)
 
         if on_notify is not None:

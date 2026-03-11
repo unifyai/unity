@@ -307,10 +307,19 @@ class TestRenderHistoryEvent:
 
     # -- Boss-only events --
 
-    def test_actor_notification_boss_only(self):
+    def test_actor_notification_in_progress_boss_only(self):
         ev = ActorNotification(handle_id=1, response="Searching…")
         result = _render_history_event(ev, {1}, True, ASSISTANT_NAME)
-        assert result == "Action progress: Searching…"
+        assert result == "Action in progress: Searching…"
+
+    def test_actor_notification_completed_boss_only(self):
+        ev = ActorNotification(
+            handle_id=1,
+            response="Done — found 3 results.",
+            completed=True,
+        )
+        result = _render_history_event(ev, {1}, True, ASSISTANT_NAME)
+        assert result == "Action completed: Done — found 3 results."
 
     def test_actor_notification_non_boss_skipped(self):
         ev = ActorNotification(handle_id=1, response="Searching…")
@@ -487,7 +496,7 @@ class TestHydrateFastBrainHistory:
             result = await hydrate_fast_brain_history({1}, True, ASSISTANT_NAME)
 
         assert len(result) == 1
-        assert "Action progress: Found 3 results" in result[0]
+        assert "Action in progress: Found 3 results" in result[0]
 
     @pytest.mark.asyncio
     async def test_non_boss_call_excludes_actor_events(self):
