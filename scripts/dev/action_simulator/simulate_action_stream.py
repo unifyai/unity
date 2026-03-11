@@ -45,6 +45,7 @@ import json
 import sys
 import time
 from datetime import datetime, timezone
+from pathlib import Path
 from uuid import uuid4
 
 import requests
@@ -2267,7 +2268,19 @@ def main():
         help="(stream mode) Also write events to Orchestra for historical "
         "persistence (child expansion, ToolLoop fetch on page refresh).",
     )
+    parser.add_argument(
+        "--clear",
+        action="store_true",
+        help="Clear existing action events from Orchestra before starting.",
+    )
     args = parser.parse_args()
+
+    if args.clear:
+        import subprocess
+
+        clear_script = Path(__file__).parent / "clear_action_events.sh"
+        subprocess.run(["bash", str(clear_script)], check=True)
+        print()
 
     steps_builder = SCENARIOS[args.scenario]
 
