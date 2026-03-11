@@ -29,11 +29,7 @@ class TestWorkspaceBootstrap:
 
         root.mkdir(parents=True, exist_ok=True)
         (root / "Downloads").mkdir(exist_ok=True)
-
-        outputs = root / "Outputs"
-        if outputs.exists():
-            shutil.rmtree(outputs)
-        outputs.mkdir(exist_ok=True)
+        (root / "Outputs").mkdir(exist_ok=True)
 
         screenshots = root / "Screenshots"
         if screenshots.exists():
@@ -51,20 +47,18 @@ class TestWorkspaceBootstrap:
         assert (root / "Screenshots" / "User").is_dir()
         assert (root / "Screenshots" / "Assistant").is_dir()
 
-    def test_outputs_cleared_between_sessions(self, tmp_path):
+    def test_outputs_preserved_between_sessions(self, tmp_path):
         root = tmp_path / "Unity" / "Local"
         self._bootstrap(root)
 
         # Simulate a file generated during a previous session.
-        stale = root / "Outputs" / "old_report.pdf"
-        stale.write_bytes(b"stale")
-        assert stale.exists()
+        report = root / "Outputs" / "old_report.pdf"
+        report.write_bytes(b"report")
 
-        # Second bootstrap (new session) should clear Outputs/.
+        # Second bootstrap should NOT clear Outputs/.
         self._bootstrap(root)
 
-        assert not stale.exists()
-        assert (root / "Outputs").is_dir()
+        assert report.exists()
 
     def test_screenshots_cleared_between_sessions(self, tmp_path):
         root = tmp_path / "Unity" / "Local"

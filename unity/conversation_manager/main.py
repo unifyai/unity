@@ -201,15 +201,9 @@ async def run_conversation_manager(
 
     # Ensure standard workspace directories exist.
     (_local_root / "Downloads").mkdir(exist_ok=True)
+    (_local_root / "Outputs").mkdir(exist_ok=True)
 
     import shutil as _shutil
-
-    # Clear Outputs/ between sessions so generated files don't accumulate.
-    _outputs = _local_root / "Outputs"
-    if _outputs.exists():
-        asyncio.create_task(asyncio.to_thread(_shutil.rmtree, _outputs))
-    else:
-        _outputs.mkdir(exist_ok=True)
 
     # Clear Screenshots/ between sessions (ephemeral visual context).
     _screenshots = _local_root / "Screenshots"
