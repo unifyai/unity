@@ -1355,6 +1355,12 @@ def build_single_action_steps():
     cid = str(uuid4())
     h = [f"CodeActActor.act({cid[:4]})"]
 
+    # StorageCheck runs after the doing loop completes, as a child of root
+    sc_suffix = "sc01"
+    sc_h = [*h, f"StorageCheck(CodeActActor.act)({sc_suffix})"]
+    sc_cid = str(uuid4())
+    sc_method = "StorageCheck(CodeActActor.act)"
+
     # Sub-agent dispatch: execute_function(primitives.actor.act)
     ef1_suffix = "d7e8"
     ef1_h = [*h, f"execute_function(primitives.actor.act)({ef1_suffix})"]
@@ -1994,7 +2000,150 @@ def build_single_action_steps():
                 ),
             ],
         },
-        # ── 24. ManagerMethod outgoing ──
+        # ── 24–30. StorageCheck: reviews trajectory, decides nothing to store ──
+        {
+            "label": "StorageCheck incoming",
+            "delay": 1.0,
+            "events": [
+                mm(
+                    sc_cid,
+                    sc_h,
+                    phase="incoming",
+                    manager="CodeActActor",
+                    method="StorageCheck",
+                    display_label="Storing Reusable Skills",
+                    request="Review the trajectory and store any reusable functions and compositional guidance.",
+                ),
+            ],
+        },
+        {
+            "label": "SC inner: user request",
+            "delay": 0.3,
+            "events": [
+                tl(
+                    sc_h,
+                    {
+                        "role": "user",
+                        "content": "Review the trajectory and store any reusable functions and compositional guidance.",
+                    },
+                    method=sc_method,
+                ),
+            ],
+        },
+        {
+            "label": "SC inner: thinking + search existing functions",
+            "delay": 1.5,
+            "events": [
+                tl(
+                    sc_h,
+                    _thinking(
+                        "Let me check what functions and guidance already exist before "
+                        "deciding whether anything from this trajectory is worth storing.",
+                        tool_calls=[
+                            _tc(
+                                "tc_sc_list",
+                                "FunctionManager_list_functions",
+                                {"include_implementations": False},
+                            ),
+                        ],
+                    ),
+                    method=sc_method,
+                    tool_aliases={
+                        "FunctionManager_list_functions": "Listing existing functions",
+                    },
+                ),
+            ],
+        },
+        {
+            "label": "SC inner: list_functions result",
+            "delay": 1.5,
+            "events": [
+                tl(
+                    sc_h,
+                    _tool_result(
+                        "tc_sc_list",
+                        "FunctionManager_list_functions",
+                        {"functions": [], "count": 0},
+                    ),
+                    method=sc_method,
+                ),
+            ],
+        },
+        {
+            "label": "SC inner: thinking + search guidance",
+            "delay": 1.0,
+            "events": [
+                tl(
+                    sc_h,
+                    _thinking(
+                        "No existing functions. The trajectory involved looking up a contact "
+                        "and drafting an email — both are straightforward single-primitive calls "
+                        "with no reusable composition pattern. Let me check guidance too.",
+                        tool_calls=[
+                            _tc(
+                                "tc_sc_search_g",
+                                "GuidanceManager_search",
+                                {"query": "contact lookup email drafting"},
+                            ),
+                        ],
+                    ),
+                    method=sc_method,
+                    tool_aliases={
+                        "GuidanceManager_search": "Searching existing guidance",
+                    },
+                ),
+            ],
+        },
+        {
+            "label": "SC inner: search guidance result",
+            "delay": 1.0,
+            "events": [
+                tl(
+                    sc_h,
+                    _tool_result(
+                        "tc_sc_search_g",
+                        "GuidanceManager_search",
+                        {"results": [], "count": 0},
+                    ),
+                    method=sc_method,
+                ),
+            ],
+        },
+        {
+            "label": "SC inner: final response (nothing to store)",
+            "delay": 2.0,
+            "events": [
+                tl(
+                    sc_h,
+                    {
+                        "role": "assistant",
+                        "content": (
+                            "Nothing worth storing. The trajectory used two standard primitives "
+                            "(primitives.contacts.ask + execute_code for email drafting) in a "
+                            "straightforward sequence with no reusable composition pattern or "
+                            "non-obvious logic worth persisting as a function or guidance entry."
+                        ),
+                    },
+                    method=sc_method,
+                ),
+            ],
+        },
+        {
+            "label": "StorageCheck outgoing",
+            "delay": 0.5,
+            "events": [
+                mm(
+                    sc_cid,
+                    sc_h,
+                    phase="outgoing",
+                    manager="CodeActActor",
+                    method="StorageCheck",
+                    display_label="Storing Reusable Skills",
+                    answer="Nothing worth storing.",
+                ),
+            ],
+        },
+        # ── 31. ManagerMethod outgoing ──
         {
             "label": "ManagerMethod outgoing",
             "delay": 0.5,
