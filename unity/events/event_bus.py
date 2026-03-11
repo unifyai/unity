@@ -456,6 +456,12 @@ class EventBus:
         # accumulated during publish() and flushed in batch via flush()/clear().
         self._pending_writes: list[tuple[dict, str]] = []
 
+        # Periodic flush: drains _pending_writes every few seconds so that
+        # Orchestra stays current for console REST queries while still
+        # batching writes for efficiency.
+        self._FLUSH_INTERVAL_S = 5.0
+        self._periodic_flush_task: Optional["asyncio.Task[None]"] = None
+
         # ── Hydrate in the *background* rather than blocking import time ───
         # The original synchronous pre-fill was executed right here,
         # effectively stalling every process that imported the module.
@@ -579,7 +585,7 @@ class EventBus:
         """
         Concurrently hydrate deques *and* persisted subscriptions.
         Sets `self._prefill_done` when complete so other coroutines can
-        await bus readiness.
+        await bus readiness.  Also starts the periodic flush loop.
         """
         try:
             await asyncio.gather(
@@ -596,6 +602,19 @@ class EventBus:
                 pass
         finally:
             self._prefill_done.set()
+
+        if self._periodic_flush_task is None:
+            self._periodic_flush_task = asyncio.create_task(self._periodic_flush_loop())
+
+    async def _periodic_flush_loop(self) -> None:
+        """Background task that drains _pending_writes at a fixed cadence."""
+        while True:
+            await asyncio.sleep(self._FLUSH_INTERVAL_S)
+            if self._pending_writes:
+                try:
+                    await asyncio.to_thread(self.flush)
+                except Exception as exc:
+                    LOGGER.debug("Periodic flush error: %s", exc)
 
     async def _async_prefill_from_unify(self) -> None:
         """Populate per-type deques without blocking the event-loop."""
@@ -1027,17 +1046,23 @@ class EventBus:
         Uses ``unify.create_logs`` (single HTTP POST per context) rather
         than N individual ``log_create`` calls.  Aggregation mirrors are
         attached in bulk after each batch completes.
+
+        Thread-safe: atomically swaps the buffer so concurrent publish()
+        calls append to a fresh list while we process the snapshot.
         """
         if not self._pending_writes:
             return
 
+        # Atomic swap: grab current buffer and replace with empty list.
+        snapshot = self._pending_writes
+        self._pending_writes = []
+
         project = unify.active_project()
 
         batches: dict[str, list[dict]] = defaultdict(list)
-        for entries, context in self._pending_writes:
+        for entries, context in snapshot:
             batches[context].append(entries)
-        total_events = len(self._pending_writes)
-        self._pending_writes.clear()
+        total_events = len(snapshot)
 
         LOGGER.debug(
             "EventBus flush: %d events across %d contexts",
@@ -1471,11 +1496,20 @@ class EventBus:
     # ------------------------------------------------------------------
     def clear(self, delete_contexts: bool = True) -> None:
 
-        # 1. Stop the background pre-fill if it's still pending
+        # 1. Stop background tasks (pre-fill and periodic flush)
         try:
             if getattr(self, "_prefill_task", None) and not self._prefill_task.done():
                 self._prefill_task.cancel()
         except Exception:  # pragma: no cover – defensive
+            pass
+        try:
+            if (
+                getattr(self, "_periodic_flush_task", None)
+                and not self._periodic_flush_task.done()
+            ):
+                self._periodic_flush_task.cancel()
+                self._periodic_flush_task = None
+        except Exception:
             pass
 
         # 2. Flush all buffered writes before cleanup
