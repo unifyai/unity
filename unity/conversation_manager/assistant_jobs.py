@@ -58,6 +58,7 @@ def _record_running_job_count(api_key: str) -> None:
             project="AssistantJobs",
             context="startup_events",
             filter="running == 'true'",
+            limit=100,
             api_key=api_key,
         )
         _m_running_jobs.set(len(logs))
@@ -133,6 +134,7 @@ def log_job_startup(job_name: str, user_id: str, assistant_id: str):
                 f"assistant_id == '{assistant_id}' and "
                 f"running == 'true'"
             ),
+            limit=100,
             api_key=api_key,
         )
         LOGGER.debug(
@@ -188,6 +190,7 @@ def update_liveview_url(assistant_id: str, user_id: str, liveview_url: str) -> N
                 f"assistant_id == '{assistant_id}' and "
                 f"running == 'true'"
             ),
+            limit=100,
             api_key=api_key,
         )
         if existing_logs:
@@ -261,6 +264,7 @@ def mark_job_done(job_name: str, inactivity_timeout: float = 0.0):
             project="AssistantJobs",
             context="startup_events",
             filter=f"job_name == '{job_name}'",
+            limit=100,
             api_key=api_key,
         )[0]
         job_log.update_entries(running=False)

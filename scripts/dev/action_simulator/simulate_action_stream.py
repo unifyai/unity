@@ -10,6 +10,10 @@ Scenarios (--scenario):
   single_action         A one-shot act(persist=False) action that delegates to a
                         sub-agent, with a post-completion StorageCheck phase.
 
+  live                  Runs a real CodeActActor against local Orchestra, bridging
+                        EventBus action events to the Console's local SSE endpoint
+                        (same noise filtering as production).
+
 Delivery (--stream / --save):
 
   --stream    POST events via SSE to the Console with realistic delays.
@@ -17,11 +21,13 @@ Delivery (--stream / --save):
 
   Both can be combined. If neither is given, --stream is the default.
   --speed only applies when --stream is active.
+  --scenario live always streams and saves (EventBus handles both).
 
 Prerequisites:
     --stream only:     Console running (http://localhost:3333)
     --save only:       Local Orchestra running (http://127.0.0.1:8000)
     --stream --save:   Both Console and Orchestra running
+    --scenario live:   Both, plus .env with UNIFY_KEY and LLM API keys
 
 Usage:
     .venv/bin/python scripts/dev/action_simulator/simulate_action_stream.py                            # stream persistent
@@ -30,6 +36,10 @@ Usage:
     .venv/bin/python scripts/dev/action_simulator/simulate_action_stream.py --stream --save            # stream + save
     .venv/bin/python scripts/dev/action_simulator/simulate_action_stream.py --speed 2                  # 2x faster streaming
     .venv/bin/python scripts/dev/action_simulator/simulate_action_stream.py --clear                    # wipe old events first
+    .venv/bin/python scripts/dev/action_simulator/simulate_action_stream.py --scenario live \\
+        --request "Search the web for today's top headlines"                                           # live CodeActActor
+    .venv/bin/python scripts/dev/action_simulator/simulate_action_stream.py --scenario live \\
+        --request "Help me set up credentials" --kwargs '{"persist": true}'                            # live with persist
 """
 
 from __future__ import annotations
@@ -2168,6 +2178,9 @@ SCENARIOS = {
     "single_action": build_single_action_steps,
 }
 
+# "live" is handled separately (runs real CodeActActor, not canned steps).
+ALL_SCENARIO_NAMES = [*SCENARIOS, "live"]
+
 
 # =============================================================================
 # Orchestra Helpers (used by both stream and upload modes)
@@ -2393,6 +2406,106 @@ def run_upload(steps_builder: callable, scenario_name: str) -> None:
 
 
 # =============================================================================
+# Live Mode — Real CodeActActor with EventBus → Console bridge
+# =============================================================================
+
+
+def _snake_to_camel(name: str) -> str:
+    parts = name.split("_")
+    return parts[0] + "".join(p.capitalize() for p in parts[1:])
+
+
+def _install_console_bridge(assistant_id: str) -> None:
+    """Monkeypatch EventBus to POST action events to the Console push endpoint.
+
+    Replaces ``_stream_action_to_pubsub`` so that ManagerMethod/ToolLoop events
+    (after the production noise filter) are forwarded to the local Console's SSE
+    bus instead of GCP Pub/Sub.  All other EventBus behaviour (Orchestra writes,
+    callbacks, periodic flush) is untouched.
+    """
+    from unity.events.event_bus import EVENT_BUS
+
+    push_url = f"{CONSOLE_BASE}/api/assistant/{assistant_id}/actions/push"
+
+    def _bridge(self, event, base_entries, payload_dict):
+        entries = {
+            _snake_to_camel(k): v
+            for k, v in {**base_entries, **payload_dict}.items()
+            if k not in ("row_id", "event_timestamp", "payload_cls")
+        }
+        entries["type"] = event.type
+
+        sse_event = {
+            "type": event.type,
+            "data": {
+                "id": base_entries.get("row_id", 0),
+                "ts": base_entries.get("event_timestamp", ""),
+                "entries": entries,
+            },
+        }
+        try:
+            requests.post(push_url, json=sse_event, timeout=5)
+        except Exception as exc:
+            print(f"    PUSH ERROR: {exc}")
+
+    import types
+
+    inner = EVENT_BUS._inner if hasattr(EVENT_BUS, "_inner") else EVENT_BUS
+    inner._stream_action_to_pubsub = types.MethodType(_bridge, inner)
+
+
+def run_live(request: str, kwargs: dict, assistant_id: str) -> None:
+    import asyncio
+    import os
+
+    from dotenv import load_dotenv
+
+    load_dotenv(Path(__file__).resolve().parents[3] / ".env")
+    os.environ["EVENTBUS_PUBLISHING_ENABLED"] = "true"
+
+    import unity
+    from unity.events.event_bus import EVENT_BUS
+
+    print("\n--- Initialising Unity ---")
+    unity.init(project_name=PROJECT, overwrite=False)
+    EVENT_BUS.clear()
+
+    _install_console_bridge(assistant_id)
+    print(f"  Console bridge installed → {CONSOLE_BASE}")
+
+    from unity.actor.code_act_actor import CodeActActor
+    from unity.actor.environments import StateManagerEnvironment
+    from unity.function_manager.primitives import Primitives
+    from unity.manager_registry import ManagerRegistry
+
+    primitives = Primitives()
+    environments = [StateManagerEnvironment(primitives)]
+
+    function_manager = None
+    try:
+        function_manager = ManagerRegistry.get_function_manager()
+    except Exception:
+        pass
+
+    actor = CodeActActor(
+        environments=environments,
+        function_manager=function_manager,
+    )
+
+    persist = kwargs.pop("persist", None)
+
+    print(f"\n=== live / request: {request!r} ===")
+    print(f"    persist={persist}  kwargs={kwargs}\n")
+
+    async def _run():
+        handle = await actor.act(request, persist=persist, **kwargs)
+        result = await handle.result()
+        print(f"\n=== Result ===\n{result}\n")
+
+    asyncio.run(_run())
+
+
+# =============================================================================
 # Entry Point
 # =============================================================================
 
@@ -2404,8 +2517,9 @@ def main():
     parser.add_argument(
         "--scenario",
         default="persistent",
-        choices=list(SCENARIOS.keys()),
-        help="Which scenario to simulate (default: persistent).",
+        choices=ALL_SCENARIO_NAMES,
+        help="Which scenario to simulate (default: persistent). "
+        "'live' runs a real CodeActActor.",
     )
     parser.add_argument(
         "--stream",
@@ -2431,10 +2545,19 @@ def main():
         action="store_true",
         help="Wipe existing action events from Orchestra before starting.",
     )
+    parser.add_argument(
+        "--request",
+        type=str,
+        default=None,
+        help="Request text for --scenario live.",
+    )
+    parser.add_argument(
+        "--kwargs",
+        type=str,
+        default="{}",
+        help="JSON kwargs for --scenario live (e.g. '{\"persist\": true}').",
+    )
     args = parser.parse_args()
-
-    if not args.stream and not args.save:
-        args.stream = True
 
     if args.clear:
         import subprocess
@@ -2442,6 +2565,16 @@ def main():
         clear_script = Path(__file__).parent / "clear_action_events.sh"
         subprocess.run(["bash", str(clear_script)], check=True)
         input("\nRefresh the browser, then press Enter to continue...")
+
+    if args.scenario == "live":
+        if not args.request:
+            parser.error("--request is required for --scenario live")
+        live_kwargs = json.loads(args.kwargs)
+        run_live(args.request, live_kwargs, ASSISTANT_ID)
+        return
+
+    if not args.stream and not args.save:
+        args.stream = True
 
     steps_builder = SCENARIOS[args.scenario]
 

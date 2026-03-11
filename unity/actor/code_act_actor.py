@@ -1115,11 +1115,7 @@ def _start_storage_check_loop(
         f"{instructions}"
     )
 
-    client = new_llm_client(
-        actor._model,
-        reasoning_effort=None,
-        service_tier=None,
-    )
+    client = new_llm_client(actor._model)
     client.set_system_message(system_prompt)
 
     return start_async_tool_loop(
@@ -1226,11 +1222,7 @@ def _start_proactive_storage_loop(
         f"{instructions}"
     )
 
-    client = new_llm_client(
-        actor._model,
-        reasoning_effort=None,
-        service_tier=None,
-    )
+    client = new_llm_client(actor._model)
     client.set_system_message(system_prompt)
 
     return start_async_tool_loop(
@@ -1336,7 +1328,18 @@ class _StorageCheckHandle(SteerableToolHandle):
                 self._relay_notifications_from(self._inner),
             )
 
-            self._original_result = await self._inner.result()
+            try:
+                self._original_result = await self._inner.result()
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                self._original_result = (
+                    f"Error: inner task failed: {type(exc).__name__}: {exc}"
+                )
+                logger.error(
+                    f"_StorageCheckHandle: inner result raised "
+                    f"{type(exc).__name__}: {exc}",
+                )
             await self._cancel_relay()
             self._task_done_event.set()
 
@@ -3985,11 +3988,7 @@ class CodeActActor(BaseCodeActActor):
             tool_policy = _wrapped_policy
 
         # Build an LLM client for this act() call
-        client = new_llm_client(
-            self._model,
-            reasoning_effort=None,
-            service_tier=None,
-        )
+        client = new_llm_client(self._model)
         if system_prompt:
             client.set_system_message(system_prompt)
 

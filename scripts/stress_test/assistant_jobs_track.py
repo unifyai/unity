@@ -9,6 +9,7 @@ jobs = unify.get_logs(
     context="startup_events",
     api_key=os.getenv("SHARED_UNIFY_KEY"),
     filter="running == 'true'",
+    limit=100,
 )
 for idx, job in enumerate(jobs):
     print("--------------------------------")

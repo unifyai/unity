@@ -303,7 +303,11 @@ async def _(
     )
 
     # Trigger LLM run so the brain can decide next steps
-    await cm.request_llm_run(delay=0, cancel_running=True)
+    await cm.request_llm_run(
+        delay=0,
+        cancel_running=True,
+        triggering_contact_id=contact_id,
+    )
 
 
 @EventHandler.register(
@@ -358,7 +362,10 @@ async def _(event: Event, cm: "ConversationManager", *args, **kwargs):
         if cm.assistant_screen_share_active:
             await cm.capture_assistant_screenshot(event.content, message_id)
 
-        await cm.interject_or_run(event.content)
+        await cm.interject_or_run(
+            event.content,
+            triggering_contact_id=contact_id,
+        )
 
 
 @EventHandler.register(FastBrainNotification)
@@ -444,7 +451,11 @@ async def _(
     cm.call_manager.call_exchange_id = UNASSIGNED
     cm.call_manager.unify_meet_exchange_id = UNASSIGNED
 
-    await cm.request_llm_run(delay=0, cancel_running=True)
+    await cm.request_llm_run(
+        delay=0,
+        cancel_running=True,
+        triggering_contact_id=contact_id,
+    )
 
 
 @EventHandler.register(RecordingReady)
@@ -704,7 +715,10 @@ async def _(event, cm: "ConversationManager", *args, **kwargs):
             notif_content = f"Email sent to {', '.join(email_to[:2])}{'...' if len(email_to) > 2 else ''}"
             cm.notifications_bar.push_notif("comms", notif_content, event.timestamp)
             if cm._outbound_suppress_gen != cm._llm_gen:
-                await cm.request_llm_run(delay=2)
+                await cm.request_llm_run(
+                    delay=2,
+                    triggering_contact_id=contact_id,
+                )
             return  # Early return - email handling is complete
 
         case EmailReceived():
@@ -736,7 +750,10 @@ async def _(event, cm: "ConversationManager", *args, **kwargs):
             notif_content = f"Email Received from {sender_name}"
             cm.notifications_bar.push_notif("comms", notif_content, event.timestamp)
             await cm.cancel_proactive_speech()
-            await cm.request_llm_run(delay=2)
+            await cm.request_llm_run(
+                delay=2,
+                triggering_contact_id=contact_id,
+            )
             return  # Early return - email handling is complete
 
         case UnifyMessageSent():
@@ -807,7 +824,10 @@ async def _(event, cm: "ConversationManager", *args, **kwargs):
         await cm.cancel_proactive_speech()
 
     if role == "user" or cm._outbound_suppress_gen != cm._llm_gen:
-        await cm.request_llm_run(delay=2)
+        await cm.request_llm_run(
+            delay=2,
+            triggering_contact_id=contact_id,
+        )
 
 
 @EventHandler.register(Error)
@@ -887,7 +907,10 @@ async def _(event: UnknownContactCreated, cm: "ConversationManager", *args, **kw
     cm.notifications_bar.push_notif("contacts", notif_content, event.timestamp)
 
     # Trigger LLM run so assistant can decide how to handle
-    await cm.request_llm_run(delay=2)
+    await cm.request_llm_run(
+        delay=2,
+        triggering_contact_id=contact.get("contact_id"),
+    )
 
 
 async def _startup_sequence(cm: "ConversationManager"):

@@ -2932,6 +2932,20 @@ async def async_tool_loop_inner(
 
                                 _prune_wait(msg, call["id"], client=client)
 
+                            # The assistant message containing this wait() was
+                            # already published to EventBus before we could
+                            # inspect it.  Emit a matching tool result so the
+                            # frontend can resolve the pending tool-call row.
+                            with suppress(Exception):
+                                await to_event_bus(
+                                    create_tool_call_message(
+                                        "wait",
+                                        call["id"],
+                                        "",
+                                    ),
+                                    cfg,
+                                )
+
                             # After acknowledging a wait, do NOT grant an immediate LLM turn.
                             # The loop should now wait for any pending tools or interjections.
                             continue

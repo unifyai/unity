@@ -455,7 +455,10 @@ class TestTextMessageHandlers:
             mock_utils.queue_operation = AsyncMock()
             await EventHandler.handle_event(event, mock_cm)
 
-        mock_cm.request_llm_run.assert_called_once_with(delay=2)
+        mock_cm.request_llm_run.assert_called_once_with(
+            delay=2,
+            triggering_contact_id=2,
+        )
 
     @pytest.mark.asyncio
     async def test_sms_sent_updates_contact_index(self, mock_cm):
@@ -713,7 +716,11 @@ class TestPhoneCallHandlers:
 
         mock_cm.call_manager.cleanup_call_proc.assert_called_once()
         mock_cm.cancel_proactive_speech.assert_called_once()
-        mock_cm.request_llm_run.assert_called_once_with(delay=0, cancel_running=True)
+        mock_cm.request_llm_run.assert_called_once_with(
+            delay=0,
+            cancel_running=True,
+            triggering_contact_id=2,
+        )
 
 
 # =============================================================================
@@ -824,7 +831,10 @@ class TestVoiceUtteranceHandlers:
             mock_utils.queue_operation = AsyncMock()
             await EventHandler.handle_event(event, mock_cm)
 
-        mock_cm.interject_or_run.assert_called_once_with("What's the weather?")
+        mock_cm.interject_or_run.assert_called_once_with(
+            "What's the weather?",
+            triggering_contact_id=2,
+        )
 
     @pytest.mark.asyncio
     async def test_outbound_utterance_resets_proactive_speech(self, mock_cm):

@@ -89,7 +89,10 @@ def is_visibility_guidance(msg: dict) -> bool:
 # ---------------------------------------------------------------------------
 
 _STREAM_NOISE_RULES: list[Callable[[dict], bool]] = [
-    is_synthetic_status_check,
+    # is_synthetic_status_check intentionally excluded — the frontend needs
+    # these events to resolve pending parallel tool calls via
+    # resolvedToolCallIds.  Display filtering is handled client-side by
+    # event-filters.ts isToolLoopNoise.
     is_placeholder_message,
     is_runtime_context_header,
     is_visibility_guidance,

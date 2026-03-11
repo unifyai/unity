@@ -77,7 +77,7 @@ class TestActContextPropagation:
         try:
             # Create brain action tools and call act directly
             brain_tools = ConversationManagerBrainActionTools(cm)
-            await brain_tools.act(query="test query")
+            await brain_tools.act(query="test query", requesting_contact_id=1)
 
             # Verify context was captured
             assert len(captured_context) == 1, "act() should have been called once"
@@ -126,7 +126,7 @@ class TestActContextPropagation:
 
         try:
             brain_tools = ConversationManagerBrainActionTools(cm)
-            await brain_tools.act(query="test query")
+            await brain_tools.act(query="test query", requesting_contact_id=1)
 
             assert len(captured_context) == 1
             assert (
@@ -151,7 +151,10 @@ class TestActStartedInHistory:
         cm = initialized_cm.cm
 
         brain_tools = ConversationManagerBrainActionTools(cm)
-        await brain_tools.act(query="Find all contacts in New York")
+        await brain_tools.act(
+            query="Find all contacts in New York",
+            requesting_contact_id=1,
+        )
 
         # Exactly one in-flight action should exist.
         assert len(cm.in_flight_actions) == 1
@@ -182,7 +185,10 @@ class TestActStartedInHistory:
         cm = initialized_cm.cm
 
         brain_tools = ConversationManagerBrainActionTools(cm)
-        await brain_tools.act(query="Search the web for weather")
+        await brain_tools.act(
+            query="Search the web for weather",
+            requesting_contact_id=1,
+        )
 
         renderer = Renderer()
         snapshot = renderer.render_state(
@@ -223,7 +229,10 @@ class TestActCompletionInHistory:
         cm = initialized_cm.cm
 
         brain_tools = ConversationManagerBrainActionTools(cm)
-        await brain_tools.act(query="Find all contacts in New York")
+        await brain_tools.act(
+            query="Find all contacts in New York",
+            requesting_contact_id=1,
+        )
 
         assert len(cm.in_flight_actions) == 1
         handle_id = next(iter(cm.in_flight_actions))
@@ -876,7 +885,10 @@ class TestContextContent:
         try:
             # Create brain action tools and call act directly
             brain_tools = ConversationManagerBrainActionTools(cm)
-            await brain_tools.act(query="Search for frontend engineer roles")
+            await brain_tools.act(
+                query="Search for frontend engineer roles",
+                requesting_contact_id=1,
+            )
 
             # Verify context was captured
             assert len(captured_context) == 1, "act() should have been called once"
