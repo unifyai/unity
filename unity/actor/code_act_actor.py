@@ -399,6 +399,23 @@ _STORAGE_WHAT_CAN_BE_STORED = (
     "principle applies to any code pattern — whenever some parameters "
     "represent reusable configuration and others represent per-call "
     "input, wrap to bake in the former and expose the latter.\n\n"
+    "### Preserving user-facing communication points\n\n"
+    "When wrapping a workflow into a stored function, pay attention to "
+    "points where the original code depended on the user being "
+    "informed — especially states that block until the user takes an "
+    "external action. If the original trajectory included a step like "
+    '"notify the user about X, then wait for X to happen", the '
+    "`notify()` call must survive into the stored function. Stripping "
+    "it out creates a silent deadlock: the function blocks waiting for "
+    "a condition the user does not know about.\n\n"
+    "The general principle: a stored function inherits the execution "
+    "environment's `notify()` helper. Any workflow state where "
+    "progress depends on external human action (approving an auth "
+    "prompt, granting a permission, confirming a destructive "
+    "operation) must include a `notify()` call *before* entering the "
+    "wait. Without it, the function waits indefinitely for something "
+    "only the user can provide, and the user has no idea they need "
+    "to act.\n\n"
     "### Third-party package dependencies\n\n"
     "If the trajectory used `install_python_packages` and the function "
     "you want to store imports any of those packages (anything beyond "
@@ -3573,7 +3590,7 @@ class CodeActActor(BaseCodeActActor):
         "CodeActActor",
         "act",
         payload_key="request",
-        display_label="Taking Action",
+        display_label=lambda kw: "Session" if kw.get("persist") else "Taking Action",
         forward_kwargs=("persist",),
     )
     async def act(

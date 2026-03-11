@@ -301,26 +301,34 @@ _CONTAINER_LOG_DIRS = (
 
 
 def _sync_all_logs(pod_name: str, namespace: str, mirror_root: Path) -> None:
-    """Bulk-copy all container log directories to the local mirror."""
+    """Bulk-copy all container log directories to the local mirror.
+
+    Each directory sync catches KeyboardInterrupt individually so that a
+    Ctrl+C during one copy doesn't prevent the remaining directories from
+    being attempted.
+    """
     info("Syncing all container logs...")
     for container_dir in _CONTAINER_LOG_DIRS:
         subdir = container_dir.split("/")[-1]  # unillm, unify, unity
         local_dir = mirror_root / subdir
         local_dir.mkdir(parents=True, exist_ok=True)
-        result = subprocess.run(
-            [
-                KUBECTL,
-                "cp",
-                f"{namespace}/{pod_name}:{container_dir}/.",
-                str(local_dir),
-            ],
-            capture_output=True,
-            text=True,
-        )
-        if result.returncode == 0:
-            success(f"  {container_dir} → {local_dir}")
-        else:
-            warn(f"  {container_dir}: {result.stderr.strip() or 'copy failed'}")
+        try:
+            result = subprocess.run(
+                [
+                    KUBECTL,
+                    "cp",
+                    f"{namespace}/{pod_name}:{container_dir}/.",
+                    str(local_dir),
+                ],
+                capture_output=True,
+                text=True,
+            )
+            if result.returncode == 0:
+                success(f"  {container_dir} → {local_dir}")
+            else:
+                warn(f"  {container_dir}: {result.stderr.strip() or 'copy failed'}")
+        except KeyboardInterrupt:
+            warn(f"  {container_dir}: interrupted, continuing with remaining dirs")
 
 
 def _hyperlink(uri: str, text: str) -> str:
@@ -499,7 +507,10 @@ def stream_logs(
             finally:
                 executor.shutdown(wait=True)
                 if sync_all and pod_name and mirror_root:
-                    _sync_all_logs(pod_name, namespace, mirror_root)
+                    try:
+                        _sync_all_logs(pod_name, namespace, mirror_root)
+                    except KeyboardInterrupt:
+                        warn("Log sync aborted.")
 
     try:
         _run_stream(kubectl_cmd)

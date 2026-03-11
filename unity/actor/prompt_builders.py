@@ -160,13 +160,41 @@ _EXECUTION_RULES = textwrap.dedent("""
        - User-facing: explain progress in plain language the end user can understand.
        - High-level: summarize what is underway, not internal implementation details.
 
+       **User visibility rule**
+
+       Your internal reasoning, screenshots, and turn-completion text are
+       *not* visible to the end user. The user only hears what is
+       explicitly sent through `notify()` or `send_notification`. If you
+       encounter something the user needs to be aware of or act on — a
+       blocker, an unexpected redirect, a state requiring their input, a
+       decision point — you must notify. Otherwise the user will hear
+       nothing about it.
+
+       **Notifications as action triggers**
+
+       Some workflows reach a point where progress is blocked until the
+       user takes an external action — approving an MFA prompt on their
+       phone, granting an OAuth consent, clicking a confirmation link,
+       physically plugging in a device, or any state where *your* process
+       cannot continue without *their* intervention. In these situations
+       `notify()` is not merely informational — it is the mechanism that
+       unblocks the workflow. Without it, both sides are stuck: the code
+       waits for a condition that will never be met because the user does
+       not know they need to act.
+
+       Treat any "wait for external action" loop as requiring a
+       notification *before* the wait begins. If you detect a blocking
+       condition and then enter a polling/retry loop, the notification
+       must fire before the first iteration — not after the loop
+       completes. A notification gated on a function return that itself
+       blocks on user action creates a deadlock.
+
        **Anti-patterns to avoid**
        - Wrapping a single primitive call in `execute_code` just to add `notify()` around it — use `send_notification` before the `execute_function` call instead.
        - Generic filler text with no signal (for example: "working on it", "still processing", "please wait").
        - Repeating the same update without new information.
        - Over-notifying for trivial operations that complete almost immediately.
        - Dumping low-level internals (stack traces, call IDs, schema/debug metadata) into user progress updates.
-       - Using notifications to announce the final result or completion of the current turn — your response text is automatically surfaced when you yield control. Notifications are for updates *during* active work, not for summarizing what you just finished.
 
        **Display Helper (`display`)**
        - `display(obj)` emits rich output (text or PIL images) to stdout.

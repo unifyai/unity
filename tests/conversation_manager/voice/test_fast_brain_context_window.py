@@ -327,19 +327,19 @@ class TestRenderHistoryEvent:
         result = _render_history_event(ev, {1}, True, ASSISTANT_NAME)
         assert result == "Action failed: Timeout"
 
-    def test_actor_handle_started(self):
+    def test_actor_handle_started_filtered(self):
         ev = ActorHandleStarted(
             action_name="web_search",
             handle_id=1,
             query="weather today",
         )
         result = _render_history_event(ev, {1}, True, ASSISTANT_NAME)
-        assert result == "Action started: web_search — weather today"
+        assert result is None
 
-    def test_actor_session_response(self):
+    def test_actor_session_response_filtered(self):
         ev = ActorSessionResponse(handle_id=1, content="Here are the results")
         result = _render_history_event(ev, {1}, True, ASSISTANT_NAME)
-        assert result == "Action update: Here are the results"
+        assert result is None
 
     # -- Skipped events --
 
@@ -463,7 +463,12 @@ class TestHydrateFastBrainHistory:
 
     @pytest.mark.asyncio
     async def test_boss_call_includes_actor_events(self):
-        """Boss calls include Actor notification events in history."""
+        """Boss calls include Actor notification events in history.
+
+        ActorHandleStarted is filtered (no value for fast brain since it
+        already responded to the user turn). Only ActorNotification
+        (explicit progress via notify()) is rendered.
+        """
         events = [
             ActorHandleStarted(
                 action_name="search",
@@ -481,9 +486,8 @@ class TestHydrateFastBrainHistory:
         with patch(MOCK_GET_LOGS, return_value=_make_log_rows(events)):
             result = await hydrate_fast_brain_history({1}, True, ASSISTANT_NAME)
 
-        assert len(result) == 2
-        assert "Action started: search" in result[0]
-        assert "Action progress: Found 3 results" in result[1]
+        assert len(result) == 1
+        assert "Action progress: Found 3 results" in result[0]
 
     @pytest.mark.asyncio
     async def test_non_boss_call_excludes_actor_events(self):
