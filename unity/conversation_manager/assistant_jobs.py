@@ -224,7 +224,7 @@ def _release_vm(assistant_id: str) -> None:
             timeout=60,
         )
         if response.ok:
-            LOGGER.debug(
+            LOGGER.info(
                 f"{ICONS['assistant_jobs']} [assistant_jobs] Pool VM released for assistant "
                 f"{assistant_id}: {response.json()}",
             )
