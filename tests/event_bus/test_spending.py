@@ -166,7 +166,7 @@ class TestAtomicUpsert:
         assert initial_data.get("_user") == "user_abc123"
         assert initial_data.get("_user_id") == "user_abc123"
         assert initial_data.get("_assistant") == "asst_789"
-        assert initial_data.get("_assistant_id") == 789
+        assert initial_data.get("_assistant_id") == "789"
 
     @pytest.mark.asyncio
     async def test_atomic_upsert_includes_org_id_when_present(self):
