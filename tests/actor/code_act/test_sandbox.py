@@ -340,6 +340,55 @@ print("after")
     assert llm_content[2]["type"] == "text"
 
 
+@pytest.mark.asyncio
+@pytest.mark.timeout(30)
+async def test_display_rejects_oversized_image():
+    """display() should raise when the encoded image exceeds the LLM API
+    size limit (5 MB), so the calling LLM sees the error and can resize
+    before retrying.
+
+    Without this guard, a large image is silently base64-encoded as a
+    lossless PNG (~13 MB for a 4032x3024 photo), the next LLM inference
+    call hits Anthropic's 5 MB per-image limit, and the entire tool loop
+    crashes with no feedback to the model.
+    """
+    sandbox = PythonExecutionSession()
+
+    code = """
+import numpy as np
+from PIL import Image
+img = Image.fromarray(np.random.randint(0, 255, (3024, 4032, 3), dtype=np.uint8))
+display(img)
+"""
+    result = await sandbox.execute(code)
+
+    # display() should raise (visible as a traceback in stderr or as an
+    # error in the result) rather than silently producing an oversized
+    # ImagePart that will crash the LLM call downstream.
+    stdout = result["stdout"]
+    oversized_images = [
+        p for p in stdout if isinstance(p, ImagePart) and len(p.data) > 5_242_880
+    ]
+    assert not oversized_images, (
+        f"display() silently produced a {len(oversized_images[0].data):,} byte "
+        f"base64 image (limit is 5,242,880). It should raise an error so the "
+        f"LLM knows to resize the image before retrying."
+    )
+
+    # The error should be visible to the LLM (either as an exception
+    # traceback in the result, or as a text message in stdout).
+    all_text = (result.get("error") or "") + " ".join(
+        p.text for p in stdout if isinstance(p, TextPart)
+    )
+    assert any(
+        kw in all_text.lower() for kw in ["size", "large", "limit", "exceed", "5 mb"]
+    ), (
+        f"Expected an error message mentioning image size limits, but got:\n"
+        f"stdout text: {all_text[:500]}\n"
+        f"error: {result.get('error', 'None')}"
+    )
+
+
 def test_execution_result_implements_formatted_tool_result():
     """Tests that ExecutionResult implements the FormattedToolResult protocol."""
     # ExecutionResult should be recognized as a FormattedToolResult
