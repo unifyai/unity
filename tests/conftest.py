@@ -116,7 +116,10 @@ def _set_unify_context_for_test(item: pytest.Item) -> None:
         except Exception:
             pass
 
-    unify.set_context(ctx, relative=False, skip_create=skip_ctx_create)
+    try:
+        unify.set_context(ctx, relative=False, skip_create=skip_ctx_create)
+    except Exception:
+        pass  # Project may not exist yet; tests that need it will fail on their own
 
     # Ensure singleton registries don't leak across tests and that fixtures see
     # the correct context for any context-derived subcontexts (e.g. FunctionManager).
