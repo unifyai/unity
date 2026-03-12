@@ -320,55 +320,51 @@ class LocalFileSystemAdapter(BaseFileSystemAdapter):
         # Local adapter does not persist protection flags; always False
         return False
 
-    def save_file_to_downloads(
+    def save_attachment(
         self,
+        attachment_id: str,
         filename: str,
         contents: bytes,
         *,
         sync: bool = False,
     ) -> str:
-        """Save bytes to Downloads directory.
+        """Save bytes to Attachments directory as ``{attachment_id}_{filename}``.
 
         Parameters
         ----------
+        attachment_id : str
+            Unique attachment identifier (guarantees no collisions).
         filename : str
-            Desired filename for the saved file.
+            Original filename for the attachment.
         contents : bytes
             File contents.
         sync : bool, default False
             If True and sync is active, trigger sync to remote VM.
-            Note: When True, this method schedules an async sync task.
 
         Returns
         -------
         str
-            Relative path to saved file (e.g., "Downloads/report.pdf")
+            Relative path to saved file (e.g., ``"Attachments/abc123_report.pdf"``).
         """
-        downloads_dir = (self._root / "Downloads").resolve()
+        attachments_dir = (self._root / "Attachments").resolve()
         try:
-            downloads_dir.mkdir(parents=True, exist_ok=True)
+            attachments_dir.mkdir(parents=True, exist_ok=True)
         except Exception:
             pass
-        desired = Path(filename).name or "downloaded_file"
-        try:
-            existing = {p.name for p in downloads_dir.iterdir() if p.is_file()}
-        except Exception:
-            existing = set()
-        unique = self._unique_name(existing, desired)
-        target_path = downloads_dir / unique
+        safe_name = Path(filename).name or "attachment"
+        target_name = f"{attachment_id}_{safe_name}"
+        target_path = attachments_dir / target_name
         with open(target_path, "wb") as f:
             f.write(contents)
 
-        relative_path = f"Downloads/{unique}"
+        relative_path = f"Attachments/{target_name}"
 
-        # Schedule sync if requested and sync is active
         if sync and self._sync_manager is not None and self._sync_manager._started:
             abs_path = str(self._root / relative_path)
             try:
                 loop = asyncio.get_running_loop()
                 loop.create_task(self._sync_manager.on_file_write(abs_path))
             except RuntimeError:
-                # No running loop - sync will happen on next poll
                 LOGGER.debug(
                     f"{ICONS['file_sync']} [LocalFS] No event loop for sync, will sync on next poll",
                 )
@@ -379,10 +375,10 @@ class LocalFileSystemAdapter(BaseFileSystemAdapter):
         candidate = (self._root / display_name).expanduser().resolve()
         if candidate.exists():
             return str(candidate)
-        # Check Downloads namespace
-        dl = (self._root / "Downloads" / Path(display_name).name).resolve()
-        if dl.exists():
-            return str(dl)
+        # Check Attachments namespace
+        att = (self._root / "Attachments" / Path(display_name).name).resolve()
+        if att.exists():
+            return str(att)
         return None
 
     # ----------------------- Async Sync Methods ----------------------- #

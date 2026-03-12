@@ -25,7 +25,7 @@ class SyncConfig:
     - remote_root: /Unity/Local (VM, set up by ubuntu-vm-startup.sh)
 
     Syncs the dedicated Unity workspace which contains user files
-    (Downloads/, functions/, etc.).
+    (Attachments/, functions/, etc.).
 
     Conflict resolution: Latest wins (by modification time)
     """

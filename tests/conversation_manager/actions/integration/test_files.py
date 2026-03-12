@@ -5,7 +5,7 @@ These validate the production path where a user provides a file path and the act
 - reads/parses the file (PDF/CSV fixtures)
 - extracts/summarizes content
 - handles missing paths gracefully
-- reads downloaded attachments from Downloads/
+- reads downloaded attachments from Attachments/
 """
 
 import pytest
@@ -102,10 +102,10 @@ async def test_file_missing_path_returns_helpful_error(initialized_cm_codeact):
 @pytest.mark.timeout(300)
 @_handle_project
 async def test_downloaded_attachment_readable_by_actor(initialized_cm_codeact):
-    """Actor can read a file that was auto-downloaded to Downloads/.
+    """Actor can read a file that was auto-downloaded to Attachments/.
 
-    Simulates the production attachment flow: a file lands in Downloads/ via
-    save_file_to_downloads (which ingests it), then the user asks the actor
+    Simulates the production attachment flow: a file lands in Attachments/ via
+    save_attachment (which ingests it), then the user asks the actor
     about its contents.  The test is agnostic to *how* the actor reads the
     file (open(), primitives.files.*, etc.) — it only checks the answer.
     """
@@ -113,7 +113,8 @@ async def test_downloaded_attachment_readable_by_actor(initialized_cm_codeact):
 
     # Simulate an attachment download: save a .txt file with known content.
     fm = ManagerRegistry.get_file_manager()
-    fm.save_file_to_downloads(
+    fm.save_attachment(
+        "att-notes-1",
         "meeting_notes.txt",
         b"Project Aurora kickoff meeting\n"
         b"Attendees: Sarah Chen, Marcus Webb, Priya Patel\n"
@@ -125,7 +126,7 @@ async def test_downloaded_attachment_readable_by_actor(initialized_cm_codeact):
         SMSReceived(
             contact=BOSS,
             content=(
-                "I just received a file called meeting_notes.txt in Downloads. "
+                "I just received a file called meeting_notes.txt in Attachments. "
                 "Who attended the meeting and what was the launch date?"
             ),
         ),

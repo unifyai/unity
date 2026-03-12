@@ -358,10 +358,9 @@ async def add_email_attachments(
     gmail_message_id: str,
 ) -> None:
     """
-    Download attachments via the /attachment endpoint and write placeholder files.
+    Download email attachments and save to Attachments folder.
 
     Each attachment item should be of the form: {"id": str, "filename": str}
-    For now, writes an empty placeholder file with the same filename.
     """
     if not attachments:
         return
@@ -372,7 +371,6 @@ async def add_email_attachments(
             try:
                 att_id = att.get("id", "")
                 raw_filename = att.get("filename") or f"attachment_{att_id}"
-                # very basic filename sanitization
                 safe_filename = os.path.basename(raw_filename)
 
                 url = f"{SETTINGS.conversation.COMMS_URL}/gmail/attachment"
@@ -380,7 +378,6 @@ async def add_email_attachments(
                     "receiver_email": receiver_email,
                     "gmail_message_id": gmail_message_id,
                     "attachment_id": att_id,
-                    # "filename": safe_filename,
                 }
 
                 async with session.get(url, headers=headers, params=params) as resp:
@@ -390,13 +387,14 @@ async def add_email_attachments(
 
                 file_manager = ManagerRegistry.get_file_manager()
                 await asyncio.to_thread(
-                    file_manager.save_file_to_downloads,
+                    file_manager.save_attachment,
+                    att_id,
                     safe_filename,
                     data,
                 )
 
                 LOGGER.debug(
-                    f"{ICONS['comms_outbound']} Downloaded attachment {safe_filename} (size={len(data)} bytes) — placeholder file written",
+                    f"{ICONS['comms_outbound']} Downloaded email attachment {safe_filename} (size={len(data)} bytes)",
                 )
             except Exception as e:
                 LOGGER.error(
@@ -462,7 +460,8 @@ async def _download_single_attachment(
         data = b""
 
     display_name = await asyncio.to_thread(
-        adapter.save_file_to_downloads,
+        adapter.save_attachment,
+        att_id,
         safe_filename,
         data,
     )
@@ -478,7 +477,7 @@ async def add_unify_message_attachments(
     attachments: list[dict[str, str]],
 ) -> None:
     """
-    Download attachments from Unify console messages and save to Downloads folder.
+    Download attachments from Unify console messages and save to Attachments folder.
 
     Each attachment item should be of the form:
         {"id": str, "filename": str, "url": str}

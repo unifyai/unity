@@ -117,11 +117,21 @@ def _llm_event_to_eventbus(event: "LLMEvent") -> None:
     try:
         from datetime import datetime, timezone
 
+        from ..session_details import SESSION_DETAILS
+        from .cost_attribution import COST_ATTRIBUTION
         from .event_bus import EVENT_BUS, Event
         from .types.llm import LLMPayload
 
         # Generate timestamp once for consistency between Event and derived columns
         ts = datetime.now(timezone.utc)
+
+        # Resolve attributed user: the user who triggered this LLM call.
+        # COST_ATTRIBUTION is set by ConversationManager / act() when a
+        # platform user (not the supervisor) triggers the interaction.
+        attributed_ids = COST_ATTRIBUTION.get()
+        attributed_user_id = (
+            attributed_ids[0] if attributed_ids else SESSION_DETAILS.user.id
+        )
 
         # Pass through the simplified event data with derived time columns
         # for aggregation/grouping in usage analytics
@@ -130,6 +140,10 @@ def _llm_event_to_eventbus(event: "LLMEvent") -> None:
             response=event.response,
             provider_cost=event.provider_cost,
             billed_cost=event.billed_cost,
+            # Attributed user for per-member usage filtering in the console.
+            # _inject_private_fields sets _user_id to the supervisor; this
+            # field records who actually triggered the call.
+            _attributed_user_id=attributed_user_id,
             # Derived time columns for time-based aggregation
             # All columns use formats that Orchestra infers as date/datetime types
             time_minute=ts.replace(second=0, microsecond=0).isoformat(),

@@ -457,8 +457,14 @@ class TestRendererUnifyMessage:
 
         assert "Here's the document." in result
         assert "[Attachments:" in result
-        assert "report.pdf (auto-downloaded to Downloads/report.pdf)" in result
-        assert "data.xlsx (auto-downloaded to Downloads/data.xlsx)" in result
+        assert (
+            "report.pdf (id: att-1, auto-downloaded to Attachments/att-1_report.pdf)"
+            in result
+        )
+        assert (
+            "data.xlsx (id: att-2, auto-downloaded to Attachments/att-2_data.xlsx)"
+            in result
+        )
 
     def test_render_outgoing_unify_message_with_attachments(self, renderer):
         """Outgoing UnifyMessage attachments show as 'attached'."""
@@ -474,7 +480,7 @@ class TestRendererUnifyMessage:
 
         assert "Here's the analysis." in result
         assert "[Attachments:" in result
-        assert "analysis.pdf (attached)" in result
+        assert "analysis.pdf (id: att-1, attached)" in result
         # Should NOT say "auto-downloaded"
         assert "auto-downloaded" not in result
 

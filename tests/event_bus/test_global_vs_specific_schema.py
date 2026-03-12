@@ -16,7 +16,7 @@ import unify
 
 from unity.events.event_bus import EventBus, Event
 from unity.events.types.manager_method import ManagerMethodPayload
-from unity.events.types.tool_loop import ToolLoopPayload
+from unity.events.types.tool_loop import ToolLoopPayload, ToolLoopKind
 from tests.helpers import _handle_project
 
 
@@ -118,6 +118,7 @@ async def test_toolloop_complex_message_no_type_conflict():
 
     # Simple message
     simple_payload = ToolLoopPayload(
+        kind=ToolLoopKind.REQUEST,
         message={"role": "user", "content": "hello"},
         method="test_method",
         hierarchy=["root"],
@@ -133,6 +134,7 @@ async def test_toolloop_complex_message_no_type_conflict():
 
     # Complex message with None and nested structures
     complex_payload = ToolLoopPayload(
+        kind=ToolLoopKind.TOOL_CALL,
         message={
             "content": None,
             "role": "assistant",
@@ -175,6 +177,7 @@ async def test_rehydration_from_payload_json():
 
     # Publish a ToolLoop event with a complex message
     original_payload = ToolLoopPayload(
+        kind=ToolLoopKind.RESPONSE,
         message={"role": "assistant", "content": "test content", "extra": [1, 2, 3]},
         method="test_rehydration",
         hierarchy=["level1", "level2"],

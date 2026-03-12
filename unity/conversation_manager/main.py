@@ -188,7 +188,7 @@ async def run_conversation_manager(
         init_metrics()
 
     # Set the process working directory to the local file root so that relative
-    # file paths in CodeActActor-generated code (e.g. "Downloads/report.pdf")
+    # file paths in CodeActActor-generated code (e.g. "Attachments/abc123_report.pdf")
     # resolve against the same root used by LocalFileSystemAdapter.  This must
     # happen after settings/env are loaded but before any concurrent tasks are
     # created, since os.chdir() is process-global.
@@ -200,7 +200,7 @@ async def run_conversation_manager(
     os.chdir(_local_root)
 
     # Ensure standard workspace directories exist.
-    (_local_root / "Downloads").mkdir(exist_ok=True)
+    (_local_root / "Attachments").mkdir(exist_ok=True)
 
     import shutil as _shutil
 
