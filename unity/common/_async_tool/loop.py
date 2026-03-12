@@ -2600,6 +2600,9 @@ async def async_tool_loop_inner(
             #      result for that assistant turn is ready.
             # Finally we `continue` so control jumps back to *branch A*
             # where we wait for the **first** task / cancel / interjection.
+            _persist_response_emitted = False
+            _persist_response_content = None  # captured by send_response for surfacing
+
             if msg["tool_calls"]:
                 # ── De-duplicate tool calls (optional) ────────────────────────
                 if prune_tool_duplicates:
@@ -2625,11 +2628,6 @@ async def async_tool_loop_inner(
                         "content": "System notification: The tool calls in your last response were blocked due to quota limits. Please modify your plan or conclude.",
                     }
                     await _msg_dispatcher.append_msgs([sys_notice])
-
-                _persist_response_emitted = False
-                _persist_response_content = (
-                    None  # captured by send_response for surfacing
-                )
 
                 for idx, call in enumerate(msg["tool_calls"]):  # capture index
                     name = call["function"]["name"]

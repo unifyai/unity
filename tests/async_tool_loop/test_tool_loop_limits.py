@@ -417,9 +417,11 @@ async def test_policy_forces_single_tool_invocation(llm_config):
 @pytest.mark.asyncio
 async def test_policy_shows_then_hides_tool(llm_config):
     """
-    On step 0 the policy hides *all* tools so the assistant must think without
-    calling them.  On step 1 the tool becomes available and the assistant
-    should call it exactly once before finishing.
+    Step 0: tool is required → LLM calls it exactly once.
+    Step 1+: tools hidden → LLM produces text → loop ends.
+
+    Symbolic test: verifies tool_policy correctly gates tool visibility
+    across turns. The "required" choice on step 0 removes eval variance.
     """
 
     call_log: list[str] = []
@@ -428,23 +430,22 @@ async def test_policy_shows_then_hides_tool(llm_config):
         call_log.append("invoked")
         return "ok"
 
-    def hide_first_then_show(step: int, tools: Dict[str, Callable]):
-        # Hide every tool on the very first step.
+    def require_first_then_hide(step: int, tools: Dict[str, Callable]):
         if step == 0:
-            return "auto", tools
-        # Reveal all tools afterwards (no *required* flag).
+            return "required", tools
         return "auto", {}
 
     client = new_llm_client(**llm_config)
     handle = start_async_tool_loop(
         client,
-        "You are part of a test. Continue calling `observed_tool` until the tool option disappears, up to a *maximum* of two *consecutive* tool calls.",
+        "Call the observed_tool when it is available.",
         {"observed_tool": observed_tool},
-        tool_policy=hide_first_then_show,
+        tool_policy=require_first_then_hide,
+        max_parallel_tool_calls=1,
     )
     await handle.result()
 
-    assert call_log == ["invoked"]  # exactly one call, on step 1
+    assert call_log == ["invoked"]  # exactly one call, on step 0
 
 
 @pytest.mark.asyncio
