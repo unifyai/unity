@@ -438,11 +438,11 @@ function waitForPort(port: number, timeoutMs = 5000): Promise<boolean> {
 }
 
 function findDemoSitesRoot(): string | null {
-  // Check common locations: relative to agent-service, or absolute /app path
+  // demo-sites/ lives inside agent-service/ so it's always co-located
   const candidates = [
-    path.resolve(__dirname, '..', '..', 'demo-sites'),    // dev: agent-service/src/../../demo-sites
-    path.resolve(__dirname, '..', 'demo-sites'),           // compiled: agent-service/dist/../demo-sites
-    '/app/demo-sites',                                      // Docker: COPY demo-sites/ /app/demo-sites/
+    path.resolve(__dirname, '..', 'demo-sites'),           // dev: agent-service/src/../demo-sites
+    path.resolve(__dirname, '..', '..', 'demo-sites'),     // compiled: agent-service/dist/../../demo-sites
+    '/app/agent-service/demo-sites',                        // Docker
   ];
   for (const dir of candidates) {
     if (fs.existsSync(dir)) return dir;
