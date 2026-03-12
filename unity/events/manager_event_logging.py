@@ -290,16 +290,27 @@ def log_manager_call(
 
             suffix_token = _PENDING_LOOP_SUFFIX.set(suffix)
             try:
-                await publish_manager_method_event(
-                    call_id,
-                    manager_name,
-                    method_name,
-                    phase="incoming",
-                    display_label=resolved_label,
-                    hierarchy=hierarchy,
-                    **{payload_key: payload_value},
-                    **extra_fields,
-                )
+                try:
+                    await publish_manager_method_event(
+                        call_id,
+                        manager_name,
+                        method_name,
+                        phase="incoming",
+                        display_label=resolved_label,
+                        hierarchy=hierarchy,
+                        **{payload_key: payload_value},
+                        **extra_fields,
+                    )
+                except Exception:
+                    import logging as _logging
+
+                    _logging.getLogger(__name__).warning(
+                        "Failed to publish incoming ManagerMethod event "
+                        "for %s.%s — proceeding with method execution",
+                        manager_name,
+                        method_name,
+                        exc_info=True,
+                    )
 
                 # Inject call_id only when the wrapped method declares it
                 if _accepts_call_id:
