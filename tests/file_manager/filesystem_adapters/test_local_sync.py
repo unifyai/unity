@@ -30,40 +30,36 @@ class TestLocalFileSystemAdapterSync:
         adapter = LocalFileSystemAdapter(str(tmp_path), enable_sync=False)
         assert adapter._enable_sync is False
 
-    def test_save_file_to_downloads_basic(self, tmp_path):
-        """Test save_file_to_downloads without sync."""
+    def test_save_attachment_basic(self, tmp_path):
+        """Test save_attachment without sync."""
         adapter = LocalFileSystemAdapter(str(tmp_path), enable_sync=False)
 
-        result = adapter.save_file_to_downloads("test.txt", b"hello world")
+        result = adapter.save_attachment("att-1", "test.txt", b"hello world")
 
-        assert result == "Downloads/test.txt"
-        saved_file = tmp_path / "Downloads" / "test.txt"
+        assert result == "Attachments/att-1_test.txt"
+        saved_file = tmp_path / "Attachments" / "att-1_test.txt"
         assert saved_file.exists()
         assert saved_file.read_bytes() == b"hello world"
 
-    def test_save_file_to_downloads_unique_name(self, tmp_path):
-        """Test save_file_to_downloads generates unique names."""
+    def test_save_attachment_unique_ids(self, tmp_path):
+        """Test save_attachment with different IDs produces distinct files."""
         adapter = LocalFileSystemAdapter(str(tmp_path), enable_sync=False)
 
-        # Save first file
-        result1 = adapter.save_file_to_downloads("test.txt", b"first")
-        assert result1 == "Downloads/test.txt"
+        result1 = adapter.save_attachment("att-1", "test.txt", b"first")
+        assert result1 == "Attachments/att-1_test.txt"
 
-        # Save second file with same name
-        result2 = adapter.save_file_to_downloads("test.txt", b"second")
-        assert result2 == "Downloads/test (1).txt"
+        result2 = adapter.save_attachment("att-2", "test.txt", b"second")
+        assert result2 == "Attachments/att-2_test.txt"
 
-        # Both files exist with correct content
-        assert (tmp_path / "Downloads" / "test.txt").read_bytes() == b"first"
-        assert (tmp_path / "Downloads" / "test (1).txt").read_bytes() == b"second"
+        assert (tmp_path / "Attachments" / "att-1_test.txt").read_bytes() == b"first"
+        assert (tmp_path / "Attachments" / "att-2_test.txt").read_bytes() == b"second"
 
-    def test_save_file_to_downloads_sync_param(self, tmp_path):
-        """Test save_file_to_downloads with sync=True (no effect when sync not started)."""
+    def test_save_attachment_sync_param(self, tmp_path):
+        """Test save_attachment with sync=True (no effect when sync not started)."""
         adapter = LocalFileSystemAdapter(str(tmp_path), enable_sync=False)
 
-        # sync=True should not fail even when sync not configured
-        result = adapter.save_file_to_downloads("test.txt", b"data", sync=True)
-        assert result == "Downloads/test.txt"
+        result = adapter.save_attachment("att-1", "test.txt", b"data", sync=True)
+        assert result == "Attachments/att-1_test.txt"
 
 
 class TestLocalFileSystemAdapterAsyncSync:

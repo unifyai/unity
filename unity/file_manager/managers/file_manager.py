@@ -1488,38 +1488,34 @@ class FileManager(BaseFileManager):
             return False
         return self._adapter.is_protected(file_path)
 
-    def save_file_to_downloads(self, file_path: str, contents: bytes) -> str:
+    def save_attachment(
+        self,
+        attachment_id: str,
+        filename: str,
+        contents: bytes,
+    ) -> str:
         """
-        Save bytes into the adapter's downloads area and return the saved path.
-
-        Use this when you have in-memory file content that should be exposed to
-        the user as a downloadable artifact. The adapter decides where the
-        downloads area lives and how names are de-duplicated.
+        Save bytes into the Attachments directory and return the saved path.
 
         Parameters
         ----------
-        file_path : str
-            Desired file name or relative path within the downloads area.
+        attachment_id : str
+            Unique attachment identifier.
+        filename : str
+            Original filename for the attachment.
         contents : bytes
             Raw bytes to persist.
 
         Returns
         -------
         str
-            Adapter-native path or URL referring to the saved file.
-
-        Raises
-        ------
-        NotImplementedError
-            If no adapter is configured.
-        Exception
-            Any error from the adapter's ``save_file_to_downloads`` implementation.
+            Relative path to the saved file (e.g. ``"Attachments/abc123_report.pdf"``).
         """
         if self._adapter is None:
             raise NotImplementedError(
-                "No adapter configured for save_file_to_downloads",
+                "No adapter configured for save_attachment",
             )
-        display_name = self._adapter.save_file_to_downloads(file_path, contents)
+        display_name = self._adapter.save_attachment(attachment_id, filename, contents)
         result = self.ingest_files(display_name)
 
         # ingest_files only creates FileRecords entries for successfully parsed

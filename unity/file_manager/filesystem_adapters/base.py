@@ -213,14 +213,15 @@ class BaseFileSystemAdapter(ABC):
     ) -> bool:  # pragma: no cover - default not supported
         return False
 
-    def save_file_to_downloads(
+    def save_attachment(
         self,
+        attachment_id: str,
         filename: str,
         contents: bytes,
     ) -> str:  # pragma: no cover - default not supported
-        """Save bytes to an adapter-specific Downloads directory and return the display name."""
+        """Save bytes to the Attachments directory as {attachment_id}_{filename} and return the display name."""
         raise NotImplementedError(
-            "save_file_to_downloads not supported by this adapter",
+            "save_attachment not supported by this adapter",
         )
 
     def resolve_display_name(

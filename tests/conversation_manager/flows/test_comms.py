@@ -211,7 +211,7 @@ async def test_email_with_attachment_visible(initialized_cm):
             subject="Document for review",
             body="I've attached the quarterly report. Can you confirm you received it?",
             email_id="test_email_with_attachment",
-            attachments=["quarterly_report.pdf"],
+            attachments=[{"id": "att-email-1", "filename": "quarterly_report.pdf"}],
         ),
     )
 
@@ -248,9 +248,9 @@ async def test_email_with_attachment_visible(initialized_cm):
     assert_has_one(result2.output_events, EmailSent)
     email2 = filter_events_by_type(result2.output_events, EmailSent)[0]
     body2_lower = email2.body.lower()
-    # The reply should mention the Downloads path
-    assert "downloads" in body2_lower and "quarterly_report.pdf" in body2_lower, (
-        f"Expected reply to include download path (Downloads/quarterly_report.pdf), "
+    # The reply should mention the Attachments path
+    assert "attachments" in body2_lower and "quarterly_report.pdf" in body2_lower, (
+        f"Expected reply to include attachment path (Attachments/att-email-1_quarterly_report.pdf), "
         f"got: {email2.body}"
     )
 
@@ -348,9 +348,11 @@ async def test_unify_message_with_attachment_visible(initialized_cm):
     assert_has_one(result2.output_events, UnifyMessageSent)
     msg2 = filter_events_by_type(result2.output_events, UnifyMessageSent)[0]
     content2_lower = msg2.content.lower()
-    # The reply should mention the Downloads path
-    assert "downloads" in content2_lower and "quarterly_report.pdf" in content2_lower, (
-        f"Expected reply to include download path (Downloads/quarterly_report.pdf), "
+    # The reply should mention the Attachments path
+    assert (
+        "attachments" in content2_lower and "quarterly_report.pdf" in content2_lower
+    ), (
+        f"Expected reply to include attachment path (Attachments/att-1_quarterly_report.pdf), "
         f"got: {msg2.content}"
     )
 

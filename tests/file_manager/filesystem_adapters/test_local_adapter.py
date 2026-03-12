@@ -68,12 +68,12 @@ async def test_import_and_register(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_downloads(tmp_path):
+async def test_save_attachment(tmp_path):
     root = tmp_path / "root"
     root.mkdir()
     ad = LocalFileSystemAdapter(root.as_posix())
-    disp = ad.save_file_to_downloads("z.bin", b"\x00\x01")
-    assert disp.startswith("Downloads/")
+    disp = ad.save_attachment("att-1", "z.bin", b"\x00\x01")
+    assert disp == "Attachments/att-1_z.bin"
     resolved = ad.resolve_display_name(disp)
     assert resolved is not None and Path(resolved).exists()
     assert Path(resolved).read_bytes() == b"\x00\x01"

@@ -151,8 +151,8 @@ class TestAddUnifyMessageAttachments:
         mock_session.__aexit__ = AsyncMock(return_value=None)
 
         mock_adapter = MagicMock()
-        mock_adapter.save_file_to_downloads = MagicMock(
-            return_value="Downloads/report.pdf",
+        mock_adapter.save_attachment = MagicMock(
+            return_value="Attachments/att-1_report.pdf",
         )
 
         mock_file_manager = MagicMock()
@@ -176,15 +176,16 @@ class TestAddUnifyMessageAttachments:
             await comms_utils.add_unify_message_attachments(attachments)
 
             # Verify file was written to disk via adapter
-            mock_adapter.save_file_to_downloads.assert_called_once()
-            call_args = mock_adapter.save_file_to_downloads.call_args
-            assert call_args[0][0] == "report.pdf"  # filename
-            assert call_args[0][1] == b"PDF file content"  # content
+            mock_adapter.save_attachment.assert_called_once()
+            call_args = mock_adapter.save_attachment.call_args
+            assert call_args[0][0] == "att-1"  # attachment_id
+            assert call_args[0][1] == "report.pdf"  # filename
+            assert call_args[0][2] == b"PDF file content"  # content
 
             # Verify parallel ingestion was triggered
             mock_file_manager.ingest_files.assert_called_once()
             ingest_args = mock_file_manager.ingest_files.call_args
-            assert ingest_args[0][0] == ["Downloads/report.pdf"]
+            assert ingest_args[0][0] == ["Attachments/att-1_report.pdf"]
             assert ingest_args[1]["config"].execution.parallel_files is True
 
     @pytest.mark.asyncio
@@ -197,8 +198,8 @@ class TestAddUnifyMessageAttachments:
     async def test_handles_missing_url(self):
         """Handles attachments without URL gracefully (writes empty placeholder)."""
         mock_adapter = MagicMock()
-        mock_adapter.save_file_to_downloads = MagicMock(
-            return_value="Downloads/placeholder.txt",
+        mock_adapter.save_attachment = MagicMock(
+            return_value="Attachments/att-1_placeholder.txt",
         )
 
         mock_file_manager = MagicMock()
@@ -219,10 +220,11 @@ class TestAddUnifyMessageAttachments:
             await comms_utils.add_unify_message_attachments(attachments)
 
             # Should still save (empty content)
-            mock_adapter.save_file_to_downloads.assert_called_once()
-            call_args = mock_adapter.save_file_to_downloads.call_args
-            assert call_args[0][0] == "placeholder.txt"
-            assert call_args[0][1] == b""  # Empty content
+            mock_adapter.save_attachment.assert_called_once()
+            call_args = mock_adapter.save_attachment.call_args
+            assert call_args[0][0] == "att-1"  # attachment_id
+            assert call_args[0][1] == "placeholder.txt"
+            assert call_args[0][2] == b""  # Empty content
 
     @pytest.mark.asyncio
     async def test_sanitizes_filename(self):
@@ -238,7 +240,9 @@ class TestAddUnifyMessageAttachments:
         mock_session.__aexit__ = AsyncMock(return_value=None)
 
         mock_adapter = MagicMock()
-        mock_adapter.save_file_to_downloads = MagicMock(return_value="Downloads/passwd")
+        mock_adapter.save_attachment = MagicMock(
+            return_value="Attachments/att-1_passwd",
+        )
 
         mock_file_manager = MagicMock()
         mock_file_manager._adapter = mock_adapter
@@ -261,8 +265,8 @@ class TestAddUnifyMessageAttachments:
             await comms_utils.add_unify_message_attachments(attachments)
 
             # Filename should be sanitized
-            call_args = mock_adapter.save_file_to_downloads.call_args
-            saved_filename = call_args[0][0]
+            call_args = mock_adapter.save_attachment.call_args
+            saved_filename = call_args[0][1]  # second arg is filename
             assert ".." not in saved_filename
             assert "/" not in saved_filename
 
@@ -296,7 +300,7 @@ class TestAddUnifyMessageAttachments:
         mock_session.__aexit__ = AsyncMock(return_value=None)
 
         mock_file_manager = MagicMock()
-        mock_file_manager.save_file_to_downloads = MagicMock()
+        mock_file_manager.save_attachment = MagicMock()
 
         with (
             patch("aiohttp.ClientSession", return_value=mock_session),
@@ -345,7 +349,7 @@ class TestAddUnifyMessageAttachments:
         mock_session.__aexit__ = AsyncMock(return_value=None)
 
         mock_file_manager = MagicMock()
-        mock_file_manager.save_file_to_downloads = MagicMock()
+        mock_file_manager.save_attachment = MagicMock()
 
         with (
             patch("aiohttp.ClientSession", return_value=mock_session),

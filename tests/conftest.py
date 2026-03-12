@@ -551,7 +551,7 @@ def pytest_configure(config):
     # Isolate HOME so that tests never touch the real home directory.
     # get_local_root() defaults to ~/Unity/Local, and the process cwd
     # is set to the same path at startup.  By pointing HOME at a temp
-    # dir we keep Downloads/, .env, snapshots, etc. sandboxed.
+    # dir we keep Attachments/, .env, snapshots, etc. sandboxed.
     #
     # The path is deterministic (not random) so that CodeActActor system
     # prompts — which embed the resolved ~/Unity/Local path — produce
