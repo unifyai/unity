@@ -121,7 +121,7 @@ async def test_wait_called_and_pruned_when_other_tool_is_very_slow(
 
     handle = start_async_tool_loop(
         client,
-        message="Please run fast_task and slow_task, triggering them both **immediately** (at the same time)",
+        message="Please run fast_task and very_slow_task, triggering them both **immediately** (at the same time)",
         tools=tools,
         interrupt_llm_with_interjections=True,
     )

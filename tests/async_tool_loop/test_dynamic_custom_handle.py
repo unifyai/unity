@@ -387,7 +387,7 @@ async def test_dynamic_helpers_use_base_docstrings(client):
     # ask (from SteerableToolHandle.ask)
     for k, v in registered_docs.items():
         if k.startswith("ask_"):
-            assert "Query the status or progress of this running task" in v
+            assert "Ask about status/progress if the task is still running" in v
     # stop – either base or explicit; ensure it's non-empty and informative
     for k, v in registered_docs.items():
         if k.startswith("stop_"):

@@ -39,12 +39,16 @@ async def echo(text: str) -> str:  # noqa: D401 – simple echo tool
 # --------------------------------------------------------------------------- #
 
 
+_INFRASTRUCTURE_EVENT_KINDS = {"thinking_sentinel"}
+
+
 def _filter_runtime_context(events: list) -> list:
-    """Filter out internal runtime context events (user visibility guidance, etc.)."""
+    """Filter out internal runtime/infrastructure events that don't represent conversation turns."""
     return [
         evt
         for evt in events
         if not evt.payload.get("message", {}).get("_runtime_context")
+        and evt.payload.get("kind") not in _INFRASTRUCTURE_EVENT_KINDS
     ]
 
 
