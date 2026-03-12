@@ -616,10 +616,21 @@ class EventBus:
                 except Exception as exc:
                     LOGGER.debug("Periodic flush error: %s", exc)
 
-    async def _async_prefill_from_unify(self) -> None:
-        """Populate per-type deques without blocking the event-loop."""
+    # Only these event types are prefilled into in-memory deques on startup.
+    # Comms is the only type with production search() consumers
+    # (hydrate_global_thread, get_last_store_chat_history).  All other types
+    # are either write-only from the deque perspective (LLM, ToolLoop) or
+    # consumed exclusively via publish-driven callbacks (ManagerMethod,
+    # Message).  search() falls back to the backend for any type not in the
+    # deque, so non-prefilled types still work — they just make an API call
+    # instead of reading from memory.
+    _PREFILL_TYPES: frozenset[str] = frozenset({"Comms"})
 
-        async def _prefill_one(etype: str, context: str, window_size: int):
+    async def _async_prefill_from_unify(self) -> None:
+        """Prefill Comms deques and seed row_id counters for all types."""
+
+        async def _prefill_deque(etype: str, context: str, window_size: int):
+            """Fetch recent events into the in-memory deque."""
             raw_logs = await asyncio.to_thread(
                 unify.get_logs,
                 context=context,
@@ -632,23 +643,42 @@ class EventBus:
                     continue
                 dq.append(self._row_to_event(log.entries, default_type=etype))
             self._deques[etype] = dq
-            # Enforce window limits post-load
             async with self._lock:
                 self._trim_window(etype)
 
-        tasks = [
-            _prefill_one(
-                et,
-                ctx,
-                self._window_sizes.setdefault(et, self._default_window),
+        async def _seed_row_id(etype: str, context: str):
+            """Fetch only the latest row_id so the counter stays monotonic."""
+            raw_logs = await asyncio.to_thread(
+                unify.get_logs,
+                context=context,
+                limit=1,
+                sorting={"row_id": "descending"},
             )
-            for et, ctx in self._specific_ctxs.items()
-        ]
+            if raw_logs and raw_logs[0].entries:
+                row_id = raw_logs[0].entries.get("row_id")
+                if row_id is not None:
+                    self._next_row_ids[etype] = int(row_id) + 1
+
+        tasks = []
+        for et, ctx in self._specific_ctxs.items():
+            if et in self._PREFILL_TYPES:
+                tasks.append(
+                    _prefill_deque(
+                        et,
+                        ctx,
+                        self._window_sizes.setdefault(et, self._default_window),
+                    ),
+                )
+            else:
+                tasks.append(_seed_row_id(et, ctx))
         if tasks:
             await asyncio.gather(*tasks)
 
-        # ──  Initialise local row_id counters based on persisted data ─────────
-        for etype, dq in self._deques.items():
+        # Seed row_id counters for prefilled types from their deques
+        for etype in self._PREFILL_TYPES:
+            dq = self._deques.get(etype)
+            if not dq:
+                continue
             max_id = max(
                 (evt.row_id for evt in dq if evt.row_id is not None),
                 default=-1,
@@ -845,8 +875,24 @@ class EventBus:
             return
 
         self._lazy_start_hydration_if_needed()
-        # Guarantee that local row_id counters are initialised before use
-        await self.join_initialization()
+        # Best-effort wait for hydration so row_id counters are initialised.
+        # If prefill failed (e.g. Orchestra 500s), degrade gracefully: assign
+        # row_ids from zero and keep routing events in-process.  Persistence
+        # may produce duplicate row_ids in that edge case, but the alternative
+        # — permanently blocking publish() for the pod's lifetime — is far
+        # worse (it kills the @log_manager_call decorator path and prevents
+        # the CodeActActor from ever executing).
+        try:
+            await self.join_initialization()
+        except Exception:
+            if not getattr(self, "_prefill_warning_logged", False):
+                LOGGER.warning(
+                    "EventBus hydration failed — operating with degraded "
+                    "persistence (row_id counters not seeded from backend). "
+                    "In-process event routing continues normally. Error: %r",
+                    self._prefill_exc,
+                )
+                self._prefill_warning_logged = True
         # --- Auto pin/unpin evaluation *before* we acquire the deque lock ---
         for _rule in self._auto_pin_rules:
             if _rule["event_type"] is None or _rule["event_type"] == event.type:

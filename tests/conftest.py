@@ -116,7 +116,10 @@ def _set_unify_context_for_test(item: pytest.Item) -> None:
         except Exception:
             pass
 
-    unify.set_context(ctx, relative=False, skip_create=skip_ctx_create)
+    try:
+        unify.set_context(ctx, relative=False, skip_create=skip_ctx_create)
+    except Exception:
+        pass  # Project may not exist yet; tests that need it will fail on their own
 
     # Ensure singleton registries don't leak across tests and that fixtures see
     # the correct context for any context-derived subcontexts (e.g. FunctionManager).
@@ -532,6 +535,25 @@ _session_costs: list[tuple[str, float]] = []
 
 
 def pytest_configure(config):
+    # ------------------------------------------------------------------
+    # Isolate HOME so that tests never touch the real home directory.
+    # get_local_root() defaults to ~/Unity/Local, and the process cwd
+    # is set to the same path at startup.  By pointing HOME at a temp
+    # dir we keep Attachments/, .env, snapshots, etc. sandboxed.
+    #
+    # The path is deterministic (not random) so that CodeActActor system
+    # prompts — which embed the resolved ~/Unity/Local path — produce
+    # stable LLM cache keys across pytest sessions.  Actual test file
+    # isolation is handled by pytest's tmp_path fixture, not HOME.
+    # ------------------------------------------------------------------
+    import tempfile
+
+    global _original_home
+    _original_home = os.environ.get("HOME")
+    test_home = os.path.join(tempfile.gettempdir(), "unity_test_home")
+    os.makedirs(test_home, exist_ok=True)
+    os.environ["HOME"] = test_home
+
     config.addinivalue_line(
         "markers",
         "requires_real_unify: mark test as requiring the real unify implementation",

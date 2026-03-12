@@ -2085,6 +2085,27 @@ def _next_row_id() -> int:
     return _row_counter
 
 
+def _classify_sim_message(msg: dict) -> str:
+    """Lightweight kind classifier for simulated messages."""
+    role = msg.get("role", "")
+    if role == "system":
+        if msg.get("_steering"):
+            action = str(msg.get("_steering_action", "pause")).lower()
+            return f"steering_{action}"
+        return "system_notice"
+    if role == "user":
+        return "interjection" if msg.get("_interjection") else "request"
+    if role == "tool":
+        return "tool_result"
+    if role == "assistant":
+        if msg.get("_thinking_in_flight"):
+            return "thinking_sentinel"
+        if msg.get("tool_calls"):
+            return "tool_call"
+        return "response"
+    return "response"
+
+
 def _event_to_sse(event: dict) -> dict:
     """Convert a step event dict into the pre-shaped SSE format the push endpoint expects."""
     if event["kind"] == "mm":
@@ -2117,10 +2138,12 @@ def _event_to_sse(event: dict) -> dict:
         }
     else:
         kw = event["kwargs"]
+        msg = event["message"]
         entries = {
             "eventId": str(uuid4()),
             "eventTimestamp": now_iso(),
-            "message": event["message"],
+            "kind": kw.get("kind") or _classify_sim_message(msg),
+            "message": msg,
             "method": kw.get("method", "CodeActActor.act"),
             "hierarchy": event["hierarchy"],
             "hierarchyLabel": "->".join(event["hierarchy"]),

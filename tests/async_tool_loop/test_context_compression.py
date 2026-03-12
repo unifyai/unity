@@ -1533,12 +1533,16 @@ async def test_image_aware_multi_pass_accumulates(llm_config):
     prior_entries = [(i, msg.content) for i, msg in enumerate(result1.messages)]
 
     pass2_msgs = [
-        {"role": "user", "content": "Here is an updated dashboard screenshot."},
+        {
+            "role": "user",
+            "content": "Here is an updated dashboard screenshot. Compare it to the old one.",
+        },
         {
             "role": "assistant",
             "content": (
-                "I can see the updated dashboard in [img:2]. Revenue is now "
-                "even higher than in the previous screenshot [img:0]."
+                "Comparing the updated dashboard [img:2] with the original [img:0]: "
+                "revenue in [img:2] is significantly higher. I need both [img:0] and "
+                "[img:2] to complete the comparison you requested."
             ),
         },
     ]

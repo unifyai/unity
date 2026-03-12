@@ -62,7 +62,7 @@ async def test_second_act_includes_failure_context(initialized_cm):
             contact=BOSS,
             content=(
                 "Could you please take these properties in the image at "
-                "Downloads/IMG_1019.png and put them all into an Excel "
+                "Attachments/att-img-1_IMG_1019.png and put them all into an Excel "
                 "spreadsheet for me, with each of their postcodes listed? "
                 "Could you also please plot them all on a map?"
             ),

@@ -408,7 +408,7 @@ async def test_email_summarize_attachment_triggers_act_with_filepath(initialized
     to summarize it. The assistant should call `act` with the filepath of the
     auto-downloaded attachment so the Actor can access and process the file.
 
-    The rendered email shows: "Attachments: report.pdf (auto-downloaded to Downloads/report.pdf)"
+    The rendered email shows: "Attachments: quarterly_report.pdf (id: att-email-1, auto-downloaded to Attachments/att-email-1_quarterly_report.pdf)"
     so the LLM should know the file location and include it in the act query.
     """
     cm = initialized_cm
@@ -419,7 +419,7 @@ async def test_email_summarize_attachment_triggers_act_with_filepath(initialized
             subject="Q3 Report",
             body="Please summarize this PDF for me.",
             email_id="test_summarize_attachment",
-            attachments=["quarterly_report.pdf"],
+            attachments=[{"id": "att-email-1", "filename": "quarterly_report.pdf"}],
         ),
     )
 
@@ -435,10 +435,10 @@ async def test_email_summarize_attachment_triggers_act_with_filepath(initialized
     actor_events = filter_events_by_type(result.output_events, ActorHandleStarted)
     assert len(actor_events) >= 1, "Expected at least one ActorHandleStarted event"
 
-    # The query sent to act should include the download path
+    # The query sent to act should include the attachment path
     act_query = actor_events[0].query.lower()
-    assert "downloads" in act_query and "quarterly_report.pdf" in act_query, (
-        f"Expected act query to include filepath 'Downloads/quarterly_report.pdf', "
+    assert "attachments" in act_query and "quarterly_report.pdf" in act_query, (
+        f"Expected act query to include filepath 'Attachments/att-email-1_quarterly_report.pdf', "
         f"got query: {actor_events[0].query}"
     )
 
@@ -458,7 +458,7 @@ async def test_unify_message_summarize_attachment_triggers_act_with_filepath(
     to summarize it. The assistant should call `act` with the filepath of the
     auto-downloaded attachment so the Actor can access and process the file.
 
-    The rendered message shows: "[Attachments: report.pdf (auto-downloaded to Downloads/report.pdf)]"
+    The rendered message shows: "[Attachments: quarterly_report.pdf (id: att-1, auto-downloaded to Attachments/att-1_quarterly_report.pdf)]"
     so the LLM should know the file location and include it in the act query.
     """
     cm = initialized_cm
@@ -483,10 +483,10 @@ async def test_unify_message_summarize_attachment_triggers_act_with_filepath(
     actor_events = filter_events_by_type(result.output_events, ActorHandleStarted)
     assert len(actor_events) >= 1, "Expected at least one ActorHandleStarted event"
 
-    # The query sent to act should include the download path
+    # The query sent to act should include the attachment path
     act_query = actor_events[0].query.lower()
-    assert "downloads" in act_query and "quarterly_report.pdf" in act_query, (
-        f"Expected act query to include filepath 'Downloads/quarterly_report.pdf', "
+    assert "attachments" in act_query and "quarterly_report.pdf" in act_query, (
+        f"Expected act query to include filepath 'Attachments/att-1_quarterly_report.pdf', "
         f"got query: {actor_events[0].query}"
     )
 
