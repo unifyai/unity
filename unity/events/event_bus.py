@@ -616,6 +616,14 @@ class EventBus:
                 except Exception as exc:
                     LOGGER.debug("Periodic flush error: %s", exc)
 
+    # Event types whose payloads are too large for bulk prefill.  LLM events
+    # store full request/response dicts (~1-2 MB each); fetching 50 at once
+    # produces responses that exceed Cloud Run's 32 MB response limit, causing
+    # 500 errors that poison the entire EventBus.  These types are write-only
+    # from the in-memory deque perspective — no search() or callback consumers
+    # read from them — so skipping prefill has zero functional impact.
+    _SKIP_PREFILL_TYPES: frozenset[str] = frozenset({"LLM"})
+
     async def _async_prefill_from_unify(self) -> None:
         """Populate per-type deques without blocking the event-loop."""
 
@@ -643,6 +651,7 @@ class EventBus:
                 self._window_sizes.setdefault(et, self._default_window),
             )
             for et, ctx in self._specific_ctxs.items()
+            if et not in self._SKIP_PREFILL_TYPES
         ]
         if tasks:
             await asyncio.gather(*tasks)
@@ -845,8 +854,24 @@ class EventBus:
             return
 
         self._lazy_start_hydration_if_needed()
-        # Guarantee that local row_id counters are initialised before use
-        await self.join_initialization()
+        # Best-effort wait for hydration so row_id counters are initialised.
+        # If prefill failed (e.g. Orchestra 500s), degrade gracefully: assign
+        # row_ids from zero and keep routing events in-process.  Persistence
+        # may produce duplicate row_ids in that edge case, but the alternative
+        # — permanently blocking publish() for the pod's lifetime — is far
+        # worse (it kills the @log_manager_call decorator path and prevents
+        # the CodeActActor from ever executing).
+        try:
+            await self.join_initialization()
+        except Exception:
+            if not getattr(self, "_prefill_warning_logged", False):
+                LOGGER.warning(
+                    "EventBus hydration failed — operating with degraded "
+                    "persistence (row_id counters not seeded from backend). "
+                    "In-process event routing continues normally. Error: %r",
+                    self._prefill_exc,
+                )
+                self._prefill_warning_logged = True
         # --- Auto pin/unpin evaluation *before* we acquire the deque lock ---
         for _rule in self._auto_pin_rules:
             if _rule["event_type"] is None or _rule["event_type"] == event.type:
