@@ -2502,6 +2502,11 @@ def run_live(request: str, kwargs: dict, assistant_id: str) -> None:
         result = await handle.result()
         print(f"\n=== Result ===\n{result}\n")
 
+        # Wait for post-completion phases (e.g. StorageCheck) to finish.
+        while not handle.done():
+            await asyncio.sleep(0.5)
+        print("=== All phases complete ===")
+
     asyncio.run(_run())
 
 
