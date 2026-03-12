@@ -799,22 +799,28 @@ def make_send_notification_tool(
         *,
         _notification_up_q: "asyncio.Queue[dict] | None" = None,
     ) -> str:
-        """Send a notification to the user.
+        """Send a progress notification to the user.
 
-        Use this to report meaningful milestones during active work and to
-        announce when a task finishes.  The notification is fire-and-forget:
-        execution continues immediately.
+        Use this to report meaningful milestones during active work — for
+        example, announcing that a long-running step has started, providing
+        intermediate results, or flagging a blocker that needs user action.
+        The notification is fire-and-forget: execution continues immediately.
+
+        Do NOT call this tool alongside your final response. When you are
+        done, provide the final answer as a plain assistant message with no
+        tool calls. The loop's natural termination is the completion signal.
 
         Parameters
         ----------
         message : str
-            A concise, user-facing update.
+            A concise, user-facing progress update.
         completed : bool
-            Set to True when the overall instruction is finished and you
-            are ready for the next one (e.g. "Done — email sent to 3
-            recipients").  Leave False (default) for in-progress updates
-            (e.g. "Sending the email now"), intermediate steps within a
-            multi-step workflow, or blockers awaiting user action.
+            Set to True to mark the notification as a completion
+            announcement within a multi-step workflow. Leave False
+            (default) for in-progress updates, intermediate steps, or
+            blockers awaiting user action. At the top level, prefer
+            ending with a tool-less text response rather than calling
+            send_notification(completed=True).
 
         Returns
         -------

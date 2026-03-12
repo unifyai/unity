@@ -982,6 +982,10 @@ def start_async_tool_loop(
     extra_ask_tools: Optional[Dict[str, Callable]] = None,
     enable_compression: bool = True,
     extra_compression_tools: Optional[list[str]] = None,
+    clarification_queues: Optional[Tuple["asyncio.Queue", "asyncio.Queue"]] = None,
+    on_clarification_request: Optional[Callable[[str], Any]] = None,
+    on_clarification_answer: Optional[Callable[[str], Any]] = None,
+    on_notify: Optional[Callable[[str], Any]] = None,
 ) -> AsyncToolLoopHandle:
     """
     Kick off `_async_tool_use_loop_inner` in its own task and give the caller
@@ -1106,6 +1110,10 @@ def start_async_tool_loop(
                 extra_ask_tools=extra_ask_tools,
                 enable_compression=enable_compression,
                 extra_compression_tools=extra_compression_tools,
+                clarification_queues=clarification_queues,
+                on_clarification_request=on_clarification_request,
+                on_clarification_answer=on_clarification_answer,
+                on_notify=on_notify,
             )
         except asyncio.CancelledError:
             raise
@@ -1182,6 +1190,10 @@ def start_async_tool_loop(
         "extra_ask_tools": extra_ask_tools,
         "enable_compression": enable_compression,
         "extra_compression_tools": extra_compression_tools,
+        "clarification_queues": clarification_queues,
+        "on_clarification_request": on_clarification_request,
+        "on_clarification_answer": on_clarification_answer,
+        "on_notify": on_notify,
     }
 
     # Attach lineage to handle for optional external inspection
