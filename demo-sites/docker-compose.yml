@@ -1,9 +1,0 @@
-services:
-  example:
-    build: ./example
-    ports:
-    - "4001:3000"
-  vantage-portal:
-    build: ./vantage-portal
-    ports:
-    - "4002:3000"
