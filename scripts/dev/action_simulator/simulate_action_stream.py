@@ -929,9 +929,9 @@ def build_persistent_steps():
                 ),
             ],
         },
-        # ── 23. execute_code result (parent ToolLoop) with display() image ──
+        # ── 23. execute_code result (parent ToolLoop) with display() images ──
         {
-            "label": "execute_code result (with image)",
+            "label": "execute_code result (with images)",
             "delay": 0.5,
             "events": [
                 tl(
@@ -945,10 +945,19 @@ def build_persistent_steps():
                                 "type": "text",
                                 "text": json.dumps(
                                     {
-                                        "result": "Knowledge updated and contacts updated successfully.",
-                                        "notification_sent": True,
+                                        "result": None,
+                                        "language": "python",
+                                        "state_mode": "stateless",
+                                        "session_id": None,
+                                        "duration_ms": 3420,
                                     },
+                                    indent=2,
                                 ),
+                            },
+                            {"type": "text", "text": "\n--- stdout ---\n"},
+                            {
+                                "type": "text",
+                                "text": "Updating knowledge base with new credentials info...\n",
                             },
                             {
                                 "type": "image_url",
@@ -956,6 +965,14 @@ def build_persistent_steps():
                                     "url": f"data:{TEST_IMAGE_MIME};base64,{TEST_IMAGE_B64}",
                                 },
                             },
+                            {"type": "text", "text": "Updating contact records...\n"},
+                            {
+                                "type": "image_url",
+                                "image_url": {
+                                    "url": f"data:{TEST_IMAGE_MIME_2};base64,{TEST_IMAGE_B64_2}",
+                                },
+                            },
+                            {"type": "text", "text": "Done.\n"},
                         ],
                     },
                 ),
@@ -1980,9 +1997,9 @@ def build_single_action_steps():
                 ),
             ],
         },
-        # ── 22. execute_code result (with display() image) ──
+        # ── 22. execute_code result (with display() images) ──
         {
-            "label": "execute_code result (with image)",
+            "label": "execute_code result (with images)",
             "delay": 2.0,
             "events": [
                 tl(
@@ -2001,9 +2018,18 @@ def build_single_action_steps():
                                             "subject": "Q1 Partnership Review Follow-Up",
                                             "body": "Hi Rachel,\n\nThank you for your time...",
                                         },
-                                        "notification_sent": True,
+                                        "language": "python",
+                                        "state_mode": "stateless",
+                                        "session_id": None,
+                                        "duration_ms": 1850,
                                     },
+                                    indent=2,
                                 ),
+                            },
+                            {"type": "text", "text": "\n--- stdout ---\n"},
+                            {
+                                "type": "text",
+                                "text": "Drafting email for Rachel Torres...\n",
                             },
                             {
                                 "type": "image_url",
@@ -2011,6 +2037,14 @@ def build_single_action_steps():
                                     "url": f"data:{TEST_IMAGE_MIME_2};base64,{TEST_IMAGE_B64_2}",
                                 },
                             },
+                            {"type": "text", "text": "Email preview rendered.\n"},
+                            {
+                                "type": "image_url",
+                                "image_url": {
+                                    "url": f"data:{TEST_IMAGE_MIME};base64,{TEST_IMAGE_B64}",
+                                },
+                            },
+                            {"type": "text", "text": "Final draft ready.\n"},
                         ],
                     },
                 ),
