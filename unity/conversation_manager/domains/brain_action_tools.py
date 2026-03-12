@@ -556,6 +556,7 @@ class ConversationManagerBrainActionTools:
                     )
 
                 attachment = upload_result
+                attachment["filepath"] = attachment_filepath
 
             except FileNotFoundError:
                 return await self._surface_comms_error(
@@ -666,6 +667,7 @@ class ConversationManagerBrainActionTools:
                             _api_topic,
                             **_api_err,
                         )
+                    upload_result["filepath"] = filepath
                     uploaded_attachments.append(upload_result)
                 except FileNotFoundError:
                     return await self._surface_comms_error(

@@ -1053,24 +1053,37 @@ class Renderer:
         if isinstance(message, UnifyMessage):
             attachments_line = ""
             if message.attachments:
-                # Extract filename from attachment (supports both dict and string format)
-                def get_filename(att):
+
+                def _unify_att_detail(att, is_self: bool) -> str:
                     if isinstance(att, dict):
-                        return att.get(
+                        fname = att.get(
                             "filename",
                             f"attachment_{att.get('id', 'unknown')}",
                         )
-                    return att  # Already a string
+                        att_id = att.get("id")
+                        id_part = f"id: {att_id}, " if att_id else ""
+                        if is_self:
+                            fpath = att.get("filepath")
+                            if fpath:
+                                return f"{fname} ({id_part}attached from {fpath})"
+                            return (
+                                f"{fname} ({id_part}attached)"
+                                if id_part
+                                else f"{fname} (attached)"
+                            )
+                        return (
+                            f"{fname} ({id_part}auto-downloaded to Downloads/{fname})"
+                        )
+                    return (
+                        f"{att} (attached)"
+                        if is_self
+                        else f"{att} (auto-downloaded to Downloads/{att})"
+                    )
 
-                if message.name == "You":
-                    attachment_details = [
-                        f"{get_filename(att)} (attached)" for att in message.attachments
-                    ]
-                else:
-                    attachment_details = [
-                        f"{get_filename(att)} (auto-downloaded to Downloads/{get_filename(att)})"
-                        for att in message.attachments
-                    ]
+                attachment_details = [
+                    _unify_att_detail(att, message.name == "You")
+                    for att in message.attachments
+                ]
                 attachments_line = f" [Attachments: {', '.join(attachment_details)}]"
 
             # Show timezone info for the contact
@@ -1090,23 +1103,36 @@ class Renderer:
             attachments_line = ""
             if message.attachments:
 
-                def get_filename(att):
+                def _api_att_detail(att, is_self: bool) -> str:
                     if isinstance(att, dict):
-                        return att.get(
+                        fname = att.get(
                             "filename",
                             f"attachment_{att.get('id', 'unknown')}",
                         )
-                    return att
+                        att_id = att.get("id")
+                        id_part = f"id: {att_id}, " if att_id else ""
+                        if is_self:
+                            fpath = att.get("filepath")
+                            if fpath:
+                                return f"{fname} ({id_part}attached from {fpath})"
+                            return (
+                                f"{fname} ({id_part}attached)"
+                                if id_part
+                                else f"{fname} (attached)"
+                            )
+                        return (
+                            f"{fname} ({id_part}auto-downloaded to Downloads/{fname})"
+                        )
+                    return (
+                        f"{att} (attached)"
+                        if is_self
+                        else f"{att} (auto-downloaded to Downloads/{att})"
+                    )
 
-                if message.name == "You":
-                    attachment_details = [
-                        f"{get_filename(att)} (attached)" for att in message.attachments
-                    ]
-                else:
-                    attachment_details = [
-                        f"{get_filename(att)} (auto-downloaded to Downloads/{get_filename(att)})"
-                        for att in message.attachments
-                    ]
+                attachment_details = [
+                    _api_att_detail(att, message.name == "You")
+                    for att in message.attachments
+                ]
                 attachments_line = f" [Attachments: {', '.join(attachment_details)}]"
 
             tags_line = ""
