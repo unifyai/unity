@@ -28,8 +28,12 @@ class TestWorkspaceBootstrap:
         import shutil
 
         root.mkdir(parents=True, exist_ok=True)
-        (root / "Downloads").mkdir(exist_ok=True)
-        (root / "Outputs").mkdir(exist_ok=True)
+        (root / "Attachments").mkdir(exist_ok=True)
+
+        outputs = root / "Outputs"
+        if outputs.exists():
+            shutil.rmtree(outputs)
+        outputs.mkdir(exist_ok=True)
 
         screenshots = root / "Screenshots"
         if screenshots.exists():
@@ -42,23 +46,25 @@ class TestWorkspaceBootstrap:
         self._bootstrap(root)
 
         assert root.is_dir()
-        assert (root / "Downloads").is_dir()
+        assert (root / "Attachments").is_dir()
         assert (root / "Outputs").is_dir()
         assert (root / "Screenshots" / "User").is_dir()
         assert (root / "Screenshots" / "Assistant").is_dir()
 
-    def test_outputs_preserved_between_sessions(self, tmp_path):
+    def test_outputs_cleared_between_sessions(self, tmp_path):
         root = tmp_path / "Unity" / "Local"
         self._bootstrap(root)
 
         # Simulate a file generated during a previous session.
-        report = root / "Outputs" / "old_report.pdf"
-        report.write_bytes(b"report")
+        stale = root / "Outputs" / "old_report.pdf"
+        stale.write_bytes(b"stale")
+        assert stale.exists()
 
-        # Second bootstrap should NOT clear Outputs/.
+        # Second bootstrap (new session) should clear Outputs/.
         self._bootstrap(root)
 
-        assert report.exists()
+        assert not stale.exists()
+        assert (root / "Outputs").is_dir()
 
     def test_screenshots_cleared_between_sessions(self, tmp_path):
         root = tmp_path / "Unity" / "Local"
@@ -80,15 +86,15 @@ class TestWorkspaceBootstrap:
         assert (root / "Screenshots" / "User").is_dir()
         assert (root / "Screenshots" / "Assistant").is_dir()
 
-    def test_downloads_preserved_between_sessions(self, tmp_path):
+    def test_attachments_preserved_between_sessions(self, tmp_path):
         root = tmp_path / "Unity" / "Local"
         self._bootstrap(root)
 
-        # Simulate a downloaded attachment.
-        attachment = root / "Downloads" / "invoice.pdf"
+        # Simulate an attachment from a previous session.
+        attachment = root / "Attachments" / "att-1_invoice.pdf"
         attachment.write_bytes(b"attachment")
 
-        # Second bootstrap should NOT clear Downloads/.
+        # Second bootstrap should NOT clear Attachments/.
         self._bootstrap(root)
 
         assert attachment.exists()

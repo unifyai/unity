@@ -989,15 +989,33 @@ class Renderer:
         if isinstance(message, EmailMessage):
             attachments_line = ""
             if message.attachments:
-                if message.name == "You":
-                    attachment_details = [
-                        f"{fname} (attached)" for fname in message.attachments
-                    ]
-                else:
-                    attachment_details = [
-                        f"{fname} (auto-downloaded to Downloads/{fname})"
-                        for fname in message.attachments
-                    ]
+
+                def _email_att_detail(att, is_self: bool) -> str:
+                    if isinstance(att, dict):
+                        fname = att.get(
+                            "filename",
+                            f"attachment_{att.get('id', 'unknown')}",
+                        )
+                        att_id = att.get("id")
+                        id_part = f"id: {att_id}, " if att_id else ""
+                        if is_self:
+                            fpath = att.get("filepath")
+                            if fpath:
+                                return f"{fname} ({id_part}attached from {fpath})"
+                            return (
+                                f"{fname} ({id_part}attached)"
+                                if id_part
+                                else f"{fname} (attached)"
+                            )
+                        return f"{fname} ({id_part}auto-downloaded to Attachments/{att_id}_{fname})"
+                    return (
+                        f"{att} (attached)" if is_self else f"{att} (auto-downloaded)"
+                    )
+
+                attachment_details = [
+                    _email_att_detail(att, message.name == "You")
+                    for att in message.attachments
+                ]
                 attachments_line = f"Attachments: {', '.join(attachment_details)}\n"
             # Render recipients (for reply-all context)
             recipients_lines = ""
@@ -1071,13 +1089,9 @@ class Renderer:
                                 if id_part
                                 else f"{fname} (attached)"
                             )
-                        return (
-                            f"{fname} ({id_part}auto-downloaded to Downloads/{fname})"
-                        )
+                        return f"{fname} ({id_part}auto-downloaded to Attachments/{att_id}_{fname})"
                     return (
-                        f"{att} (attached)"
-                        if is_self
-                        else f"{att} (auto-downloaded to Downloads/{att})"
+                        f"{att} (attached)" if is_self else f"{att} (auto-downloaded)"
                     )
 
                 attachment_details = [
@@ -1120,13 +1134,9 @@ class Renderer:
                                 if id_part
                                 else f"{fname} (attached)"
                             )
-                        return (
-                            f"{fname} ({id_part}auto-downloaded to Downloads/{fname})"
-                        )
+                        return f"{fname} ({id_part}auto-downloaded to Attachments/{att_id}_{fname})"
                     return (
-                        f"{att} (attached)"
-                        if is_self
-                        else f"{att} (auto-downloaded to Downloads/{att})"
+                        f"{att} (attached)" if is_self else f"{att} (auto-downloaded)"
                     )
 
                 attachment_details = [

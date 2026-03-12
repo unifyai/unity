@@ -556,7 +556,20 @@ class ConversationManagerBrainActionTools:
                     )
 
                 attachment = upload_result
-                attachment["filepath"] = attachment_filepath
+                att_id = attachment.get("id", "")
+                att_target = f"Attachments/{att_id}_{attachment_filename}"
+                try:
+                    import shutil
+
+                    att_dir = adapter._abspath("Attachments")
+                    os.makedirs(att_dir, exist_ok=True)
+                    shutil.copy2(
+                        abs_path,
+                        os.path.join(att_dir, f"{att_id}_{attachment_filename}"),
+                    )
+                except Exception:
+                    pass
+                attachment["filepath"] = att_target
 
             except FileNotFoundError:
                 return await self._surface_comms_error(
@@ -667,7 +680,21 @@ class ConversationManagerBrainActionTools:
                             _api_topic,
                             **_api_err,
                         )
-                    upload_result["filepath"] = filepath
+                    att_id = upload_result.get("id", "")
+                    att_fname = os.path.basename(filepath)
+                    att_target = f"Attachments/{att_id}_{att_fname}"
+                    try:
+                        import shutil
+
+                        att_dir = adapter._abspath("Attachments")
+                        os.makedirs(att_dir, exist_ok=True)
+                        shutil.copy2(
+                            abs_path,
+                            os.path.join(att_dir, f"{att_id}_{att_fname}"),
+                        )
+                    except Exception:
+                        pass
+                    upload_result["filepath"] = att_target
                     uploaded_attachments.append(upload_result)
                 except FileNotFoundError:
                     return await self._surface_comms_error(
@@ -996,7 +1023,7 @@ class ConversationManagerBrainActionTools:
 
         # --- Handle attachment ---
         attachment = None
-        attachment_filename = None
+        attachment_meta = None
         if attachment_filepath:
             try:
                 from unity.file_manager.filesystem_adapters.local_adapter import (
@@ -1019,10 +1046,30 @@ class ConversationManagerBrainActionTools:
                         **_email_err,
                     )
 
-                attachment_filename = os.path.basename(attachment_filepath)
+                import uuid
+
+                att_filename = os.path.basename(attachment_filepath)
+                att_id = str(uuid.uuid4())
                 attachment = {
-                    "filename": attachment_filename,
+                    "filename": att_filename,
                     "content_base64": base64.b64encode(file_contents).decode("utf-8"),
+                }
+                att_target = f"Attachments/{att_id}_{att_filename}"
+                try:
+                    import shutil
+
+                    att_dir = adapter._abspath("Attachments")
+                    os.makedirs(att_dir, exist_ok=True)
+                    shutil.copy2(
+                        abs_path,
+                        os.path.join(att_dir, f"{att_id}_{att_filename}"),
+                    )
+                except Exception:
+                    pass
+                attachment_meta = {
+                    "id": att_id,
+                    "filename": att_filename,
+                    "filepath": att_target,
                 }
             except FileNotFoundError:
                 return await self._surface_comms_error(
@@ -1055,7 +1102,7 @@ class ConversationManagerBrainActionTools:
                 body=body,
                 subject=final_subject,
                 email_id_replied_to=reply_email_id,
-                attachments=[attachment_filename] if attachment_filename else [],
+                attachments=[attachment_meta] if attachment_meta else [],
                 to=final_to,
                 cc=final_cc,
                 bcc=final_bcc,

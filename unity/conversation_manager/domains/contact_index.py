@@ -43,7 +43,10 @@ class Message(CommsMessage):
 
 @dataclass
 class EmailMessage(CommsMessage):
-    """Email message with subject, body, and optional attachments."""
+    """Email message with subject, body, and optional attachments.
+
+    Each attachment is a dict with keys: id, filename (and optionally filepath).
+    """
 
     name: str
     subject: str
@@ -51,7 +54,7 @@ class EmailMessage(CommsMessage):
     email_id: str | None
     timestamp: datetime
     role: str  # "user" or "assistant"
-    attachments: list[str] = field(default_factory=list)
+    attachments: list[dict] = field(default_factory=list)
     # Recipients (for reply-all functionality)
     to: list[str] = field(default_factory=list)
     cc: list[str] = field(default_factory=list)
