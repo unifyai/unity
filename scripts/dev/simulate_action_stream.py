@@ -340,7 +340,7 @@ def build_persistent_steps():
                     phase="incoming",
                     manager="WebSearcher",
                     method="ask",
-                    display_label="Searching the Web",
+                    display_label="Searching the web",
                     request="Google Cloud service account setup with Drive API access 2026",
                 ),
             ],
@@ -546,7 +546,7 @@ def build_persistent_steps():
                     phase="outgoing",
                     manager="WebSearcher",
                     method="ask",
-                    display_label="Searching the Web",
+                    display_label="Searching the web",
                     answer=(
                         "As of March 2026, to create a GCP service account with Drive access:\n"
                         "1. Go to console.cloud.google.com\n"
@@ -707,7 +707,7 @@ def build_persistent_steps():
                     phase="incoming",
                     manager="KnowledgeManager",
                     method="update",
-                    display_label="Updating Knowledge Base",
+                    display_label="Updating notes",
                     request="Store GCP project unify-prod-2026 credential details.",
                 ),
             ],
@@ -814,7 +814,7 @@ def build_persistent_steps():
                     phase="outgoing",
                     manager="KnowledgeManager",
                     method="update",
-                    display_label="Updating Knowledge Base",
+                    display_label="Updating notes",
                     answer="Knowledge base updated with credential details.",
                 ),
             ],
@@ -830,7 +830,7 @@ def build_persistent_steps():
                     phase="incoming",
                     manager="ContactManager",
                     method="update",
-                    display_label="Updating Contacts",
+                    display_label="Updating contact book",
                     request="Update DevOps team contact with Drive credentials.",
                 ),
             ],
@@ -945,7 +945,7 @@ def build_persistent_steps():
                     phase="outgoing",
                     manager="ContactManager",
                     method="update",
-                    display_label="Updating Contacts",
+                    display_label="Updating contact book",
                     answer="DevOps team contact updated with new credential details.",
                 ),
             ],
@@ -1385,7 +1385,7 @@ def build_single_action_steps():
                     cid,
                     h,
                     phase="incoming",
-                    display_label="Taking Action",
+                    display_label="Taking action",
                     request="Find the main contact at Acme Corp and draft a follow-up email about the Q1 partnership review.",
                 ),
             ],
@@ -1541,7 +1541,7 @@ def build_single_action_steps():
                     sa_cid,
                     sa_h,
                     phase="incoming",
-                    display_label="Taking Action",
+                    display_label="Taking action",
                     request="Find the main contact person at Acme Corp. "
                     "I need their full name, role, and email address.",
                 ),
@@ -1624,7 +1624,7 @@ def build_single_action_steps():
                     phase="incoming",
                     manager="ContactManager",
                     method="ask",
-                    display_label="Checking Contact Book",
+                    display_label="Checking contact book",
                     request="Who is the main contact at Acme Corp?",
                 ),
             ],
@@ -1750,7 +1750,7 @@ def build_single_action_steps():
                     phase="outgoing",
                     manager="ContactManager",
                     method="ask",
-                    display_label="Checking Contact Book",
+                    display_label="Checking contact book",
                     answer=(
                         "Rachel Torres — VP of Partnerships at Acme Corp (r.torres@acmecorp.com). "
                         "Also David Kim — Account Manager (d.kim@acmecorp.com)."
@@ -1831,7 +1831,7 @@ def build_single_action_steps():
                     sa_cid,
                     sa_h,
                     phase="outgoing",
-                    display_label="Taking Action",
+                    display_label="Taking action",
                     answer=(
                         "Main contact: Rachel Torres, VP of Partnerships at Acme Corp "
                         "(r.torres@acmecorp.com). Secondary: David Kim, Account Manager "
@@ -1987,7 +1987,7 @@ def build_single_action_steps():
                     cid,
                     h,
                     phase="outgoing",
-                    display_label="Taking Action",
+                    display_label="Taking action",
                     answer=(
                         "Drafted follow-up email to Rachel Torres (VP of Partnerships, Acme Corp) "
                         "regarding the Q1 partnership review action items."

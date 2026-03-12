@@ -1395,7 +1395,7 @@ class _StorageCheckHandle(SteerableToolHandle):
                     "CodeActActor",
                     "StorageCheck",
                     phase="incoming",
-                    display_label="Storing Reusable Skills",
+                    display_label="Storing reusable skills",
                     hierarchy=_sc_hierarchy,
                     instructions="Review the trajectory and store any reusable functions and compositional guidance.",
                 )
@@ -1427,7 +1427,7 @@ class _StorageCheckHandle(SteerableToolHandle):
                         "CodeActActor",
                         "StorageCheck",
                         phase="outgoing",
-                        display_label="Storing Reusable Skills",
+                        display_label="Storing reusable skills",
                         hierarchy=_sc_hierarchy,
                     )
                 else:
@@ -1444,7 +1444,7 @@ class _StorageCheckHandle(SteerableToolHandle):
                         "CodeActActor",
                         "StorageCheck",
                         phase="outgoing",
-                        display_label="Storing Reusable Skills",
+                        display_label="Storing reusable skills",
                         hierarchy=_sc_hierarchy,
                     )
             finally:
@@ -2243,7 +2243,7 @@ class CodeActActor(BaseCodeActActor):
                         "CodeActActor",
                         "execute_code",
                         hierarchy=_hierarchy,
-                        display_label="Running Code",
+                        display_label="Running code",
                         **payload,
                     )
                 except Exception as e:
@@ -2672,7 +2672,7 @@ class CodeActActor(BaseCodeActActor):
                     "CodeActActor",
                     "ProactiveStorage",
                     phase="incoming",
-                    display_label="Proactive Skill Storage",
+                    display_label="Proactive skill storage",
                     hierarchy=_ps_hierarchy,
                     instructions=request,
                 )
@@ -2692,7 +2692,7 @@ class CodeActActor(BaseCodeActActor):
                         "CodeActActor",
                         "ProactiveStorage",
                         phase="outgoing",
-                        display_label="Proactive Skill Storage",
+                        display_label="Proactive skill storage",
                         hierarchy=_ps_hierarchy,
                     )
                     return (
@@ -2713,7 +2713,7 @@ class CodeActActor(BaseCodeActActor):
                             "CodeActActor",
                             "ProactiveStorage",
                             phase="outgoing",
-                            display_label="Proactive Skill Storage",
+                            display_label="Proactive skill storage",
                             hierarchy=_ps_hierarchy,
                         )
 
@@ -3643,7 +3643,7 @@ class CodeActActor(BaseCodeActActor):
         "CodeActActor",
         "act",
         payload_key="request",
-        display_label=lambda kw: "Session" if kw.get("persist") else "Taking Action",
+        display_label=lambda kw: "Session" if kw.get("persist") else "Taking action",
         forward_kwargs=("persist",),
     )
     async def act(

@@ -527,7 +527,7 @@ class AsyncToolLoopHandle(SteerableToolHandle):
             _ask_manager,
             "ask",
             phase="incoming",
-            display_label="Answering Question",
+            display_label="Answering question",
             question=question,
             hierarchy=_ask_hierarchy,
         )
@@ -569,7 +569,7 @@ class AsyncToolLoopHandle(SteerableToolHandle):
                     _ask_manager,
                     "ask",
                     phase="outgoing",
-                    display_label="Answering Question",
+                    display_label="Answering question",
                     answer=ans if isinstance(ans, str) else str(ans),
                     hierarchy=_ask_hierarchy,
                 )
@@ -601,7 +601,7 @@ class AsyncToolLoopHandle(SteerableToolHandle):
                 _ask_manager,
                 "ask",
                 phase="outgoing",
-                display_label="Answering Question",
+                display_label="Answering question",
                 answer=answer if isinstance(answer, str) else str(answer),
                 hierarchy=_ask_hierarchy,
             )

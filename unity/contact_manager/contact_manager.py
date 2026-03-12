@@ -195,7 +195,7 @@ class ContactManager(BaseContactManager):
         "ContactManager",
         "ask",
         payload_key="question",
-        display_label="Checking Contact Book",
+        display_label="Checking contact book",
     )
     async def ask(
         self,
@@ -302,7 +302,7 @@ class ContactManager(BaseContactManager):
         "ContactManager",
         "update",
         payload_key="request",
-        display_label="Updating Contact Book",
+        display_label="Updating contact book",
     )
     async def update(
         self,
