@@ -1,5 +1,4 @@
 import asyncio
-import traceback
 
 from unity.logger import LOGGER
 
@@ -10,7 +9,7 @@ def log_task_exc(task: asyncio.Task) -> None:
     except asyncio.CancelledError:
         pass
     except Exception as e:
-        traceback.print_exc()
+        LOGGER.exception("Slow-brain task failed: %s", e)
 
 
 class Debouncer:

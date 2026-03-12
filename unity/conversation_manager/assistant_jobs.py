@@ -204,45 +204,91 @@ def update_liveview_url(assistant_id: str, user_id: str, liveview_url: str) -> N
         )
 
 
-def _release_vm(assistant_id: str) -> None:
+def _release_vm(assistant_id: str, _max_attempts: int = 3) -> None:
     """Release the pool VM assigned to this assistant back to the pool.
 
     The pool release endpoint finds the VM by its ``assistant_id`` label
-    and transitions it from "assigned" back to "available".
-    """
-    try:
-        comms_url = SETTINGS.conversation.COMMS_URL.rstrip("/")
-        admin_key = SETTINGS.ORCHESTRA_ADMIN_KEY.get_secret_value()
-        if not comms_url or not admin_key:
-            LOGGER.debug(
-                f"{ICONS['assistant_jobs']} [assistant_jobs] Skipping VM release: "
-                "COMMS_URL or admin key not configured",
-            )
-            return
+    and transitions it from "assigned" back to "available".  Retries on
+    transient 5xx errors to guard against Cloud Run cold-start 503s.
 
-        response = requests.post(
-            f"{comms_url}/infra/vm/pool/release",
-            json={"assistant_id": assistant_id},
-            headers={"Authorization": f"Bearer {admin_key}"},
-            timeout=60,
+    If the release response indicates no VM is assigned (labels already
+    cleared but disk still attached), falls back to an explicit disk
+    detach call.
+    """
+    comms_url = SETTINGS.conversation.COMMS_URL.rstrip("/")
+    admin_key = SETTINGS.ORCHESTRA_ADMIN_KEY.get_secret_value()
+    if not comms_url or not admin_key:
+        LOGGER.debug(
+            f"{ICONS['assistant_jobs']} [assistant_jobs] Skipping VM release: "
+            "COMMS_URL or admin key not configured",
         )
-        if response.ok:
-            LOGGER.info(
-                f"{ICONS['assistant_jobs']} [assistant_jobs] Pool VM released for assistant "
-                f"{assistant_id}: {response.json()}",
+        return
+
+    headers = {"Authorization": f"Bearer {admin_key}"}
+
+    for attempt in range(1, _max_attempts + 1):
+        try:
+            response = requests.post(
+                f"{comms_url}/infra/vm/pool/release",
+                json={"assistant_id": assistant_id},
+                headers=headers,
+                timeout=60,
             )
-        else:
+            if response.ok:
+                body = response.json()
+                if body.get("released"):
+                    LOGGER.info(
+                        f"{ICONS['assistant_jobs']} [assistant_jobs] Pool VM released for assistant "
+                        f"{assistant_id}: {body}",
+                    )
+                    return
+                LOGGER.warning(
+                    f"{ICONS['assistant_jobs']} [assistant_jobs] Release returned released=false "
+                    f"for {assistant_id}: {body}",
+                )
+                _detach_disk(assistant_id, comms_url, headers)
+                return
+            if response.status_code >= 500 and attempt < _max_attempts:
+                LOGGER.warning(
+                    f"{ICONS['assistant_jobs']} [assistant_jobs] Pool VM release got "
+                    f"{response.status_code}, retrying ({attempt}/{_max_attempts})…",
+                )
+                time.sleep(attempt)
+                continue
             LOGGER.error(
                 f"{ICONS['assistant_jobs']} [assistant_jobs] Failed to release pool VM: "
                 f"{response.status_code} {response.text}",
             )
-    except requests.exceptions.Timeout:
-        LOGGER.error(
-            f"{ICONS['assistant_jobs']} [assistant_jobs] Pool VM release request timed out",
+            return
+        except Exception as e:
+            LOGGER.error(
+                f"{ICONS['assistant_jobs']} [assistant_jobs] Error releasing pool VM: {e}",
+            )
+            traceback.print_exc()
+            return
+
+
+def _detach_disk(assistant_id: str, comms_url: str, headers: dict) -> None:
+    """Best-effort detach of the assistant's persistent disk."""
+    try:
+        response = requests.post(
+            f"{comms_url}/infra/vm/pool/disk/detach/{assistant_id}",
+            headers=headers,
+            timeout=60,
         )
+        if response.ok:
+            LOGGER.info(
+                f"{ICONS['assistant_jobs']} [assistant_jobs] Disk detached for assistant "
+                f"{assistant_id}: {response.json()}",
+            )
+        else:
+            LOGGER.error(
+                f"{ICONS['assistant_jobs']} [assistant_jobs] Failed to detach disk: "
+                f"{response.status_code} {response.text}",
+            )
     except Exception as e:
         LOGGER.error(
-            f"{ICONS['assistant_jobs']} [assistant_jobs] Error releasing pool VM: {e}",
+            f"{ICONS['assistant_jobs']} [assistant_jobs] Error detaching disk: {e}",
         )
         traceback.print_exc()
 
