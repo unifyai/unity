@@ -2987,6 +2987,59 @@ class CodeActActor(BaseCodeActActor):
                     ):
                         out = ExecutionResult(**out)
 
+                    # When the execution produced a bare SteerableToolHandle
+                    # with no meaningful side output, return the handle directly
+                    # so the core loop adopts it via the bare-handle path
+                    # (no intermediate LLM turn required).
+                    _ef_result_val = (
+                        out.get("result")
+                        if isinstance(out, dict)
+                        else getattr(out, "result", None)
+                    )
+                    if isinstance(_ef_result_val, SteerableToolHandle):
+                        _ef_stdout = (
+                            out.get("stdout")
+                            if isinstance(out, dict)
+                            else getattr(out, "stdout", None)
+                        )
+                        _ef_stderr = (
+                            out.get("stderr")
+                            if isinstance(out, dict)
+                            else getattr(out, "stderr", None)
+                        )
+                        _ef_error = (
+                            out.get("error")
+                            if isinstance(out, dict)
+                            else getattr(out, "error", None)
+                        )
+                        _has_side_output = bool(
+                            (
+                                _ef_stdout
+                                and (
+                                    isinstance(_ef_stdout, str)
+                                    and _ef_stdout.strip()
+                                    or isinstance(_ef_stdout, list)
+                                    and _ef_stdout
+                                )
+                            )
+                            or (
+                                _ef_stderr
+                                and (
+                                    isinstance(_ef_stderr, str)
+                                    and _ef_stderr.strip()
+                                    or isinstance(_ef_stderr, list)
+                                    and _ef_stderr
+                                )
+                            )
+                            or _ef_error,
+                        )
+                        if not _has_side_output:
+                            _ef_log.debug(
+                                f"⏱️ [execute_function +{_ef_ms()}] "
+                                f"returning bare handle (no side output)",
+                            )
+                            return _ef_result_val
+
                     _ef_log.debug(
                         f"⏱️ [execute_function +{_ef_ms()}] returning result",
                     )
