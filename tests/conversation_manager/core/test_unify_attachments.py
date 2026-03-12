@@ -449,18 +449,20 @@ class TestUploadUnifyAttachmentEnhanced:
         When the communication adapter returns enhanced metadata (gs_url, content_type,
         size_bytes), this is passed through by upload_unify_attachment.
         """
+        import json
+
+        server_payload = {
+            "id": "test-uuid-123",
+            "filename": "document.pdf",
+            "url": "https://storage.googleapis.com/signed-url",
+            "gs_url": "gs://unify-message-attachments/12345/test-uuid_document.pdf",
+            "content_type": "application/pdf",
+            "size_bytes": 2048,
+        }
+
         mock_response = MagicMock()
-        mock_response.raise_for_status = MagicMock()
-        mock_response.json = AsyncMock(
-            return_value={
-                "id": "test-uuid-123",
-                "filename": "document.pdf",
-                "url": "https://storage.googleapis.com/signed-url",
-                "gs_url": "gs://unify-message-attachments/12345/test-uuid_document.pdf",
-                "content_type": "application/pdf",
-                "size_bytes": 2048,
-            },
-        )
+        mock_response.status = 200
+        mock_response.text = AsyncMock(return_value=json.dumps(server_payload))
 
         mock_session = MagicMock()
         mock_session.post = MagicMock(
@@ -479,7 +481,7 @@ class TestUploadUnifyAttachmentEnhanced:
             ) as mock_settings,
         ):
             mock_session_details.assistant.agent_id = 42
-            mock_settings.conversation.COMMS_URL = "http://localhost:8080"
+            mock_settings.conversation.ADAPTERS_URL = "http://localhost:8080"
 
             result = await comms_utils.upload_unify_attachment(
                 file_content=b"PDF content here",
