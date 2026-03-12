@@ -31,7 +31,7 @@ import pytest
 from tests.helpers import _handle_project
 from unity.events.event_bus import EventBus, Event
 from unity.events.types.comms import CommsPayload
-from unity.events.types.tool_loop import ToolLoopPayload
+from unity.events.types.tool_loop import ToolLoopPayload, ToolLoopKind
 from unity.events.types.manager_method import ManagerMethodPayload
 
 
@@ -165,6 +165,7 @@ async def test_time_single_session() -> None:
             type="ToolLoop",
             timestamp=ts(0),
             payload=ToolLoopPayload(
+                kind=ToolLoopKind.REQUEST,
                 message={"role": "user"},
                 method="test",
                 hierarchy=[],
@@ -178,6 +179,7 @@ async def test_time_single_session() -> None:
             type="ToolLoop",
             timestamp=ts(1),
             payload=ToolLoopPayload(
+                kind=ToolLoopKind.REQUEST,
                 message={"role": "user"},
                 method="test",
                 hierarchy=[],
@@ -191,6 +193,7 @@ async def test_time_single_session() -> None:
             type="ToolLoop",
             timestamp=ts(3),
             payload=ToolLoopPayload(
+                kind=ToolLoopKind.REQUEST,
                 message={"role": "user"},
                 method="test",
                 hierarchy=[],
@@ -231,6 +234,7 @@ async def test_time_across_sessions() -> None:
             type="ToolLoop",
             timestamp=ts(0),
             payload=ToolLoopPayload(
+                kind=ToolLoopKind.REQUEST,
                 message={"role": "user"},
                 method="test",
                 hierarchy=[],
@@ -262,6 +266,7 @@ async def test_time_across_sessions() -> None:
             type="ToolLoop",
             timestamp=ts(1),
             payload=ToolLoopPayload(
+                kind=ToolLoopKind.REQUEST,
                 message={"role": "user"},
                 method="test",
                 hierarchy=[],
@@ -276,6 +281,7 @@ async def test_time_across_sessions() -> None:
             type="ToolLoop",
             timestamp=ts(3),
             payload=ToolLoopPayload(
+                kind=ToolLoopKind.REQUEST,
                 message={"role": "user"},
                 method="test",
                 hierarchy=[],

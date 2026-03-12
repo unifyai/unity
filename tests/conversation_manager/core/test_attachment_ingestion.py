@@ -78,7 +78,7 @@ class TestAttachmentIngestion:
             ]
             await comms_utils.add_unify_message_attachments(attachments)
 
-        display_name = "Downloads/report.txt"
+        display_name = "Attachments/att-1_report.txt"
         assert fm.exists(display_name)
 
         storage = fm.describe(file_path=display_name)
@@ -120,7 +120,7 @@ class TestAttachmentIngestion:
                 gmail_message_id="msg-123",
             )
 
-        display_name = "Downloads/data.csv"
+        display_name = "Attachments/att-email-1_data.csv"
         assert fm.exists(display_name)
 
         storage = fm.describe(file_path=display_name)

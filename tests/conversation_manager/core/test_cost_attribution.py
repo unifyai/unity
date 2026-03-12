@@ -361,6 +361,69 @@ class TestSpendingWritePath:
 
 
 # ═════════════════════════════════════════════════════════════════════════════
+# 6b. _llm_event_to_eventbus includes _attributed_user_id in payload
+# ═════════════════════════════════════════════════════════════════════════════
+
+
+class TestLLMEventPayloadAttribution:
+    """Verify that LLM event payloads carry _attributed_user_id so the console
+    usage chart can filter by the user who triggered the call."""
+
+    def test_payload_uses_cost_attribution_when_set(self):
+        """When COST_ATTRIBUTION is set (org member), _attributed_user_id
+        should reflect the attributed user, not the supervisor."""
+        from unillm import LLMEvent
+        from unity.events.llm_event_hook import _llm_event_to_eventbus
+        from unity.events.types.llm import LLMPayload
+
+        token = COST_ATTRIBUTION.set([ALICE_UID])
+        try:
+            with patch("unity.session_details.SESSION_DETAILS") as mock_sd:
+                _mock_session_details(mock_sd)
+
+                # Capture the payload by intercepting Event creation
+                with patch("unity.events.event_bus.Event") as MockEvent:
+                    llm_event = LLMEvent(
+                        request={"model": "gpt-4o", "messages": []},
+                        billed_cost=0.01,
+                    )
+                    _llm_event_to_eventbus(llm_event)
+
+                    MockEvent.assert_called_once()
+                    payload = MockEvent.call_args.kwargs["payload"]
+                    assert isinstance(payload, LLMPayload)
+                    assert payload.model_dump()["_attributed_user_id"] == ALICE_UID
+        finally:
+            COST_ATTRIBUTION.reset(token)
+
+    def test_payload_falls_back_to_supervisor_when_unset(self):
+        """When COST_ATTRIBUTION is None (personal account / no override),
+        _attributed_user_id should fall back to SESSION_DETAILS.user.id."""
+        from unillm import LLMEvent
+        from unity.events.llm_event_hook import _llm_event_to_eventbus
+        from unity.events.types.llm import LLMPayload
+
+        token = COST_ATTRIBUTION.set(None)
+        try:
+            with patch("unity.session_details.SESSION_DETAILS") as mock_sd:
+                _mock_session_details(mock_sd)
+
+                with patch("unity.events.event_bus.Event") as MockEvent:
+                    llm_event = LLMEvent(
+                        request={"model": "gpt-4o", "messages": []},
+                        billed_cost=0.01,
+                    )
+                    _llm_event_to_eventbus(llm_event)
+
+                    MockEvent.assert_called_once()
+                    payload = MockEvent.call_args.kwargs["payload"]
+                    assert isinstance(payload, LLMPayload)
+                    assert payload.model_dump()["_attributed_user_id"] == SUPERVISOR_UID
+        finally:
+            COST_ATTRIBUTION.reset(token)
+
+
+# ═════════════════════════════════════════════════════════════════════════════
 # 7. Concurrent asyncio.create_task isolation
 # ═════════════════════════════════════════════════════════════════════════════
 

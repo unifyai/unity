@@ -246,9 +246,9 @@ class SMSReceived(Event):
 class UnifyMessageReceived(Event):
     """A message was received via the Unify console chat interface.
 
-    Attachments are downloaded asynchronously to the Downloads folder.
+    Attachments are downloaded asynchronously to the Attachments folder.
     Each attachment is a dict with keys: id, filename, gs_url, content_type, size_bytes.
-    The actual files are saved to Downloads/ and can be accessed via FileManager.
+    Files are saved to Attachments/{id}_{filename} and can be accessed via FileManager.
     """
 
     topic: ClassVar[str | None] = "app:comms:unify_message_message"
@@ -256,7 +256,7 @@ class UnifyMessageReceived(Event):
 
     contact: dict
     content: str
-    # List of attachment dicts with full metadata (files are saved to Downloads/).
+    # List of attachment dicts with full metadata (files saved to Attachments/).
     attachments: list[dict] = field(default_factory=list)
 
 
@@ -317,9 +317,8 @@ CallGuidance = FastBrainNotification
 class EmailReceived(Event):
     """An email was received from a contact.
 
-    Attachments are downloaded asynchronously to the Downloads folder. The
-    ``attachments`` field contains only filenames (not paths or binary data) so
-    the LLM can acknowledge them and, if needed, access them via FileManager.
+    Attachments are downloaded asynchronously to the Attachments folder.
+    Each attachment is a dict with keys: id, filename.
     """
 
     topic: ClassVar[str | None] = "app:comms:email_message"
@@ -331,8 +330,8 @@ class EmailReceived(Event):
     # Email provider identifier used for threading (e.g., RFC Message-ID header value).
     # This is *not* the TranscriptManager's auto-incremented message_id.
     email_id: Optional[str] = None
-    # List of attachment filenames (actual files are saved to Downloads/).
-    attachments: list[str] = field(default_factory=list)
+    # List of attachment dicts with metadata (files saved to Attachments/).
+    attachments: list[dict] = field(default_factory=list)
     # Recipients from the original email (for reply-all functionality)
     to: list[str] = field(default_factory=list)
     cc: list[str] = field(default_factory=list)
@@ -353,8 +352,8 @@ class SMSSent(Event):
 class UnifyMessageSent(Event):
     """A message was sent via the Unify console chat interface.
 
-    Attachments are uploaded to GCS. Each attachment is a dict with keys:
-    id, filename, gs_url, content_type, size_bytes.
+    Attachments are uploaded to GCS and copied to Attachments/{id}_{filename}.
+    Each attachment is a dict with keys: id, filename, gs_url, content_type, size_bytes, filepath.
     """
 
     topic: ClassVar[str | None] = "app:comms:unify_message_sent"
@@ -370,8 +369,7 @@ class UnifyMessageSent(Event):
 class EmailSent(Event):
     """An email was sent to a contact.
 
-    Attachments are specified by filepath and uploaded with the email. The
-    ``attachments`` field contains only filenames (not paths) for display.
+    Each attachment is a dict with keys: id, filename, filepath.
     """
 
     topic: ClassVar[str | None] = "app:comms:email_sent"
@@ -383,8 +381,8 @@ class EmailSent(Event):
     # Email provider identifier used for threading (e.g., RFC Message-ID header value).
     # This is *not* the TranscriptManager's auto-incremented message_id.
     email_id_replied_to: str | None = None
-    # List of attachment filenames that were sent with the email.
-    attachments: list[str] = field(default_factory=list)
+    # List of attachment dicts with metadata.
+    attachments: list[dict] = field(default_factory=list)
     # Recipients the email was sent to
     to: list[str] = field(default_factory=list)
     cc: list[str] = field(default_factory=list)
@@ -395,8 +393,8 @@ class EmailSent(Event):
 class ApiMessageReceived(Event):
     """A programmatic message received via the REST API.
 
-    Attachments are uploaded to GCS. Each attachment is a dict with keys:
-    id, filename, gs_url, content_type, size_bytes.
+    Attachments are downloaded to Attachments/{id}_{filename}.
+    Each attachment is a dict with keys: id, filename, gs_url, content_type, size_bytes.
     Tags are opaque strings supplied by the developer for routing and context.
     """
 
@@ -414,8 +412,8 @@ class ApiMessageReceived(Event):
 class ApiMessageSent(Event):
     """A response sent back to the developer via the REST API.
 
-    Attachments are uploaded to GCS. Each attachment is a dict with keys:
-    id, filename, gs_url, content_type, size_bytes.
+    Attachments are uploaded to GCS and copied to Attachments/{id}_{filename}.
+    Each attachment is a dict with keys: id, filename, gs_url, content_type, size_bytes, filepath.
     Tags are typically echoed from the inbound message for routing.
     """
 

@@ -448,12 +448,8 @@ class CommsManager:
                         self._ack_with_latency(message, publish_timestamp, topic)
                         return
 
-                    # Extract attachment filenames for the event
+                    # Extract attachment metadata for the event
                     attachments = event.get("attachments") or []
-                    attachment_filenames = [
-                        att.get("filename") or f"attachment_{att.get('id', 'unknown')}"
-                        for att in attachments
-                    ]
 
                     # Extract to/cc/bcc - normalize to lists
                     def _normalize_recipients(val):
@@ -470,7 +466,7 @@ class CommsManager:
                             body=event["body"],
                             contact=contact,
                             email_id=event["email_id"],
-                            attachments=attachment_filenames,
+                            attachments=attachments,
                             to=_normalize_recipients(event.get("to")),
                             cc=_normalize_recipients(event.get("cc")),
                             bcc=_normalize_recipients(event.get("bcc")),
@@ -492,7 +488,7 @@ class CommsManager:
                             ).to_json(),
                         )
 
-                    # add attachments (if any) to Downloads using async helper
+                    # add attachments (if any) to Attachments using async helper
                     try:
                         if attachments:
                             asyncio.run_coroutine_threadsafe(
@@ -544,7 +540,7 @@ class CommsManager:
                         ).to_json(),
                     )
 
-                    # Download attachments (if any) to Downloads using async helper
+                    # Download attachments (if any) to Attachments using async helper
                     try:
                         if attachments:
                             asyncio.run_coroutine_threadsafe(
@@ -577,7 +573,7 @@ class CommsManager:
                         ).to_json(),
                     )
 
-                    # Download attachments (if any) to Downloads — reuse the
+                    # Download attachments (if any) to Attachments — reuse the
                     # same helper used by unify_message.
                     try:
                         if attachments:

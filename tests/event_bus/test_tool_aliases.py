@@ -8,7 +8,7 @@ ToolLoopPayload without touching any EventBus, Pub/Sub, or project setup.
 from unity.common.tool_spec import ToolSpec, normalise_tools
 from unity.common.llm_helpers import methods_to_tool_dict
 from unity.common._async_tool.loop_config import LoopConfig
-from unity.events.types.tool_loop import ToolLoopPayload
+from unity.events.types.tool_loop import ToolLoopPayload, ToolLoopKind
 
 # ============================================================================
 #  ToolSpec.display_label basics
@@ -137,6 +137,7 @@ def test_loop_config_tool_alias_lookup_set_to_none():
 
 def test_payload_tool_aliases_defaults_to_none():
     payload = ToolLoopPayload(
+        kind=ToolLoopKind.REQUEST,
         message={"role": "user", "content": "hi"},
         method="test",
     )
@@ -145,6 +146,7 @@ def test_payload_tool_aliases_defaults_to_none():
 
 def test_payload_tool_aliases_serializes():
     payload = ToolLoopPayload(
+        kind=ToolLoopKind.RESPONSE,
         message={"role": "assistant", "content": None},
         method="test",
         tool_aliases={"my_tool": "Doing something"},
@@ -155,6 +157,7 @@ def test_payload_tool_aliases_serializes():
 
 def test_payload_tool_aliases_null_when_none():
     payload = ToolLoopPayload(
+        kind=ToolLoopKind.RESPONSE,
         message={"role": "assistant", "content": None},
         method="test",
         tool_aliases=None,
@@ -330,6 +333,7 @@ def test_end_to_end_alias_flow():
     assert _build_sparse_aliases(lookup, message_with_b) is None
 
     payload = ToolLoopPayload(
+        kind=ToolLoopKind.TOOL_CALL,
         message=message_with_a,
         method="TestLoop",
         tool_aliases=sparse,
