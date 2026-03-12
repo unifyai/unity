@@ -18,7 +18,7 @@ from pathlib import Path
 import pytest
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
-_DEMO_SITES_DIR = _REPO_ROOT / "demo-sites" / "example"
+_DEMO_SITES_DIR = _REPO_ROOT / "agent-service" / "demo-sites" / "example"
 _AGENT_SERVICE_DIR = _REPO_ROOT / "agent-service"
 _MAGNITUDE_CORE_DIST = (
     _REPO_ROOT / "magnitude" / "packages" / "magnitude-core" / "dist" / "index.cjs"
