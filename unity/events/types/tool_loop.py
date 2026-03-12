@@ -100,7 +100,14 @@ def classify_tool_loop_message(msg: dict) -> ToolLoopKind:
         )
         if has_thinking:
             return ToolLoopKind.THOUGHT
-        if msg.get("tool_calls"):
+        tool_calls = msg.get("tool_calls") or []
+        if tool_calls:
+            if all(
+                isinstance(tc.get("function", {}).get("name"), str)
+                and tc["function"]["name"].startswith("check_status_")
+                for tc in tool_calls
+            ):
+                return ToolLoopKind.STATUS_CHECK
             return ToolLoopKind.TOOL_CALL
         return ToolLoopKind.RESPONSE
 
