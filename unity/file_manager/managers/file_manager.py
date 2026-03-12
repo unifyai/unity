@@ -1548,7 +1548,7 @@ class FileManager(BaseFileManager):
         "FileManager",
         "ask_about_file",
         payload_key="question",
-        display_label="Reading File",
+        display_label="Reading file",
     )
     async def ask_about_file(
         self,

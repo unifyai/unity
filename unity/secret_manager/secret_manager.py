@@ -365,7 +365,7 @@ class SecretManager(BaseSecretManager):
         "SecretManager",
         "ask",
         payload_key="question",
-        display_label="Checking Credentials",
+        display_label="Checking credentials",
     )
     async def ask(
         self,
@@ -476,7 +476,7 @@ class SecretManager(BaseSecretManager):
         "SecretManager",
         "update",
         payload_key="request",
-        display_label="Updating Credentials",
+        display_label="Updating credentials",
     )
     async def update(
         self,

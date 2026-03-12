@@ -33,7 +33,7 @@ class WebSearcher(BaseWebSearcher):
 
         # Build the tools mapping once; copy when used
         ask_tools: Dict[str, Any] = methods_to_tool_dict(
-            ToolSpec(fn=self._search, display_label="Searching the web"),
+            ToolSpec(fn=self._search, display_label="Search query"),
             ToolSpec(fn=self._extract, display_label="Extracting page content"),
             ToolSpec(fn=self._crawl, display_label="Crawling a website"),
             ToolSpec(fn=self._map, display_label="Mapping website structure"),
@@ -48,7 +48,7 @@ class WebSearcher(BaseWebSearcher):
         "WebSearcher",
         "ask",
         payload_key="question",
-        display_label="Searching the Web",
+        display_label="Searching the web",
     )
     async def ask(
         self,

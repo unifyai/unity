@@ -403,7 +403,7 @@ class TaskScheduler(BaseTaskScheduler):
         "TaskScheduler",
         "ask",
         payload_key="question",
-        display_label="Checking Tasks",
+        display_label="Checking tasks",
     )
     async def ask(
         self,
@@ -486,7 +486,7 @@ class TaskScheduler(BaseTaskScheduler):
         "TaskScheduler",
         "update",
         payload_key="request",
-        display_label="Updating Tasks",
+        display_label="Updating tasks",
     )
     async def update(
         self,
@@ -602,7 +602,7 @@ class TaskScheduler(BaseTaskScheduler):
         "TaskScheduler",
         "execute",
         payload_key="request",
-        display_label="Working on Task",
+        display_label="Working on task",
     )
     async def execute(
         self,

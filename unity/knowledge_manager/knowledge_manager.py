@@ -453,7 +453,7 @@ class KnowledgeManager(BaseKnowledgeManager):
         "KnowledgeManager",
         "refactor",
         payload_key="request",
-        display_label="Reorganizing Notes",
+        display_label="Reorganizing notes",
     )
     async def refactor(
         self,
@@ -590,7 +590,7 @@ class KnowledgeManager(BaseKnowledgeManager):
         "KnowledgeManager",
         "update",
         payload_key="request",
-        display_label="Updating Notes",
+        display_label="Updating notes",
     )
     async def update(
         self,
@@ -731,7 +731,7 @@ class KnowledgeManager(BaseKnowledgeManager):
         "KnowledgeManager",
         "ask",
         payload_key="question",
-        display_label="Checking Notes",
+        display_label="Checking notes",
     )
     async def ask(
         self,

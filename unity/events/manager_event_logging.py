@@ -233,7 +233,7 @@ def log_manager_call(
     implementation can tag any sub-events (e.g. clarification requests) with
     the same identifier.
 
-    ``display_label`` is a user-friendly phrase (e.g. "Checking Contact Book")
+    ``display_label`` is a user-friendly phrase (e.g. "Checking contact book")
     that gets attached to every event in the lifecycle so the frontend can
     render it directly without maintaining its own mapping.  May also be a
     callable ``(kwargs) -> str`` for labels that depend on runtime arguments.

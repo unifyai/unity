@@ -199,7 +199,7 @@ class TranscriptManager(BaseTranscriptManager):
         "TranscriptManager",
         "ask",
         payload_key="question",
-        display_label="Reviewing Conversations",
+        display_label="Reviewing conversations",
     )
     async def ask(
         self,
