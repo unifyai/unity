@@ -117,3 +117,71 @@ def test_clear_initialises_and_resets_caches():
 
     # Tools should still be provisioned (now just the 4 Tavily tools)
     assert {"search", "extract", "crawl", "map"} == set(ws.get_tools("ask").keys())
+
+
+# ---------------------------------------------------------------------------
+# Regression: same-day date range
+# ---------------------------------------------------------------------------
+
+
+def test_search_same_day_date_range_widened():
+    """_search should widen start_date when start_date == end_date.
+
+    Tavily rejects identical dates with BadRequestError. The fix pushes
+    start_date back by one day so the request succeeds.
+    """
+    from unittest.mock import MagicMock
+
+    ws = WebSearcher()
+    ws.tavily_client = MagicMock()
+    ws.tavily_client.search.return_value = {
+        "answer": "ok",
+        "results": [],
+        "images": [],
+    }
+
+    ws._search("test", start_date="2026-03-12", end_date="2026-03-12")
+
+    call_kw = ws.tavily_client.search.call_args.kwargs
+    assert (
+        call_kw["start_date"] == "2026-03-11"
+    ), f"start_date should be widened to the day before, got {call_kw['start_date']}"
+    assert call_kw["end_date"] == "2026-03-12"
+
+
+def test_search_different_dates_unchanged():
+    """_search should pass through dates untouched when they differ."""
+    from unittest.mock import MagicMock
+
+    ws = WebSearcher()
+    ws.tavily_client = MagicMock()
+    ws.tavily_client.search.return_value = {
+        "answer": "ok",
+        "results": [],
+        "images": [],
+    }
+
+    ws._search("test", start_date="2026-03-10", end_date="2026-03-12")
+
+    call_kw = ws.tavily_client.search.call_args.kwargs
+    assert call_kw["start_date"] == "2026-03-10"
+    assert call_kw["end_date"] == "2026-03-12"
+
+
+def test_search_no_dates_unchanged():
+    """_search should leave dates as None when not provided."""
+    from unittest.mock import MagicMock
+
+    ws = WebSearcher()
+    ws.tavily_client = MagicMock()
+    ws.tavily_client.search.return_value = {
+        "answer": "ok",
+        "results": [],
+        "images": [],
+    }
+
+    ws._search("test")
+
+    call_kw = ws.tavily_client.search.call_args.kwargs
+    assert call_kw["start_date"] is None
+    assert call_kw["end_date"] is None
