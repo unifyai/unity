@@ -196,6 +196,17 @@ class WebSearcher(BaseWebSearcher):
             - "results": Ranked list of sources with titles, URLs and snippets.
             - "images": When requested, a list of related images (may be empty).
         """
+        # Tavily rejects start_date == end_date. When the caller wants a
+        # single day, widen the window by pushing start_date back one day.
+        if start_date and end_date and start_date == end_date:
+            try:
+                from datetime import datetime, timedelta
+
+                dt = datetime.strptime(start_date, "%Y-%m-%d")
+                start_date = (dt - timedelta(days=1)).strftime("%Y-%m-%d")
+            except ValueError:
+                pass
+
         response = self.tavily_client.search(
             query=query,
             max_results=max_results,
