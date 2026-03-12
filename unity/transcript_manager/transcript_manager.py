@@ -17,9 +17,10 @@ from .types.exchange import Exchange
 from ..contact_manager.types.contact import Contact
 from ..common.llm_helpers import (
     methods_to_tool_dict,
+    make_request_clarification_tool,
 )
 from ..common.llm_client import new_llm_client
-from ..common.clarification_tools import add_clarification_tool_with_events
+from ..events.event_bus import EVENT_BUS, Event
 from ..common.llm_policies import require_first
 from ..common.async_tool_loop import (
     start_async_tool_loop,
@@ -219,16 +220,46 @@ class TranscriptManager(BaseTranscriptManager):
     ) -> SteerableToolHandle:
         # ── 0.  Build the *live* tools-dict (may include clarification helper) ──
         tools = dict(self.get_tools("ask"))
-
+        _clar_queues = None
+        _on_clar_req = None
+        _on_clar_ans = None
         if _clarification_up_q is not None and _clarification_down_q is not None:
-            add_clarification_tool_with_events(
-                tools,
-                _clarification_up_q,
-                _clarification_down_q,
-                manager="TranscriptManager",
-                method="ask",
-                call_id=_call_id,
-            )
+            _clar_queues = (_clarification_up_q, _clarification_down_q)
+            tools["request_clarification"] = make_request_clarification_tool(None, None)
+
+            async def _on_clar_req(q: str):
+                try:
+                    await EVENT_BUS.publish(
+                        Event(
+                            type="ManagerMethod",
+                            calling_id=_call_id,
+                            payload={
+                                "manager": "TranscriptManager",
+                                "method": "ask",
+                                "action": "clarification_request",
+                                "question": q,
+                            },
+                        ),
+                    )
+                except Exception:
+                    pass
+
+            async def _on_clar_ans(ans: str):
+                try:
+                    await EVENT_BUS.publish(
+                        Event(
+                            type="ManagerMethod",
+                            calling_id=_call_id,
+                            payload={
+                                "manager": "TranscriptManager",
+                                "method": "ask",
+                                "action": "clarification_answer",
+                                "answer": ans,
+                            },
+                        ),
+                    )
+                except Exception:
+                    pass
 
         # ── 1.  Build LLM client & inject dynamic system-prompt ───────────
         client = new_llm_client()
@@ -267,6 +298,9 @@ class TranscriptManager(BaseTranscriptManager):
                 ReadOnlyAskGuardHandle if SETTINGS.UNITY_READONLY_ASK_GUARD else None
             ),
             response_format=response_format,
+            clarification_queues=_clar_queues,
+            on_clarification_request=_on_clar_req,
+            on_clarification_answer=_on_clar_ans,
         )
 
         # ── 4.  Optional reasoning exposure  ───────────────────────────────

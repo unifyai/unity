@@ -40,10 +40,7 @@ from unity.common.async_tool_loop import (
     SteerableToolHandle,
     start_async_tool_loop,
 )
-from unity.common.clarification_tools import (
-    add_clarification_tool_with_events,
-    add_notification_tool_with_events,
-)
+from unity.events.event_bus import EVENT_BUS, Event
 from unity.common.llm_client import new_llm_client
 from unity.common.llm_helpers import methods_to_tool_dict
 from unity.common.tool_spec import ToolSpec
@@ -4045,24 +4042,66 @@ class CodeActActor(BaseCodeActActor):
         if system_prompt:
             client.set_system_message(system_prompt)
 
-        # Add clarification tool when queues are supplied
         tools = dict(base_tools)
-        if clarification_up_q is not None and clarification_down_q is not None:
-            add_clarification_tool_with_events(
-                tools,
-                clarification_up_q,
-                clarification_down_q,
-                manager="CodeActActor",
-                method="act",
-                call_id=_call_id,
-            )
 
-        add_notification_tool_with_events(
-            tools,
-            manager="CodeActActor",
-            method="act",
-            call_id=_call_id,
-        )
+        # Build event bus callbacks for clarification and notification tools
+        # (the loop creates the tools; we just provide the event hooks).
+        _clar_queues = None
+        _on_clar_req = None
+        _on_clar_ans = None
+        if clarification_up_q is not None and clarification_down_q is not None:
+            _clar_queues = (clarification_up_q, clarification_down_q)
+
+            async def _on_clar_req(q: str):
+                try:
+                    await EVENT_BUS.publish(
+                        Event(
+                            type="ManagerMethod",
+                            calling_id=_call_id,
+                            payload={
+                                "manager": "CodeActActor",
+                                "method": "act",
+                                "action": "clarification_request",
+                                "question": q,
+                            },
+                        ),
+                    )
+                except Exception:
+                    pass
+
+            async def _on_clar_ans(ans: str):
+                try:
+                    await EVENT_BUS.publish(
+                        Event(
+                            type="ManagerMethod",
+                            calling_id=_call_id,
+                            payload={
+                                "manager": "CodeActActor",
+                                "method": "act",
+                                "action": "clarification_answer",
+                                "answer": ans,
+                            },
+                        ),
+                    )
+                except Exception:
+                    pass
+
+        async def _on_notify(message: str):
+            try:
+                await EVENT_BUS.publish(
+                    Event(
+                        type="ManagerMethod",
+                        calling_id=_call_id,
+                        payload={
+                            "manager": "CodeActActor",
+                            "method": "act",
+                            "action": "notification",
+                            "message": message,
+                        },
+                    ),
+                )
+            except Exception:
+                pass
 
         logger.debug(f"⏱️ [CodeActActor.act +{_act_ms()}] starting async tool loop")
         handle = start_async_tool_loop(
@@ -4080,6 +4119,10 @@ class CodeActActor(BaseCodeActActor):
             prompt_caching=self._prompt_caching,
             extra_ask_tools=self._get_extra_ask_tools(),
             extra_compression_tools=(["store_skills"] if effective_can_store else None),
+            clarification_queues=_clar_queues,
+            on_clarification_request=_on_clar_req,
+            on_clarification_answer=_on_clar_ans,
+            on_notify=_on_notify,
         )
         logger.debug(
             f"⏱️ [CodeActActor.act +{_act_ms()}] loop started, returning handle",

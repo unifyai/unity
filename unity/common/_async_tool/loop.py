@@ -249,6 +249,10 @@ async def async_tool_loop_inner(
     extra_ask_tools: Optional[Dict[str, Callable]] = None,
     enable_compression: bool = True,
     extra_compression_tools: Optional[list[str]] = None,
+    clarification_queues: Optional[Tuple["asyncio.Queue", "asyncio.Queue"]] = None,
+    on_clarification_request: Optional[Callable[[str], Any]] = None,
+    on_clarification_answer: Optional[Callable[[str], Any]] = None,
+    on_notify: Optional[Callable[[str], Any]] = None,
 ) -> str:
     r"""
     Orchestrate an *interactive* "function-calling" dialogue between an LLM
@@ -658,6 +662,23 @@ async def async_tool_loop_inner(
     # • helper that answers "may we launch / advertise *this* tool right now?"
     #   by comparing the live count with max_concurrent.
     # -----------------------------------------------------------------------
+
+    # ── Inject loop-owned tools when the caller opted in ────────────────
+    if clarification_queues is not None:
+        from ..llm_helpers import make_request_clarification_tool
+
+        _clar_up_q, _clar_down_q = clarification_queues
+        tools["request_clarification"] = make_request_clarification_tool(
+            _clar_up_q,
+            _clar_down_q,
+            on_request=on_clarification_request,
+            on_answer=on_clarification_answer,
+        )
+
+    if on_notify is not None:
+        from ..llm_helpers import make_send_notification_tool
+
+        tools["send_notification"] = make_send_notification_tool(on_notify=on_notify)
 
     # Initialise loop state early so preflight backfill can schedule tasks
     logger.debug(f"[setup +{_setup_elapsed()}] initialising ToolsData")
