@@ -70,6 +70,20 @@ MM_CTX = "All/Events/ManagerMethod"
 TL_CTX = "All/Events/ToolLoop"
 
 
+def _load_test_image_b64(filename: str) -> tuple[str, str]:
+    """Load a test image from tests/images/ and return (base64_data, mime_type)."""
+    import base64
+
+    img_path = Path(__file__).resolve().parents[3] / "tests" / "images" / filename
+    data = base64.b64encode(img_path.read_bytes()).decode()
+    mime = "image/jpeg" if filename.endswith(".jpg") else "image/png"
+    return data, mime
+
+
+TEST_IMAGE_B64, TEST_IMAGE_MIME = _load_test_image_b64("gcp_homepage.jpg")
+TEST_IMAGE_B64_2, TEST_IMAGE_MIME_2 = _load_test_image_b64("wizard_screen.jpg")
+
+
 # =============================================================================
 # Shared Helpers
 # =============================================================================
@@ -915,21 +929,35 @@ def build_persistent_steps():
                 ),
             ],
         },
-        # ── 23. execute_code result (parent ToolLoop) ──
+        # ── 23. execute_code result (parent ToolLoop) with display() image ──
         {
-            "label": "execute_code result",
+            "label": "execute_code result (with image)",
             "delay": 0.5,
             "events": [
                 tl(
                     h,
-                    _tool_result(
-                        "tc_code",
-                        "execute_code",
-                        {
-                            "result": "Knowledge updated and contacts updated successfully.",
-                            "notification_sent": True,
-                        },
-                    ),
+                    {
+                        "role": "tool",
+                        "tool_call_id": "tc_code",
+                        "name": "execute_code",
+                        "content": [
+                            {
+                                "type": "text",
+                                "text": json.dumps(
+                                    {
+                                        "result": "Knowledge updated and contacts updated successfully.",
+                                        "notification_sent": True,
+                                    },
+                                ),
+                            },
+                            {
+                                "type": "image_url",
+                                "image_url": {
+                                    "url": f"data:{TEST_IMAGE_MIME};base64,{TEST_IMAGE_B64}",
+                                },
+                            },
+                        ],
+                    },
                 ),
             ],
         },
@@ -1952,25 +1980,39 @@ def build_single_action_steps():
                 ),
             ],
         },
-        # ── 22. execute_code result ──
+        # ── 22. execute_code result (with display() image) ──
         {
-            "label": "execute_code result",
+            "label": "execute_code result (with image)",
             "delay": 2.0,
             "events": [
                 tl(
                     h,
-                    _tool_result(
-                        "tc_code",
-                        "execute_code",
-                        {
-                            "result": {
-                                "to": "r.torres@acmecorp.com",
-                                "subject": "Q1 Partnership Review Follow-Up",
-                                "body": "Hi Rachel,\n\nThank you for your time...",
+                    {
+                        "role": "tool",
+                        "tool_call_id": "tc_code",
+                        "name": "execute_code",
+                        "content": [
+                            {
+                                "type": "text",
+                                "text": json.dumps(
+                                    {
+                                        "result": {
+                                            "to": "r.torres@acmecorp.com",
+                                            "subject": "Q1 Partnership Review Follow-Up",
+                                            "body": "Hi Rachel,\n\nThank you for your time...",
+                                        },
+                                        "notification_sent": True,
+                                    },
+                                ),
                             },
-                            "notification_sent": True,
-                        },
-                    ),
+                            {
+                                "type": "image_url",
+                                "image_url": {
+                                    "url": f"data:{TEST_IMAGE_MIME_2};base64,{TEST_IMAGE_B64_2}",
+                                },
+                            },
+                        ],
+                    },
                 ),
             ],
         },
