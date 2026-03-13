@@ -3,6 +3,7 @@ from __future__ import annotations
 import functools
 import hashlib
 import os
+import re
 import shutil
 import tempfile
 
@@ -10,7 +11,10 @@ from typing import Any
 
 import pytest
 
+from unity.actor.execution.capture import StreamLike
 from unity.actor.execution.session import SessionExecutor
+
+_ADDR_RE = re.compile(r" at 0x[0-9a-fA-F]+")
 
 
 def _normalize_execute_function_duration(result: Any) -> Any:
@@ -34,6 +38,18 @@ def stabilize_execute_function_duration(monkeypatch: pytest.MonkeyPatch) -> None
         return _normalize_execute_function_duration(result)
 
     monkeypatch.setattr(SessionExecutor, "execute", _patched_execute, raising=True)
+
+
+@pytest.fixture(autouse=True)
+def _sanitize_sandbox_addresses(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Strip non-deterministic ``at 0x…`` addresses from sandbox output so LLM cache keys stay stable."""
+    original_write = StreamLike.write
+
+    @functools.wraps(original_write)
+    def _sanitized_write(self, obj: str) -> int:
+        return original_write(self, _ADDR_RE.sub(" at 0x...", obj))
+
+    monkeypatch.setattr(StreamLike, "write", _sanitized_write)
 
 
 @pytest.fixture(autouse=True)
