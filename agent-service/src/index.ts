@@ -457,7 +457,24 @@ async function ensureDemoSites(urlMappings: Record<string, string>): Promise<voi
     return;
   }
 
-  for (const [, replacement] of Object.entries(urlMappings)) {
+  // Add /etc/hosts entries so the browser resolves mapped domains to localhost.
+  // This bypasses patchright's CDP interception blocking.
+  for (const [original] of Object.entries(urlMappings)) {
+    try {
+      const origHost = new URL(original).hostname;
+      const hostsFile = fs.readFileSync('/etc/hosts', 'utf-8');
+      if (!hostsFile.includes(origHost)) {
+        fs.appendFileSync('/etc/hosts', `\n127.0.0.1 ${origHost}\n`);
+        console.log(`[demo-sites] Added /etc/hosts entry: 127.0.0.1 ${origHost}`);
+      } else {
+        console.log(`[demo-sites] /etc/hosts already has entry for ${origHost}`);
+      }
+    } catch (e) {
+      console.warn(`[demo-sites] Could not update /etc/hosts: ${e}`);
+    }
+  }
+
+  for (const [original, replacement] of Object.entries(urlMappings)) {
     let parsed: URL;
     try { parsed = new URL(replacement); } catch { continue; }
 
@@ -466,6 +483,15 @@ async function ensureDemoSites(urlMappings: Record<string, string>): Promise<voi
 
     const port = parseInt(parsed.port, 10);
     if (!port) continue;
+
+    // Determine the port the browser will actually hit (from the original URL)
+    let browserPort = 80;
+    try {
+      const origUrl = new URL(original);
+      if (origUrl.port) browserPort = parseInt(origUrl.port, 10);
+      else if (origUrl.protocol === 'https:') browserPort = 443;
+      else browserPort = 80;
+    } catch {}
 
     if (await isPortOpen(port)) {
       console.log(`[demo-sites] Port ${port} already in use, skipping`);
@@ -529,6 +555,28 @@ async function ensureDemoSites(urlMappings: Record<string, string>): Promise<voi
       console.log(`[demo-sites] ${dirName} ready on port ${port}`);
     } else {
       console.error(`[demo-sites] ${dirName} failed to start on port ${port} within timeout`);
+    }
+
+    // Start an additional listener on the port the browser will actually hit
+    // (e.g. port 80 for http://connect.zoho.com). This forwards to the demo site.
+    if (browserPort !== port && !(await isPortOpen(browserPort))) {
+      try {
+        const proxy = http.createServer((req, res) => {
+          const proxyReq = http.request(
+            { hostname: '127.0.0.1', port, path: req.url, method: req.method, headers: req.headers },
+            (proxyRes) => {
+              res.writeHead(proxyRes.statusCode || 200, proxyRes.headers);
+              proxyRes.pipe(res);
+            }
+          );
+          req.pipe(proxyReq);
+          proxyReq.on('error', () => { res.writeHead(502); res.end(); });
+        });
+        proxy.listen(browserPort, '0.0.0.0');
+        console.log(`[demo-sites] Proxy listening on port ${browserPort} -> ${port}`);
+      } catch (e) {
+        console.warn(`[demo-sites] Could not start proxy on port ${browserPort}: ${e}`);
+      }
     }
   }
 }
