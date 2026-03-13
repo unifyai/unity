@@ -21,6 +21,7 @@ import gc
 import io
 import os
 import sys
+import warnings
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -241,21 +242,23 @@ def _dump_modules(out: io.StringIO) -> None:
     _section(out, "LOADED PYTHON MODULES (top 60 by attribute footprint)")
 
     mod_sizes: list[tuple[int, str, int]] = []  # (size, name, attr_count)
-    for name, mod in list(sys.modules.items()):
-        if mod is None:
-            continue
-        total = 0
-        attr_count = 0
-        try:
-            for attr in dir(mod):
-                attr_count += 1
-                try:
-                    total += sys.getsizeof(getattr(mod, attr))
-                except (TypeError, ReferenceError, AttributeError):
-                    pass
-        except Exception:
-            pass
-        mod_sizes.append((total, name, attr_count))
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        for name, mod in list(sys.modules.items()):
+            if mod is None:
+                continue
+            total = 0
+            attr_count = 0
+            try:
+                for attr in dir(mod):
+                    attr_count += 1
+                    try:
+                        total += sys.getsizeof(getattr(mod, attr))
+                    except (TypeError, ReferenceError, AttributeError):
+                        pass
+            except Exception:
+                pass
+            mod_sizes.append((total, name, attr_count))
 
     mod_sizes.sort(reverse=True)
     out.write(f"  Total modules loaded: {len(sys.modules):,d}\n\n")
