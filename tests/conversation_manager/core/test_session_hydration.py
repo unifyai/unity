@@ -345,6 +345,130 @@ class TestUnifyMessageHydration:
         assert msgs[0].content == "Check this file"
         assert msgs[1].role == "assistant"
 
+    @pytest.mark.asyncio
+    async def test_hydration_collects_unify_attachment_metadata(self):
+        """Inbound UnifyMessage attachments are collected for deferred download."""
+        cm = _make_mock_cm()
+        att = [
+            {
+                "id": "att-1",
+                "filename": "report.pdf",
+                "gs_url": "gs://bucket/att-1_report.pdf",
+            },
+        ]
+        events = [
+            UnifyMessageReceived(
+                contact=ALICE,
+                content="See attached",
+                attachments=att,
+                timestamp=BASE_TIME,
+            ),
+        ]
+
+        with patch(
+            "unity.conversation_manager.domains.managers_utils.EVENT_BUS",
+        ) as mock_bus:
+            mock_bus.search = AsyncMock(return_value=_make_bus_events(events))
+            await hydrate_global_thread(cm)
+
+        pending = cm._pending_hydration_attachments
+        assert len(pending) == 1
+        kind, atts, extra = pending[0]
+        assert kind == "unify"
+        assert atts == att
+        assert extra == {}
+
+    @pytest.mark.asyncio
+    async def test_hydration_collects_email_attachment_metadata(self):
+        """Inbound EmailReceived attachments are collected with email-specific metadata.
+
+        Note: email_id is stripped from bus events during publish_bus_events(),
+        so gmail_message_id will be empty after hydration. The important thing
+        is that the attachment metadata itself is collected.
+        """
+        cm = _make_mock_cm()
+        att = [{"id": "att-email-1", "filename": "invoice.pdf"}]
+        events = [
+            EmailReceived(
+                contact=BOB,
+                subject="Invoice",
+                body="Please review",
+                attachments=att,
+                email_id="gmail-msg-123",
+                timestamp=BASE_TIME,
+            ),
+        ]
+
+        with patch(
+            "unity.conversation_manager.domains.managers_utils.EVENT_BUS",
+        ) as mock_bus:
+            mock_bus.search = AsyncMock(return_value=_make_bus_events(events))
+            await hydrate_global_thread(cm)
+
+        pending = cm._pending_hydration_attachments
+        assert len(pending) == 1
+        kind, atts, extra = pending[0]
+        assert kind == "email"
+        assert atts == att
+        # email_id is stripped from bus events by publish_bus_events, so
+        # gmail_message_id is empty after hydration — this is expected
+        assert "gmail_message_id" in extra
+
+    @pytest.mark.asyncio
+    async def test_hydration_skips_outbound_attachments(self):
+        """Outbound messages (Sent events) don't trigger attachment collection."""
+        cm = _make_mock_cm()
+        events = [
+            UnifyMessageSent(
+                contact=ALICE,
+                content="Here's the result",
+                attachments=[{"id": "out-1", "filename": "output.xlsx"}],
+                timestamp=BASE_TIME,
+            ),
+        ]
+
+        with patch(
+            "unity.conversation_manager.domains.managers_utils.EVENT_BUS",
+        ) as mock_bus:
+            mock_bus.search = AsyncMock(return_value=_make_bus_events(events))
+            await hydrate_global_thread(cm)
+
+        pending = cm._pending_hydration_attachments
+        assert len(pending) == 0
+
+    @pytest.mark.asyncio
+    async def test_hydration_collects_multiple_attachments_across_messages(self):
+        """Multiple inbound messages with attachments are all collected."""
+        cm = _make_mock_cm()
+        events = [
+            UnifyMessageReceived(
+                contact=ALICE,
+                content="File 1",
+                attachments=[{"id": "a1", "filename": "f1.pdf"}],
+                timestamp=BASE_TIME,
+            ),
+            UnifyMessageReceived(
+                contact=ALICE,
+                content="File 2",
+                attachments=[
+                    {"id": "a2", "filename": "f2.pdf"},
+                    {"id": "a3", "filename": "f3.xlsx"},
+                ],
+                timestamp=BASE_TIME + timedelta(minutes=5),
+            ),
+        ]
+
+        with patch(
+            "unity.conversation_manager.domains.managers_utils.EVENT_BUS",
+        ) as mock_bus:
+            mock_bus.search = AsyncMock(return_value=_make_bus_events(events))
+            await hydrate_global_thread(cm)
+
+        pending = cm._pending_hydration_attachments
+        assert len(pending) == 2
+        assert len(pending[0][1]) == 1
+        assert len(pending[1][1]) == 2
+
 
 # =============================================================================
 # Cross-Cutting Concerns
