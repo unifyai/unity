@@ -54,7 +54,7 @@ class SyncManager:
 
         LOGGER.debug(f"{ICONS['file_sync']} [FileSync] Starting sync manager...")
 
-        # 1. Get SSH private key from Orchestra secrets
+        # 1. Get SSH private key from Orchestra assistant record
         ssh_key = await self._get_ssh_private_key()
         if not ssh_key:
             LOGGER.error(
@@ -192,7 +192,7 @@ class SyncManager:
         LOGGER.debug(f"{ICONS['file_sync']} [FileSync] Created sentinel: {sentinel}")
 
     async def _get_ssh_private_key(self) -> Optional[str]:
-        """Retrieve SSH private key from Orchestra assistant secrets."""
+        """Retrieve SSH private key from Orchestra assistant record."""
         from unity.session_details import SESSION_DETAILS
         from unity.settings import SETTINGS
 
@@ -224,7 +224,7 @@ class SyncManager:
 
         LOGGER.debug(f"{ICONS['file_sync']} [FileSync] Retrieving SSH key from {url}")
 
-        # Retry loop for secret retrieval
+        # Retry loop for SSH key retrieval
         max_retries = self.config.max_retries
         retry_delay = self.config.retry_delay_seconds
 
@@ -233,7 +233,7 @@ class SyncManager:
                 from unify.utils import http
 
                 LOGGER.debug(
-                    f"{ICONS['file_sync']} [FileSync] Fetching secrets (attempt {attempt}/{max_retries})...",
+                    f"{ICONS['file_sync']} [FileSync] Fetching SSH key (attempt {attempt}/{max_retries})...",
                 )
                 resp = http.get(url, headers=headers, timeout=30)
 
@@ -255,8 +255,7 @@ class SyncManager:
                         )
                         return None
 
-                    secrets = matched.get("secrets") or {}
-                    key = secrets.get("vm_ssh_private_key")
+                    key = matched.get("desktop_filesync_sshkey")
 
                     if key:
                         LOGGER.debug(
@@ -265,18 +264,18 @@ class SyncManager:
                         return key
                     else:
                         LOGGER.error(
-                            f"{ICONS['file_sync']} [FileSync] No vm_ssh_private_key in secrets",
+                            f"{ICONS['file_sync']} [FileSync] No desktop_filesync_sshkey on assistant",
                         )
                         return None
                 else:
                     LOGGER.debug(
-                        f"{ICONS['file_sync']} [FileSync] Failed to get secrets: "
+                        f"{ICONS['file_sync']} [FileSync] Failed to get assistant data: "
                         f"status={resp.status_code}, body={resp.text[:200]}",
                     )
 
             except Exception as e:
                 LOGGER.error(
-                    f"{ICONS['file_sync']} [FileSync] Exception retrieving secrets: {e}",
+                    f"{ICONS['file_sync']} [FileSync] Exception retrieving SSH key: {e}",
                 )
                 import traceback
 
