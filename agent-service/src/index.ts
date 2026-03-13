@@ -484,15 +484,6 @@ async function ensureDemoSites(urlMappings: Record<string, string>): Promise<voi
     const port = parseInt(parsed.port, 10);
     if (!port) continue;
 
-    // Determine the port the browser will actually hit (from the original URL)
-    let browserPort = 80;
-    try {
-      const origUrl = new URL(original);
-      if (origUrl.port) browserPort = parseInt(origUrl.port, 10);
-      else if (origUrl.protocol === 'https:') browserPort = 443;
-      else browserPort = 80;
-    } catch {}
-
     if (await isPortOpen(port)) {
       console.log(`[demo-sites] Port ${port} already in use, skipping`);
       continue;
@@ -557,25 +548,49 @@ async function ensureDemoSites(urlMappings: Record<string, string>): Promise<voi
       console.error(`[demo-sites] ${dirName} failed to start on port ${port} within timeout`);
     }
 
-    // Start an additional listener on the port the browser will actually hit
-    // (e.g. port 80 for http://connect.zoho.com). This forwards to the demo site.
-    if (browserPort !== port && !(await isPortOpen(browserPort))) {
-      try {
-        const proxy = http.createServer((req, res) => {
-          const proxyReq = http.request(
-            { hostname: '127.0.0.1', port, path: req.url, method: req.method, headers: req.headers },
-            (proxyRes) => {
-              res.writeHead(proxyRes.statusCode || 200, proxyRes.headers);
-              proxyRes.pipe(res);
+    // Start proxy listeners on the ports the browser will actually hit.
+    // Handles both HTTP (80) and HTTPS (443) since Chrome may upgrade
+    // via HSTS. HTTPS uses a self-signed cert (browser context has
+    // ignoreHTTPSErrors=true).
+    const proxyHandler = (req: any, res: any) => {
+      const proxyReq = http.request(
+        { hostname: '127.0.0.1', port, path: req.url, method: req.method, headers: req.headers },
+        (proxyRes: any) => { res.writeHead(proxyRes.statusCode || 200, proxyRes.headers); proxyRes.pipe(res); }
+      );
+      req.pipe(proxyReq);
+      proxyReq.on('error', () => { res.writeHead(502); res.end(); });
+    };
+
+    for (const listenPort of [80, 443]) {
+      if (listenPort !== port && !(await isPortOpen(listenPort))) {
+        try {
+          if (listenPort === 443) {
+            const { generateKeyPairSync, createSign, createHash } = await import('crypto');
+            // Generate a self-signed cert on the fly
+            const tls = await import('tls');
+            const { execSync: execSyncLocal } = await import('child_process');
+            try {
+              execSyncLocal(
+                'openssl req -x509 -newkey rsa:2048 -keyout /tmp/demo-key.pem -out /tmp/demo-cert.pem -days 1 -nodes -subj "/CN=connect.zoho.com" 2>/dev/null',
+                { timeout: 5000 }
+              );
+              const httpsProxy = https.createServer(
+                { key: fs.readFileSync('/tmp/demo-key.pem'), cert: fs.readFileSync('/tmp/demo-cert.pem') },
+                proxyHandler
+              );
+              httpsProxy.listen(443, '0.0.0.0');
+              console.log(`[demo-sites] HTTPS proxy listening on port 443 -> ${port}`);
+            } catch (e) {
+              console.warn(`[demo-sites] Could not create HTTPS proxy: ${e}`);
             }
-          );
-          req.pipe(proxyReq);
-          proxyReq.on('error', () => { res.writeHead(502); res.end(); });
-        });
-        proxy.listen(browserPort, '0.0.0.0');
-        console.log(`[demo-sites] Proxy listening on port ${browserPort} -> ${port}`);
-      } catch (e) {
-        console.warn(`[demo-sites] Could not start proxy on port ${browserPort}: ${e}`);
+          } else {
+            const httpProxy = http.createServer(proxyHandler);
+            httpProxy.listen(listenPort, '0.0.0.0');
+            console.log(`[demo-sites] HTTP proxy listening on port ${listenPort} -> ${port}`);
+          }
+        } catch (e) {
+          console.warn(`[demo-sites] Could not start proxy on port ${listenPort}: ${e}`);
+        }
       }
     }
   }
@@ -718,7 +733,7 @@ const startBrowserOnVm = async (urlMappings?: Record<string, string>): Promise<B
           downloadsPath: defaultBrowserPaths.downloadsPath || undefined,
           tracesDir: defaultBrowserPaths.tracesDir || undefined,
         },
-        contextOptions: { viewport: null },
+        contextOptions: { viewport: null, ignoreHTTPSErrors: true },
       },
       narrate: true,
       urlMappings,
