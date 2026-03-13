@@ -36,6 +36,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import time
 import threading
 from contextlib import contextmanager
 from datetime import datetime, timezone
@@ -43,6 +44,76 @@ from pathlib import Path
 from typing import Any, Optional
 
 from unity.settings import SETTINGS
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Cgroup Memory Reporting
+#
+# Reads container memory from cgroup v1/v2 pseudo-files and formats a compact
+# tag like ``[4821/8192 MiB]`` for inclusion in every log line.  Cached with
+# a short TTL to avoid per-record syscall overhead.  Returns an empty string
+# when cgroup files are absent (local dev, macOS, tests).
+# ─────────────────────────────────────────────────────────────────────────────
+
+_CGROUP_MEM_FILE: str | None = None  # path to current-usage pseudo-file
+_CGROUP_MEM_MAX: int | None = None  # limit in bytes (None = no limit)
+_CGROUP_CACHE: tuple[float, int] = (0.0, 0)  # (monotonic_ts, usage_bytes)
+_CGROUP_CACHE_TTL = 1.0  # seconds
+
+
+def _init_cgroup_paths() -> None:
+    """Detect cgroup v1/v2 memory files (called once, lazily)."""
+    global _CGROUP_MEM_FILE, _CGROUP_MEM_MAX
+    if _CGROUP_MEM_FILE is not None:
+        return
+
+    # cgroup v2
+    if os.path.isfile("/sys/fs/cgroup/memory.current"):
+        _CGROUP_MEM_FILE = "/sys/fs/cgroup/memory.current"
+        try:
+            with open("/sys/fs/cgroup/memory.max") as f:
+                val = f.read().strip()
+                _CGROUP_MEM_MAX = None if val == "max" else int(val)
+        except (OSError, ValueError):
+            _CGROUP_MEM_MAX = None
+    # cgroup v1
+    elif os.path.isfile("/sys/fs/cgroup/memory/memory.usage_in_bytes"):
+        _CGROUP_MEM_FILE = "/sys/fs/cgroup/memory/memory.usage_in_bytes"
+        try:
+            with open("/sys/fs/cgroup/memory/memory.limit_in_bytes") as f:
+                _CGROUP_MEM_MAX = int(f.read().strip())
+        except (OSError, ValueError):
+            _CGROUP_MEM_MAX = None
+    else:
+        _CGROUP_MEM_FILE = ""  # sentinel: no cgroup available
+
+
+def _get_memory_tag() -> str:
+    """Return e.g. ``[4821/8192 MiB]`` or ``""`` if cgroup unavailable."""
+    global _CGROUP_CACHE
+
+    _init_cgroup_paths()
+    if not _CGROUP_MEM_FILE:
+        return ""
+
+    now = time.monotonic()
+    cached_ts, cached_bytes = _CGROUP_CACHE
+    if now - cached_ts < _CGROUP_CACHE_TTL:
+        current = cached_bytes
+    else:
+        try:
+            with open(_CGROUP_MEM_FILE) as f:
+                current = int(f.read().strip())
+            _CGROUP_CACHE = (now, current)
+        except (OSError, ValueError):
+            return ""
+
+    mib = current >> 20  # // 1048576
+    if _CGROUP_MEM_MAX:
+        max_mib = _CGROUP_MEM_MAX >> 20
+        pct = current * 100 // _CGROUP_MEM_MAX
+        return f"[{mib}/{max_mib} MiB ({pct}%)]"
+    return f"[{mib} MiB]"
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Logger Instance
@@ -456,6 +527,18 @@ for _fo in _FILE_ONLY_LOGGERS:
 # ─────────────────────────────────────────────────────────────────────────────
 
 
+class _MemoryFileFormatter(logging.Formatter):
+    """File formatter that prepends cgroup memory usage to each line."""
+
+    def format(self, record: logging.LogRecord) -> str:
+        mem = _get_memory_tag()
+        base = super().format(record)
+        if mem:
+            # Insert memory tag after the log-level field
+            return f"{base} {mem}"
+        return base
+
+
 def configure_log_dir(log_dir: Optional[str] = None) -> Optional[Path]:
     """Configure or reconfigure the Unity LOGGER file output directory.
 
@@ -511,7 +594,7 @@ def configure_log_dir(log_dir: Optional[str] = None) -> Optional[Path]:
 
         log_file = log_path / "unity.log"
         handler = logging.FileHandler(log_file, mode="a", encoding="utf-8")
-        handler.setFormatter(logging.Formatter(fmt))
+        handler.setFormatter(_MemoryFileFormatter(fmt))
         handler.setLevel(logging.DEBUG)
         handler._unity_file_handler = True  # type: ignore[attr-defined]
         LOGGER.addHandler(handler)
