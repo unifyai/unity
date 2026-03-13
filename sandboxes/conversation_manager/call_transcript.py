@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
-"""Post-hoc call transcript builder for ConversationManager runs.
+"""Post-hoc transcript builder for ConversationManager runs.
 
 Parses voice-agent and CM logs to produce a deterministic, source-traced
-call transcript with anomaly detection.
+transcript with anomaly detection. Supports both voice calls and text chat
+sessions.
 
-Supports two input modes:
+Supports three input modes:
 
 1. **Local sandbox** — separate voice-agent and CM log files::
 
@@ -17,7 +18,14 @@ Supports two input modes:
     .venv/bin/python sandboxes/conversation_manager/call_transcript.py \\
         --staging-log staging_assistant_log_dump.txt
 
-Every assistant utterance is traced to its source path:
+3. **Chat session** — a unity.log from a text-medium session (no voice
+   agent). Produces a rich transcript with messages, full actor code,
+   execution output, and slow brain decisions::
+
+    .venv/bin/python sandboxes/conversation_manager/call_transcript.py \\
+        --chat-log path/to/unity.log
+
+Every assistant utterance (voice) is traced to its source path:
   - Path 1: fast_brain (reply)
   - Path 2: proactive_speech
   - Path 3: slow_brain / actor_notification
@@ -283,6 +291,89 @@ class Timeline:
     call_end_ms: int
     call_start_utc: str
     call_end_utc: str
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Chat Session Data Models
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+@dataclass
+class ChatMessage:
+    """An inbound or outbound text message in a chat session."""
+
+    ts_utc: str
+    direction: str  # "inbound" or "outbound"
+    contact_name: str
+    content: str
+    attachments: list[str] = field(default_factory=list)
+
+
+@dataclass
+class SystemEvent:
+    """A system-level event (initialization, errors, shutdown)."""
+
+    ts_utc: str
+    category: (
+        str  # "startup", "init", "hydration", "customization", "error", "shutdown"
+    )
+    detail: str
+
+
+@dataclass
+class ChatActorStep:
+    """A single step within an actor invocation (LLM turn, tool call, or result)."""
+
+    ts_utc: str
+    step_type: str  # "llm_thinking", "tool_call", "tool_result", "execute_code", "code_result", "actor_result", "notification", "storage_check"
+    actor_id: str
+    tool_name: str = ""
+    tool_call_id: str = ""
+    duration_s: float | None = None
+    llm_log_path: str = ""
+    thought: str = ""
+    code: str = ""
+    language: str = ""
+    arguments_json: str = ""
+    result_text: str = ""
+    content: str = ""
+
+
+@dataclass
+class ChatActorInvocation:
+    """A complete actor invocation from request to result."""
+
+    ts_utc: str
+    actor_id: str
+    request_text: str
+    steps: list[ChatActorStep] = field(default_factory=list)
+    result_text: str = ""
+    result_utc: str = ""
+
+
+@dataclass
+class ChatSlowBrainDecision:
+    """A slow-brain decision in a chat session."""
+
+    ts_utc: str
+    origin_event: str
+    action: str  # "act", "wait", etc.
+    llm_log_path: str = ""
+
+
+@dataclass
+class ChatLogData:
+    """All parsed data from a chat session log."""
+
+    messages: list[ChatMessage] = field(default_factory=list)
+    system_events: list[SystemEvent] = field(default_factory=list)
+    actor_invocations: list[ChatActorInvocation] = field(default_factory=list)
+    slow_brain_decisions: list[ChatSlowBrainDecision] = field(default_factory=list)
+    session_name: str = ""
+    assistant_id: str = ""
+    assistant_name: str = ""
+    org_email: str = ""
+    error_count: int = 0
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1301,6 +1392,1001 @@ def _find_fb_trigger_for_utterance(
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Chat Log Parser
+# ─────────────────────────────────────────────────────────────────────────────
+
+_CHAT_MSG_RE = re.compile(
+    r"💬 \[ConversationManager\] Message (from|to) (.+?):\s*(.*)",
+)
+_ACTOR_REQUEST_RE = re.compile(
+    r"➡️ \[CodeActActor\.act\((\w+)\)\] Request:\s*(.*)",
+)
+_ACTOR_ROBOT_RE = re.compile(
+    r"🤖 \[CodeActActor\.act\((\w+)\)\]\s*\{",
+)
+_ACTOR_ROBOT_CONTENT_RE = re.compile(
+    r'🤖 \[CodeActActor\.act\((\w+)\)\]\s*\{\s*"content":\s*"(.*)',
+)
+_TOOL_SCHEDULED_RE = re.compile(
+    r"🛠️\s+ToolCall Scheduled \[CodeActActor\.act\((\w+)\)\] (\S+) - (\S+)",
+)
+_TOOL_COMPLETED_RE = re.compile(
+    r"✅\s+ToolCall Completed \[([0-9.]+)s\] \[CodeActActor\.act\((\w+)\)\]\s*\{",
+)
+_EXEC_CODE_RE = re.compile(
+    r"🛠️ \[CodeActActor\.act\((\w+)\)->execute_code\((\w+)\)\] Executing code\.\.\.",
+)
+_LLM_THINKING_ACTOR_RE = re.compile(
+    r"🧠 \[CodeActActor\.act\((\w+)\)\] LLM thinking… → (.+)",
+)
+_LLM_THINKING_CM_RE = re.compile(
+    r"🧠 \[ConversationManager\] LLM thinking… \(([^)]+)\) → (.+)",
+)
+_NOTIFICATION_RE = re.compile(
+    r"🔔 \[CodeActActor\.act\((\w+)\)\] Notification from (\S+):\s*(.*)",
+)
+_STORAGE_CHECK_RE = re.compile(
+    r"➡️ \[StorageCheck\(CodeActActor\.act\)\((\w+)\)\] Request:\s*(.*)",
+)
+_STORAGE_ROBOT_RE = re.compile(
+    r"🤖 \[StorageCheck\(CodeActActor\.act\)\((\w+)\)\]\s*\{",
+)
+
+
+def _accumulate_json_block(lines: list[str], start_idx: int) -> tuple[str, int]:
+    """Accumulate a multi-line JSON block starting at ``{`` on ``start_idx``.
+
+    Returns (json_string, end_idx) where end_idx is the line index of the
+    closing ``}``. Uses brace-counting to handle nested objects.
+
+    A safety limit prevents runaway accumulation when braces inside
+    string values cause the counter to become unbalanced. When a new
+    log line (starting with a timestamp and log level) is encountered
+    at depth 0 or when depth goes negative, accumulation stops.
+    """
+    first_line = lines[start_idx]
+    brace_start = first_line.find("{")
+    if brace_start == -1:
+        return "", start_idx
+
+    accumulated = [first_line[brace_start:]]
+    depth = first_line[brace_start:].count("{") - first_line[brace_start:].count("}")
+
+    if depth == 0:
+        return first_line[brace_start:], start_idx
+
+    _NEW_LOG_LINE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}")
+    MAX_BLOCK_LINES = 500
+
+    i = start_idx + 1
+    while i < len(lines) and depth > 0 and (i - start_idx) < MAX_BLOCK_LINES:
+        raw = lines[i]
+        # If we hit a new timestamped log line while at a reasonable depth,
+        # check if this line starts a genuinely new log entry (not JSON continuation)
+        if (
+            depth <= 1
+            and _NEW_LOG_LINE_RE.match(raw)
+            and ("INFO" in raw or "ERROR" in raw or "DEBUG" in raw or "WARNING" in raw)
+        ):
+            break
+        accumulated.append(raw)
+        depth += raw.count("{") - raw.count("}")
+        if depth < 0:
+            depth = 0
+            break
+        i += 1
+
+    return "\n".join(accumulated), i - 1
+
+
+def _try_parse_json(json_str: str) -> dict | None:
+    """Attempt to parse a JSON block, handling literal newlines inside strings."""
+    try:
+        return json.loads(json_str)
+    except (json.JSONDecodeError, ValueError):
+        pass
+    # The log often contains literal newlines inside JSON string values
+    # (the code field). Fix by escaping unescaped newlines within strings.
+    try:
+        fixed = re.sub(
+            r'(?<=": ")(.*?)(?="[,}\s])',
+            lambda m: m.group(0).replace("\n", "\\n").replace("\r", "\\r"),
+            json_str,
+            flags=re.DOTALL,
+        )
+        return json.loads(fixed)
+    except (json.JSONDecodeError, ValueError):
+        pass
+    return None
+
+
+def _dedent_code(code: str) -> str:
+    """Remove common leading whitespace from code extracted from log JSON.
+
+    Handles the case where the first line has been left-stripped by an outer
+    .strip() but subsequent lines retain large log-format indentation.
+    """
+    code_lines = code.splitlines()
+    if len(code_lines) <= 1:
+        return code
+    # Compute min indent from lines 2+ (non-empty) since line 1 may have
+    # been stripped to column 0 by an outer .strip()
+    tail_non_empty = [ln for ln in code_lines[1:] if ln.strip()]
+    if not tail_non_empty:
+        return code
+    min_indent = min(len(ln) - len(ln.lstrip()) for ln in tail_non_empty)
+    if min_indent == 0:
+        return code
+    return "\n".join(
+        ln[min_indent:] if i > 0 and len(ln) >= min_indent else ln
+        for i, ln in enumerate(code_lines)
+    )
+
+
+def _extract_code_from_robot_json(json_str: str) -> tuple[str, str, str, str]:
+    """Extract (thought, code, language, content) from a parsed 🤖 JSON block."""
+    thought = ""
+    code = ""
+    language = ""
+    content = ""
+    obj = _try_parse_json(json_str)
+    if obj is None:
+        # Fallback: extract code with regex from the raw JSON text
+        code_m = re.search(r'"code":\s*"(.*?)(?:```)"', json_str, re.DOTALL)
+        if code_m:
+            raw_code = code_m.group(1)
+            raw_code = raw_code.replace('\\"', '"').replace("\\n", "\n")
+            if "```python" in raw_code:
+                raw_code = raw_code.split("```python", 1)[-1]
+            if "```" in raw_code:
+                raw_code = raw_code.rsplit("```", 1)[0]
+            code = _dedent_code(raw_code.strip())
+            language = "python"
+        thought_m = re.search(r'"thought":\s*"([^"]*)"', json_str)
+        if thought_m:
+            thought = thought_m.group(1).replace('\\"', '"')
+        content_m = re.search(r'"content":\s*"([^"]*)"', json_str)
+        if content_m:
+            content = content_m.group(1).replace('\\"', '"')
+        thinking_m = re.search(r'"thinking":\s*"([^"]*)"', json_str)
+        if thinking_m and not thought:
+            thought = thinking_m.group(1).replace('\\"', '"')
+        return thought, code, language, content
+
+    content = obj.get("content") or ""
+    reasoning = obj.get("reasoning_content") or ""
+    thinking_blocks = obj.get("thinking_blocks") or []
+    if thinking_blocks and isinstance(thinking_blocks, list):
+        for tb in thinking_blocks:
+            if isinstance(tb, dict) and tb.get("thinking"):
+                reasoning = tb["thinking"]
+                break
+    thought = reasoning
+
+    tool_calls = obj.get("tool_calls") or []
+    for tc in tool_calls:
+        if not isinstance(tc, dict):
+            continue
+        func = tc.get("function") or {}
+        args = func.get("arguments") or {}
+        name = func.get("name", "")
+
+        if name == "execute_code":
+            code = args.get("code", "")
+            language = args.get("language", "python")
+            if not thought:
+                thought = args.get("thought", "")
+            # Strip markdown code fences
+            code = code.strip()
+            if code.startswith("```"):
+                first_nl = code.find("\n")
+                if first_nl != -1:
+                    code = code[first_nl + 1 :]
+                if code.endswith("```"):
+                    code = code[: -len("```")]
+                code = _dedent_code(code.strip())
+            break
+
+    return thought, code, language, content
+
+
+def _extract_result_from_tool_json(json_str: str) -> tuple[str, str]:
+    """Extract (tool_call_id, result_text) from a ✅ tool result JSON block."""
+    tool_call_id = ""
+    result_parts: list[str] = []
+    obj = _try_parse_json(json_str)
+    if obj is None:
+        # Regex fallback for tool_call_id
+        tc_m = re.search(r'"tool_call_id":\s*"([^"]+)"', json_str)
+        if tc_m:
+            tool_call_id = tc_m.group(1)
+        # Extract text content blocks
+        for text_m in re.finditer(r'"text":\s*"((?:[^"\\]|\\.)*)"', json_str):
+            result_parts.append(
+                text_m.group(1).replace("\\n", "\n").replace('\\"', '"'),
+            )
+        return tool_call_id, "".join(result_parts)
+
+    tool_call_id = obj.get("tool_call_id", "")
+    content = obj.get("content")
+    if isinstance(content, str):
+        result_parts.append(content)
+    elif isinstance(content, list):
+        for item in content:
+            if isinstance(item, dict) and "text" in item:
+                result_parts.append(item["text"])
+            elif isinstance(item, str):
+                result_parts.append(item)
+
+    return tool_call_id, "".join(result_parts)
+
+
+def _extract_search_args_from_robot_json(json_str: str) -> list[tuple[str, str, str]]:
+    """Extract [(tool_name, tool_call_id, arguments_summary), ...] from 🤖 JSON for non-execute_code tools."""
+    results: list[tuple[str, str, str]] = []
+    obj = _try_parse_json(json_str)
+    if obj is None:
+        return results
+    for tc in obj.get("tool_calls") or []:
+        if not isinstance(tc, dict):
+            continue
+        func = tc.get("function") or {}
+        name = func.get("name", "")
+        tc_id = tc.get("id", "")
+        args = func.get("arguments") or {}
+        if name == "execute_code":
+            continue
+        args_summary = json.dumps(args, ensure_ascii=False)[:200]
+        results.append((name, tc_id, args_summary))
+    return results
+
+
+def parse_chat_log(path: Path) -> ChatLogData:
+    """Parse a chat session unity.log into structured data."""
+    text = path.read_text(encoding="utf-8", errors="replace")
+    lines = text.splitlines()
+    data = ChatLogData()
+
+    log_date = _extract_log_date(lines)
+
+    def _ts(line: str) -> str:
+        return _parse_cm_ts(line, log_date)
+
+    # Extract session name from the log (job name in the path or log content)
+    for raw in lines[:200]:
+        if "Marked job as" in raw:
+            m = re.search(r"job as \w+: (unity-[\w-]+)", raw)
+            if m:
+                data.session_name = m.group(1)
+                break
+        if "Updated record with job_name=" in raw:
+            m = re.search(r"job_name=(unity-[\w-]+)", raw)
+            if m:
+                data.session_name = m.group(1)
+                break
+    if not data.session_name:
+        data.session_name = (
+            path.parent.parent.name if "unity" in str(path) else path.stem
+        )
+
+    # Extract assistant info from Pub/Sub contact data
+    for raw in lines[:300]:
+        if '"assistant_id"' in raw and '"first_name"' in raw:
+            aid_m = re.search(r'"assistant_id":\s*"(\d+)"', raw)
+            if aid_m:
+                data.assistant_id = aid_m.group(1)
+            # Find the assistant's own contact (contact_id 0)
+            name_m = re.search(
+                r'"contact_id":\s*0[^}]*?"first_name":\s*"([^"]+)"[^}]*?"surname":\s*"([^"]*)"',
+                raw,
+            )
+            if name_m:
+                data.assistant_name = f"{name_m.group(1)} {name_m.group(2)}".strip()
+            # Find user email
+            email_m = re.search(
+                r'"contact_id":\s*1[^}]*?"email_address":\s*"([^"]+)"',
+                raw,
+            )
+            if email_m:
+                data.org_email = email_m.group(1)
+            break
+
+    # Active actor invocations being built
+    active_actors: dict[str, ChatActorInvocation] = {}
+    # Map tool_call_id → actor_id for correlating results
+    pending_tool_calls: dict[str, tuple[str, str]] = {}  # tc_id → (actor_id, tool_name)
+    # Track storage checks
+    active_storage: dict[str, ChatActorStep] = {}
+
+    i = 0
+    while i < len(lines):
+        line = lines[i]
+        ts = _ts(line)
+
+        # ── Chat messages ──
+        msg_m = _CHAT_MSG_RE.search(line)
+        if msg_m:
+            direction = "inbound" if msg_m.group(1) == "from" else "outbound"
+            data.messages.append(
+                ChatMessage(
+                    ts_utc=ts,
+                    direction=direction,
+                    contact_name=msg_m.group(2),
+                    content=msg_m.group(3),
+                ),
+            )
+            i += 1
+            continue
+
+        # ── System events ──
+        if "⚡ [ConversationManager] Received startup event" in line:
+            data.system_events.append(
+                SystemEvent(ts_utc=ts, category="startup", detail="Session activated"),
+            )
+            i += 1
+            continue
+        if "⚙️ [ManagersWorker] Unity initialized" in line:
+            m = re.search(r"initialized in ([0-9.]+) seconds", line)
+            data.system_events.append(
+                SystemEvent(
+                    ts_utc=ts,
+                    category="init",
+                    detail=(
+                        f"Unity initialized in {m.group(1)}s"
+                        if m
+                        else "Unity initialized"
+                    ),
+                ),
+            )
+            i += 1
+            continue
+        if "⚙️ [Hydration] Restored" in line:
+            m = re.search(r"Restored (\d+) messages from (\d+) Comms events", line)
+            data.system_events.append(
+                SystemEvent(
+                    ts_utc=ts,
+                    category="hydration",
+                    detail=m.group(0) if m else "Hydration",
+                ),
+            )
+            i += 1
+            continue
+        if "🏷️ [ManagersWorker] Customization resolved" in line:
+            m = re.search(r"resolved in ([0-9.]+) seconds", line)
+            data.system_events.append(
+                SystemEvent(
+                    ts_utc=ts,
+                    category="customization",
+                    detail=(
+                        f"Customization resolved in {m.group(1)}s"
+                        if m
+                        else "Customization resolved"
+                    ),
+                ),
+            )
+            i += 1
+            continue
+        if "🏷️ [ManagersWorker] Seed data synced" in line:
+            m = re.search(r"synced in ([0-9.]+) seconds", line)
+            data.system_events.append(
+                SystemEvent(
+                    ts_utc=ts,
+                    category="customization",
+                    detail=(
+                        f"Seed data synced in {m.group(1)}s"
+                        if m
+                        else "Seed data synced"
+                    ),
+                ),
+            )
+            i += 1
+            continue
+        if "⚙️ [ManagersWorker] All managers initialized" in line:
+            m = re.search(r"initialized in ([0-9.]+) seconds", line)
+            data.system_events.append(
+                SystemEvent(
+                    ts_utc=ts,
+                    category="init",
+                    detail=(
+                        f"All managers initialized in {m.group(1)}s"
+                        if m
+                        else "All managers initialized"
+                    ),
+                ),
+            )
+            i += 1
+            continue
+        if "⚙️ [ManagersWorker] Initialization complete" in line:
+            m = re.search(r"complete in ([0-9.]+) seconds", line)
+            data.system_events.append(
+                SystemEvent(
+                    ts_utc=ts,
+                    category="init",
+                    detail=(
+                        f"Initialization complete in {m.group(1)}s"
+                        if m
+                        else "Initialization complete"
+                    ),
+                ),
+            )
+            i += 1
+            continue
+        if "Error publishing bus event" in line:
+            data.error_count += 1
+            data.system_events.append(
+                SystemEvent(
+                    ts_utc=ts,
+                    category="error",
+                    detail="EventBus publish error: "
+                    + line.split("Error publishing bus event:", 1)[-1].strip()[:200],
+                ),
+            )
+            i += 1
+            continue
+        if "Inactivity timeout reached" in line:
+            data.system_events.append(
+                SystemEvent(
+                    ts_utc=ts,
+                    category="shutdown",
+                    detail="Inactivity timeout reached, shutting down",
+                ),
+            )
+            i += 1
+            continue
+        if "🖥️ [ConversationManager] VM ready" in line:
+            m = re.search(r"VM ready: (\S+) at (.+)", line)
+            data.system_events.append(
+                SystemEvent(
+                    ts_utc=ts,
+                    category="init",
+                    detail=(
+                        f"VM ready: {m.group(1)} at {m.group(2)}" if m else "VM ready"
+                    ),
+                ),
+            )
+            i += 1
+            continue
+        if "ERROR" in line and "⚙️" in line:
+            detail = line.split("ERROR", 1)[-1].strip()[:300]
+            data.error_count += 1
+            data.system_events.append(
+                SystemEvent(ts_utc=ts, category="error", detail=detail),
+            )
+            i += 1
+            continue
+
+        # ── Slow brain decisions ──
+        sb_m = _LLM_THINKING_CM_RE.search(line)
+        if sb_m and "ConversationManager" in line:
+            data.slow_brain_decisions.append(
+                ChatSlowBrainDecision(
+                    ts_utc=ts,
+                    origin_event=sb_m.group(1),
+                    action="thinking",
+                    llm_log_path=sb_m.group(2).strip(),
+                ),
+            )
+            i += 1
+            continue
+        if "[ConversationManager] Decided to wait" in line:
+            if (
+                data.slow_brain_decisions
+                and data.slow_brain_decisions[-1].action == "thinking"
+            ):
+                data.slow_brain_decisions[-1].action = "wait"
+            else:
+                data.slow_brain_decisions.append(
+                    ChatSlowBrainDecision(ts_utc=ts, origin_event="", action="wait"),
+                )
+            i += 1
+            continue
+
+        # ── Actor request (start of invocation) ──
+        req_m = _ACTOR_REQUEST_RE.search(line)
+        if req_m:
+            actor_id = req_m.group(1)
+            invocation = ChatActorInvocation(
+                ts_utc=ts,
+                actor_id=actor_id,
+                request_text=req_m.group(2),
+            )
+            active_actors[actor_id] = invocation
+            data.actor_invocations.append(invocation)
+            i += 1
+            continue
+
+        # ── Actor LLM thinking ──
+        llm_m = _LLM_THINKING_ACTOR_RE.search(line)
+        if llm_m:
+            actor_id = llm_m.group(1)
+            if actor_id in active_actors:
+                active_actors[actor_id].steps.append(
+                    ChatActorStep(
+                        ts_utc=ts,
+                        step_type="llm_thinking",
+                        actor_id=actor_id,
+                        llm_log_path=llm_m.group(2).strip(),
+                    ),
+                )
+            i += 1
+            continue
+
+        # ── Actor robot response (🤖 with JSON block) ──
+        robot_m = _ACTOR_ROBOT_RE.search(line)
+        if robot_m and "StorageCheck" not in line:
+            actor_id = robot_m.group(1)
+            json_str, end_i = _accumulate_json_block(lines, i)
+            thought, code, language, content = _extract_code_from_robot_json(json_str)
+            search_tools = _extract_search_args_from_robot_json(json_str)
+
+            if actor_id in active_actors:
+                if code:
+                    active_actors[actor_id].steps.append(
+                        ChatActorStep(
+                            ts_utc=ts,
+                            step_type="execute_code",
+                            actor_id=actor_id,
+                            tool_name="execute_code",
+                            thought=thought,
+                            code=code,
+                            language=language,
+                        ),
+                    )
+                elif content:
+                    active_actors[actor_id].steps.append(
+                        ChatActorStep(
+                            ts_utc=ts,
+                            step_type="actor_result",
+                            actor_id=actor_id,
+                            content=content,
+                        ),
+                    )
+                    active_actors[actor_id].result_text = content
+                    active_actors[actor_id].result_utc = ts
+
+                for tool_name, tc_id, args_summary in search_tools:
+                    active_actors[actor_id].steps.append(
+                        ChatActorStep(
+                            ts_utc=ts,
+                            step_type="tool_call",
+                            actor_id=actor_id,
+                            tool_name=tool_name,
+                            tool_call_id=tc_id,
+                            arguments_json=args_summary,
+                        ),
+                    )
+                    pending_tool_calls[tc_id] = (actor_id, tool_name)
+                    # Also register _completed variant
+                    pending_tool_calls[tc_id + "_completed"] = (actor_id, tool_name)
+
+            i = end_i + 1
+            continue
+
+        # ── Storage check robot response ──
+        sc_robot_m = _STORAGE_ROBOT_RE.search(line)
+        if sc_robot_m:
+            sc_id = sc_robot_m.group(1)
+            json_str, end_i = _accumulate_json_block(lines, i)
+            _, _, _, content = _extract_code_from_robot_json(json_str)
+            if sc_id in active_storage:
+                active_storage[sc_id].content = content
+            i = end_i + 1
+            continue
+
+        # ── Tool call completed (✅ with JSON block) ──
+        tc_m = _TOOL_COMPLETED_RE.search(line)
+        if tc_m:
+            duration = float(tc_m.group(1))
+            actor_id = tc_m.group(2)
+            json_str, end_i = _accumulate_json_block(lines, i)
+            tc_id, result_text = _extract_result_from_tool_json(json_str)
+
+            if actor_id in active_actors:
+                # Try to match to a pending tool call or code step
+                matched = False
+                if tc_id in pending_tool_calls:
+                    pid_actor, tool_name = pending_tool_calls.pop(tc_id)
+                    for step in reversed(active_actors[actor_id].steps):
+                        if (
+                            step.tool_call_id == tc_id
+                            or (step.tool_call_id + "_completed") == tc_id
+                        ):
+                            step.duration_s = duration
+                            step.result_text = result_text
+                            matched = True
+                            break
+                    if not matched:
+                        active_actors[actor_id].steps.append(
+                            ChatActorStep(
+                                ts_utc=ts,
+                                step_type="tool_result",
+                                actor_id=actor_id,
+                                tool_name=tool_name,
+                                tool_call_id=tc_id,
+                                duration_s=duration,
+                                result_text=result_text,
+                            ),
+                        )
+                else:
+                    # Likely an execute_code result — attach to last code step
+                    for step in reversed(active_actors[actor_id].steps):
+                        if step.step_type == "execute_code" and step.duration_s is None:
+                            step.duration_s = duration
+                            step.result_text = result_text
+                            matched = True
+                            break
+                    if not matched:
+                        active_actors[actor_id].steps.append(
+                            ChatActorStep(
+                                ts_utc=ts,
+                                step_type="code_result",
+                                actor_id=actor_id,
+                                duration_s=duration,
+                                result_text=result_text,
+                            ),
+                        )
+
+            i = end_i + 1
+            continue
+
+        # ── Actor notifications ──
+        notif_m = _NOTIFICATION_RE.search(line)
+        if notif_m:
+            actor_id = notif_m.group(1)
+            if actor_id in active_actors:
+                active_actors[actor_id].steps.append(
+                    ChatActorStep(
+                        ts_utc=ts,
+                        step_type="notification",
+                        actor_id=actor_id,
+                        tool_name=notif_m.group(2),
+                        content=notif_m.group(3),
+                    ),
+                )
+            i += 1
+            continue
+
+        # ── Storage check request ──
+        sc_m = _STORAGE_CHECK_RE.search(line)
+        if sc_m:
+            sc_id = sc_m.group(1)
+            # Find the most recent actor invocation to attach to
+            for inv in reversed(data.actor_invocations):
+                if inv.result_text or inv.result_utc:
+                    step = ChatActorStep(
+                        ts_utc=ts,
+                        step_type="storage_check",
+                        actor_id=sc_id,
+                        content="",
+                    )
+                    inv.steps.append(step)
+                    active_storage[sc_id] = step
+                    break
+            i += 1
+            continue
+
+        i += 1
+
+    return data
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Chat Timeline Formatter
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def _short_ts(ts_utc: str) -> str:
+    """Extract HH:MM:SS from a full UTC timestamp."""
+    if "T" not in ts_utc:
+        return ts_utc[:8] if len(ts_utc) >= 8 else ts_utc
+    time_part = ts_utc.split("T")[1].split("+")[0].split("-")[0]
+    return time_part[:8]
+
+
+def _ts_diff_s(a: str, b: str) -> float:
+    """Compute seconds between two UTC timestamps (b - a)."""
+    ms_a = _utc_to_ms(a)
+    ms_b = _utc_to_ms(b)
+    return (ms_b - ms_a) / 1000.0
+
+
+def format_chat_transcript(data: ChatLogData, *, verbose: bool = False) -> str:
+    """Render a parsed ChatLogData into a human-readable transcript."""
+    out: list[str] = []
+    sep = "═" * 80
+    thin_sep = "─" * 80
+
+    # ── Header ──
+    out.append(sep)
+    out.append(f"CHAT TRANSCRIPT: {data.session_name}")
+    if data.assistant_name or data.assistant_id:
+        header_parts = []
+        if data.assistant_name:
+            header_parts.append(f"Assistant: {data.assistant_name}")
+        if data.assistant_id:
+            header_parts.append(f"(ID: {data.assistant_id})")
+        if data.org_email:
+            header_parts.append(f"| Org: {data.org_email}")
+        out.append(" ".join(header_parts))
+
+    # Session timing
+    all_ts = [e.ts_utc for e in data.system_events if e.ts_utc]
+    all_ts += [m.ts_utc for m in data.messages if m.ts_utc]
+    if all_ts:
+        first = min(all_ts, key=_utc_to_ms)
+        last = max(all_ts, key=_utc_to_ms)
+        duration = _ts_diff_s(first, last)
+        mins = int(duration // 60)
+        secs = int(duration % 60)
+        out.append(
+            f"Session: {_short_ts(first)} - {_short_ts(last)} UTC | Duration: {mins}m {secs}s",
+        )
+
+    # Summary stats
+    inbound = sum(1 for m in data.messages if m.direction == "inbound")
+    outbound = sum(1 for m in data.messages if m.direction == "outbound")
+    code_steps = sum(
+        1
+        for inv in data.actor_invocations
+        for s in inv.steps
+        if s.step_type == "execute_code"
+    )
+    code_time = sum(
+        s.duration_s or 0
+        for inv in data.actor_invocations
+        for s in inv.steps
+        if s.step_type == "execute_code" and s.duration_s
+    )
+    out.append(
+        f"Messages: {inbound} inbound, {outbound} outbound | "
+        f"Actor invocations: {len(data.actor_invocations)} | "
+        f"Code executions: {code_steps} ({code_time:.1f}s total)",
+    )
+    if data.error_count:
+        out.append(f"EventBus: {data.error_count} errors")
+    else:
+        out.append("EventBus: healthy (0 errors)")
+    out.append(sep)
+    out.append("")
+
+    # ── System events (before first message) ──
+    first_msg_ts = data.messages[0].ts_utc if data.messages else ""
+    first_msg_ms = _utc_to_ms(first_msg_ts) if first_msg_ts else float("inf")
+    for evt in data.system_events:
+        if _utc_to_ms(evt.ts_utc) <= first_msg_ms:
+            icon = {
+                "startup": "⚡",
+                "init": "⚙️",
+                "hydration": "⚙️",
+                "customization": "🏷️",
+                "error": "❌",
+                "shutdown": "⏸️",
+            }.get(evt.category, "⚙️")
+            out.append(f"  {icon} {_short_ts(evt.ts_utc)} SYSTEM  {evt.detail}")
+
+    # ── Build chronological event stream ──
+    # Interleave messages, actor steps, slow brain decisions, and system events
+    events: list[tuple[str, str, object]] = []  # (ts_utc, type, object)
+    for m in data.messages:
+        events.append((m.ts_utc, "message", m))
+    for inv in data.actor_invocations:
+        events.append((inv.ts_utc, "actor_start", inv))
+    for sb in data.slow_brain_decisions:
+        events.append((sb.ts_utc, "slow_brain", sb))
+    for evt in data.system_events:
+        if _utc_to_ms(evt.ts_utc) > first_msg_ms:
+            events.append((evt.ts_utc, "system", evt))
+
+    events.sort(key=lambda x: _utc_to_ms(x[0]))
+
+    msg_idx = 0
+    rendered_actors: set[str] = set()
+
+    for ts, etype, obj in events:
+        if etype == "message":
+            msg: ChatMessage = obj  # type: ignore[assignment]
+            msg_idx += 1
+            out.append("")
+            out.append(thin_sep)
+            if msg.direction == "inbound":
+                out.append(
+                    f"#{msg_idx} | {_short_ts(msg.ts_utc)} UTC | USER ({msg.contact_name})",
+                )
+            else:
+                out.append(
+                    f"#{msg_idx} | {_short_ts(msg.ts_utc)} UTC | ASSISTANT → {msg.contact_name}",
+                )
+            out.append(thin_sep)
+            out.append(msg.content)
+            out.append("")
+
+        elif etype == "actor_start":
+            inv: ChatActorInvocation = obj  # type: ignore[assignment]
+            if inv.actor_id in rendered_actors:
+                continue
+            rendered_actors.add(inv.actor_id)
+
+            out.append(
+                f"  ◆ {_short_ts(inv.ts_utc)} ACTOR STARTED [act({inv.actor_id})]",
+            )
+            # Render request, potentially truncated
+            req_text = inv.request_text
+            if not verbose and len(req_text) > 300:
+                req_text = req_text[:300] + "..."
+            for req_line in req_text.splitlines():
+                out.append(
+                    (
+                        f"  Request: {req_line}"
+                        if req_line == req_text.splitlines()[0]
+                        else f"    {req_line}"
+                    ),
+                )
+            out.append("")
+
+            # Render all steps
+            for step in inv.steps:
+                _render_chat_step(out, step, verbose=verbose)
+
+        elif etype == "slow_brain":
+            sb_dec: ChatSlowBrainDecision = obj  # type: ignore[assignment]
+            if sb_dec.action == "wait":
+                out.append(
+                    f"  🕒 {_short_ts(sb_dec.ts_utc)} SLOW BRAIN — decided to wait",
+                )
+            elif sb_dec.action == "thinking":
+                out.append(
+                    f"  🧠 {_short_ts(sb_dec.ts_utc)} SLOW BRAIN ← {sb_dec.origin_event}",
+                )
+                if sb_dec.llm_log_path:
+                    out.append(f"     → {sb_dec.llm_log_path}")
+            else:
+                out.append(
+                    f"  🧠 {_short_ts(sb_dec.ts_utc)} SLOW BRAIN → {sb_dec.action}",
+                )
+            out.append("")
+
+        elif etype == "system":
+            evt: SystemEvent = obj  # type: ignore[assignment]
+            icon = {"error": "❌", "shutdown": "⏸️"}.get(evt.category, "⚙️")
+            out.append(f"  {icon} {_short_ts(evt.ts_utc)} {evt.detail}")
+            out.append("")
+
+    # ── Footer summary ──
+    out.append("")
+    out.append(sep)
+    out.append("SUMMARY")
+    out.append(f"  Messages: {inbound} inbound, {outbound} outbound")
+    if data.actor_invocations:
+        actor_ids = ", ".join(f"act({inv.actor_id})" for inv in data.actor_invocations)
+        out.append(f"  Actor invocations: {len(data.actor_invocations)} ({actor_ids})")
+    out.append(f"  Code executions: {code_steps} ({code_time:.1f}s total)")
+    out.append(f"  Errors: {data.error_count}")
+    if all_ts:
+        first = min(all_ts, key=_utc_to_ms)
+        last = max(all_ts, key=_utc_to_ms)
+        duration = _ts_diff_s(first, last)
+        mins = int(duration // 60)
+        secs = int(duration % 60)
+        out.append(
+            f"  Duration: {_short_ts(first)} — {_short_ts(last)} ({mins}m {secs}s)",
+        )
+    out.append(sep)
+
+    return "\n".join(out)
+
+
+def _render_chat_step(
+    out: list[str],
+    step: ChatActorStep,
+    *,
+    verbose: bool = False,
+) -> None:
+    """Render a single ChatActorStep into output lines."""
+    if step.step_type == "llm_thinking":
+        out.append(f"  🧠 {_short_ts(step.ts_utc)} LLM thinking…")
+        if step.llm_log_path:
+            out.append(f"     → {step.llm_log_path}")
+
+    elif step.step_type == "tool_call":
+        out.append(f"  🛠️  {_short_ts(step.ts_utc)} {step.tool_name}")
+        if step.arguments_json:
+            args_display = step.arguments_json
+            if not verbose and len(args_display) > 200:
+                args_display = args_display[:200] + "..."
+            out.append(f"     args: {args_display}")
+        if step.duration_s is not None:
+            result_preview = step.result_text.strip()
+            if not verbose and len(result_preview) > 300:
+                result_preview = result_preview[:300] + "..."
+            out.append(f"     ✅ {step.duration_s:.2f}s")
+            if result_preview:
+                for rl in result_preview.splitlines():
+                    out.append(f"     {rl}")
+
+    elif step.step_type == "tool_result":
+        result_preview = step.result_text.strip()
+        if not verbose and len(result_preview) > 300:
+            result_preview = result_preview[:300] + "..."
+        out.append(
+            (
+                f"  ✅ {_short_ts(step.ts_utc)} {step.tool_name} [{step.duration_s:.2f}s]"
+                if step.duration_s
+                else f"  ✅ {_short_ts(step.ts_utc)} {step.tool_name}"
+            ),
+        )
+        if result_preview:
+            for rl in result_preview.splitlines():
+                out.append(f"     {rl}")
+
+    elif step.step_type == "execute_code":
+        out.append(f"  🤖 {_short_ts(step.ts_utc)} LLM → execute_code")
+        if step.thought:
+            thought_display = step.thought
+            if not verbose and len(thought_display) > 200:
+                thought_display = thought_display[:200] + "..."
+            out.append(f"     💭 {thought_display}")
+        out.append("")
+        if step.code:
+            code_lines = step.code.splitlines()
+            if not verbose and len(code_lines) > 30:
+                shown = code_lines[:25]
+                out.append(f"     ```{step.language or 'python'}")
+                for cl in shown:
+                    out.append(f"     {cl}")
+                out.append(
+                    f"     ... ({len(code_lines) - 25} more lines, use -v to show all)",
+                )
+                out.append("     ```")
+            else:
+                out.append(f"     ```{step.language or 'python'}")
+                for cl in code_lines:
+                    out.append(f"     {cl}")
+                out.append("     ```")
+        out.append("")
+        if step.duration_s is not None:
+            out.append(f"     ✅ {step.duration_s:.2f}s")
+            if step.result_text.strip():
+                for rl in step.result_text.strip().splitlines():
+                    out.append(f"     {rl}")
+        out.append("")
+
+    elif step.step_type == "code_result":
+        out.append(
+            (
+                f"  ✅ {_short_ts(step.ts_utc)} execute_code [{step.duration_s:.2f}s]"
+                if step.duration_s
+                else f"  ✅ {_short_ts(step.ts_utc)} execute_code"
+            ),
+        )
+        if step.result_text.strip():
+            for rl in step.result_text.strip().splitlines():
+                out.append(f"     {rl}")
+
+    elif step.step_type == "actor_result":
+        content_display = step.content
+        if not verbose and len(content_display) > 400:
+            content_display = content_display[:400] + "..."
+        out.append(f"  🤖 {_short_ts(step.ts_utc)} ACTOR RESULT")
+        for rl in content_display.splitlines():
+            out.append(f"     {rl}")
+        out.append("")
+
+    elif step.step_type == "notification":
+        out.append(
+            f"  🔔 {_short_ts(step.ts_utc)} Notification ({step.tool_name}): {step.content}",
+        )
+
+    elif step.step_type == "storage_check":
+        out.append(f"  📦 {_short_ts(step.ts_utc)} STORAGE CHECK")
+        if step.content:
+            content_display = step.content
+            if not verbose and len(content_display) > 300:
+                content_display = content_display[:300] + "..."
+            out.append(f"     → {content_display}")
+        out.append("")
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Timeline Builder
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -2316,7 +3402,7 @@ def _attach_unmatched_magnitude_traces(
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Build a source-traced call transcript from sandbox voice logs.",
+        description="Build a source-traced transcript from voice call or chat session logs.",
     )
     parser.add_argument(
         "voice_log",
@@ -2339,6 +3425,15 @@ def main() -> None:
             "Path to a combined staging/GKE log file. When provided, both "
             "voice-agent and CM data are extracted from this single file "
             "(replaces voice_log and --cm-log)."
+        ),
+    )
+    parser.add_argument(
+        "--chat-log",
+        type=Path,
+        default=None,
+        help=(
+            "Path to a chat session unity.log file (text medium, no voice). "
+            "Produces a rich transcript with messages, actor code, and execution output."
         ),
     )
     parser.add_argument(
@@ -2367,6 +3462,26 @@ def main() -> None:
     )
     args = parser.parse_args()
 
+    # ── Chat log mode ──
+    if args.chat_log:
+        if not args.chat_log.exists():
+            print(f"Error: chat log not found: {args.chat_log}", file=sys.stderr)
+            sys.exit(1)
+        chat_data = parse_chat_log(args.chat_log)
+        if not chat_data.messages and not chat_data.actor_invocations:
+            print(
+                "No messages or actor invocations found in chat log.",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        output = format_chat_transcript(chat_data, verbose=args.verbose)
+        print(output)
+        stem = args.chat_log.stem
+        out_path = args.chat_log.with_name(f"{stem}_chat_transcript.txt")
+        out_path.write_text(output, encoding="utf-8")
+        print(f"Wrote chat transcript to {out_path}", file=sys.stderr)
+        return
+
     if args.staging_log:
         if not args.staging_log.exists():
             print(
@@ -2384,7 +3499,7 @@ def main() -> None:
             sys.exit(1)
         log_path = args.voice_log
     else:
-        parser.error("Either voice_log or --staging-log is required")
+        parser.error("Either voice_log, --staging-log, or --chat-log is required")
 
     data = parse_voice_log(log_path)
 
