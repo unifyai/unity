@@ -44,18 +44,34 @@ def get_gcs_prefix() -> str:
 
 
 def compress_logs(log_dirs: list[str]) -> Path | None:
-    """Compress log directories into a single tar.gz archive."""
+    """Compress log directories into a single tar.gz archive.
+
+    Files that vanish between directory listing and read are silently
+    skipped — this is expected during shutdown when unify/unillm trace
+    files with ``_PENDING_`` suffixes may be renamed or deleted.
+    """
     existing = [d for d in log_dirs if os.path.isdir(d) and os.listdir(d)]
     if not existing:
         return None
 
     ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H-%M-%S")
     tmp = Path(tempfile.mktemp(suffix=f"_{ts}.tar.gz"))
+    skipped = 0
 
     with tarfile.open(tmp, "w:gz") as tar:
         for log_dir in existing:
             arcname = os.path.basename(log_dir)
-            tar.add(log_dir, arcname=arcname)
+            for root, dirs, files in os.walk(log_dir):
+                for fname in files:
+                    full = os.path.join(root, fname)
+                    arc = os.path.join(arcname, os.path.relpath(full, log_dir))
+                    try:
+                        tar.add(full, arcname=arc, recursive=False)
+                    except (FileNotFoundError, OSError):
+                        skipped += 1
+
+    if skipped:
+        print(f"[upload_pod_logs] Skipped {skipped} vanished file(s)")
 
     return tmp
 
