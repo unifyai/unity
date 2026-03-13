@@ -1220,7 +1220,12 @@ def _init_managers(
         f"{ICONS['managers_worker']} [ManagersWorker] Initializing FileManager...",
     )
     local_start_time = perf_counter()
-    ManagerRegistry.get_file_manager()
+    fm = ManagerRegistry.get_file_manager()
+    # Force the lazy DataManager property to resolve now while ContextVars
+    # are correct.  The ingestion pipeline later accesses _data_manager from
+    # ThreadPoolExecutor workers where ContextVars may not propagate — eager
+    # init avoids the resulting empty-context / double-slash paths.
+    _ = fm._data_manager  # noqa: F841
     _file_dur = perf_counter() - local_start_time
     LOGGER.info(
         f"{ICONS['managers_worker']} [ManagersWorker] FileManager initialized in "
