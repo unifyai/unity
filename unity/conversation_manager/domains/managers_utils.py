@@ -1451,7 +1451,6 @@ async def init_conv_manager(
                     add_email_attachments,
                     add_unify_message_attachments,
                 )
-                from unity.session_details import SESSION_DETAILS
 
                 download_tasks = []
                 for kind, atts, extra in pending:
