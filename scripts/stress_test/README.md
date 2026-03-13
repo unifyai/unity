@@ -55,3 +55,20 @@ python assistant_jobs_track.py
 ```
 
 Prints each running job's name and assistant ID.
+
+### `cleanup_stale_jobs.py`
+
+Marks stale assistant jobs as done and releases their pool VMs (with disk-detach fallback). Can target all running jobs or a specific set of assistant IDs.
+
+| Variable | Source | Description |
+|---|---|---|
+| `SHARED_UNIFY_KEY` | env | Shared Unify API key |
+| `UNITY_COMMS_URL` | env | Communication service base URL |
+| `ORCHESTRA_ADMIN_KEY` | env | Admin key for VM release endpoints |
+| `ASSISTANT_IDS` | in-script | List of assistant IDs to clean up (empty = all running jobs) |
+
+```bash
+python cleanup_stale_jobs.py
+```
+
+Edit `ASSISTANT_IDS` in the script to target specific assistants, or leave it empty to clean up all stale jobs.
