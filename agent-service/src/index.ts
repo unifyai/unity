@@ -741,6 +741,74 @@ app.post('/start', async (req: Request, res: Response) => {
     }
     console.log(`[start] agent_created=${Date.now() - t0}ms mode=${mode}`);
 
+    // ── Diagnostic logging for URL mapping debugging ────────────────────
+    if (mappings) {
+      console.log(`[url-map-diag] urlMappings received by agent: ${JSON.stringify(mappings)}`);
+
+      // Verify each demo site is actually reachable right now
+      for (const [original, replacement] of Object.entries(mappings)) {
+        console.log(`[url-map-diag] Mapping: ${original} -> ${replacement}`);
+        try {
+          const testResp = await fetch(replacement, { redirect: 'manual' });
+          console.log(`[url-map-diag] Fetch test ${replacement} -> status=${testResp.status}, headers=${JSON.stringify(Object.fromEntries([...testResp.headers.entries()].filter(([k]) => ['content-type','location','content-length'].includes(k.toLowerCase()))))}`);
+        } catch (e) {
+          console.error(`[url-map-diag] Fetch test ${replacement} -> FAILED: ${e}`);
+        }
+      }
+
+      // Log all registered routes on the context (Playwright exposes them via internal state)
+      try {
+        // Check if magnitude registered any routes by inspecting the context
+        const page = agent.page;
+        console.log(`[url-map-diag] Current page URL after agent start: ${page.url()}`);
+      } catch (e) {
+        console.warn(`[url-map-diag] Could not read page URL: ${e}`);
+      }
+
+      // Add a catch-all diagnostic route that logs EVERY request the browser makes.
+      // Uses route.fallback() so it doesn't interfere with magnitude's routes --
+      // if magnitude's route already handled it, this won't fire.
+      // If this DOES fire for a mapped URL, it means magnitude's route did NOT catch it.
+      try {
+        await agent.context.route('**/*', async (route) => {
+          const req = route.request();
+          const url = req.url();
+          const isNav = req.isNavigationRequest();
+          const method = req.method();
+          const resourceType = req.resourceType();
+
+          // Log all navigation requests + anything hitting a mapped domain
+          const mappedEntries = Object.entries(mappings!);
+          let matchInfo = 'no-match';
+          for (const [orig] of mappedEntries) {
+            const origHost = new URL(orig).hostname;
+            if (url.includes(origHost)) {
+              matchInfo = `matches-domain:${origHost}`;
+              // This request matched a mapped domain but reached our fallback,
+              // meaning magnitude's context.route() did NOT intercept it.
+              console.warn(`[url-map-diag] ⚠️ LEAKED REQUEST: ${method} ${url} (magnitude route did NOT intercept this)`);
+              // Check if URL exactly matches what magnitude should catch
+              const urlObj = new URL(url);
+              console.warn(`[url-map-diag]   url.href=${urlObj.href}, original=${orig}, startsWith(orig+/)=${urlObj.href.startsWith(orig + '/')}, equals=${urlObj.href === orig}`);
+              break;
+            }
+          }
+
+          if (isNav) {
+            console.log(`[url-map-diag] NAV ${method} ${url} (type=${resourceType}, ${matchInfo})`);
+          }
+
+          await route.fallback();
+        });
+        console.log(`[url-map-diag] Diagnostic catch-all route installed`);
+      } catch (e) {
+        console.warn(`[url-map-diag] Failed to install diagnostic route: ${e}`);
+      }
+    } else {
+      console.log(`[url-map-diag] No urlMappings provided for this session`);
+    }
+    // ── End diagnostic logging ───────────────────────────────────────────
+
     if (label && mode === 'web-vm') {
       try {
         await agent.context.addInitScript(`
