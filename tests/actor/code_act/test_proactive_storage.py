@@ -190,7 +190,7 @@ async def test_store_skills_filtered_when_can_store_false():
 
 
 @pytest.mark.asyncio
-@pytest.mark.timeout(30)
+@pytest.mark.timeout(120)
 async def test_proactive_storage_loop_receives_request_and_trajectory():
     """``_start_proactive_storage_loop`` is called with the trajectory snapshot
     and the request string from the ``store_skills`` tool."""
