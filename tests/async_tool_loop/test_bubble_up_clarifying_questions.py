@@ -102,22 +102,9 @@ async def test_clarification_bubbles_up_two_tiers(llm_config) -> None:
     clar_up_q = asyncio.Queue()
     clar_down_q = asyncio.Queue()
 
-    async def request_clarification(
-        question: str,
-    ) -> str:
-        """Ask the user **question** and return their reply."""
-        # Bubble the request up …
-        await clar_up_q.put(question)
-        # … then block until the answer comes back down.
-        return await clar_down_q.get()
-
-    request_clarification.__name__ = "request_clarification"
-    request_clarification.__qualname__ = "request_clarification"
-
     outer_tools = {
         "send_email": send_email,
         "send_text": send_text,
-        "request_clarification": request_clarification,
     }
 
     outer_handle = start_async_tool_loop(  # type: ignore[attr-defined]
@@ -125,6 +112,7 @@ async def test_clarification_bubbles_up_two_tiers(llm_config) -> None:
         message="Please email jonathan.smith123@gmail.com and politely tell him I (Dan) will be arriving at the BBQ around 5pm.",
         tools=outer_tools,
         time_awareness=False,
+        clarification_queues=(clar_up_q, clar_down_q),
     )
 
     # Deterministic ordering using triggers:
@@ -243,17 +231,13 @@ async def delegating_tool(
         "Keep responses concise.",
     )
 
-    async def request_clarification(question: str) -> str:
-        await _clarification_up_q.put(question)
-        return await _clarification_down_q.get()
-
     handle = start_async_tool_loop(  # <-- returns AsyncToolLoopHandle
         inner_llm,
         message="Run inner_tool please.",
         tools={
             "inner_tool": inner_tool,
-            "request_clarification": request_clarification,
         },
+        clarification_queues=(_clarification_up_q, _clarification_down_q),
     )
     return handle  # outer tool finishes instantly
 
@@ -267,10 +251,6 @@ async def test_clarification_bubbles_through_returned_handle(llm_config) -> None
 
     clar_up_q: asyncio.Queue[str] = asyncio.Queue()
     clar_down_q: asyncio.Queue[str] = asyncio.Queue()
-
-    async def request_clarification(question: str) -> str:
-        await clar_up_q.put(question)
-        return await clar_down_q.get()
 
     outer_llm = make_llm(
         "You are the TOP-LEVEL coordinator. When any pending tool (including nested delegated tools) asks a clarification "
@@ -288,8 +268,8 @@ async def test_clarification_bubbles_through_returned_handle(llm_config) -> None
         message="Run delegating_tool please.",
         tools={
             "delegating_tool": delegating_tool,
-            "request_clarification": request_clarification,
         },
+        clarification_queues=(clar_up_q, clar_down_q),
     )
 
     # ── satisfy the clarification that should bubble up ──────────────────

@@ -403,7 +403,7 @@ class TaskScheduler(BaseTaskScheduler):
         "TaskScheduler",
         "ask",
         payload_key="question",
-        display_label="Checking Tasks",
+        display_label="Checking tasks",
     )
     async def ask(
         self,
@@ -427,12 +427,12 @@ class TaskScheduler(BaseTaskScheduler):
         # Build a live tools dictionary so the prompt reflects reality
         tools = dict(self.get_tools("ask"))
 
-        # Add clarification tool when queues are provided
-        self._maybe_add_clarification_tool(
-            tools,
-            _clarification_up_q,
-            _clarification_down_q,
-        )
+        _clar_queues = None
+        if _clarification_up_q is not None and _clarification_down_q is not None:
+            from ..common.llm_helpers import make_request_clarification_tool
+
+            _clar_queues = (_clarification_up_q, _clarification_down_q)
+            tools["request_clarification"] = make_request_clarification_tool(None, None)
 
         # Inject the dynamic system prompt
         include_activity = (
@@ -469,6 +469,7 @@ class TaskScheduler(BaseTaskScheduler):
                 ReadOnlyAskGuardHandle if SETTINGS.UNITY_READONLY_ASK_GUARD else None
             ),
             response_format=response_format,
+            clarification_queues=_clar_queues,
         )
         # Logging wrapper applied by decorator
 
@@ -485,7 +486,7 @@ class TaskScheduler(BaseTaskScheduler):
         "TaskScheduler",
         "update",
         payload_key="request",
-        display_label="Updating Tasks",
+        display_label="Updating tasks",
     )
     async def update(
         self,
@@ -544,12 +545,12 @@ class TaskScheduler(BaseTaskScheduler):
             ),
         )
 
-        # Add clarification tool when queues are provided
-        self._maybe_add_clarification_tool(
-            tools,
-            _clarification_up_q,
-            _clarification_down_q,
-        )
+        _clar_queues = None
+        if _clarification_up_q is not None and _clarification_down_q is not None:
+            from ..common.llm_helpers import make_request_clarification_tool
+
+            _clar_queues = (_clarification_up_q, _clarification_down_q)
+            tools["request_clarification"] = make_request_clarification_tool(None, None)
 
         # Inject the dynamic system prompt
         include_activity = (
@@ -584,6 +585,7 @@ class TaskScheduler(BaseTaskScheduler):
             log_steps=_log_tool_steps,
             tool_policy=effective_tool_policy,
             response_format=response_format,
+            clarification_queues=_clar_queues,
         )
         # Logging wrapper applied by decorator
 
@@ -600,7 +602,7 @@ class TaskScheduler(BaseTaskScheduler):
         "TaskScheduler",
         "execute",
         payload_key="request",
-        display_label="Working on Task",
+        display_label="Working on task",
     )
     async def execute(
         self,
@@ -3803,37 +3805,6 @@ class TaskScheduler(BaseTaskScheduler):
     #  (removed) checkpoint persistence                                   #
     # ------------------------------------------------------------------ #
 
-    def _make_request_clarification_tool(
-        self,
-        clarification_up_q: Optional[asyncio.Queue[str]] = None,
-        clarification_down_q: Optional[asyncio.Queue[str]] = None,
-    ) -> Callable[[str], "asyncio.Future[str]"]:
-        """Return an async tool that bubbles a question up and awaits the answer.
-
-        Behaviour and integration notes
-        --------------------------------
-        - This tool exists only when the outer TaskScheduler loop has been given
-          clarification queues. If those queues are not present, the outer loop
-          MUST NOT ask the user questions as part of its final response. It must
-          proceed using sensible defaults or best guesses and briefly state the
-          assumptions used. If an inner tool asks for clarification but this
-          outer loop lacks clarification queues, explicitly tell the inner tool
-          that no clarification channel is available and provide reasonable
-          default values or concrete best‑guess parameters instead.
-
-        The returned coroutine raises RuntimeError if queues are not provided at call time.
-        """
-
-        async def _request(question: str) -> str:
-            if clarification_up_q is None or clarification_down_q is None:
-                raise RuntimeError(
-                    "Clarification queues not supplied – cannot request clarification in this context.",
-                )
-            await clarification_up_q.put(question)
-            return await clarification_down_q.get()
-
-        return _request
-
     # ────────────────────────────────────────────────────────────────────
     # Small DRY helpers used by ask/update flows
     # ────────────────────────────────────────────────────────────────────
@@ -3855,6 +3826,7 @@ class TaskScheduler(BaseTaskScheduler):
         ] = None,
         handle_cls: Optional["type[SteerableToolHandle]"] = None,
         response_format: Optional[Type[BaseModel]] = None,
+        clarification_queues: Optional[Tuple["asyncio.Queue", "asyncio.Queue"]] = None,
     ) -> SteerableToolHandle:
         """Centralised wrapper around start_async_tool_loop."""
         return start_async_tool_loop(
@@ -3868,20 +3840,8 @@ class TaskScheduler(BaseTaskScheduler):
             tool_policy=tool_policy,
             handle_cls=handle_cls,
             response_format=response_format,
+            clarification_queues=clarification_queues,
         )
-
-    def _maybe_add_clarification_tool(
-        self,
-        tools: ToolsDict,
-        clarification_up_q: Optional[asyncio.Queue[str]],
-        clarification_down_q: Optional[asyncio.Queue[str]],
-    ) -> None:
-        """Insert `request_clarification` only when both queues are provided."""
-        if clarification_up_q is not None and clarification_down_q is not None:
-            tools["request_clarification"] = self._make_request_clarification_tool(
-                clarification_up_q,
-                clarification_down_q,
-            )
 
     def _wrap_result_with_messages(
         self,

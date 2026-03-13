@@ -29,9 +29,10 @@ from unity.file_manager.prompt_builders import (
     build_file_manager_ask_about_file_prompt,
 )
 from unity.common.llm_helpers import (
+    make_request_clarification_tool,
     methods_to_tool_dict,
 )
-from unity.common.clarification_tools import add_clarification_tool_with_events
+from unity.events.event_bus import EVENT_BUS, Event
 from unity.common.async_tool_loop import (
     TOOL_LOOP_LINEAGE,
     SteerableToolHandle,
@@ -1547,7 +1548,7 @@ class FileManager(BaseFileManager):
         "FileManager",
         "ask_about_file",
         payload_key="question",
-        display_label="Reading File",
+        display_label="Reading file",
     )
     async def ask_about_file(
         self,
@@ -1587,15 +1588,47 @@ class FileManager(BaseFileManager):
         # Expose join/multi-join tools for cross-context retrieval
         tools.update(dict(self.get_tools("ask_about_file.multi_table")))
 
+        _clar_queues = None
+        _on_clar_req = None
+        _on_clar_ans = None
         if _clarification_up_q is not None and _clarification_down_q is not None:
-            add_clarification_tool_with_events(
-                tools,
-                _clarification_up_q,
-                _clarification_down_q,
-                manager="FileManager",
-                method="ask_about_file",
-                call_id=_call_id,
-            )
+            _clar_queues = (_clarification_up_q, _clarification_down_q)
+            tools["request_clarification"] = make_request_clarification_tool(None, None)
+
+            async def _on_clar_req(q: str):
+                try:
+                    await EVENT_BUS.publish(
+                        Event(
+                            type="ManagerMethod",
+                            calling_id=_call_id,
+                            payload={
+                                "manager": "FileManager",
+                                "method": "ask_about_file",
+                                "action": "clarification_request",
+                                "question": q,
+                            },
+                        ),
+                    )
+                except Exception:
+                    pass
+
+            async def _on_clar_ans(ans: str):
+                try:
+                    await EVENT_BUS.publish(
+                        Event(
+                            type="ManagerMethod",
+                            calling_id=_call_id,
+                            payload={
+                                "manager": "FileManager",
+                                "method": "ask_about_file",
+                                "action": "clarification_answer",
+                                "answer": ans,
+                            },
+                        ),
+                    )
+                except Exception:
+                    pass
+
         include_activity = (
             self._rolling_summary_in_prompts
             if rolling_summary_in_prompts is None
@@ -1624,6 +1657,9 @@ class FileManager(BaseFileManager):
                 ReadOnlyAskGuardHandle if SETTINGS.UNITY_READONLY_ASK_GUARD else None
             ),
             response_format=response_format,
+            clarification_queues=_clar_queues,
+            on_clarification_request=_on_clar_req,
+            on_clarification_answer=_on_clar_ans,
         )
         if _return_reasoning_steps:
             original_result = handle.result

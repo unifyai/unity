@@ -1,6 +1,6 @@
 """Tests for the first-class send_notification tool.
 
-Verifies that the make_send_notification_tool helper produces a tool that:
+Verifies that the loop-owned send_notification tool:
   1. Puts notifications onto _notification_up_q (surfaced via handle.next_notification)
   2. Fires the on_notify callback for event emission
   3. Coexists with in-code notify() — both paths produce notifications on the same handle
@@ -14,7 +14,6 @@ import json
 import pytest
 from unity.common.async_tool_loop import start_async_tool_loop
 from unity.common.llm_client import new_llm_client
-from unity.common.llm_helpers import make_send_notification_tool
 from tests.helpers import _handle_project
 from tests.async_helpers import first_assistant_tool_call
 
@@ -38,8 +37,6 @@ async def do_work(task: str) -> str:
 async def test_send_notification_surfaces_on_handle(llm_config) -> None:
     """send_notification tool call produces a notification on handle.next_notification()."""
 
-    notif_tool = make_send_notification_tool()
-
     client = make_llm(
         "You have two tools: send_notification and do_work.\n"
         "1) First call send_notification with the message 'Starting task...'.\n"
@@ -52,10 +49,10 @@ async def test_send_notification_surfaces_on_handle(llm_config) -> None:
         client,
         message="Please process data and notify me of progress.",
         tools={
-            "send_notification": notif_tool,
             "do_work": do_work,
         },
         time_awareness=False,
+        on_notify=lambda msg: None,
     )
 
     try:
@@ -92,8 +89,6 @@ async def test_send_notification_on_notify_callback(llm_config) -> None:
     async def _capture(msg: str):
         captured.append(msg)
 
-    notif_tool = make_send_notification_tool(on_notify=_capture)
-
     client = make_llm(
         "Call send_notification with message 'Checkpoint reached' then respond with 'ok'.",
         **llm_config,
@@ -102,8 +97,9 @@ async def test_send_notification_on_notify_callback(llm_config) -> None:
     handle = start_async_tool_loop(
         client,
         message="Notify me.",
-        tools={"send_notification": notif_tool, "do_work": do_work},
+        tools={"do_work": do_work},
         time_awareness=False,
+        on_notify=_capture,
     )
 
     try:
@@ -141,8 +137,6 @@ async def test_send_notification_coexists_with_inline_notify(llm_config) -> None
     """Both send_notification (tool call) and inline notify (via _notification_up_q)
     produce notifications on the same handle."""
 
-    notif_tool = make_send_notification_tool()
-
     client = make_llm(
         "You have send_notification and tool_with_inline_notify.\n"
         "1) Call send_notification with message 'tool notification'.\n"
@@ -155,10 +149,10 @@ async def test_send_notification_coexists_with_inline_notify(llm_config) -> None
         client,
         message="Run both notification paths.",
         tools={
-            "send_notification": notif_tool,
             "tool_with_inline_notify": tool_with_inline_notify,
         },
         time_awareness=False,
+        on_notify=lambda msg: None,
     )
 
     notifications: list[dict] = []

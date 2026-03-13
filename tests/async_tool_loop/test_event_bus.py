@@ -293,7 +293,7 @@ async def test_ask_publishes_boundary_events(llm_config) -> None:
     ), "Outgoing ask event should share the incoming calling_id"
 
     # display_label should be present
-    assert incoming[0].payload.get("display_label") == "Answering Question"
+    assert incoming[0].payload.get("display_label") == "Answering question"
 
 
 @pytest.mark.asyncio
