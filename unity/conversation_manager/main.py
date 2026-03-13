@@ -308,6 +308,12 @@ async def main(project_name: str = "Assistants"):
     LOGGER.debug(f"{ICONS['lifecycle']} Server is Running...")
     await _stop.wait()
 
+    _oom_prevention = os.path.isfile("/tmp/oom_prevention_shutdown")
+    if _oom_prevention:
+        LOGGER.warning(
+            f"{ICONS['lifecycle']} Shutdown triggered by memory pressure (OOM prevention)",
+        )
+
     LOGGER.debug(f"{ICONS['lifecycle']} Cleaning up conversation manager...")
     await _conversation_manager.cleanup()
     LOGGER.debug(f"{ICONS['lifecycle']} Cleanup finished")
