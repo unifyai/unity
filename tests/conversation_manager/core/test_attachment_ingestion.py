@@ -127,3 +127,74 @@ class TestAttachmentIngestion:
         assert storage.indexed_exists, "Downloaded email attachment must be indexed"
         assert storage.parsed_status == "success", "Email attachment must be parsed"
         assert storage.has_document, "Parsed content must be available"
+
+
+class TestHydrationAttachmentMaterialization:
+    """Verify that attachments collected during hydration are materialised
+    when the post-init download step runs.
+    """
+
+    @pytest.mark.asyncio
+    async def test_pending_unify_attachments_materialised(self, real_file_manager):
+        """Unify message attachments stashed during hydration get downloaded
+        and ingested when the post-init step fires.
+        """
+        fm = real_file_manager
+
+        mock_response = MagicMock()
+        mock_response.read = AsyncMock(return_value=SAMPLE_TEXT_CONTENT)
+        mock_response.raise_for_status = MagicMock()
+
+        mock_session = MagicMock()
+        mock_session.get = MagicMock(
+            return_value=AsyncMock(
+                __aenter__=AsyncMock(return_value=mock_response),
+            ),
+        )
+        mock_session.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_session.__aexit__ = AsyncMock(return_value=None)
+
+        with patch("aiohttp.ClientSession", return_value=mock_session):
+            await comms_utils.add_unify_message_attachments(
+                [
+                    {
+                        "id": "hydrated-att-1",
+                        "filename": "notes.txt",
+                        "url": "https://storage.googleapis.com/signed-url",
+                    },
+                ],
+            )
+
+        display_name = "Attachments/hydrated-att-1_notes.txt"
+        assert fm.exists(display_name), "Hydrated attachment must appear on disk"
+        storage = fm.describe(file_path=display_name)
+        assert storage.indexed_exists, "Hydrated attachment must be indexed"
+
+    @pytest.mark.asyncio
+    async def test_idempotent_with_existing_file(self, real_file_manager, tmp_path):
+        """If a hydrated attachment already exists on disk (e.g. from a live
+        message in the same session), the download is skipped.
+        """
+        att_dir = tmp_path / "Attachments"
+        att_dir.mkdir(exist_ok=True)
+        existing = att_dir / "hydrated-att-2_notes.txt"
+        existing.write_bytes(b"already here")
+
+        mock_session = MagicMock()
+        mock_session.get = MagicMock()
+        mock_session.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_session.__aexit__ = AsyncMock(return_value=None)
+
+        with patch("aiohttp.ClientSession", return_value=mock_session):
+            await comms_utils.add_unify_message_attachments(
+                [
+                    {
+                        "id": "hydrated-att-2",
+                        "filename": "notes.txt",
+                        "gs_url": "gs://bucket/hydrated-att-2_notes.txt",
+                    },
+                ],
+            )
+
+        mock_session.get.assert_not_called()
+        assert existing.read_bytes() == b"already here"
