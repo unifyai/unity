@@ -52,7 +52,7 @@ RUN npm install --ignore-scripts --omit=dev
 WORKDIR /app/magnitude/packages/magnitude-extract
 RUN npm install --ignore-scripts --omit=dev
 
-# Agent service install
+# Agent service install (includes demo-sites/ subdirectory)
 WORKDIR /app/agent-service
 COPY agent-service/ ./
 RUN npm ci

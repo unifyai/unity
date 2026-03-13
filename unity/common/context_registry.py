@@ -30,10 +30,6 @@ class ContextRegistry:
         return active_context["read"]
 
     @staticmethod
-    def _get_available_contexts() -> List[str]:
-        return list(unify.get_contexts().keys())
-
-    @staticmethod
     def _get_manager_name(
         manager: Union[BaseStateManager, Type[BaseStateManager]],
     ) -> str:
@@ -120,7 +116,6 @@ class ContextRegistry:
         cls,
         manager_name: str,
         entry: Dict,
-        remote_contexts: List[str],
     ):
         """Create unify context and ensure fields are created, store in registry.
 
@@ -271,11 +266,9 @@ class ContextRegistry:
         if ret is None:
             active_context = cls._get_active_context()
             contexts = cls._get_contexts_for_manager(manager, active_context)
-            available_contexts = cls._get_available_contexts()
             ret = cls._create_context_wrapper(
                 manager_name,
                 contexts[ctx_name],
-                available_contexts,
             )
 
         return ret
@@ -287,7 +280,6 @@ class ContextRegistry:
             return
 
         current_context = cls._get_active_context()
-        available_contexts = cls._get_available_contexts()
 
         with ThreadPoolExecutor() as executor:
             futures = []
@@ -302,7 +294,6 @@ class ContextRegistry:
                             cls._create_context_wrapper,
                             manager_name,
                             entry,
-                            available_contexts,
                         ),
                     )
 

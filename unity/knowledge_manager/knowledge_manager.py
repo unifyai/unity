@@ -20,6 +20,7 @@ from unity.common.grouping_helpers import build_grouped_dump_payload
 from .types import ColumnType
 from ..common.llm_helpers import (
     methods_to_tool_dict,
+    make_request_clarification_tool,
 )
 from ..common.async_tool_loop import (
     start_async_tool_loop,
@@ -38,8 +39,8 @@ from ..settings import SETTINGS
 from ..common.read_only_ask_guard import ReadOnlyAskGuardHandle
 from ..common.context_registry import ContextRegistry, TableContext
 from ..common.llm_client import new_llm_client
-from ..common.clarification_tools import add_clarification_tool_with_events
 from ..common.metrics_utils import reduce_logs
+from ..events.event_bus import EVENT_BUS, Event
 
 # Module delegations (split helpers for parity with ContactManager)
 from .storage import (
@@ -452,7 +453,7 @@ class KnowledgeManager(BaseKnowledgeManager):
         "KnowledgeManager",
         "refactor",
         payload_key="request",
-        display_label="Reorganizing Notes",
+        display_label="Reorganizing notes",
     )
     async def refactor(
         self,
@@ -497,15 +498,46 @@ class KnowledgeManager(BaseKnowledgeManager):
         # 1️⃣  Prepare toolset (and optional live clarification helper)
         tools = dict(self.get_tools("refactor"))
 
+        _clar_queues = None
+        _on_clar_req = None
+        _on_clar_ans = None
         if _clarification_up_q is not None and _clarification_down_q is not None:
-            add_clarification_tool_with_events(
-                tools,
-                _clarification_up_q,
-                _clarification_down_q,
-                manager="KnowledgeManager",
-                method="refactor",
-                call_id=_call_id,
-            )
+            _clar_queues = (_clarification_up_q, _clarification_down_q)
+            tools["request_clarification"] = make_request_clarification_tool(None, None)
+
+            async def _on_clar_req(q: str):
+                try:
+                    await EVENT_BUS.publish(
+                        Event(
+                            type="ManagerMethod",
+                            calling_id=_call_id,
+                            payload={
+                                "manager": "KnowledgeManager",
+                                "method": "refactor",
+                                "action": "clarification_request",
+                                "question": q,
+                            },
+                        ),
+                    )
+                except Exception:
+                    pass
+
+            async def _on_clar_ans(ans: str):
+                try:
+                    await EVENT_BUS.publish(
+                        Event(
+                            type="ManagerMethod",
+                            calling_id=_call_id,
+                            payload={
+                                "manager": "KnowledgeManager",
+                                "method": "refactor",
+                                "action": "clarification_answer",
+                                "answer": ans,
+                            },
+                        ),
+                    )
+                except Exception:
+                    pass
 
         # 2️⃣  Build & inject system prompt
         table_schemas_json = json.dumps(
@@ -536,6 +568,9 @@ class KnowledgeManager(BaseKnowledgeManager):
             parent_chat_context=_parent_chat_context,
             tool_policy=self._default_refactor_tool_policy,
             response_format=response_format,
+            clarification_queues=_clar_queues,
+            on_clarification_request=_on_clar_req,
+            on_clarification_answer=_on_clar_ans,
         )
 
         # 4️⃣  Optionally wrap .result() to expose hidden reasoning
@@ -555,7 +590,7 @@ class KnowledgeManager(BaseKnowledgeManager):
         "KnowledgeManager",
         "update",
         payload_key="request",
-        display_label="Updating Notes",
+        display_label="Updating notes",
     )
     async def update(
         self,
@@ -601,15 +636,46 @@ class KnowledgeManager(BaseKnowledgeManager):
         # ── 1.  Expose tools + a *dynamic* request_clarification helper ──
         tools = dict(self.get_tools("update"))
 
+        _clar_queues = None
+        _on_clar_req = None
+        _on_clar_ans = None
         if _clarification_up_q is not None and _clarification_down_q is not None:
-            add_clarification_tool_with_events(
-                tools,
-                _clarification_up_q,
-                _clarification_down_q,
-                manager="KnowledgeManager",
-                method="update",
-                call_id=_call_id,
-            )
+            _clar_queues = (_clarification_up_q, _clarification_down_q)
+            tools["request_clarification"] = make_request_clarification_tool(None, None)
+
+            async def _on_clar_req(q: str):
+                try:
+                    await EVENT_BUS.publish(
+                        Event(
+                            type="ManagerMethod",
+                            calling_id=_call_id,
+                            payload={
+                                "manager": "KnowledgeManager",
+                                "method": "update",
+                                "action": "clarification_request",
+                                "question": q,
+                            },
+                        ),
+                    )
+                except Exception:
+                    pass
+
+            async def _on_clar_ans(ans: str):
+                try:
+                    await EVENT_BUS.publish(
+                        Event(
+                            type="ManagerMethod",
+                            calling_id=_call_id,
+                            payload={
+                                "manager": "KnowledgeManager",
+                                "method": "update",
+                                "action": "clarification_answer",
+                                "answer": ans,
+                            },
+                        ),
+                    )
+                except Exception:
+                    pass
 
         # ── 2.  Launch the interactive tool-use loop ──────────────────────
         # Add the system message with all tools
@@ -642,6 +708,9 @@ class KnowledgeManager(BaseKnowledgeManager):
             parent_chat_context=_parent_chat_context,
             tool_policy=self._default_update_tool_policy,
             response_format=response_format,
+            clarification_queues=_clar_queues,
+            on_clarification_request=_on_clar_req,
+            on_clarification_answer=_on_clar_ans,
         )
 
         # Optionally wrap .result() to expose reasoning
@@ -662,7 +731,7 @@ class KnowledgeManager(BaseKnowledgeManager):
         "KnowledgeManager",
         "ask",
         payload_key="question",
-        display_label="Checking Notes",
+        display_label="Checking notes",
     )
     async def ask(
         self,
@@ -717,15 +786,46 @@ class KnowledgeManager(BaseKnowledgeManager):
             multi_table_tools = dict(self.get_tools("ask.multi_table"))
             tools.update(multi_table_tools)
 
+        _clar_queues = None
+        _on_clar_req = None
+        _on_clar_ans = None
         if _clarification_up_q is not None and _clarification_down_q is not None:
-            add_clarification_tool_with_events(
-                tools,
-                _clarification_up_q,
-                _clarification_down_q,
-                manager="KnowledgeManager",
-                method="ask",
-                call_id=_call_id,
-            )
+            _clar_queues = (_clarification_up_q, _clarification_down_q)
+            tools["request_clarification"] = make_request_clarification_tool(None, None)
+
+            async def _on_clar_req(q: str):
+                try:
+                    await EVENT_BUS.publish(
+                        Event(
+                            type="ManagerMethod",
+                            calling_id=_call_id,
+                            payload={
+                                "manager": "KnowledgeManager",
+                                "method": "ask",
+                                "action": "clarification_request",
+                                "question": q,
+                            },
+                        ),
+                    )
+                except Exception:
+                    pass
+
+            async def _on_clar_ans(ans: str):
+                try:
+                    await EVENT_BUS.publish(
+                        Event(
+                            type="ManagerMethod",
+                            calling_id=_call_id,
+                            payload={
+                                "manager": "KnowledgeManager",
+                                "method": "ask",
+                                "action": "clarification_answer",
+                                "answer": ans,
+                            },
+                        ),
+                    )
+                except Exception:
+                    pass
 
         # ── 2.  Launch the interactive tool-use loop ──────────────────────
         # Add the system message with all tools
@@ -762,6 +862,9 @@ class KnowledgeManager(BaseKnowledgeManager):
             handle_cls=(
                 ReadOnlyAskGuardHandle if SETTINGS.UNITY_READONLY_ASK_GUARD else None
             ),
+            clarification_queues=_clar_queues,
+            on_clarification_request=_on_clar_req,
+            on_clarification_answer=_on_clar_ans,
         )
 
         # Optionally wrap .result() to expose reasoning

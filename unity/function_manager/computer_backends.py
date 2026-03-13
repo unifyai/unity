@@ -1553,24 +1553,7 @@ class MagnitudeBackend(ComputerBackend):
         if label is not None:
             params["label"] = label
         if self._url_mappings:
-            if mode in ("desktop", "web-vm"):
-                # Remote VM can't reach our localhost; rewrite to the pod's
-                # actual IP so the VM's context.route() handler can fetch
-                # the demo site running in this pod.
-                import socket
-
-                pod_ip = socket.gethostbyname(socket.gethostname())
-                params["urlMappings"] = {
-                    orig: (
-                        repl.replace("localhost", pod_ip).replace(
-                            "127.0.0.1",
-                            pod_ip,
-                        )
-                    )
-                    for orig, repl in self._url_mappings.items()
-                }
-            else:
-                params["urlMappings"] = self._url_mappings
+            params["urlMappings"] = self._url_mappings
         auth_key = SESSION_DETAILS.unify_key
         headers = {"authorization": f"Bearer {auth_key}"}
         use_ssl = self._vm_ssl if mode in ("desktop", "web-vm") else None

@@ -20,7 +20,7 @@ from urllib.parse import urlparse
 
 logger = logging.getLogger(__name__)
 
-_DEMO_SITES_DIR = Path(__file__).resolve().parents[2] / "demo-sites"
+_DEMO_SITES_DIR = Path(__file__).resolve().parents[2] / "agent-service" / "demo-sites"
 
 _RUNNING: dict[int, subprocess.Popen] = {}
 

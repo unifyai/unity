@@ -12,8 +12,9 @@ dotenv.config();
 import os from 'os';
 import path from 'path';
 import fs from 'fs';
+import net from 'net';
 import { randomUUID } from 'crypto';
-import { spawn, execSync } from 'child_process';
+import { ChildProcess, spawn, execSync } from 'child_process';
 import multer from 'multer';
 import { jsonSchemaToZod } from './jsonSchemaToZod';
 
@@ -405,6 +406,146 @@ wsInstance.app.ws('/logs/stream', async (ws: WebSocket, req: Request) => {
 });
 
 
+// --- Demo Sites ---
+// Port-to-directory mapping (same convention as the Python demo_sites.py)
+const DEMO_SITE_DIRS: Record<number, string> = {
+  4001: 'example',
+  4002: 'vantage-portal',
+};
+
+const demoSiteProcesses: Map<number, ChildProcess> = new Map();
+
+function isPortOpen(port: number): Promise<boolean> {
+  return new Promise((resolve) => {
+    const sock = net.createConnection({ port, host: '127.0.0.1' });
+    sock.setTimeout(500);
+    sock.on('connect', () => { sock.destroy(); resolve(true); });
+    sock.on('error', () => { sock.destroy(); resolve(false); });
+    sock.on('timeout', () => { sock.destroy(); resolve(false); });
+  });
+}
+
+function waitForPort(port: number, timeoutMs = 5000): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs;
+  return new Promise((resolve) => {
+    const check = async () => {
+      if (await isPortOpen(port)) return resolve(true);
+      if (Date.now() >= deadline) return resolve(false);
+      setTimeout(check, 200);
+    };
+    check();
+  });
+}
+
+function findDemoSitesRoot(): string | null {
+  // demo-sites/ lives inside agent-service/ so it's always co-located
+  const candidates = [
+    path.resolve(__dirname, '..', 'demo-sites'),           // dev: agent-service/src/../demo-sites
+    path.resolve(__dirname, '..', '..', 'demo-sites'),     // compiled: agent-service/dist/../../demo-sites
+    '/app/agent-service/demo-sites',                        // Docker
+  ];
+  for (const dir of candidates) {
+    if (fs.existsSync(dir)) return dir;
+  }
+  return null;
+}
+
+async function ensureDemoSites(urlMappings: Record<string, string>): Promise<void> {
+  const demoSitesRoot = findDemoSitesRoot();
+  if (!demoSitesRoot) {
+    console.warn('[demo-sites] No demo-sites directory found, skipping');
+    return;
+  }
+
+  for (const [, replacement] of Object.entries(urlMappings)) {
+    let parsed: URL;
+    try { parsed = new URL(replacement); } catch { continue; }
+
+    const host = parsed.hostname;
+    if (host !== 'localhost' && host !== '127.0.0.1') continue;
+
+    const port = parseInt(parsed.port, 10);
+    if (!port) continue;
+
+    if (await isPortOpen(port)) {
+      console.log(`[demo-sites] Port ${port} already in use, skipping`);
+      continue;
+    }
+
+    if (demoSiteProcesses.has(port)) {
+      const existing = demoSiteProcesses.get(port)!;
+      if (existing.exitCode === null) {
+        console.log(`[demo-sites] Process for port ${port} still running (pid ${existing.pid})`);
+        continue;
+      }
+      console.warn(`[demo-sites] Process for port ${port} exited, restarting`);
+    }
+
+    // Find the matching demo site directory
+    const dirName = DEMO_SITE_DIRS[port];
+    if (!dirName) {
+      console.warn(`[demo-sites] No demo site mapped to port ${port}`);
+      continue;
+    }
+
+    const siteDir = path.join(demoSitesRoot, dirName);
+    const serverJs = path.join(siteDir, 'server.js');
+    const indexHtml = path.join(siteDir, 'index.html');
+
+    if (fs.existsSync(serverJs)) {
+      console.log(`[demo-sites] Starting ${dirName} on port ${port} (node server.js)`);
+      const proc = spawn('node', [serverJs, String(port)], {
+        cwd: siteDir,
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
+      proc.stdout?.on('data', (d: Buffer) => console.log(`[demo-sites:${dirName}] ${d.toString().trim()}`));
+      proc.stderr?.on('data', (d: Buffer) => console.error(`[demo-sites:${dirName}] ${d.toString().trim()}`));
+      proc.on('exit', (code) => console.log(`[demo-sites] ${dirName} exited with code ${code}`));
+      demoSiteProcesses.set(port, proc);
+    } else if (fs.existsSync(indexHtml)) {
+      // Fallback: serve static directory with a minimal handler
+      console.log(`[demo-sites] Starting static server for ${dirName} on port ${port}`);
+      const staticServer = http.createServer((req, res) => {
+        const filePath = path.join(siteDir, req.url === '/' ? 'index.html' : req.url || 'index.html');
+        fs.readFile(filePath, (err, data) => {
+          if (err) { res.writeHead(404); res.end('Not found'); return; }
+          const ext = path.extname(filePath).toLowerCase();
+          const mimeTypes: Record<string, string> = {'.html':'text/html','.css':'text/css','.js':'text/javascript','.json':'application/json','.png':'image/png','.jpg':'image/jpeg','.svg':'image/svg+xml'};
+          res.writeHead(200, { 'Content-Type': mimeTypes[ext] || 'application/octet-stream' });
+          res.end(data);
+        });
+      });
+      staticServer.listen(port, '0.0.0.0');
+      // Wrap in a pseudo-ChildProcess shape for cleanup
+      const fakeProc = { exitCode: null, kill: () => { staticServer.close(); } } as unknown as ChildProcess;
+      demoSiteProcesses.set(port, fakeProc);
+    } else {
+      console.warn(`[demo-sites] ${dirName} has no server.js or index.html, skipping`);
+      continue;
+    }
+
+    const ready = await waitForPort(port);
+    if (ready) {
+      console.log(`[demo-sites] ${dirName} ready on port ${port}`);
+    } else {
+      console.error(`[demo-sites] ${dirName} failed to start on port ${port} within timeout`);
+    }
+  }
+}
+
+// Cleanup demo site processes on exit
+function cleanupDemoSites() {
+  for (const [port, proc] of demoSiteProcesses) {
+    try { proc.kill(); } catch {}
+    console.log(`[demo-sites] Stopped process on port ${port}`);
+  }
+  demoSiteProcesses.clear();
+}
+process.on('SIGTERM', cleanupDemoSites);
+process.on('SIGINT', cleanupDemoSites);
+process.on('exit', cleanupDemoSites);
+
+
 // --- Agent Initialization ---
 console.log(`Starting Magnitude BrowserAgent...`);
 app.listen(port, () => {
@@ -586,6 +727,11 @@ app.post('/start', async (req: Request, res: Response) => {
   try {
     let agent: BrowserAgent;
     const mappings = urlMappings && typeof urlMappings === 'object' ? urlMappings as Record<string, string> : undefined;
+
+    if (mappings) {
+      await ensureDemoSites(mappings);
+    }
+
     if (mode === "desktop") {
       agent = await startDesktop();
     } else if (mode === "web-vm") {
