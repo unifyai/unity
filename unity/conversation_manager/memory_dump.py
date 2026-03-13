@@ -292,17 +292,7 @@ def _dump_open_fds(out: io.StringIO) -> None:
         out.write(f"  fd {fd:4d} → {target}\n")
 
 
-def write_oom_memory_dump(log_dir: str | Path | None = None) -> Path | None:
-    """Write an exhaustive memory dump and return the file path.
-
-    Args:
-        log_dir: Directory to write the dump file.  Falls back to
-                 UNITY_LOG_DIR, then /var/log/unity, then /tmp.
-
-    Returns:
-        Path to the dump file, or None if writing failed entirely.
-    """
-    # Resolve output directory
+def _resolve_log_dir(log_dir: str | Path | None) -> Path:
     if log_dir is None:
         log_dir = os.environ.get("UNITY_LOG_DIR", "").strip()
     if not log_dir:
@@ -310,14 +300,33 @@ def write_oom_memory_dump(log_dir: str | Path | None = None) -> Path | None:
             if os.path.isdir(fallback):
                 log_dir = fallback
                 break
-    if not log_dir:
-        log_dir = "/tmp"
+    return Path(log_dir or "/tmp")
 
-    dump_path = Path(log_dir) / "oom_memory_dump.txt"
+
+def write_memory_dump(
+    filename: str = "oom_memory_dump.txt",
+    log_dir: str | Path | None = None,
+    *,
+    header: str | None = None,
+) -> Path | None:
+    """Write an exhaustive memory dump and return the file path.
+
+    Args:
+        filename: Name of the dump file (e.g. ``oom_memory_dump.txt``
+                  or ``startup_memory_dump.txt``).
+        log_dir: Directory to write to.  Falls back to UNITY_LOG_DIR,
+                 then /var/log/unity, then /tmp.
+        header: First line of the dump.  Defaults to ``MEMORY DUMP``.
+
+    Returns:
+        Path to the dump file, or None if writing failed entirely.
+    """
+    dir_path = _resolve_log_dir(log_dir)
+    dump_path = dir_path / filename
 
     out = io.StringIO()
     ts = datetime.now(timezone.utc).isoformat()
-    out.write(f"OOM PREVENTION MEMORY DUMP — {ts}\n")
+    out.write(f"{header or 'MEMORY DUMP'} — {ts}\n")
     out.write(f"PID: {os.getpid()}  Python: {sys.version}\n")
 
     collectors = [
@@ -343,10 +352,18 @@ def write_oom_memory_dump(log_dir: str | Path | None = None) -> Path | None:
         dump_path.write_text(out.getvalue(), encoding="utf-8")
         return dump_path
     except Exception:
-        # Last resort — try /tmp
-        fallback = Path("/tmp/oom_memory_dump.txt")
+        fallback = Path(f"/tmp/{filename}")
         try:
             fallback.write_text(out.getvalue(), encoding="utf-8")
             return fallback
         except Exception:
             return None
+
+
+def write_oom_memory_dump(log_dir: str | Path | None = None) -> Path | None:
+    """Convenience wrapper for OOM-prevention dumps."""
+    return write_memory_dump(
+        "oom_memory_dump.txt",
+        log_dir,
+        header="OOM PREVENTION MEMORY DUMP",
+    )

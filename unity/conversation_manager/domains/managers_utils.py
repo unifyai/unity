@@ -1509,6 +1509,23 @@ async def init_conv_manager(
                 f"{ICONS['managers_worker']} [ManagersWorker] Initialization complete in {_init_dur:.2f} seconds",
             )
 
+            try:
+                from unity.conversation_manager.memory_dump import (
+                    write_memory_dump,
+                )
+
+                dump_path = write_memory_dump("startup_memory_dump.txt")
+                if dump_path:
+                    LOGGER.info(
+                        f"{ICONS['managers_worker']} [ManagersWorker] "
+                        f"Startup memory dump written to {dump_path}",
+                    )
+            except Exception as exc:
+                LOGGER.warning(
+                    f"{ICONS['managers_worker']} [ManagersWorker] "
+                    f"Startup memory dump failed: {exc}",
+                )
+
         except Exception as e:
             LOGGER.error(
                 f"{ICONS['managers_worker']} [ManagersWorker] Error during initialization: {e}",
