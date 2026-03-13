@@ -61,11 +61,7 @@ from unity.conversation_manager.medium_scripts.common import (
     hydrate_fast_brain_history,
     trim_fast_brain_context,
 )
-from unity.conversation_manager.types.screenshot import (
-    ScreenshotEntry,
-    generate_screenshot_path,
-    write_screenshot_to_disk,
-)
+from unity.conversation_manager.types.screenshot import ScreenshotEntry
 
 # Globals initialized lazily or via prewarm to avoid duplicate heavy init
 STT = None
@@ -278,15 +274,18 @@ async def entrypoint(ctx: agents.JobContext):
     _log.session_start("Connected to room")
 
     # User screen share and webcam capture (subscribe to LiveKit room tracks automatically)
+    _gcs_session_id = ctx.room.name or "unknown"
     screen_capture = UserTrackCaptureManager(
         ctx.room,
         track_source="screenshare",
+        session_id=_gcs_session_id,
         on_track_change=publish_meet_interaction_from_track,
         fb_logger=_log,
     )
     webcam_capture = UserTrackCaptureManager(
         ctx.room,
         track_source="camera",
+        session_id=_gcs_session_id,
         on_track_change=publish_meet_interaction_from_track,
         fb_logger=_log,
     )
@@ -550,20 +549,18 @@ async def entrypoint(ctx: agents.JobContext):
         )
         _visual_ctx_msg_id = msg.id
 
-    def _publish_screenshot(entry: ScreenshotEntry, filepath: str) -> None:
-        """Fire-and-forget: write to disk and publish to slow brain via IPC."""
+    def _publish_screenshot(entry: ScreenshotEntry) -> None:
+        """Fire-and-forget: publish screenshot event to slow brain via IPC."""
 
         async def _background():
-            await asyncio.to_thread(write_screenshot_to_disk, entry, filepath)
             await event_broker.publish(
                 "app:comms:screenshot",
                 json.dumps(
                     {
-                        "b64": entry.b64,
+                        "gcs_uri": entry.gcs_uri,
                         "utterance": entry.utterance,
                         "timestamp": entry.timestamp.isoformat(),
                         "source": entry.source,
-                        "filepath": filepath,
                     },
                 ),
             )
@@ -571,12 +568,11 @@ async def entrypoint(ctx: agents.JobContext):
         asyncio.create_task(_background())
 
     def _handle_screenshot(entry: ScreenshotEntry) -> None:
-        """Process a captured screenshot: history, visual context, disk, IPC."""
-        filepath = generate_screenshot_path(entry)
-        screenshot_history.add(entry, filepath)
+        """Process a captured screenshot: history, visual context, IPC."""
+        screenshot_history.add(entry)
         _inject_visual_context()
         if entry.source != "assistant":
-            _publish_screenshot(entry, filepath)
+            _publish_screenshot(entry)
 
     @session.on("conversation_item_added")
     def _on_chat_item_added(ev):
@@ -607,21 +603,21 @@ async def entrypoint(ctx: agents.JobContext):
             event = user_utterance_event(contact, content=text)
             from datetime import datetime, timezone
 
-            b64 = screen_capture.capture_screenshot()
-            if b64:
+            gcs_uri = screen_capture.capture_screenshot()
+            if gcs_uri:
                 _handle_screenshot(
                     ScreenshotEntry(
-                        b64=b64,
+                        gcs_uri=gcs_uri,
                         utterance=text,
                         timestamp=datetime.now(timezone.utc),
                         source="user",
                     ),
                 )
-            webcam_b64 = webcam_capture.capture_screenshot()
-            if webcam_b64:
+            webcam_gcs_uri = webcam_capture.capture_screenshot()
+            if webcam_gcs_uri:
                 _handle_screenshot(
                     ScreenshotEntry(
-                        b64=webcam_b64,
+                        gcs_uri=webcam_gcs_uri,
                         utterance=text,
                         timestamp=datetime.now(timezone.utc),
                         source="webcam",
@@ -669,24 +665,24 @@ async def entrypoint(ctx: agents.JobContext):
 
             copy_visual_id = _visual_ctx_msg_id
 
-            if is_user_turn and screen_capture._latest_frame_data is not None:
-                b64 = screen_capture.capture_screenshot()
-                if b64:
+            if is_user_turn and screen_capture._latest_gcs_uri is not None:
+                gcs_uri = screen_capture.capture_screenshot()
+                if gcs_uri:
                     _handle_screenshot(
                         ScreenshotEntry(
-                            b64=b64,
+                            gcs_uri=gcs_uri,
                             utterance=utterance,
                             timestamp=datetime.now(timezone.utc),
                             source="user",
                         ),
                     )
                     captured_any = True
-            if is_user_turn and webcam_capture._latest_frame_data is not None:
-                b64 = webcam_capture.capture_screenshot()
-                if b64:
+            if is_user_turn and webcam_capture._latest_gcs_uri is not None:
+                gcs_uri = webcam_capture.capture_screenshot()
+                if gcs_uri:
                     _handle_screenshot(
                         ScreenshotEntry(
-                            b64=b64,
+                            gcs_uri=gcs_uri,
                             utterance=utterance,
                             timestamp=datetime.now(timezone.utc),
                             source="webcam",
@@ -699,6 +695,7 @@ async def entrypoint(ctx: agents.JobContext):
                     fb_logger=_log,
                     agent_service_url=_agent_service_url,
                     http_session=_screenshot_http_session,
+                    session_id=_gcs_session_id,
                 )
                 if entry:
                     if not assistant_screen_share_active:

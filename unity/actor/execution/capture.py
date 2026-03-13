@@ -6,12 +6,13 @@ capture their own stdout/stderr output as structured TextPart/ImagePart lists.
 
 from __future__ import annotations
 
-import base64
 import contextlib
 import contextvars
 import io
 import sys
 from typing import Any, Callable, List, Union
+
+from unity.conversation_manager.gcs_images import upload_image as _gcs_upload
 
 from .types import ImagePart, TextPart
 
@@ -165,29 +166,47 @@ def _make_display(
 
 
 def _encode_image_for_llm(img: Any) -> tuple[str, str]:
-    """Encode a PIL Image to base64, ensuring it stays within the API size limit.
+    """Encode a PIL Image and upload to GCS, returning ``(gcs_uri, mime)``.
 
-    Tries PNG first for lossless quality.  If the result exceeds the limit,
-    falls back to JPEG with progressive quality reduction.  Raises if the
-    image cannot be brought under the limit.
+    Tries PNG first for lossless quality.  If the result exceeds the size
+    limit, falls back to JPEG with progressive quality reduction.  Raises
+    if the image cannot be brought under the limit.
+
+    The image bytes are uploaded to GCS and a ``gs://`` URI is returned
+    instead of base64 to avoid holding large strings in memory.
     """
+    from datetime import datetime, timezone
+
+    from unity.session_details import SESSION_DETAILS
+
+    session_id = (
+        str(SESSION_DETAILS.assistant.agent_id)
+        if SESSION_DETAILS.assistant.agent_id is not None
+        else "unknown"
+    )
+    ts = datetime.now(timezone.utc).isoformat()
+
     buf = io.BytesIO()
     img.save(buf, format="PNG")
-    b64_data = base64.b64encode(buf.getvalue()).decode("ascii")
-    if len(b64_data) <= _IMAGE_BASE64_LIMIT:
-        return b64_data, "image/png"
+    png_bytes = buf.getvalue()
+    if len(png_bytes) <= _IMAGE_BASE64_LIMIT:
+        gcs_uri = _gcs_upload(
+            png_bytes, session_id, ts, "display", content_type="image/png"
+        )
+        return gcs_uri, "image/png"
 
     rgb_img = img.convert("RGB") if img.mode != "RGB" else img
     for quality in (85, 60, 40, 20):
         buf = io.BytesIO()
         rgb_img.save(buf, format="JPEG", quality=quality)
-        b64_data = base64.b64encode(buf.getvalue()).decode("ascii")
-        if len(b64_data) <= _IMAGE_BASE64_LIMIT:
-            return b64_data, "image/jpeg"
+        jpeg_bytes = buf.getvalue()
+        if len(jpeg_bytes) <= _IMAGE_BASE64_LIMIT:
+            gcs_uri = _gcs_upload(jpeg_bytes, session_id, ts, "display")
+            return gcs_uri, "image/jpeg"
 
     raise ValueError(
         f"Image too large for the LLM API even after JPEG compression "
-        f"(quality={quality}): {len(b64_data):,} bytes base64, "
+        f"(quality={quality}): {len(jpeg_bytes):,} bytes, "
         f"limit is {_IMAGE_BASE64_LIMIT:,} bytes (5 MB). "
         f"Resize the image to smaller dimensions before calling display().",
     )

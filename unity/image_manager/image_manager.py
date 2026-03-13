@@ -19,6 +19,8 @@ import unify
 from ..common.model_to_fields import model_to_fields
 from ..common.embed_utils import ensure_vector_column
 from ..common.semantic_search import backfill_rows, fetch_top_k_by_references
+from unity.conversation_manager.gcs_images import signed_url as _gcs_signed_url
+
 from .base import BaseImageManager
 from .prompt_builders import build_image_ask_prompt
 from .types.image import Image
@@ -989,19 +991,22 @@ class ImageManager(BaseImageManager):
             # In async mode, only return handles (ids are unknown yet)
             return handles
 
-        # Prepare payloads (convert bytes → base64) – sync path only
+        # Prepare payloads (convert bytes → base64, or resolve gcs_uri) – sync path only
         prepared: List[Dict[str, Any]] = []
         annotations: List[Optional[str]] = []
         auto_caption_flags: List[bool] = []
         for raw in items or []:
             payload = dict(raw or {})
-            # Extract handle-local annotation (not part of the backend payload)
             ann = payload.pop("annotation", None)
             ac_flag = bool(payload.pop("auto_caption", True))
+
+            gcs_uri = payload.pop("gcs_uri", None)
             data_val = payload.get("data")
-            if data_val is None:
-                raise ValueError("'data' is required for add_images")
-            if isinstance(data_val, (bytes, bytearray)):
+            if data_val is None and gcs_uri:
+                payload["data"] = _gcs_signed_url(gcs_uri)
+            elif data_val is None:
+                raise ValueError("'data' or 'gcs_uri' is required for add_images")
+            elif isinstance(data_val, (bytes, bytearray)):
                 payload["data"] = base64.b64encode(data_val).decode("utf-8")
             img = Image(**payload)
             prepared.append(img.to_post_json())

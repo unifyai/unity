@@ -10,6 +10,7 @@ logger = logging.getLogger(__name__)
 import unify
 
 from unity.common.tool_spec import manager_tool, read_only, ToolSpec
+from unity.conversation_manager.gcs_images import signed_url, upload_image
 from unity.file_manager.base import BaseFileManager
 from unity.file_manager.file_parsers import FileParser
 from unity.file_manager.types.file import FileRecord
@@ -1647,25 +1648,33 @@ class FileManager(BaseFileManager):
         _parent_chat_context: Optional[List[Dict[str, Any]]] = None,
     ) -> SteerableToolHandle:
         """Single-shot vision LLM call for image files (JPEG/PNG)."""
-        import base64 as _b64
-
         if not self._adapter.exists(file_path):
             raise FileNotFoundError(file_path)
 
         image_bytes = self._adapter.open_bytes(file_path)
 
-        head = image_bytes[:10]
-        if head.startswith(b"\xff\xd8"):
-            mime = "image/jpeg"
-        elif head.startswith(b"\x89PNG\r\n\x1a\n"):
-            mime = "image/png"
-        else:
-            mime = "application/octet-stream"
+        from datetime import datetime, timezone
 
-        b64_data = _b64.b64encode(image_bytes).decode("ascii")
+        import mimetypes
+
+        from unity.session_details import SESSION_DETAILS
+
+        _fm_session_id = (
+            str(SESSION_DETAILS.assistant.agent_id)
+            if SESSION_DETAILS.assistant.agent_id is not None
+            else "unknown"
+        )
+        mime = mimetypes.guess_type(file_path)[0] or "image/jpeg"
+        gcs_uri = upload_image(
+            image_bytes,
+            _fm_session_id,
+            datetime.now(timezone.utc).isoformat(),
+            "file_ask",
+            content_type=mime,
+        )
         content_block = {
             "type": "image_url",
-            "image_url": {"url": f"data:{mime};base64,{b64_data}"},
+            "image_url": {"url": signed_url(gcs_uri)},
         }
 
         async def _vision_call() -> str:

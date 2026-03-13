@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING
 from pydantic import BaseModel, Field, create_model
 
 from unity.common.prompt_helpers import PromptParts
+from unity.conversation_manager.gcs_images import signed_url
 from unity.conversation_manager.prompt_builders import build_system_prompt
 from unity.conversation_manager.types import Mode, ScreenshotEntry
 
@@ -73,14 +74,9 @@ class BrainSpec:
     system_prompt: PromptParts
     state_prompt: str
     response_model: type["BaseModel"]
-    # Buffered screenshots captured during screen sharing, aligned with user turns.
     screenshots: list[ScreenshotEntry] = field(default_factory=list)
-    # Relative file paths for each screenshot (parallel to screenshots list).
-    screenshot_paths: list[str] = field(default_factory=list)
 
     def state_message(self) -> dict:
-        # Mark this as a state snapshot so the async tool loop can treat it as
-        # transient state (e.g., keep only the latest snapshot when generating).
         if not self.screenshots:
             return {
                 "role": "user",
@@ -88,8 +84,6 @@ class BrainSpec:
                 "_cm_state_snapshot": True,
             }
 
-        # Build multimodal content: text state + screenshot blocks aligned with
-        # the user utterances that triggered them.
         sources = {s.source for s in self.screenshots}
         if len(sources) > 1:
             header = (
@@ -133,15 +127,12 @@ class BrainSpec:
         }
         for i, entry in enumerate(self.screenshots, 1):
             label = source_labels.get(entry.source, "Screenshot")
-            path_suffix = ""
-            if i <= len(self.screenshot_paths):
-                path_suffix = f" -- {self.screenshot_paths[i - 1]}"
             content_parts.append(
                 {
                     "type": "text",
                     "text": (
                         f"\n[{label} - Screenshot {i}/{len(self.screenshots)}"
-                        f"{path_suffix}] "
+                        f" -- {entry.gcs_uri}] "
                         f'User said: "{entry.utterance}"'
                     ),
                 },
@@ -149,7 +140,7 @@ class BrainSpec:
             content_parts.append(
                 {
                     "type": "image_url",
-                    "image_url": {"url": f"data:image/jpeg;base64,{entry.b64}"},
+                    "image_url": {"url": signed_url(entry.gcs_uri)},
                 },
             )
 
@@ -164,13 +155,9 @@ def build_brain_spec(
     cm: "ConversationManager",
     snapshot_state: "SnapshotState",
     screenshots: list[ScreenshotEntry] | None = None,
-    screenshot_paths: list[str] | None = None,
 ) -> BrainSpec:
     """
     Build the prompt + response model inputs for a single Main CM Brain run.
-
-    The returned spec is *pure* (no side effects) and can be used by either the
-    legacy single-shot generate path or the async tool loop path.
 
     Parameters
     ----------
@@ -182,14 +169,11 @@ def build_brain_spec(
     screenshots : list[ScreenshotEntry] | None
         Buffered screenshots from screen sharing (assistant and/or user), each
         paired with the user utterance that triggered capture and a timestamp.
-    screenshot_paths : list[str] | None
-        Relative file paths corresponding to each screenshot (parallel list).
     """
     from unity.settings import SETTINGS
 
     prompt = snapshot_state.full_render
 
-    # Get boss contact (contact_id=1) from ContactManager - the source of truth
     boss_contact = cm.contact_index.get_contact(1) or {}
     is_boss_on_call = cm.mode.is_voice and (
         (cm.get_active_contact() or {}).get("contact_id") == 1
@@ -211,7 +195,6 @@ def build_brain_spec(
 
     response_model = _RESPONSE_MODELS[cm.mode]
 
-    # Validate we can JSON-encode state prompt early (helps catch accidental objects)
     json.dumps({"state_prompt": prompt})
 
     return BrainSpec(
@@ -219,5 +202,4 @@ def build_brain_spec(
         state_prompt=prompt,
         response_model=response_model,
         screenshots=screenshots or [],
-        screenshot_paths=screenshot_paths or [],
     )

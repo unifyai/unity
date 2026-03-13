@@ -12,6 +12,7 @@ if TYPE_CHECKING:
     from unity.conversation_manager.types.screenshot import ScreenshotEntry
 
 from unity.conversation_manager.event_broker import get_event_broker
+from unity.conversation_manager.gcs_images import signed_url, upload_image
 from unity.conversation_manager.events import (
     Event,
     PhoneCallReceived,
@@ -652,8 +653,9 @@ class UserTrackCaptureManager:
 
     Registers track_subscribed/track_unsubscribed handlers on the room to
     automatically start and stop frame capture when a matching video track
-    appears or disappears. Stores the latest frame as raw RGBA bytes and
-    converts to base64 JPEG on demand (lazy conversion to avoid per-frame cost).
+    appears or disappears.  Frames are JPEG-encoded and uploaded to GCS in
+    the background at 1 fps; only the lightweight ``gs://`` URI is kept in
+    memory.
 
     The ``track_source`` parameter selects which LiveKit track source to
     capture (e.g. ``SOURCE_SCREENSHARE`` for screen share, ``SOURCE_CAMERA``
@@ -664,7 +666,7 @@ class UserTrackCaptureManager:
         screen_mgr = UserTrackCaptureManager(ctx.room)  # screen share (default)
         webcam_mgr = UserTrackCaptureManager(ctx.room, track_source="camera")
         # ... later, on user utterance ...
-        b64 = screen_mgr.capture_screenshot()  # None if no active share
+        gcs_uri = screen_mgr.capture_screenshot()  # None if no active share
         # ... on cleanup ...
         await screen_mgr.close()
     """
@@ -674,16 +676,18 @@ class UserTrackCaptureManager:
         room,
         *,
         track_source: str = "screenshare",
+        session_id: str = "",
         on_track_change: Callable[[str, bool], Awaitable[None]] | None = None,
         fb_logger: FastBrainLogger | None = None,
     ) -> None:
         from livekit import rtc
 
-        self._latest_frame_data: tuple[bytes, int, int] | None = None
+        self._latest_gcs_uri: str | None = None
         self._capture_task: asyncio.Task | None = None
         self._stream = None
         self._on_track_change = on_track_change
         self._log = fb_logger
+        self._session_id = session_id
 
         source_map = {
             "screenshare": rtc.TrackSource.SOURCE_SCREENSHARE,
@@ -723,7 +727,7 @@ class UserTrackCaptureManager:
                 self._log.screenshot_debug(
                     f"{self._label} track unsubscribed, stopping capture",
                 )
-            self._latest_frame_data = None
+            self._latest_gcs_uri = None
             if self._capture_task and not self._capture_task.done():
                 self._capture_task.cancel()
                 self._capture_task = None
@@ -732,8 +736,15 @@ class UserTrackCaptureManager:
                 asyncio.create_task(self._on_track_change(self._label, False))
 
     async def _capture_loop(self, stream) -> None:
-        """Continuously capture frames, rate-limited to 1 per second."""
+        """Capture frames at 1 fps, JPEG-encode, and upload to GCS.
+
+        The ``gs://`` URI of the most recently uploaded frame is stored in
+        ``_latest_gcs_uri`` so that :meth:`capture_screenshot` returns
+        instantly with no I/O on the critical path.
+        """
         import time
+
+        from datetime import datetime, timezone
 
         last_capture = 0.0
         try:
@@ -747,11 +758,25 @@ class UserTrackCaptureManager:
 
                 if frame.type != rtc.VideoBufferType.RGBA:
                     frame = frame.convert(rtc.VideoBufferType.RGBA)
-                self._latest_frame_data = (
-                    bytes(frame.data),
-                    frame.width,
-                    frame.height,
-                )
+
+                rgba_bytes = bytes(frame.data)
+                width, height = frame.width, frame.height
+                ts = datetime.now(timezone.utc).isoformat()
+
+                try:
+                    gcs_uri = await asyncio.to_thread(
+                        self._encode_and_upload,
+                        rgba_bytes,
+                        width,
+                        height,
+                        ts,
+                    )
+                    self._latest_gcs_uri = gcs_uri
+                except Exception as exc:
+                    if self._log:
+                        self._log.error(
+                            f"GCS upload error ({self._label}): {exc}",
+                        )
         except asyncio.CancelledError:
             pass
         except Exception as e:
@@ -763,26 +788,37 @@ class UserTrackCaptureManager:
             except Exception:
                 pass
 
-    def capture_screenshot(self) -> str | None:
-        """Convert the latest captured frame to a base64-encoded JPEG string.
-
-        Returns None if no screen share track is active or no frame has
-        been captured yet.
-        """
-        if self._latest_frame_data is None:
-            return None
-
-        import base64
+    def _encode_and_upload(
+        self,
+        rgba_bytes: bytes,
+        width: int,
+        height: int,
+        timestamp: str,
+    ) -> str:
+        """JPEG-encode a raw RGBA frame and upload to GCS (runs in thread)."""
         import io
 
         from PIL import Image
 
-        rgba_bytes, width, height = self._latest_frame_data
         img = Image.frombytes("RGBA", (width, height), rgba_bytes, "raw")
         rgb = img.convert("RGB")
         buf = io.BytesIO()
         rgb.save(buf, format="JPEG", quality=85)
-        return base64.b64encode(buf.getvalue()).decode("ascii")
+        return upload_image(
+            buf.getvalue(),
+            self._session_id,
+            timestamp,
+            self._label,
+        )
+
+    def capture_screenshot(self) -> str | None:
+        """Return the ``gs://`` URI of the latest captured frame.
+
+        Returns ``None`` if no screen share track is active or no frame
+        has been uploaded yet.  This is an instant lookup -- the upload
+        happened in the background capture loop.
+        """
+        return self._latest_gcs_uri
 
     async def close(self) -> None:
         """Cancel the capture loop and release resources."""
@@ -793,7 +829,7 @@ class UserTrackCaptureManager:
             except asyncio.CancelledError:
                 pass
         self._capture_task = None
-        self._latest_frame_data = None
+        self._latest_gcs_uri = None
         self._stream = None
 
 
@@ -829,15 +865,14 @@ class ScreenshotHistory:
     """Per-source screenshot history for the fast brain LLM.
 
     Tracks captured screenshots and builds a visual context message with the
-    latest screenshot from each source (user / assistant) as an inline image
-    and all older entries as filepath-only text references.
+    latest screenshot from each source (user / assistant) as an inline image.
     """
 
     def __init__(self):
-        self._entries: list[tuple["ScreenshotEntry", str]] = []
+        self._entries: list["ScreenshotEntry"] = []
 
-    def add(self, entry: "ScreenshotEntry", filepath: str) -> None:
-        self._entries.append((entry, filepath))
+    def add(self, entry: "ScreenshotEntry") -> None:
+        self._entries.append(entry)
 
     def clear(self, source: str | None = None) -> None:
         """Remove entries, optionally filtered by source.
@@ -847,13 +882,13 @@ class ScreenshotHistory:
         if source is None:
             self._entries.clear()
         else:
-            self._entries = [(e, p) for e, p in self._entries if e.source != source]
+            self._entries = [e for e in self._entries if e.source != source]
 
     def build_visual_context_content(self) -> list:
         """Build a content list for a visual context chat message.
 
         Returns only the latest screenshot from each source with a clear
-        structural label.  Historical entries are omitted — the fast brain
+        structural label.  Historical entries are omitted -- the fast brain
         needs a snapshot of *now*, not a timeline.
         """
         from livekit.agents.llm import ImageContent
@@ -862,7 +897,7 @@ class ScreenshotHistory:
             return []
 
         latest_by_source: dict[str, "ScreenshotEntry"] = {}
-        for entry, _ in self._entries:
+        for entry in self._entries:
             latest_by_source[entry.source] = entry
 
         source_labels = {
@@ -878,7 +913,7 @@ class ScreenshotHistory:
                 continue
             parts.append(source_labels.get(source, "=== SCREENSHOT ==="))
             parts.append(
-                ImageContent(image=f"data:image/jpeg;base64,{entry.b64}"),
+                ImageContent(image=signed_url(entry.gcs_uri)),
             )
 
         return parts
@@ -901,27 +936,23 @@ def _resolve_agent_service_url() -> str:
     return "http://localhost:3000"
 
 
-def _ensure_jpeg(b64: str) -> str:
-    """Convert a base64-encoded image to JPEG if it isn't already.
+def _ensure_jpeg_bytes(raw: bytes) -> bytes:
+    """Convert raw image bytes to JPEG if they aren't already.
 
     The agent-service screenshot endpoint returns PNG (Playwright default),
-    but all downstream consumers tag images as ``image/jpeg``.  Converting
-    here keeps every ``ScreenshotEntry.b64`` consistently JPEG, matching
-    the format produced by ``UserTrackCaptureManager.capture_screenshot``.
+    but all downstream consumers expect JPEG.  Returns raw JPEG bytes.
     """
-    import base64 as b64mod
-    import io
-
-    raw = b64mod.b64decode(b64)
     if raw[:2] == b"\xff\xd8":
-        return b64
+        return raw
+
+    import io
 
     from PIL import Image
 
     img = Image.open(io.BytesIO(raw))
     buf = io.BytesIO()
     img.convert("RGB").save(buf, format="JPEG", quality=85)
-    return b64mod.b64encode(buf.getvalue()).decode("ascii")
+    return buf.getvalue()
 
 
 async def _screenshot_post(
@@ -953,6 +984,7 @@ async def capture_assistant_screenshot(
     fb_logger: FastBrainLogger | None = None,
     agent_service_url: str | None = None,
     http_session=None,
+    session_id: str = "",
 ) -> "ScreenshotEntry | None":
     """Capture the assistant's desktop via HTTP POST.
 
@@ -965,6 +997,7 @@ async def capture_assistant_screenshot(
     diagnostics is created (useful for one-off / CM-process captures).
     """
     import aiohttp
+    import base64 as b64mod
     import time as _time
 
     from datetime import datetime, timezone
@@ -991,11 +1024,20 @@ async def capture_assistant_screenshot(
 
     t_start = _time.monotonic()
 
-    def _make_entry(b64: str) -> ScreenshotEntry:
+    def _make_entry(b64_str: str) -> ScreenshotEntry:
+        raw = b64mod.b64decode(b64_str)
+        jpeg_bytes = _ensure_jpeg_bytes(raw)
+        ts = datetime.now(timezone.utc)
+        gcs_uri = upload_image(
+            jpeg_bytes,
+            session_id or "unknown",
+            ts.isoformat(),
+            "assistant",
+        )
         return ScreenshotEntry(
-            b64=_ensure_jpeg(b64),
+            gcs_uri=gcs_uri,
             utterance=utterance,
-            timestamp=datetime.now(timezone.utc),
+            timestamp=ts,
             source="assistant",
         )
 

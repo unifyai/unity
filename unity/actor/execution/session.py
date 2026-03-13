@@ -26,6 +26,7 @@ from typing import (
     TYPE_CHECKING,
 )
 
+from unity.conversation_manager.gcs_images import download_image
 from unity.function_manager.primitives import ComputerPrimitives
 from unity.common.hierarchical_logger import DEFAULT_ICON
 
@@ -393,6 +394,7 @@ class PythonExecutionSession:
                 return
 
         self.global_state["notify"] = notify
+        self.global_state["download_image"] = download_image
 
         # Inject pools into namespace (for function proxies to use)
         if venv_pool is not None:

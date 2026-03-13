@@ -689,9 +689,6 @@ async def log_message(
                 if logged_msgs:
                     tm_message_id = logged_msgs[0].message_id
 
-            if local_message_id is not None and tm_message_id is not None:
-                cm._local_to_global_message_ids[local_message_id] = tm_message_id
-
             LOGGER.debug(
                 f"{ICONS['managers_worker']} [ManagersWorker] Logged message: {medium}"
                 f" from {sender_id} to {receiver_ids}",

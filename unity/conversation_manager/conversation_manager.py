@@ -39,10 +39,7 @@ from unity.memory_manager.memory_manager import MemoryManager
 from unity.contact_manager.contact_manager import ContactManager
 from unity.transcript_manager.transcript_manager import TranscriptManager
 from unity.conversation_manager.types import Medium, Mode, ScreenshotEntry
-from unity.conversation_manager.types.screenshot import (
-    generate_screenshot_path,
-    write_screenshot_to_disk,
-)
+from unity.conversation_manager.gcs_images import signed_url, upload_image
 from unity.actor.base import BaseActor
 from unity.conversation_manager.domains.proactive_speech import ProactiveSpeech
 from unity.conversation_manager.medium_scripts.common import FastBrainLogger
@@ -196,10 +193,6 @@ class ConversationManager(metaclass=SingletonABCMeta):
 
         # screenshot buffer for slow brain visual context
         self._screenshot_buffer: list[ScreenshotEntry] = []
-        # mapping from local_message_id (ephemeral CM counter) to
-        # global message_id (persistent backend TM id), populated by
-        # log_message() for post-hoc screenshot image updates.
-        self._local_to_global_message_ids: dict[int, int] = {}
 
         # mapping from conference_name/room_name to exchange_id, populated
         # at call/meet end so the async RecordingReady handler can resolve
@@ -299,11 +292,12 @@ class ConversationManager(metaclass=SingletonABCMeta):
         is active. The screenshot is paired with the user's utterance text so
         the slow brain can align visual context with spoken instructions.
 
-        Runs the HTTP call in a thread to avoid event loop starvation — the
-        main process event loop is shared with the actor and managers, which
-        can saturate it during heavy async work.
+        Runs the HTTP call + GCS upload in a thread to avoid event loop
+        starvation — the main process event loop is shared with the actor
+        and managers, which can saturate it during heavy async work.
         """
         import asyncio
+        import base64 as b64mod
         import time as _time
         from datetime import datetime, timezone
 
@@ -311,14 +305,15 @@ class ConversationManager(metaclass=SingletonABCMeta):
 
         from unity.conversation_manager.medium_scripts.common import (
             _resolve_agent_service_url,
-            _ensure_jpeg,
+            _ensure_jpeg_bytes,
         )
 
         base_url = _resolve_agent_service_url()
         url = f"{base_url}/screenshot"
         auth_key = SESSION_DETAILS.unify_key
 
-        def _sync_capture() -> dict | None:
+        def _sync_capture() -> str | None:
+            """Capture screenshot, JPEG-encode, upload to GCS. Returns gs:// URI."""
             t0 = _time.monotonic()
             try:
                 resp = _requests.post(
@@ -337,13 +332,29 @@ class ConversationManager(metaclass=SingletonABCMeta):
                     )
                     return None
                 data = resp.json()
+                b64_str = data.get("screenshot", "")
+                if not b64_str:
+                    return None
+                raw = b64mod.b64decode(b64_str)
+                jpeg_bytes = _ensure_jpeg_bytes(raw)
+                ts = datetime.now(timezone.utc)
+                session_id = (
+                    str(SESSION_DETAILS.assistant.agent_id)
+                    if SESSION_DETAILS.assistant.agent_id is not None
+                    else "unknown"
+                )
+                gcs_uri = upload_image(
+                    jpeg_bytes,
+                    session_id,
+                    ts.isoformat(),
+                    "assistant",
+                )
                 self._session_logger.debug(
                     "screenshot_capture",
                     f"Screenshot capture OK: url={url} "
-                    f"total={total_ms:.0f}ms "
-                    f"b64_len={len(data.get('screenshot', ''))}",
+                    f"total={total_ms:.0f}ms gcs_uri={gcs_uri}",
                 )
-                return data
+                return gcs_uri
             except Exception as e:
                 total_ms = (_time.monotonic() - t0) * 1000
                 self._session_logger.warning(
@@ -353,20 +364,17 @@ class ConversationManager(metaclass=SingletonABCMeta):
                 )
                 return None
 
-        data = await asyncio.to_thread(_sync_capture)
-        if data and self.assistant_screen_share_active:
-            b64 = data.get("screenshot")
-            if b64:
-                b64 = _ensure_jpeg(b64)
-                self._screenshot_buffer.append(
-                    ScreenshotEntry(
-                        b64,
-                        user_utterance,
-                        datetime.now(timezone.utc),
-                        "assistant",
-                        local_message_id,
-                    ),
-                )
+        gcs_uri = await asyncio.to_thread(_sync_capture)
+        if gcs_uri and self.assistant_screen_share_active:
+            self._screenshot_buffer.append(
+                ScreenshotEntry(
+                    gcs_uri,
+                    user_utterance,
+                    datetime.now(timezone.utc),
+                    "assistant",
+                    local_message_id,
+                ),
+            )
 
     def peek_screenshot_buffer(self) -> list[ScreenshotEntry]:
         """Return a snapshot of buffered screenshots without clearing.
@@ -389,95 +397,6 @@ class ConversationManager(metaclass=SingletonABCMeta):
         """
         del self._screenshot_buffer[:count]
 
-    async def _register_screenshots_background(
-        self,
-        screenshots: list[ScreenshotEntry],
-        screenshot_paths: list[str],
-    ) -> None:
-        """Persist screenshots to disk and register with ImageManager / TM.
-
-        Runs as a fire-and-forget background task after a successful LLM turn.
-        None of these operations affect the LLM prompt or decision — they are
-        purely persistence bookkeeping (disk write, image storage, transcript
-        annotation).
-        """
-        source_labels = {"assistant": "Assistant's screen", "user": "User's screen"}
-
-        # 0. Write screenshots to disk (entries with filepath already set by
-        #    the fast brain are skipped — write_screenshot_to_disk is a no-op
-        #    for those).
-        for entry, path in zip(screenshots, screenshot_paths):
-            if not entry.filepath:
-                write_screenshot_to_disk(entry, path)
-
-        # 1. Register with ImageManager to get persistent image_ids.
-        image_ids: list[int] = []
-        try:
-            from unity.manager_registry import ManagerRegistry
-
-            image_manager = ManagerRegistry.get_image_manager()
-            items = [
-                {
-                    "data": entry.b64,
-                    "timestamp": entry.timestamp,
-                    "filepath": path,
-                }
-                for entry, path in zip(screenshots, screenshot_paths)
-            ]
-            image_ids = await asyncio.to_thread(
-                image_manager.add_images,
-                items,
-                synchronous=True,
-            )
-        except Exception as e:
-            self._session_logger.warning(
-                "screenshot_registration",
-                f"ImageManager registration failed, skipping: {e}",
-            )
-            return
-
-        # 2. Annotate CM Message objects with image_ids and build TM refs.
-        msg_to_image_refs: dict[int, list[dict]] = {}
-        for i, (entry, _path) in enumerate(zip(screenshots, screenshot_paths)):
-            if entry.local_message_id is None or i >= len(image_ids):
-                continue
-            mid = entry.local_message_id
-            img_id = image_ids[i]
-
-            # Attach image_id to the Message object.
-            for gte in self.contact_index.global_thread:
-                msg = gte.message
-                if isinstance(msg, Message) and msg.local_message_id == mid:
-                    if not hasattr(msg, "image_ids") or msg.image_ids is None:
-                        msg.image_ids = []
-                    msg.image_ids.append(img_id)
-                    break
-
-            label = source_labels.get(entry.source, "Screenshot")
-            msg_to_image_refs.setdefault(mid, []).append(
-                {
-                    "raw_image_ref": {"image_id": img_id},
-                    "annotation": f"{label} -- '{entry.utterance}'",
-                },
-            )
-
-        # 3. Post-hoc update TM messages with AnnotatedImageRefs.
-        if msg_to_image_refs and self.transcript_manager is not None:
-            for local_mid, refs in msg_to_image_refs.items():
-                tm_msg_id = self._local_to_global_message_ids.get(local_mid)
-                if tm_msg_id is not None:
-                    try:
-                        await asyncio.to_thread(
-                            self.transcript_manager.update_message_images,
-                            tm_msg_id,
-                            refs,
-                        )
-                    except Exception as e:
-                        self._session_logger.warning(
-                            "screenshot_tm_update",
-                            f"TM image update failed for msg {tm_msg_id}: {e}",
-                        )
-
     def _claim_pending_user_screenshot(self, local_message_id: int) -> None:
         """Stamp the most recent unclaimed user screenshot with the given local_message_id."""
         if self._screenshot_buffer:
@@ -491,25 +410,23 @@ class ConversationManager(metaclass=SingletonABCMeta):
         """Buffer a screenshot received from the fast brain via IPC.
 
         Accepts both user and assistant screenshots, distinguished by the
-        ``source`` field in the JSON payload.  When a ``filepath`` is included,
-        the file has already been written to disk by the fast brain.
+        ``source`` field in the JSON payload.
         """
         import json as _json
         from datetime import datetime, timezone
 
         try:
             data = _json.loads(event_json)
-            b64 = data.get("b64", "")
+            gcs_uri = data.get("gcs_uri", "")
             utterance = data.get("utterance", "")
             source = data.get("source", "user")
-            filepath = data.get("filepath")
             ts_str = data.get("timestamp")
             ts = (
                 datetime.fromisoformat(ts_str) if ts_str else datetime.now(timezone.utc)
             )
-            if b64:
+            if gcs_uri:
                 self._screenshot_buffer.append(
-                    ScreenshotEntry(b64, utterance, ts, source, filepath=filepath),
+                    ScreenshotEntry(gcs_uri, utterance, ts, source),
                 )
                 self._session_logger.debug(
                     "screenshot_capture",
@@ -918,32 +835,21 @@ class ConversationManager(metaclass=SingletonABCMeta):
         # cancelled mid-flight the screenshots remain available for retry.
         screenshots = self.peek_screenshot_buffer()
 
-        # Compute deterministic filepaths for each screenshot (no I/O).
-        # The actual disk writes are deferred to the background task — the
-        # LLM only needs the path strings for prompt labels, and the
-        # CodeActActor won't read the files for 17+ seconds (behind its own
-        # LLM call), so they'll be on disk long before they're needed.
-        screenshot_paths = [
-            s.filepath or generate_screenshot_path(s) for s in screenshots
-        ]
-
-        # Annotate CM Message objects with screenshot filepaths so the
-        # rendered state includes path references.  This is a fast in-memory
-        # loop with no I/O — only needs the paths computed above.
+        # Annotate CM Message objects with GCS URIs so the rendered state
+        # includes screenshot references the Actor can use.
         if screenshots:
-            msg_to_paths: dict[int, list[str]] = {}
-            for entry, path in zip(screenshots, screenshot_paths):
+            msg_to_uris: dict[int, list[str]] = {}
+            for entry in screenshots:
                 if entry.local_message_id is not None:
-                    msg_to_paths.setdefault(entry.local_message_id, []).append(path)
-            if msg_to_paths:
+                    msg_to_uris.setdefault(entry.local_message_id, []).append(
+                        entry.gcs_uri,
+                    )
+            if msg_to_uris:
                 for gte in self.contact_index.global_thread:
                     msg = gte.message
-                    if (
-                        isinstance(msg, Message)
-                        and msg.local_message_id in msg_to_paths
-                    ):
-                        msg.screenshots = msg_to_paths.pop(msg.local_message_id)
-                    if not msg_to_paths:
+                    if isinstance(msg, Message) and msg.local_message_id in msg_to_uris:
+                        msg.screenshots = msg_to_uris.pop(msg.local_message_id)
+                    if not msg_to_uris:
                         break
 
         self.snapshot()
@@ -979,7 +885,6 @@ class ConversationManager(metaclass=SingletonABCMeta):
             self,
             snapshot_state=snapshot_state,
             screenshots=screenshots,
-            screenshot_paths=screenshot_paths,
         )
         if screenshots:
             self._session_logger.debug(
@@ -1153,12 +1058,6 @@ class ConversationManager(metaclass=SingletonABCMeta):
         # are preserved.
         if screenshots:
             self.commit_screenshot_buffer(len(screenshots))
-            asyncio.create_task(
-                self._register_screenshots_background(
-                    screenshots,
-                    screenshot_paths,
-                ),
-            )
 
         # Build assistant message for chat history
         assistant_content = (
@@ -1547,7 +1446,7 @@ class ConversationManager(metaclass=SingletonABCMeta):
                         {
                             "type": "image_url",
                             "image_url": {
-                                "url": f"data:image/jpeg;base64,{entry.b64}",
+                                "url": signed_url(entry.gcs_uri),
                             },
                         },
                     )

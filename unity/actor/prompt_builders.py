@@ -418,9 +418,6 @@ def _build_filesystem_context() -> str:
         |----------|---------|
         | `{resolved}/Attachments/` | **Inbound & Outbound** — all exchanged file attachments are stored here as `{{attachment_id}}_{{filename}}`. Persists across sessions. |
         | `{resolved}/Outputs/` | **Outbound staging** — save generated files here (reports, CSVs, images, etc.) so the caller can attach and send them to the user. May be auto-cleared between sessions. |
-        | `{resolved}/Screenshots/User/` | Auto-captured frames from the user's screen share. Read-only, cleared between sessions. |
-        | `{resolved}/Screenshots/Assistant/` | Auto-captured frames from the assistant's desktop. Read-only, cleared between sessions. |
-        | `{resolved}/Screenshots/Webcam/` | Auto-captured frames from the user's webcam. Read-only, cleared between sessions. |
         | `{resolved}/.env` | Environment secrets managed by SecretManager. |
         | Everything else | Your own persistent workspace — organize however makes sense for the work. |
 
@@ -431,10 +428,11 @@ def _build_filesystem_context() -> str:
           include the full path in your final answer
           (e.g. `{resolved}/Outputs/summary.csv`).  Once sent, the file is
           copied to `{resolved}/Attachments/` with a stable attachment ID.
-        - **Screenshots**: Timestamped JPEGs auto-saved during screen sharing.
-          Reference them for programmatic access (image analysis, OCR,
-          comparison, etc.) using full paths
-          (e.g. `{resolved}/Screenshots/Assistant/2026-02-16T14-30-45.123456.jpg`).
+        - **Screenshots**: During screen sharing, screenshots are captured
+          automatically and appear inline in the state context as images
+          with `gs://` URIs.  For programmatic access (image analysis, OCR,
+          comparison, etc.), use `download_image(gcs_uri)` to fetch the
+          image as a PIL Image.
         - **Stay inside the workspace**: Always use full absolute paths
           rooted under `{resolved}/`.  Do not reference paths outside this
           workspace (e.g. `/tmp`, `/var`).  Everything you need is inside

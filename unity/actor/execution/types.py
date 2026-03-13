@@ -19,6 +19,8 @@ from typing import (
 
 from pydantic import BaseModel, Field
 
+from unity.conversation_manager.gcs_images import signed_url as _gcs_signed_url
+
 
 class TextPart(BaseModel):
     """A text output part from sandbox execution."""
@@ -36,10 +38,15 @@ class ImagePart(BaseModel):
 
     type: Literal["image"] = "image"
     mime: str = "image/png"
-    data: str  # base64 encoded
+    data: str  # gs:// URI (uploaded to GCS) or legacy base64
 
     def to_llm_content(self) -> dict:
         """Convert to LLM content block format."""
+        if self.data.startswith("gs://"):
+            return {
+                "type": "image_url",
+                "image_url": {"url": _gcs_signed_url(self.data)},
+            }
         return {
             "type": "image_url",
             "image_url": {"url": f"data:{self.mime};base64,{self.data}"},
