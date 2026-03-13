@@ -289,7 +289,7 @@ class CommsManager:
                             target=mark_job_label,
                             args=(SETTINGS.conversation.JOB_NAME, "running"),
                             kwargs={
-                                "assistant_id": str(SESSION_DETAILS.assistant.agent_id),
+                                "assistant_id": str(event.get("assistant_id", "")),
                             },
                             daemon=True,
                         ).start()
