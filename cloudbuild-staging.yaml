@@ -46,8 +46,8 @@ steps:
     echo "Refreshing idle jobs with new image..."
     curl -sf -X POST -H "$${AUTH}" "$${ADAPTERS}/scheduled/jobs/create?refresh=true" && echo
 
-    echo "Waiting 30s for jobs to register as idle..."
-    sleep 30
+    echo "Waiting 120s for jobs to register as idle..."
+    sleep 120
 
     echo "Cleaning up stale idle jobs..."
     curl -sf -X POST -H "$${AUTH}" "$${ADAPTERS}/scheduled/jobs/cleanup" && echo
