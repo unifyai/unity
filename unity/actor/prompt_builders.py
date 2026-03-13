@@ -250,6 +250,31 @@ _EXECUTION_RULES = textwrap.dedent("""
          verify and correct if needed.
        - Focus on decisions that could materially affect the output.
          Do not list trivial or obvious choices.
+
+    9. **Data Provenance — Never Present Model Knowledge as Sourced Data**:
+       - There is a fundamental difference between data retrieved from
+         an external tool (a database query, a web search, an API call)
+         and content generated from your own parametric knowledge.
+         External data has a verifiable origin; model-generated content
+         does not. The user cannot distinguish them unless you are
+         explicit.
+       - When an external data source fails or is unavailable, **do not
+         fill the gap by generating realistic-looking records from
+         memory**. Fabricated records with specific names, figures, and
+         source attributions (e.g. invented transactions attributed to
+         a real brokerage) are worse than no data — they look
+         authoritative but cannot be verified, and the user may act on
+         them in professional contexts where accuracy is critical.
+       - Instead: (a) report clearly that the data source was
+         unavailable, (b) explain what you were unable to retrieve,
+         (c) offer alternatives — retry later, use a different source,
+         provide general market context clearly labelled as model
+         knowledge rather than sourced data, or ask the user to supply
+         the data manually.
+       - If you do provide general context from model knowledge (e.g.
+         typical ranges, known industry trends), label it explicitly
+         as such — never format it as a table of specific records with
+         fabricated source citations.
 """).strip()
 
 _INCREMENTAL_EXECUTION = textwrap.dedent("""
