@@ -313,6 +313,18 @@ async def main(project_name: str = "Assistants"):
         LOGGER.warning(
             f"{ICONS['lifecycle']} Shutdown triggered by memory pressure (OOM prevention)",
         )
+        try:
+            from unity.conversation_manager.memory_dump import write_oom_memory_dump
+
+            dump_path = write_oom_memory_dump()
+            if dump_path:
+                LOGGER.warning(
+                    f"{ICONS['lifecycle']} OOM memory dump written to {dump_path}",
+                )
+        except Exception as exc:
+            LOGGER.warning(
+                f"{ICONS['lifecycle']} OOM memory dump failed: {exc}",
+            )
 
     LOGGER.debug(f"{ICONS['lifecycle']} Cleaning up conversation manager...")
     await _conversation_manager.cleanup()
