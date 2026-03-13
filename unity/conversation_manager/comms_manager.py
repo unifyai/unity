@@ -288,6 +288,9 @@ class CommsManager:
                         threading.Thread(
                             target=mark_job_label,
                             args=(SETTINGS.conversation.JOB_NAME, "running"),
+                            kwargs={
+                                "assistant_id": str(SESSION_DETAILS.assistant.agent_id),
+                            },
                             daemon=True,
                         ).start()
 
