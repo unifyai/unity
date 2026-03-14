@@ -1,27 +1,25 @@
 steps:
-  # Build Docker Image
-- name: 'gcr.io/cloud-builders/docker'
-  id: 'build-image'
-  entrypoint: 'bash'
+  # Build and push Docker image using Kaniko (with layer caching).
+  # Kaniko caches each Docker layer in Artifact Registry, so incremental builds
+  # only rebuild from the first changed layer. Push is built-in (no separate step).
+- name: 'gcr.io/kaniko-project/executor:v1.23.2-debug'
+  id: 'build-and-push'
+  entrypoint: 'sh'
   args:
   - '-c'
   - |
-    docker build --build-arg UNIFY_KEY=$$ORCHESTRA_API_KEY --build-arg GITHUB_TOKEN=$$GITHUB_TOKEN --build-arg BRANCH=staging \
-      -t ${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPOSITORY}/unity-staging:${SHORT_SHA} \
-      -t ${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPOSITORY}/unity-staging:latest .
+    /kaniko/executor \
+      --context=/workspace \
+      --dockerfile=Dockerfile \
+      --destination=${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPOSITORY}/unity-staging:${SHORT_SHA} \
+      --destination=${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPOSITORY}/unity-staging:latest \
+      --cache=true \
+      --cache-ttl=24h \
+      --cache-repo=${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPOSITORY}/unity-staging-cache \
+      --build-arg=UNIFY_KEY=$$ORCHESTRA_API_KEY \
+      --build-arg=GITHUB_TOKEN=$$GITHUB_TOKEN \
+      --build-arg=BRANCH=staging
   secretEnv: ['ORCHESTRA_API_KEY', 'GITHUB_TOKEN']
-
-  # Push Docker Image (SHA Tag)
-- name: 'gcr.io/cloud-builders/docker'
-  id: 'push-sha-tag'
-  args: ['push', '${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPOSITORY}/unity-staging:${SHORT_SHA}']
-  waitFor: ['build-image']
-
-  # Push Docker Image (Latest Tag)
-- name: 'gcr.io/cloud-builders/docker'
-  id: 'push-latest-tag'
-  args: ['push', '${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPOSITORY}/unity-staging:latest']
-  waitFor: ['build-image']
 
   # Upload SHA to Cloud Storage
 - name: 'gcr.io/cloud-builders/gsutil'
@@ -31,7 +29,7 @@ steps:
   - '-c'
   - |
     echo ${SHORT_SHA} | gsutil cp - gs://unity-image-hash/image_hash_staging.txt
-  waitFor: ['push-latest-tag']
+  waitFor: ['build-and-push']
 
   # Refresh idle containers so they pick up the new image
 - name: 'gcr.io/cloud-builders/curl'
@@ -77,8 +75,3 @@ availableSecrets:
 
 # Timeout
 timeout: '1800s'  # 30 minutes
-
-# Images to be pushed (for Cloud Build history)
-images:
-- '${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPOSITORY}/unity-staging:${SHORT_SHA}'
-- '${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPOSITORY}/unity-staging:latest'
