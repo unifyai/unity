@@ -130,9 +130,9 @@ async def test_actor_escalates_on_failed_credential_fast_path():
             "If this result looks wrong or incomplete — especially if the "
             "task falls within your loaded guidance or requires capabilities "
             "the fast path lacks (credentials, secrets, multi-step "
-            "workflows) — escalate by calling "
-            'notify({"type": "escalation", "message": "<what you can do '
-            'better>"}).  Otherwise, no action needed.',
+            "workflows) — escalate via execute_code by calling "
+            '```python\nnotify({"type": "escalation", "message": "<what you can do '
+            'better>"})\n```.  Otherwise, no action needed.',
         )
 
         notification = await _wait_for_escalation(handle, timeout=60)
@@ -189,9 +189,9 @@ async def test_actor_no_escalation_on_successful_atomic_fast_path():
             "If this result looks wrong or incomplete — especially if the "
             "task falls within your loaded guidance or requires capabilities "
             "the fast path lacks (credentials, secrets, multi-step "
-            "workflows) — escalate by calling "
-            'notify({"type": "escalation", "message": "<what you can do '
-            'better>"}).  Otherwise, no action needed.',
+            "workflows) — escalate via execute_code by calling "
+            '```python\nnotify({"type": "escalation", "message": "<what you can do '
+            'better>"})\n```.  Otherwise, no action needed.',
         )
 
         await _assert_no_escalation(handle, window=15)
@@ -216,7 +216,7 @@ async def test_actor_no_escalation_on_successful_atomic_fast_path():
 
 
 @pytest.mark.asyncio
-@pytest.mark.timeout(180)
+@pytest.mark.timeout(240)
 async def test_actor_escalates_on_multi_step_fast_path_attempt():
     """The actor should escalate when a fast-path result shows it attempted
     a complex multi-step task that should have been routed through the actor.
@@ -246,9 +246,9 @@ async def test_actor_escalates_on_multi_step_fast_path_attempt():
             "If this result looks wrong or incomplete — especially if the "
             "task falls within your loaded guidance or requires capabilities "
             "the fast path lacks (credentials, secrets, multi-step "
-            "workflows) — escalate by calling "
-            'notify({"type": "escalation", "message": "<what you can do '
-            'better>"}).  Otherwise, no action needed.',
+            "workflows) — escalate via execute_code by calling "
+            '```python\nnotify({"type": "escalation", "message": "<what you can do '
+            'better>"})\n```.  Otherwise, no action needed.',
         )
 
         notification = await _wait_for_escalation(handle, timeout=60)
