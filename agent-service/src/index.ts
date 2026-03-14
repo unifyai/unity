@@ -457,11 +457,17 @@ async function ensureDemoSites(urlMappings: Record<string, string>): Promise<voi
     return;
   }
 
-  // Add /etc/hosts entries so the browser resolves mapped domains to localhost.
-  // This bypasses patchright's CDP interception blocking.
-  for (const [original] of Object.entries(urlMappings)) {
+  // Add /etc/hosts entries and Caddy reverse proxy blocks so the browser
+  // resolves mapped domains to localhost and Caddy terminates TLS with a
+  // self-signed cert. This bypasses patchright's CDP interception blocking.
+  let caddyChanged = false;
+  for (const [original, replacement] of Object.entries(urlMappings)) {
     try {
-      const origHost = new URL(original).hostname;
+      const origUrl = new URL(original);
+      const origHost = origUrl.hostname;
+      const replPort = new URL(replacement).port || '80';
+
+      // /etc/hosts
       const hostsFile = fs.readFileSync('/etc/hosts', 'utf-8');
       if (!hostsFile.includes(origHost)) {
         fs.appendFileSync('/etc/hosts', `\n127.0.0.1 ${origHost}\n`);
@@ -469,8 +475,31 @@ async function ensureDemoSites(urlMappings: Record<string, string>): Promise<voi
       } else {
         console.log(`[demo-sites] /etc/hosts already has entry for ${origHost}`);
       }
+
+      // Caddy block (only for https mappings where Caddy needs to terminate TLS)
+      if (origUrl.protocol === 'https:') {
+        const caddyFile = fs.existsSync('/etc/caddy/Caddyfile')
+          ? fs.readFileSync('/etc/caddy/Caddyfile', 'utf-8') : '';
+        if (!caddyFile.includes(origHost + ' {')) {
+          const caddyBlock = `\n${origHost} {\n    tls internal\n    reverse_proxy localhost:${replPort}\n}\n`;
+          fs.appendFileSync('/etc/caddy/Caddyfile', caddyBlock);
+          caddyChanged = true;
+          console.log(`[demo-sites] Added Caddy block: ${origHost} -> localhost:${replPort}`);
+        } else {
+          console.log(`[demo-sites] Caddy already has block for ${origHost}`);
+        }
+      }
     } catch (e) {
-      console.warn(`[demo-sites] Could not update /etc/hosts: ${e}`);
+      console.warn(`[demo-sites] Could not configure hosts/Caddy: ${e}`);
+    }
+  }
+
+  if (caddyChanged) {
+    try {
+      execSync('caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile 2>&1', { timeout: 10000 });
+      console.log('[demo-sites] Caddy reloaded with new demo site routes');
+    } catch (e) {
+      console.warn(`[demo-sites] Caddy reload failed: ${e}`);
     }
   }
 
@@ -548,51 +577,6 @@ async function ensureDemoSites(urlMappings: Record<string, string>): Promise<voi
       console.error(`[demo-sites] ${dirName} failed to start on port ${port} within timeout`);
     }
 
-    // Start proxy listeners on the ports the browser will actually hit.
-    // Handles both HTTP (80) and HTTPS (443) since Chrome may upgrade
-    // via HSTS. HTTPS uses a self-signed cert (browser context has
-    // ignoreHTTPSErrors=true).
-    const proxyHandler = (req: any, res: any) => {
-      const proxyReq = http.request(
-        { hostname: '127.0.0.1', port, path: req.url, method: req.method, headers: req.headers },
-        (proxyRes: any) => { res.writeHead(proxyRes.statusCode || 200, proxyRes.headers); proxyRes.pipe(res); }
-      );
-      req.pipe(proxyReq);
-      proxyReq.on('error', () => { res.writeHead(502); res.end(); });
-    };
-
-    for (const listenPort of [80, 443]) {
-      if (listenPort !== port && !(await isPortOpen(listenPort))) {
-        try {
-          if (listenPort === 443) {
-            const { generateKeyPairSync, createSign, createHash } = await import('crypto');
-            // Generate a self-signed cert on the fly
-            const tls = await import('tls');
-            const { execSync: execSyncLocal } = await import('child_process');
-            try {
-              execSyncLocal(
-                'openssl req -x509 -newkey rsa:2048 -keyout /tmp/demo-key.pem -out /tmp/demo-cert.pem -days 1 -nodes -subj "/CN=connect.zoho.com" 2>/dev/null',
-                { timeout: 5000 }
-              );
-              const httpsProxy = https.createServer(
-                { key: fs.readFileSync('/tmp/demo-key.pem'), cert: fs.readFileSync('/tmp/demo-cert.pem') },
-                proxyHandler
-              );
-              httpsProxy.listen(443, '0.0.0.0');
-              console.log(`[demo-sites] HTTPS proxy listening on port 443 -> ${port}`);
-            } catch (e) {
-              console.warn(`[demo-sites] Could not create HTTPS proxy: ${e}`);
-            }
-          } else {
-            const httpProxy = http.createServer(proxyHandler);
-            httpProxy.listen(listenPort, '0.0.0.0');
-            console.log(`[demo-sites] HTTP proxy listening on port ${listenPort} -> ${port}`);
-          }
-        } catch (e) {
-          console.warn(`[demo-sites] Could not start proxy on port ${listenPort}: ${e}`);
-        }
-      }
-    }
   }
 }
 
