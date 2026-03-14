@@ -800,3 +800,115 @@ class TestAskAnswerEventForwarding:
             f"The fast brain receives ask answers via event forwarding.\n"
             f"Tool calls: {cm.all_tool_calls}"
         )
+
+
+# =============================================================================
+# Test: slow brain should not send text messages during voice calls
+# =============================================================================
+
+
+@pytest.mark.eval
+@pytest.mark.asyncio
+class TestSlowBrainSuppressesTextDuringVoiceCall:
+    """During a Unify Meet with the boss, the fast brain receives all system
+    events directly and handles verbal communication autonomously.  The slow
+    brain should NOT silently send text messages (Unify messages, SMS) to relay
+    results that the fast brain is already handling — this manifests as the
+    caller receiving an unexpected text notification during a live voice
+    conversation with no verbal acknowledgement.
+    """
+
+    @_handle_project
+    async def test_slow_brain_waits_after_action_completes_during_meet(
+        self,
+        initialized_cm,
+    ):
+        """When an action completes during a boss Unify Meet, the slow brain
+        should call wait() — not send_unify_message — because the fast brain
+        already receives the ActorResult via the notification pipeline and
+        will relay results verbally.
+
+        Regression: in production the slow brain consistently sent detailed
+        Unify messages with action results during live voice calls, even
+        though the fast brain was simultaneously verbalising the same
+        information.  The caller would get a silent text notification with
+        no verbal indication that anything was sent.
+
+        The production scenario had an active Unify message thread alongside
+        the meet (the user had sent text messages before joining the call),
+        which biased the LLM toward replying in that same text channel.
+        The brain was woken by the ActorResult itself — not by a user
+        utterance — and decided to "deliver" the results via text.
+        """
+        from unity.conversation_manager.events import (
+            ActorResult,
+            UnifyMessageReceived,
+            UnifyMessageSent,
+        )
+
+        cm = initialized_cm
+
+        # Establish a pre-existing text thread where the user explicitly
+        # asked for structured information via text.
+        await cm.step(
+            UnifyMessageReceived(
+                contact=BOSS,
+                content=(
+                    "Hey David, I've set up the OneDrive API credentials "
+                    "in the secrets page. Can you connect and send me a "
+                    "summary of what's in there? A breakdown with folder "
+                    "names and file counts would be great."
+                ),
+            ),
+        )
+        await cm.step(
+            UnifyMessageSent(
+                contact=BOSS,
+                content="On it, connecting now.",
+            ),
+        )
+
+        # User joins a Unify Meet to discuss interactively.
+        await cm.step(UnifyMeetReceived(contact=BOSS))
+        await cm.step(UnifyMeetStarted(contact=BOSS))
+        assert cm.cm.mode == Mode.MEET
+
+        # Simulate an in-flight action that was dispatched during the call.
+        cm.cm.in_flight_actions[0] = {
+            "query": (
+                "Connect to Microsoft OneDrive using the stored API "
+                "credentials and list the contents of Dan's drive."
+            ),
+            "handle_actions": [],
+        }
+
+        cm.all_tool_calls.clear()
+
+        # Action completes — the brain is woken by the ActorResult.
+        # The fast brain also receives this via the notification pipeline.
+        await cm.step_until_wait(
+            ActorResult(
+                handle_id=0,
+                success=True,
+                result=(
+                    "Connected successfully. Dan's OneDrive root "
+                    "contains: Projects/ (3 subfolders), Finance/ "
+                    "(invoices, receipts), HR/ (contracts, policies), "
+                    "plus 50 miscellaneous files at root level "
+                    "including duplicates and temp files."
+                ),
+            ),
+            max_steps=5,
+        )
+
+        text_tools = {"send_unify_message", "send_sms", "send_email"}
+        used_text_tools = text_tools & set(cm.all_tool_calls)
+        assert not used_text_tools, (
+            f"During a Unify Meet with the boss, the slow brain must not "
+            f"send text messages to relay action results — the fast brain "
+            f"handles verbal communication autonomously.  An active text "
+            f"thread from before the call does not justify switching to "
+            f"text mid-conversation.\n"
+            f"Text tools called: {used_text_tools}\n"
+            f"All tool calls: {cm.all_tool_calls}"
+        )

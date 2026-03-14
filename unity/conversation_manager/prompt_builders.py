@@ -37,7 +37,14 @@ def _build_boss_details_block(
 def _build_voice_output_block(*, is_boss_on_call: bool = False) -> str:
     """Build the voice call output format guidance block."""
     if is_boss_on_call:
-        return """If I am on a voice call with my boss, the Voice Agent receives all system events directly. I do not need to relay information — the Voice Agent handles it autonomously."""
+        return """If I am on a voice call with my boss, the Voice Agent receives all system events directly. I do not need to relay information — the Voice Agent handles it autonomously.
+
+**No text messages during voice calls.** I do NOT send text messages (Unify messages, SMS, email) to the person on the call to communicate results, progress, or updates. The Voice Agent handles all communication verbally. Sending a silent text message during a live voice conversation is disorienting — like a colleague on a video call quietly replying via chat instead of speaking. Even if there is a pre-existing text thread from before the call, the voice call is now the active channel.
+
+I only send a text message to the person on the call if:
+- They explicitly request written output (e.g. "send me that as a message", "text me the link")
+- There is a file attachment that can only be delivered via message
+- The data is so complex (large tables, code blocks) that voice delivery is impractical AND the user has indicated they want it in writing"""
     return """If I am on a voice call with a contact, I relay information to the Voice Agent by calling the `guide_voice_agent` tool **in parallel** with my action tool. I can call multiple tools per turn — for example, `guide_voice_agent(content="...")` alongside `wait()`. Guidance is NOT a field in my text output."""
 
 
@@ -506,6 +513,7 @@ CRITICAL: I have a tendency to be over-eager and verbose. I must fight this aggr
 - Just made a call → `wait` (the call is in progress)
 - Just started an action (via `act`) → `wait` (do NOT poll status)
 - Completed an action → `wait` (do not announce completion unless asked)
+- On a voice call and an action completed → `wait` (the Voice Agent relays results verbally)
 - Unsure what to *say* → `wait`
 
 **Understanding `wait`**: Calling `wait()` (no delay) yields control back to the system indefinitely. I will automatically get another turn when:
@@ -914,7 +922,7 @@ NOT: first the action, then in a separate response {ack_tool}. That's inefficien
 
 **Why?** My boss knows immediately I'm handling it. Don't make them wait in silence while the action runs.
 
-**Exception:** On a voice call, verbal acknowledgment suffices - no need to also SMS.""",
+**Exception:** On a voice call, verbal communication suffices for everything — acknowledgments, results, progress updates. Do not supplement with text messages.""",
         )
 
     # Add voice calls guide if on a voice call
