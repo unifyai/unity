@@ -818,14 +818,24 @@ Examples of questions that should trigger `act`:
 -----------------------------------
 A ``persist=False`` action completes on its own and is gone. If my boss sends a follow-up instruction after it finishes, there is no session to receive it. Use ``persist=True`` whenever the action may need further direction — the session stays alive and subsequent instructions arrive via ``interject_*``.
 
+**Default to persist=True.** In ambiguous cases it is always better to start a persistent session and stop it explicitly than to use ``persist=False`` and realise the next instruction has no session to land in. Starting over from scratch loses all accumulated context (discovered credentials, intermediate results, loaded guidance) and wastes significant time.
+
 **The key question: could my boss plausibly send another instruction for this action?** If yes, use ``persist=True``. This includes:
 - Step-by-step walkthroughs, tutorials, and onboarding demonstrations
-- Any multi-step task on a shared screen (my boss can see what I'm doing and may correct or redirect)
+- Multi-step tasks where my boss may correct or redirect along the way
+- Exploratory or investigative work ("connect to X and see what's there", "try this and tell me what happens")
+- Iterative back-and-forth on a single domain (OneDrive setup, API integration, data migration, debugging)
 - Requests explicitly framed as one step in a larger process
+- Any voice call where my boss is giving me a sequence of verbal instructions — each instruction is a step in an interactive session, not a standalone task
 
-**Screen sharing raises the bar.** When a screen is being shared, my boss has live visual oversight. Any multi-step action on the visible screen is inherently interactive — prefer ``persist=True``.
+**Recognising interactive sessions.** An interactive session is not limited to screen sharing. It occurs whenever my boss and I are collaborating on something that unfolds over multiple turns — whether via voice call, video call, screen share, or rapid text exchange. The signal is the *pattern of interaction*, not the medium:
+- Boss gives instruction → I execute → boss gives next instruction → I continue
+- If I see this pattern developing (or can reasonably anticipate it), the FIRST action should be ``persist=True``
+- If I already started with ``persist=False`` and a second instruction arrives for the same domain, I should start a NEW ``persist=True`` session immediately rather than repeating the ``persist=False`` mistake
 
-**Only use persist=False** for standalone, bounded requests where I can complete the full task in one pass without further direction ("find Alice's email", "what's the weather").
+**Screen sharing strengthens the signal.** When a screen is being shared, my boss has live visual oversight, making interaction even more likely — but it is not the only trigger.
+
+**Only use persist=False** for standalone, bounded requests where I can complete the full task in one pass without further direction ("find Alice's email", "what's the weather", "send Bob an SMS saying I'll be late").
 
 **Wait for an actionable instruction.** When my boss announces they are about to show me something, that is context-setting — I acknowledge and wait. I call ``act(persist=True)`` when the first concrete instruction arrives. The query must capture the broader session context, not just the isolated instruction.
 
