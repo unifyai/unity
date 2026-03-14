@@ -371,6 +371,102 @@ class TestAddUnifyMessageAttachments:
 
 
 # =============================================================================
+# Download Idempotency Tests
+# =============================================================================
+
+
+class TestAttachmentDownloadIdempotency:
+    """Verify that already-downloaded attachments are not re-fetched."""
+
+    @pytest.mark.asyncio
+    async def test_skips_download_when_file_exists(self, tmp_path):
+        """If the target file already exists on disk, the download is skipped."""
+        # Pre-create the attachment file
+        att_dir = tmp_path / "Attachments"
+        att_dir.mkdir()
+        existing_file = att_dir / "att-1_report.pdf"
+        existing_file.write_bytes(b"original content")
+
+        mock_adapter = MagicMock()
+        mock_adapter._root = tmp_path
+
+        mock_file_manager = MagicMock()
+        mock_file_manager._adapter = mock_adapter
+
+        mock_session = MagicMock()
+        mock_session.get = MagicMock()
+        mock_session.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_session.__aexit__ = AsyncMock(return_value=None)
+
+        with (
+            patch("aiohttp.ClientSession", return_value=mock_session),
+            patch(
+                "unity.manager_registry.ManagerRegistry.get_file_manager",
+                return_value=mock_file_manager,
+            ),
+        ):
+            attachments = [
+                {
+                    "id": "att-1",
+                    "filename": "report.pdf",
+                    "url": "https://storage.googleapis.com/signed-url",
+                },
+            ]
+
+            await comms_utils.add_unify_message_attachments(attachments)
+
+            # Network request should NOT have been made
+            mock_session.get.assert_not_called()
+            # File content should be unchanged
+            assert existing_file.read_bytes() == b"original content"
+
+    @pytest.mark.asyncio
+    async def test_downloads_when_file_missing(self, tmp_path):
+        """Normal download proceeds when the target file does not exist."""
+        att_dir = tmp_path / "Attachments"
+        att_dir.mkdir()
+
+        mock_adapter = MagicMock()
+        mock_adapter._root = tmp_path
+        mock_adapter.save_attachment = MagicMock(
+            return_value="Attachments/att-2_data.xlsx",
+        )
+
+        mock_file_manager = MagicMock()
+        mock_file_manager._adapter = mock_adapter
+
+        mock_response = MagicMock()
+        mock_response.read = AsyncMock(return_value=b"xlsx content")
+
+        mock_session = MagicMock()
+        mock_session.get = MagicMock(
+            return_value=AsyncMock(__aenter__=AsyncMock(return_value=mock_response)),
+        )
+        mock_session.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_session.__aexit__ = AsyncMock(return_value=None)
+
+        with (
+            patch("aiohttp.ClientSession", return_value=mock_session),
+            patch(
+                "unity.manager_registry.ManagerRegistry.get_file_manager",
+                return_value=mock_file_manager,
+            ),
+        ):
+            attachments = [
+                {
+                    "id": "att-2",
+                    "filename": "data.xlsx",
+                    "url": "https://storage.googleapis.com/signed-url-2",
+                },
+            ]
+
+            await comms_utils.add_unify_message_attachments(attachments)
+
+            # Download should have proceeded
+            mock_adapter.save_attachment.assert_called_once()
+
+
+# =============================================================================
 # Message Model Attachments Tests
 # =============================================================================
 

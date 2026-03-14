@@ -71,7 +71,7 @@ def _record_running_job_count(api_key: str) -> None:
         )
 
 
-def mark_job_label(job_name: str, status: str):
+def mark_job_label(job_name: str, status: str, assistant_id: str | None = None):
     """Patch the K8s Job unity-status label via the communication service."""
     comms_url = SETTINGS.conversation.COMMS_URL.rstrip("/")
     admin_key = SETTINGS.ORCHESTRA_ADMIN_KEY.get_secret_value()
@@ -80,12 +80,15 @@ def mark_job_label(job_name: str, status: str):
             f"{ICONS['assistant_jobs']} [assistant_jobs] Skipping label update: COMMS_URL or admin key not configured",
         )
         return
+    labels = {"unity-status": status}
+    if assistant_id is not None:
+        labels["assistant-id"] = str(assistant_id).lower().replace("_", "-")
     try:
         resp = requests.patch(
             f"{comms_url}/infra/job/labels",
             data={
                 "job_name": job_name,
-                "labels": json.dumps({"unity-status": status}),
+                "labels": json.dumps(labels),
             },
             headers={"Authorization": f"Bearer {admin_key}"},
             timeout=30,

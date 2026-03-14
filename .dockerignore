@@ -64,5 +64,14 @@ tests/
 *.md
 !README.md
 
+# Cloned/built inside the image (not from local checkout)
+magnitude/
+
+# Node modules (agent-service installs its own)
+node_modules/
+
+# Build logs
+logs/
+
 # Other
 .DS_Store

@@ -1013,6 +1013,225 @@ class TestFastBrainGuidanceFlow:
             len(session.say_calls) == 0
         ), "Notify-only guidance must NOT trigger session.say() directly."
 
+    async def test_outbound_message_to_caller_triggers_fast_brain_turn(
+        self,
+        monkeypatch,
+    ):
+        """When the slow brain sends a text message to the person on the
+        call, the fast brain must receive a turn so it can verbally
+        acknowledge the sent message (e.g. "I just sent you a message
+        with the full breakdown, by the way").
+
+        Without this, the caller gets a silent text notification during a
+        live voice conversation with no verbal acknowledgement — like a
+        colleague on a Teams call quietly replying via chat instead of
+        speaking.
+        """
+        from livekit.agents import llm
+        from unity.conversation_manager.medium_scripts import call as call_script
+
+        contact = {
+            "contact_id": 1,
+            "first_name": "Dan",
+            "surname": "Lenton",
+            "phone_number": "+15550100001",
+            "email_address": "dan@example.com",
+        }
+        boss = contact
+
+        class _ImmediateAwaitable:
+            def __await__(self):
+                async def _done():
+                    return None
+
+                return _done().__await__()
+
+        class _FakeLocalParticipant:
+            async def publish_data(self, *args, **kwargs):
+                pass
+
+        class _FakeRoom:
+            name = "fake-room"
+            local_participant = _FakeLocalParticipant()
+
+            def on(self, *args, **kwargs):
+                return lambda fn: fn
+
+        class _FakeJobContext:
+            def __init__(self):
+                self.room = _FakeRoom()
+                self.job = SimpleNamespace()
+
+            async def connect(self):
+                return None
+
+            def add_shutdown_callback(self, cb):
+                pass
+
+            def shutdown(self, reason=""):
+                pass
+
+        class _FakeEventBroker:
+            def __init__(self):
+                self.callbacks = {}
+
+            def set_logger(self, fb_logger):
+                pass
+
+            def register_callback(self, channel, handler):
+                self.callbacks[channel] = handler
+
+            async def publish(self, channel, message):
+                return 1
+
+        fake_session_holder = {}
+
+        class _FakeSession:
+            def __init__(self, *args, **kwargs):
+                self._chat_ctx = llm.ChatContext()
+                self.current_agent = None
+                self._events = {}
+                self.generate_reply_calls = 0
+                self.say_calls = []
+                self.agent_state = "listening"
+                self.current_speech = None
+                fake_session_holder["session"] = self
+
+            def on(self, event_name):
+                def _decorator(fn):
+                    self._events[event_name] = fn
+                    return fn
+
+                return _decorator
+
+            async def start(self, room, agent, room_input_options=None):
+                self.current_agent = agent
+
+            def generate_reply(self, **kwargs):
+                self.generate_reply_calls += 1
+                return _ImmediateAwaitable()
+
+            def say(self, text, **kwargs):
+                self.say_calls.append(text)
+                return _ImmediateAwaitable()
+
+        class _FakeAssistant:
+            def __init__(self, *args, **kwargs):
+                self._chat_ctx = llm.ChatContext()
+                self.call_received = True
+
+            def set_call_received(self):
+                self.call_received = True
+
+        async def _noop_async(*args, **kwargs):
+            return None
+
+        async def _noop_end_call():
+            return None
+
+        fake_broker = _FakeEventBroker()
+        fake_session_details = SimpleNamespace(
+            populate_from_env=lambda: None,
+            voice=SimpleNamespace(provider="cartesia", id=""),
+            voice_call=SimpleNamespace(
+                outbound=False,
+                channel="unify_meet",
+                contact_json=json.dumps(contact),
+                boss_json=json.dumps(boss),
+            ),
+            assistant=SimpleNamespace(about="Assistant bio", name="David"),
+        )
+
+        monkeypatch.setattr(call_script, "event_broker", fake_broker)
+        monkeypatch.setattr(call_script, "SESSION_DETAILS", fake_session_details)
+        monkeypatch.setattr(call_script, "AgentSession", _FakeSession)
+        monkeypatch.setattr(call_script, "Assistant", _FakeAssistant)
+        monkeypatch.setattr(call_script, "UnifyLLM", lambda *args, **kwargs: object())
+        monkeypatch.setattr(
+            call_script,
+            "build_voice_agent_prompt",
+            lambda **kwargs: SimpleNamespace(flatten=lambda: "system prompt"),
+        )
+        monkeypatch.setattr(call_script, "start_event_broker_receive", _noop_async)
+        monkeypatch.setattr(call_script, "publish_call_started", _noop_async)
+        monkeypatch.setattr(
+            call_script,
+            "create_end_call",
+            lambda *args, **kwargs: _noop_end_call,
+        )
+        monkeypatch.setattr(
+            call_script,
+            "setup_inactivity_timeout",
+            lambda end_call: (lambda: None),
+        )
+        monkeypatch.setattr(
+            call_script,
+            "setup_participant_disconnect_handler",
+            lambda *args, **kwargs: None,
+        )
+        monkeypatch.setattr(call_script, "RoomInputOptions", lambda **kwargs: object())
+        monkeypatch.setattr(call_script, "EnglishModel", lambda: object())
+        monkeypatch.setattr(call_script.cartesia, "TTS", lambda **kwargs: object())
+        monkeypatch.setattr(call_script.elevenlabs, "TTS", lambda **kwargs: object())
+        if hasattr(call_script, "noise_cancellation"):
+            monkeypatch.setattr(call_script.noise_cancellation, "BVC", lambda: object())
+
+        monkeypatch.setattr(call_script, "STT", object())
+        monkeypatch.setattr(call_script, "VAD", object())
+
+        import unity.common.llm_client as _llm_mod
+
+        class _FakeGreetingClient:
+            async def generate(self, **kwargs):
+                return "Hello!"
+
+        monkeypatch.setattr(
+            _llm_mod,
+            "new_llm_client",
+            lambda *a, **kw: _FakeGreetingClient(),
+        )
+
+        await call_script.entrypoint(_FakeJobContext())
+
+        session = fake_session_holder["session"]
+        baseline_replies = session.generate_reply_calls
+
+        from unity.conversation_manager.events import UnifyMessageSent
+
+        comms_cb = fake_broker.callbacks["app:comms:*"]
+        event = UnifyMessageSent(
+            contact={"contact_id": 1, "first_name": "Dan", "surname": "Lenton"},
+            content="Here's the full breakdown of your OneDrive contents.",
+        )
+        comms_cb({"event": event.to_json()})
+
+        ctx_texts = [
+            item.text_content or ""
+            for item in session._chat_ctx.items
+            if getattr(item, "type", None) == "message"
+        ]
+        has_outbound_ref = any("OneDrive" in txt for txt in ctx_texts)
+        assert has_outbound_ref, (
+            "When the slow brain sends a Unify message to the person on "
+            "the call, the fast brain's chat context must include a "
+            "reference to it so the fast brain can acknowledge it "
+            "verbally (e.g. 'I just sent you a message with the details').\n"
+            f"Chat context messages: {ctx_texts}"
+        )
+
+        # generate_reply is scheduled via call_later with a coalesce delay;
+        # yield to the event loop so the timer fires.
+        import asyncio
+
+        await asyncio.sleep(0.1)
+
+        got_reply_turn = session.generate_reply_calls > baseline_replies
+        assert got_reply_turn, (
+            "The fast brain must get an LLM turn after an outbound "
+            "message is sent to the caller, so it can verbally "
+            "acknowledge the sent message."
+        )
+
     async def test_should_speak_guidance_not_injected_into_chat_ctx(
         self,
         monkeypatch,
@@ -1907,6 +2126,71 @@ class TestParticipantCommsRendering:
 
     def _make_event_json(self, event):
         return event.to_json()
+
+    # ── Outbound (assistant → participant) ──────────────────────────────
+
+    def test_outbound_unify_message_to_participant_rendered(self):
+        """When the slow brain sends a Unify message to the person on the
+        call, the fast brain must see it so it can verbally acknowledge it.
+
+        Without this, the caller receives a silent text message during a
+        live voice conversation with no verbal indication from the
+        assistant that anything was sent.
+        """
+        from unity.conversation_manager.events import UnifyMessageSent
+        from unity.conversation_manager.medium_scripts.common import (
+            render_participant_comms,
+        )
+
+        event = UnifyMessageSent(
+            contact={"contact_id": 1, "first_name": "Dan", "surname": "Lenton"},
+            content="Here's the detailed breakdown of your OneDrive contents.",
+        )
+        result = render_participant_comms(event.to_json(), {1})
+        assert result is not None, (
+            "render_participant_comms must render outbound UnifyMessageSent "
+            "to a call participant so the fast brain can acknowledge it verbally"
+        )
+        assert "Dan Lenton" in result
+        assert "OneDrive" in result
+
+    def test_outbound_sms_to_participant_rendered(self):
+        """Outbound SMS to a call participant should be visible to the fast
+        brain for verbal acknowledgement."""
+        from unity.conversation_manager.events import SMSSent
+        from unity.conversation_manager.medium_scripts.common import (
+            render_participant_comms,
+        )
+
+        event = SMSSent(
+            contact={"contact_id": 5, "first_name": "Marcus", "surname": "Rivera"},
+            content="Sent you the meeting link.",
+        )
+        result = render_participant_comms(event.to_json(), {5})
+        assert result is not None, (
+            "render_participant_comms must render outbound SMSSent "
+            "to a call participant so the fast brain can acknowledge it verbally"
+        )
+        assert "Marcus Rivera" in result
+        assert "meeting link" in result
+
+    def test_outbound_message_to_non_participant_returns_none(self):
+        """Outbound messages to contacts NOT on the call should still be
+        invisible to the fast brain — only participant-targeted messages
+        matter."""
+        from unity.conversation_manager.events import UnifyMessageSent
+        from unity.conversation_manager.medium_scripts.common import (
+            render_participant_comms,
+        )
+
+        event = UnifyMessageSent(
+            contact={"contact_id": 99, "first_name": "Alice", "surname": "Other"},
+            content="Some message to a third party.",
+        )
+        result = render_participant_comms(event.to_json(), {1, 5})
+        assert result is None
+
+    # ── Inbound (participant → assistant) ───────────────────────────────
 
     def test_sms_from_participant_rendered_with_tag(self):
         from unity.conversation_manager.medium_scripts.common import (

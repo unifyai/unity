@@ -1,23 +1,39 @@
 steps:
-  # Build Docker Image
+  # Pull previous image for Docker layer cache (may not exist on first run)
+- name: 'gcr.io/cloud-builders/docker'
+  id: 'pull-cache'
+  entrypoint: 'bash'
+  args:
+  - '-c'
+  - |
+    docker pull ${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPOSITORY}/unity-staging:latest || true
+
+  # Build Docker image with BuildKit inline cache.
+  # --cache-from reuses layers from the previous image, so only changed layers rebuild.
+  # BUILDKIT_INLINE_CACHE=1 embeds cache metadata in the pushed image for next build.
 - name: 'gcr.io/cloud-builders/docker'
   id: 'build-image'
   entrypoint: 'bash'
   args:
   - '-c'
   - |
-    docker build --build-arg UNIFY_KEY=$$ORCHESTRA_API_KEY --build-arg GITHUB_TOKEN=$$GITHUB_TOKEN --build-arg BRANCH=staging \
+    DOCKER_BUILDKIT=1 docker build \
+      --cache-from ${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPOSITORY}/unity-staging:latest \
+      --build-arg BUILDKIT_INLINE_CACHE=1 \
+      --build-arg UNIFY_KEY=$$ORCHESTRA_API_KEY \
+      --build-arg GITHUB_TOKEN=$$GITHUB_TOKEN \
+      --build-arg BRANCH=staging \
       -t ${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPOSITORY}/unity-staging:${SHORT_SHA} \
       -t ${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPOSITORY}/unity-staging:latest .
   secretEnv: ['ORCHESTRA_API_KEY', 'GITHUB_TOKEN']
+  waitFor: ['pull-cache']
 
-  # Push Docker Image (SHA Tag)
+  # Push Docker Image (SHA and latest tags in parallel)
 - name: 'gcr.io/cloud-builders/docker'
   id: 'push-sha-tag'
   args: ['push', '${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPOSITORY}/unity-staging:${SHORT_SHA}']
   waitFor: ['build-image']
 
-  # Push Docker Image (Latest Tag)
 - name: 'gcr.io/cloud-builders/docker'
   id: 'push-latest-tag'
   args: ['push', '${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPOSITORY}/unity-staging:latest']
@@ -46,8 +62,8 @@ steps:
     echo "Refreshing idle jobs with new image..."
     curl -sf -X POST -H "$${AUTH}" "$${ADAPTERS}/scheduled/jobs/create?refresh=true" && echo
 
-    echo "Waiting 30s for jobs to register as idle..."
-    sleep 30
+    echo "Waiting 120s for jobs to register as idle..."
+    sleep 120
 
     echo "Cleaning up stale idle jobs..."
     curl -sf -X POST -H "$${AUTH}" "$${ADAPTERS}/scheduled/jobs/cleanup" && echo

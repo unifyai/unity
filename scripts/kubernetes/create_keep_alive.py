@@ -85,8 +85,8 @@ def create_keep_alive_deployment(api_client, namespace="default"):
                                 "command": ["/bin/sh"],
                                 "args": ["-c", "while true; do sleep 30; done"],
                                 "resources": {
-                                    "requests": {"cpu": "2", "memory": "8Gi"},
-                                    "limits": {"cpu": "2", "memory": "8Gi"},
+                                    "requests": {"cpu": "2", "memory": "16Gi"},
+                                    "limits": {"cpu": "2", "memory": "16Gi"},
                                 },
                             },
                         ],
