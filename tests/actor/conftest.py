@@ -13,6 +13,7 @@ import pytest
 
 from unity.actor.execution.capture import StreamLike
 from unity.actor.execution.session import SessionExecutor
+from unity.manager_registry import ManagerRegistry
 
 _ADDR_RE = re.compile(r" at 0x[0-9a-fA-F]+")
 
@@ -25,6 +26,17 @@ def _normalize_execute_function_duration(result: Any) -> Any:
     elif hasattr(result, "duration_ms"):
         result.duration_ms = 0
     return result
+
+
+@pytest.fixture(autouse=True)
+def _force_simulated_web(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Force WebSearcher to use the simulated implementation for actor tests."""
+    from unity.settings import SETTINGS
+
+    monkeypatch.setenv("UNITY_WEB_IMPL", "simulated")
+    monkeypatch.setattr(SETTINGS.web, "IMPL", "simulated", raising=False)
+
+    ManagerRegistry.clear()
 
 
 @pytest.fixture(autouse=True)
