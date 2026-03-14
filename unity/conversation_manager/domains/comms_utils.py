@@ -3,6 +3,7 @@ import json
 import asyncio
 import aiohttp
 import os
+from pathlib import Path
 
 from unity.logger import LOGGER
 from unity.common.hierarchical_logger import ICONS
@@ -439,6 +440,13 @@ async def _download_single_attachment(
     att_id = att.get("id", "")
     raw_filename = att.get("filename") or f"attachment_{att_id}"
     safe_filename = os.path.basename(raw_filename)
+
+    target_path = Path(adapter._root) / "Attachments" / f"{att_id}_{safe_filename}"
+    if target_path.exists() and target_path.stat().st_size > 0:
+        LOGGER.debug(
+            f"{ICONS['comms_outbound']} Attachment {safe_filename} already on disk, skipping download",
+        )
+        return f"Attachments/{att_id}_{safe_filename}"
 
     url = att.get("url")
     gs_url = att.get("gs_url")

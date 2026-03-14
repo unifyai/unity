@@ -457,7 +457,53 @@ async function ensureDemoSites(urlMappings: Record<string, string>): Promise<voi
     return;
   }
 
-  for (const [, replacement] of Object.entries(urlMappings)) {
+  // Add /etc/hosts entries and Caddy reverse proxy blocks so the browser
+  // resolves mapped domains to localhost and Caddy terminates TLS with a
+  // self-signed cert. This bypasses patchright's CDP interception blocking.
+  let caddyChanged = false;
+  for (const [original, replacement] of Object.entries(urlMappings)) {
+    try {
+      const origUrl = new URL(original);
+      const origHost = origUrl.hostname;
+      const replPort = new URL(replacement).port || '80';
+
+      // /etc/hosts
+      const hostsFile = fs.readFileSync('/etc/hosts', 'utf-8');
+      if (!hostsFile.includes(origHost)) {
+        fs.appendFileSync('/etc/hosts', `\n127.0.0.1 ${origHost}\n`);
+        console.log(`[demo-sites] Added /etc/hosts entry: 127.0.0.1 ${origHost}`);
+      } else {
+        console.log(`[demo-sites] /etc/hosts already has entry for ${origHost}`);
+      }
+
+      // Caddy block (only for https mappings where Caddy needs to terminate TLS)
+      if (origUrl.protocol === 'https:') {
+        const caddyFile = fs.existsSync('/etc/caddy/Caddyfile')
+          ? fs.readFileSync('/etc/caddy/Caddyfile', 'utf-8') : '';
+        if (!caddyFile.includes(origHost + ' {')) {
+          const caddyBlock = `\n${origHost} {\n    tls internal\n    reverse_proxy localhost:${replPort}\n}\n`;
+          fs.appendFileSync('/etc/caddy/Caddyfile', caddyBlock);
+          caddyChanged = true;
+          console.log(`[demo-sites] Added Caddy block: ${origHost} -> localhost:${replPort}`);
+        } else {
+          console.log(`[demo-sites] Caddy already has block for ${origHost}`);
+        }
+      }
+    } catch (e) {
+      console.warn(`[demo-sites] Could not configure hosts/Caddy: ${e}`);
+    }
+  }
+
+  if (caddyChanged) {
+    try {
+      execSync('caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile 2>&1', { timeout: 10000 });
+      console.log('[demo-sites] Caddy reloaded with new demo site routes');
+    } catch (e) {
+      console.warn(`[demo-sites] Caddy reload failed: ${e}`);
+    }
+  }
+
+  for (const [original, replacement] of Object.entries(urlMappings)) {
     let parsed: URL;
     try { parsed = new URL(replacement); } catch { continue; }
 
@@ -530,6 +576,7 @@ async function ensureDemoSites(urlMappings: Record<string, string>): Promise<voi
     } else {
       console.error(`[demo-sites] ${dirName} failed to start on port ${port} within timeout`);
     }
+
   }
 }
 
@@ -670,7 +717,7 @@ const startBrowserOnVm = async (urlMappings?: Record<string, string>): Promise<B
           downloadsPath: defaultBrowserPaths.downloadsPath || undefined,
           tracesDir: defaultBrowserPaths.tracesDir || undefined,
         },
-        contextOptions: { viewport: null },
+        contextOptions: { viewport: null, ignoreHTTPSErrors: true },
       },
       narrate: true,
       urlMappings,
