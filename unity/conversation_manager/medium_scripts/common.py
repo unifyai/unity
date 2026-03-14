@@ -1169,11 +1169,11 @@ def _event_contact_id(event: Event) -> int | None:
 
 
 def render_participant_comms(event_json: str, participant_ids: set[int]) -> str | None:
-    """Render a comms event as a tagged message if the sender is a call participant.
+    """Render a comms event involving a call participant as a tagged message.
 
-    Returns a string like ``[SMS from Marcus] Hey, running late`` for
-    participant comms, or None if the event is not from a participant or
-    is not a comms event worth surfacing.
+    Covers both inbound (participant → assistant) and outbound (assistant →
+    participant) messages so the fast brain can acknowledge sent messages
+    verbally.  Returns None for non-participants and unrecognised event types.
     """
     try:
         event = Event.from_json(event_json)
@@ -1186,6 +1186,7 @@ def render_participant_comms(event_json: str, participant_ids: set[int]) -> str 
 
     name = _contact_name(event.contact)
 
+    # Inbound
     if isinstance(event, SMSReceived):
         return f"[SMS from {name}] {event.content}"
     if isinstance(event, EmailReceived):
@@ -1196,6 +1197,15 @@ def render_participant_comms(event_json: str, participant_ids: set[int]) -> str 
         )
     if isinstance(event, UnifyMessageReceived):
         return f"[Message from {name}] {event.content}"
+
+    # Outbound
+    if isinstance(event, SMSSent):
+        return f"[You texted {name}] {event.content}"
+    if isinstance(event, EmailSent):
+        subj = event.subject or "(no subject)"
+        return f"[You emailed {name}] {subj}"
+    if isinstance(event, UnifyMessageSent):
+        return f"[You messaged {name}] {event.content}"
 
     return None
 
