@@ -22,23 +22,22 @@ def insert_rows_impl(
     context: str,
     rows: List[Dict[str, Any]],
     *,
-    dedupe_key: Optional[str] = None,
     add_to_all_context: bool = False,
     batched: bool = True,
 ) -> List[int]:
-    """
-    Implementation of insert_rows operation.
+    """Insert rows into a context via bulk creation.
 
-    Inserts rows into a context with optional deduplication.
+    Uniqueness enforcement belongs at the **schema level** (``unique_keys``
+    on the context), not at insert time.  Use ``create_table(unique_keys=…)``
+    or ``ingest(unique_keys=…)`` to declare which columns form the natural
+    key; the backend will reject or upsert duplicates server-side.
 
     Parameters
     ----------
     context : str
         Fully-qualified Unify context path.
     rows : list[dict[str, Any]]
-        List of row dictionaries to insert.
-    dedupe_key : str | None
-        If provided, existing rows with matching key values are replaced.
+        Row dictionaries to insert.
     add_to_all_context : bool, default False
         Whether to also add to aggregation contexts.
     batched : bool, default True
@@ -48,62 +47,21 @@ def insert_rows_impl(
     -------
     list[int]
         Log IDs of inserted rows.
-
-    Raises
-    ------
-    Exception
-        If insertion fails.
     """
     if not rows:
         return []
 
-    logger.debug(
-        "Inserting %d rows into %s (dedupe_key=%s, batched=%s)",
-        len(rows),
-        context,
-        dedupe_key,
-        batched,
+    logger.debug("Inserting %d rows into %s (batched=%s)", len(rows), context, batched)
+
+    result = unify_create_logs(
+        context=context,
+        entries=rows,
+        add_to_all_context=add_to_all_context,
+        batched=batched,
     )
-
-    if dedupe_key:
-        # Upsert mode: check and replace existing rows
-        inserted_ids: List[int] = []
-        for row in rows:
-            key_val = row.get(dedupe_key)
-            if key_val is not None:
-                # Check if row with this key exists
-                existing = unify.get_logs(
-                    context=context,
-                    filter=f"{dedupe_key} == {key_val!r}",
-                    limit=1,
-                )
-                if existing:
-                    # Delete existing row
-                    log_id = existing[0].id if hasattr(existing[0], "id") else None
-                    if log_id:
-                        unify.delete_logs(context=context, logs=[log_id])
-
-            # Insert the row
-            log = unify_log(
-                context=context,
-                add_to_all_context=add_to_all_context,
-                **row,
-            )
-            if hasattr(log, "id"):
-                inserted_ids.append(log.id)
-
-        return inserted_ids
-    else:
-        # Bulk insert mode - always use batched=True for efficiency
-        result = unify_create_logs(
-            context=context,
-            entries=rows,
-            add_to_all_context=add_to_all_context,
-            batched=batched,
-        )
-        if isinstance(result, list):
-            return [lg.id for lg in result if hasattr(lg, "id")]
-        return []
+    if isinstance(result, list):
+        return [lg.id for lg in result if hasattr(lg, "id")]
+    return []
 
 
 def update_rows_impl(
