@@ -75,7 +75,7 @@ def test_get_manager_spec_valid():
     spec = registry.get_manager_spec("files")
     assert spec is not None
     assert spec.manager_alias == "files"
-    assert spec.domain == "Files & Data Operations"
+    assert spec.domain == "File Operations & Document Parsing"
 
 
 def test_get_manager_spec_invalid():
