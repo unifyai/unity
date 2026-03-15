@@ -309,17 +309,18 @@ class JsonFileReporter:
         self._file_path = Path(file_path)
         self._append = append
         self._max_error_length = max_error_length
-        # Generate run timestamp for unique subfolder per pipeline run
-        self._run_timestamp = time.strftime("%Y-%m-%dT%H-%M-%S")
-        # Default error dir: sibling to progress file, with per-run subfolder
-        base_error_dir = (
-            Path(error_dir) if error_dir else self._file_path.parent / "error_details"
-        )
-        self._error_dir = base_error_dir / self._run_timestamp
+        if error_dir is not None:
+            # Caller owns isolation (e.g. a timestamped run directory) --
+            # use as-is without adding another timestamp subfolder.
+            self._error_dir = Path(error_dir)
+        else:
+            # Default: sibling to progress file with per-run subfolder
+            ts = time.strftime("%Y-%m-%dT%H-%M-%S")
+            self._error_dir = self._file_path.parent / "error_details" / ts
         self._lock = threading.Lock()
         self._file: Optional[TextIO] = None
         self._opened = False
-        self._error_counter = 0  # For unique error file names
+        self._error_counter = 0
 
     def _ensure_open(self) -> TextIO:
         """Ensure the file is open for writing."""
@@ -350,7 +351,12 @@ class JsonFileReporter:
                 logger.warning(f"JSON file report failed: {e}")
 
     def _maybe_truncate_error(self, event: ProgressEvent) -> ProgressEvent:
-        """Truncate long errors and dump full details to separate file.
+        """Externalize errors and tracebacks into separate detail files.
+
+        Any event that carries an ``error`` longer than *max_error_length*
+        **or** a non-empty ``traceback`` field gets its full payload dumped
+        to a per-run detail file.  The JSONL line keeps only a short
+        summary + the ``error_detail_file`` path.
 
         Parameters
         ----------
@@ -360,22 +366,26 @@ class JsonFileReporter:
         Returns
         -------
         ProgressEvent
-            The event with truncated error and error_detail_file if applicable,
-            or the original event if no truncation was needed.
+            The event with truncated error, traceback stripped, and
+            ``error_detail_file`` set; or the original event unchanged.
         """
         error = event.get("error")
-        if not error or len(error) <= self._max_error_length:
+        traceback_str = event.get("traceback")
+
+        has_long_error = error and len(error) > self._max_error_length
+        has_traceback = bool(traceback_str)
+
+        if not has_long_error and not has_traceback:
             return event
 
-        # Extract the useful part (e.g., HTTP status + detail)
-        truncated = self._extract_error_summary(error)
+        truncated = self._extract_error_summary(error) if has_long_error else error
 
-        # Dump full error to separate file
-        error_file = self._dump_full_error(event, error)
+        error_file = self._dump_full_error(event, error or "")
 
-        # Return modified event with truncated error + file reference
         new_event = dict(event)
-        new_event["error"] = truncated
+        if truncated is not None:
+            new_event["error"] = truncated
+        new_event.pop("traceback", None)
         new_event["error_detail_file"] = str(error_file)
         return new_event  # type: ignore[return-value]
 
@@ -435,13 +445,13 @@ class JsonFileReporter:
         Path
             Path to the created error detail file.
         """
-        self._error_dir.mkdir(parents=True, exist_ok=True)
-
-        # Create unique filename using phase and counter
-        # (timestamp subfolder already provides run isolation)
+        # Create unique filename using phase and counter.
+        # Phase may contain slashes (e.g. "ingest_table/insert_chunk") which
+        # become subdirectories — ensure the full parent tree exists.
         phase = event.get("phase", "unknown")
         self._error_counter += 1
         error_file = self._error_dir / f"{phase}_{self._error_counter:04d}.json"
+        error_file.parent.mkdir(parents=True, exist_ok=True)
 
         error_payload = {
             "timestamp": event.get("timestamp"),
@@ -703,13 +713,23 @@ def create_progress_event(
     # Add meta based on verbosity level
     if meta is not None and verbosity != "low":
         if verbosity == "medium":
-            # Medium: include basic chunk/progress info
-            filtered_meta = {
-                k: v
-                for k, v in meta.items()
-                if k
-                in ("chunk", "total_chunks", "table_label", "row_count", "strategy")
+            _MEDIUM_KEYS = {
+                "chunk",
+                "chunk_index",
+                "total_chunks",
+                "chunk_size",
+                "table_label",
+                "row_count",
+                "total_rows",
+                "rows_inserted",
+                "rows_embedded",
+                "task_type",
+                "strategy",
+                "context",
+                "success",
+                "error",
             }
+            filtered_meta = {k: v for k, v in meta.items() if k in _MEDIUM_KEYS}
             if filtered_meta:
                 event["meta"] = filtered_meta
         else:  # high
