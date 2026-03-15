@@ -96,11 +96,24 @@ _MANAGER_SPECS: tuple[ManagerSpec, ...] = (
         primitive_class_path="unity.data_manager.data_manager.DataManager",
         excluded_methods=frozenset(),
         priority=9,
-        domain="Data Operations & Pipelines",
-        description="Low-level data operations on any Unify context (filter, search, reduce, join, vectorize, plot)",
-        use_when="Direct data operations on any context, pipeline transformations, cross-context joins",
-        examples="'Filter rows where amount > 1000', 'Join repairs with telematics', 'Sum revenue by region'",
-        special_note="DataManager operates on ANY Unify context. For file-specific operations with file_path resolution, use FileManager instead.",
+        domain="Data Operations, Visualizations & Ingestion",
+        description=(
+            "Low-level and high-level data operations on any Unify context "
+            "(filter, search, reduce, join, ingest, vectorize, plot, table_view)"
+        ),
+        use_when=(
+            "Data operations, aggregations, visualizations, "
+            "data ingestion from APIs/warehouses, cross-context joins"
+        ),
+        examples=(
+            "'Filter rows where amount > 1000', 'Join repairs with telematics', "
+            "'Sum revenue by region', 'Plot repairs by category', "
+            "'Show me a table view of orders', 'Ingest this API data'"
+        ),
+        special_note=(
+            "DataManager operates on any Unify context path. "
+            "Use `describe_table` and `list_tables` to discover schemas and available tables."
+        ),
     ),
     ManagerSpec(
         manager_alias="transcripts",
@@ -175,10 +188,19 @@ _MANAGER_SPECS: tuple[ManagerSpec, ...] = (
             },
         ),
         priority=7,
-        domain="Files & Data Operations",
-        description="Received/downloaded files, document parsing, file metadata, data queries",
-        use_when="Questions about specific files/documents, data operations, aggregations, visualizations",
-        examples="'Parse the attached PDF', 'What's in document X?', 'Find files about Y'",
+        domain="File Operations & Document Parsing",
+        description=(
+            "File-specific operations: describing storage layout, listing files, "
+            "parsing documents, rendering PDFs/Excel sheets as images"
+        ),
+        use_when=(
+            "Questions about files themselves (metadata, layout, parsing), "
+            "file-path-based context resolution, document rendering"
+        ),
+        examples=(
+            "'Parse the attached PDF', 'What's in document X?', "
+            "'Describe the schema of report.xlsx', 'Render page 3 of the report'"
+        ),
     ),
     ManagerSpec(
         manager_alias="computer",
@@ -265,20 +287,40 @@ _ROUTING_GUIDANCE: List[Dict[str, Any]] = [
         "guidance": [
             (
                 "data",
-                "Use for **data operations on table contents** - filtering rows, "
-                "aggregating/reducing values (sum, avg, count), joining tables, transforming data. "
-                "Use when the question is about the DATA INSIDE a table/dataset.",
+                "Use for **ALL analytical and data operations** -- filtering, searching, "
+                "aggregating, joining, plotting, table views, and data ingestion. Works on "
+                "any Unify context (`Data/*`, `Files/*`, `Knowledge/*`). Use when the question "
+                "is about DATA INSIDE tables, regardless of where those tables came from. "
+                "Also use for ingesting data from APIs/warehouses and for generating "
+                "visualizations (plots, table views).",
             ),
             (
                 "files",
-                "Use for **file-level operations** - listing files in directories, "
-                "describing storage layout, getting file metadata, asking about what a file contains (high-level). "
-                "Use when the question is about FILES themselves.",
+                "Use for **file-specific operations** -- describing the storage layout of "
+                "an uploaded/received file, listing files in the file registry, parsing "
+                "documents, rendering PDFs/Excel sheets as images for visual inspection. "
+                "Use when the question is about FILES themselves (metadata, layout, parsing) "
+                "or when you need file-path-based context resolution.",
             ),
         ],
         "examples": [
             (
-                "Calculate the sum of the amount column",
+                "Plot the distribution of repair types",
+                "data",
+                "primitives.data.plot(...)",
+            ),
+            (
+                "Show me a table view of the top 10 records",
+                "data",
+                "primitives.data.table_view(...)",
+            ),
+            (
+                "Ingest this API response into the database",
+                "data",
+                "primitives.data.ingest(...)",
+            ),
+            (
+                "Sum the amount column grouped by region",
                 "data",
                 "primitives.data.reduce(...)",
             ),
@@ -288,14 +330,24 @@ _ROUTING_GUIDANCE: List[Dict[str, Any]] = [
                 "primitives.data.filter(...)",
             ),
             (
-                "What files are in /reports?",
-                "files",
-                "primitives.files.filter_files(...)",
+                "What tables exist under Data/MidlandHeart?",
+                "data",
+                "primitives.data.list_tables(prefix=...)",
             ),
             (
-                "Describe the storage layout of report.csv",
+                "Describe the schema of the repairs table",
+                "data",
+                "primitives.data.describe_table(...)",
+            ),
+            (
+                "What's in the uploaded PDF?",
                 "files",
-                "primitives.files.describe(...)",
+                "primitives.files.describe(file_path=...)",
+            ),
+            (
+                "Render page 3 of the report as an image",
+                "files",
+                "primitives.files.render_pdf(...)",
             ),
         ],
     },
@@ -335,11 +387,13 @@ _EXAMPLE_GENERATORS: Dict[str, List[str]] = {
         "get_primitives_files_reduce_example",
         "get_primitives_files_filter_example",
         "get_primitives_files_search_example",
-        "get_primitives_files_visualize_example",
     ],
     "data": [
         "get_primitives_data_filter_example",
         "get_primitives_data_reduce_example",
+        "get_primitives_data_plot_example",
+        "get_primitives_data_table_view_example",
+        "get_primitives_data_ingest_example",
     ],
 }
 
