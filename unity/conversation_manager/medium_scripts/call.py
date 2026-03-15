@@ -790,8 +790,24 @@ async def entrypoint(ctx: agents.JobContext):
         _log.notification_say(text, notification_source=notification_source)
         session.say(text, allow_interruptions=True, add_to_chat_ctx=True)
 
-    def _extract_chat_messages(ctx) -> list[dict]:
-        """Convert a LiveKit ChatContext into a list of message dicts for direct LLM calls."""
+    def _extract_chat_messages(
+        ctx,
+        *,
+        strip_images: bool = False,
+        tail: int | None = None,
+    ) -> list[dict]:
+        """Convert a LiveKit ChatContext into a list of message dicts for direct LLM calls.
+
+        Parameters
+        ----------
+        strip_images : bool
+            When True, image content parts are dropped and only the text portions
+            of multi-modal messages are kept.  Messages that become empty after
+            stripping are omitted entirely.
+        tail : int | None
+            When set, only the last *tail* messages are returned (after any
+            image stripping).  Useful for keeping the context compact.
+        """
         from livekit.agents.llm import ImageContent
 
         messages: list[dict] = []
@@ -806,21 +822,29 @@ async def entrypoint(ctx: agents.JobContext):
                 isinstance(c, ImageContent) for c in raw_content
             )
             if has_images:
-                parts: list[dict] = []
-                for c in raw_content:
-                    if isinstance(c, str):
-                        parts.append({"type": "text", "text": c})
-                    elif isinstance(c, ImageContent) and isinstance(c.image, str):
-                        parts.append(
-                            {"type": "image_url", "image_url": {"url": c.image}},
-                        )
-                if parts:
-                    messages.append({"role": role, "content": parts})
+                if strip_images:
+                    text_parts = [c for c in raw_content if isinstance(c, str)]
+                    text = " ".join(text_parts).strip()
+                    if text:
+                        messages.append({"role": role, "content": text})
+                else:
+                    parts: list[dict] = []
+                    for c in raw_content:
+                        if isinstance(c, str):
+                            parts.append({"type": "text", "text": c})
+                        elif isinstance(c, ImageContent) and isinstance(c.image, str):
+                            parts.append(
+                                {"type": "image_url", "image_url": {"url": c.image}},
+                            )
+                    if parts:
+                        messages.append({"role": role, "content": parts})
             else:
                 text = getattr(item, "text_content", None)
                 if not text:
                     continue
                 messages.append({"role": role, "content": text})
+        if tail is not None and len(messages) > tail:
+            messages = messages[-tail:]
         return messages
 
     async def _evaluate_notification_reply() -> None:
@@ -833,10 +857,13 @@ async def entrypoint(ctx: agents.JobContext):
         evaluator = NotificationReplyEvaluator(
             model=SETTINGS.conversation.FAST_BRAIN_MODEL,
         )
-        chat_messages = _extract_chat_messages(session._chat_ctx)
+        chat_messages = _extract_chat_messages(
+            session._chat_ctx,
+            strip_images=True,
+            tail=SETTINGS.conversation.NOTIFICATION_REPLY_CONTEXT_WINDOW,
+        )
         decision, log_path = await evaluator.evaluate(
             chat_history=chat_messages,
-            system_prompt=system_prompt,
         )
         _pending_notification_eval_task = None
 
