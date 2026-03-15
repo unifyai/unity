@@ -280,6 +280,11 @@ class SecretManager(BaseSecretManager):
                     lines[key_to_idx[key]] = line
                 else:
                     lines.append(line)
+                os.environ[key] = value
+
+        if remove_keys:
+            for key in remove_keys:
+                os.environ.pop(key, None)
 
         with open(path, "w", encoding="utf-8") as fh:
             fh.write("\n".join(lines) + ("\n" if lines else ""))
@@ -700,7 +705,7 @@ class SecretManager(BaseSecretManager):
                 ),
                 name=r.get("name"),
                 value="",
-                description=r.get("description", ""),
+                description=r.get("description") or "",
             )
             for r in rows
         ]
@@ -747,7 +752,7 @@ class SecretManager(BaseSecretManager):
                 ),
                 name=lg.entries.get("name"),
                 value="",
-                description=lg.entries.get("description", ""),
+                description=lg.entries.get("description") or "",
             )
             for lg in logs
         ]
