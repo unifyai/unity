@@ -11,11 +11,13 @@ IMPORTANT: Do not duplicate docstrings in concrete implementations.
 from __future__ import annotations
 
 from abc import abstractmethod
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Callable, Dict, List, Optional, Union
 
 from unity.common.state_managers import BaseStateManager
 from unity.data_manager.types.table import TableDescription
 from unity.data_manager.types.plot import PlotResult
+from unity.data_manager.types.table_view import TableViewResult
+from unity.data_manager.types.ingest import IngestExecutionConfig, IngestResult
 
 
 class BaseDataManager(BaseStateManager):
@@ -113,11 +115,14 @@ class BaseDataManager(BaseStateManager):
         Tables can be created empty and populated later via ``insert_rows``,
         or created with a predefined schema for type enforcement.
 
-        This is NOT for creating file-derived tables (use FileManager.ingest_files
-        for that). Use this for:
-        - Pipeline outputs stored in ``Data/*``
-        - Intermediate calculation results
-        - API/warehouse data ingestion targets
+        For bulk data loading (create table + insert rows + optional embedding),
+        prefer the higher-level :meth:`ingest` method which handles chunking,
+        parallelism, and retry automatically.  Use ``create_table`` for:
+
+        - Schema-first workflows where the table must exist before rows arrive
+        - Empty table provisioning
+        - Cases where you need fine-grained control over table creation
+          separately from row insertion
 
         Parameters
         ----------
@@ -196,8 +201,9 @@ class BaseDataManager(BaseStateManager):
 
         Anti-patterns
         -------------
-        - WRONG: Creating tables for file-derived data directly.
-          CORRECT: Let FileManager.ingest_files create the table structure.
+        - WRONG: Calling ``create_table`` then ``insert_rows`` then
+          ``vectorize_rows`` for a standard bulk load.
+          CORRECT: Use ``ingest()`` which handles all three in one call.
 
         - WRONG: Using this for temporary intermediate results that fit in memory.
           CORRECT: Process in Python, only persist when needed.
@@ -1866,15 +1872,20 @@ class BaseDataManager(BaseStateManager):
         context: str,
         rows: List[Dict[str, Any]],
         *,
-        dedupe_key: Optional[str] = None,
         add_to_all_context: bool = False,
         batched: bool = True,
     ) -> List[int]:
         """
         Insert rows into a table.
 
-        Use this to add new data to an existing table. Supports bulk inserts
-        and deduplication based on a key column.
+        Use this to add new data to an existing table via efficient bulk
+        inserts.  For large batch inserts with optional embedding, prefer
+        :meth:`ingest` which provides chunking, parallelism, retry, and
+        integrated embedding.
+
+        Uniqueness / upsert semantics are handled at the **schema level**
+        through ``unique_keys`` (set via :meth:`create_table` or
+        :meth:`ingest`).  The backend enforces constraints server-side.
 
         Parameters
         ----------
@@ -1887,12 +1898,6 @@ class BaseDataManager(BaseStateManager):
 
             Example: ``[{"id": 1, "name": "Alice"}, {"id": 2, "name": "Bob"}]``
 
-        dedupe_key : str | None, default ``None``
-            If provided, rows with duplicate key values are updated instead of
-            creating duplicates. This enables "upsert" behavior.
-
-            Example: ``dedupe_key="id"`` - if row with same id exists, update it.
-
         add_to_all_context : bool, default ``False``
             Whether to also add rows to aggregation contexts.
 
@@ -1904,7 +1909,7 @@ class BaseDataManager(BaseStateManager):
         Returns
         -------
         list[int]
-            Log IDs of inserted rows (or updated if dedupe_key caused updates).
+            Log IDs of inserted rows.
 
         Usage Examples
         --------------
@@ -1914,32 +1919,26 @@ class BaseDataManager(BaseStateManager):
             {"id": 2, "name": "Bob", "email": "bob@example.com"},
         ])
 
-        # Upsert with dedupe_key
-        dm.insert_rows(
-            "Data/products",
-            [{"sku": "ABC123", "price": 29.99, "stock": 100}],
-            dedupe_key="sku"  # Updates if SKU exists
-        )
-
         # Batch insert from API response
         api_data = fetch_from_api()
         transformed = [transform_row(r) for r in api_data]
         count = dm.insert_rows("Data/MH/arrears", transformed)
         print(f"Inserted {count} rows")
 
+        # For upsert semantics, declare unique_keys at table creation:
+        dm.create_table("Data/products", unique_keys={"sku": "str"})
+        dm.insert_rows("Data/products", [{"sku": "ABC", "price": 29.99}])
+
         Anti-patterns
         -------------
         - WRONG: Inserting one row at a time in a loop
           CORRECT: Batch rows into a single insert_rows call
 
-        - WRONG: Inserting without dedupe_key when updates are expected
-          CORRECT: Use dedupe_key for idempotent inserts
-
         Notes
         -----
         - Empty rows list returns 0 without error
         - If table doesn't exist, it's created with inferred schema
-        - With dedupe_key, existing rows are replaced (delete + insert)
+        - For upsert behaviour, set ``unique_keys`` on the table schema
         """
 
     @abstractmethod
@@ -2080,6 +2079,182 @@ class BaseDataManager(BaseStateManager):
         - Filter is required as a safety measure
         - Deletion is immediate and permanent
         - Associated references from other tables are NOT cleaned up
+        """
+
+    # ──────────────────────────────────────────────────────────────────────────
+    # High-Level Ingestion
+    # ──────────────────────────────────────────────────────────────────────────
+
+    @abstractmethod
+    def ingest(
+        self,
+        context: str,
+        rows: List[Dict[str, Any]],
+        *,
+        description: Optional[str] = None,
+        fields: Optional[Dict[str, str]] = None,
+        unique_keys: Optional[Dict[str, str]] = None,
+        embed_columns: Optional[List[str]] = None,
+        embed_strategy: str = "along",
+        chunk_size: int = 1000,
+        auto_counting: Optional[Dict[str, Optional[str]]] = None,
+        infer_untyped_fields: bool = False,
+        add_to_all_context: bool = False,
+        execution: Optional["IngestExecutionConfig"] = None,
+        on_task_complete: Optional[Callable] = None,
+    ) -> "IngestResult":
+        """
+        Create a table, insert rows, and optionally embed -- in one call.
+
+        ``ingest`` is the **preferred high-level API** for loading data into
+        Unify contexts.  It orchestrates three clearly separated steps:
+
+        1. **Table creation** (idempotent) -- provisions the context with an
+           optional schema and description.
+        2. **Row insertion** (chunked, parallel) -- splits *rows* into chunks
+           of *chunk_size* and inserts them through a pipeline engine that
+           provides parallelism, retry, and fail-fast behaviour.
+        3. **Embedding** (optional) -- only runs when *embed_columns* is
+           provided.  Creates vector columns and populates embeddings for the
+           specified text columns.  The timing of embedding relative to
+           insertion is controlled by *embed_strategy*.
+
+        For file-derived data, prefer :meth:`FileManager.ingest_files` which
+        handles parsing, storage layout, and file records before delegating
+        the data storage step to this method.  For API / warehouse data or
+        programmatic row insertion, use ``ingest`` directly.
+
+        Parameters
+        ----------
+        context : str
+            Target context path.  Accepts relative, absolute owned, or
+            foreign paths (same resolution rules as ``create_table``).
+
+        rows : list[dict[str, Any]]
+            Row data to insert.  Each dict maps column names to values.
+
+        description : str | None, default ``None``
+            Human-readable description stored on the table.  Strongly
+            recommended for discoverability by the Actor.
+
+        fields : dict[str, str] | None, default ``None``
+            Explicit schema mapping field names to Unify types.  When
+            ``None``, types are inferred from the first inserted chunk.
+
+        unique_keys : dict[str, str] | None, default ``None``
+            Columns that should enforce uniqueness in Unify.  The backend
+            enforces upsert semantics server-side for rows whose key columns
+            match an existing row.
+
+        embed_columns : list[str] | None, default ``None``
+            Text columns to create vector embeddings for.  When ``None``
+            (the default), **no embedding occurs** regardless of
+            *embed_strategy*.
+
+        embed_strategy : str, default ``"along"``
+            Controls when embeddings are generated relative to row
+            insertion.  Only meaningful when *embed_columns* is provided.
+
+            - ``"along"`` -- embed each chunk immediately after it is
+              inserted (maximises pipeline overlap).
+            - ``"after"``  -- embed all rows in a single pass after every
+              chunk has been inserted (simpler but no overlap).
+            - ``"off"``    -- skip embedding even if *embed_columns* is
+              set (useful for deferred embedding workflows).
+
+        chunk_size : int, default ``1000``
+            Maximum rows per insertion chunk.  The pipeline splits *rows*
+            into sublists of this size and processes them with controlled
+            parallelism.
+
+        auto_counting : dict[str, str | None] | None, default ``None``
+            Columns with auto-increment behaviour (same semantics as
+            ``create_table``).
+
+        infer_untyped_fields : bool, default ``False``
+            When ``True``, Unify infers types for fields not declared in
+            *fields*.
+
+        add_to_all_context : bool, default ``False``
+            Whether to also add inserted rows to aggregation contexts.
+            Used by FileManager to populate cross-assistant shared tables.
+
+        execution : IngestExecutionConfig | None, default ``None``
+            Advanced pipeline knobs (max_workers, retries, backoff,
+            fail_fast).  Defaults are suitable for most workloads.
+        on_task_complete : callable | None, default ``None``
+            Optional ``(Task, TaskResult) -> None`` callback fired after each
+            internal pipeline task finishes (insert chunk, embed chunk, etc.).
+            Useful for wiring external progress reporters.
+
+        Returns
+        -------
+        IngestResult
+            Aggregated outcome with ``rows_inserted``, ``rows_embedded``,
+            ``log_ids``, ``duration_ms``, and ``chunks_processed``.
+
+        Usage Examples
+        --------------
+        # Simple ingest -- no embedding
+        result = dm.ingest(
+            "Data/MidlandHeart/Repairs",
+            rows=api_response["records"],
+            description="Repairs raised Jul-Nov 2025",
+            fields={"job_id": "str", "status": "str", "cost": "float"},
+        )
+        print(f"Inserted {result.rows_inserted} rows in {result.duration_ms:.0f}ms")
+
+        # Ingest with embedding (embed as each chunk is inserted)
+        result = dm.ingest(
+            "Data/Products",
+            rows=product_rows,
+            embed_columns=["description", "name"],
+            embed_strategy="along",
+            chunk_size=500,
+        )
+
+        # Ingest with upsert via unique_keys (backend-enforced)
+        result = dm.ingest(
+            "Data/Devices/telemetry",
+            rows=telemetry_rows,
+            unique_keys={"device_id": "str"},
+        )
+
+        # Ingest with custom execution config for high throughput
+        from unity.data_manager.types import IngestExecutionConfig
+        result = dm.ingest(
+            "Data/Warehouse/events",
+            rows=large_batch,
+            chunk_size=2000,
+            execution=IngestExecutionConfig(max_workers=8, fail_fast=True),
+        )
+
+        Anti-patterns
+        -------------
+        - WRONG: Using ``ingest`` for single-row inserts.
+          CORRECT: Use ``insert_rows`` directly for small inserts.
+
+        - WRONG: Passing ``embed_columns=[]`` to mean "no embedding".
+          CORRECT: Omit ``embed_columns`` entirely (``None`` is the default).
+
+        - WRONG: Setting ``embed_strategy`` without ``embed_columns``.
+          This is harmless but misleading -- ``embed_strategy`` is ignored
+          when ``embed_columns`` is ``None``.
+
+        Notes
+        -----
+        - Table creation is idempotent: if the context already exists with
+          a compatible schema, no error is raised.
+        - An empty *rows* list returns immediately with zero counts.
+        - Chunk failures are captured per-chunk; partial ingestion is
+          possible (check ``IngestResult.chunks_processed`` vs expected).
+
+        See Also
+        --------
+        create_table : Low-level table provisioning.
+        insert_rows : Low-level row insertion (no chunking / embedding).
+        ensure_vector_column : Set up embedding column structure.
+        vectorize_rows : Populate embeddings for existing rows.
         """
 
     # ──────────────────────────────────────────────────────────────────────────
@@ -2379,6 +2554,198 @@ class BaseDataManager(BaseStateManager):
             x="category",
             y="revenue",
             aggregate="sum"
+        )
+
+        for ctx, result in zip(contexts, results):
+            if result.succeeded:
+                print(f"{ctx}: {result.url}")
+        """
+
+    # ──────────────────────────────────────────────────────────────────────────
+    # Table Views
+    # ──────────────────────────────────────────────────────────────────────────
+
+    @abstractmethod
+    def table_view(
+        self,
+        context: str,
+        *,
+        columns_visible: Optional[List[str]] = None,
+        columns_hidden: Optional[List[str]] = None,
+        columns_order: Optional[List[str]] = None,
+        sort_by: Optional[str] = None,
+        sort_order: Optional[str] = None,
+        row_limit: Optional[int] = None,
+        filter: Optional[str] = None,
+        title: Optional[str] = None,
+    ) -> "TableViewResult":
+        """
+        Create a shareable table view from table data.
+
+        Generates a signed URL to an interactive, read-only table view that
+        can be embedded in chat or shared externally. Use this to give users
+        a browsable snapshot of tabular data with optional column visibility,
+        ordering, sorting, and filtering.
+
+        This is distinct from ``plot`` which creates chart visualizations.
+        Use ``table_view`` when the user needs to browse raw rows and columns
+        interactively, and ``plot`` when they need a visual chart.
+
+        Parameters
+        ----------
+        context : str
+            Target context path containing the data to display.
+
+        columns_visible : list[str] | None, default ``None``
+            Columns to include in the view. If None, all columns are shown.
+            Mutually exclusive with ``columns_hidden``.
+
+        columns_hidden : list[str] | None, default ``None``
+            Columns to exclude from the view. Alternative to
+            ``columns_visible``. Mutually exclusive with ``columns_visible``.
+
+        columns_order : list[str] | None, default ``None``
+            Custom column ordering. Column names listed here appear in this
+            order; unlisted columns appear after in their default order.
+
+        sort_by : str | None, default ``None``
+            Column to sort by.
+
+        sort_order : str | None, default ``None``
+            Sort direction: ``"asc"`` or ``"desc"``. Only used when
+            ``sort_by`` is set.
+
+        row_limit : int | None, default ``None``
+            Maximum number of rows to display. Use this to keep the view
+            compact for large datasets.
+
+        filter : str | None, default ``None``
+            Filter expression to subset data before rendering the view.
+
+        title : str | None, default ``None``
+            Title displayed above the table.
+
+        Returns
+        -------
+        TableViewResult
+            Result with URL, token, or error information.
+            Check ``result.succeeded`` to verify creation worked.
+            Access ``result.url`` for the table view URL.
+
+        Usage Examples
+        --------------
+        # Simple table view
+        result = dm.table_view("Data/sales", title="Sales Data")
+        if result.succeeded:
+            print(f"Table URL: {result.url}")
+
+        # Table with specific columns and sorting
+        result = dm.table_view(
+            "Data/sales",
+            columns_visible=["date", "region", "revenue"],
+            sort_by="revenue",
+            sort_order="desc",
+            row_limit=100,
+            title="Top Sales by Revenue"
+        )
+
+        # Hide internal columns
+        result = dm.table_view(
+            "Data/employees",
+            columns_hidden=["internal_id", "ssn"],
+            title="Employee Directory"
+        )
+
+        # Filtered view
+        result = dm.table_view(
+            "Data/orders",
+            filter="status == 'pending'",
+            sort_by="created_at",
+            sort_order="desc",
+            title="Pending Orders"
+        )
+
+        Anti-patterns
+        -------------
+        - WRONG: Using both columns_visible and columns_hidden
+
+          CORRECT: Pick one or the other -- visible to whitelist, hidden to
+          blacklist
+
+        - WRONG: Confusing table_view with plot
+
+          table_view renders raw rows and columns interactively.
+          plot creates a chart (bar, scatter, line, histogram).
+
+        - WRONG: Using table_view to extract data programmatically
+
+          CORRECT: Use filter() or search() to get row data. table_view
+          produces a URL for human consumption.
+
+        Notes
+        -----
+        - The returned URL is shareable and read-only.
+        - Large datasets are truncated by ``row_limit``; consider filtering
+          to show the most relevant subset.
+        - Error details available in ``result.error`` and
+          ``result.traceback_str``.
+
+        See Also
+        --------
+        plot : Create chart visualizations (scatter, bar, line, histogram)
+        filter : Retrieve rows matching exact criteria
+        reduce : Compute aggregate metrics
+        """
+
+    @abstractmethod
+    def table_view_batch(
+        self,
+        contexts: List[str],
+        *,
+        columns_visible: Optional[List[str]] = None,
+        columns_hidden: Optional[List[str]] = None,
+        columns_order: Optional[List[str]] = None,
+        sort_by: Optional[str] = None,
+        sort_order: Optional[str] = None,
+        row_limit: Optional[int] = None,
+        filter: Optional[str] = None,
+        title: Optional[str] = None,
+    ) -> List["TableViewResult"]:
+        """
+        Create table views for multiple tables with the same configuration.
+
+        Convenience method for generating comparable table views across
+        multiple data sources with identical display settings.
+
+        Parameters
+        ----------
+        contexts : list[str]
+            List of context paths to generate table views for.
+
+        columns_visible, columns_hidden, columns_order, sort_by, sort_order,
+        row_limit, filter, title
+            Same parameters as ``table_view()``. Applied to all contexts.
+
+        Returns
+        -------
+        list[TableViewResult]
+            One result per context, in the same order as inputs.
+            Check each result's ``succeeded`` property.
+
+        Usage Examples
+        --------------
+        # Compare quarterly data side-by-side
+        results = dm.table_view_batch(
+            contexts=[
+                "Data/sales/Q1",
+                "Data/sales/Q2",
+                "Data/sales/Q3",
+                "Data/sales/Q4"
+            ],
+            columns_visible=["region", "revenue", "units"],
+            sort_by="revenue",
+            sort_order="desc",
+            title="Quarterly Sales"
         )
 
         for ctx, result in zip(contexts, results):
