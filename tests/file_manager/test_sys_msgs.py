@@ -104,16 +104,6 @@ def _make_mock_tools() -> dict:
         """Get file stat."""
         return {}
 
-    def visualize(
-        *,
-        tables: str,
-        plot_type: str,
-        x_axis: str,
-        y_axis: str = None,
-    ) -> dict:
-        """Visualize data."""
-        return {}
-
     return {
         "exists": exists,
         "list": list_dir,
@@ -127,7 +117,6 @@ def _make_mock_tools() -> dict:
         "filter_multi_join": filter_multi_join,
         "search_multi_join": search_multi_join,
         "stat": stat,
-        "visualize": visualize,
     }
 
 
@@ -205,8 +194,6 @@ def _build_prompt_in_subprocess(method: str) -> str:
         def filter_multi_join(*, joins: list, result_where: str = None) -> list: return []
         def search_multi_join(*, joins: list, references: dict, k: int = 10) -> list: return []
         def stat(path_or_uri: str) -> dict: return {{}}
-        def visualize(*, tables: str, plot_type: str, x_axis: str, y_axis: str = None) -> dict: return {{}}
-
         tools = {{
             "exists": exists, "list": list_dir, "list_columns": list_columns,
             "describe": describe, "filter_files": filter_files,
@@ -214,7 +201,6 @@ def _build_prompt_in_subprocess(method: str) -> str:
             "reduce": reduce, "filter_join": filter_join,
             "search_join": search_join, "filter_multi_join": filter_multi_join,
             "search_multi_join": search_multi_join, "stat": stat,
-            "visualize": visualize,
         }}
 
         prompt = build_file_manager_ask_about_file_prompt(
