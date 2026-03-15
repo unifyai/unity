@@ -15,7 +15,6 @@ if TYPE_CHECKING:
     from unity.data_manager.base import BaseDataManager as DataManager
 
 from .base import BaseFileManager
-from unity.data_manager.types import PlotResult as _VizPlotResult
 from ..common.async_tool_loop import SteerableToolHandle
 from ..common.llm_client import new_llm_client
 from .prompt_builders import (
@@ -713,79 +712,6 @@ class SimulatedFileManager(BaseFileManager):
             files = files[:k]
 
         return files
-
-    def visualize(
-        self,
-        *,
-        tables: Union[str, List[str]],
-        plot_type: str,
-        x_axis: str,
-        y_axis: Optional[str] = None,
-        group_by: Optional[str] = None,
-        filter: Optional[str] = None,
-        title: Optional[str] = None,
-        metric: Optional[str] = None,
-        aggregate: Optional[str] = None,
-        scale_x: Optional[str] = None,
-        scale_y: Optional[str] = None,
-        bin_count: Optional[int] = None,
-        show_regression: Optional[bool] = None,
-    ) -> Union["_VizPlotResult", List["_VizPlotResult"]]:
-        """
-        Return simulated plot result(s) with placeholder URLs.
-
-        The simulated manager does not call the real Plot API; this returns
-        deterministic placeholder responses with the same shape as the real
-        implementation.
-        """
-        from secrets import token_hex
-
-        # Normalize tables to list
-        table_list: List[str] = []
-        if isinstance(tables, str):
-            if tables:
-                table_list = [tables]
-        else:
-            table_list = [t for t in tables if t]
-
-        if not table_list:
-            return _VizPlotResult(error="No tables provided", title=title or "Untitled")
-
-        # Generate placeholder results
-        results: List[_VizPlotResult] = []
-        for tbl in table_list:
-            # Extract table label: simulates what resolved context would produce
-            # For paths like "/path/to/file.Tables.July_2025", use the table name
-            # For resolved contexts like "User/Asst/Files/.../Tables/July_2025", use last segment
-            if ".Tables." in tbl:
-                table_label = tbl.rsplit(".Tables.", 1)[-1]
-            elif "/" in tbl:
-                table_label = tbl.rsplit("/", 1)[-1]
-            else:
-                table_label = tbl
-
-            # Build title
-            base_title = title or f"{plot_type} chart"
-            plot_title = (
-                f"{base_title} ({table_label})" if len(table_list) > 1 else base_title
-            )
-
-            # Generate placeholder URL
-            token = token_hex(8)
-            results.append(
-                _VizPlotResult(
-                    url=f"https://console.unify.ai/plot/simulated/{token}",
-                    token=token,
-                    expires_in_hours=24,
-                    title=plot_title,
-                    table=tbl,
-                ),
-            )
-
-        # Return single PlotResult or list based on input
-        if len(results) == 1:
-            return results[0]
-        return results
 
     def rename_file(
         self,
