@@ -1,16 +1,11 @@
-"""Pure batch embedding operations for the FileManager pipeline.
+"""Batch embedding operations for the FileManager pipeline.
 
-This module contains the core embedding logic extracted from ops.py,
-providing clean, stateless functions for embedding content and table columns.
-
-These functions:
-- Are pure batch operations without async orchestration
-- Take explicit parameters instead of relying on manager state
-- Return results directly without side effects on progress tracking
-- Are designed to be called by the PipelineExecutor's task functions
-
-The orchestration of these operations (parallel execution, progress reporting,
-retries) is handled by the executor layer.
+.. deprecated::
+    Embedding is now delegated to ``DataManager.ingest()`` via the
+    ``embed_columns`` / ``embed_strategy`` parameters.  Functions in this
+    module are no longer called by the FM pipeline task graph.  They are
+    retained for backward compatibility and direct-use scenarios outside
+    the pipeline.
 """
 
 from __future__ import annotations
