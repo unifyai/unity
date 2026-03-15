@@ -687,6 +687,13 @@ class ConversationManager(metaclass=SingletonABCMeta):
         except Exception:
             return messages
 
+    _USER_ORIGIN_EVENTS = frozenset(
+        {
+            "InboundPhoneUtterance",
+            "InboundUnifyMeetUtterance",
+        },
+    )
+
     async def interject_or_run(
         self,
         content: str,
@@ -699,20 +706,38 @@ class ConversationManager(metaclass=SingletonABCMeta):
         if self.active_ask_handle and not self.active_ask_handle.done():
             await self.active_ask_handle.interject(content)
         else:
-            # Voice mode: cancel_running=False so running LLM tasks complete
-            # while only pending tasks are replaced ("queue of 2"). This
-            # prevents rapid user speech from cancelling every LLM run.
-            # Text mode: cancel_running=True — rapid messages should get
-            # fresh responses with the latest context.
-            cancel_running = not self.mode.is_voice
+            if self.mode.is_voice:
+                running_origin = self.debouncer.running_task_trace_meta.get(
+                    "origin_event_name",
+                    "",
+                )
+                running_is_known_non_user = (
+                    running_origin != ""
+                    and running_origin not in self._USER_ORIGIN_EVENTS
+                )
+                has_running = (
+                    self.debouncer.running_task is not None
+                    and not self.debouncer.running_task.done()
+                )
+                # Deterministically preempt non-user slow-brain runs.
+                # Only cancel when the running task is *known* to be a
+                # non-user event. Unknown origin (empty) defaults to the
+                # safe queue-of-2 behavior.
+                cancel_running = has_running and running_is_known_non_user
+            else:
+                # Text mode: rapid messages should get fresh responses.
+                cancel_running = True
+
             await self.request_llm_run(
                 delay=0,
                 cancel_running=cancel_running,
                 triggering_contact_id=triggering_contact_id,
+                is_user_origin=True,
             )
 
             if (
                 self.mode.is_voice
+                and not cancel_running
                 and SETTINGS.conversation.SPEECH_URGENCY_PREEMPT_ENABLED
                 and self.debouncer.running_task
                 and not self.debouncer.running_task.done()
@@ -788,6 +813,7 @@ class ConversationManager(metaclass=SingletonABCMeta):
         delay: float = 0,
         cancel_running: bool = False,
         trace_meta: dict[str, str] | None = None,
+        is_user_origin: bool = False,
     ):
         await self.debouncer.submit(
             self._run_llm,
@@ -796,6 +822,7 @@ class ConversationManager(metaclass=SingletonABCMeta):
             cancel_running=cancel_running,
             label=(trace_meta or {}).get("origin_event_name", ""),
             trace_meta=trace_meta,
+            is_user_origin=is_user_origin,
         )
 
     async def request_llm_run(
@@ -803,6 +830,7 @@ class ConversationManager(metaclass=SingletonABCMeta):
         delay=0,
         cancel_running=False,
         triggering_contact_id: int | None = None,
+        is_user_origin: bool = False,
     ) -> None:
         """Request an LLM run.
 
@@ -817,8 +845,9 @@ class ConversationManager(metaclass=SingletonABCMeta):
             "origin_event_id": event_trace.get("event_id", ""),
             "origin_event_name": event_trace.get("event_name", ""),
             "triggering_contact_id": triggering_contact_id,
+            "is_user_origin": is_user_origin,
         }
-        self._pending_llm_requests.append((delay, cancel_running))
+        self._pending_llm_requests.append((delay, cancel_running, is_user_origin))
         self._pending_llm_request_meta.append(request_meta)
         self._session_logger.debug(
             "llm_queue",
@@ -826,7 +855,8 @@ class ConversationManager(metaclass=SingletonABCMeta):
                 f"Queued slow-brain run request_id={request_id} "
                 f"origin_event_id={request_meta['origin_event_id'] or '-'} "
                 f"origin_event={request_meta['origin_event_name'] or '-'} "
-                f"delay={delay} cancel_running={cancel_running}"
+                f"delay={delay} cancel_running={cancel_running} "
+                f"is_user_origin={is_user_origin}"
             ),
         )
 
@@ -837,13 +867,20 @@ class ConversationManager(metaclass=SingletonABCMeta):
         if not self.ready_for_brain:
             return
 
-        dropped_requests = max(len(self._pending_llm_requests) - 1, 0)
-        delay, cancel_running = self._pending_llm_requests[-1]
-        selected_meta = (
-            dict(self._pending_llm_request_meta[-1])
-            if self._pending_llm_request_meta
-            else {}
-        )
+        requests = self._pending_llm_requests
+        metas = self._pending_llm_request_meta
+
+        # Prefer the newest user-origin request; fall back to the newest overall.
+        selected_idx = len(requests) - 1
+        for i in range(len(requests) - 1, -1, -1):
+            if requests[i][2]:  # is_user_origin
+                selected_idx = i
+                break
+
+        dropped_requests = len(requests) - 1
+        delay, cancel_running, is_user_origin = requests[selected_idx]
+        selected_meta = dict(metas[selected_idx]) if metas else {}
+
         self._pending_llm_requests.clear()
         self._pending_llm_request_meta.clear()
 
@@ -860,13 +897,14 @@ class ConversationManager(metaclass=SingletonABCMeta):
                 f"origin_event_id={selected_meta.get('origin_event_id', '-') or '-'} "
                 f"origin_event={selected_meta.get('origin_event_name', '-') or '-'} "
                 f"dropped_requests={dropped_requests} delay={delay} "
-                f"cancel_running={cancel_running}"
+                f"cancel_running={cancel_running} is_user_origin={is_user_origin}"
             ),
         )
         await self.run_llm(
             delay=delay,
             cancel_running=cancel_running,
             trace_meta=selected_meta,
+            is_user_origin=is_user_origin,
         )
 
     async def _run_llm(self, trace_meta: dict[str, str] | None = None) -> list[str]:
