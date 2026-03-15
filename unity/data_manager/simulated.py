@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import functools
 import logging
+import time
 from typing import Any, Dict, List, Optional, Union
 from collections import defaultdict
 
@@ -23,6 +24,8 @@ from unity.data_manager.types.table import (
     ColumnInfo,
 )
 from unity.data_manager.types.plot import PlotResult
+from unity.data_manager.types.table_view import TableViewResult
+from unity.data_manager.types.ingest import IngestExecutionConfig, IngestResult
 
 logger = logging.getLogger(__name__)
 
@@ -816,44 +819,21 @@ class SimulatedDataManager(BaseDataManager):
         context: str,
         rows: List[Dict[str, Any]],
         *,
-        dedupe_key: Optional[str] = None,
         add_to_all_context: bool = False,
         batched: bool = True,
     ) -> List[int]:
-        # Note: add_to_all_context and batched are accepted but ignored in simulated mode
         if not rows:
             return []
 
         resolved = self._resolve_context(context)
 
         inserted_ids: List[int] = []
-
-        if dedupe_key:
-            # Upsert mode: remove existing rows with same key
-            existing_keys = {row.get(dedupe_key) for row in self._tables[resolved]}
-            for row in rows:
-                key_val = row.get(dedupe_key)
-                if key_val in existing_keys:
-                    # Remove old row
-                    self._tables[resolved] = [
-                        r
-                        for r in self._tables[resolved]
-                        if r.get(dedupe_key) != key_val
-                    ]
-                # Assign a log ID to each row for tracking
-                log_id = self._next_log_id
-                self._next_log_id += 1
-                row_with_id = {**row, "_log_id": log_id}
-                self._tables[resolved].append(row_with_id)
-                inserted_ids.append(log_id)
-        else:
-            for row in rows:
-                # Assign a log ID to each row for tracking
-                log_id = self._next_log_id
-                self._next_log_id += 1
-                row_with_id = {**row, "_log_id": log_id}
-                self._tables[resolved].append(row_with_id)
-                inserted_ids.append(log_id)
+        for row in rows:
+            log_id = self._next_log_id
+            self._next_log_id += 1
+            row_with_id = {**row, "_log_id": log_id}
+            self._tables[resolved].append(row_with_id)
+            inserted_ids.append(log_id)
 
         return inserted_ids
 
@@ -927,6 +907,68 @@ class SimulatedDataManager(BaseDataManager):
             return original_count - len(new_rows)
 
         return 0
+
+    # ──────────────────────────────────────────────────────────────────────────
+    # High-Level Ingestion
+    # ──────────────────────────────────────────────────────────────────────────
+
+    @functools.wraps(BaseDataManager.ingest, updated=())
+    def ingest(
+        self,
+        context: str,
+        rows: List[Dict[str, Any]],
+        *,
+        description: Optional[str] = None,
+        fields: Optional[Dict[str, str]] = None,
+        unique_keys: Optional[Dict[str, str]] = None,
+        embed_columns: Optional[List[str]] = None,
+        embed_strategy: str = "along",
+        chunk_size: int = 1000,
+        auto_counting: Optional[Dict[str, Optional[str]]] = None,
+        infer_untyped_fields: bool = False,
+        add_to_all_context: bool = False,
+        execution: Optional[IngestExecutionConfig] = None,
+        on_task_complete=None,
+    ) -> IngestResult:
+        start = time.perf_counter()
+        resolved = self._resolve_context(context)
+
+        # Step 1: create table (idempotent)
+        self.create_table(
+            resolved,
+            description=description,
+            fields=fields,
+            unique_keys=unique_keys,
+            auto_counting=auto_counting,
+        )
+
+        # Step 2: insert rows
+        log_ids = self.insert_rows(resolved, rows)
+
+        # Step 3: optional embedding
+        rows_embedded = 0
+        if embed_columns:
+            for col in embed_columns:
+                self.ensure_vector_column(resolved, source_column=col)
+                rows_embedded += self.vectorize_rows(
+                    resolved,
+                    source_column=col,
+                    row_ids=log_ids,
+                )
+
+        duration_ms = (time.perf_counter() - start) * 1000
+        chunks_processed = (
+            max(1, (len(rows) + chunk_size - 1) // chunk_size) if rows else 0
+        )
+
+        return IngestResult(
+            context=resolved,
+            rows_inserted=len(log_ids),
+            rows_embedded=rows_embedded,
+            log_ids=log_ids,
+            duration_ms=duration_ms,
+            chunks_processed=chunks_processed,
+        )
 
     # ──────────────────────────────────────────────────────────────────────────
     # Embedding Operations
@@ -1015,6 +1057,57 @@ class SimulatedDataManager(BaseDataManager):
                 y=y,
                 group_by=group_by,
                 aggregate=aggregate,
+                filter=filter,
+                title=title,
+            )
+            for ctx in contexts
+        ]
+
+    @functools.wraps(BaseDataManager.table_view, updated=())
+    def table_view(
+        self,
+        context: str,
+        *,
+        columns_visible: Optional[List[str]] = None,
+        columns_hidden: Optional[List[str]] = None,
+        columns_order: Optional[List[str]] = None,
+        sort_by: Optional[str] = None,
+        sort_order: Optional[str] = None,
+        row_limit: Optional[int] = None,
+        filter: Optional[str] = None,
+        title: Optional[str] = None,
+    ) -> TableViewResult:
+        resolved = self._resolve_context(context)
+        return TableViewResult(
+            url=f"https://simulated-table-view.example.com/{resolved}",
+            token="simulated-token",
+            title=title or "Simulated Table View",
+            context=resolved,
+        )
+
+    @functools.wraps(BaseDataManager.table_view_batch, updated=())
+    def table_view_batch(
+        self,
+        contexts: List[str],
+        *,
+        columns_visible: Optional[List[str]] = None,
+        columns_hidden: Optional[List[str]] = None,
+        columns_order: Optional[List[str]] = None,
+        sort_by: Optional[str] = None,
+        sort_order: Optional[str] = None,
+        row_limit: Optional[int] = None,
+        filter: Optional[str] = None,
+        title: Optional[str] = None,
+    ) -> List[TableViewResult]:
+        return [
+            self.table_view(
+                ctx,
+                columns_visible=columns_visible,
+                columns_hidden=columns_hidden,
+                columns_order=columns_order,
+                sort_by=sort_by,
+                sort_order=sort_order,
+                row_limit=row_limit,
                 filter=filter,
                 title=title,
             )
