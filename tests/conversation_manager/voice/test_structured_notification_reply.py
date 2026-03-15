@@ -323,7 +323,7 @@ class TestStructuredNotificationReply:
             NotificationReply,
         )
 
-        async def _counting_evaluate(self, chat_history, system_prompt):
+        async def _counting_evaluate(self, chat_history):
             nonlocal call_count
             call_count += 1
             return NotificationReply(speak=False, content=""), ""
@@ -369,7 +369,7 @@ class TestStructuredNotificationReply:
 
         eval_call_count = 0
 
-        async def _smart_evaluate(self, chat_history, system_prompt):
+        async def _smart_evaluate(self, chat_history):
             nonlocal eval_call_count
             eval_call_count += 1
             if eval_call_count == 1:
