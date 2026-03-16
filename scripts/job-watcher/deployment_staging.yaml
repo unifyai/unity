@@ -1,25 +1,25 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: job-watcher
+  name: job-watcher-staging
   namespace: staging
   labels:
-    app: job-watcher
+    app: job-watcher-staging
 spec:
   replicas: 1
   selector:
     matchLabels:
-      app: job-watcher
+      app: job-watcher-staging
   template:
     metadata:
       labels:
-        app: job-watcher
+        app: job-watcher-staging
       annotations:
         cluster-autoscaler.kubernetes.io/safe-to-evict: "false"
     spec:
       serviceAccountName: comm-sa
       containers:
-      - name: job-watcher
+      - name: job-watcher-staging
         image: us-central1-docker.pkg.dev/responsive-city-458413-a2/unity/job-watcher-staging:latest
         ports:
         - containerPort: 8080
