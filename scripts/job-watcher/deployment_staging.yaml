@@ -1,3 +1,36 @@
+apiVersion: scheduling.k8s.io/v1
+kind: PriorityClass
+metadata:
+  name: job-watcher-critical
+value: 1000000
+globalDefault: false
+description: "Same priority as unity-critical — ensures the watcher is never preempted for lower-priority workloads."
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: job-watcher
+rules:
+- apiGroups: [""]
+  resources: ["namespaces"]
+  verbs: ["list", "get", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: job-watcher
+subjects:
+- kind: ServiceAccount
+  name: comm-sa
+  namespace: staging
+- kind: ServiceAccount
+  name: comm-sa
+  namespace: production
+roleRef:
+  kind: ClusterRole
+  name: job-watcher
+  apiGroup: rbac.authorization.k8s.io
+---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
@@ -44,11 +77,12 @@ spec:
       annotations:
         cluster-autoscaler.kubernetes.io/safe-to-evict: "false"
     spec:
+      priorityClassName: job-watcher-critical
       serviceAccountName: comm-sa
       containers:
       - name: job-watcher-staging
         image: us-central1-docker.pkg.dev/responsive-city-458413-a2/unity/job-watcher-staging:latest
-        command: ["kopf", "run", "watcher.py", "--liveness=http://0.0.0.0:8080/healthz", "--verbose", "--namespace=staging", "--standalone"]
+        command: ["kopf", "run", "watcher.py", "--liveness=http://0.0.0.0:8080/healthz", "--namespace=staging", "--standalone"]
         ports:
         - containerPort: 8080
           name: health
