@@ -72,6 +72,12 @@ class _InjectingFunctionManager:
     def list_functions(self, **kwargs) -> Any:
         return self.search_functions(**kwargs)
 
+    def add_functions(self, **kwargs) -> dict:
+        return {}
+
+    def delete_function(self, **kwargs) -> dict:
+        return {}
+
     def _get_function_data_by_name(self, *, name: str):
         return None
 
