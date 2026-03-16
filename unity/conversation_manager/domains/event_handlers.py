@@ -532,6 +532,7 @@ async def _(
 
     await cm.call_manager.cleanup_call_proc()
     await cm.cancel_proactive_speech()
+    await _cleanup_computer_sessions(cm)
 
     # Clear all session state after cleanup.
     cm.call_manager.conference_name = None
@@ -546,6 +547,38 @@ async def _(
         cancel_running=True,
         triggering_contact_id=contact_id,
     )
+
+
+async def _cleanup_computer_sessions(cm: "ConversationManager") -> None:
+    """Stop in-flight actor sessions and close web browser sessions.
+
+    Called on call end so resource cleanup is deterministic rather than
+    relying on the slow brain to remember to call stop/close tools.
+    """
+    # Stop in-flight actor sessions
+    for handle_id, action_data in list(cm.in_flight_actions.items()):
+        handle = action_data.get("handle")
+        if handle and not handle.done():
+            try:
+                await handle.stop("Call ended")
+            except Exception:
+                pass
+        stopped = cm.in_flight_actions.pop(handle_id, None)
+        if stopped:
+            cm.completed_actions[handle_id] = stopped
+
+    # Close active web browser sessions
+    cp = cm.computer_primitives
+    if cp is not None:
+        try:
+            active_sessions = cp.web.list_sessions(active_only=True)
+            for session in active_sessions:
+                try:
+                    await session.stop()
+                except Exception:
+                    pass
+        except Exception:
+            pass
 
 
 @EventHandler.register(RecordingReady)
