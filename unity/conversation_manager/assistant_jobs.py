@@ -34,7 +34,10 @@ from unity.conversation_manager.metrics import (
 from unity.session_details import SESSION_DETAILS
 from unity.settings import SETTINGS
 
+# Track whether AssistantJobs project has been verified/created
 _project_verified = False
+
+# Session start time (perf_counter), set by log_job_startup, read by mark_job_done
 _session_start_perf: float | None = None
 
 
@@ -123,11 +126,15 @@ def log_job_startup(job_name: str, user_id: str, assistant_id: str):
                 f"{ICONS['assistant_jobs']} [assistant_jobs] Updated record with job_name={job_name}",
             )
 
+            # X1: record running job count right after the record is updated
             _record_running_job_count(api_key)
 
+            # Mark session start for U9 duration measurement
             global _session_start_perf
             _session_start_perf = time.perf_counter()
         else:
+            # No record found - adapter's mark_job_running() must have failed
+            # Log warning but don't fail; liveview just won't be tracked
             LOGGER.error(
                 f"{ICONS['assistant_jobs']} [assistant_jobs] WARNING: No running record found for "
                 f"user_id={user_id}, assistant_id={assistant_id}. "
@@ -186,11 +193,13 @@ def mark_job_done(job_name: str, inactivity_timeout: float = 0.0):
 
     if api_key:
         expire_assistant_records(api_key, assistant_id)
+        # X1: record running job count right after the record is updated
         _record_running_job_count(api_key)
 
     if comms_url and admin_key:
         release_pool_vm(comms_url, admin_key, assistant_id)
 
+    # U9: session duration (log_job_startup → mark_job_done), excluding idle tail
     if _session_start_perf is not None:
         total_dur = time.perf_counter() - _session_start_perf
         active_dur = max(0.0, total_dur - inactivity_timeout)
