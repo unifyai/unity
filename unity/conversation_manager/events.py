@@ -756,6 +756,15 @@ class AssistantDesktopReady(Event):
     vm_type: str = ""
 
 
+@dataclass
+class FileSyncComplete(Event):
+    """The initial rclone bisync between the container and the managed VM has
+    finished.  All files from the assistant's persistent disk are now available
+    on the local filesystem."""
+
+    topic: ClassVar[str | None] = "app:comms:file_sync_complete"
+
+
 # --------------------------------------------------------------------------- #
 # Meet Interaction Events (screen share / remote control)
 # --------------------------------------------------------------------------- #

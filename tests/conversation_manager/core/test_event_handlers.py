@@ -2335,3 +2335,29 @@ class TestRemoteControlComputerPrimitivesIntegration:
             await EventHandler.handle_event(event, mock_cm)
 
         mock_cp.set_user_remote_control.assert_not_called()
+
+
+# =============================================================================
+# FileSyncComplete Event Tests
+# =============================================================================
+
+
+class TestFileSyncCompleteEvent:
+    """Tests for the FileSyncComplete event."""
+
+    def test_file_sync_complete_is_registered(self):
+        """FileSyncComplete should have a handler in the registry."""
+        from unity.conversation_manager.events import FileSyncComplete
+
+        assert FileSyncComplete in EventHandler._registry
+
+    @pytest.mark.asyncio
+    async def test_file_sync_complete_handler_logs(self, mock_cm):
+        """FileSyncComplete handler should log and not trigger an LLM run."""
+        from unity.conversation_manager.events import FileSyncComplete
+
+        event = FileSyncComplete()
+        await EventHandler.handle_event(event, mock_cm)
+
+        mock_cm._session_logger.debug.assert_called()
+        mock_cm.request_llm_run.assert_not_called()

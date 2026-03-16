@@ -1393,11 +1393,26 @@ async def _(
     asyncio.ensure_future(_ensure_desktop_session(cm))
     await managers_utils._start_file_sync()
 
+    await cm.event_broker.publish(
+        FileSyncComplete.topic,
+        FileSyncComplete().to_json(),
+    )
+
     await comms_utils.publish_assistant_desktop_ready(
         desktop_url,
         liveview_url,
         event.vm_type,
     )
+
+
+@EventHandler.register((FileSyncComplete,))
+async def _(
+    event: "FileSyncComplete",
+    cm: "ConversationManager",
+    *args,
+    **kwargs,
+):
+    cm._session_logger.debug("file_sync", "File sync complete")
 
 
 # --------------------------------------------------------------------------- #
