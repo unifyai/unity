@@ -4,8 +4,8 @@ metadata:
   name: job-watcher
   namespace: staging
 rules:
-- apiGroups: [""]
-  resources: ["pods"]
+- apiGroups: ["batch"]
+  resources: ["jobs"]
   verbs: ["list", "watch", "get"]
 - apiGroups: [""]
   resources: ["events"]
