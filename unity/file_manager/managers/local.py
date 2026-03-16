@@ -18,6 +18,6 @@ class LocalFileManager(FileManager, metaclass=SingletonABCMeta):
         self,
         root: str | None = None,
         *,
-        enable_sync: bool = False,
+        enable_sync: bool = True,
     ):
         super().__init__(adapter=LocalFileSystemAdapter(root, enable_sync=enable_sync))

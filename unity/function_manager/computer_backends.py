@@ -1524,6 +1524,17 @@ class MagnitudeBackend(ComputerBackend):
             f"🔗 MagnitudeBackend initialized (container={self._container_url}, local={self._local_url})",
         )
 
+    def update_container_url(self, url: str) -> None:
+        """Update the container agent-service URL after construction.
+
+        Called when the managed VM becomes ready after the backend was already
+        instantiated (e.g. ``url_mappings`` setter triggered early creation).
+        """
+        logger.info(f"🔗 MagnitudeBackend container URL updated: {url}")
+        self._container_url = url
+        self.agent_base_url = url
+        self._vm_ssl = False if url.startswith("https://") else None
+
     def _url_for_mode(self, mode: str) -> str:
         if mode in ("desktop", "web-vm"):
             if self._container_url is None:
@@ -1558,7 +1569,7 @@ class MagnitudeBackend(ComputerBackend):
         headers = {"authorization": f"Bearer {auth_key}"}
         use_ssl = self._vm_ssl if mode in ("desktop", "web-vm") else None
         logger.debug(
-            f"⏱️ [MagnitudeBackend._create_session] POST /start ({mode}) begin",
+            f"⏱️ [MagnitudeBackend._create_session] POST {url}/start ({mode}) begin",
         )
         async with aiohttp.ClientSession() as s:
             async with s.post(

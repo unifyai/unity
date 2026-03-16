@@ -2335,3 +2335,228 @@ class TestRemoteControlComputerPrimitivesIntegration:
             await EventHandler.handle_event(event, mock_cm)
 
         mock_cp.set_user_remote_control.assert_not_called()
+
+
+# =============================================================================
+# FileSyncComplete Event Tests
+# =============================================================================
+
+
+class TestFileSyncCompleteEvent:
+    """Tests for the FileSyncComplete event."""
+
+    def test_file_sync_complete_is_registered(self):
+        """FileSyncComplete should have a handler in the registry."""
+        from unity.conversation_manager.events import FileSyncComplete
+
+        assert FileSyncComplete in EventHandler._registry
+
+    @pytest.mark.asyncio
+    async def test_file_sync_complete_sets_flag(self, mock_cm):
+        """FileSyncComplete handler should set cm.file_sync_complete to True."""
+        from unity.conversation_manager.events import FileSyncComplete
+
+        mock_cm.file_sync_complete = False
+        event = FileSyncComplete()
+        await EventHandler.handle_event(event, mock_cm)
+
+        assert mock_cm.file_sync_complete is True
+
+    @pytest.mark.asyncio
+    async def test_file_sync_complete_triggers_llm_run(self, mock_cm):
+        """FileSyncComplete handler should trigger an LLM run."""
+        from unity.conversation_manager.events import FileSyncComplete
+
+        mock_cm.file_sync_complete = False
+        event = FileSyncComplete()
+        await EventHandler.handle_event(event, mock_cm)
+
+        mock_cm.request_llm_run.assert_called_once_with(delay=0)
+
+    @pytest.mark.asyncio
+    async def test_file_sync_complete_handler_logs(self, mock_cm):
+        """FileSyncComplete handler should log the sync completion."""
+        from unity.conversation_manager.events import FileSyncComplete
+
+        mock_cm.file_sync_complete = False
+        event = FileSyncComplete()
+        await EventHandler.handle_event(event, mock_cm)
+
+        mock_cm._session_logger.debug.assert_called()
+
+
+# =============================================================================
+# AssistantDesktopReady Event Tests
+# =============================================================================
+
+
+class TestAssistantDesktopReadyEvent:
+    """Tests for the AssistantDesktopReady VM-readiness handler."""
+
+    def test_assistant_desktop_ready_is_registered(self):
+        """AssistantDesktopReady should have a handler in the registry."""
+        from unity.conversation_manager.events import AssistantDesktopReady
+
+        assert AssistantDesktopReady in EventHandler._registry
+
+    @pytest.mark.asyncio
+    async def test_assistant_desktop_ready_sets_vm_ready_flag(self, mock_cm):
+        """AssistantDesktopReady should set cm.vm_ready to True."""
+        from unity.conversation_manager.events import AssistantDesktopReady
+
+        mock_cm.vm_ready = False
+        mock_cm.assistant_id = "84"
+        mock_cm.user_id = "test_user"
+        event = AssistantDesktopReady(
+            desktop_url="https://unity-pool-ubuntu-1.vm.unify.ai",
+            vm_type="ubuntu",
+        )
+
+        with (
+            patch(
+                "unity.conversation_manager.assistant_jobs.update_liveview_url",
+            ),
+            patch(
+                "unity.conversation_manager.domains.managers_utils._start_file_sync",
+                new_callable=AsyncMock,
+            ),
+            patch(
+                "unity.session_details.SESSION_DETAILS",
+            ) as mock_sd,
+            patch(
+                "unity.function_manager.primitives.runtime._vm_ready",
+            ),
+            patch(
+                "unity.conversation_manager.domains.event_handlers._ensure_desktop_session",
+                return_value=AsyncMock()(),
+            ),
+            patch(
+                "unity.conversation_manager.domains.comms_utils.publish_assistant_desktop_ready",
+                new_callable=AsyncMock,
+            ),
+        ):
+            mock_sd.assistant.desktop_url = ""
+            await EventHandler.handle_event(event, mock_cm)
+
+        assert mock_cm.vm_ready is True
+
+    @pytest.mark.asyncio
+    async def test_assistant_desktop_ready_triggers_llm_run(self, mock_cm):
+        """AssistantDesktopReady should trigger an LLM run."""
+        from unity.conversation_manager.events import AssistantDesktopReady
+
+        mock_cm.vm_ready = False
+        mock_cm.assistant_id = "84"
+        mock_cm.user_id = "test_user"
+        event = AssistantDesktopReady(
+            desktop_url="https://unity-pool-ubuntu-1.vm.unify.ai",
+            vm_type="ubuntu",
+        )
+
+        with (
+            patch(
+                "unity.conversation_manager.assistant_jobs.update_liveview_url",
+            ),
+            patch(
+                "unity.conversation_manager.domains.managers_utils._start_file_sync",
+                new_callable=AsyncMock,
+            ),
+            patch(
+                "unity.session_details.SESSION_DETAILS",
+            ) as mock_sd,
+            patch(
+                "unity.function_manager.primitives.runtime._vm_ready",
+            ),
+            patch(
+                "unity.conversation_manager.domains.event_handlers._ensure_desktop_session",
+                return_value=AsyncMock()(),
+            ),
+            patch(
+                "unity.conversation_manager.domains.comms_utils.publish_assistant_desktop_ready",
+                new_callable=AsyncMock,
+            ),
+        ):
+            mock_sd.assistant.desktop_url = ""
+            await EventHandler.handle_event(event, mock_cm)
+
+        mock_cm.request_llm_run.assert_called_with(delay=0)
+
+
+# =============================================================================
+# Renderer: Infrastructure State Tests
+# =============================================================================
+
+
+class TestRenderInfrastructureState:
+    """Tests for Renderer.render_infrastructure_state()."""
+
+    def test_both_pending_with_desktop(self):
+        """Both VM and sync pending should produce two sections."""
+        from unity.conversation_manager.domains.renderer import Renderer
+
+        result = Renderer.render_infrastructure_state(
+            vm_ready=False,
+            file_sync_complete=False,
+            has_desktop=True,
+        )
+        assert "vm_pending" in result
+        assert "sync_pending" in result
+
+    def test_vm_ready_sync_pending(self):
+        """Only sync pending should produce one section."""
+        from unity.conversation_manager.domains.renderer import Renderer
+
+        result = Renderer.render_infrastructure_state(
+            vm_ready=True,
+            file_sync_complete=False,
+            has_desktop=True,
+        )
+        assert "vm_pending" not in result
+        assert "sync_pending" in result
+
+    def test_all_ready(self):
+        """Both ready should return empty string."""
+        from unity.conversation_manager.domains.renderer import Renderer
+
+        result = Renderer.render_infrastructure_state(
+            vm_ready=True,
+            file_sync_complete=True,
+            has_desktop=True,
+        )
+        assert result == ""
+
+    def test_no_desktop(self):
+        """No desktop configured should return empty string regardless of flags."""
+        from unity.conversation_manager.domains.renderer import Renderer
+
+        result = Renderer.render_infrastructure_state(
+            vm_ready=False,
+            file_sync_complete=False,
+            has_desktop=False,
+        )
+        assert result == ""
+
+    def test_vm_pending_mentions_computer_actions(self):
+        """The VM pending section should mention computer actions are unavailable."""
+        from unity.conversation_manager.domains.renderer import Renderer
+
+        result = Renderer.render_infrastructure_state(
+            vm_ready=False,
+            file_sync_complete=True,
+            has_desktop=True,
+        )
+        assert "desktop_act" in result
+        assert "vm_pending" in result
+        assert "sync_pending" not in result
+
+    def test_sync_pending_mentions_files(self):
+        """The sync pending section should mention historical files."""
+        from unity.conversation_manager.domains.renderer import Renderer
+
+        result = Renderer.render_infrastructure_state(
+            vm_ready=True,
+            file_sync_complete=False,
+            has_desktop=True,
+        )
+        assert "Attachments/" in result
+        assert "sync_pending" in result

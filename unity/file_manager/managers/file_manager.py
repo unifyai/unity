@@ -54,7 +54,6 @@ from .utils.storage import (
     ctx_for_file_content as _storage_ctx_for_file_content,
     ctx_for_file_table as _storage_ctx_for_file_table,
 )
-from unity.data_manager.types import PlotResult as _VizPlotResult
 
 from unity.file_manager.file_parsers.types.formats import (
     extension_to_format as _ext_to_fmt,
@@ -160,7 +159,7 @@ class FileManager(BaseFileManager):
             If None, a DataManager will be lazily instantiated when needed.
         """
         super().__init__()
-        self.include_in_multi_assistant_table = False
+        self.include_in_multi_assistant_table = True
         if adapter is None:
             from unity.file_manager.filesystem_adapters.local_adapter import (
                 LocalFileSystemAdapter,
@@ -226,7 +225,6 @@ class FileManager(BaseFileManager):
             ToolSpec(fn=self.filter_files, display_label="Filtering file data"),
             ToolSpec(fn=self.search_files, display_label="Searching file contents"),
             ToolSpec(fn=self.reduce, display_label="Summarising file data"),
-            ToolSpec(fn=self.visualize, display_label="Creating a visualisation"),
             include_class_name=False,
         )
         self.add_tools("ask_about_file", ask_about_file_tools)
@@ -933,10 +931,14 @@ class FileManager(BaseFileManager):
                     if original_path in error_results:
                         continue
                     if return_mode == "full":
-                        error_results[original_path] = FileParseResult(
-                            logical_path=original_path,
+                        from unity.file_manager.types.ingest import IngestedFullFile
+
+                        error_results[original_path] = IngestedFullFile(
+                            file_path=original_path,
                             status="error",
                             error=f"parse failed: {e}",
+                            content_rows=[],
+                            tables=[],
                         )
                     elif return_mode == "none":
                         error_results[original_path] = IngestedMinimal(
@@ -971,7 +973,15 @@ class FileManager(BaseFileManager):
                 if status != "success":
                     if orig and orig not in error_results:
                         if return_mode == "full":
-                            error_results[orig] = pr
+                            from unity.file_manager.types.ingest import IngestedFullFile
+
+                            error_results[orig] = IngestedFullFile(
+                                file_path=orig,
+                                status="error",
+                                error=str(getattr(pr, "error", "") or ""),
+                                content_rows=[],
+                                tables=[],
+                            )
                         elif return_mode == "none":
                             error_results[orig] = IngestedMinimal(
                                 file_path=orig,
@@ -1077,95 +1087,6 @@ class FileManager(BaseFileManager):
             filter=filter,
             group_by=group_by,
         )
-
-    @functools.wraps(BaseFileManager.visualize, updated=())
-    @read_only
-    def visualize(
-        self,
-        *,
-        tables: Union[str, List[str]],
-        plot_type: str,
-        x_axis: str,
-        y_axis: Optional[str] = None,
-        group_by: Optional[str] = None,
-        filter: Optional[str] = None,
-        title: Optional[str] = None,
-        metric: Optional[str] = None,
-        aggregate: Optional[str] = None,
-        scale_x: Optional[str] = None,
-        scale_y: Optional[str] = None,
-        bin_count: Optional[int] = None,
-        show_regression: Optional[bool] = None,
-    ) -> Union["_VizPlotResult", List["_VizPlotResult"]]:
-        # Normalize tables to list
-        table_list: List[str] = []
-        if isinstance(tables, str):
-            if tables:
-                table_list = [tables]
-        else:
-            table_list = [t for t in tables if t]
-
-        if not table_list:
-            return _VizPlotResult(error="No tables provided", title=title or "Untitled")
-
-        # Resolve each table to a fully-qualified context
-        contexts: List[str] = []
-        for tbl in table_list:
-            try:
-                ctx = self._resolve_table_ref(tbl)
-                contexts.append(ctx)
-            except Exception as e:
-                # If we can't resolve, return error immediately
-                return _VizPlotResult(
-                    error=f"Failed to resolve table '{tbl}': {e}",
-                    title=title or "Untitled",
-                    table=tbl,
-                )
-
-        # Delegate to DataManager for plot generation.
-        # plot_batch expects individual kwargs (x, y, ...) not a config object.
-        # Note: DataManager uses "x"/"y" while FileManager uses "x_axis"/"y_axis".
-        plot_kwargs: dict = dict(
-            plot_type=plot_type,
-            x=x_axis,
-            y=y_axis,
-            group_by=group_by,
-            aggregate=aggregate,
-            filter=filter,
-            title=title,
-        )
-        # Pass optional kwargs only when set (they go through **kwargs)
-        if metric is not None:
-            plot_kwargs["metric"] = metric
-        if scale_x is not None:
-            plot_kwargs["scale_x"] = scale_x
-        if scale_y is not None:
-            plot_kwargs["scale_y"] = scale_y
-        if bin_count is not None:
-            plot_kwargs["bin_count"] = bin_count
-        if show_regression is not None:
-            plot_kwargs["show_regression"] = show_regression
-
-        dm_results = self._data_manager.plot_batch(contexts=contexts, **plot_kwargs)
-
-        # Convert DataManager results to FileManager result type for backward compat
-        results: List[_VizPlotResult] = []
-        for dm_res in dm_results:
-            results.append(
-                _VizPlotResult(
-                    url=dm_res.url,
-                    token=dm_res.token,
-                    expires_in_hours=dm_res.expires_in_hours,
-                    title=dm_res.title,
-                    error=dm_res.error,
-                    table=dm_res.context,
-                ),
-            )
-
-        # Return PlotResult directly (single) or list of PlotResult (multiple)
-        if len(results) == 1:
-            return results[0]
-        return results
 
     @functools.wraps(BaseFileManager.list_columns, updated=())
     @read_only
@@ -1802,11 +1723,13 @@ class FileManager(BaseFileManager):
         except Exception:
             pass
 
+    @functools.wraps(BaseFileManager.render_excel_sheet, updated=())
     def render_excel_sheet(self, sheet, cell_range=None, scale=1.0):
         from unity.file_manager.rendering import render_excel_sheet
 
         return render_excel_sheet(sheet, cell_range=cell_range, scale=scale)
 
+    @functools.wraps(BaseFileManager.render_pdf, updated=())
     def render_pdf(self, source, page=0, dpi=150):
         from unity.file_manager.rendering import render_pdf
 

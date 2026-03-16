@@ -3,12 +3,15 @@ Utility functions for embedding-based vector search through the logs.
 """
 
 import hashlib
+import logging
 import os
 import sys
 import tempfile
 import unify
 import threading
 from contextlib import contextmanager
+
+logger = logging.getLogger(__name__)
 
 # Cross-platform file locking
 if sys.platform == "win32":
@@ -193,11 +196,27 @@ def ensure_derived_column(
                     referenced_logs=referenced_logs,
                     derived=derived,
                 )
-                # Be quiet in normal operation; tests assert no failure logs appear.
-                # print(f"{response}")
+                id_count = len(from_ids) if from_ids else None
+                logger.debug(
+                    "create_derived_logs response context=%s key=%s "
+                    "from_ids_count=%s referenced_logs=%s => %s",
+                    context,
+                    key,
+                    id_count,
+                    referenced_logs,
+                    response,
+                )
             except unify.RequestError as e:
                 body = getattr(e.response, "text", "") or ""
-                # Treat duplicate/exists as success and do not emit error output
+                logger.debug(
+                    "create_derived_logs FAILED context=%s key=%s "
+                    "from_ids_count=%s status=%s body=%s",
+                    context,
+                    key,
+                    len(from_ids) if from_ids else None,
+                    getattr(e.response, "status_code", "?"),
+                    body,
+                )
                 if (
                     "already exists" in body
                     or "duplicate key value violates unique constraint" in body
@@ -236,6 +255,7 @@ def ensure_vector_column(
             context=context,
             key=source_column,
             equation=derived_expr,
+            derived=True,
             from_ids=from_ids,
         )
 
@@ -251,6 +271,6 @@ def ensure_vector_column(
         context=context,
         key=embed_column,
         equation=embed_expr,
+        derived=True,
         from_ids=from_ids,
     )
-    return None

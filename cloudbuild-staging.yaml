@@ -39,6 +39,39 @@ steps:
   args: ['push', '${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPOSITORY}/unity-staging:latest']
   waitFor: ['build-image']
 
+  # Build job-watcher image (reuses the same repo root context as Unity)
+- name: 'gcr.io/cloud-builders/docker'
+  id: 'build-job-watcher'
+  entrypoint: 'bash'
+  args:
+  - '-c'
+  - |
+    DOCKER_BUILDKIT=1 docker build \
+      --build-arg GITHUB_TOKEN=$$GITHUB_TOKEN \
+      --build-arg BRANCH=staging \
+      -f scripts/job-watcher/Dockerfile \
+      -t ${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPOSITORY}/job-watcher-staging:${SHORT_SHA} \
+      -t ${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPOSITORY}/job-watcher-staging:latest .
+  secretEnv: ['GITHUB_TOKEN']
+  waitFor: ['-']
+
+- name: 'gcr.io/cloud-builders/docker'
+  id: 'push-job-watcher'
+  args: ['push', '--all-tags', '${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPOSITORY}/job-watcher-staging']
+  waitFor: ['build-job-watcher']
+
+  # Deploy job-watcher to staging (creates Deployment on first run, updates image on subsequent runs)
+- name: 'gcr.io/cloud-builders/kubectl'
+  id: 'deploy-job-watcher'
+  entrypoint: 'bash'
+  args:
+  - '-c'
+  - |
+    gcloud container clusters get-credentials unity --region ${_REGION} --project ${PROJECT_ID}
+    sed "s|image:.*job-watcher.*|image: ${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPOSITORY}/job-watcher-staging:${SHORT_SHA}|" \
+      scripts/job-watcher/deployment_staging.yaml | kubectl apply -f -
+  waitFor: ['push-job-watcher']
+
   # Upload SHA to Cloud Storage
 - name: 'gcr.io/cloud-builders/gsutil'
   id: 'upload-sha'
@@ -98,3 +131,5 @@ timeout: '1800s'  # 30 minutes
 images:
 - '${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPOSITORY}/unity-staging:${SHORT_SHA}'
 - '${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPOSITORY}/unity-staging:latest'
+- '${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPOSITORY}/job-watcher-staging:${SHORT_SHA}'
+- '${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPOSITORY}/job-watcher-staging:latest'

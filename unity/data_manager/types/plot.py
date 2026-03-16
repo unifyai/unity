@@ -137,6 +137,8 @@ class PlotResult(BaseModel):
     ...     print(f"Error: {result.error}")
     """
 
+    model_config = ConfigDict(populate_by_name=True)
+
     url: Optional[str] = None
     token: Optional[str] = None
     expires_in_hours: Optional[int] = None

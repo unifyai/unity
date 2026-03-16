@@ -407,7 +407,7 @@ wsInstance.app.ws('/logs/stream', async (ws: WebSocket, req: Request) => {
 
 
 // --- Demo Sites ---
-// Port-to-directory mapping (same convention as the Python demo_sites.py)
+// Port-to-directory mapping for local demo site replicas
 const DEMO_SITE_DIRS: Record<number, string> = {
   4001: 'example',
   4002: 'vantage-portal',

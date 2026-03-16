@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import pytest
+import unify
 
 from unity.secret_manager.secret_manager import SecretManager
 
@@ -86,3 +87,47 @@ def test_clear(secret_manager_context):
     after = sm._list_secret_keys()
     assert isinstance(after, list)
     assert len(after) == 0
+
+
+def test_filter_and_search_tolerate_null_description(secret_manager_context):
+    """Secrets created externally (e.g. Console UI) may have description=None
+    in the DB. _filter_secrets and _search_secrets must not crash."""
+    sm = SecretManager()
+
+    # Insert a row with description=None directly, bypassing _create_secret
+    # which coerces None→"". This reproduces how secrets appear when created
+    # through Orchestra/Console without providing a description.
+    unify.log(
+        context=sm._ctx,
+        secret_id=0,
+        name="SF_USER",
+        value="admin@corp.com",
+        description=None,
+        new=True,
+        mutable=True,
+    )
+    unify.log(
+        context=sm._ctx,
+        secret_id=1,
+        name="SF_PASS",
+        value="hunter2",
+        description=None,
+        new=True,
+        mutable=True,
+    )
+
+    # _filter_secrets must return valid Secret objects, not crash
+    rows = sm._filter_secrets()
+    assert len(rows) == 2
+    names = {r.name for r in rows}
+    assert names == {"SF_USER", "SF_PASS"}
+    for r in rows:
+        assert isinstance(r.description, str)
+        assert r.value == ""  # redacted
+
+    # _search_secrets must also tolerate description=None
+    results = sm._search_secrets(k=10)
+    assert len(results) == 2
+    for r in results:
+        assert isinstance(r.description, str)
+        assert r.value == ""

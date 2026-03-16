@@ -100,3 +100,39 @@ def test_externally_added_secret_synced_on_ask(monkeypatch, secret_manager_conte
         content_after = _read(dotenv_path)
         assert "external_key=val-external" in content_after
         assert "existing_key=val-existing" in content_after
+
+
+def test_env_merge_syncs_os_environ(monkeypatch, secret_manager_context):
+    """_env_merge_and_write must set os.environ, not just the .env file.
+
+    On fresh pods, load_dotenv() runs before SecretManager writes to .env,
+    so os.environ never picks up secret values unless _env_merge_and_write
+    explicitly sets them.
+    """
+    import os
+
+    with tempfile.TemporaryDirectory() as td:
+        dotenv_path = str(pathlib.Path(td) / ".env")
+        monkeypatch.setattr(SETTINGS.secret, "DOTENV_PATH", dotenv_path)
+
+        # Ensure no leftover env vars from previous tests
+        monkeypatch.delenv("TEST_SECRET_A", raising=False)
+        monkeypatch.delenv("TEST_SECRET_B", raising=False)
+
+        sm = SecretManager()
+
+        # Create secrets — _env_set calls _env_merge_and_write
+        sm._create_secret(name="TEST_SECRET_A", value="alpha", description="a")
+        sm._create_secret(name="TEST_SECRET_B", value="bravo", description="b")
+
+        # os.environ must have the values, not just the .env file
+        assert os.environ.get("TEST_SECRET_A") == "alpha"
+        assert os.environ.get("TEST_SECRET_B") == "bravo"
+
+        # Update must propagate to os.environ too
+        sm._update_secret(name="TEST_SECRET_A", value="alpha-rotated")
+        assert os.environ.get("TEST_SECRET_A") == "alpha-rotated"
+
+        # Delete must remove from os.environ
+        sm._delete_secret(name="TEST_SECRET_B")
+        assert os.environ.get("TEST_SECRET_B") is None
