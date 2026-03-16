@@ -14,6 +14,7 @@ The Unity system is a comprehensive multi-channel communication platform that dy
 - [Inbound Communication Flow](#-inbound-communication-flow)
 - [Outbound Communication Flow](#-outbound-communication-flow)
 - [Inactivity & Idle Container Management](#-inactivity--idle-container-management)
+- [Job Watcher (Pod Termination Cleanup)](#job-watcher-pod-termination-cleanup)
 - [Debugging](#-debugging)
 - [Infrastructure Components](#️-infrastructure-components)
 - [Webhook System](#-webhook-system)
@@ -326,12 +327,53 @@ When a container hits the inactivity timeout:
 
 1. **Graceful shutdown initiated**: The conversation manager sets the stop event
 2. **Cleanup performed**: Active subscriptions are cancelled, resources released
-3. **Job marked as done**: `debug_logger.mark_job_done()` updates AssistantJobs with `running: False`
+3. **Job marked as done**: `assistant_jobs.mark_job_done()` patches the K8s label, expires the `AssistantJobs` record (`running=False`), releases the pool VM, and records session duration metrics. The job-watcher operator (`scripts/job-watcher/`) repeats the same idempotent expire/release calls externally to cover crash scenarios
 4. **Service deleted**: The external service (for liveview) is deleted
 5. **Container exits**: The process exits cleanly
 6. **Job retained on GKE**: The job itself is NOT deleted—it remains for log access
 
 **Important**: Any ongoing work is lost when the container shuts down. The assistant does not persist state between sessions. If the user contacts the assistant again, a new container is engaged and starts fresh (though conversation history is available via Unify logs).
+
+### Job Watcher (Pod Termination Cleanup)
+
+The **job-watcher** is a lightweight [kopf](https://kopf.dev/)-based Kubernetes operator that runs as a single-replica Deployment on the same GKE cluster as Unity containers. It is the **sole owner** of two critical cleanup tasks:
+
+1. Setting `running=False` on `AssistantJobs` records in Orchestra
+2. Releasing any pool VM assigned to the assistant back to the pool
+
+These responsibilities were moved out of the Unity container because in-container cleanup (`mark_job_done`) cannot run if the container crashes (OOMKill, segfault, node failure, etc.). The job-watcher runs **externally** and reacts to pod termination events via a Kubernetes watch stream, guaranteeing cleanup regardless of how the container exits.
+
+#### How it works
+
+The watcher registers a kopf event handler on pods with `labels={"app": "unity"}`. kopf manages the underlying K8s watch stream (persistent push connection, automatic reconnection, `resourceVersion` tracking). When a pod reaches `Succeeded` or `Failed`:
+
+1. Fetches `AssistantJobs` records matching the pod's `assistant-id` label and sets `running=False`
+2. Calls the comms service to release any pool VM assigned to that assistant (with retries and disk-detach fallback)
+
+Each handler invocation is isolated — if one cleanup fails, it doesn't affect other events. kopf handles retries and error tracking automatically.
+
+#### Responsibility split
+
+| Component | When it runs | What it does |
+|---|---|---|
+| `mark_job_done()` (in Unity container) | Graceful exit | K8s label patch + `running=False` + VM release + session duration metric |
+| **job-watcher** | Any exit (crash-safe) | `running=False` in AssistantJobs + VM release |
+| `expire_all_stale_jobs()` (adapters) | Periodic sweep | Safety net for anything the watcher missed |
+
+All three layers call the same idempotent operations — running any combination is harmless.
+
+#### Deployment
+
+The watcher is built and deployed automatically by Cloud Build alongside the main Unity image. Every push to `staging` or `main` rebuilds the watcher image in parallel with the Unity image and applies the deployment manifest via `kubectl apply` (creates on first run, updates on subsequent runs). The brief restart (~5 seconds) is safe: kopf replays recent events on startup, and all cleanup operations are idempotent.
+
+It uses the `comm-sa` service account (same as other cluster services) and pulls environment variables from the existing `unity-config` ConfigMap and `unity-secrets` Secret. Resource footprint is minimal (50m CPU / 64Mi memory request).
+
+#### Resilience
+
+- kopf manages watch stream reconnection and `resourceVersion` tracking automatically
+- The Deployment has `replicas: 1` with `safe-to-evict: "false"` to prevent the cluster autoscaler from evicting it
+- Liveness and readiness probes on `/healthz` (port 8080) ensure K8s restarts the pod if it becomes unresponsive
+- If the watcher pod itself crashes, K8s restarts it immediately. On restart, kopf replays recent events via `resourceVersion`, so no pod terminations are missed
 
 ### Idle Job Management Strategy
 
@@ -588,12 +630,19 @@ Without these renewals, the assistant would stop receiving inbound emails/messag
 unity/
 ├── cloudbuild.yaml               # Production deployment
 ├── cloudbuild-staging.yaml       # Staging deployment
+├── scripts/
+│   └── job-watcher/              # Pod termination cleanup operator
+│       ├── watcher.py            # kopf-based K8s watcher
+│       ├── Dockerfile
+│       ├── requirements.txt
+│       ├── deployment.yaml       # Production K8s manifest
+│       └── deployment_staging.yaml # Staging K8s manifest
 ├── unity/
 │   └── conversation_manager/
 │       ├── main.py               # Container entry point
 │       ├── comms_manager.py      # Pub/Sub subscription handler
 │       ├── conversation_manager.py # Main conversation logic
-│       ├── debug_logger.py       # AssistantJobs logging
+│       ├── assistant_jobs.py     # AssistantJobs logging (labels + metrics only; cleanup is in job-watcher)
 │       └── domains/
 │           └── comms_utils.py    # Outbound helpers
 
@@ -703,7 +752,7 @@ The GKE/PubSub/Artifact Registry project ID (`responsive-city-458413-a2`) is set
 | Email/SMS not received | Email watch expired or contact not validated | Check `/scheduled/email-watches` logs; verify sender is a saved contact |
 | "This number is no longer active" | Sender not in assistant's contacts | Add sender as contact in Unify console |
 | Container dies immediately | Crash during startup | Check GKE job logs for exceptions |
-| `running: True` but assistant unresponsive | Container crashed without cleanup | Manually update AssistantJobs log to `running: False` |
+| `running: True` but assistant unresponsive | Container crashed and job-watcher hasn't processed the event yet (or watcher is down) | Check `kubectl logs -l app=job-watcher` for errors; if watcher is healthy, the record should clear within seconds of pod termination |
 | Liveview URL not working | Service not ready yet (< 60s) or already deleted | Wait or check if job is still running |
 | `TLSV1_ALERT_INTERNAL_ERROR` on desktop session | VM has no TLS cert (wildcard secret missing or LE ACME rate-limited) | Check Secret Manager for `VM_WILDCARD_FULLCHAIN` in `unity-assistant-vms`; check `crt.sh/?q=%.vm.unify.ai` for rate limit status |
 | "Share assistant screen" shows broken iframe | VM HTTPS unreachable but `liveview_url` was set from a stale record | Check `AssistantJobs` for stale `running: True` entries; the adapter's `_expire_stale_records` should prevent this |

@@ -34,7 +34,7 @@ class LocalFileSystemAdapter(BaseFileSystemAdapter):
         self,
         root: str | None = None,
         *,
-        enable_sync: bool = False,
+        enable_sync: bool = True,
     ):
         """Initialize LocalFileSystemAdapter.
 
@@ -42,7 +42,7 @@ class LocalFileSystemAdapter(BaseFileSystemAdapter):
         ----------
         root : str | None, default None
             Root directory for file operations. Defaults to ~/Unity/Local.
-        enable_sync : bool, default False
+        enable_sync : bool, default True
             Whether to enable VM file sync. Actual sync only occurs if
             SESSION_DETAILS.desktop_url is configured.
         """

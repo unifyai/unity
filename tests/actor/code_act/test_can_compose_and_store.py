@@ -3,6 +3,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from tests.actor.code_act.conftest import make_fm_mock
 from unity.actor.code_act_actor import CodeActActor
 from unity.function_manager.function_manager import FunctionManager
 
@@ -65,7 +66,7 @@ async def test_code_act_can_compose_false_executes_best_matching_function():
         "implementation": _fn_impl,
         "language": "python",
     }
-    fm = MagicMock()
+    fm = make_fm_mock()
     fm.search_functions = MagicMock(return_value={"metadata": _fn_metadata})
     fm.filter_functions = MagicMock(return_value={"metadata": _fn_metadata})
     fm.list_functions = MagicMock(return_value={"metadata": _fn_metadata})
@@ -103,7 +104,7 @@ async def test_code_act_can_compose_false_no_functions_match():
     When can_compose=False and no stored functions match the query, the LLM
     should report the failure gracefully without invoking execute_function.
     """
-    fm = MagicMock()
+    fm = make_fm_mock()
     fm.search_functions = MagicMock(return_value={"metadata": []})
     fm.filter_functions = MagicMock(return_value={"metadata": []})
     fm.list_functions = MagicMock(return_value={"metadata": []})
@@ -147,12 +148,13 @@ async def test_code_act_can_store_false_blocks_add_functions_tool():
     We validate this by instructing the agent to call it; the loop should fail gracefully
     rather than executing the tool.
     """
-    fm = MagicMock()
-    fm.add_functions = MagicMock(return_value={"x": "added"})
+    fm = make_fm_mock()
+    fm.add_functions.return_value = {"x": "added"}
 
     actor = CodeActActor(
         function_manager=fm,
         timeout=30,
+        tool_policy=lambda *args: ("auto", {}),
     )
 
     try:

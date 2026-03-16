@@ -461,9 +461,9 @@ _STORAGE_TWO_STORES = (
     "(`FunctionManager_add_functions` with `overwrite=True`).\n"
     "- **Merge** overlapping functions into one general-purpose function: "
     "add the merged version, then delete the old entries "
-    "(`FunctionManager_delete_functions`).\n"
+    "(`FunctionManager_delete_function`).\n"
     "- **Delete** functions that are redundant or superseded "
-    "(`FunctionManager_delete_functions`).\n"
+    "(`FunctionManager_delete_function`).\n"
     "- **Manage venvs**: create (`FunctionManager_add_venv`), list "
     "(`FunctionManager_list_venvs`), update "
     "(`FunctionManager_update_venv`), or delete "
@@ -597,239 +597,20 @@ def _build_storage_tools(
     fm = actor.function_manager
     gm = actor.guidance_manager
 
-    # ── FunctionManager tools ─────────────────────────────────────────
-
-    async def FunctionManager_search_functions(
-        query: str,
-        n: int = 5,
-        include_implementations: bool = True,
-        _return_callable: bool = False,
-        _namespace: Optional[Dict[str, Any]] = None,
-        _also_return_metadata: bool = False,
-    ) -> Any:
-        return fm.search_functions(
-            query=query,
-            n=n,
-            include_implementations=include_implementations,
-        )
-
-    FunctionManager_search_functions.__doc__ = (
-        BaseFunctionManager.search_functions.__doc__
-    )
-
-    async def FunctionManager_filter_functions(
-        filter: Optional[str] = None,
-        offset: int = 0,
-        limit: int = 100,
-        include_implementations: bool = True,
-        _return_callable: bool = False,
-        _namespace: Optional[Dict[str, Any]] = None,
-        _also_return_metadata: bool = False,
-    ) -> Any:
-        return fm.filter_functions(
-            filter=filter,
-            offset=offset,
-            limit=limit,
-            include_implementations=include_implementations,
-        )
-
-    FunctionManager_filter_functions.__doc__ = (
-        BaseFunctionManager.filter_functions.__doc__
-    )
-
-    async def FunctionManager_list_functions(
-        include_implementations: bool = False,
-        _return_callable: bool = False,
-        _namespace: Optional[Dict[str, Any]] = None,
-        _also_return_metadata: bool = False,
-    ) -> Any:
-        return fm.list_functions(
-            include_implementations=include_implementations,
-        )
-
-    FunctionManager_list_functions.__doc__ = BaseFunctionManager.list_functions.__doc__
-
-    async def FunctionManager_add_functions(
-        implementations: str | list[str],
-        *,
-        language: str = "python",
-        overwrite: bool = False,
-        venv_id: Optional[int] = None,
-    ) -> Any:
-        return fm.add_functions(
-            implementations=implementations,
-            language=language,
-            overwrite=bool(overwrite),
-            venv_id=venv_id,
-        )
-
-    FunctionManager_add_functions.__doc__ = BaseFunctionManager.add_functions.__doc__
-
-    async def FunctionManager_delete_functions(
-        function_ids: list[int],
-    ) -> Any:
-        return fm.delete_function(function_id=function_ids)
-
-    FunctionManager_delete_functions.__doc__ = (
-        BaseFunctionManager.delete_function.__doc__
-    )
-
-    # ── FunctionManager venv tools ────────────────────────────────────
-
-    async def FunctionManager_add_venv(
-        venv: str,
-    ) -> int:
-        """Create a new virtual environment from a pyproject.toml specification.
-
-        Call this **before** storing a function that imports third-party
-        packages.  The returned ``venv_id`` is passed to
-        ``FunctionManager_add_functions(venv_id=...)`` so the function runs
-        in an isolated environment with its dependencies.
-
-        Parameters
-        ----------
-        venv : str
-            Full ``pyproject.toml`` content declaring the project name,
-            Python version constraint, and ``dependencies`` list.
-
-        Returns
-        -------
-        int
-            The auto-assigned ``venv_id``.
-        """
-        return fm.add_venv(venv=venv)
-
-    async def FunctionManager_list_venvs() -> Any:
-        """List all virtual environments.
-
-        Use this to check whether a suitable venv already exists before
-        creating a new one.  Prefer reusing an existing venv when its
-        dependency set is a superset of what the new function needs.
-
-        Returns
-        -------
-        list[dict]
-            Each dict contains ``venv_id`` and ``venv`` (the pyproject.toml
-            content).
-        """
-        return fm.list_venvs()
-
-    async def FunctionManager_get_venv(
-        venv_id: int,
-    ) -> Any:
-        """Get a virtual environment by ID.
-
-        Parameters
-        ----------
-        venv_id : int
-            The venv to retrieve.
-
-        Returns
-        -------
-        dict | None
-            Dict with ``venv_id`` and ``venv`` content, or ``None`` if
-            not found.
-        """
-        return fm.get_venv(venv_id=venv_id)
-
-    async def FunctionManager_update_venv(
-        venv_id: int,
-        venv: str,
-    ) -> bool:
-        """Update an existing virtual environment's pyproject.toml.
-
-        Use this to add dependencies to a venv that multiple functions
-        share, rather than creating a new venv for each function.
-
-        Parameters
-        ----------
-        venv_id : int
-            The venv to update.
-        venv : str
-            The new pyproject.toml content.
-
-        Returns
-        -------
-        bool
-            ``True`` if updated, ``False`` if not found.
-        """
-        return fm.update_venv(venv_id=venv_id, venv=venv)
-
-    async def FunctionManager_delete_venv(
-        venv_id: int,
-    ) -> bool:
-        """Delete a virtual environment.
-
-        Functions referencing this venv will fall back to the default
-        environment (``venv_id`` set to ``None``).
-
-        Parameters
-        ----------
-        venv_id : int
-            The venv to delete.
-
-        Returns
-        -------
-        bool
-            ``True`` if deleted, ``False`` if not found.
-        """
-        return fm.delete_venv(venv_id=venv_id)
-
-    async def FunctionManager_set_function_venv(
-        function_id: int,
-        venv_id: Optional[int],
-    ) -> bool:
-        """Link or unlink a function to/from a virtual environment.
-
-        Parameters
-        ----------
-        function_id : int
-            The function to update.
-        venv_id : int | None
-            The venv to associate, or ``None`` to revert to the default
-            environment.
-
-        Returns
-        -------
-        bool
-            ``True`` if updated, ``False`` if the function was not found.
-        """
-        return fm.set_function_venv(function_id=function_id, venv_id=venv_id)
-
-    async def FunctionManager_get_function_venv(
-        function_id: int,
-    ) -> Any:
-        """Get the virtual environment associated with a function.
-
-        Parameters
-        ----------
-        function_id : int
-            The function to query.
-
-        Returns
-        -------
-        dict | None
-            The venv dict if the function has one, ``None`` if using the
-            default environment.
-        """
-        return fm.get_function_venv(function_id=function_id)
-
-    # ── GuidanceManager tools (bound methods, no wrappers needed) ────
-
     tools: Dict[str, Callable] = {
-        "FunctionManager_search_functions": FunctionManager_search_functions,
-        "FunctionManager_filter_functions": FunctionManager_filter_functions,
-        "FunctionManager_list_functions": FunctionManager_list_functions,
-        "FunctionManager_add_functions": FunctionManager_add_functions,
-        "FunctionManager_delete_functions": FunctionManager_delete_functions,
-        "FunctionManager_add_venv": FunctionManager_add_venv,
-        "FunctionManager_list_venvs": FunctionManager_list_venvs,
-        "FunctionManager_get_venv": FunctionManager_get_venv,
-        "FunctionManager_update_venv": FunctionManager_update_venv,
-        "FunctionManager_delete_venv": FunctionManager_delete_venv,
-        "FunctionManager_set_function_venv": FunctionManager_set_function_venv,
-        "FunctionManager_get_function_venv": FunctionManager_get_function_venv,
         **methods_to_tool_dict(
+            fm.search_functions,
+            fm.filter_functions,
+            fm.list_functions,
+            fm.add_functions,
+            fm.delete_function,
+            fm.add_venv,
+            fm.list_venvs,
+            fm.get_venv,
+            fm.update_venv,
+            fm.delete_venv,
+            fm.set_function_venv,
+            fm.get_function_venv,
             gm.search,
             gm.filter,
             gm.add_guidance,
@@ -2589,9 +2370,24 @@ class CodeActActor(BaseCodeActActor):
                 display_label="Listing existing skills",
             )
 
-        # GuidanceManager tools: bound methods registered directly via
-        # methods_to_tool_dict (no custom wrappers needed — unlike FM, GM
-        # methods are plain CRUD with no sandbox injection side-effects).
+            fm = self.function_manager
+            tools.update(
+                methods_to_tool_dict(
+                    ToolSpec(
+                        fn=fm.add_functions,
+                        display_label="Adding functions to the library",
+                    ),
+                    ToolSpec(
+                        fn=fm.delete_function,
+                        display_label="Deleting functions from the library",
+                    ),
+                    include_class_name=True,
+                ),
+            )
+
+        # FunctionManager read tools (search/filter/list) use custom wrappers
+        # that inject callables into the sandbox. All other FM/GM tools below
+        # are plain CRUD with no sandbox side-effects.
         if self.guidance_manager:
             gm = self.guidance_manager
             tools.update(
@@ -3924,12 +3720,19 @@ class CodeActActor(BaseCodeActActor):
             return entry_handle
 
         # Build the tool set for this call. When can_compose=False the LLM
-        # may only discover and execute stored functions — no arbitrary code,
-        # no function persistence. Session tools are kept because
-        # execute_function supports the same session/state_mode semantics.
+        # can_compose=False: specialist may only discover and execute stored
+        # functions — no arbitrary code, no function persistence.
+        # can_store=False: function/guidance library is read-only.
+        # Session tools are kept because execute_function supports the same
+        # session/state_mode semantics.
         _compose_only_tools = {
             "execute_code",
             "install_python_packages",
+        }
+        _store_only_tools = {
+            "store_skills",
+            "FunctionManager_add_functions",
+            "FunctionManager_delete_function",
         }
 
         def _filter_tools(tool_dict: Dict[str, Any]) -> Dict[str, Any]:
@@ -3938,8 +3741,11 @@ class CodeActActor(BaseCodeActActor):
             if not effective_can_compose:
                 for name in _compose_only_tools:
                     out.pop(name, None)
+                for name in _store_only_tools:
+                    out.pop(name, None)
             if not effective_can_store:
-                out.pop("store_skills", None)
+                for name in _store_only_tools:
+                    out.pop(name, None)
             return out
 
         base_tools = _filter_tools(self.get_tools("act"))

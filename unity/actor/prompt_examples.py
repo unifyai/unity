@@ -900,25 +900,6 @@ async def search_for_topic(table_context: str, query: str) -> list:
 '''
 
 
-def get_primitives_files_visualize_example() -> str:
-    """Example: generating charts via `primitives.files.visualize(...)`."""
-
-    return '''
-# Example: Generate a chart from file data
-async def plot_distribution(table_context: str) -> str:
-    """Generate a bar chart showing distribution by category."""
-    result = await primitives.files.visualize(
-        tables=table_context,
-        plot_type="bar",
-        x_axis="category",
-        y_axis="amount",
-        metric="sum",
-        title="Amount by Category",
-    )
-    return result.get("url") if isinstance(result, dict) else result
-'''
-
-
 def get_primitives_files_render_extract_example() -> str:
     """Example: visual render-first extraction from Excel and PDF files."""
 
@@ -983,6 +964,100 @@ async def extract_financials_from_documents(directory: str) -> dict:
             doc.close()
 
     return results
+'''
+
+
+def get_primitives_data_filter_example() -> str:
+    """Example: filtering rows from a data context via ``primitives.data.filter(...)``."""
+
+    return '''
+# Example: Filter rows from a data context
+async def get_active_repairs(context: str = "Data/MidlandHeart/Repairs") -> list:
+    """Get recent active repairs with selected columns."""
+    rows = await primitives.data.filter(
+        context=context,
+        filter="WorksOrderStatusDescription == 'In Progress'",
+        columns=["WorksOrderReference", "OperativeName", "RaisedDate", "Priority"],
+        limit=50,
+    )
+    return rows
+'''
+
+
+def get_primitives_data_reduce_example() -> str:
+    """Example: aggregating data via ``primitives.data.reduce(...)``."""
+
+    return '''
+# Example: Aggregate data from a data context
+async def count_repairs_by_operative(context: str = "Data/MidlandHeart/Repairs") -> dict:
+    """Count repairs grouped by operative."""
+    result = await primitives.data.reduce(
+        context=context,
+        metric="count",
+        columns="WorksOrderReference",
+        group_by="OperativeName",
+    )
+    return result
+'''
+
+
+def get_primitives_data_plot_example() -> str:
+    """Example: generating charts via ``primitives.data.plot(...)``."""
+
+    return '''
+# Example: Generate a bar chart from a data context
+async def plot_repairs_by_category(context: str = "Data/MidlandHeart/Repairs") -> str:
+    """Generate a bar chart of repair counts by category."""
+    result = await primitives.data.plot(
+        context=context,
+        plot_type="bar",
+        x="SORGroupDescription",
+        y="WorksOrderReference",
+        metric="count",
+        title="Repairs by Category",
+    )
+    if result.succeeded:
+        return result.url
+    return f"Plot failed: {result.error}"
+'''
+
+
+def get_primitives_data_table_view_example() -> str:
+    """Example: generating an interactive table view via ``primitives.data.table_view(...)``."""
+
+    return '''
+# Example: Render an interactive table view from a data context
+async def show_top_repairs(context: str = "Data/MidlandHeart/Repairs") -> str:
+    """Generate a shareable table view of the most recent repairs."""
+    result = await primitives.data.table_view(
+        context=context,
+        columns_visible=["WorksOrderReference", "OperativeName", "RaisedDate", "Priority"],
+        sort_by="RaisedDate",
+        sort_order="desc",
+        row_limit=50,
+        title="Recent Repairs",
+    )
+    if result.succeeded:
+        return result.url
+    return f"Table view failed: {result.error}"
+'''
+
+
+def get_primitives_data_ingest_example() -> str:
+    """Example: ingesting API data into a data context via ``primitives.data.ingest(...)``."""
+
+    return '''
+# Example: Ingest API data into a data context
+async def ingest_api_response(records: list) -> dict:
+    """Ingest rows from an API response into the Data namespace."""
+    result = await primitives.data.ingest(
+        context="Data/ExternalAPI/Orders",
+        rows=records,
+        description="Orders imported from external API",
+        fields={"order_id": "int", "customer": "str", "amount": "float", "date": "datetime"},
+        unique_keys={"order_id": "int"},
+    )
+    return {"rows_inserted": result.rows_inserted, "context": result.context}
 '''
 
 
@@ -1454,15 +1529,17 @@ def get_example_function_map() -> dict[str, callable]:
         "get_primitives_files_reduce_example": get_primitives_files_reduce_example,
         "get_primitives_files_filter_example": get_primitives_files_filter_example,
         "get_primitives_files_search_example": get_primitives_files_search_example,
-        "get_primitives_files_visualize_example": get_primitives_files_visualize_example,
         # Web
         "get_primitives_web_ask_example": get_primitives_web_ask_example,
         # Secrets
         "get_primitives_secrets_ask_example": lambda: "",  # placeholder
         "get_primitives_secrets_update_example": lambda: "",  # placeholder
-        # Data
-        "get_primitives_data_filter_example": lambda: "",  # placeholder
-        "get_primitives_data_reduce_example": lambda: "",  # placeholder
+        # Data (using real DataManager primitives)
+        "get_primitives_data_filter_example": get_primitives_data_filter_example,
+        "get_primitives_data_reduce_example": get_primitives_data_reduce_example,
+        "get_primitives_data_plot_example": get_primitives_data_plot_example,
+        "get_primitives_data_table_view_example": get_primitives_data_table_view_example,
+        "get_primitives_data_ingest_example": get_primitives_data_ingest_example,
     }
 
 

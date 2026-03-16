@@ -110,7 +110,6 @@ class StateManagerEnvironment(BaseEnvironment):
             "reduce",
             "filter_files",
             "search_files",
-            "visualize",
             "describe",
             "list_columns",
         }

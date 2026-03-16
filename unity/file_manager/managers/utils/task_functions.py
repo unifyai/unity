@@ -1,21 +1,19 @@
 """Pure task execution functions for the FileManager pipeline.
 
-This module contains the actual work functions that are executed as tasks
-by the PipelineExecutor. Each function is PURE:
-- Explicit parameters (no hidden state)
-- Single responsibility (does one thing)
-- Returns explicit results (dict with status/data)
-- Raises exceptions on failure (caught by executor for retry)
+Each function is a self-contained unit of work executed by the
+``PipelineExecutor``.  They are PURE:
 
-These functions are designed to be called by the executor's task system.
-They do NOT handle:
-- Retries (handled by executor)
-- Progress reporting (handled by executor)
-- Timing (handled by executor)
-- Parallelism (handled by executor)
+- Explicit parameters (no hidden state).
+- Single responsibility (does one thing).
+- Returns explicit results (dict with status/data).
+- Raises exceptions on failure (caught by executor for retry).
 
-The orchestration layer (task_factory.py) wires these functions into
-task graphs with proper dependencies.
+Embedding is now delegated to ``DataManager.ingest()`` (via the
+``embed_columns`` and ``embed_strategy`` parameters), so there are
+no longer separate embed task functions.
+
+The orchestration layer (``executor.py``) calls these functions
+directly with retry logic and optional concurrency.
 """
 
 from __future__ import annotations
@@ -43,25 +41,15 @@ def _lookup_table_business_context(
     table_label: str,
     config: FilePipelineConfig,
 ) -> Optional[TableBusinessContextSpec]:
-    """
-    Look up the business context for a specific table.
+    """Look up the business context for a specific table.
 
-    Searches config.ingest.business_contexts.file_contexts for a matching file_path,
-    then finds the matching table spec within that file's table_contexts.
-
-    Parameters
-    ----------
-    file_path : str
-        The file path to match against.
-    table_label : str
-        The table label to match.
-    config : FilePipelineConfig
-        Pipeline configuration containing business contexts.
+    Searches ``config.ingest.business_contexts.file_contexts`` for a matching
+    *file_path*, then finds the matching table spec within that file's
+    ``table_contexts``.
 
     Returns
     -------
     TableBusinessContextSpec | None
-        The matching business context spec, or None if not found.
     """
     if not config or not hasattr(config, "ingest"):
         return None
@@ -70,7 +58,6 @@ def _lookup_table_business_context(
     if not business_contexts:
         return None
 
-    # Access file_contexts from the BusinessContextsConfig
     file_contexts = getattr(business_contexts, "file_contexts", [])
     if not file_contexts:
         return None
@@ -78,7 +65,6 @@ def _lookup_table_business_context(
     for fc in file_contexts:
         if fc.file_path != file_path:
             continue
-        # Found matching file, now find matching table in table_contexts
         for table_spec in fc.table_contexts:
             if table_spec.table == table_label:
                 logger.debug(
@@ -90,6 +76,41 @@ def _lookup_table_business_context(
         f"[TaskFn] No business context match for table '{table_label}' in {file_path}",
     )
     return None
+
+
+def _build_table_description(
+    table_label: str,
+    business_context: Optional[TableBusinessContextSpec],
+) -> Optional[str]:
+    """Build a table description string from business context metadata."""
+    if not business_context:
+        return None
+
+    parts: List[str] = []
+    if business_context.table_description:
+        parts.append(business_context.table_description)
+    if business_context.table_rules:
+        parts.append("Rules: " + "; ".join(business_context.table_rules))
+    if business_context.column_descriptions:
+        col_desc = ", ".join(
+            f"{k}: {v}" for k, v in business_context.column_descriptions.items()
+        )
+        parts.append(f"Columns: {col_desc}")
+    return " | ".join(parts) if parts else None
+
+
+def _build_table_fields(
+    columns: List[str],
+    example_row: Optional[Dict[str, Any]] = None,
+    business_context: Optional[TableBusinessContextSpec] = None,
+) -> Optional[Dict[str, str]]:
+    """Infer field types from column names, example row, and business context."""
+    if not columns:
+        return None
+    fields: Dict[str, str] = {}
+    for name in columns:
+        fields[str(name)] = "Any"
+    return fields
 
 
 # =============================================================================
@@ -106,34 +127,21 @@ def execute_create_file_record(
     document_summary: str = "",
     total_records: Optional[int] = None,
 ) -> Dict[str, Any]:
-    """
-    Create the FileRecord entry in the index.
+    """Create the FileRecord entry in the index.
 
-    This task MUST run before any content/table ingestion. It registers
-    the file in the FileRecords index and returns the generated file_id
-    and computed storage_id.
-
-    Parameters
-    ----------
-    file_manager : FileManager
-        The file manager instance providing storage context and identity helpers.
-    file_path : str
-        The logical file path/identifier.
-    parse_result : FileParseResult
-        The FileParseResult from the file parser (content_rows + tables + trace).
-    config : FilePipelineConfig
-        Pipeline configuration for ingest settings.
+    This task MUST run before any content/table ingestion.  It registers
+    the file in the FileRecords index and returns the generated ``file_id``
+    and computed ``storage_id``.
 
     Returns
     -------
     dict
-        {"file_id": int, "file_path": str, "storage_id": str}
+        ``{"file_id": int, "file_path": str, "storage_id": str}``
 
     Raises
     ------
     Exception
-        On failure to create the file record. This halts the entire
-        file's task graph since all other tasks depend on file_id.
+        On failure to create the file record.
     """
     from .ops import create_file_record as _ops_create_file_record
     from .ingest_ops import get_file_id_from_path
@@ -142,17 +150,14 @@ def execute_create_file_record(
     dm = file_manager._data_manager
     logger.debug(f"[TaskFn] Creating file record for: {file_path}")
 
-    # Determine ingest settings from config
-    # storage_id from config (None means auto-assign using str(file_id))
     config_storage_id = config.ingest.storage_id
     table_ingest = config.ingest.table_ingest
 
-    # Best-effort: adapter-derived size/timestamps (never raises)
     from .source_info import source_info_for_file
 
     ref = None
     try:
-        ref = file_manager._adapter.get_file(file_path)  # type: ignore[attr-defined]
+        ref = file_manager._adapter.get_file(file_path)
     except Exception:
         ref = None
     sinfo = source_info_for_file(
@@ -160,7 +165,6 @@ def execute_create_file_record(
         trace=getattr(parse_result, "trace", None),
     )
 
-    # Get source_uri and source_provider from adapter/resolver
     source_uri = None
     source_provider = None
     try:
@@ -179,14 +183,12 @@ def execute_create_file_record(
     except Exception:
         pass
 
-    # Create the file record entry with empty storage_id initially
-    # (will be updated with str(file_id) after we know file_id, unless config specifies one)
     entry = FileRecord.to_file_record_entry(
         file_path=file_path,
         source_uri=source_uri,
         source_provider=source_provider,
         parse_result=parse_result,
-        storage_id=config_storage_id or "",  # Empty means auto-assign
+        storage_id=config_storage_id or "",
         table_ingest=table_ingest,
         file_size=sinfo.size_bytes,
         created_at=sinfo.created_at,
@@ -198,7 +200,6 @@ def execute_create_file_record(
     created_file_record = _ops_create_file_record(file_manager, entry=entry)
     logger.debug(f"[TaskFn] Created file record: {created_file_record}")
 
-    # Lookup the created file_id
     file_id = get_file_id_from_path(
         data_manager=dm,
         index_context=file_manager._ctx,
@@ -210,11 +211,8 @@ def execute_create_file_record(
             f"Failed to retrieve file_id after creating record for: {file_path}",
         )
 
-    # Compute effective storage_id
-    # If config_storage_id is provided, use it; otherwise use str(file_id)
     storage_id = config_storage_id if config_storage_id else str(file_id)
 
-    # Update the record with computed storage_id if we used auto-assign
     if not config_storage_id:
         dm = file_manager._data_manager
         dm.update_rows(
@@ -236,67 +234,54 @@ def execute_create_file_record(
 
 
 # =============================================================================
-# CONTENT INGEST TASK
+# CONTENT INGEST TASK  (delegates to dm.ingest via ingest_content_batch)
 # =============================================================================
 
 
-def execute_ingest_content_chunk(
+def execute_ingest_content(
     *,
     file_manager: Any,
     file_path: str,
-    chunk_records: List[FileContentRow],
-    chunk_index: int,
-    total_chunks: int,
+    content_rows: List[FileContentRow],
     config: FilePipelineConfig,
 ) -> Dict[str, Any]:
-    """
-    Ingest a single chunk of content rows.
+    """Ingest ALL content rows for a file via ``dm.ingest()``.
 
-    Parameters
-    ----------
-    file_manager : FileManager
-        The file manager instance.
-    file_path : str
-        The logical file path/identifier.
-    chunk_records : list[FileContentRow]
-        The records for this chunk (already chunked by task_factory).
-    chunk_index : int
-        Zero-based index of this chunk.
-    total_chunks : int
-        Total number of content chunks for this file.
-    config : FilePipelineConfig
-        Pipeline configuration.
+    Chunking, retry, and embedding are handled internally by DM's ingest
+    pipeline.  This function:
+
+    1. Resolves ``file_id``, ``storage_id``, and the content context path.
+    2. Optionally deletes existing rows (``replace_existing``).
+    3. Transforms ``FileContentRow`` objects into document entries.
+    4. Resolves embed columns from the FM config.
+    5. Calls ``dm.ingest()`` with all rows in a single call.
 
     Returns
     -------
     dict
-        {
-            "inserted_ids": list[int],
-            "chunk_index": int,
-            "row_count": int,
-            "context": str,
-        }
+        ``{"ingest_result": IngestResult, "context": str, "row_count": int}``
 
     Raises
     ------
     Exception
-        On ingest failure. This halts the dependency chain - subsequent
-        content chunks cannot be ingested.
+        On fatal ingest failure.
     """
-    from .storage import ensure_file_context as _storage_ensure_file_context
     from .ingest_ops import (
         get_file_id_from_path,
         get_storage_id_from_path,
         ingest_content_batch,
+        resolve_embed_columns_for_content,
+        resolve_embed_strategy,
+        build_dm_execution_config,
     )
+    from unity.common.model_to_fields import model_to_fields
+    from unity.file_manager.types.file import FileContent
 
     dm = file_manager._data_manager
     logger.debug(
-        f"[TaskFn] Ingesting content chunk {chunk_index + 1}/{total_chunks} "
-        f"for {file_path} ({len(chunk_records)} rows)",
+        f"[TaskFn] Ingesting content for {file_path} ({len(content_rows)} rows)",
     )
 
-    # Get file_id (should exist from file_record task)
     file_id = get_file_id_from_path(
         data_manager=dm,
         index_context=file_manager._ctx,
@@ -305,7 +290,6 @@ def execute_ingest_content_chunk(
     if file_id is None:
         raise ValueError(f"File ID not found for {file_path}")
 
-    # Get storage_id from the file record
     storage_id = get_storage_id_from_path(
         data_manager=dm,
         index_context=file_manager._ctx,
@@ -314,44 +298,29 @@ def execute_ingest_content_chunk(
     if not storage_id:
         storage_id = str(file_id)
 
-    if not chunk_records:
-        logger.debug(
-            f"[TaskFn] No rows to ingest after preparation for chunk {chunk_index + 1}",
-        )
+    if not content_rows:
+        from unity.data_manager.types.ingest import IngestResult
+
         return {
-            "inserted_ids": [],
-            "chunk_index": chunk_index,
-            "row_count": 0,
+            "ingest_result": IngestResult(context=""),
             "context": "",
+            "row_count": 0,
         }
 
-    # Ensure the content context exists (on first chunk)
-    if chunk_index == 0:
-        try:
-            _storage_ensure_file_context(file_manager, storage_id=storage_id)
-        except Exception as e:
-            logger.warning(f"[TaskFn] Error ensuring content context: {e}")
-
-    # Determine destination context using storage_id
     context = file_manager._ctx_for_file_content(storage_id)
-
-    # Determine if this is shared storage (storage_id != str(file_id))
     is_shared_storage = storage_id != str(file_id)
 
-    # Delete existing rows on first chunk only (if replace_existing)
-    if chunk_index == 0 and config.ingest.replace_existing:
+    if config.ingest.replace_existing:
         from .ops import delete_file_content_rows
 
         try:
             if is_shared_storage:
-                # Shared storage: delete only this file's rows using filter
                 delete_file_content_rows(
                     file_manager,
                     storage_id=storage_id,
                     filter_expr=f"file_id == {file_id}",
                 )
             else:
-                # Per-file storage: delete all rows
                 delete_file_content_rows(
                     file_manager,
                     storage_id=storage_id,
@@ -360,232 +329,90 @@ def execute_ingest_content_chunk(
         except Exception as e:
             logger.warning(f"[TaskFn] Failed to delete existing rows: {e}")
 
-    # Ingest the batch via DataManager
-    inserted_ids = ingest_content_batch(
+    embed_columns = resolve_embed_columns_for_content(file_path, config)
+    embed_strategy = resolve_embed_strategy(config)
+    execution = build_dm_execution_config(config)
+
+    content_fields = model_to_fields(FileContent)
+
+    result = ingest_content_batch(
         data_manager=dm,
         context=context,
-        rows=chunk_records,
+        rows=content_rows,
         file_id=file_id,
-        add_to_all_context=file_manager.include_in_multi_assistant_table,
+        description=f"Content context for storage_id={storage_id}",
+        fields=content_fields,
+        unique_keys={"row_id": "int"},
+        auto_counting={"row_id": None},
+        embed_columns=embed_columns or None,
+        embed_strategy=embed_strategy,
+        chunk_size=config.ingest.content_rows_batch_size,
         infer_untyped_fields=config.ingest.infer_untyped_fields,
+        add_to_all_context=file_manager.include_in_multi_assistant_table,
+        execution=execution,
     )
 
     logger.debug(
-        f"[TaskFn] Ingested content chunk {chunk_index + 1}/{total_chunks}: "
-        f"{len(inserted_ids)} rows inserted",
+        f"[TaskFn] Content ingest complete for {file_path}: "
+        f"{result.rows_inserted} rows, {result.rows_embedded} embedded",
     )
 
     return {
-        "inserted_ids": inserted_ids,
-        "chunk_index": chunk_index,
-        "row_count": len(chunk_records),
+        "ingest_result": result,
         "context": context,
+        "row_count": result.rows_inserted,
     }
 
 
 # =============================================================================
-# CONTENT EMBED TASK
+# TABLE INGEST TASK  (delegates to dm.ingest via ingest_table_batch)
 # =============================================================================
 
 
-def execute_embed_content_chunk(
-    *,
-    file_manager: Any,
-    file_path: str,
-    inserted_ids: List[int],
-    chunk_index: int,
-    total_chunks: int,
-    config: FilePipelineConfig,
-) -> Dict[str, Any]:
-    """
-    Embed a single chunk of content using its inserted_ids.
-
-    This task is NON-BLOCKING in "along" strategy - the executor allows
-    ingest N+1 to proceed while this embed runs concurrently.
-
-    Parameters
-    ----------
-    file_manager : FileManager
-        The file manager instance.
-    file_path : str
-        The logical file path/identifier.
-    inserted_ids : list[int]
-        Log IDs from the corresponding ingest task.
-    chunk_index : int
-        Zero-based index of this chunk.
-    total_chunks : int
-        Total number of content chunks.
-    config : FilePipelineConfig
-        Pipeline configuration.
-
-    Returns
-    -------
-    dict
-        {
-            "chunk_index": int,
-            "success": bool,
-            "columns_embedded": dict[str, bool],
-            "embedded_count": int,
-        }
-
-    Notes
-    -----
-    Embed failures are GRACEFUL - they return success=False but do NOT
-    raise exceptions. The executor records these for the final summary
-    but does NOT halt the pipeline.
-    """
-    from .embed_ops import embed_content_batch, get_embedding_specs_for_file
-    from .ingest_ops import get_storage_id_from_path, get_file_id_from_path
-
-    dm = file_manager._data_manager
-    logger.debug(
-        f"[TaskFn] Embedding content chunk {chunk_index + 1}/{total_chunks} "
-        f"for {file_path} ({len(inserted_ids)} ids)",
-    )
-
-    if not inserted_ids:
-        logger.debug(f"[TaskFn] No IDs to embed for chunk {chunk_index + 1}")
-        return {
-            "chunk_index": chunk_index,
-            "success": True,
-            "columns_embedded": {},
-            "embedded_count": 0,
-        }
-
-    # Get embedding specs for this file
-    specs = get_embedding_specs_for_file(file_path, config)
-    if not specs:
-        logger.debug(f"[TaskFn] No embedding specs for {file_path}")
-        return {
-            "chunk_index": chunk_index,
-            "success": True,
-            "columns_embedded": {},
-            "embedded_count": 0,
-        }
-
-    # Get file_id and storage_id for context resolution
-    file_id = get_file_id_from_path(
-        data_manager=dm,
-        index_context=file_manager._ctx,
-        file_path=file_path,
-    )
-    storage_id = get_storage_id_from_path(
-        data_manager=dm,
-        index_context=file_manager._ctx,
-        file_path=file_path,
-    )
-    if not storage_id and file_id is not None:
-        storage_id = str(file_id)
-
-    # Determine context using storage_id
-    if storage_id:
-        context = file_manager._ctx_for_file_content(storage_id)
-    else:
-        # Fallback (should not happen)
-        logger.warning(f"[TaskFn] No storage_id found for {file_path}")
-        return {
-            "chunk_index": chunk_index,
-            "success": False,
-            "columns_embedded": {},
-            "embedded_count": 0,
-        }
-
-    # Embed the batch
-    results = embed_content_batch(
-        context=context,
-        specs=specs,
-        inserted_ids=inserted_ids,
-    )
-
-    success = all(results.values()) if results else True
-    if not success:
-        failed_cols = [col for col, ok in results.items() if not ok]
-        logger.warning(
-            f"[TaskFn] Embed chunk {chunk_index + 1} partial failure: {failed_cols}",
-        )
-
-    logger.debug(
-        f"[TaskFn] Embedded content chunk {chunk_index + 1}/{total_chunks}: "
-        f"success={success}, columns={list(results.keys())}",
-    )
-
-    return {
-        "chunk_index": chunk_index,
-        "success": success,
-        "columns_embedded": results,
-        "embedded_count": len(inserted_ids),
-    }
-
-
-# =============================================================================
-# TABLE INGEST TASK
-# =============================================================================
-
-
-def execute_ingest_table_chunk(
+def execute_ingest_table(
     *,
     file_manager: Any,
     file_path: str,
     table_label: str,
-    chunk_rows: List[Dict[str, Any]],
+    table_rows: List[Dict[str, Any]],
     columns: List[str],
-    chunk_index: int,
-    total_chunks: int,
     config: FilePipelineConfig,
 ) -> Dict[str, Any]:
-    """
-    Ingest a single chunk of table rows.
+    """Ingest ALL rows for one table via ``dm.ingest()``.
 
-    Parameters
-    ----------
-    file_manager : FileManager
-        The file manager instance.
-    file_path : str
-        The logical file path/identifier.
-    table_label : str
-        The table label (e.g., sheet name).
-    chunk_rows : list[dict]
-        The rows for this chunk.
-    columns : list[str]
-        Column names for the table.
-    chunk_index : int
-        Zero-based index of this chunk within the table.
-    total_chunks : int
-        Total chunks for this table.
-    config : FilePipelineConfig
-        Pipeline configuration.
+    Chunking, retry, and embedding are handled internally by DM's ingest
+    pipeline.  This function:
+
+    1. Resolves ``file_id``, ``storage_id``, and the table context path.
+    2. Resolves table description from business context.
+    3. Resolves embed columns from the FM config.
+    4. Calls ``dm.ingest()`` with all rows for this table.
 
     Returns
     -------
     dict
-        {
-            "inserted_ids": list[int],
-            "table_label": str,
-            "chunk_index": int,
-            "row_count": int,
-            "context": str,
-        }
+        ``{"ingest_result": IngestResult, "table_label": str, "context": str, "row_count": int}``
 
     Raises
     ------
     Exception
-        On ingest failure. This halts dependent embed tasks for this table.
+        On fatal ingest failure.
     """
-    from .storage import ensure_file_table_context as _storage_ensure_file_table_context
-    from .ops import batch_insert_file_table_rows as _batch_insert_file_table_rows
     from .ingest_ops import (
         get_file_id_from_path,
         get_storage_id_from_path,
+        ingest_table_batch,
+        resolve_embed_columns_for_table,
+        resolve_embed_strategy,
+        build_dm_execution_config,
         with_infer_untyped_fields,
     )
 
     dm = file_manager._data_manager
     logger.debug(
-        f"[TaskFn] Ingesting table '{table_label}' chunk {chunk_index + 1}/{total_chunks} "
-        f"for {file_path} ({len(chunk_rows)} rows)",
+        f"[TaskFn] Ingesting table '{table_label}' for {file_path} ({len(table_rows)} rows)",
     )
 
-    # Get file_id and storage_id for context resolution
     file_id = get_file_id_from_path(
         data_manager=dm,
         index_context=file_manager._ctx,
@@ -602,190 +429,64 @@ def execute_ingest_table_chunk(
     if not storage_id:
         raise ValueError(f"No storage_id found for {file_path}")
 
-    # Ensure the table context exists (on first chunk)
-    if chunk_index == 0:
-        try:
-            # Look up business context for table/column descriptions
-            business_context = _lookup_table_business_context(
-                file_path=file_path,
-                table_label=table_label,
-                config=config,
-            )
-            example = (
-                chunk_rows[0]
-                if chunk_rows and isinstance(chunk_rows[0], dict)
-                else None
-            )
-            _storage_ensure_file_table_context(
-                file_manager,
-                storage_id=storage_id,
-                table=table_label,
-                columns=columns,
-                example_row=example,
-                business_context=business_context,
-            )
-        except Exception as e:
-            logger.warning(f"[TaskFn] Error ensuring table context: {e}")
+    if not table_rows:
+        from unity.data_manager.types.ingest import IngestResult
 
-    # Get context path and insert rows directly (ensure already done on first chunk)
-    context = file_manager._ctx_for_file_table(storage_id, table_label)
-    inserted_ids = _batch_insert_file_table_rows(
-        file_manager,
-        storage_id=storage_id,
-        table=table_label,
-        rows=with_infer_untyped_fields(
-            chunk_rows,
-            enabled=config.ingest.infer_untyped_fields,
-        ),
-    )
-
-    logger.debug(
-        f"[TaskFn] Ingested table '{table_label}' chunk {chunk_index + 1}/{total_chunks}: "
-        f"{len(inserted_ids)} rows inserted",
-    )
-
-    return {
-        "inserted_ids": inserted_ids,
-        "table_label": table_label,
-        "chunk_index": chunk_index,
-        "row_count": len(chunk_rows),
-        "context": context,
-    }
-
-
-# =============================================================================
-# TABLE EMBED TASK
-# =============================================================================
-
-
-def execute_embed_table_chunk(
-    *,
-    file_manager: Any,
-    file_path: str,
-    table_label: str,
-    inserted_ids: List[int],
-    chunk_index: int,
-    total_chunks: int,
-    config: FilePipelineConfig,
-) -> Dict[str, Any]:
-    """
-    Embed a single chunk of table rows.
-
-    Parameters
-    ----------
-    file_manager : FileManager
-        The file manager instance.
-    file_path : str
-        The logical file path/identifier.
-    table_label : str
-        The table label.
-    inserted_ids : list[int]
-        Log IDs from the corresponding ingest task.
-    chunk_index : int
-        Zero-based index of this chunk.
-    total_chunks : int
-        Total chunks for this table.
-    config : FilePipelineConfig
-        Pipeline configuration.
-
-    Returns
-    -------
-    dict
-        {
-            "table_label": str,
-            "chunk_index": int,
-            "success": bool,
-            "columns_embedded": dict[str, bool],
-            "embedded_count": int,
-        }
-
-    Notes
-    -----
-    Like content embed, table embed failures are GRACEFUL and do not
-    halt the pipeline.
-    """
-    from .embed_ops import embed_table_batch, get_embedding_specs_for_file
-    from .ingest_ops import get_file_id_from_path, get_storage_id_from_path
-
-    dm = file_manager._data_manager
-    logger.debug(
-        f"[TaskFn] Embedding table '{table_label}' chunk {chunk_index + 1}/{total_chunks} "
-        f"for {file_path} ({len(inserted_ids)} ids)",
-    )
-
-    if not inserted_ids:
         return {
+            "ingest_result": IngestResult(context=""),
             "table_label": table_label,
-            "chunk_index": chunk_index,
-            "success": True,
-            "columns_embedded": {},
-            "embedded_count": 0,
+            "context": "",
+            "row_count": 0,
         }
 
-    # Get embedding specs
-    specs = get_embedding_specs_for_file(file_path, config)
-    if not specs:
-        return {
-            "table_label": table_label,
-            "chunk_index": chunk_index,
-            "success": True,
-            "columns_embedded": {},
-            "embedded_count": 0,
-        }
-
-    # Get file_id and storage_id for context resolution
-    file_id = get_file_id_from_path(
-        data_manager=dm,
-        index_context=file_manager._ctx,
-        file_path=file_path,
-    )
-    storage_id = get_storage_id_from_path(
-        data_manager=dm,
-        index_context=file_manager._ctx,
-        file_path=file_path,
-    )
-    if not storage_id and file_id is not None:
-        storage_id = str(file_id)
-
-    if not storage_id:
-        logger.warning(f"[TaskFn] No storage_id found for {file_path}")
-        return {
-            "table_label": table_label,
-            "chunk_index": chunk_index,
-            "success": False,
-            "columns_embedded": {},
-            "embedded_count": 0,
-        }
-
-    # Get context using storage_id
     context = file_manager._ctx_for_file_table(storage_id, table_label)
 
-    # Embed the batch
-    results = embed_table_batch(
-        context=context,
+    business_context = _lookup_table_business_context(
+        file_path=file_path,
         table_label=table_label,
-        specs=specs,
-        inserted_ids=inserted_ids,
+        config=config,
+    )
+    description = _build_table_description(table_label, business_context)
+    fields = _build_table_fields(columns, business_context=business_context)
+
+    embed_columns = resolve_embed_columns_for_table(
+        file_path,
+        table_label,
+        config,
         safe_fn=file_manager.safe,
     )
+    embed_strategy = resolve_embed_strategy(config)
+    execution = build_dm_execution_config(config)
 
-    success = all(results.values()) if results else True
-    if not success:
-        failed_cols = [col for col, ok in results.items() if not ok]
-        logger.warning(
-            f"[TaskFn] Embed table '{table_label}' chunk {chunk_index + 1} "
-            f"partial failure: {failed_cols}",
-        )
+    prepared_rows = with_infer_untyped_fields(
+        table_rows,
+        enabled=config.ingest.infer_untyped_fields,
+    )
+
+    result = ingest_table_batch(
+        data_manager=dm,
+        context=context,
+        rows=prepared_rows,
+        description=description,
+        fields=fields,
+        unique_keys={"row_id": "int"},
+        auto_counting={"row_id": None},
+        embed_columns=embed_columns or None,
+        embed_strategy=embed_strategy,
+        chunk_size=config.ingest.table_rows_batch_size,
+        infer_untyped_fields=config.ingest.infer_untyped_fields,
+        add_to_all_context=file_manager.include_in_multi_assistant_table,
+        execution=execution,
+    )
 
     logger.debug(
-        f"[TaskFn] Embedded table '{table_label}' chunk {chunk_index + 1}/{total_chunks}: "
-        f"success={success}",
+        f"[TaskFn] Table '{table_label}' ingest complete for {file_path}: "
+        f"{result.rows_inserted} rows, {result.rows_embedded} embedded",
     )
 
     return {
+        "ingest_result": result,
         "table_label": table_label,
-        "chunk_index": chunk_index,
-        "success": success,
-        "columns_embedded": results,
-        "embedded_count": len(inserted_ids),
+        "context": context,
+        "row_count": result.rows_inserted,
     }

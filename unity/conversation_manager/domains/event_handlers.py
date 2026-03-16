@@ -1,5 +1,8 @@
 import asyncio
+import subprocess
+import time
 import traceback
+from pathlib import Path
 from typing import TYPE_CHECKING, Union
 
 from unity.contact_manager.types.contact import UNASSIGNED
@@ -8,9 +11,96 @@ from unity.conversation_manager import assistant_jobs
 from unity.conversation_manager.events import *
 from unity.conversation_manager.domains import managers_utils
 from unity.conversation_manager.types import Medium, Mode
+from unity.logger import LOGGER
+from unity.session_details import SESSION_DETAILS
 
 if TYPE_CHECKING:
     from unity.conversation_manager.conversation_manager import ConversationManager
+
+
+_AGENT_SERVICE_PID_FILE = Path("/tmp/agent-service.pid")
+
+
+def _find_agent_service_dir() -> Path | None:
+    """Locate the agent-service directory (Docker or local dev)."""
+    candidates = [
+        Path("/app/agent-service"),
+        Path(__file__).resolve().parents[3] / "agent-service",
+    ]
+    for d in candidates:
+        if d.is_dir():
+            return d
+    return None
+
+
+def _update_env_file(env_path: Path, key: str, value: str) -> None:
+    """Update or add a key=value line in a .env file, preserving other lines."""
+    lines = env_path.read_text().splitlines() if env_path.exists() else []
+    prefix = f"{key}="
+    replaced = False
+    for i, line in enumerate(lines):
+        if line.startswith(prefix):
+            lines[i] = f"{key}={value}"
+            replaced = True
+            break
+    if not replaced:
+        lines.append(f"{key}={value}")
+    env_path.write_text("\n".join(lines) + "\n")
+
+
+def _restart_agent_service_with_key(api_key: str) -> None:
+    """Kill and restart the agent-service so it picks up the user's API key.
+
+    1. Updates the agent-service .env file
+    2. Kills the process currently on port 3000
+    3. Spawns a new agent-service (inherits os.environ which already has the
+       correct UNIFY_KEY from export_to_env())
+    4. Writes the new PID to /tmp/agent-service.pid for entrypoint.sh cleanup
+    """
+    try:
+        agent_dir = _find_agent_service_dir()
+        if agent_dir is None:
+            LOGGER.warning(
+                "[agent-service-restart] agent-service directory not found, skipping",
+            )
+            return
+
+        # 1. Update .env
+        _update_env_file(agent_dir / ".env", "UNIFY_KEY", api_key)
+        LOGGER.info(
+            "[agent-service-restart] Updated agent-service .env with user API key",
+        )
+
+        # 2. Kill existing process on port 3000 (pkill is available on all Linux
+        #    images; mirrors the fallback in entrypoint.sh's stop_agent_service)
+        subprocess.run(["pkill", "-f", "node.*agent-service"], capture_output=True)
+        subprocess.run(["pkill", "-f", "ts-node"], capture_output=True)
+        time.sleep(0.3)
+        LOGGER.info(
+            "[agent-service-restart] Killed existing agent-service on port 3000",
+        )
+
+        # 3. Restart (same logic as entrypoint.sh)
+        compiled = agent_dir / "dist" / "index.js"
+        if compiled.exists():
+            cmd = ["node", str(compiled)]
+        else:
+            cmd = ["npx", "ts-node", str(agent_dir / "src" / "index.ts")]
+
+        proc = subprocess.Popen(
+            cmd,
+            cwd=str(agent_dir),
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+
+        # 4. Write PID file for entrypoint.sh cleanup
+        _AGENT_SERVICE_PID_FILE.write_text(str(proc.pid))
+        LOGGER.info(
+            f"[agent-service-restart] Restarted agent-service (PID: {proc.pid})",
+        )
+    except Exception as e:
+        LOGGER.info(f"[agent-service-restart] Failed (non-fatal): {e}")
 
 
 def _event_type_to_log_key(event_cls) -> str:
@@ -946,6 +1036,19 @@ async def _(event: StartupEvent, cm: "ConversationManager", *args, **kwargs):
 
         payload = event.to_dict()["payload"]
         cm.set_details(payload)
+
+        # Restart agent-service with the user's API key.
+        # The agent-service is a sibling Node.js process started by entrypoint.sh
+        # with the container's original UNIFY_KEY. set_details() + export_to_env()
+        # update os.environ in this Python process, but the Node.js process still
+        # has the old key. Kill and respawn so auth and LLM billing use the user's key.
+        asyncio.create_task(
+            asyncio.to_thread(
+                _restart_agent_service_with_key,
+                SESSION_DETAILS.unify_key,
+            ),
+        )
+
         cm.call_manager.set_config(cm.get_call_config())
         cm.call_manager.start_persistent_worker()
 
@@ -963,7 +1066,17 @@ async def _(event: StartupEvent, cm: "ConversationManager", *args, **kwargs):
 async def _(event: AssistantUpdateEvent, cm: "ConversationManager", *args, **kwargs):
     cm._session_logger.info("assistant_update", "Received assistant update event")
     payload = event.to_dict()["payload"]
+    old_key = SESSION_DETAILS.unify_key
     cm.set_details(payload)
+
+    if SESSION_DETAILS.unify_key != old_key:
+        asyncio.create_task(
+            asyncio.to_thread(
+                _restart_agent_service_with_key,
+                SESSION_DETAILS.unify_key,
+            ),
+        )
+
     cm.call_manager.set_config(cm.get_call_config())
 
     # Update contact manager with new assistant/user details
@@ -1265,14 +1378,57 @@ async def _(
 
     _vm_ready.set()
 
+    if desktop_url:
+        from urllib.parse import urlparse
+        from unity.function_manager.primitives.runtime import ComputerPrimitives
+        from unity.manager_registry import ManagerRegistry
+
+        cp = ManagerRegistry.get_instance(ComputerPrimitives)
+        if cp is not None and cp._backend is not None:
+            parsed = urlparse(desktop_url)
+            cp._backend.update_container_url(
+                f"{parsed.scheme}://{parsed.netloc}/api",
+            )
+
+    cm.vm_ready = True
+    cm.notifications_bar.push_notif(
+        "System",
+        "Desktop VM is ready — computer actions are now available.",
+        event.timestamp,
+    )
+
     asyncio.ensure_future(_ensure_desktop_session(cm))
     await managers_utils._start_file_sync()
+
+    await cm.event_broker.publish(
+        FileSyncComplete.topic,
+        FileSyncComplete().to_json(),
+    )
 
     await comms_utils.publish_assistant_desktop_ready(
         desktop_url,
         liveview_url,
         event.vm_type,
     )
+
+    await cm.request_llm_run(delay=0)
+
+
+@EventHandler.register((FileSyncComplete,))
+async def _(
+    event: "FileSyncComplete",
+    cm: "ConversationManager",
+    *args,
+    **kwargs,
+):
+    cm.file_sync_complete = True
+    cm.notifications_bar.push_notif(
+        "System",
+        "File sync complete — all files from previous sessions are now available on disk.",
+        event.timestamp,
+    )
+    cm._session_logger.debug("file_sync", "File sync complete")
+    await cm.request_llm_run(delay=0)
 
 
 # --------------------------------------------------------------------------- #

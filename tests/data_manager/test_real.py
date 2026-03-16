@@ -374,8 +374,8 @@ def test_filter_return_ids_only():
 
 
 @_handle_project
-def test_insert_with_dedupe():
-    """insert_rows with dedupe_key should upsert."""
+def test_insert_with_unique_keys():
+    """insert_rows into a table with unique_keys should upsert server-side."""
     dm = _fresh_dm()
 
     path = dm.create_table(
@@ -385,7 +385,7 @@ def test_insert_with_dedupe():
     )
 
     dm.insert_rows(path, [{"sku": "A1", "price": 10.0}])
-    dm.insert_rows(path, [{"sku": "A1", "price": 15.0}], dedupe_key="sku")
+    dm.insert_rows(path, [{"sku": "A1", "price": 15.0}])
 
     rows = dm.filter(path)
     assert len(rows) == 1

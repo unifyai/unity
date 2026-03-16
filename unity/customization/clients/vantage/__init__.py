@@ -78,7 +78,7 @@ _VANTAGE_SECRETS = [
     },
     {
         "name": "PORTAL_USERNAME",
-        "value": "steph",
+        "value": "steph@vantage.com.uk",
         "description": (
             "Username for the Zoho Connect community portal at "
             "https://connect.zoho.com — a forum where Carbon Club members "

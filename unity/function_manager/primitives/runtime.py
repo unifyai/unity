@@ -555,7 +555,14 @@ class ComputerPrimitives(metaclass=SingletonABCMeta):
     _SECRET_INJECTED_METHODS = frozenset({"act", "observe", "type_text"})
 
     @staticmethod
-    def _resolve_container_url(explicit_url: str | None) -> str:
+    def _resolve_container_url(explicit_url: str | None) -> str | None:
+        """Resolve the agent-service container URL.
+
+        Returns ``None`` when the managed VM hasn't been confirmed ready yet
+        (``_vm_ready`` is unset), signalling that no URL is available.  Once
+        ``_vm_ready`` is set the method returns the real desktop-derived URL
+        or falls back to ``DEFAULT_AGENT_SERVER_URL`` for local/mock setups.
+        """
         if explicit_url is not None and explicit_url != DEFAULT_AGENT_SERVER_URL:
             return explicit_url
         try:
@@ -566,6 +573,8 @@ class ComputerPrimitives(metaclass=SingletonABCMeta):
 
                 parsed = urlparse(SESSION_DETAILS.assistant.desktop_url)
                 return f"{parsed.scheme}://{parsed.netloc}/api"
+            if not _vm_ready.is_set():
+                return None
         except Exception:
             pass
         return DEFAULT_AGENT_SERVER_URL
@@ -584,6 +593,9 @@ class ComputerPrimitives(metaclass=SingletonABCMeta):
         resolved_container = container_url or self._resolve_container_url(
             agent_server_url,
         )
+        logger.info(
+            f"ComputerPrimitives init: container_url={resolved_container}, mode={computer_mode}",
+        )
 
         self._computer_mode = computer_mode
         self._computer_kwargs_map = {
@@ -598,11 +610,12 @@ class ComputerPrimitives(metaclass=SingletonABCMeta):
         self._backend = None
         self._desktop_ns: Optional[_ComputerNamespace] = None
         self._web_factory: Optional[_WebSessionFactory] = None
+        self._pending_url_mappings: dict[str, str] | None = None
 
         self._interject_queues: set[asyncio.Queue] = set()
         self._user_remote_control_active: bool = False
 
-        if computer_mode == "mock" or resolved_container == DEFAULT_AGENT_SERVER_URL:
+        if computer_mode == "mock":
             _vm_ready.set()
 
         if connect_now:
@@ -625,8 +638,14 @@ class ComputerPrimitives(metaclass=SingletonABCMeta):
             )
 
             fresh_url = self._resolve_container_url(None)
-            if fresh_url != DEFAULT_AGENT_SERVER_URL:
+            if fresh_url is not None and fresh_url != DEFAULT_AGENT_SERVER_URL:
                 self._computer_kwargs_map["magnitude"]["container_url"] = fresh_url
+
+            effective_url = self._computer_kwargs_map["magnitude"].get("container_url")
+            logger.info(
+                f"Creating {self._computer_mode} backend: fresh_url={fresh_url}, "
+                f"container_url={effective_url}",
+            )
 
             if self._computer_mode == "magnitude":
                 self._backend = MagnitudeBackend(
@@ -639,15 +658,21 @@ class ComputerPrimitives(metaclass=SingletonABCMeta):
             else:
                 raise ValueError(f"Unknown computer_mode: '{self._computer_mode}'.")
             self._backend._on_session_closed = self._invalidate_web_session
+            if self._pending_url_mappings is not None:
+                self._backend._url_mappings = self._pending_url_mappings
         return self._backend
 
     @property
     def url_mappings(self) -> dict[str, str] | None:
-        return self.backend._url_mappings
+        if self._backend is not None:
+            return self._backend._url_mappings
+        return self._pending_url_mappings
 
     @url_mappings.setter
     def url_mappings(self, mappings: dict[str, str] | None) -> None:
-        self.backend._url_mappings = mappings
+        self._pending_url_mappings = mappings
+        if self._backend is not None:
+            self._backend._url_mappings = mappings
 
     @staticmethod
     def mark_ready() -> None:

@@ -39,6 +39,10 @@ class FileSettings(BaseSettings):
         PLOT_API_TIMEOUT: Timeout in seconds for plot API requests.
         PLOT_API_MAX_RETRIES: Maximum number of retries for plot API requests.
         PLOT_API_RETRY_BACKOFF: Base backoff time in seconds for retries.
+        TABLE_VIEW_API_ENDPOINT: Endpoint path for table view creation.
+        TABLE_VIEW_API_TIMEOUT: Timeout in seconds for table view API requests.
+        TABLE_VIEW_API_MAX_RETRIES: Maximum number of retries for table view API requests.
+        TABLE_VIEW_API_RETRY_BACKOFF: Base backoff time in seconds for retries.
     """
 
     ENABLED: bool = False
@@ -49,6 +53,12 @@ class FileSettings(BaseSettings):
     PLOT_API_TIMEOUT: float = 30.0
     PLOT_API_MAX_RETRIES: int = 3
     PLOT_API_RETRY_BACKOFF: float = 1.0
+
+    # Table View API settings
+    TABLE_VIEW_API_ENDPOINT: str = "/logs/table"
+    TABLE_VIEW_API_TIMEOUT: float = 30.0
+    TABLE_VIEW_API_MAX_RETRIES: int = 3
+    TABLE_VIEW_API_RETRY_BACKOFF: float = 1.0
 
     model_config = SettingsConfigDict(
         env_prefix="UNITY_FILE_",

@@ -36,6 +36,7 @@ ENVIRONMENT_MODULES: frozenset[str] = frozenset(
     {
         "primitives",
         "pydantic",
+        "unity",
     },
 )
 """Non-stdlib module names that the function execution environment provides.

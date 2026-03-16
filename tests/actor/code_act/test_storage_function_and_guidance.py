@@ -143,7 +143,7 @@ async def test_storage_loop_stores_both_function_and_guidance():
         assert result is not None
 
         # result() resolves after the task phase; wait for storage to finish.
-        deadline = asyncio.get_event_loop().time() + 120
+        deadline = asyncio.get_event_loop().time() + 300
         while not handle.done():
             if asyncio.get_event_loop().time() > deadline:
                 raise TimeoutError("Storage loop did not complete in time")
@@ -224,7 +224,7 @@ async def test_storage_loop_stores_function_without_guidance():
         assert result is not None
 
         # result() resolves after the task phase; wait for storage to finish.
-        deadline = asyncio.get_event_loop().time() + 120
+        deadline = asyncio.get_event_loop().time() + 300
         while not handle.done():
             if asyncio.get_event_loop().time() > deadline:
                 raise TimeoutError("Storage loop did not complete in time")

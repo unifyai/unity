@@ -18,6 +18,7 @@ class Debouncer:
         self.pending_task: asyncio.Task = None
         self._name = name
         self._pending_label: str = ""
+        self._pending_is_user_origin: bool = False
         self.was_queued: bool = False
         self.running_task_started_at: float = 0.0
         self.running_task_trace_meta: dict = {}
@@ -31,12 +32,21 @@ class Debouncer:
         cancel_running=False,
         label: str = "",
         trace_meta: dict | None = None,
+        is_user_origin: bool = False,
     ):
         args, kwargs = args or (), kwargs or {}
 
         had_pending = self.pending_task is not None and not self.pending_task.done()
         has_running = self.running_task is not None and not self.running_task.done()
         old_label = self._pending_label
+
+        if had_pending and self._pending_is_user_origin and not is_user_origin:
+            if self._name:
+                LOGGER.info(
+                    f"🚦 [{self._name}] {label} skipped — "
+                    f"pending user utterance ({old_label}) takes priority",
+                )
+            return
 
         await self._cancel_tasks(running=cancel_running)
 
@@ -72,10 +82,8 @@ class Debouncer:
                 # In case 1, we should proceed to create a new running task.
                 # In case 2, we should NOT proceed - let the newer pending task handle it.
                 if self.running_task and self.running_task.cancelled():
-                    # Running task was cancelled, proceed to create new one
                     pass
                 else:
-                    # We (the pending task) were cancelled, re-raise to stop
                     raise
             self.was_queued = queued
             self.running_task_started_at = asyncio.get_event_loop().time()
@@ -84,9 +92,11 @@ class Debouncer:
             self.running_task.add_done_callback(log_task_exc)
             self.pending_task = None
             self._pending_label = ""
+            self._pending_is_user_origin = False
 
         self.pending_task = asyncio.create_task(wait_for_running_task())
         self._pending_label = label
+        self._pending_is_user_origin = is_user_origin
 
     async def _cancel_tasks(self, pending=True, running=False):
         if running:

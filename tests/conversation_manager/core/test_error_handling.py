@@ -555,12 +555,12 @@ class TestLLMRequestEdgeCases:
         cm = initialized_cm
 
         # Manually add multiple requests with different params
-        cm.cm._pending_llm_requests.append((0, False))
-        cm.cm._pending_llm_requests.append((1, False))
-        cm.cm._pending_llm_requests.append((2, True))  # Last one
+        cm.cm._pending_llm_requests.append((0, False, False))
+        cm.cm._pending_llm_requests.append((1, False, False))
+        cm.cm._pending_llm_requests.append((2, True, False))  # Last one
 
         # The flush logic uses the last request's params
-        assert cm.cm._pending_llm_requests[-1] == (2, True)
+        assert cm.cm._pending_llm_requests[-1] == (2, True, False)
 
         # Clear for other tests
         cm.cm._pending_llm_requests.clear()

@@ -11,7 +11,12 @@ import pytest
 
 from unity.data_manager.simulated import SimulatedDataManager
 from unity.data_manager.base import BaseDataManager
-from unity.data_manager.types import TableDescription, PlotResult
+from unity.data_manager.types import (
+    TableDescription,
+    PlotResult,
+    TableViewResult,
+    IngestResult,
+)
 
 # ────────────────────────────────────────────────────────────────────────────
 # Docstring inheritance
@@ -392,23 +397,19 @@ def test_insert_rows(simulated_dm):
     assert len(rows) == 2
 
 
-def test_insert_rows_with_dedupe(simulated_dm):
-    """insert_rows with dedupe_key should update existing rows."""
+def test_insert_rows_bulk(simulated_dm):
+    """insert_rows in bulk should assign distinct log IDs."""
     simulated_dm.create_table("test/items", fields={"id": "int", "value": "str"})
 
-    # Insert initial
-    simulated_dm.insert_rows("test/items", [{"id": 1, "value": "original"}])
-
-    # Insert with dedupe - should update
-    simulated_dm.insert_rows(
+    ids = simulated_dm.insert_rows(
         "test/items",
-        [{"id": 1, "value": "updated"}],
-        dedupe_key="id",
+        [{"id": 1, "value": "a"}, {"id": 2, "value": "b"}],
     )
 
+    assert len(ids) == 2
+    assert ids[0] != ids[1]
     rows = simulated_dm.filter("test/items")
-    assert len(rows) == 1
-    assert rows[0]["value"] == "updated"
+    assert len(rows) == 2
 
 
 def test_insert_rows_with_batched(simulated_dm):
@@ -600,8 +601,8 @@ def test_vectorize_rows(simulated_dm):
 # ────────────────────────────────────────────────────────────────────────────
 
 
-def test_plot(seeded_dm):
-    """plot should return a PlotResult."""
+def test_plot_bar_with_aggregate(seeded_dm):
+    """Bar chart with aggregation returns a valid PlotResult."""
     result = seeded_dm.plot(
         "test/products",
         plot_type="bar",
@@ -614,19 +615,174 @@ def test_plot(seeded_dm):
     assert isinstance(result, PlotResult)
     assert result.succeeded
     assert result.url is not None
+    assert result.title == "Price by Category"
 
 
-def test_plot_batch(seeded_dm):
-    """plot_batch should return a list of PlotResults."""
+def test_plot_line_with_group_by(seeded_dm):
+    """Line chart with group_by propagates all params and succeeds."""
+    result = seeded_dm.plot(
+        "test/orders",
+        plot_type="line",
+        x="order_date",
+        y="total",
+        group_by="status",
+        title="Orders Over Time",
+    )
+
+    assert result.succeeded
+    assert "line" in result.url
+    assert result.title == "Orders Over Time"
+
+
+def test_plot_scatter_with_regression_and_scales(seeded_dm):
+    """Scatter plot with regression line and log scales."""
+    result = seeded_dm.plot(
+        "test/products",
+        plot_type="scatter",
+        x="price",
+        y="id",
+        show_regression=True,
+        scale_x="log",
+        scale_y="linear",
+    )
+
+    assert result.succeeded
+    assert "scatter" in result.url
+
+
+def test_plot_histogram_with_bins(seeded_dm):
+    """Histogram with custom bin_count."""
+    result = seeded_dm.plot(
+        "test/products",
+        plot_type="histogram",
+        x="price",
+        bin_count=20,
+    )
+
+    assert result.succeeded
+    assert "histogram" in result.url
+
+
+def test_plot_with_filter(seeded_dm):
+    """Plot with a filter expression propagates without error."""
+    result = seeded_dm.plot(
+        "test/orders",
+        plot_type="bar",
+        x="status",
+        y="total",
+        filter="status == 'shipped'",
+        aggregate="sum",
+    )
+
+    assert result.succeeded
+
+
+def test_plot_title_defaults_when_omitted(seeded_dm):
+    """Omitting title produces a sensible default containing the plot type."""
+    result = seeded_dm.plot(
+        "test/products",
+        plot_type="bar",
+        x="category",
+    )
+
+    assert result.succeeded
+    assert "bar" in result.title.lower()
+
+
+def test_plot_batch_per_context_results(seeded_dm):
+    """plot_batch returns one result per context with the correct URL stem."""
+    contexts = ["test/products", "test/orders"]
     results = seeded_dm.plot_batch(
-        ["test/products", "test/orders"],
+        contexts,
         plot_type="bar",
         x="id",
         y="id",
     )
 
-    assert len(results) == 2
+    assert len(results) == len(contexts)
     assert all(isinstance(r, PlotResult) for r in results)
+    for ctx, r in zip(contexts, results):
+        assert r.succeeded
+        assert ctx.replace("/", "/") in r.url
+
+
+def test_plot_resolves_relative_context(simulated_dm):
+    """Relative context paths are resolved to the Data/ namespace in the URL."""
+    simulated_dm.create_table("myproject/metrics", fields={"x": "int"})
+    result = simulated_dm.plot(
+        "myproject/metrics",
+        plot_type="bar",
+        x="x",
+    )
+
+    assert result.succeeded
+    assert "Data/myproject/metrics" in result.url
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# Table Views
+# ────────────────────────────────────────────────────────────────────────────
+
+
+def test_table_view_with_column_config(seeded_dm):
+    """table_view with column visibility, ordering, and sorting."""
+    result = seeded_dm.table_view(
+        "test/products",
+        columns_visible=["id", "name", "price"],
+        columns_order=["price", "name", "id"],
+        columns_hidden=["category"],
+        sort_by="price",
+        sort_order="desc",
+        title="Products Table",
+    )
+
+    assert isinstance(result, TableViewResult)
+    assert result.succeeded
+    assert result.url is not None
+    assert result.title == "Products Table"
+
+
+def test_table_view_with_filter_and_row_limit(seeded_dm):
+    """table_view with filter and row_limit propagates without error."""
+    result = seeded_dm.table_view(
+        "test/orders",
+        filter="status == 'shipped'",
+        row_limit=50,
+        title="Shipped Orders",
+    )
+
+    assert result.succeeded
+    assert result.title == "Shipped Orders"
+
+
+def test_table_view_title_defaults_when_omitted(seeded_dm):
+    """Omitting title produces a sensible default."""
+    result = seeded_dm.table_view("test/products")
+    assert result.succeeded
+    assert result.title is not None
+
+
+def test_table_view_batch_per_context(seeded_dm):
+    """table_view_batch returns one result per context."""
+    contexts = ["test/products", "test/orders"]
+    results = seeded_dm.table_view_batch(
+        contexts,
+        sort_by="id",
+        sort_order="asc",
+    )
+
+    assert len(results) == len(contexts)
+    assert all(isinstance(r, TableViewResult) for r in results)
+    assert all(r.succeeded for r in results)
+
+
+def test_table_view_resolves_relative_context(simulated_dm):
+    """Relative context paths are resolved to the Data/ namespace."""
+    simulated_dm.create_table("myproject/data", fields={"a": "int"})
+    result = simulated_dm.table_view("myproject/data")
+
+    assert result.succeeded
+    assert "Data/myproject/data" in result.url
 
 
 # ────────────────────────────────────────────────────────────────────────────
@@ -663,3 +819,107 @@ def test_clear(simulated_dm):
 
     tables = simulated_dm.list_tables()
     assert len(tables) == 0
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# Ingest
+# ────────────────────────────────────────────────────────────────────────────
+
+
+def test_ingest_basic(simulated_dm):
+    """ingest should create table and insert rows in one call."""
+    result = simulated_dm.ingest(
+        "test/ingest_basic",
+        rows=[
+            {"id": 1, "name": "Alice"},
+            {"id": 2, "name": "Bob"},
+            {"id": 3, "name": "Carol"},
+        ],
+        description="Basic ingest test",
+        fields={"id": "int", "name": "str"},
+    )
+
+    assert isinstance(result, IngestResult)
+    assert result.context == "Data/test/ingest_basic"
+    assert result.rows_inserted == 3
+    assert result.rows_embedded == 0
+    assert len(result.log_ids) == 3
+    assert result.duration_ms > 0
+    assert result.chunks_processed >= 1
+
+    # Verify rows actually exist
+    rows = simulated_dm.filter("test/ingest_basic")
+    assert len(rows) == 3
+
+
+def test_ingest_with_embedding(simulated_dm):
+    """ingest with embed_columns should report embedded rows."""
+    result = simulated_dm.ingest(
+        "test/ingest_embed",
+        rows=[
+            {"id": 1, "text": "Hello world"},
+            {"id": 2, "text": "Foo bar"},
+        ],
+        fields={"id": "int", "text": "str"},
+        embed_columns=["text"],
+    )
+
+    assert result.rows_inserted == 2
+    assert result.rows_embedded > 0
+
+    # Verify embedding columns were created
+    desc = simulated_dm.describe_table("test/ingest_embed")
+    assert desc.has_embeddings
+    assert "_text_emb" in desc.embedding_columns
+
+
+def test_ingest_appends_rows(simulated_dm):
+    """Successive ingest calls should append rows (uniqueness is schema-level)."""
+    simulated_dm.ingest(
+        "test/ingest_append",
+        rows=[{"id": 1, "value": "first"}],
+        fields={"id": "int", "value": "str"},
+    )
+
+    result = simulated_dm.ingest(
+        "test/ingest_append",
+        rows=[{"id": 2, "value": "second"}],
+    )
+
+    assert result.rows_inserted == 1
+    rows = simulated_dm.filter("test/ingest_append")
+    assert len(rows) == 2
+
+
+def test_ingest_empty_rows(simulated_dm):
+    """ingest with empty rows should return zero counts immediately."""
+    result = simulated_dm.ingest("test/ingest_empty", rows=[])
+
+    assert result.rows_inserted == 0
+    assert result.chunks_processed == 0
+    assert result.log_ids == []
+
+
+def test_ingest_chunk_counting(simulated_dm):
+    """ingest should calculate correct chunk count based on chunk_size."""
+    rows = [{"id": i} for i in range(10)]
+
+    result = simulated_dm.ingest(
+        "test/ingest_chunks",
+        rows=rows,
+        chunk_size=3,
+    )
+
+    assert result.rows_inserted == 10
+    # 10 rows / chunk_size 3 = ceil(10/3) = 4 chunks
+    assert result.chunks_processed == 4
+
+
+def test_ingest_docstring_inherited(simulated_dm):
+    """SimulatedDataManager.ingest should inherit docstring from base."""
+    from unity.data_manager.base import BaseDataManager
+
+    assert (
+        BaseDataManager.ingest.__doc__.strip()
+        in SimulatedDataManager.ingest.__doc__.strip()
+    )

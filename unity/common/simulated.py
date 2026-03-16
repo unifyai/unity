@@ -1066,7 +1066,6 @@ def mirror_file_manager_tools(kind: str) -> Dict[str, Any]:
             FileManager.filter_files,
             FileManager.search_files,
             FileManager.reduce,
-            FileManager.visualize,
             # Join/multi-join tools (exposed via ask.multi_table and merged at call-time)
             FileManager.filter_join,
             FileManager.search_join,
@@ -1087,7 +1086,6 @@ def mirror_file_manager_tools(kind: str) -> Dict[str, Any]:
             FileManager.filter_files,
             FileManager.search_files,
             FileManager.reduce,
-            FileManager.visualize,
             # Join/multi-join tools for file-scoped analysis
             FileManager.filter_join,
             FileManager.search_join,
@@ -1115,7 +1113,6 @@ def mirror_file_manager_tools(kind: str) -> Dict[str, Any]:
             FileManager.filter_files,
             FileManager.search_files,
             FileManager.reduce,
-            FileManager.visualize,
             FileManager.filter_join,
             FileManager.search_join,
             FileManager.filter_multi_join,
