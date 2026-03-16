@@ -1,20 +1,28 @@
-"""AssistantJobs lifecycle: log job startup, mark done, query running count.
+"""AssistantJobs lifecycle helpers for the Unity container.
 
-Manages records in the ``AssistantJobs`` Unify project that track which
-assistant containers are currently running.
+Thin wrapper around ``assistant_jobs_api`` that reads session-specific
+values (``SESSION_DETAILS``, ``SETTINGS``) and records Prometheus
+metrics.  All actual HTTP operations live in ``assistant_jobs_api.py``
+which is shared with the job-watcher operator.
+
+VM release and ``running=False`` cleanup are handled externally by the
+job-watcher operator (``scripts/job-watcher/``).
 """
 
 from dotenv import load_dotenv
 
 load_dotenv()
-import json
 import time
 import traceback
-import requests
-import unify
 
 from unity.logger import LOGGER
-from unity.common.hierarchical_logger import DEFAULT_ICON, ICONS
+from unity.common.hierarchical_logger import ICONS
+from unity.conversation_manager.assistant_jobs_api import (
+    ensure_project_exists,
+    get_assistant_logs,
+    get_running_count,
+    patch_job_label,
+)
 from unity.conversation_manager.metrics import (
     running_job_count as _m_running_jobs,
     session_duration as _m_session_dur,
@@ -22,10 +30,7 @@ from unity.conversation_manager.metrics import (
 from unity.session_details import SESSION_DETAILS
 from unity.settings import SETTINGS
 
-# Track whether AssistantJobs project has been verified/created
 _project_verified = False
-
-# Session start time (perf_counter), set by log_job_startup, read by mark_job_done
 _session_start_perf: float | None = None
 
 
@@ -35,7 +40,7 @@ def _ensure_project_exists(api_key: str) -> None:
     if _project_verified or not api_key:
         return
     try:
-        unify.create_project("AssistantJobs", api_key=api_key)
+        ensure_project_exists(api_key)
         _project_verified = True
     except Exception as e:
         LOGGER.error(
@@ -43,27 +48,13 @@ def _ensure_project_exists(api_key: str) -> None:
         )
 
 
-def _is_managed_vm() -> bool:
-    """Check if running on a managed VM.
-
-    Returns True when desktop_mode is "windows" or "ubuntu".
-    """
-    return SESSION_DETAILS.assistant.desktop_mode in ("windows", "ubuntu")
-
-
 def _record_running_job_count(api_key: str) -> None:
     """Query running jobs and record the count as a metric (best-effort)."""
     try:
-        logs = unify.get_logs(
-            project="AssistantJobs",
-            context="startup_events",
-            filter="running == 'true'",
-            limit=100,
-            api_key=api_key,
-        )
-        _m_running_jobs.set(len(logs))
+        count = get_running_count(api_key)
+        _m_running_jobs.set(count)
         LOGGER.debug(
-            f"{ICONS['assistant_jobs']} [assistant_jobs] Running job count: {len(logs)}",
+            f"{ICONS['assistant_jobs']} [assistant_jobs] Running job count: {count}",
         )
     except Exception as exc:
         LOGGER.error(
@@ -80,31 +71,14 @@ def mark_job_label(job_name: str, status: str, assistant_id: str | None = None):
             f"{ICONS['assistant_jobs']} [assistant_jobs] Skipping label update: COMMS_URL or admin key not configured",
         )
         return
-    labels = {"unity-status": status}
-    if assistant_id is not None:
-        labels["assistant-id"] = str(assistant_id).lower().replace("_", "-")
-    try:
-        resp = requests.patch(
-            f"{comms_url}/infra/job/labels",
-            data={
-                "job_name": job_name,
-                "labels": json.dumps(labels),
-            },
-            headers={"Authorization": f"Bearer {admin_key}"},
-            timeout=30,
+    ok = patch_job_label(comms_url, admin_key, job_name, status, assistant_id)
+    if ok:
+        LOGGER.debug(
+            f"{ICONS['assistant_jobs']} [assistant_jobs] Marked job as {status}: {job_name}",
         )
-        if resp.ok:
-            LOGGER.debug(
-                f"{ICONS['assistant_jobs']} [assistant_jobs] Marked job as {status}: {job_name}",
-            )
-        else:
-            LOGGER.warning(
-                f"{ICONS['assistant_jobs']} [assistant_jobs] Failed to mark job as {status} "
-                f"(status {resp.status_code}): {resp.text}",
-            )
-    except Exception as e:
+    else:
         LOGGER.warning(
-            f"{ICONS['assistant_jobs']} [assistant_jobs] Error marking job as {status}: {e}",
+            f"{ICONS['assistant_jobs']} [assistant_jobs] Failed to mark job as {status}: {job_name}",
         )
 
 
@@ -129,37 +103,27 @@ def log_job_startup(job_name: str, user_id: str, assistant_id: str):
         LOGGER.debug(
             f"{ICONS['assistant_jobs']} [assistant_jobs] Getting existing logs for user_id={user_id}, assistant_id={assistant_id}",
         )
-        existing_logs = unify.get_logs(
-            project="AssistantJobs",
-            context="startup_events",
-            filter=(
-                f"user_id == '{user_id}' and "
-                f"assistant_id == '{assistant_id}' and "
-                f"running == 'true'"
-            ),
-            limit=100,
-            api_key=api_key,
+        existing_logs = get_assistant_logs(
+            api_key,
+            f"user_id == '{user_id}' and "
+            f"assistant_id == '{assistant_id}' and "
+            f"running == 'true'",
         )
         LOGGER.debug(
             f"{ICONS['assistant_jobs']} [assistant_jobs] Found {len(existing_logs)} running records",
         )
 
         if existing_logs:
-            log = existing_logs[0]
-            log.update_entries(job_name=job_name)
+            existing_logs[0].update_entries(job_name=job_name)
             LOGGER.debug(
                 f"{ICONS['assistant_jobs']} [assistant_jobs] Updated record with job_name={job_name}",
             )
 
-            # X1: record running job count right after the record is updated
             _record_running_job_count(api_key)
 
-            # Mark session start for U9 duration measurement
             global _session_start_perf
             _session_start_perf = time.perf_counter()
         else:
-            # No record found - adapter's mark_job_running() must have failed
-            # Log warning but don't fail; liveview just won't be tracked
             LOGGER.error(
                 f"{ICONS['assistant_jobs']} [assistant_jobs] WARNING: No running record found for "
                 f"user_id={user_id}, assistant_id={assistant_id}. "
@@ -185,16 +149,11 @@ def update_liveview_url(assistant_id: str, user_id: str, liveview_url: str) -> N
     _ensure_project_exists(api_key)
 
     try:
-        existing_logs = unify.get_logs(
-            project="AssistantJobs",
-            context="startup_events",
-            filter=(
-                f"user_id == '{user_id}' and "
-                f"assistant_id == '{assistant_id}' and "
-                f"running == 'true'"
-            ),
-            limit=100,
-            api_key=api_key,
+        existing_logs = get_assistant_logs(
+            api_key,
+            f"user_id == '{user_id}' and "
+            f"assistant_id == '{assistant_id}' and "
+            f"running == 'true'",
         )
         if existing_logs:
             existing_logs[0].update_entries(liveview_url=liveview_url)
@@ -207,125 +166,14 @@ def update_liveview_url(assistant_id: str, user_id: str, liveview_url: str) -> N
         )
 
 
-def _release_vm(assistant_id: str, _max_attempts: int = 3) -> None:
-    """Release the pool VM assigned to this assistant back to the pool.
-
-    The pool release endpoint finds the VM by its ``assistant_id`` label
-    and transitions it from "assigned" back to "available".  Retries on
-    transient 5xx errors to guard against Cloud Run cold-start 503s.
-
-    If the release response indicates no VM is assigned (labels already
-    cleared but disk still attached), falls back to an explicit disk
-    detach call.
-    """
-    comms_url = SETTINGS.conversation.COMMS_URL.rstrip("/")
-    admin_key = SETTINGS.ORCHESTRA_ADMIN_KEY.get_secret_value()
-    if not comms_url or not admin_key:
-        LOGGER.debug(
-            f"{ICONS['assistant_jobs']} [assistant_jobs] Skipping VM release: "
-            "COMMS_URL or admin key not configured",
-        )
-        return
-
-    headers = {"Authorization": f"Bearer {admin_key}"}
-
-    for attempt in range(1, _max_attempts + 1):
-        try:
-            response = requests.post(
-                f"{comms_url}/infra/vm/pool/release",
-                json={"assistant_id": assistant_id},
-                headers=headers,
-                timeout=60,
-            )
-            if response.ok:
-                body = response.json()
-                if body.get("released"):
-                    LOGGER.info(
-                        f"{ICONS['assistant_jobs']} [assistant_jobs] Pool VM released for assistant "
-                        f"{assistant_id}: {body}",
-                    )
-                    return
-                LOGGER.warning(
-                    f"{ICONS['assistant_jobs']} [assistant_jobs] Release returned released=false "
-                    f"for {assistant_id}: {body}",
-                )
-                _detach_disk(assistant_id, comms_url, headers)
-                return
-            if response.status_code >= 500 and attempt < _max_attempts:
-                LOGGER.warning(
-                    f"{ICONS['assistant_jobs']} [assistant_jobs] Pool VM release got "
-                    f"{response.status_code}, retrying ({attempt}/{_max_attempts})…",
-                )
-                time.sleep(attempt)
-                continue
-            LOGGER.error(
-                f"{ICONS['assistant_jobs']} [assistant_jobs] Failed to release pool VM: "
-                f"{response.status_code} {response.text}",
-            )
-            return
-        except Exception as e:
-            LOGGER.error(
-                f"{ICONS['assistant_jobs']} [assistant_jobs] Error releasing pool VM: {e}",
-            )
-            traceback.print_exc()
-            return
-
-
-def _detach_disk(assistant_id: str, comms_url: str, headers: dict) -> None:
-    """Best-effort detach of the assistant's persistent disk."""
-    try:
-        response = requests.post(
-            f"{comms_url}/infra/vm/pool/disk/detach/{assistant_id}",
-            headers=headers,
-            timeout=60,
-        )
-        if response.ok:
-            LOGGER.info(
-                f"{ICONS['assistant_jobs']} [assistant_jobs] Disk detached for assistant "
-                f"{assistant_id}: {response.json()}",
-            )
-        else:
-            LOGGER.error(
-                f"{ICONS['assistant_jobs']} [assistant_jobs] Failed to detach disk: "
-                f"{response.status_code} {response.text}",
-            )
-    except Exception as e:
-        LOGGER.error(
-            f"{ICONS['assistant_jobs']} [assistant_jobs] Error detaching disk: {e}",
-        )
-        traceback.print_exc()
-
-
 def mark_job_done(job_name: str, inactivity_timeout: float = 0.0):
-    """Mark a job as done and record session-end metrics."""
+    """Mark a job as done and record session-end metrics.
+
+    VM release and ``running=False`` in AssistantJobs are handled by the
+    job-watcher operator, which reacts to pod termination events externally.
+    """
     mark_job_label(job_name, "done")
 
-    api_key = SESSION_DETAILS.shared_unify_key or None
-    if not api_key:
-        LOGGER.debug(
-            f"{ICONS['assistant_jobs']} [assistant_jobs] Skipping mark_job_done: no shared API key available",
-        )
-        return
-
-    # mark job done in the logs
-    try:
-        job_log = unify.get_logs(
-            project="AssistantJobs",
-            context="startup_events",
-            filter=f"job_name == '{job_name}'",
-            limit=100,
-            api_key=api_key,
-        )[0]
-        job_log.update_entries(running=False)
-        LOGGER.info(f"{DEFAULT_ICON} Job marked done {job_name}")
-
-        # X1: record running job count right after the record is updated
-        _record_running_job_count(api_key)
-    except Exception as e:
-        LOGGER.error(f"{DEFAULT_ICON} Error finding job: {e}")
-        traceback.print_exc()
-
-    # U9: session duration (log_job_startup → mark_job_done), excluding idle tail
     if _session_start_perf is not None:
         total_dur = time.perf_counter() - _session_start_perf
         active_dur = max(0.0, total_dur - inactivity_timeout)
@@ -334,7 +182,3 @@ def mark_job_done(job_name: str, inactivity_timeout: float = 0.0):
             f"{ICONS['assistant_jobs']} [assistant_jobs] Session duration: "
             f"{total_dur:.1f}s total, {inactivity_timeout:.1f}s idle, {active_dur:.1f}s active",
         )
-
-    # Release pool VM if applicable (managed VM, not user's own desktop)
-    if _is_managed_vm():
-        _release_vm(str(SESSION_DETAILS.assistant.agent_id))
