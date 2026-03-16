@@ -57,39 +57,48 @@ def _restart_agent_service_with_key(api_key: str) -> None:
        correct UNIFY_KEY from export_to_env())
     4. Writes the new PID to /tmp/agent-service.pid for entrypoint.sh cleanup
     """
-    agent_dir = _find_agent_service_dir()
-    if agent_dir is None:
-        LOGGER.warning(
-            "[agent-service-restart] agent-service directory not found, skipping restart",
+    try:
+        agent_dir = _find_agent_service_dir()
+        if agent_dir is None:
+            LOGGER.warning(
+                "[agent-service-restart] agent-service directory not found, skipping",
+            )
+            return
+
+        # 1. Update .env
+        _update_env_file(agent_dir / ".env", "UNIFY_KEY", api_key)
+        LOGGER.info(
+            "[agent-service-restart] Updated agent-service .env with user API key",
         )
-        return
 
-    # 1. Update .env
-    _update_env_file(agent_dir / ".env", "UNIFY_KEY", api_key)
-    LOGGER.info("[agent-service-restart] Updated agent-service .env with user API key")
+        # 2. Kill existing process on port 3000
+        subprocess.run(["fuser", "-k", "3000/tcp"], capture_output=True)
+        time.sleep(0.3)
+        LOGGER.info(
+            "[agent-service-restart] Killed existing agent-service on port 3000",
+        )
 
-    # 2. Kill existing process on port 3000
-    subprocess.run(["fuser", "-k", "3000/tcp"], capture_output=True)
-    time.sleep(0.3)
-    LOGGER.info("[agent-service-restart] Killed existing agent-service on port 3000")
+        # 3. Restart (same logic as entrypoint.sh)
+        compiled = agent_dir / "dist" / "index.js"
+        if compiled.exists():
+            cmd = ["node", str(compiled)]
+        else:
+            cmd = ["npx", "ts-node", str(agent_dir / "src" / "index.ts")]
 
-    # 3. Restart (same logic as entrypoint.sh)
-    compiled = agent_dir / "dist" / "index.js"
-    if compiled.exists():
-        cmd = ["node", str(compiled)]
-    else:
-        cmd = ["npx", "ts-node", str(agent_dir / "src" / "index.ts")]
+        proc = subprocess.Popen(
+            cmd,
+            cwd=str(agent_dir),
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
 
-    proc = subprocess.Popen(
-        cmd,
-        cwd=str(agent_dir),
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-    )
-
-    # 4. Write PID file for entrypoint.sh cleanup
-    _AGENT_SERVICE_PID_FILE.write_text(str(proc.pid))
-    LOGGER.info(f"[agent-service-restart] Restarted agent-service (PID: {proc.pid})")
+        # 4. Write PID file for entrypoint.sh cleanup
+        _AGENT_SERVICE_PID_FILE.write_text(str(proc.pid))
+        LOGGER.info(
+            f"[agent-service-restart] Restarted agent-service (PID: {proc.pid})",
+        )
+    except Exception as e:
+        LOGGER.info(f"[agent-service-restart] Failed (non-fatal): {e}")
 
 
 def _event_type_to_log_key(event_cls) -> str:
@@ -1031,9 +1040,11 @@ async def _(event: StartupEvent, cm: "ConversationManager", *args, **kwargs):
         # with the container's original UNIFY_KEY. set_details() + export_to_env()
         # update os.environ in this Python process, but the Node.js process still
         # has the old key. Kill and respawn so auth and LLM billing use the user's key.
-        await asyncio.to_thread(
-            _restart_agent_service_with_key,
-            SESSION_DETAILS.unify_key,
+        asyncio.create_task(
+            asyncio.to_thread(
+                _restart_agent_service_with_key,
+                SESSION_DETAILS.unify_key,
+            ),
         )
 
         cm.call_manager.set_config(cm.get_call_config())
@@ -1057,9 +1068,11 @@ async def _(event: AssistantUpdateEvent, cm: "ConversationManager", *args, **kwa
     cm.set_details(payload)
 
     if SESSION_DETAILS.unify_key != old_key:
-        await asyncio.to_thread(
-            _restart_agent_service_with_key,
-            SESSION_DETAILS.unify_key,
+        asyncio.create_task(
+            asyncio.to_thread(
+                _restart_agent_service_with_key,
+                SESSION_DETAILS.unify_key,
+            ),
         )
 
     cm.call_manager.set_config(cm.get_call_config())
