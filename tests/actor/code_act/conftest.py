@@ -4,19 +4,39 @@ import pytest
 from unittest.mock import AsyncMock, MagicMock
 
 from unity.function_manager.computer_backends import ActResult
+from unity.function_manager.function_manager import FunctionManager
 from unity.function_manager.primitives import ComputerPrimitives
+
+_FM_METHOD_NAMES = (
+    "search_functions",
+    "filter_functions",
+    "list_functions",
+    "add_functions",
+    "delete_function",
+    "add_venv",
+    "list_venvs",
+    "get_venv",
+    "update_venv",
+    "delete_venv",
+    "set_function_venv",
+    "get_function_venv",
+)
 
 
 def make_fm_mock() -> MagicMock:
     """Create a FunctionManager MagicMock compatible with ``methods_to_tool_dict``.
 
-    ``methods_to_tool_dict`` derives tool keys from ``fn.__name__``, which plain
-    ``MagicMock`` methods lack. This helper sets ``__name__`` on the FM write
-    methods that are registered via ``methods_to_tool_dict`` in the doing loop.
+    ``methods_to_tool_dict`` derives tool keys from ``fn.__self__.__class__``
+    and ``fn.__name__``, which plain ``MagicMock`` methods lack. Using
+    ``spec=FunctionManager`` gives the correct MRO so the canonical class name
+    resolves to ``FunctionManager``, and we set ``__name__`` / ``__self__`` on
+    each method so they look like real bound methods.
     """
-    fm = MagicMock()
-    fm.add_functions.__name__ = "add_functions"
-    fm.delete_function.__name__ = "delete_function"
+    fm = MagicMock(spec=FunctionManager)
+    for name in _FM_METHOD_NAMES:
+        method = getattr(fm, name)
+        method.__name__ = name
+        method.__self__ = fm
     return fm
 
 
