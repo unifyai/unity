@@ -120,6 +120,9 @@ class _FakeHandle:
     def __init__(self, value: str) -> None:
         self._value = value
 
+    def __repr__(self) -> str:
+        return f"_FakeHandle({self._value!r})"
+
     async def result(self) -> str:
         return self._value
 
