@@ -2589,8 +2589,9 @@ class CodeActActor(BaseCodeActActor):
                 display_label="Listing existing skills",
             )
 
-            # FM write tools: thin async wrappers with no sandbox
-            # injection (plain CRUD, same pattern as GuidanceManager).
+            # FM write tools: thin async wrappers (same pattern as the FM
+            # read tools above — wrappers are needed because tests use
+            # MagicMock FMs that lack __name__, breaking methods_to_tool_dict).
 
             async def FunctionManager_add_functions(
                 implementations: str | list[str],
@@ -2610,14 +2611,16 @@ class CodeActActor(BaseCodeActActor):
                 BaseFunctionManager.add_functions.__doc__
             )
 
-            async def FunctionManager_delete_functions(
-                function_ids: list[int],
+            async def FunctionManager_delete_function(
+                function_id: Union[int, list[int]],
+                delete_dependents: bool = True,
             ) -> Any:
                 return self.function_manager.delete_function(
-                    function_id=function_ids,
+                    function_id=function_id,
+                    delete_dependents=delete_dependents,
                 )
 
-            FunctionManager_delete_functions.__doc__ = (
+            FunctionManager_delete_function.__doc__ = (
                 BaseFunctionManager.delete_function.__doc__
             )
 
@@ -2625,8 +2628,8 @@ class CodeActActor(BaseCodeActActor):
                 fn=FunctionManager_add_functions,
                 display_label="Adding functions to the library",
             )
-            tools["FunctionManager_delete_functions"] = ToolSpec(
-                fn=FunctionManager_delete_functions,
+            tools["FunctionManager_delete_function"] = ToolSpec(
+                fn=FunctionManager_delete_function,
                 display_label="Deleting functions from the library",
             )
 
@@ -3977,7 +3980,7 @@ class CodeActActor(BaseCodeActActor):
         _store_only_tools = {
             "store_skills",
             "FunctionManager_add_functions",
-            "FunctionManager_delete_functions",
+            "FunctionManager_delete_function",
         }
 
         def _filter_tools(tool_dict: Dict[str, Any]) -> Dict[str, Any]:
