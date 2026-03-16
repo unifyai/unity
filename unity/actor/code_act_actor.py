@@ -2589,48 +2589,19 @@ class CodeActActor(BaseCodeActActor):
                 display_label="Listing existing skills",
             )
 
-            # FM write tools: thin async wrappers (same pattern as the FM
-            # read tools above — wrappers are needed because tests use
-            # MagicMock FMs that lack __name__, breaking methods_to_tool_dict).
-
-            async def FunctionManager_add_functions(
-                implementations: str | list[str],
-                *,
-                language: str = "python",
-                overwrite: bool = False,
-                venv_id: Optional[int] = None,
-            ) -> Any:
-                return self.function_manager.add_functions(
-                    implementations=implementations,
-                    language=language,
-                    overwrite=bool(overwrite),
-                    venv_id=venv_id,
-                )
-
-            FunctionManager_add_functions.__doc__ = (
-                BaseFunctionManager.add_functions.__doc__
-            )
-
-            async def FunctionManager_delete_function(
-                function_id: Union[int, list[int]],
-                delete_dependents: bool = True,
-            ) -> Any:
-                return self.function_manager.delete_function(
-                    function_id=function_id,
-                    delete_dependents=delete_dependents,
-                )
-
-            FunctionManager_delete_function.__doc__ = (
-                BaseFunctionManager.delete_function.__doc__
-            )
-
-            tools["FunctionManager_add_functions"] = ToolSpec(
-                fn=FunctionManager_add_functions,
-                display_label="Adding functions to the library",
-            )
-            tools["FunctionManager_delete_function"] = ToolSpec(
-                fn=FunctionManager_delete_function,
-                display_label="Deleting functions from the library",
+            fm = self.function_manager
+            tools.update(
+                methods_to_tool_dict(
+                    ToolSpec(
+                        fn=fm.add_functions,
+                        display_label="Adding functions to the library",
+                    ),
+                    ToolSpec(
+                        fn=fm.delete_function,
+                        display_label="Deleting functions from the library",
+                    ),
+                    include_class_name=True,
+                ),
             )
 
         # FunctionManager read tools (search/filter/list) use custom wrappers

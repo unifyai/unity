@@ -7,6 +7,19 @@ from unity.function_manager.computer_backends import ActResult
 from unity.function_manager.primitives import ComputerPrimitives
 
 
+def make_fm_mock() -> MagicMock:
+    """Create a FunctionManager MagicMock compatible with ``methods_to_tool_dict``.
+
+    ``methods_to_tool_dict`` derives tool keys from ``fn.__name__``, which plain
+    ``MagicMock`` methods lack. This helper sets ``__name__`` on the FM write
+    methods that are registered via ``methods_to_tool_dict`` in the doing loop.
+    """
+    fm = MagicMock()
+    fm.add_functions.__name__ = "add_functions"
+    fm.delete_function.__name__ = "delete_function"
+    return fm
+
+
 @pytest.fixture
 def mock_computer_primitives():
     """Fixture to create a mock ComputerPrimitives for testing.
