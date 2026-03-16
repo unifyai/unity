@@ -196,7 +196,12 @@ def mark_job_done(job_name: str, inactivity_timeout: float = 0.0):
         # X1: record running job count right after the record is updated
         _record_running_job_count(api_key)
 
-    if comms_url and admin_key:
+    # Release pool VM if applicable (managed VM, not user's own desktop)
+    if (
+        comms_url
+        and admin_key
+        and SESSION_DETAILS.assistant.desktop_mode in ("windows", "ubuntu")
+    ):
         release_pool_vm(comms_url, admin_key, assistant_id)
 
     # U9: session duration (log_job_startup → mark_job_done), excluding idle tail
