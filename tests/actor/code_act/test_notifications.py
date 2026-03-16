@@ -170,6 +170,7 @@ async def test_tool_loop_handle_next_notification():
         assert event.get("tool_name") == "notifying_tool"
         # The message from our tool should be in the event
         assert "hello" in str(event.get("message", ""))
+        await handle.result()
 
     finally:
         if not handle.done():
