@@ -24,13 +24,10 @@ retries, deduplication, and liveness probes.
 """
 
 from __future__ import annotations
-
 import datetime
 import logging
 import os
-
 import kopf
-
 from assistant_jobs_api import expire_assistant_records, release_pool_vm
 
 log = logging.getLogger("job-watcher")
