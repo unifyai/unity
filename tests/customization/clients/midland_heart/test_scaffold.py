@@ -37,7 +37,7 @@ from unity.customization.clients import (
     _ASSISTANT_GUIDANCE,
     _ASSISTANT_KNOWLEDGE,
     _ASSISTANT_BLACKLIST,
-    register_org,
+    register_assistant,
     resolve,
 )
 
@@ -120,12 +120,13 @@ class TestMidlandHeartScaffold:
     def test_mh_guidance_entries(self):
         from unity.customization.clients.midland_heart import _MH_GUIDANCE
 
-        assert len(_MH_GUIDANCE) == 4
+        assert len(_MH_GUIDANCE) == 5
         titles = {g["title"] for g in _MH_GUIDANCE}
         assert "Repairs KPI Analysis Workflow" in titles
-        assert "Repairs Data Schema" in titles
-        assert "Telematics Data Schema" in titles
-        assert "Data Discovery Guide" in titles
+        assert "Repairs Data Schema — MidlandHeart/Repairs2025" in titles
+        assert "Telematics Data Schema — MidlandHeart/Telematics2025" in titles
+        assert "Data Discovery, Composition Patterns, and Examples" in titles
+        assert "Midland Heart Business Rules and Data Quality" in titles
         for g in _MH_GUIDANCE:
             assert len(g["content"]) > 100
 
@@ -135,25 +136,24 @@ class TestMidlandHeartScaffold:
         assert _MH_CONFIG.guidelines is not None
         assert len(_MH_CONFIG.guidelines) < 300
 
-    def test_mh_org_registration(self):
+    def test_mh_assistant_registration(self):
         from unity.customization.clients.midland_heart import (
             _MH_CONFIG,
             _MH_FUNCTION_DIR,
             _MH_GUIDANCE,
-            _MH_ORG_ID,
+            _MH_ASSISTANT_ID,
         )
 
-        assert _MH_ORG_ID == 3
-        register_org(
-            _MH_ORG_ID,
+        register_assistant(
+            _MH_ASSISTANT_ID,
             config=_MH_CONFIG,
             function_dir=_MH_FUNCTION_DIR,
             guidance=_MH_GUIDANCE,
         )
-        r = resolve(org_id=_MH_ORG_ID)
+        r = resolve(assistant_id=_MH_ASSISTANT_ID)
         assert r.config.guidelines is not None
         assert r.environments == []
-        assert len(r.guidance) == 4
+        assert len(r.guidance) == 5
         assert len(r.function_dirs) == 1
 
     def test_mh_function_dir_exists(self):
@@ -177,8 +177,8 @@ class TestMidlandHeartScaffold:
         assert callable(seed_all)
         assert callable(seed_repairs)
         assert callable(seed_telematics)
-        assert REPAIRS_CONTEXT == "Data/MidlandHeart/Repairs"
-        assert TELEMATICS_CONTEXT_PREFIX == "Data/MidlandHeart/Telematics"
+        assert REPAIRS_CONTEXT == "MidlandHeart/Repairs2025"
+        assert TELEMATICS_CONTEXT_PREFIX == "MidlandHeart/Telematics2025"
 
     def test_build_metric_result_returns_standard_dict(self):
         from unity.customization.clients.midland_heart.functions.helpers import (
