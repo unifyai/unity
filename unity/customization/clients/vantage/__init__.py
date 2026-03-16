@@ -103,3 +103,11 @@ register_user(
     config=_VANTAGE_CONFIG,
     secrets=_VANTAGE_SECRETS,
 )
+
+_JULIA_USER_ID = "26b19a19-7cc0-467b-b369-636ad533cccc"
+
+register_user(
+    _JULIA_USER_ID,
+    config=_VANTAGE_CONFIG,
+    secrets=_VANTAGE_SECRETS,
+)
