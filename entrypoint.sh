@@ -55,10 +55,20 @@ memory_watchdog() {
 }
 
 stop_agent_service() {
-    if [ ! -z "$AGENT_PID" ]; then
-        echo "Stopping agent-service (PID: $AGENT_PID)..."
-        kill -TERM $AGENT_PID 2>/dev/null || true
-        wait $AGENT_PID 2>/dev/null || true
+    # Prefer PID file written by Python after an in-flight restart
+    # (the original $AGENT_PID becomes stale when Python restarts the service).
+    local pid_file="/tmp/agent-service.pid"
+    local pid=""
+    if [ -f "$pid_file" ]; then
+        pid=$(cat "$pid_file")
+    elif [ ! -z "$AGENT_PID" ]; then
+        pid=$AGENT_PID
+    fi
+
+    if [ ! -z "$pid" ] && kill -0 "$pid" 2>/dev/null; then
+        echo "Stopping agent-service (PID: $pid)..."
+        kill -TERM "$pid" 2>/dev/null || true
+        wait "$pid" 2>/dev/null || true
     else
         echo "Stopping agent-service..."
         pkill -f "ts-node" 2>/dev/null || true
