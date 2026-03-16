@@ -68,7 +68,7 @@ steps:
   - '-c'
   - |
     sed "s|image:.*job-watcher.*|image: ${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPOSITORY}/job-watcher-staging:${SHORT_SHA}|" \
-      scripts/job-watcher/staging/deployment.yaml | kubectl apply -f -
+      scripts/job-watcher/deployment_staging.yaml | kubectl apply -f -
   env:
   - 'CLOUDSDK_COMPUTE_REGION=${_REGION}'
   - 'CLOUDSDK_CONTAINER_CLUSTER=unity'

@@ -635,8 +635,8 @@ unity/
 │       ├── watcher.py            # kopf-based K8s watcher
 │       ├── Dockerfile
 │       ├── requirements.txt
-│       ├── staging/              # Staging deployment manifest + deploy script
-│       └── production/           # Production deployment manifest + deploy script
+│       ├── deployment.yaml       # Production K8s manifest
+│       └── deployment_staging.yaml # Staging K8s manifest
 ├── unity/
 │   └── conversation_manager/
 │       ├── main.py               # Container entry point
