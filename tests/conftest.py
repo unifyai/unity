@@ -512,6 +512,19 @@ def pytest_sessionfinish(session, exitstatus):
         unify.delete_project(unify.active_project())
 
 
+def pytest_unconfigure(config):
+    """Restore HOME and clean up the temporary test home directory."""
+    import shutil
+
+    test_home = os.environ.get("HOME", "")
+    if _original_home is None:
+        os.environ.pop("HOME", None)
+    else:
+        os.environ["HOME"] = _original_home
+    if test_home.endswith("/unity_test_home"):
+        shutil.rmtree(test_home, ignore_errors=True)
+
+
 def pytest_terminal_summary(terminalreporter, exitstatus, config):
     if SETTINGS.UNITY_CACHE_STATS:
         import unillm
@@ -532,6 +545,8 @@ def pytest_terminal_summary(terminalreporter, exitstatus, config):
 from unillm.cost_tracker import capture_costs
 
 _session_costs: list[tuple[str, float]] = []
+
+_original_home: str | None = None
 
 
 def pytest_configure(config):
