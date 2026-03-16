@@ -479,6 +479,9 @@ class Renderer:
         user_webcam_active: bool = False,
         user_remote_control_active: bool = False,
         active_web_sessions: list | None = None,
+        vm_ready: bool = True,
+        file_sync_complete: bool = True,
+        has_desktop: bool = False,
     ) -> SnapshotState:
         """Render the full conversation state.
 
@@ -490,6 +493,12 @@ class Renderer:
         message_elements: list[MessageElement] = []
         notification_elements: list[NotificationElement] = []
         action_elements: list[ActionElement] = []
+
+        infra_render = self.render_infrastructure_state(
+            vm_ready=vm_ready,
+            file_sync_complete=file_sync_complete,
+            has_desktop=has_desktop,
+        )
 
         meet_render = self.render_meet_interaction_state(
             assistant_screen_share_active=assistant_screen_share_active,
@@ -528,6 +537,7 @@ class Renderer:
         sections = [
             s
             for s in [
+                infra_render,
                 meet_render,
                 web_sessions_render,
                 notif_render,
@@ -546,6 +556,50 @@ class Renderer:
             actions=action_elements,
             snapshot_time=prompt_now(as_string=False),
         )
+
+    @staticmethod
+    def render_infrastructure_state(
+        *,
+        vm_ready: bool,
+        file_sync_complete: bool,
+        has_desktop: bool,
+    ) -> str:
+        """Render pending infrastructure state (VM boot, filesystem sync).
+
+        Returns XML sections only while the relevant subsystem is still
+        initialising.  Once both are ready (or no desktop is configured),
+        returns an empty string so the snapshot is not cluttered.
+        """
+        if not has_desktop:
+            return ""
+
+        parts: list[str] = []
+
+        if not vm_ready:
+            parts.append(
+                "<infrastructure status='vm_pending'>\n"
+                "Your managed desktop VM is still booting. Computer actions "
+                "(desktop_act, web_act, screenshot, etc.) are not available "
+                "yet. Do not attempt computer actions until you receive a "
+                "notification that the VM is ready. If a user asks you to do "
+                "something on the computer, let them know you will action it "
+                "in just a moment.\n"
+                "</infrastructure>",
+            )
+
+        if not file_sync_complete:
+            parts.append(
+                "<infrastructure status='sync_pending'>\n"
+                "Your local filesystem is being synced from persistent "
+                "storage. Files from previous sessions (Attachments/, "
+                "functions/, downloaded files, etc.) are not yet available "
+                "on disk. Do not attempt to read or reference historical "
+                "files until you receive a notification that the sync is "
+                "complete.\n"
+                "</infrastructure>",
+            )
+
+        return "\n".join(parts)
 
     @staticmethod
     def render_meet_interaction_state(

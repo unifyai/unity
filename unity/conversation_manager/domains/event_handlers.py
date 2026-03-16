@@ -1390,6 +1390,8 @@ async def _(
                 f"{parsed.scheme}://{parsed.netloc}/api",
             )
 
+    cm.vm_ready = True
+
     asyncio.ensure_future(_ensure_desktop_session(cm))
     await managers_utils._start_file_sync()
 
@@ -1404,6 +1406,8 @@ async def _(
         event.vm_type,
     )
 
+    await cm.request_llm_run(delay=0)
+
 
 @EventHandler.register((FileSyncComplete,))
 async def _(
@@ -1412,7 +1416,9 @@ async def _(
     *args,
     **kwargs,
 ):
+    cm.file_sync_complete = True
     cm._session_logger.debug("file_sync", "File sync complete")
+    await cm.request_llm_run(delay=0)
 
 
 # --------------------------------------------------------------------------- #

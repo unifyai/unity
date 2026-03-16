@@ -134,6 +134,8 @@ class ConversationManager(metaclass=SingletonABCMeta):
         # initialization state
         self.initialized: bool = False
         self.ready_for_brain: bool = False
+        self.vm_ready: bool = False
+        self.file_sync_complete: bool = False
         # logging
         self.loop = asyncio.get_event_loop()
         self.project_name = project_name
@@ -1001,6 +1003,7 @@ class ConversationManager(metaclass=SingletonABCMeta):
                         active_only=True,
                     )
 
+        _has_desktop = SESSION_DETAILS.assistant.desktop_mode in ("ubuntu", "windows")
         snapshot_state = self.prompt_renderer.render_state(
             self.contact_index,
             self.notifications_bar,
@@ -1012,6 +1015,9 @@ class ConversationManager(metaclass=SingletonABCMeta):
             user_webcam_active=self.user_webcam_active,
             user_remote_control_active=self.user_remote_control_active,
             active_web_sessions=web_sessions,
+            vm_ready=self.vm_ready,
+            file_sync_complete=self.file_sync_complete,
+            has_desktop=_has_desktop,
         )
         brain_spec = build_brain_spec(
             self,
@@ -1613,6 +1619,10 @@ class ConversationManager(metaclass=SingletonABCMeta):
                         },
                     )
 
+            _has_desktop = SESSION_DETAILS.assistant.desktop_mode in (
+                "ubuntu",
+                "windows",
+            )
             snapshot_state = self.prompt_renderer.render_state(
                 self.contact_index,
                 self.notifications_bar,
@@ -1623,6 +1633,9 @@ class ConversationManager(metaclass=SingletonABCMeta):
                 user_screen_share_active=self.user_screen_share_active,
                 user_webcam_active=self.user_webcam_active,
                 user_remote_control_active=self.user_remote_control_active,
+                vm_ready=self.vm_ready,
+                file_sync_complete=self.file_sync_complete,
+                has_desktop=_has_desktop,
             )
             brain_spec = build_brain_spec(self, snapshot_state=snapshot_state)
 
