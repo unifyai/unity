@@ -30,6 +30,7 @@ CONTEXT = "startup_events"
 # Project management
 # ---------------------------------------------------------------------------
 
+
 def ensure_project_exists(api_key: str) -> None:
     """Create the AssistantJobs project if it doesn't already exist."""
     try:
@@ -41,6 +42,7 @@ def ensure_project_exists(api_key: str) -> None:
 # ---------------------------------------------------------------------------
 # Record queries
 # ---------------------------------------------------------------------------
+
 
 def get_assistant_logs(
     api_key: str,
@@ -70,6 +72,7 @@ def get_running_count(api_key: str) -> int:
 # Record mutations
 # ---------------------------------------------------------------------------
 
+
 def expire_assistant_records(api_key: str, assistant_id: str) -> None:
     """Set ``running=False`` on all records for *assistant_id*."""
     try:
@@ -91,6 +94,7 @@ def expire_assistant_records(api_key: str, assistant_id: str) -> None:
 # ---------------------------------------------------------------------------
 # K8s label operations (via comms service)
 # ---------------------------------------------------------------------------
+
 
 def patch_job_label(
     comms_url: str,
@@ -123,6 +127,7 @@ def patch_job_label(
 # VM operations (via comms service)
 # ---------------------------------------------------------------------------
 
+
 def detach_disk(
     comms_url: str,
     admin_key: str,
@@ -141,7 +146,9 @@ def detach_disk(
         else:
             log.error(
                 "Failed to detach disk for %s: %d %s",
-                assistant_id, resp.status_code, resp.text,
+                assistant_id,
+                resp.status_code,
+                resp.text,
             )
     except Exception:
         log.exception("Error detaching disk for %s", assistant_id)
@@ -173,7 +180,8 @@ def release_pool_vm(
                 log.warning(
                     "Release returned released=false for %s: %s — "
                     "attempting disk detach",
-                    assistant_id, body,
+                    assistant_id,
+                    body,
                 )
                 detach_disk(comms_url, admin_key, assistant_id)
                 return
@@ -181,14 +189,19 @@ def release_pool_vm(
             if resp.status_code >= 500 and attempt < max_attempts:
                 log.warning(
                     "Pool VM release got %d for %s, retrying (%d/%d)",
-                    resp.status_code, assistant_id, attempt, max_attempts,
+                    resp.status_code,
+                    assistant_id,
+                    attempt,
+                    max_attempts,
                 )
                 time.sleep(attempt)
                 continue
 
             log.error(
                 "Failed to release pool VM for %s: %d %s",
-                assistant_id, resp.status_code, resp.text,
+                assistant_id,
+                resp.status_code,
+                resp.text,
             )
             return
         except Exception:
