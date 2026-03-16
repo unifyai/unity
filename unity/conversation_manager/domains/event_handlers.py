@@ -71,8 +71,10 @@ def _restart_agent_service_with_key(api_key: str) -> None:
             "[agent-service-restart] Updated agent-service .env with user API key",
         )
 
-        # 2. Kill existing process on port 3000
-        subprocess.run(["fuser", "-k", "3000/tcp"], capture_output=True)
+        # 2. Kill existing process on port 3000 (pkill is available on all Linux
+        #    images; mirrors the fallback in entrypoint.sh's stop_agent_service)
+        subprocess.run(["pkill", "-f", "node.*agent-service"], capture_output=True)
+        subprocess.run(["pkill", "-f", "ts-node"], capture_output=True)
         time.sleep(0.3)
         LOGGER.info(
             "[agent-service-restart] Killed existing agent-service on port 3000",
