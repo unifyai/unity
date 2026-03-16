@@ -54,7 +54,7 @@ _FUNCTION_AND_GUIDANCE_LIBRARY = textwrap.dedent("""
 
     When the user explicitly requests adding, updating, or deleting specific
     functions — independent of the current execution trajectory — use
-    `FunctionManager_add_functions` or `FunctionManager_delete_functions`
+    `FunctionManager_add_functions` or `FunctionManager_delete_function`
     directly. This is appropriate when the user has inspected the function
     library and wants a surgical edit (e.g. "update function X to handle
     edge case Y", "delete that unused function", "add this implementation").
@@ -92,7 +92,7 @@ _DISCOVERY_FIRST_POLICY = textwrap.dedent("""
     as parallel tool calls in a single assistant message. Once both discovery
     calls complete, the full tool set unlocks automatically — including
     `execute_code`, primitives, FunctionManager write tools
-    (`FunctionManager_add_functions`, `FunctionManager_delete_functions`),
+    (`FunctionManager_add_functions`, `FunctionManager_delete_function`),
     and GuidanceManager write tools (`GuidanceManager_add_guidance`,
     `GuidanceManager_update_guidance`, `GuidanceManager_delete_guidance`).
 
@@ -356,7 +356,7 @@ _STORAGE_DEFERRED_NOTICE = textwrap.dedent("""
     `GuidanceManager_add_guidance` as part of the current task. If the user
     explicitly requests adding, updating, or deleting specific function
     implementations, use `FunctionManager_add_functions` or
-    `FunctionManager_delete_functions` directly. `store_skills` is for
+    `FunctionManager_delete_function` directly. `store_skills` is for
     extracting reusable function implementations and compositional
     strategies from the execution trajectory — use it when you recognise
     patterns worth preserving from what you just did, not for direct
