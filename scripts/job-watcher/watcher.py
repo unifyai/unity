@@ -52,8 +52,11 @@ def on_job_event(event, **_):
     conditions = job.get("status", {}).get("conditions", [])
 
     terminal = next(
-        (c for c in conditions
-         if c.get("type") in ("Complete", "Failed") and c.get("status") == "True"),
+        (
+            c
+            for c in conditions
+            if c.get("type") in ("Complete", "Failed") and c.get("status") == "True"
+        ),
         None,
     )
     if terminal is None:
@@ -66,7 +69,9 @@ def on_job_event(event, **_):
 
     log.info(
         "Job %s terminal (condition=%s, assistant-id=%s)",
-        job_name, terminal["type"], assistant_id,
+        job_name,
+        terminal["type"],
+        assistant_id,
     )
     _events_processed += 1
 
