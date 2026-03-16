@@ -364,15 +364,7 @@ All three layers call the same idempotent operations — running any combination
 
 #### Deployment
 
-The watcher lives in `scripts/job-watcher/` and is deployed as a standard K8s Deployment with separate staging/production manifests:
-
-```bash
-# Staging
-scripts/job-watcher/staging/deploy.sh --build
-
-# Production
-scripts/job-watcher/production/deploy.sh --build
-```
+The watcher is built and deployed automatically by Cloud Build alongside the main Unity image. Every push to `staging` or `main` rebuilds the watcher image in parallel with the Unity image and rolls out the new version via `kubectl set image`. The brief restart (~5 seconds) is safe: kopf replays recent events on startup, and all cleanup operations are idempotent.
 
 It uses the `comm-sa` service account (same as other cluster services) and pulls environment variables from the existing `unity-config` ConfigMap and `unity-secrets` Secret. Resource footprint is minimal (50m CPU / 64Mi memory request).
 
