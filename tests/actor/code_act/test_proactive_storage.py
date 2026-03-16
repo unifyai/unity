@@ -208,6 +208,7 @@ async def test_proactive_storage_loop_receives_request_and_trajectory():
     captured_kwargs: dict = {}
 
     with (
+        patch.object(MagicMock, "__repr__", return_value="<MockHandle>"),
         patch(
             "unity.actor.code_act_actor._start_proactive_storage_loop",
         ) as mock_proactive,
