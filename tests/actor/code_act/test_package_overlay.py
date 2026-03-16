@@ -10,6 +10,7 @@ These are symbolic/infrastructure tests verifying that:
 import asyncio
 import importlib
 import os
+import re
 import sys
 
 import pytest
@@ -19,6 +20,23 @@ from unity.actor.execution.package_overlay import (
     PackageOverlay,
     _CURRENT_PACKAGE_OVERLAY,
 )
+
+_UV_TIMING_RE = re.compile(r" in \d+(\.\d+)?(ms|s|m)\b")
+_original_install = PackageOverlay.install
+
+
+def _install_without_timings(self, packages, timeout=120):
+    result = _original_install(self, packages, timeout=timeout)
+    result["stderr"] = _UV_TIMING_RE.sub("", result["stderr"])
+    return result
+
+
+@pytest.fixture(autouse=True)
+def _strip_uv_timings(monkeypatch):
+    """Strip non-deterministic timing values from uv stderr so that LLM tool
+    results are identical across runs, preventing cache busting."""
+    monkeypatch.setattr(PackageOverlay, "install", _install_without_timings)
+
 
 # ---------------------------------------------------------------------------
 # Direct PackageOverlay unit tests (no LLM, no actor)
