@@ -327,7 +327,7 @@ When a container hits the inactivity timeout:
 
 1. **Graceful shutdown initiated**: The conversation manager sets the stop event
 2. **Cleanup performed**: Active subscriptions are cancelled, resources released
-3. **Job marked as done**: `assistant_jobs.mark_job_done()` patches the K8s label and records session duration metrics. VM release and `running=False` in AssistantJobs are handled externally by the job-watcher operator (`scripts/job-watcher/`)
+3. **Job marked as done**: `assistant_jobs.mark_job_done()` patches the K8s label, expires the `AssistantJobs` record (`running=False`), releases the pool VM, and records session duration metrics. The job-watcher operator (`scripts/job-watcher/`) repeats the same idempotent expire/release calls externally to cover crash scenarios
 4. **Service deleted**: The external service (for liveview) is deleted
 5. **Container exits**: The process exits cleanly
 6. **Job retained on GKE**: The job itself is NOT deleted—it remains for log access
@@ -356,11 +356,11 @@ Each handler invocation is isolated — if one cleanup fails, it doesn't affect 
 
 | Component | When it runs | What it does |
 |---|---|---|
-| `mark_job_done()` (in Unity container) | Graceful exit | K8s label patch (`unity-status=done`) + session duration metric |
+| `mark_job_done()` (in Unity container) | Graceful exit | K8s label patch + `running=False` + VM release + session duration metric |
 | **job-watcher** | Any exit (crash-safe) | `running=False` in AssistantJobs + VM release |
 | `expire_all_stale_jobs()` (adapters) | Periodic sweep | Safety net for anything the watcher missed |
 
-The watcher and the adapter sweep are idempotent — running both is harmless.
+All three layers call the same idempotent operations — running any combination is harmless.
 
 #### Deployment
 

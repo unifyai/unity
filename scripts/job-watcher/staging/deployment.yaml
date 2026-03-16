@@ -20,7 +20,7 @@ spec:
       serviceAccountName: comm-sa
       containers:
       - name: job-watcher
-        image: us-central1-docker.pkg.dev/responsive-city-458413-a2/unity/job-watcher:latest
+        image: us-central1-docker.pkg.dev/responsive-city-458413-a2/unity/job-watcher-staging:latest
         ports:
         - containerPort: 8080
           name: health

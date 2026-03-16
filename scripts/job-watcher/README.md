@@ -58,16 +58,30 @@ scripts set the Docker build context to the repo root and pass
 
 | Component | When it runs | What it does |
 |---|---|---|
-| `mark_job_done()` (in Unity container) | Graceful exit | K8s label patch (`unity-status=done`) + session duration metric |
+| `mark_job_done()` (in Unity container) | Graceful exit | K8s label patch + `running=False` + VM release + session duration metric |
 | **job-watcher** (this) | Any exit (crash-safe) | `running=False` in AssistantJobs + VM release |
 | `expire_all_stale_jobs()` (adapters) | Periodic sweep | Safety net for anything the watcher missed |
 
-The watcher and the adapter sweep are idempotent.  Running both is harmless.
+All three layers call the same idempotent operations.  Running any
+combination is harmless.
 
 ## Deployment
 
-### Prerequisites
+### CI (automatic)
 
+The job-watcher is built and deployed automatically by Cloud Build
+alongside the main Unity image.  Every push to `staging` or `main`
+rebuilds the watcher image in parallel with the Unity image and rolls
+out the new version via `kubectl set image`.
+
+The brief restart (~5 seconds) is safe: kopf replays recent events on
+startup, and all cleanup operations are idempotent.
+
+### Manual deployment
+
+For one-off deploys outside CI:
+
+**Prerequisites:**
 - `kubectl` configured for the unity GKE cluster:
   ```bash
   gcloud container clusters get-credentials unity \
@@ -79,26 +93,17 @@ The watcher and the adapter sweep are idempotent.  Running both is harmless.
 - `GITHUB_TOKEN` env var set (needed to clone the private `unify` repo
   during Docker build).
 
-### Build and deploy (staging)
-
 ```bash
 cd scripts/job-watcher
+
+# Staging
 GITHUB_TOKEN=ghp_... staging/deploy.sh --build
-```
 
-### Build and deploy (production)
-
-```bash
-cd scripts/job-watcher
+# Production
 GITHUB_TOKEN=ghp_... production/deploy.sh --build
-```
 
-### Deploy only (image already pushed)
-
-```bash
+# Deploy only (image already pushed)
 staging/deploy.sh
-# or
-production/deploy.sh
 ```
 
 ### Verify

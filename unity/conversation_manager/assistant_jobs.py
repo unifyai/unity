@@ -5,8 +5,10 @@ values (``SESSION_DETAILS``, ``SETTINGS``) and records Prometheus
 metrics.  All actual HTTP operations live in ``assistant_jobs_api.py``
 which is shared with the job-watcher operator.
 
-VM release and ``running=False`` cleanup are handled externally by the
-job-watcher operator (``scripts/job-watcher/``).
+On graceful exit, ``mark_job_done`` also runs record expiry and VM
+release for immediate cleanup.  The job-watcher operator
+(``scripts/job-watcher/``) repeats the same idempotent operations
+externally to cover crash scenarios.
 """
 
 from dotenv import load_dotenv
@@ -19,9 +21,11 @@ from unity.logger import LOGGER
 from unity.common.hierarchical_logger import ICONS
 from unity.conversation_manager.assistant_jobs_api import (
     ensure_project_exists,
+    expire_assistant_records,
     get_assistant_logs,
     get_running_count,
     patch_job_label,
+    release_pool_vm,
 )
 from unity.conversation_manager.metrics import (
     running_job_count as _m_running_jobs,
@@ -167,12 +171,25 @@ def update_liveview_url(assistant_id: str, user_id: str, liveview_url: str) -> N
 
 
 def mark_job_done(job_name: str, inactivity_timeout: float = 0.0):
-    """Mark a job as done and record session-end metrics.
+    """Mark a job as done, expire records, release VM, and record metrics.
 
-    VM release and ``running=False`` in AssistantJobs are handled by the
-    job-watcher operator, which reacts to pod termination events externally.
+    The job-watcher operator repeats the same expire/release calls
+    externally (crash-safe).  Both paths are idempotent so running
+    them here as well gives immediate cleanup on graceful exit.
     """
     mark_job_label(job_name, "done")
+
+    assistant_id = str(SESSION_DETAILS.assistant.agent_id)
+    api_key = SESSION_DETAILS.shared_unify_key or None
+    comms_url = SETTINGS.conversation.COMMS_URL.rstrip("/")
+    admin_key = SETTINGS.ORCHESTRA_ADMIN_KEY.get_secret_value()
+
+    if api_key:
+        expire_assistant_records(api_key, assistant_id)
+        _record_running_job_count(api_key)
+
+    if comms_url and admin_key:
+        release_pool_vm(comms_url, admin_key, assistant_id)
 
     if _session_start_perf is not None:
         total_dur = time.perf_counter() - _session_start_perf

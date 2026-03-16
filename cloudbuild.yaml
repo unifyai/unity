@@ -38,6 +38,41 @@ steps:
   args: ['push', '${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPOSITORY}/unity:latest']
   waitFor: ['build-image']
 
+  # Build job-watcher image (reuses the same repo root context as Unity)
+- name: 'gcr.io/cloud-builders/docker'
+  id: 'build-job-watcher'
+  entrypoint: 'bash'
+  args:
+  - '-c'
+  - |
+    DOCKER_BUILDKIT=1 docker build \
+      --build-arg GITHUB_TOKEN=$$GITHUB_TOKEN \
+      -f scripts/job-watcher/Dockerfile \
+      -t ${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPOSITORY}/job-watcher:${SHORT_SHA} \
+      -t ${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPOSITORY}/job-watcher:latest .
+  secretEnv: ['GITHUB_TOKEN']
+  waitFor: ['-']
+
+- name: 'gcr.io/cloud-builders/docker'
+  id: 'push-job-watcher'
+  args: ['push', '--all-tags', '${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPOSITORY}/job-watcher']
+  waitFor: ['build-job-watcher']
+
+  # Deploy job-watcher to production (rolling restart picks up the new image)
+- name: 'gcr.io/cloud-builders/kubectl'
+  id: 'deploy-job-watcher'
+  args:
+  - 'set'
+  - 'image'
+  - 'deployment/job-watcher'
+  - 'job-watcher=${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPOSITORY}/job-watcher:${SHORT_SHA}'
+  - '-n'
+  - 'production'
+  env:
+  - 'CLOUDSDK_COMPUTE_REGION=${_REGION}'
+  - 'CLOUDSDK_CONTAINER_CLUSTER=unity'
+  waitFor: ['push-job-watcher']
+
   # Upload SHA to Cloud Storage
 - name: 'gcr.io/cloud-builders/gsutil'
   id: 'upload-sha'
@@ -97,3 +132,5 @@ timeout: '1800s'  # 30 minutes
 images:
 - '${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPOSITORY}/unity:${SHORT_SHA}'
 - '${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPOSITORY}/unity:latest'
+- '${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPOSITORY}/job-watcher:${SHORT_SHA}'
+- '${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPOSITORY}/job-watcher:latest'

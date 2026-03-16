@@ -17,7 +17,7 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PARENT_DIR="$(dirname "$SCRIPT_DIR")"
 REPO_ROOT="$(cd "$PARENT_DIR/../.." && pwd)"
-IMAGE="us-central1-docker.pkg.dev/responsive-city-458413-a2/unity/job-watcher:latest"
+IMAGE="us-central1-docker.pkg.dev/responsive-city-458413-a2/unity/job-watcher-staging:latest"
 
 BUILD=false
 while [[ $# -gt 0 ]]; do
