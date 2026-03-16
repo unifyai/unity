@@ -1391,6 +1391,11 @@ async def _(
             )
 
     cm.vm_ready = True
+    cm.notifications_bar.push_notif(
+        "System",
+        "Desktop VM is ready — computer actions are now available.",
+        event.timestamp,
+    )
 
     asyncio.ensure_future(_ensure_desktop_session(cm))
     await managers_utils._start_file_sync()
@@ -1417,6 +1422,11 @@ async def _(
     **kwargs,
 ):
     cm.file_sync_complete = True
+    cm.notifications_bar.push_notif(
+        "System",
+        "File sync complete — all files from previous sessions are now available on disk.",
+        event.timestamp,
+    )
     cm._session_logger.debug("file_sync", "File sync complete")
     await cm.request_llm_run(delay=0)
 

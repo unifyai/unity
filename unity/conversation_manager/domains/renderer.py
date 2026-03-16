@@ -592,10 +592,14 @@ class Renderer:
                 "<infrastructure status='sync_pending'>\n"
                 "Your local filesystem is being synced from persistent "
                 "storage. Files from previous sessions (Attachments/, "
-                "functions/, downloaded files, etc.) are not yet available "
-                "on disk. Do not attempt to read or reference historical "
-                "files until you receive a notification that the sync is "
-                "complete.\n"
+                "functions/, downloaded files, etc.) DO NOT EXIST on disk "
+                "yet — any attempt to open, read, or reference them will "
+                "fail. You MUST wait for the sync-complete notification "
+                "before performing any file operations. If the user asks "
+                "about a file, tell them your files are still loading and "
+                "you will get to it once they've finished syncing, and then "
+                "wait for the explicit notification that the files have "
+                "synced before proceeding with any action.\n"
                 "</infrastructure>",
             )
 
