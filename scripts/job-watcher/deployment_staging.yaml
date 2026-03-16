@@ -1,3 +1,30 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: job-watcher
+  namespace: staging
+rules:
+- apiGroups: [""]
+  resources: ["pods"]
+  verbs: ["list", "watch", "get"]
+- apiGroups: [""]
+  resources: ["events"]
+  verbs: ["create", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: job-watcher
+  namespace: staging
+subjects:
+- kind: ServiceAccount
+  name: comm-sa
+  namespace: staging
+roleRef:
+  kind: Role
+  name: job-watcher
+  apiGroup: rbac.authorization.k8s.io
+---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -21,6 +48,7 @@ spec:
       containers:
       - name: job-watcher-staging
         image: us-central1-docker.pkg.dev/responsive-city-458413-a2/unity/job-watcher-staging:latest
+        command: ["kopf", "run", "watcher.py", "--liveness=http://0.0.0.0:8080/healthz", "--verbose", "--namespace=staging", "--standalone"]
         ports:
         - containerPort: 8080
           name: health
