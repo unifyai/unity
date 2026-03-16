@@ -364,7 +364,7 @@ All three layers call the same idempotent operations — running any combination
 
 #### Deployment
 
-The watcher is built and deployed automatically by Cloud Build alongside the main Unity image. Every push to `staging` or `main` rebuilds the watcher image in parallel with the Unity image and rolls out the new version via `kubectl set image`. The brief restart (~5 seconds) is safe: kopf replays recent events on startup, and all cleanup operations are idempotent.
+The watcher is built and deployed automatically by Cloud Build alongside the main Unity image. Every push to `staging` or `main` rebuilds the watcher image in parallel with the Unity image and applies the deployment manifest via `kubectl apply` (creates on first run, updates on subsequent runs). The brief restart (~5 seconds) is safe: kopf replays recent events on startup, and all cleanup operations are idempotent.
 
 It uses the `comm-sa` service account (same as other cluster services) and pulls environment variables from the existing `unity-config` ConfigMap and `unity-secrets` Secret. Resource footprint is minimal (50m CPU / 64Mi memory request).
 

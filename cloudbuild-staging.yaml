@@ -60,16 +60,15 @@ steps:
   args: ['push', '--all-tags', '${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPOSITORY}/job-watcher-staging']
   waitFor: ['build-job-watcher']
 
-  # Deploy job-watcher to staging (rolling restart picks up the new image)
+  # Deploy job-watcher to staging (creates Deployment on first run, updates image on subsequent runs)
 - name: 'gcr.io/cloud-builders/kubectl'
   id: 'deploy-job-watcher'
+  entrypoint: 'bash'
   args:
-  - 'set'
-  - 'image'
-  - 'deployment/job-watcher'
-  - 'job-watcher=${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPOSITORY}/job-watcher-staging:${SHORT_SHA}'
-  - '-n'
-  - 'staging'
+  - '-c'
+  - |
+    sed "s|image:.*job-watcher.*|image: ${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPOSITORY}/job-watcher-staging:${SHORT_SHA}|" \
+      scripts/job-watcher/staging/deployment.yaml | kubectl apply -f -
   env:
   - 'CLOUDSDK_COMPUTE_REGION=${_REGION}'
   - 'CLOUDSDK_CONTAINER_CLUSTER=unity'

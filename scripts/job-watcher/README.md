@@ -67,44 +67,14 @@ combination is harmless.
 
 ## Deployment
 
-### CI (automatic)
-
 The job-watcher is built and deployed automatically by Cloud Build
-alongside the main Unity image.  Every push to `staging` or `main`
-rebuilds the watcher image in parallel with the Unity image and rolls
-out the new version via `kubectl set image`.
+alongside the main Unity image (`cloudbuild.yaml` / `cloudbuild-staging.yaml`).
+Every push to `staging` or `main` rebuilds the watcher image in parallel
+with the Unity image and applies the deployment manifest via `kubectl apply`
+(creates the Deployment on first run, updates the image on subsequent runs).
 
 The brief restart (~5 seconds) is safe: kopf replays recent events on
 startup, and all cleanup operations are idempotent.
-
-### Manual deployment
-
-For one-off deploys outside CI:
-
-**Prerequisites:**
-- `kubectl` configured for the unity GKE cluster:
-  ```bash
-  gcloud container clusters get-credentials unity \
-    --region us-central1 \
-    --project responsive-city-458413-a2
-  ```
-- `unity-config` ConfigMap and `unity-secrets` Secret exist in the target
-  namespace (they already do for Unity jobs).
-- `GITHUB_TOKEN` env var set (needed to clone the private `unify` repo
-  during Docker build).
-
-```bash
-cd scripts/job-watcher
-
-# Staging
-GITHUB_TOKEN=ghp_... staging/deploy.sh --build
-
-# Production
-GITHUB_TOKEN=ghp_... production/deploy.sh --build
-
-# Deploy only (image already pushed)
-staging/deploy.sh
-```
 
 ### Verify
 
