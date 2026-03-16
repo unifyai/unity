@@ -11,6 +11,8 @@ import hashlib
 import importlib.util
 import inspect
 import logging
+import sys
+import types
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
@@ -162,15 +164,32 @@ def _get_function_docstring(func: Callable) -> str:
 
 
 def _load_module_from_file(file_path: Path) -> Optional[Any]:
-    """Dynamically load a Python module from a file path."""
+    """Dynamically load a Python module from a file path.
+
+    Registers a synthetic parent package for the file's directory so that
+    relative imports between sibling modules work
+    (e.g. ``from .helpers import ...`` in a neighbouring file).
+    """
     try:
+        parent_dir = str(file_path.parent)
+        package_name = f"custom_functions_{abs(hash(parent_dir)) % (10**8):08d}"
+
+        if package_name not in sys.modules:
+            pkg = types.ModuleType(package_name)
+            pkg.__path__ = [parent_dir]
+            pkg.__package__ = package_name
+            sys.modules[package_name] = pkg
+
+        module_name = f"custom_functions_{file_path.stem}"
         spec = importlib.util.spec_from_file_location(
-            f"custom_functions_{file_path.stem}",
+            module_name,
             file_path,
         )
         if spec is None or spec.loader is None:
             return None
         module = importlib.util.module_from_spec(spec)
+        module.__package__ = package_name
+        sys.modules[module_name] = module
         spec.loader.exec_module(module)
         return module
     except Exception as e:

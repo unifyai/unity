@@ -35,7 +35,7 @@ class _StubManager:
         "StubManager",
         "process",
         payload_key="text",
-        display_label="Processing Data",
+        display_label="Processing data",
     )
     async def process(self, text: str) -> str:
         # Record the lineage visible inside the method body
@@ -46,7 +46,7 @@ class _StubManager:
         "StubManager",
         "fail",
         payload_key="text",
-        display_label="Failing Gracefully",
+        display_label="Failing gracefully",
     )
     async def fail(self, text: str) -> str:
         raise ValueError("intentional error")
@@ -55,7 +55,7 @@ class _StubManager:
         "StubManager",
         "pollute",
         payload_key="text",
-        display_label="Polluting Lineage",
+        display_label="Polluting lineage",
     )
     async def pollute(self, text: str) -> str:
         """Simulates what a real MemoryManager method does: the inner body
@@ -121,7 +121,7 @@ async def test_result_display_label_propagates():
 
     for evt in stub_events:
         assert (
-            evt.payload.get("display_label") == "Processing Data"
+            evt.payload.get("display_label") == "Processing data"
         ), f"display_label missing or wrong on {evt.payload.get('phase')} event"
 
 
@@ -198,7 +198,7 @@ async def test_result_error_publishes_outgoing_with_error_status():
     assert outgoing[0].payload.get("status") == "error"
     assert "intentional error" in outgoing[0].payload.get("error", "")
     assert outgoing[0].payload.get("error_type") == "ValueError"
-    assert outgoing[0].payload.get("display_label") == "Failing Gracefully"
+    assert outgoing[0].payload.get("display_label") == "Failing gracefully"
 
 
 @pytest.mark.asyncio

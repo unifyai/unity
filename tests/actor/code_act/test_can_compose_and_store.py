@@ -153,6 +153,7 @@ async def test_code_act_can_store_false_blocks_add_functions_tool():
     actor = CodeActActor(
         function_manager=fm,
         timeout=30,
+        tool_policy=lambda *args: ("auto", {}),
     )
 
     try:

@@ -10,10 +10,7 @@ import unify
 from unity.common.llm_client import new_llm_client
 from unity.common.log_utils import log as unity_log
 import functools
-from ..common.llm_helpers import (
-    methods_to_tool_dict,
-    make_request_clarification_tool,
-)
+from ..common.llm_helpers import methods_to_tool_dict
 from ..common.tool_spec import ToolSpec
 from ..common.async_tool_loop import (
     start_async_tool_loop,
@@ -283,6 +280,11 @@ class SecretManager(BaseSecretManager):
                     lines[key_to_idx[key]] = line
                 else:
                     lines.append(line)
+                os.environ[key] = value
+
+        if remove_keys:
+            for key in remove_keys:
+                os.environ.pop(key, None)
 
         with open(path, "w", encoding="utf-8") as fh:
             fh.write("\n".join(lines) + ("\n" if lines else ""))
@@ -368,7 +370,7 @@ class SecretManager(BaseSecretManager):
         "SecretManager",
         "ask",
         payload_key="question",
-        display_label="Checking Credentials",
+        display_label="Checking credentials",
     )
     async def ask(
         self,
@@ -398,42 +400,48 @@ class SecretManager(BaseSecretManager):
 
         # Build tools for read-only inspection
         tools = dict(self.get_tools("ask"))
+        _clar_queues = None
+        _on_clar_req = None
+        _on_clar_ans = None
         if _clarification_up_q is not None and _clarification_down_q is not None:
+            from ..common.llm_helpers import make_request_clarification_tool
 
-            async def _on_request(q: str):
-                await EVENT_BUS.publish(
-                    Event(
-                        type="ManagerMethod",
-                        calling_id=_call_id,
-                        payload={
-                            "manager": "SecretManager",
-                            "method": "ask",
-                            "action": "clarification_request",
-                            "question": q,
-                        },
-                    ),
-                )
+            _clar_queues = (_clarification_up_q, _clarification_down_q)
+            tools["request_clarification"] = make_request_clarification_tool(None, None)
 
-            async def _on_answer(ans: str):
-                await EVENT_BUS.publish(
-                    Event(
-                        type="ManagerMethod",
-                        calling_id=_call_id,
-                        payload={
-                            "manager": "SecretManager",
-                            "method": "ask",
-                            "action": "clarification_answer",
-                            "answer": ans,
-                        },
-                    ),
-                )
+            async def _on_clar_req(q: str):
+                try:
+                    await EVENT_BUS.publish(
+                        Event(
+                            type="ManagerMethod",
+                            calling_id=_call_id,
+                            payload={
+                                "manager": "SecretManager",
+                                "method": "ask",
+                                "action": "clarification_request",
+                                "question": q,
+                            },
+                        ),
+                    )
+                except Exception:
+                    pass
 
-            tools["request_clarification"] = make_request_clarification_tool(
-                _clarification_up_q,
-                _clarification_down_q,
-                on_request=_on_request,
-                on_answer=_on_answer,
-            )
+            async def _on_clar_ans(ans: str):
+                try:
+                    await EVENT_BUS.publish(
+                        Event(
+                            type="ManagerMethod",
+                            calling_id=_call_id,
+                            payload={
+                                "manager": "SecretManager",
+                                "method": "ask",
+                                "action": "clarification_answer",
+                                "answer": ans,
+                            },
+                        ),
+                    )
+                except Exception:
+                    pass
 
         # System message via prompt builder
         client.set_system_message(
@@ -452,6 +460,9 @@ class SecretManager(BaseSecretManager):
             handle_cls=(
                 ReadOnlyAskGuardHandle if SETTINGS.UNITY_READONLY_ASK_GUARD else None
             ),
+            clarification_queues=_clar_queues,
+            on_clarification_request=_on_clar_req,
+            on_clarification_answer=_on_clar_ans,
         )
 
         if _return_reasoning_steps:
@@ -470,7 +481,7 @@ class SecretManager(BaseSecretManager):
         "SecretManager",
         "update",
         payload_key="request",
-        display_label="Updating Credentials",
+        display_label="Updating credentials",
     )
     async def update(
         self,
@@ -492,42 +503,48 @@ class SecretManager(BaseSecretManager):
         client = new_llm_client()
 
         tools = dict(self.get_tools("update"))
+        _clar_queues = None
+        _on_clar_req = None
+        _on_clar_ans = None
         if _clarification_up_q is not None and _clarification_down_q is not None:
+            from ..common.llm_helpers import make_request_clarification_tool
 
-            async def _on_request(q: str):
-                await EVENT_BUS.publish(
-                    Event(
-                        type="ManagerMethod",
-                        calling_id=_call_id,
-                        payload={
-                            "manager": "SecretManager",
-                            "method": "update",
-                            "action": "clarification_request",
-                            "question": q,
-                        },
-                    ),
-                )
+            _clar_queues = (_clarification_up_q, _clarification_down_q)
+            tools["request_clarification"] = make_request_clarification_tool(None, None)
 
-            async def _on_answer(ans: str):
-                await EVENT_BUS.publish(
-                    Event(
-                        type="ManagerMethod",
-                        calling_id=_call_id,
-                        payload={
-                            "manager": "SecretManager",
-                            "method": "update",
-                            "action": "clarification_answer",
-                            "answer": ans,
-                        },
-                    ),
-                )
+            async def _on_clar_req(q: str):
+                try:
+                    await EVENT_BUS.publish(
+                        Event(
+                            type="ManagerMethod",
+                            calling_id=_call_id,
+                            payload={
+                                "manager": "SecretManager",
+                                "method": "update",
+                                "action": "clarification_request",
+                                "question": q,
+                            },
+                        ),
+                    )
+                except Exception:
+                    pass
 
-            tools["request_clarification"] = make_request_clarification_tool(
-                _clarification_up_q,
-                _clarification_down_q,
-                on_request=_on_request,
-                on_answer=_on_answer,
-            )
+            async def _on_clar_ans(ans: str):
+                try:
+                    await EVENT_BUS.publish(
+                        Event(
+                            type="ManagerMethod",
+                            calling_id=_call_id,
+                            payload={
+                                "manager": "SecretManager",
+                                "method": "update",
+                                "action": "clarification_answer",
+                                "answer": ans,
+                            },
+                        ),
+                    )
+                except Exception:
+                    pass
 
         client.set_system_message(
             build_update_prompt(tools=tools).to_list(),
@@ -542,6 +559,9 @@ class SecretManager(BaseSecretManager):
             parent_chat_context=_parent_chat_context,
             tool_policy=self._default_update_tool_policy,
             response_format=response_format,
+            clarification_queues=_clar_queues,
+            on_clarification_request=_on_clar_req,
+            on_clarification_answer=_on_clar_ans,
         )
 
         if _return_reasoning_steps:
@@ -685,7 +705,7 @@ class SecretManager(BaseSecretManager):
                 ),
                 name=r.get("name"),
                 value="",
-                description=r.get("description", ""),
+                description=r.get("description") or "",
             )
             for r in rows
         ]
@@ -732,7 +752,7 @@ class SecretManager(BaseSecretManager):
                 ),
                 name=lg.entries.get("name"),
                 value="",
-                description=lg.entries.get("description", ""),
+                description=lg.entries.get("description") or "",
             )
             for lg in logs
         ]

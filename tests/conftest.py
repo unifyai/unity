@@ -116,7 +116,10 @@ def _set_unify_context_for_test(item: pytest.Item) -> None:
         except Exception:
             pass
 
-    unify.set_context(ctx, relative=False, skip_create=skip_ctx_create)
+    try:
+        unify.set_context(ctx, relative=False, skip_create=skip_ctx_create)
+    except Exception:
+        pass  # Project may not exist yet; tests that need it will fail on their own
 
     # Ensure singleton registries don't leak across tests and that fixtures see
     # the correct context for any context-derived subcontexts (e.g. FunctionManager).
@@ -510,7 +513,7 @@ def pytest_sessionfinish(session, exitstatus):
 
 
 def pytest_unconfigure(config):
-    """Restore HOME and clean up the temporary test home directory."""
+    """Restore HOME (and HF_HOME if we set it) and clean up the temporary test home directory."""
     import shutil
 
     test_home = os.environ.get("HOME", "")
@@ -518,6 +521,8 @@ def pytest_unconfigure(config):
         os.environ.pop("HOME", None)
     else:
         os.environ["HOME"] = _original_home
+    if _hf_home_set_by_us:
+        os.environ.pop("HF_HOME", None)
     if test_home.endswith("/unity_test_home"):
         shutil.rmtree(test_home, ignore_errors=True)
 
@@ -544,6 +549,7 @@ from unillm.cost_tracker import capture_costs
 _session_costs: list[tuple[str, float]] = []
 
 _original_home: str | None = None
+_hf_home_set_by_us: bool = False
 
 
 def pytest_configure(config):
@@ -565,6 +571,19 @@ def pytest_configure(config):
     test_home = os.path.join(tempfile.gettempdir(), "unity_test_home")
     os.makedirs(test_home, exist_ok=True)
     os.environ["HOME"] = test_home
+
+    # Preserve access to the real HuggingFace model cache.  The HOME
+    # override above moves ~/.cache/huggingface to a temp dir that won't
+    # contain pre-downloaded models (e.g. SmolVLM used by docling's PDF
+    # pipeline).  Pinning HF_HOME to the original location avoids
+    # redundant multi-GB downloads and the .incomplete-blob hangs that
+    # occur when the download is interrupted or raced across sessions.
+    global _hf_home_set_by_us
+    if "HF_HOME" not in os.environ and _original_home:
+        original_hf = os.path.join(_original_home, ".cache", "huggingface")
+        if os.path.isdir(original_hf):
+            os.environ["HF_HOME"] = original_hf
+            _hf_home_set_by_us = True
 
     config.addinivalue_line(
         "markers",

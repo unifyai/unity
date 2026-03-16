@@ -12,12 +12,14 @@ from __future__ import annotations
 
 import functools
 import logging
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 
 from unity.data_manager.base import BaseDataManager
 from unity.data_manager.types.table import TableDescription
 from unity.data_manager.types.plot import PlotConfig, PlotResult
+from unity.data_manager.types.table_view import TableViewConfig, TableViewResult
+from unity.data_manager.types.ingest import IngestExecutionConfig, IngestResult
 from unity.data_manager.ops.table_ops import (
     create_table_impl,
     describe_table_impl,
@@ -48,13 +50,15 @@ from unity.data_manager.ops.join_ops import (
     filter_multi_join_impl,
     search_multi_join_impl,
 )
-from unity.data_manager.ops.embedding_ops import (
-    ensure_vector_column_impl,
-    vectorize_rows_impl,
-)
+from unity.common.embed_utils import ensure_vector_column as _ensure_vector_column
+from unity.data_manager.ops.ingest_ops import run_ingest
 from unity.data_manager.ops.plot_ops import (
     generate_plot,
     generate_plots_batch,
+)
+from unity.data_manager.ops.table_view_ops import (
+    generate_table_view,
+    generate_table_views_batch,
 )
 from unity.common.context_registry import ContextRegistry, TableContext
 
@@ -100,6 +104,7 @@ class DataManager(BaseDataManager):
     def __init__(self) -> None:
         """Initialize DataManager with context registration."""
         super().__init__()
+        self.include_in_multi_assistant_table = True
 
         # Resolve owned base context via ContextRegistry
         # This gives us the fully-qualified path like "User/Assistant/Data"
@@ -110,6 +115,28 @@ class DataManager(BaseDataManager):
             self._base_ctx = "Data"
 
         logger.debug("DataManager initialized with base context: %s", self._base_ctx)
+
+    def _resolve_unique_keys_and_auto_counting(
+        self,
+        resolved: str,
+        unique_keys: Optional[Dict[str, str]],
+        auto_counting: Optional[Dict[str, Optional[str]]],
+    ) -> Tuple[Optional[Dict[str, str]], Optional[Dict[str, Optional[str]]]]:
+        """Apply DM-owned defaults for unique keys and auto-counting.
+
+        When *resolved* lives under DataManager's own namespace and the
+        caller hasn't supplied explicit values, defaults to a global
+        auto-incrementing ``row_id`` column — matching the convention used
+        by every other state manager.  For foreign contexts the caller's
+        values pass through unchanged.
+        """
+        base = self._base_ctx or "Data"
+        if resolved == base or resolved.startswith(base + "/"):
+            if unique_keys is None:
+                unique_keys = {"row_id": "int"}
+            if auto_counting is None:
+                auto_counting = {"row_id": None}
+        return unique_keys, auto_counting
 
     def _resolve_context(self, context: str) -> str:
         """
@@ -158,6 +185,11 @@ class DataManager(BaseDataManager):
         auto_counting: Optional[Dict[str, Optional[str]]] = None,
     ) -> str:
         resolved = self._resolve_context(context)
+        unique_keys, auto_counting = self._resolve_unique_keys_and_auto_counting(
+            resolved,
+            unique_keys,
+            auto_counting,
+        )
         return create_table_impl(
             resolved,
             description=description,
@@ -483,7 +515,6 @@ class DataManager(BaseDataManager):
         context: str,
         rows: List[Dict[str, Any]],
         *,
-        dedupe_key: Optional[str] = None,
         add_to_all_context: bool = False,
         batched: bool = True,
     ) -> List[int]:
@@ -491,7 +522,6 @@ class DataManager(BaseDataManager):
         return insert_rows_impl(
             resolved,
             rows,
-            dedupe_key=dedupe_key,
             add_to_all_context=add_to_all_context,
             batched=batched,
         )
@@ -527,6 +557,51 @@ class DataManager(BaseDataManager):
         )
 
     # ──────────────────────────────────────────────────────────────────────────
+    # High-Level Ingestion
+    # ──────────────────────────────────────────────────────────────────────────
+
+    @functools.wraps(BaseDataManager.ingest, updated=())
+    def ingest(
+        self,
+        context: str,
+        rows: List[Dict[str, Any]],
+        *,
+        description: Optional[str] = None,
+        fields: Optional[Dict[str, str]] = None,
+        unique_keys: Optional[Dict[str, str]] = None,
+        embed_columns: Optional[List[str]] = None,
+        embed_strategy: str = "along",
+        chunk_size: int = 1000,
+        auto_counting: Optional[Dict[str, Optional[str]]] = None,
+        infer_untyped_fields: bool = False,
+        add_to_all_context: bool = False,
+        execution: Optional["IngestExecutionConfig"] = None,
+        on_task_complete=None,
+    ) -> "IngestResult":
+        resolved = self._resolve_context(context)
+        unique_keys, auto_counting = self._resolve_unique_keys_and_auto_counting(
+            resolved,
+            unique_keys,
+            auto_counting,
+        )
+        return run_ingest(
+            self,
+            resolved,
+            rows,
+            description=description,
+            fields=fields,
+            unique_keys=unique_keys,
+            embed_columns=embed_columns,
+            embed_strategy=embed_strategy,
+            chunk_size=chunk_size,
+            auto_counting=auto_counting,
+            infer_untyped_fields=infer_untyped_fields,
+            add_to_all_context=add_to_all_context,
+            execution=execution,
+            on_task_complete=on_task_complete,
+        )
+
+    # ──────────────────────────────────────────────────────────────────────────
     # Embedding Operations
     # ──────────────────────────────────────────────────────────────────────────
 
@@ -539,11 +614,16 @@ class DataManager(BaseDataManager):
         target_column: Optional[str] = None,
     ) -> str:
         resolved = self._resolve_context(context)
-        return ensure_vector_column_impl(
-            resolved,
+        target = target_column or f"_{source_column}_emb"
+        _ensure_vector_column(
+            context=resolved,
+            embed_column=target,
             source_column=source_column,
-            target_column=target_column,
+            derived_expr=None,
+            from_ids=None,
+            async_embeddings=True,
         )
+        return target
 
     @functools.wraps(BaseDataManager.vectorize_rows, updated=())
     def vectorize_rows(
@@ -556,13 +636,16 @@ class DataManager(BaseDataManager):
         batch_size: int = 100,
     ) -> int:
         resolved = self._resolve_context(context)
-        return vectorize_rows_impl(
-            resolved,
+        target = target_column or f"_{source_column}_emb"
+        _ensure_vector_column(
+            context=resolved,
+            embed_column=target,
             source_column=source_column,
-            target_column=target_column,
-            row_ids=row_ids,
-            batch_size=batch_size,
+            derived_expr=None,
+            from_ids=row_ids,
+            async_embeddings=True,
         )
+        return len(row_ids) if row_ids else 0
 
     # ──────────────────────────────────────────────────────────────────────────
     # Visualization
@@ -632,4 +715,64 @@ class DataManager(BaseDataManager):
             contexts=resolved_contexts,
             config=config,
             filter_expr=filter,
+        )
+
+    @functools.wraps(BaseDataManager.table_view, updated=())
+    def table_view(
+        self,
+        context: str,
+        *,
+        columns_visible: Optional[List[str]] = None,
+        columns_hidden: Optional[List[str]] = None,
+        columns_order: Optional[List[str]] = None,
+        sort_by: Optional[str] = None,
+        sort_order: Optional[str] = None,
+        row_limit: Optional[int] = None,
+        filter: Optional[str] = None,
+        title: Optional[str] = None,
+    ) -> TableViewResult:
+        resolved = self._resolve_context(context)
+        config = TableViewConfig(
+            columns_visible=columns_visible,
+            columns_hidden=columns_hidden,
+            columns_order=columns_order,
+            sort_by=sort_by,
+            sort_order=sort_order,
+            row_limit=row_limit,
+        )
+        return generate_table_view(
+            config=config,
+            context=resolved,
+            filter_expr=filter,
+            title=title,
+        )
+
+    @functools.wraps(BaseDataManager.table_view_batch, updated=())
+    def table_view_batch(
+        self,
+        contexts: List[str],
+        *,
+        columns_visible: Optional[List[str]] = None,
+        columns_hidden: Optional[List[str]] = None,
+        columns_order: Optional[List[str]] = None,
+        sort_by: Optional[str] = None,
+        sort_order: Optional[str] = None,
+        row_limit: Optional[int] = None,
+        filter: Optional[str] = None,
+        title: Optional[str] = None,
+    ) -> List[TableViewResult]:
+        resolved_contexts = [self._resolve_context(c) for c in contexts]
+        config = TableViewConfig(
+            columns_visible=columns_visible,
+            columns_hidden=columns_hidden,
+            columns_order=columns_order,
+            sort_by=sort_by,
+            sort_order=sort_order,
+            row_limit=row_limit,
+        )
+        return generate_table_views_batch(
+            contexts=resolved_contexts,
+            config=config,
+            filter_expr=filter,
+            title=title,
         )

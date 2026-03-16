@@ -11,10 +11,7 @@ from unity.common.async_tool_loop import (
 )
 from unity.common.read_only_ask_guard import ReadOnlyAskGuardHandle
 from unity.common.llm_client import new_llm_client
-from unity.common.llm_helpers import (
-    methods_to_tool_dict,
-    make_request_clarification_tool,
-)
+from unity.common.llm_helpers import methods_to_tool_dict
 from unity.common.tool_spec import ToolSpec
 from unity.events.manager_event_logging import log_manager_call
 from unity.events.event_bus import EVENT_BUS, Event
@@ -36,7 +33,7 @@ class WebSearcher(BaseWebSearcher):
 
         # Build the tools mapping once; copy when used
         ask_tools: Dict[str, Any] = methods_to_tool_dict(
-            ToolSpec(fn=self._search, display_label="Searching the web"),
+            ToolSpec(fn=self._search, display_label="Search query"),
             ToolSpec(fn=self._extract, display_label="Extracting page content"),
             ToolSpec(fn=self._crawl, display_label="Crawling a website"),
             ToolSpec(fn=self._map, display_label="Mapping website structure"),
@@ -51,7 +48,7 @@ class WebSearcher(BaseWebSearcher):
         "WebSearcher",
         "ask",
         payload_key="question",
-        display_label="Searching the Web",
+        display_label="Searching the web",
     )
     async def ask(
         self,
@@ -67,9 +64,16 @@ class WebSearcher(BaseWebSearcher):
         client = new_llm_client()
 
         tools = dict(self.get_tools("ask"))
+        _clar_queues = None
+        _on_clar_req = None
+        _on_clar_ans = None
         if _clarification_up_q is not None and _clarification_down_q is not None:
+            from unity.common.llm_helpers import make_request_clarification_tool
 
-            async def _on_request(q: str):
+            _clar_queues = (_clarification_up_q, _clarification_down_q)
+            tools["request_clarification"] = make_request_clarification_tool(None, None)
+
+            async def _on_clar_req(q: str):
                 await EVENT_BUS.publish(
                     Event(
                         type="ManagerMethod",
@@ -83,7 +87,7 @@ class WebSearcher(BaseWebSearcher):
                     ),
                 )
 
-            async def _on_answer(ans: str):
+            async def _on_clar_ans(ans: str):
                 await EVENT_BUS.publish(
                     Event(
                         type="ManagerMethod",
@@ -96,13 +100,6 @@ class WebSearcher(BaseWebSearcher):
                         },
                     ),
                 )
-
-            tools["request_clarification"] = make_request_clarification_tool(
-                _clarification_up_q,
-                _clarification_down_q,
-                on_request=_on_request,
-                on_answer=_on_answer,
-            )
 
         client.set_system_message(
             prompt_builders.build_ask_prompt(tools=tools).to_list(),
@@ -119,6 +116,9 @@ class WebSearcher(BaseWebSearcher):
             handle_cls=(
                 ReadOnlyAskGuardHandle if SETTINGS.UNITY_READONLY_ASK_GUARD else None
             ),
+            clarification_queues=_clar_queues,
+            on_clarification_request=_on_clar_req,
+            on_clarification_answer=_on_clar_ans,
         )
 
         # If the caller requests reasoning steps, wrap the handle's result
@@ -196,6 +196,17 @@ class WebSearcher(BaseWebSearcher):
             - "results": Ranked list of sources with titles, URLs and snippets.
             - "images": When requested, a list of related images (may be empty).
         """
+        # Tavily rejects start_date == end_date. When the caller wants a
+        # single day, widen the window by pushing start_date back one day.
+        if start_date and end_date and start_date == end_date:
+            try:
+                from datetime import datetime, timedelta
+
+                dt = datetime.strptime(start_date, "%Y-%m-%d")
+                start_date = (dt - timedelta(days=1)).strftime("%Y-%m-%d")
+            except ValueError:
+                pass
+
         response = self.tavily_client.search(
             query=query,
             max_results=max_results,

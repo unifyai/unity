@@ -1,49 +1,31 @@
 """FileManager utility modules.
 
 This package contains internal utilities for the FileManager pipeline:
-- executor: Task-based pipeline execution engine
-- task_factory: Task graph construction for files
+- executor: Thin orchestration layer (process_single_file, run_pipeline)
 - task_functions: Pure task execution functions
+- ingest_ops: Bridge between FM file concepts and DM.ingest()
 - progress: Progress reporting protocol and implementations
-- ops: Core batch operations (legacy, being refactored)
+- ops: Core file record and storage operations
 - search: Search and join utilities
 - storage: Context storage helpers
-- ingest_ops: Pure batch ingest functions
-- embed_ops: Pure batch embed functions
 - file_ops: File operation helpers
 """
 
 from __future__ import annotations
 
-# Executor classes
+# Orchestration
 from .executor import (
-    Task,
-    TaskGraph,
-    TaskType,
-    TaskStatus,
-    TaskResult,
-    PipelineExecutor,
-    ExecutionConfig,
-    create_task_id,
     build_file_result,
     report_file_complete,
     process_single_file,
     run_pipeline,
 )
 
-# Task factory
-from .task_factory import (
-    build_file_task_graph,
-    create_task_id as create_task_id_v2,  # New deterministic ID generator
-)
-
 # Task functions (pure execution functions)
 from .task_functions import (
     execute_create_file_record,
-    execute_ingest_content_chunk,
-    execute_embed_content_chunk,
-    execute_ingest_table_chunk,
-    execute_embed_table_chunk,
+    execute_ingest_content,
+    execute_ingest_table,
 )
 
 # Progress reporting
@@ -59,30 +41,16 @@ from .progress import (
     create_progress_event,
 )
 
-# Re-export commonly used items
 __all__ = [
-    # Executor
-    "Task",
-    "TaskGraph",
-    "TaskType",
-    "TaskStatus",
-    "TaskResult",
-    "PipelineExecutor",
-    "ExecutionConfig",
-    "create_task_id",
+    # Orchestration
     "build_file_result",
     "report_file_complete",
     "process_single_file",
     "run_pipeline",
-    # Task Factory
-    "build_file_task_graph",
-    "create_task_id_v2",
     # Task Functions
     "execute_create_file_record",
-    "execute_ingest_content_chunk",
-    "execute_embed_content_chunk",
-    "execute_ingest_table_chunk",
-    "execute_embed_table_chunk",
+    "execute_ingest_content",
+    "execute_ingest_table",
     # Progress
     "ProgressEvent",
     "ProgressReporter",

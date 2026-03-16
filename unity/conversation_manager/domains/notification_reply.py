@@ -15,6 +15,11 @@ class NotificationReply(BaseModel):
 
 
 NOTIFICATION_REPLY_PROMPT = """\
+You are a voice assistant on a live call. `[notification]` messages are your only \
+source of information about background work — the caller cannot see them. When a \
+notification contains concrete results, completion status, or actionable information \
+the caller is waiting for, you are the only way they will hear about it.
+
 You are deciding whether to speak aloud in response to a new `[notification]` that \
 just appeared in the conversation.
 
@@ -90,7 +95,6 @@ class NotificationReplyEvaluator:
     async def evaluate(
         self,
         chat_history: list[dict],
-        system_prompt: str,
     ) -> tuple[NotificationReply, str]:
         """Decide whether to speak in response to the latest notification(s).
 
@@ -105,7 +109,7 @@ class NotificationReplyEvaluator:
             messages = [
                 {
                     "role": "system",
-                    "content": f"{system_prompt}\n\n{NOTIFICATION_REPLY_PROMPT}",
+                    "content": NOTIFICATION_REPLY_PROMPT,
                 },
                 *chat_history,
             ]

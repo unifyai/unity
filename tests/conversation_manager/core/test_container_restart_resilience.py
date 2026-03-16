@@ -58,6 +58,9 @@ from unity.conversation_manager.types import Mode
 # =============================================================================
 
 
+_SUBPROCESS_JSON_SENTINEL = "__CM_RESULT_JSON__"
+
+
 def _run_cm_in_subprocess(code_body: str, env_vars: dict | None = None) -> dict:
     """
     Run ConversationManager code in a subprocess for true singleton isolation.
@@ -67,7 +70,7 @@ def _run_cm_in_subprocess(code_body: str, env_vars: dict | None = None) -> dict:
         env_vars: Additional environment variables to pass
 
     Returns:
-        dict: Parsed JSON output from the subprocess (must print JSON to stdout)
+        dict: Parsed JSON output from the subprocess
 
     Raises:
         subprocess.CalledProcessError: If the subprocess fails
@@ -126,7 +129,9 @@ def _run_cm_in_subprocess(code_body: str, env_vars: dict | None = None) -> dict:
             {textwrap.indent(code_body, '            ')}
 
         result = asyncio.run(main())
-        print(json.dumps(result))
+        # Sentinel-delimited output so module-level import noise on
+        # stdout (deprecation warnings, etc.) doesn't corrupt the JSON.
+        print("{_SUBPROCESS_JSON_SENTINEL}" + json.dumps(result))
         """,
     )
 
@@ -143,7 +148,14 @@ def _run_cm_in_subprocess(code_body: str, env_vars: dict | None = None) -> dict:
         cwd=os.getcwd(),
     )
 
-    return json.loads(proc.stdout.strip())
+    for line in proc.stdout.splitlines():
+        if line.startswith(_SUBPROCESS_JSON_SENTINEL):
+            return json.loads(line[len(_SUBPROCESS_JSON_SENTINEL) :])
+
+    raise ValueError(
+        f"Subprocess did not emit sentinel-delimited JSON.\n"
+        f"stdout: {proc.stdout[:500]}\nstderr: {proc.stderr[:500]}",
+    )
 
 
 # =============================================================================
@@ -518,8 +530,11 @@ class TestStaleAssistantJobsState:
         with patch.object(assistant_jobs, "mark_job_done") as mock_mark_done:
             await cm.cleanup()
 
-            # Should have called mark_job_done
-            mock_mark_done.assert_called_once_with("unity-test-job")
+            # Should have called mark_job_done with job name and inactivity timeout
+            mock_mark_done.assert_called_once_with(
+                "unity-test-job",
+                cm.inactivity_timeout,
+            )
 
     @pytest.mark.asyncio
     async def test_mark_job_done_not_called_for_idle_container(self, event_broker):

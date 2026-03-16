@@ -17,6 +17,7 @@ from ..common.context_registry import ContextRegistry, TableContext
 from ..common.data_store import DataStore
 from ..common.llm_helpers import (
     methods_to_tool_dict,
+    make_request_clarification_tool,
 )
 from ..common.async_tool_loop import (
     start_async_tool_loop,
@@ -28,7 +29,7 @@ from ..events.manager_event_logging import log_manager_call
 from ..settings import SETTINGS
 from ..common.read_only_ask_guard import ReadOnlyAskGuardHandle
 from ..common.llm_client import new_llm_client
-from ..common.clarification_tools import add_clarification_tool_with_events
+from ..events.event_bus import EVENT_BUS, Event
 from ..blacklist_manager.blacklist_manager import BlackListManager
 from ..conversation_manager.types import Medium
 
@@ -194,7 +195,7 @@ class ContactManager(BaseContactManager):
         "ContactManager",
         "ask",
         payload_key="question",
-        display_label="Checking Contact Book",
+        display_label="Checking contact book",
     )
     async def ask(
         self,
@@ -213,15 +214,46 @@ class ContactManager(BaseContactManager):
         # Build a *live* tools-dict so the prompt never hard-codes
         # either the number of tools or their names/argspecs.
         tools = dict(self.get_tools("ask"))
+        _clar_queues = None
+        _on_clar_req = None
+        _on_clar_ans = None
         if _clarification_up_q is not None and _clarification_down_q is not None:
-            add_clarification_tool_with_events(
-                tools,
-                _clarification_up_q,
-                _clarification_down_q,
-                manager="ContactManager",
-                method="ask",
-                call_id=_call_id,
-            )
+            _clar_queues = (_clarification_up_q, _clarification_down_q)
+            tools["request_clarification"] = make_request_clarification_tool(None, None)
+
+            async def _on_clar_req(q: str):
+                try:
+                    await EVENT_BUS.publish(
+                        Event(
+                            type="ManagerMethod",
+                            calling_id=_call_id,
+                            payload={
+                                "manager": "ContactManager",
+                                "method": "ask",
+                                "action": "clarification_request",
+                                "question": q,
+                            },
+                        ),
+                    )
+                except Exception:
+                    pass
+
+            async def _on_clar_ans(ans: str):
+                try:
+                    await EVENT_BUS.publish(
+                        Event(
+                            type="ManagerMethod",
+                            calling_id=_call_id,
+                            payload={
+                                "manager": "ContactManager",
+                                "method": "ask",
+                                "action": "clarification_answer",
+                                "answer": ans,
+                            },
+                        ),
+                    )
+                except Exception:
+                    pass
 
         include_activity = (
             self._rolling_summary_in_prompts
@@ -249,6 +281,9 @@ class ContactManager(BaseContactManager):
                 ReadOnlyAskGuardHandle if SETTINGS.UNITY_READONLY_ASK_GUARD else None
             ),
             response_format=response_format,
+            clarification_queues=_clar_queues,
+            on_clarification_request=_on_clar_req,
+            on_clarification_answer=_on_clar_ans,
         )
 
         if _return_reasoning_steps:
@@ -267,7 +302,7 @@ class ContactManager(BaseContactManager):
         "ContactManager",
         "update",
         payload_key="request",
-        display_label="Updating Contact Book",
+        display_label="Updating contact book",
     )
     async def update(
         self,
@@ -284,15 +319,46 @@ class ContactManager(BaseContactManager):
         client = new_llm_client()
 
         tools = dict(self.get_tools("update"))
+        _clar_queues = None
+        _on_clar_req = None
+        _on_clar_ans = None
         if _clarification_up_q is not None and _clarification_down_q is not None:
-            add_clarification_tool_with_events(
-                tools,
-                _clarification_up_q,
-                _clarification_down_q,
-                manager="ContactManager",
-                method="update",
-                call_id=_call_id,
-            )
+            _clar_queues = (_clarification_up_q, _clarification_down_q)
+            tools["request_clarification"] = make_request_clarification_tool(None, None)
+
+            async def _on_clar_req(q: str):
+                try:
+                    await EVENT_BUS.publish(
+                        Event(
+                            type="ManagerMethod",
+                            calling_id=_call_id,
+                            payload={
+                                "manager": "ContactManager",
+                                "method": "update",
+                                "action": "clarification_request",
+                                "question": q,
+                            },
+                        ),
+                    )
+                except Exception:
+                    pass
+
+            async def _on_clar_ans(ans: str):
+                try:
+                    await EVENT_BUS.publish(
+                        Event(
+                            type="ManagerMethod",
+                            calling_id=_call_id,
+                            payload={
+                                "manager": "ContactManager",
+                                "method": "update",
+                                "action": "clarification_answer",
+                                "answer": ans,
+                            },
+                        ),
+                    )
+                except Exception:
+                    pass
 
         include_activity = (
             self._rolling_summary_in_prompts
@@ -316,6 +382,9 @@ class ContactManager(BaseContactManager):
             parent_chat_context=_parent_chat_context,
             tool_policy=self._default_update_tool_policy,
             response_format=response_format,
+            clarification_queues=_clar_queues,
+            on_clarification_request=_on_clar_req,
+            on_clarification_answer=_on_clar_ans,
         )
 
         if _return_reasoning_steps:

@@ -41,6 +41,9 @@ class FileParserSettings(BaseSettings):
     # ---------------------------------------------------------------------
     # Docling / extraction knobs
     # ---------------------------------------------------------------------
+    # Run Docling's VLM picture-description pipeline on extracted images.
+    # Off by default — it downloads a model and adds significant latency.
+    PICTURE_DESCRIPTION_ENABLED: bool = False
     # Model repo used by Docling's picture description pipeline.
     PICTURE_DESCRIPTION_MODEL_REPO: str = "HuggingFaceTB/SmolVLM-500M-Instruct"
 

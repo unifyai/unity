@@ -12,8 +12,9 @@ dotenv.config();
 import os from 'os';
 import path from 'path';
 import fs from 'fs';
+import net from 'net';
 import { randomUUID } from 'crypto';
-import { spawn, execSync } from 'child_process';
+import { ChildProcess, spawn, execSync } from 'child_process';
 import multer from 'multer';
 import { jsonSchemaToZod } from './jsonSchemaToZod';
 
@@ -405,6 +406,193 @@ wsInstance.app.ws('/logs/stream', async (ws: WebSocket, req: Request) => {
 });
 
 
+// --- Demo Sites ---
+// Port-to-directory mapping (same convention as the Python demo_sites.py)
+const DEMO_SITE_DIRS: Record<number, string> = {
+  4001: 'example',
+  4002: 'vantage-portal',
+};
+
+const demoSiteProcesses: Map<number, ChildProcess> = new Map();
+
+function isPortOpen(port: number): Promise<boolean> {
+  return new Promise((resolve) => {
+    const sock = net.createConnection({ port, host: '127.0.0.1' });
+    sock.setTimeout(500);
+    sock.on('connect', () => { sock.destroy(); resolve(true); });
+    sock.on('error', () => { sock.destroy(); resolve(false); });
+    sock.on('timeout', () => { sock.destroy(); resolve(false); });
+  });
+}
+
+function waitForPort(port: number, timeoutMs = 5000): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs;
+  return new Promise((resolve) => {
+    const check = async () => {
+      if (await isPortOpen(port)) return resolve(true);
+      if (Date.now() >= deadline) return resolve(false);
+      setTimeout(check, 200);
+    };
+    check();
+  });
+}
+
+function findDemoSitesRoot(): string | null {
+  // demo-sites/ lives inside agent-service/ so it's always co-located
+  const candidates = [
+    path.resolve(__dirname, '..', 'demo-sites'),           // dev: agent-service/src/../demo-sites
+    path.resolve(__dirname, '..', '..', 'demo-sites'),     // compiled: agent-service/dist/../../demo-sites
+    '/app/agent-service/demo-sites',                        // Docker
+  ];
+  for (const dir of candidates) {
+    if (fs.existsSync(dir)) return dir;
+  }
+  return null;
+}
+
+async function ensureDemoSites(urlMappings: Record<string, string>): Promise<void> {
+  const demoSitesRoot = findDemoSitesRoot();
+  if (!demoSitesRoot) {
+    console.warn('[demo-sites] No demo-sites directory found, skipping');
+    return;
+  }
+
+  // Add /etc/hosts entries and Caddy reverse proxy blocks so the browser
+  // resolves mapped domains to localhost and Caddy terminates TLS with a
+  // self-signed cert. This bypasses patchright's CDP interception blocking.
+  let caddyChanged = false;
+  for (const [original, replacement] of Object.entries(urlMappings)) {
+    try {
+      const origUrl = new URL(original);
+      const origHost = origUrl.hostname;
+      const replPort = new URL(replacement).port || '80';
+
+      // /etc/hosts
+      const hostsFile = fs.readFileSync('/etc/hosts', 'utf-8');
+      if (!hostsFile.includes(origHost)) {
+        fs.appendFileSync('/etc/hosts', `\n127.0.0.1 ${origHost}\n`);
+        console.log(`[demo-sites] Added /etc/hosts entry: 127.0.0.1 ${origHost}`);
+      } else {
+        console.log(`[demo-sites] /etc/hosts already has entry for ${origHost}`);
+      }
+
+      // Caddy block (only for https mappings where Caddy needs to terminate TLS)
+      if (origUrl.protocol === 'https:') {
+        const caddyFile = fs.existsSync('/etc/caddy/Caddyfile')
+          ? fs.readFileSync('/etc/caddy/Caddyfile', 'utf-8') : '';
+        if (!caddyFile.includes(origHost + ' {')) {
+          const caddyBlock = `\n${origHost} {\n    tls internal\n    reverse_proxy localhost:${replPort}\n}\n`;
+          fs.appendFileSync('/etc/caddy/Caddyfile', caddyBlock);
+          caddyChanged = true;
+          console.log(`[demo-sites] Added Caddy block: ${origHost} -> localhost:${replPort}`);
+        } else {
+          console.log(`[demo-sites] Caddy already has block for ${origHost}`);
+        }
+      }
+    } catch (e) {
+      console.warn(`[demo-sites] Could not configure hosts/Caddy: ${e}`);
+    }
+  }
+
+  if (caddyChanged) {
+    try {
+      execSync('caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile 2>&1', { timeout: 10000 });
+      console.log('[demo-sites] Caddy reloaded with new demo site routes');
+    } catch (e) {
+      console.warn(`[demo-sites] Caddy reload failed: ${e}`);
+    }
+  }
+
+  for (const [original, replacement] of Object.entries(urlMappings)) {
+    let parsed: URL;
+    try { parsed = new URL(replacement); } catch { continue; }
+
+    const host = parsed.hostname;
+    if (host !== 'localhost' && host !== '127.0.0.1') continue;
+
+    const port = parseInt(parsed.port, 10);
+    if (!port) continue;
+
+    if (await isPortOpen(port)) {
+      console.log(`[demo-sites] Port ${port} already in use, skipping`);
+      continue;
+    }
+
+    if (demoSiteProcesses.has(port)) {
+      const existing = demoSiteProcesses.get(port)!;
+      if (existing.exitCode === null) {
+        console.log(`[demo-sites] Process for port ${port} still running (pid ${existing.pid})`);
+        continue;
+      }
+      console.warn(`[demo-sites] Process for port ${port} exited, restarting`);
+    }
+
+    // Find the matching demo site directory
+    const dirName = DEMO_SITE_DIRS[port];
+    if (!dirName) {
+      console.warn(`[demo-sites] No demo site mapped to port ${port}`);
+      continue;
+    }
+
+    const siteDir = path.join(demoSitesRoot, dirName);
+    const serverJs = path.join(siteDir, 'server.js');
+    const indexHtml = path.join(siteDir, 'index.html');
+
+    if (fs.existsSync(serverJs)) {
+      console.log(`[demo-sites] Starting ${dirName} on port ${port} (node server.js)`);
+      const proc = spawn('node', [serverJs, String(port)], {
+        cwd: siteDir,
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
+      proc.stdout?.on('data', (d: Buffer) => console.log(`[demo-sites:${dirName}] ${d.toString().trim()}`));
+      proc.stderr?.on('data', (d: Buffer) => console.error(`[demo-sites:${dirName}] ${d.toString().trim()}`));
+      proc.on('exit', (code) => console.log(`[demo-sites] ${dirName} exited with code ${code}`));
+      demoSiteProcesses.set(port, proc);
+    } else if (fs.existsSync(indexHtml)) {
+      // Fallback: serve static directory with a minimal handler
+      console.log(`[demo-sites] Starting static server for ${dirName} on port ${port}`);
+      const staticServer = http.createServer((req, res) => {
+        const filePath = path.join(siteDir, req.url === '/' ? 'index.html' : req.url || 'index.html');
+        fs.readFile(filePath, (err, data) => {
+          if (err) { res.writeHead(404); res.end('Not found'); return; }
+          const ext = path.extname(filePath).toLowerCase();
+          const mimeTypes: Record<string, string> = {'.html':'text/html','.css':'text/css','.js':'text/javascript','.json':'application/json','.png':'image/png','.jpg':'image/jpeg','.svg':'image/svg+xml'};
+          res.writeHead(200, { 'Content-Type': mimeTypes[ext] || 'application/octet-stream' });
+          res.end(data);
+        });
+      });
+      staticServer.listen(port, '0.0.0.0');
+      // Wrap in a pseudo-ChildProcess shape for cleanup
+      const fakeProc = { exitCode: null, kill: () => { staticServer.close(); } } as unknown as ChildProcess;
+      demoSiteProcesses.set(port, fakeProc);
+    } else {
+      console.warn(`[demo-sites] ${dirName} has no server.js or index.html, skipping`);
+      continue;
+    }
+
+    const ready = await waitForPort(port);
+    if (ready) {
+      console.log(`[demo-sites] ${dirName} ready on port ${port}`);
+    } else {
+      console.error(`[demo-sites] ${dirName} failed to start on port ${port} within timeout`);
+    }
+
+  }
+}
+
+// Cleanup demo site processes on exit
+function cleanupDemoSites() {
+  for (const [port, proc] of demoSiteProcesses) {
+    try { proc.kill(); } catch {}
+    console.log(`[demo-sites] Stopped process on port ${port}`);
+  }
+  demoSiteProcesses.clear();
+}
+process.on('SIGTERM', cleanupDemoSites);
+process.on('SIGINT', cleanupDemoSites);
+process.on('exit', cleanupDemoSites);
+
+
 // --- Agent Initialization ---
 console.log(`Starting Magnitude BrowserAgent...`);
 app.listen(port, () => {
@@ -529,7 +717,7 @@ const startBrowserOnVm = async (urlMappings?: Record<string, string>): Promise<B
           downloadsPath: defaultBrowserPaths.downloadsPath || undefined,
           tracesDir: defaultBrowserPaths.tracesDir || undefined,
         },
-        contextOptions: { viewport: null },
+        contextOptions: { viewport: null, ignoreHTTPSErrors: true },
       },
       narrate: true,
       urlMappings,
@@ -586,6 +774,11 @@ app.post('/start', async (req: Request, res: Response) => {
   try {
     let agent: BrowserAgent;
     const mappings = urlMappings && typeof urlMappings === 'object' ? urlMappings as Record<string, string> : undefined;
+
+    if (mappings) {
+      await ensureDemoSites(mappings);
+    }
+
     if (mode === "desktop") {
       agent = await startDesktop();
     } else if (mode === "web-vm") {
@@ -594,6 +787,74 @@ app.post('/start', async (req: Request, res: Response) => {
       agent = await startBrowser(headless ?? false, mappings);
     }
     console.log(`[start] agent_created=${Date.now() - t0}ms mode=${mode}`);
+
+    // ── Diagnostic logging for URL mapping debugging ────────────────────
+    if (mappings) {
+      console.log(`[url-map-diag] urlMappings received by agent: ${JSON.stringify(mappings)}`);
+
+      // Verify each demo site is actually reachable right now
+      for (const [original, replacement] of Object.entries(mappings)) {
+        console.log(`[url-map-diag] Mapping: ${original} -> ${replacement}`);
+        try {
+          const testResp = await fetch(replacement, { redirect: 'manual' });
+          console.log(`[url-map-diag] Fetch test ${replacement} -> status=${testResp.status}, headers=${JSON.stringify(Object.fromEntries([...testResp.headers.entries()].filter(([k]) => ['content-type','location','content-length'].includes(k.toLowerCase()))))}`);
+        } catch (e) {
+          console.error(`[url-map-diag] Fetch test ${replacement} -> FAILED: ${e}`);
+        }
+      }
+
+      // Log all registered routes on the context (Playwright exposes them via internal state)
+      try {
+        // Check if magnitude registered any routes by inspecting the context
+        const page = agent.page;
+        console.log(`[url-map-diag] Current page URL after agent start: ${page.url()}`);
+      } catch (e) {
+        console.warn(`[url-map-diag] Could not read page URL: ${e}`);
+      }
+
+      // Add a catch-all diagnostic route that logs EVERY request the browser makes.
+      // Uses route.fallback() so it doesn't interfere with magnitude's routes --
+      // if magnitude's route already handled it, this won't fire.
+      // If this DOES fire for a mapped URL, it means magnitude's route did NOT catch it.
+      try {
+        await agent.context.route('**/*', async (route) => {
+          const req = route.request();
+          const url = req.url();
+          const isNav = req.isNavigationRequest();
+          const method = req.method();
+          const resourceType = req.resourceType();
+
+          // Log all navigation requests + anything hitting a mapped domain
+          const mappedEntries = Object.entries(mappings!);
+          let matchInfo = 'no-match';
+          for (const [orig] of mappedEntries) {
+            const origHost = new URL(orig).hostname;
+            if (url.includes(origHost)) {
+              matchInfo = `matches-domain:${origHost}`;
+              // This request matched a mapped domain but reached our fallback,
+              // meaning magnitude's context.route() did NOT intercept it.
+              console.warn(`[url-map-diag] ⚠️ LEAKED REQUEST: ${method} ${url} (magnitude route did NOT intercept this)`);
+              // Check if URL exactly matches what magnitude should catch
+              const urlObj = new URL(url);
+              console.warn(`[url-map-diag]   url.href=${urlObj.href}, original=${orig}, startsWith(orig+/)=${urlObj.href.startsWith(orig + '/')}, equals=${urlObj.href === orig}`);
+              break;
+            }
+          }
+
+          if (isNav) {
+            console.log(`[url-map-diag] NAV ${method} ${url} (type=${resourceType}, ${matchInfo})`);
+          }
+
+          await route.fallback();
+        });
+        console.log(`[url-map-diag] Diagnostic catch-all route installed`);
+      } catch (e) {
+        console.warn(`[url-map-diag] Failed to install diagnostic route: ${e}`);
+      }
+    } else {
+      console.log(`[url-map-diag] No urlMappings provided for this session`);
+    }
+    // ── End diagnostic logging ───────────────────────────────────────────
 
     if (label && mode === 'web-vm') {
       try {

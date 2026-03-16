@@ -117,6 +117,12 @@ async def hydrate_global_thread(cm: "ConversationManager") -> None:
     # ordering relative to any messages that arrived during initialization.
     hydrated_entries: list = []
 
+    # Collect attachment metadata for deferred download. FileManager is not
+    # available during hydration (it initialises later), so we stash the
+    # metadata and let init_conv_manager materialise the files after all
+    # managers are ready but before the brain starts.
+    pending_attachments: list[tuple[str, list[dict], dict]] = []
+
     restored = 0
     for bus_event in bus_events:
         payload_cls = bus_event.payload_cls
@@ -163,6 +169,7 @@ async def hydrate_global_thread(cm: "ConversationManager") -> None:
 
             # --- Unify Messages ---
             case "UnifyMessageReceived":
+                atts = getattr(cm_event, "attachments", None) or []
                 entry = cm.contact_index.build_message(
                     contact_id=contact_id,
                     sender_name=sender_name,
@@ -170,8 +177,10 @@ async def hydrate_global_thread(cm: "ConversationManager") -> None:
                     message_content=cm_event.content,
                     role="user",
                     timestamp=ts,
-                    attachments=getattr(cm_event, "attachments", None),
+                    attachments=atts,
                 )
+                if atts:
+                    pending_attachments.append(("unify", atts, {}))
             case "UnifyMessageSent":
                 entry = cm.contact_index.build_message(
                     contact_id=contact_id,
@@ -185,6 +194,7 @@ async def hydrate_global_thread(cm: "ConversationManager") -> None:
 
             # --- API Messages ---
             case "ApiMessageReceived":
+                atts = getattr(cm_event, "attachments", None) or []
                 entry = cm.contact_index.build_message(
                     contact_id=contact_id,
                     sender_name=sender_name,
@@ -192,9 +202,11 @@ async def hydrate_global_thread(cm: "ConversationManager") -> None:
                     message_content=cm_event.content,
                     role="user",
                     timestamp=ts,
-                    attachments=getattr(cm_event, "attachments", None),
+                    attachments=atts,
                     tags=getattr(cm_event, "tags", None),
                 )
+                if atts:
+                    pending_attachments.append(("unify", atts, {}))
             case "ApiMessageSent":
                 entry = cm.contact_index.build_message(
                     contact_id=contact_id,
@@ -209,6 +221,7 @@ async def hydrate_global_thread(cm: "ConversationManager") -> None:
 
             # --- Email ---
             case "EmailReceived":
+                atts = getattr(cm_event, "attachments", None) or []
                 entry = cm.contact_index.build_message(
                     contact_id=contact_id,
                     sender_name=sender_name,
@@ -216,7 +229,7 @@ async def hydrate_global_thread(cm: "ConversationManager") -> None:
                     subject=cm_event.subject,
                     body=cm_event.body,
                     email_id=getattr(cm_event, "email_id", None),
-                    attachments=getattr(cm_event, "attachments", None),
+                    attachments=atts,
                     role="user",
                     timestamp=ts,
                     to=getattr(cm_event, "to", None),
@@ -224,6 +237,23 @@ async def hydrate_global_thread(cm: "ConversationManager") -> None:
                     bcc=getattr(cm_event, "bcc", None),
                     contact_role="sender",
                 )
+                if atts:
+                    pending_attachments.append(
+                        (
+                            "email",
+                            atts,
+                            {
+                                "receiver_email": getattr(
+                                    cm_event,
+                                    "receiver_email",
+                                    "",
+                                )
+                                or "",
+                                "gmail_message_id": getattr(cm_event, "email_id", "")
+                                or "",
+                            },
+                        ),
+                    )
             case "EmailSent":
                 entry = cm.contact_index.build_message(
                     contact_id=contact_id,
@@ -354,6 +384,8 @@ async def hydrate_global_thread(cm: "ConversationManager") -> None:
     # Prepend hydrated entries so historical messages appear before any
     # messages that arrived during initialization.
     cm.contact_index.prepend_entries(hydrated_entries)
+
+    cm._pending_hydration_attachments = pending_attachments
 
     LOGGER.info(
         f"{ICONS['managers_worker']} [Hydration] Restored {restored} messages from {len(bus_events)} Comms events",
@@ -1156,9 +1188,6 @@ def _init_managers(
 
             cp = ComputerPrimitives()
             if resolved.config.url_mappings:
-                from unity.customization.demo_sites import ensure_demo_sites_running
-
-                ensure_demo_sites_running(resolved.config.url_mappings)
                 cp.url_mappings = resolved.config.url_mappings
 
             cm.actor = ManagerRegistry.get_actor(
@@ -1188,7 +1217,12 @@ def _init_managers(
         f"{ICONS['managers_worker']} [ManagersWorker] Initializing FileManager...",
     )
     local_start_time = perf_counter()
-    ManagerRegistry.get_file_manager()
+    fm = ManagerRegistry.get_file_manager()
+    # Force the lazy DataManager property to resolve now while ContextVars
+    # are correct.  The ingestion pipeline later accesses _data_manager from
+    # ThreadPoolExecutor workers where ContextVars may not propagate — eager
+    # init avoids the resulting empty-context / double-slash paths.
+    _ = fm._data_manager  # noqa: F841
     _file_dur = perf_counter() - local_start_time
     LOGGER.info(
         f"{ICONS['managers_worker']} [ManagersWorker] FileManager initialized in "
@@ -1404,6 +1438,58 @@ async def init_conv_manager(
 
             await _register_computer_act_completed_callback(cm)
 
+            # Materialise any attachments referenced by hydrated messages.
+            # Hydration collected attachment metadata but couldn't download
+            # because FileManager wasn't ready yet — now all managers are
+            # initialised so we can fetch the files before the brain starts.
+            pending = getattr(cm, "_pending_hydration_attachments", None) or []
+            if pending:
+                from unity.conversation_manager.domains.comms_utils import (
+                    add_email_attachments,
+                    add_unify_message_attachments,
+                )
+
+                download_tasks = []
+                for kind, atts, extra in pending:
+                    if kind == "email":
+                        receiver = extra.get("receiver_email") or (
+                            SESSION_DETAILS.assistant.email
+                            if hasattr(SESSION_DETAILS, "assistant")
+                            and SESSION_DETAILS.assistant
+                            else ""
+                        )
+                        msg_id = extra.get("gmail_message_id", "")
+                        if receiver:
+                            download_tasks.append(
+                                add_email_attachments(atts, receiver, msg_id),
+                            )
+                    else:
+                        download_tasks.append(
+                            add_unify_message_attachments(atts),
+                        )
+
+                if download_tasks:
+                    results = await asyncio.gather(
+                        *download_tasks,
+                        return_exceptions=True,
+                    )
+                    n_ok = sum(1 for r in results if not isinstance(r, BaseException))
+                    n_fail = len(results) - n_ok
+                    total_files = sum(len(atts) for _, atts, _ in pending)
+                    LOGGER.info(
+                        f"{ICONS['managers_worker']} [Hydration] "
+                        f"Materialised {total_files} attachment(s) from "
+                        f"{n_ok} hydrated message(s)"
+                        + (f" ({n_fail} failed)" if n_fail else ""),
+                    )
+                    for r in results:
+                        if isinstance(r, BaseException):
+                            LOGGER.error(
+                                f"{ICONS['managers_worker']} [Hydration] "
+                                f"Attachment download failed: {r}",
+                            )
+                cm._pending_hydration_attachments = None
+
             # Publish initialization complete event for test synchronization
             await event_broker.publish(
                 "app:comms:initialization_complete",
@@ -1419,6 +1505,23 @@ async def init_conv_manager(
             LOGGER.info(
                 f"{ICONS['managers_worker']} [ManagersWorker] Initialization complete in {_init_dur:.2f} seconds",
             )
+
+            try:
+                from unity.conversation_manager.memory_dump import (
+                    write_memory_dump,
+                )
+
+                dump_path = write_memory_dump("startup_memory_dump.txt")
+                if dump_path:
+                    LOGGER.info(
+                        f"{ICONS['managers_worker']} [ManagersWorker] "
+                        f"Startup memory dump written to {dump_path}",
+                    )
+            except Exception as exc:
+                LOGGER.warning(
+                    f"{ICONS['managers_worker']} [ManagersWorker] "
+                    f"Startup memory dump failed: {exc}",
+                )
 
         except Exception as e:
             LOGGER.error(

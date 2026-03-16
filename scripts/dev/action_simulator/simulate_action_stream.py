@@ -70,6 +70,20 @@ MM_CTX = "All/Events/ManagerMethod"
 TL_CTX = "All/Events/ToolLoop"
 
 
+def _load_test_image_b64(filename: str) -> tuple[str, str]:
+    """Load a test image from tests/images/ and return (base64_data, mime_type)."""
+    import base64
+
+    img_path = Path(__file__).resolve().parents[3] / "tests" / "images" / filename
+    data = base64.b64encode(img_path.read_bytes()).decode()
+    mime = "image/jpeg" if filename.endswith(".jpg") else "image/png"
+    return data, mime
+
+
+TEST_IMAGE_B64, TEST_IMAGE_MIME = _load_test_image_b64("gcp_homepage.jpg")
+TEST_IMAGE_B64_2, TEST_IMAGE_MIME_2 = _load_test_image_b64("wizard_screen.jpg")
+
+
 # =============================================================================
 # Shared Helpers
 # =============================================================================
@@ -328,7 +342,7 @@ def build_persistent_steps():
                     phase="incoming",
                     manager="WebSearcher",
                     method="ask",
-                    display_label="Searching the Web",
+                    display_label="Searching the web",
                     request="Google Cloud service account setup with Drive API access 2026",
                 ),
             ],
@@ -534,7 +548,7 @@ def build_persistent_steps():
                     phase="outgoing",
                     manager="WebSearcher",
                     method="ask",
-                    display_label="Searching the Web",
+                    display_label="Searching the web",
                     answer=(
                         "As of March 2026, to create a GCP service account with Drive access:\n"
                         "1. Go to console.cloud.google.com\n"
@@ -691,7 +705,7 @@ def build_persistent_steps():
                     phase="incoming",
                     manager="KnowledgeManager",
                     method="update",
-                    display_label="Updating Knowledge Base",
+                    display_label="Updating notes",
                     request="Store GCP project unify-prod-2026 credential details.",
                 ),
                 mm(
@@ -700,7 +714,7 @@ def build_persistent_steps():
                     phase="incoming",
                     manager="ContactManager",
                     method="update",
-                    display_label="Updating Contacts",
+                    display_label="Updating contact book",
                     request="Update DevOps team contact with Drive credentials.",
                 ),
             ],
@@ -890,7 +904,7 @@ def build_persistent_steps():
                     phase="outgoing",
                     manager="KnowledgeManager",
                     method="update",
-                    display_label="Updating Knowledge Base",
+                    display_label="Updating notes",
                     answer="Knowledge base updated with credential details.",
                 ),
             ],
@@ -910,26 +924,57 @@ def build_persistent_steps():
                     phase="outgoing",
                     manager="ContactManager",
                     method="update",
-                    display_label="Updating Contacts",
+                    display_label="Updating contact book",
                     answer="DevOps team contact updated with new credential details.",
                 ),
             ],
         },
-        # ── 23. execute_code result (parent ToolLoop) ──
+        # ── 23. execute_code result (parent ToolLoop) with display() images ──
         {
-            "label": "execute_code result",
+            "label": "execute_code result (with images)",
             "delay": 0.5,
             "events": [
                 tl(
                     h,
-                    _tool_result(
-                        "tc_code",
-                        "execute_code",
-                        {
-                            "result": "Knowledge updated and contacts updated successfully.",
-                            "notification_sent": True,
-                        },
-                    ),
+                    {
+                        "role": "tool",
+                        "tool_call_id": "tc_code",
+                        "name": "execute_code",
+                        "content": [
+                            {
+                                "type": "text",
+                                "text": json.dumps(
+                                    {
+                                        "result": None,
+                                        "language": "python",
+                                        "state_mode": "stateless",
+                                        "session_id": None,
+                                        "duration_ms": 3420,
+                                    },
+                                    indent=2,
+                                ),
+                            },
+                            {"type": "text", "text": "\n--- stdout ---\n"},
+                            {
+                                "type": "text",
+                                "text": "Updating knowledge base with new credentials info...\n",
+                            },
+                            {
+                                "type": "image_url",
+                                "image_url": {
+                                    "url": f"data:{TEST_IMAGE_MIME};base64,{TEST_IMAGE_B64}",
+                                },
+                            },
+                            {"type": "text", "text": "Updating contact records...\n"},
+                            {
+                                "type": "image_url",
+                                "image_url": {
+                                    "url": f"data:{TEST_IMAGE_MIME_2};base64,{TEST_IMAGE_B64_2}",
+                                },
+                            },
+                            {"type": "text", "text": "Done.\n"},
+                        ],
+                    },
                 ),
             ],
         },
@@ -1176,7 +1221,7 @@ def build_persistent_steps():
                     phase="incoming",
                     manager="KnowledgeManager",
                     method="update",
-                    display_label="Updating Knowledge Base",
+                    display_label="Updating notes",
                     request="Update credential details for unify-prod-2026.",
                 ),
             ],
@@ -1239,7 +1284,7 @@ def build_persistent_steps():
                     phase="outgoing",
                     manager="KnowledgeManager",
                     method="update",
-                    display_label="Updating Knowledge Base",
+                    display_label="Updating notes",
                     answer="Knowledge base updated with credential details.",
                 ),
             ],
@@ -1413,7 +1458,7 @@ def build_single_action_steps():
                     cid,
                     h,
                     phase="incoming",
-                    display_label="Taking Action",
+                    display_label="Taking action",
                     request="Find the main contact at Acme Corp and draft a follow-up email about the Q1 partnership review.",
                 ),
             ],
@@ -1569,7 +1614,7 @@ def build_single_action_steps():
                     sa_cid,
                     sa_h,
                     phase="incoming",
-                    display_label="Taking Action",
+                    display_label="Taking action",
                     request="Find the main contact person at Acme Corp. "
                     "I need their full name, role, and email address.",
                 ),
@@ -1652,7 +1697,7 @@ def build_single_action_steps():
                     phase="incoming",
                     manager="ContactManager",
                     method="ask",
-                    display_label="Checking Contact Book",
+                    display_label="Checking contact book",
                     request="Who is the main contact at Acme Corp?",
                 ),
             ],
@@ -1778,7 +1823,7 @@ def build_single_action_steps():
                     phase="outgoing",
                     manager="ContactManager",
                     method="ask",
-                    display_label="Checking Contact Book",
+                    display_label="Checking contact book",
                     answer=(
                         "Rachel Torres — VP of Partnerships at Acme Corp (r.torres@acmecorp.com). "
                         "Also David Kim — Account Manager (d.kim@acmecorp.com)."
@@ -1859,7 +1904,7 @@ def build_single_action_steps():
                     sa_cid,
                     sa_h,
                     phase="outgoing",
-                    display_label="Taking Action",
+                    display_label="Taking action",
                     answer=(
                         "Main contact: Rachel Torres, VP of Partnerships at Acme Corp "
                         "(r.torres@acmecorp.com). Secondary: David Kim, Account Manager "
@@ -1952,25 +1997,56 @@ def build_single_action_steps():
                 ),
             ],
         },
-        # ── 22. execute_code result ──
+        # ── 22. execute_code result (with display() images) ──
         {
-            "label": "execute_code result",
+            "label": "execute_code result (with images)",
             "delay": 2.0,
             "events": [
                 tl(
                     h,
-                    _tool_result(
-                        "tc_code",
-                        "execute_code",
-                        {
-                            "result": {
-                                "to": "r.torres@acmecorp.com",
-                                "subject": "Q1 Partnership Review Follow-Up",
-                                "body": "Hi Rachel,\n\nThank you for your time...",
+                    {
+                        "role": "tool",
+                        "tool_call_id": "tc_code",
+                        "name": "execute_code",
+                        "content": [
+                            {
+                                "type": "text",
+                                "text": json.dumps(
+                                    {
+                                        "result": {
+                                            "to": "r.torres@acmecorp.com",
+                                            "subject": "Q1 Partnership Review Follow-Up",
+                                            "body": "Hi Rachel,\n\nThank you for your time...",
+                                        },
+                                        "language": "python",
+                                        "state_mode": "stateless",
+                                        "session_id": None,
+                                        "duration_ms": 1850,
+                                    },
+                                    indent=2,
+                                ),
                             },
-                            "notification_sent": True,
-                        },
-                    ),
+                            {"type": "text", "text": "\n--- stdout ---\n"},
+                            {
+                                "type": "text",
+                                "text": "Drafting email for Rachel Torres...\n",
+                            },
+                            {
+                                "type": "image_url",
+                                "image_url": {
+                                    "url": f"data:{TEST_IMAGE_MIME_2};base64,{TEST_IMAGE_B64_2}",
+                                },
+                            },
+                            {"type": "text", "text": "Email preview rendered.\n"},
+                            {
+                                "type": "image_url",
+                                "image_url": {
+                                    "url": f"data:{TEST_IMAGE_MIME};base64,{TEST_IMAGE_B64}",
+                                },
+                            },
+                            {"type": "text", "text": "Final draft ready.\n"},
+                        ],
+                    },
                 ),
             ],
         },
@@ -2017,7 +2093,7 @@ def build_single_action_steps():
                     cid,
                     h,
                     phase="outgoing",
-                    display_label="Taking Action",
+                    display_label="Taking action",
                     answer=(
                         "Drafted follow-up email to Rachel Torres (VP of Partnerships, Acme Corp) "
                         "regarding the Q1 partnership review action items."
@@ -2036,7 +2112,7 @@ def build_single_action_steps():
                     phase="incoming",
                     manager="CodeActActor",
                     method="StorageCheck",
-                    display_label="Storing Reusable Skills",
+                    display_label="Storing reusable skills",
                     request="Review the trajectory and store any reusable functions and compositional guidance.",
                 ),
             ],
@@ -2163,7 +2239,7 @@ def build_single_action_steps():
                     phase="outgoing",
                     manager="CodeActActor",
                     method="StorageCheck",
-                    display_label="Storing Reusable Skills",
+                    display_label="Storing reusable skills",
                     answer="Nothing worth storing.",
                 ),
             ],
@@ -2501,6 +2577,11 @@ def run_live(request: str, kwargs: dict, assistant_id: str) -> None:
         handle = await actor.act(request, persist=persist, **kwargs)
         result = await handle.result()
         print(f"\n=== Result ===\n{result}\n")
+
+        # Wait for post-completion phases (e.g. StorageCheck) to finish.
+        while not handle.done():
+            await asyncio.sleep(0.5)
+        print("=== All phases complete ===")
 
     asyncio.run(_run())
 

@@ -10,12 +10,65 @@ export CONTAINER_START_TIME_MS=$(date +%s%3N)
 # Global variables to track processes
 MAIN_PID=""
 AGENT_PID=""
+WATCHDOG_PID=""
+
+# Monitor cgroup memory usage and send SIGTERM before the kernel OOM-kills us.
+# Runs as a background process with negligible overhead (reads a sysfs file
+# every few seconds).  When usage crosses the threshold, it writes a marker
+# file so the Python shutdown path can log the reason, then sends SIGTERM to
+# the main process — triggering the normal graceful shutdown chain.
+memory_watchdog() {
+    if [ -f /sys/fs/cgroup/memory.max ]; then
+        max_file=/sys/fs/cgroup/memory.max
+        current_file=/sys/fs/cgroup/memory.current
+    elif [ -f /sys/fs/cgroup/memory/memory.limit_in_bytes ]; then
+        max_file=/sys/fs/cgroup/memory/memory.limit_in_bytes
+        current_file=/sys/fs/cgroup/memory/memory.usage_in_bytes
+    else
+        echo "[MEMORY_WATCHDOG] No cgroup memory files found, watchdog disabled"
+        return
+    fi
+
+    max_bytes=$(cat "$max_file")
+    if [ "$max_bytes" = "max" ]; then
+        echo "[MEMORY_WATCHDOG] No memory limit set, watchdog disabled"
+        return
+    fi
+
+    threshold_pct=${MEMORY_WATCHDOG_THRESHOLD:-90}
+    interval=${MEMORY_WATCHDOG_INTERVAL:-5}
+    threshold_bytes=$((max_bytes * threshold_pct / 100))
+
+    echo "[MEMORY_WATCHDOG] Limit: $((max_bytes / 1048576))MiB, threshold: ${threshold_pct}% ($((threshold_bytes / 1048576))MiB), check every ${interval}s"
+
+    while kill -0 "$MAIN_PID" 2>/dev/null; do
+        sleep "$interval"
+        current_bytes=$(cat "$current_file" 2>/dev/null) || continue
+        if [ "$current_bytes" -ge "$threshold_bytes" ]; then
+            pct=$((current_bytes * 100 / max_bytes))
+            echo "$(date '+%Y-%m-%d %H:%M:%S.%3N') - [MEMORY_WATCHDOG] Usage at ${pct}% ($((current_bytes / 1048576))/$((max_bytes / 1048576))MiB) — triggering graceful shutdown"
+            touch /tmp/oom_prevention_shutdown
+            kill -TERM "$MAIN_PID" 2>/dev/null || true
+            return
+        fi
+    done
+}
 
 stop_agent_service() {
-    if [ ! -z "$AGENT_PID" ]; then
-        echo "Stopping agent-service (PID: $AGENT_PID)..."
-        kill -TERM $AGENT_PID 2>/dev/null || true
-        wait $AGENT_PID 2>/dev/null || true
+    # Prefer PID file written by Python after an in-flight restart
+    # (the original $AGENT_PID becomes stale when Python restarts the service).
+    local pid_file="/tmp/agent-service.pid"
+    local pid=""
+    if [ -f "$pid_file" ]; then
+        pid=$(cat "$pid_file")
+    elif [ ! -z "$AGENT_PID" ]; then
+        pid=$AGENT_PID
+    fi
+
+    if [ ! -z "$pid" ] && kill -0 "$pid" 2>/dev/null; then
+        echo "Stopping agent-service (PID: $pid)..."
+        kill -TERM "$pid" 2>/dev/null || true
+        wait "$pid" 2>/dev/null || true
     else
         echo "Stopping agent-service..."
         pkill -f "ts-node" 2>/dev/null || true
@@ -26,6 +79,10 @@ stop_agent_service() {
 # finish its own shutdown sequence (which now includes the GCS log upload).
 on_signal() {
     echo "$(date '+%Y-%m-%d %H:%M:%S.%3N') - [ENTRYPOINT] Received shutdown signal, cleaning up..."
+
+    if [ ! -z "$WATCHDOG_PID" ]; then
+        kill $WATCHDOG_PID 2>/dev/null || true
+    fi
 
     if [ ! -z "$MAIN_PID" ]; then
         echo "Stopping main application (PID: $MAIN_PID)..."
@@ -85,7 +142,12 @@ python3 unity/conversation_manager/main.py &
 MAIN_PID=$!
 echo "⬥ Main application started with PID: $MAIN_PID"
 
+# Start memory watchdog in background
+memory_watchdog &
+WATCHDOG_PID=$!
+
 # Wait for the main process to exit (inactivity timeout or other self-initiated shutdown).
 # The SIGTERM path is handled by the on_signal trap above and never reaches here.
 wait $MAIN_PID || true
+kill $WATCHDOG_PID 2>/dev/null || true
 stop_agent_service

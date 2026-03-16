@@ -111,8 +111,8 @@ def main():
     parser.add_argument(
         "--delay",
         type=int,
-        default=30,
-        help="Seconds to wait between job creation and cleanup (default: 30)",
+        default=120,
+        help="Seconds to wait between job creation and cleanup (default: 120)",
     )
     parser.add_argument(
         "--no-list-jobs",

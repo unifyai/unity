@@ -139,12 +139,15 @@ _EXECUTION_RULES = textwrap.dedent("""
        events from the perspective of whatever process invoked you.
        Choose whichever is most natural for the context:
 
-       **Path 1: `send_notification(message, completed=False)` tool** (direct, JSON tool call)
+       **Path 1: `send_notification(message)` tool** (direct, JSON tool call)
        - A first-class tool you can call between any other tool calls.
        - Best for general milestone updates alongside `execute_function`
          calls, where in-code `notify()` is unavailable.
        - Best when the notification is unconditional — a simple progress
          marker between sequential steps.
+       - **Do NOT** use `send_notification` on the same turn as your
+         final answer. When you are done, provide the final answer as a
+         tool-less assistant message.
 
        **Path 2: `notify(payload)` sandbox helper** (inside `execute_code`)
        - A Python function available inside `execute_code` sessions.
@@ -165,21 +168,18 @@ _EXECUTION_RULES = textwrap.dedent("""
 
        - `send_notification(message="Sending the email now.")` —
          in-progress (default, `completed=False`).
-       - `send_notification(message="Done — email sent to 3 recipients.", completed=True)` —
-         completion announcement.
        - `notify({"message": "Step 2/3: verifying results."})` —
          in-progress (default).
        - `notify({"message": "All 3 steps complete.", "completed": True})` —
-         completion announcement.
+         completion announcement (inside `execute_code` only).
 
-       Set `completed=True` when the overall instruction is finished and
-       you are ready for the next one — the record has been saved, the
-       email has been sent, the full workflow has run to completion.
-       Individual step completions within a multi-step workflow are still
-       in-progress updates (`completed=False`), because the instruction
-       as a whole is not yet done. Notifications that surface a blocker
-       or request user action (e.g. an MFA approval prompt) are also
-       in-progress — the work is paused, not finished.
+       Use `completed=True` inside `execute_code` via `notify()` when a
+       multi-step workflow finishes. At the top level, the final answer
+       itself signals completion — end with a tool-less assistant message
+       rather than calling `send_notification(completed=True)`.
+       Notifications that surface a blocker or request user action
+       (e.g. an MFA approval prompt) are in-progress — the work is
+       paused, not finished.
 
        **What makes a strong notification**
        - Concrete: include useful details like counts, batch indexes, item names, or step descriptions.
@@ -250,6 +250,31 @@ _EXECUTION_RULES = textwrap.dedent("""
          verify and correct if needed.
        - Focus on decisions that could materially affect the output.
          Do not list trivial or obvious choices.
+
+    9. **Data Provenance — Never Present Model Knowledge as Sourced Data**:
+       - There is a fundamental difference between data retrieved from
+         an external tool (a database query, a web search, an API call)
+         and content generated from your own parametric knowledge.
+         External data has a verifiable origin; model-generated content
+         does not. The user cannot distinguish them unless you are
+         explicit.
+       - When an external data source fails or is unavailable, **do not
+         fill the gap by generating realistic-looking records from
+         memory**. Fabricated records with specific names, figures, and
+         source attributions (e.g. invented transactions attributed to
+         a real brokerage) are worse than no data — they look
+         authoritative but cannot be verified, and the user may act on
+         them in professional contexts where accuracy is critical.
+       - Instead: (a) report clearly that the data source was
+         unavailable, (b) explain what you were unable to retrieve,
+         (c) offer alternatives — retry later, use a different source,
+         provide general market context clearly labelled as model
+         knowledge rather than sourced data, or ask the user to supply
+         the data manually.
+       - If you do provide general context from model knowledge (e.g.
+         typical ranges, known industry trends), label it explicitly
+         as such — never format it as a table of specific records with
+         fabricated source citations.
 """).strip()
 
 _INCREMENTAL_EXECUTION = textwrap.dedent("""

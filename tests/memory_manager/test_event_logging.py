@@ -31,10 +31,10 @@ _TRANSCRIPT = (
 
 # Display labels defined on each @log_manager_result decorator in memory_manager.py
 _LABELS = {
-    "update_contacts": "Updating Contacts",
-    "update_knowledge": "Updating Knowledge",
-    "update_tasks": "Updating Tasks",
-    "process_chunk": "Processing Memory Chunk",
+    "update_contacts": "Updating contacts from transcript",
+    "update_knowledge": "Updating knowledge from transcript",
+    "update_tasks": "Updating tasks from transcript",
+    "process_chunk": "Processing memory chunk",
 }
 
 

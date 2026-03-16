@@ -265,7 +265,7 @@ class MemoryManager(BaseMemoryManager):
         "MemoryManager",
         "update_contacts",
         payload_key="transcript",
-        display_label="Updating Contacts",
+        display_label="Updating contacts from transcript",
     )
     async def update_contacts(
         self,
@@ -302,7 +302,7 @@ class MemoryManager(BaseMemoryManager):
         "MemoryManager",
         "update_knowledge",
         payload_key="transcript",
-        display_label="Updating Knowledge",
+        display_label="Updating knowledge from transcript",
     )
     async def update_knowledge(
         self,
@@ -346,7 +346,7 @@ class MemoryManager(BaseMemoryManager):
         "MemoryManager",
         "update_tasks",
         payload_key="transcript",
-        display_label="Updating Tasks",
+        display_label="Updating tasks from transcript",
     )
     async def update_tasks(
         self,
@@ -389,7 +389,7 @@ class MemoryManager(BaseMemoryManager):
         "MemoryManager",
         "process_chunk",
         payload_key="transcript",
-        display_label="Processing Memory Chunk",
+        display_label="Processing memory chunk",
     )
     async def process_chunk(
         self,

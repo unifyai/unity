@@ -12,6 +12,10 @@ from unity.data_manager.types import (
     PlotConfig,
     PlotResult,
     PlotType,
+    TableViewConfig,
+    TableViewResult,
+    IngestExecutionConfig,
+    IngestResult,
 )
 
 # ────────────────────────────────────────────────────────────────────────────
@@ -231,3 +235,170 @@ def test_plot_result_traceback_alias():
     )
 
     assert result.traceback_str == "Full traceback here"
+
+
+def test_plot_result_to_dict():
+    """PlotResult.to_dict() returns correct dictionary."""
+    result = PlotResult(
+        url="https://console.unify.ai/plot/abc123",
+        token="abc123",
+        title="Test Plot",
+    )
+    d = result.to_dict()
+    assert d["url"] == "https://console.unify.ai/plot/abc123"
+    assert d["token"] == "abc123"
+    assert d["title"] == "Test Plot"
+    assert "error" not in d
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# TableViewConfig
+# ────────────────────────────────────────────────────────────────────────────
+
+
+def test_table_view_config_minimal():
+    """TableViewConfig should work with all defaults (all None)."""
+    config = TableViewConfig()
+
+    assert config.columns_visible is None
+    assert config.columns_hidden is None
+    assert config.columns_order is None
+    assert config.sort_by is None
+    assert config.sort_order is None
+    assert config.row_limit is None
+
+
+def test_table_view_config_full():
+    """TableViewConfig should accept all configuration options."""
+    config = TableViewConfig(
+        columns_visible=["name", "email", "status"],
+        columns_order=["status", "name", "email"],
+        row_limit=50,
+        sort_by="name",
+        sort_order="asc",
+    )
+
+    assert config.columns_visible == ["name", "email", "status"]
+    assert config.columns_order == ["status", "name", "email"]
+    assert config.row_limit == 50
+    assert config.sort_by == "name"
+    assert config.sort_order == "asc"
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# TableViewResult
+# ────────────────────────────────────────────────────────────────────────────
+
+
+def test_table_view_result_success():
+    """TableViewResult should indicate success with URL."""
+    result = TableViewResult(
+        url="https://console.unify.ai/table/abc123",
+        token="secret-token",
+        title="Sales Table",
+        context="Data/sales",
+    )
+
+    assert result.succeeded is True
+    assert result.url == "https://console.unify.ai/table/abc123"
+    assert result.error is None
+
+
+def test_table_view_result_failure():
+    """TableViewResult should indicate failure with error."""
+    result = TableViewResult(
+        error="Invalid context: nonexistent",
+        traceback_str="Traceback...",
+    )
+
+    assert result.succeeded is False
+    assert result.url is None
+    assert result.error == "Invalid context: nonexistent"
+
+
+def test_table_view_result_traceback_alias():
+    """TableViewResult should accept traceback_str via 'traceback' alias."""
+    result = TableViewResult(
+        error="Something went wrong",
+        traceback_str="Full traceback here",
+    )
+
+    assert result.traceback_str == "Full traceback here"
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# IngestExecutionConfig
+# ────────────────────────────────────────────────────────────────────────────
+
+
+def test_ingest_execution_config_defaults():
+    """IngestExecutionConfig should have sensible defaults."""
+    cfg = IngestExecutionConfig()
+
+    assert cfg.max_workers == 4
+    assert cfg.max_retries == 3
+    assert cfg.retry_delay_seconds == 3.0
+    assert cfg.fail_fast is False
+
+
+def test_ingest_execution_config_custom():
+    """IngestExecutionConfig should accept custom values."""
+    cfg = IngestExecutionConfig(
+        max_workers=8,
+        max_retries=5,
+        retry_delay_seconds=1.0,
+        fail_fast=True,
+    )
+
+    assert cfg.max_workers == 8
+    assert cfg.max_retries == 5
+    assert cfg.retry_delay_seconds == 1.0
+    assert cfg.fail_fast is True
+
+
+def test_ingest_execution_config_validation():
+    """IngestExecutionConfig should enforce constraints."""
+    import pytest
+
+    with pytest.raises(Exception):
+        IngestExecutionConfig(max_workers=0)  # ge=1
+
+    with pytest.raises(Exception):
+        IngestExecutionConfig(max_retries=-1)  # ge=0
+
+    with pytest.raises(Exception):
+        IngestExecutionConfig(retry_delay_seconds=-0.5)  # ge=0.0
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# IngestResult
+# ────────────────────────────────────────────────────────────────────────────
+
+
+def test_ingest_result_defaults():
+    """IngestResult should have zero-value defaults except context."""
+    result = IngestResult(context="Data/test")
+
+    assert result.context == "Data/test"
+    assert result.rows_inserted == 0
+    assert result.rows_embedded == 0
+    assert result.log_ids == []
+    assert result.duration_ms == 0.0
+    assert result.chunks_processed == 0
+
+
+def test_ingest_result_full():
+    """IngestResult should store all fields."""
+    result = IngestResult(
+        context="Data/MidlandHeart/Repairs",
+        rows_inserted=5000,
+        rows_embedded=5000,
+        log_ids=[1, 2, 3],
+        duration_ms=1234.5,
+        chunks_processed=5,
+    )
+
+    assert result.rows_inserted == 5000
+    assert result.rows_embedded == 5000
+    assert len(result.log_ids) == 3
+    assert result.chunks_processed == 5

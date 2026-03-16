@@ -616,18 +616,21 @@ class EventBus:
                 except Exception as exc:
                     LOGGER.debug("Periodic flush error: %s", exc)
 
-    # Event types whose payloads are too large for bulk prefill.  LLM events
-    # store full request/response dicts (~1-2 MB each); fetching 50 at once
-    # produces responses that exceed Cloud Run's 32 MB response limit, causing
-    # 500 errors that poison the entire EventBus.  These types are write-only
-    # from the in-memory deque perspective — no search() or callback consumers
-    # read from them — so skipping prefill has zero functional impact.
-    _SKIP_PREFILL_TYPES: frozenset[str] = frozenset({"LLM"})
+    # Only these event types are prefilled into in-memory deques on startup.
+    # Comms is the only type with production search() consumers
+    # (hydrate_global_thread, get_last_store_chat_history).  All other types
+    # are either write-only from the deque perspective (LLM, ToolLoop) or
+    # consumed exclusively via publish-driven callbacks (ManagerMethod,
+    # Message).  search() falls back to the backend for any type not in the
+    # deque, so non-prefilled types still work — they just make an API call
+    # instead of reading from memory.
+    _PREFILL_TYPES: frozenset[str] = frozenset({"Comms"})
 
     async def _async_prefill_from_unify(self) -> None:
-        """Populate per-type deques without blocking the event-loop."""
+        """Prefill Comms deques and seed row_id counters for all types."""
 
-        async def _prefill_one(etype: str, context: str, window_size: int):
+        async def _prefill_deque(etype: str, context: str, window_size: int):
+            """Fetch recent events into the in-memory deque."""
             raw_logs = await asyncio.to_thread(
                 unify.get_logs,
                 context=context,
@@ -640,24 +643,42 @@ class EventBus:
                     continue
                 dq.append(self._row_to_event(log.entries, default_type=etype))
             self._deques[etype] = dq
-            # Enforce window limits post-load
             async with self._lock:
                 self._trim_window(etype)
 
-        tasks = [
-            _prefill_one(
-                et,
-                ctx,
-                self._window_sizes.setdefault(et, self._default_window),
+        async def _seed_row_id(etype: str, context: str):
+            """Fetch only the latest row_id so the counter stays monotonic."""
+            raw_logs = await asyncio.to_thread(
+                unify.get_logs,
+                context=context,
+                limit=1,
+                sorting={"row_id": "descending"},
             )
-            for et, ctx in self._specific_ctxs.items()
-            if et not in self._SKIP_PREFILL_TYPES
-        ]
+            if raw_logs and raw_logs[0].entries:
+                row_id = raw_logs[0].entries.get("row_id")
+                if row_id is not None:
+                    self._next_row_ids[etype] = int(row_id) + 1
+
+        tasks = []
+        for et, ctx in self._specific_ctxs.items():
+            if et in self._PREFILL_TYPES:
+                tasks.append(
+                    _prefill_deque(
+                        et,
+                        ctx,
+                        self._window_sizes.setdefault(et, self._default_window),
+                    ),
+                )
+            else:
+                tasks.append(_seed_row_id(et, ctx))
         if tasks:
             await asyncio.gather(*tasks)
 
-        # ──  Initialise local row_id counters based on persisted data ─────────
-        for etype, dq in self._deques.items():
+        # Seed row_id counters for prefilled types from their deques
+        for etype in self._PREFILL_TYPES:
+            dq = self._deques.get(etype)
+            if not dq:
+                continue
             max_id = max(
                 (evt.row_id for evt in dq if evt.row_id is not None),
                 default=-1,

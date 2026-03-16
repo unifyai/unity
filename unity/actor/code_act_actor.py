@@ -40,10 +40,7 @@ from unity.common.async_tool_loop import (
     SteerableToolHandle,
     start_async_tool_loop,
 )
-from unity.common.clarification_tools import (
-    add_clarification_tool_with_events,
-    add_notification_tool_with_events,
-)
+from unity.events.event_bus import EVENT_BUS, Event
 from unity.common.llm_client import new_llm_client
 from unity.common.llm_helpers import methods_to_tool_dict
 from unity.common.tool_spec import ToolSpec
@@ -489,7 +486,12 @@ _STORAGE_TWO_STORES = (
     "composition strategy that would be hard to rediscover. "
     "A single function call, a linear sequence of obvious steps, "
     "or a workflow fully explained by the individual function "
-    "docstrings does NOT need guidance.\n\n"
+    "docstrings does NOT need guidance. Exception: if a simple "
+    "operation required a non-obvious correction (an error-recovery "
+    "loop, a silent failure mode, a precondition discovered through "
+    "trial and error), the corrected approach IS worth storing as "
+    "guidance — the value is in the insight, not the code "
+    "complexity.\n\n"
     "Actions:\n"
     "- **Add** guidance for a genuinely non-trivial compositional "
     "workflow (`GuidanceManager_add_guidance`). Include `function_ids` "
@@ -554,6 +556,17 @@ _STORAGE_SUB_AGENT_PATTERNS = (
 _STORAGE_BASE_INSTRUCTIONS = (
     "## Instructions\n\n"
     "1. Review the trajectory for reusable patterns.\n"
+    "   Additionally, look for **pitfall patterns** — cases where the "
+    "trajectory reveals that an obvious approach failed in a non-obvious "
+    "way (a silent data loss, a missing property, a precondition the API "
+    "doesn't enforce). These patterns have high reuse value even when the "
+    "corrected code is simple: every future actor will attempt the obvious "
+    "approach first. Indicators include error-recovery loops (the actor hit "
+    "an exception, diagnosed the cause, and restructured the code to avoid "
+    "it) and corrections that address a gap between a tool's apparent "
+    "contract and its actual behavior. A brief guidance entry documenting "
+    "the pitfall — what fails, why, and the correct approach — saves "
+    "future sessions from repeating the same discovery cycle.\n"
     "2. Search the existing stores to understand what already exists "
     "(use the search/filter tools for each store).\n"
     "3. Decide what actions (if any) would improve the library. "
@@ -1398,7 +1411,7 @@ class _StorageCheckHandle(SteerableToolHandle):
                     "CodeActActor",
                     "StorageCheck",
                     phase="incoming",
-                    display_label="Storing Reusable Skills",
+                    display_label="Storing reusable skills",
                     hierarchy=_sc_hierarchy,
                     instructions="Review the trajectory and store any reusable functions and compositional guidance.",
                 )
@@ -1430,7 +1443,7 @@ class _StorageCheckHandle(SteerableToolHandle):
                         "CodeActActor",
                         "StorageCheck",
                         phase="outgoing",
-                        display_label="Storing Reusable Skills",
+                        display_label="Storing reusable skills",
                         hierarchy=_sc_hierarchy,
                     )
                 else:
@@ -1447,7 +1460,7 @@ class _StorageCheckHandle(SteerableToolHandle):
                         "CodeActActor",
                         "StorageCheck",
                         phase="outgoing",
-                        display_label="Storing Reusable Skills",
+                        display_label="Storing reusable skills",
                         hierarchy=_sc_hierarchy,
                     )
             finally:
@@ -2246,7 +2259,7 @@ class CodeActActor(BaseCodeActActor):
                         "CodeActActor",
                         "execute_code",
                         hierarchy=_hierarchy,
-                        display_label="Running Code",
+                        display_label="Running code",
                         **payload,
                     )
                 except Exception as e:
@@ -2675,7 +2688,7 @@ class CodeActActor(BaseCodeActActor):
                     "CodeActActor",
                     "ProactiveStorage",
                     phase="incoming",
-                    display_label="Proactive Skill Storage",
+                    display_label="Proactive skill storage",
                     hierarchy=_ps_hierarchy,
                     instructions=request,
                 )
@@ -2695,7 +2708,7 @@ class CodeActActor(BaseCodeActActor):
                         "CodeActActor",
                         "ProactiveStorage",
                         phase="outgoing",
-                        display_label="Proactive Skill Storage",
+                        display_label="Proactive skill storage",
                         hierarchy=_ps_hierarchy,
                     )
                     return (
@@ -2716,7 +2729,7 @@ class CodeActActor(BaseCodeActActor):
                             "CodeActActor",
                             "ProactiveStorage",
                             phase="outgoing",
-                            display_label="Proactive Skill Storage",
+                            display_label="Proactive skill storage",
                             hierarchy=_ps_hierarchy,
                         )
 
@@ -2986,6 +2999,59 @@ class CodeActActor(BaseCodeActActor):
                         list,
                     ):
                         out = ExecutionResult(**out)
+
+                    # When the execution produced a bare SteerableToolHandle
+                    # with no meaningful side output, return the handle directly
+                    # so the core loop adopts it via the bare-handle path
+                    # (no intermediate LLM turn required).
+                    _ef_result_val = (
+                        out.get("result")
+                        if isinstance(out, dict)
+                        else getattr(out, "result", None)
+                    )
+                    if isinstance(_ef_result_val, SteerableToolHandle):
+                        _ef_stdout = (
+                            out.get("stdout")
+                            if isinstance(out, dict)
+                            else getattr(out, "stdout", None)
+                        )
+                        _ef_stderr = (
+                            out.get("stderr")
+                            if isinstance(out, dict)
+                            else getattr(out, "stderr", None)
+                        )
+                        _ef_error = (
+                            out.get("error")
+                            if isinstance(out, dict)
+                            else getattr(out, "error", None)
+                        )
+                        _has_side_output = bool(
+                            (
+                                _ef_stdout
+                                and (
+                                    isinstance(_ef_stdout, str)
+                                    and _ef_stdout.strip()
+                                    or isinstance(_ef_stdout, list)
+                                    and _ef_stdout
+                                )
+                            )
+                            or (
+                                _ef_stderr
+                                and (
+                                    isinstance(_ef_stderr, str)
+                                    and _ef_stderr.strip()
+                                    or isinstance(_ef_stderr, list)
+                                    and _ef_stderr
+                                )
+                            )
+                            or _ef_error,
+                        )
+                        if not _has_side_output:
+                            _ef_log.debug(
+                                f"⏱️ [execute_function +{_ef_ms()}] "
+                                f"returning bare handle (no side output)",
+                            )
+                            return _ef_result_val
 
                     _ef_log.debug(
                         f"⏱️ [execute_function +{_ef_ms()}] returning result",
@@ -3593,7 +3659,7 @@ class CodeActActor(BaseCodeActActor):
         "CodeActActor",
         "act",
         payload_key="request",
-        display_label=lambda kw: "Session" if kw.get("persist") else "Taking Action",
+        display_label=lambda kw: "Session" if kw.get("persist") else "Taking action",
         forward_kwargs=("persist",),
     )
     async def act(
@@ -3992,24 +4058,66 @@ class CodeActActor(BaseCodeActActor):
         if system_prompt:
             client.set_system_message(system_prompt)
 
-        # Add clarification tool when queues are supplied
         tools = dict(base_tools)
-        if clarification_up_q is not None and clarification_down_q is not None:
-            add_clarification_tool_with_events(
-                tools,
-                clarification_up_q,
-                clarification_down_q,
-                manager="CodeActActor",
-                method="act",
-                call_id=_call_id,
-            )
 
-        add_notification_tool_with_events(
-            tools,
-            manager="CodeActActor",
-            method="act",
-            call_id=_call_id,
-        )
+        # Build event bus callbacks for clarification and notification tools
+        # (the loop creates the tools; we just provide the event hooks).
+        _clar_queues = None
+        _on_clar_req = None
+        _on_clar_ans = None
+        if clarification_up_q is not None and clarification_down_q is not None:
+            _clar_queues = (clarification_up_q, clarification_down_q)
+
+            async def _on_clar_req(q: str):
+                try:
+                    await EVENT_BUS.publish(
+                        Event(
+                            type="ManagerMethod",
+                            calling_id=_call_id,
+                            payload={
+                                "manager": "CodeActActor",
+                                "method": "act",
+                                "action": "clarification_request",
+                                "question": q,
+                            },
+                        ),
+                    )
+                except Exception:
+                    pass
+
+            async def _on_clar_ans(ans: str):
+                try:
+                    await EVENT_BUS.publish(
+                        Event(
+                            type="ManagerMethod",
+                            calling_id=_call_id,
+                            payload={
+                                "manager": "CodeActActor",
+                                "method": "act",
+                                "action": "clarification_answer",
+                                "answer": ans,
+                            },
+                        ),
+                    )
+                except Exception:
+                    pass
+
+        async def _on_notify(message: str):
+            try:
+                await EVENT_BUS.publish(
+                    Event(
+                        type="ManagerMethod",
+                        calling_id=_call_id,
+                        payload={
+                            "manager": "CodeActActor",
+                            "method": "act",
+                            "action": "notification",
+                            "message": message,
+                        },
+                    ),
+                )
+            except Exception:
+                pass
 
         logger.debug(f"⏱️ [CodeActActor.act +{_act_ms()}] starting async tool loop")
         handle = start_async_tool_loop(
@@ -4027,6 +4135,10 @@ class CodeActActor(BaseCodeActActor):
             prompt_caching=self._prompt_caching,
             extra_ask_tools=self._get_extra_ask_tools(),
             extra_compression_tools=(["store_skills"] if effective_can_store else None),
+            clarification_queues=_clar_queues,
+            on_clarification_request=_on_clar_req,
+            on_clarification_answer=_on_clar_ans,
+            on_notify=_on_notify,
         )
         logger.debug(
             f"⏱️ [CodeActActor.act +{_act_ms()}] loop started, returning handle",
