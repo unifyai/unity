@@ -33,7 +33,7 @@ def test_build_code_act_prompt_with_guidelines():
     )
     assert "### Guidelines" in prompt
     assert "Always use sub-agents for parallel tasks." in prompt
-    assert "You MUST follow these guidelines" in prompt
+    assert "Follow these guidelines throughout this session:" in prompt
 
 
 def test_build_code_act_prompt_guidelines_placed_before_rules():
@@ -46,9 +46,7 @@ def test_build_code_act_prompt_guidelines_placed_before_rules():
     guidelines_pos = prompt.index("### Guidelines")
     # The role line always appears; guidelines should come after the role but
     # the prompt overall should still contain the standard role header.
-    assert (
-        "Code-First Automation Agent" in prompt or "Function Execution Agent" in prompt
-    )
+    assert "### Role" in prompt
     assert guidelines_pos > 0
 
 
