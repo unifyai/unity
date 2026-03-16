@@ -39,8 +39,17 @@ log = logging.getLogger("job-watcher")
 COMMS_URL = os.environ["UNITY_COMMS_URL"]
 SHARED_UNIFY_KEY = os.environ["SHARED_UNIFY_KEY"]
 ADMIN_KEY = os.environ["ORCHESTRA_ADMIN_KEY"]
+MAX_EVENT_AGE = datetime.timedelta(hours=1)
 
 _events_processed = 0
+
+
+def _parse_k8s_timestamp(ts: str) -> datetime.datetime | None:
+    """Parse a K8s ISO-8601 timestamp (e.g. ``2026-03-16T12:00:00Z``)."""
+    try:
+        return datetime.datetime.fromisoformat(ts.replace("Z", "+00:00"))
+    except (ValueError, AttributeError):
+        return None
 
 
 @kopf.on.event("batch", "v1", "jobs", labels={"app": "unity"})
@@ -61,6 +70,12 @@ def on_job_event(event, **_):
     )
     if terminal is None:
         return
+
+    transition_time = _parse_k8s_timestamp(terminal.get("lastTransitionTime", ""))
+    if transition_time is not None:
+        age = datetime.datetime.now(datetime.timezone.utc) - transition_time
+        if age > MAX_EVENT_AGE:
+            return
 
     metadata = job.get("metadata", {})
     labels = metadata.get("labels", {})
