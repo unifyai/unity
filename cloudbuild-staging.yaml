@@ -67,11 +67,9 @@ steps:
   args:
   - '-c'
   - |
+    gcloud container clusters get-credentials unity --region ${_REGION} --project ${PROJECT_ID}
     sed "s|image:.*job-watcher.*|image: ${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPOSITORY}/job-watcher-staging:${SHORT_SHA}|" \
       scripts/job-watcher/deployment_staging.yaml | kubectl apply -f -
-  env:
-  - 'CLOUDSDK_COMPUTE_REGION=${_REGION}'
-  - 'CLOUDSDK_CONTAINER_CLUSTER=unity'
   waitFor: ['push-job-watcher']
 
   # Upload SHA to Cloud Storage
