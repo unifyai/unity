@@ -14,6 +14,7 @@ from __future__ import annotations
 import json
 import logging
 import time
+import traceback
 
 import requests
 import unify
@@ -152,6 +153,7 @@ def detach_disk(
             )
     except Exception:
         log.exception("Error detaching disk for %s", assistant_id)
+        traceback.print_exc()
 
 
 def release_pool_vm(
@@ -206,4 +208,5 @@ def release_pool_vm(
             return
         except Exception:
             log.exception("Error releasing pool VM for %s", assistant_id)
+            traceback.print_exc()
             return
