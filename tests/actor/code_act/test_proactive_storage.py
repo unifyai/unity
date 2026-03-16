@@ -20,6 +20,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from tests.actor.code_act.conftest import make_fm_mock
 from unity.actor.code_act_actor import (
     AgentContext,
     CodeActActor,
@@ -79,7 +80,7 @@ class _TrackingGuidanceManager:
 async def test_store_skills_tool_present_when_can_store_true():
     """When can_store=True and both FM+GM exist, the ``store_skills`` tool
     appears in the tool set passed to the doing loop."""
-    fm = MagicMock()
+    fm = make_fm_mock()
     fm._include_primitives = False
     fm.search_functions = MagicMock(return_value={"metadata": []})
     fm.filter_functions = MagicMock(return_value={"metadata": []})
@@ -113,7 +114,7 @@ async def test_store_skills_tool_absent_without_guidance_manager():
     """When GuidanceManager is missing, ``store_skills`` should not be built."""
     from unittest.mock import patch as _patch
 
-    fm = MagicMock()
+    fm = make_fm_mock()
     fm._include_primitives = False
     fm.search_functions = MagicMock(return_value={"metadata": []})
     fm.filter_functions = MagicMock(return_value={"metadata": []})
@@ -149,14 +150,14 @@ async def test_store_skills_tool_absent_without_guidance_manager():
 async def test_store_skills_filtered_when_can_store_false():
     """When can_store=False, ``store_skills`` must be removed by _filter_tools
     even though FM+GM exist and the tool was built."""
-    fm = MagicMock()
+    fm = make_fm_mock()
     fm._include_primitives = False
     fm.search_functions = MagicMock(return_value={"metadata": []})
     fm.filter_functions = MagicMock(return_value={"metadata": []})
     fm.list_functions = MagicMock(return_value={"metadata": []})
     fm._get_function_data_by_name = MagicMock(return_value=None)
     fm._get_primitive_data_by_name = MagicMock(return_value=None)
-    fm.add_functions = MagicMock(return_value={"added": []})
+    fm.add_functions.return_value = {"added": []}
 
     gm = _TrackingGuidanceManager()
 
@@ -500,7 +501,7 @@ async def test_proactive_storage_publishes_manager_method_events():
         _CURRENT_AGENT_CONTEXT,
     )
 
-    fm = MagicMock()
+    fm = make_fm_mock()
     fm._include_primitives = False
     fm.search_functions = MagicMock(return_value={"metadata": []})
     fm.filter_functions = MagicMock(return_value={"metadata": []})
