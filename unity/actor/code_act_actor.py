@@ -2589,9 +2589,50 @@ class CodeActActor(BaseCodeActActor):
                 display_label="Listing existing skills",
             )
 
-        # GuidanceManager tools: bound methods registered directly via
-        # methods_to_tool_dict (no custom wrappers needed — unlike FM, GM
-        # methods are plain CRUD with no sandbox injection side-effects).
+            # FM write tools: thin async wrappers with no sandbox
+            # injection (plain CRUD, same pattern as GuidanceManager).
+
+            async def FunctionManager_add_functions(
+                implementations: str | list[str],
+                *,
+                language: str = "python",
+                overwrite: bool = False,
+                venv_id: Optional[int] = None,
+            ) -> Any:
+                return self.function_manager.add_functions(
+                    implementations=implementations,
+                    language=language,
+                    overwrite=bool(overwrite),
+                    venv_id=venv_id,
+                )
+
+            FunctionManager_add_functions.__doc__ = (
+                BaseFunctionManager.add_functions.__doc__
+            )
+
+            async def FunctionManager_delete_functions(
+                function_ids: list[int],
+            ) -> Any:
+                return self.function_manager.delete_function(
+                    function_id=function_ids,
+                )
+
+            FunctionManager_delete_functions.__doc__ = (
+                BaseFunctionManager.delete_function.__doc__
+            )
+
+            tools["FunctionManager_add_functions"] = ToolSpec(
+                fn=FunctionManager_add_functions,
+                display_label="Adding functions to the library",
+            )
+            tools["FunctionManager_delete_functions"] = ToolSpec(
+                fn=FunctionManager_delete_functions,
+                display_label="Deleting functions from the library",
+            )
+
+        # FunctionManager read tools (search/filter/list) use custom wrappers
+        # that inject callables into the sandbox. All other FM/GM tools below
+        # are plain CRUD with no sandbox side-effects.
         if self.guidance_manager:
             gm = self.guidance_manager
             tools.update(
@@ -3924,12 +3965,19 @@ class CodeActActor(BaseCodeActActor):
             return entry_handle
 
         # Build the tool set for this call. When can_compose=False the LLM
-        # may only discover and execute stored functions — no arbitrary code,
-        # no function persistence. Session tools are kept because
-        # execute_function supports the same session/state_mode semantics.
+        # can_compose=False: specialist may only discover and execute stored
+        # functions — no arbitrary code, no function persistence.
+        # can_store=False: function/guidance library is read-only.
+        # Session tools are kept because execute_function supports the same
+        # session/state_mode semantics.
         _compose_only_tools = {
             "execute_code",
             "install_python_packages",
+        }
+        _store_only_tools = {
+            "store_skills",
+            "FunctionManager_add_functions",
+            "FunctionManager_delete_functions",
         }
 
         def _filter_tools(tool_dict: Dict[str, Any]) -> Dict[str, Any]:
@@ -3938,8 +3986,11 @@ class CodeActActor(BaseCodeActActor):
             if not effective_can_compose:
                 for name in _compose_only_tools:
                     out.pop(name, None)
+                for name in _store_only_tools:
+                    out.pop(name, None)
             if not effective_can_store:
-                out.pop("store_skills", None)
+                for name in _store_only_tools:
+                    out.pop(name, None)
             return out
 
         base_tools = _filter_tools(self.get_tools("act"))

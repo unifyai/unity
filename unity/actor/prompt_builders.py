@@ -22,7 +22,7 @@ _FUNCTION_AND_GUIDANCE_LIBRARY = textwrap.dedent("""
 
     You have access to two complementary systems:
 
-    * **FunctionManager** (read-only) — stores concrete, reusable function
+    * **FunctionManager** (read + write) — stores concrete, reusable function
       implementations (the building blocks). Search results include a
       `guidance_ids` field linking to related guidance entries.
     * **GuidanceManager** (read + write) — stores procedural how-to
@@ -50,8 +50,22 @@ _FUNCTION_AND_GUIDANCE_LIBRARY = textwrap.dedent("""
     appropriate when the *act of persisting the guidance is the task itself*
     (e.g. "remember how to log into X", "here are the steps for Y").
 
-    Function storage is handled separately by a post-completion review
-    process — do not attempt to store functions during this loop.
+    #### Writing Functions
+
+    When the user explicitly requests adding, updating, or deleting specific
+    functions — independent of the current execution trajectory — use
+    `FunctionManager_add_functions` or `FunctionManager_delete_functions`
+    directly. This is appropriate when the user has inspected the function
+    library and wants a surgical edit (e.g. "update function X to handle
+    edge case Y", "delete that unused function", "add this implementation").
+
+    To update an existing function, call `FunctionManager_add_functions`
+    with `overwrite=True`.
+
+    For skills discovered *during* execution (reusable patterns from the
+    current trajectory), use `store_skills` instead — it triggers a
+    dedicated review that extracts and stores both functions and
+    compositional guidance from the trajectory.
 
     #### Function Execution Modes
 
@@ -77,9 +91,10 @@ _DISCOVERY_FIRST_POLICY = textwrap.dedent("""
     **Call both on your first turn** — they are independent and can be issued
     as parallel tool calls in a single assistant message. Once both discovery
     calls complete, the full tool set unlocks automatically — including
-    `execute_code`, primitives, and GuidanceManager write tools
-    (`GuidanceManager_add_guidance`, `GuidanceManager_update_guidance`,
-    `GuidanceManager_delete_guidance`).
+    `execute_code`, primitives, FunctionManager write tools
+    (`FunctionManager_add_functions`, `FunctionManager_delete_functions`),
+    and GuidanceManager write tools (`GuidanceManager_add_guidance`,
+    `GuidanceManager_update_guidance`, `GuidanceManager_delete_guidance`).
 
     This policy exists to ensure you always check the existing function and
     guidance libraries before attempting to solve a task from scratch.
@@ -336,11 +351,16 @@ _STORAGE_DEFERRED_NOTICE = textwrap.dedent("""
     - Every single code execution — the automatic post-completion review
       is comprehensive.
 
-    **Guidance is separate**: if the user explicitly asks you to remember
-    procedures, instructions, or how-to information, store it directly via
-    `GuidanceManager_add_guidance` as part of the current task. `store_skills`
-    is for extracting reusable function implementations and compositional
-    strategies from the execution trajectory.
+    **Direct writes vs trajectory storage**: If the user explicitly asks to
+    remember procedures or how-to information, store it directly via
+    `GuidanceManager_add_guidance` as part of the current task. If the user
+    explicitly requests adding, updating, or deleting specific function
+    implementations, use `FunctionManager_add_functions` or
+    `FunctionManager_delete_functions` directly. `store_skills` is for
+    extracting reusable function implementations and compositional
+    strategies from the execution trajectory — use it when you recognise
+    patterns worth preserving from what you just did, not for direct
+    user-requested mutations.
 
     **Before compression**: when the context window is approaching capacity,
     `store_skills` and `compress_context` will be the only tools available.
