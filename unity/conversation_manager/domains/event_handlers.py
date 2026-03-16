@@ -1265,6 +1265,18 @@ async def _(
 
     _vm_ready.set()
 
+    if desktop_url:
+        from urllib.parse import urlparse
+        from unity.function_manager.primitives.runtime import ComputerPrimitives
+        from unity.manager_registry import ManagerRegistry
+
+        cp = ManagerRegistry.get_instance(ComputerPrimitives)
+        if cp is not None and cp._backend is not None:
+            parsed = urlparse(desktop_url)
+            cp._backend.update_container_url(
+                f"{parsed.scheme}://{parsed.netloc}/api",
+            )
+
     asyncio.ensure_future(_ensure_desktop_session(cm))
     await managers_utils._start_file_sync()
 
