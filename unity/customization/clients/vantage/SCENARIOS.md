@@ -3,10 +3,10 @@
 These are concrete demo prompts to give the assistant, with exact expected outputs. Each scenario describes what to ask, which data sources the assistant should access, and the specific values it should return.
 
 The assistant has access to:
-- **Outlook** (Steph's inbox — 24 emails with member organisations)
-- **OneDrive** (Steph's drive — Excel files, transcripts, PDFs in `Vantage/` folder)
-- **OneNote** (Steph's "Member Notes" notebook — 10 renewal call pages)
-- **Mock Portal** (http://localhost:5000 — 6 discussion threads, login: steph / demo123)
+- **Outlook** (Steph's inbox — ~72 emails with member organisations and internal Vantage staff)
+- **OneDrive** (Steph's drive — Excel benchmarking files, workshop transcripts, case studies, membership data in `Vantage/` folder)
+- **OneNote** (Steph's "Member Notes" notebook — 20 renewal call pages)
+- **Mock Portal** (Zoho Connect mock — 10 discussion threads, login: steph / demo123)
 
 ---
 
@@ -24,8 +24,8 @@ The assistant has access to:
 |--------|----------|-----------------|
 | 1:1 call notes | OneDrive: `Vantage/Carbon Club/1-to-1 Notes/carbon_club_1to1_notes.xlsx` | PV install counts in Greendale, Northfield, Beacon sheets |
 | Workshop transcript | OneDrive: `Vantage/Carbon Club/Workshop Transcripts/carbon_club_workshop_14feb2025.txt` | Presentations from Greendale (1,200), Northfield (850), Beacon (340) |
-| Portal thread | Mock portal: Thread 1 "Solar PV costs and procurement" | David (Beacon: 340), Mark (Greendale: 1,200), Fiona (Northfield: 850) reply |
-| Case study PDFs | OneDrive: `Vantage/Knowledge Hub/` | Greendale and Northfield case studies with detailed metrics |
+| Portal thread | Mock portal: Thread 1 "Solar PV costs and procurement" | David (Beacon: 340→420), Mark (Greendale: 1,200), Fiona (Northfield: 850) reply |
+| Case studies | OneDrive: `Vantage/Knowledge Hub/greendale_pv_case_study.txt`, `northfield_pv_battery_case_study.txt` | Detailed metrics for Greendale and Northfield programmes |
 | Renewal notes | OneNote: Member Notes > Renewal Calls | Greendale, Northfield, Beacon renewal entries mention PV |
 | Emails | Outlook: search "solar PV" | Steph sent PV case studies to Lena (Broadland) |
 
@@ -65,15 +65,15 @@ Note: Broadland Housing has zero PV installations but is actively interested in 
 
 | Metric | Broadland Housing | Club Average |
 |--------|-------------------|--------------|
-| Cost Per Unit (£) | £5,800 | £4,722 |
+| Cost Per Unit (£) | £5,800 | £4,729 |
 | Reinvestment % | 9.2% | 7.9% |
-| Operating Margin (SH) % | 24.2% | 24.2% |
-| Overall Satisfaction % | 72.0% | 72.3% |
-| Complaint Handling % | 31.0% | 36.4% |
-| Void Turnaround (days) | 24.0 | 20.7 |
-| EPC C+ Stock % | 63.0% | 73.2% |
+| Operating Margin (SH) % | 24.2% | 24.5% |
+| Overall Satisfaction % | 72.0% | 72.7% |
+| Complaint Handling % | 31.0% | 36.8% |
+| Void Turnaround (days) | 24.0 | 20.4 |
+| EPC C+ Stock % | 63.0% | 74.5% |
 | PV Installations | 0 | 358 |
-| Retrofit Measures | 280 | 592 |
+| Retrofit Measures | 280 | 572 |
 
 ---
 
@@ -116,8 +116,8 @@ Note: Broadland Housing has zero PV installations but is actively interested in 
 - 08/01/2025: Sent SHDF Wave 2 funding guidance
 
 **Coaching Points:**
-- Complaint handling satisfaction 31% (below club avg 35%)
-- EPC C+ stock 63% (below club avg 72%) — main driver for PV interest
+- Complaint handling satisfaction 31% (below club avg ~37%)
+- EPC C+ stock 63% (below club avg ~75%) — main driver for PV interest
 - Broadland's interest in PV is a strong retention hook
 
 ---
@@ -160,7 +160,7 @@ Note: Broadland Housing has zero PV installations but is actively interested in 
 | Submit EPC data quality survey responses | All members | 31 March 2025 |
 
 **Expected — Engagement Alerts:**
-- **Riverview Estates** has now missed 4 consecutive sessions. Steph noted in the transcript: "I notice Riverview Estates aren't with us again today — that's the third session in a row." Primary contact: Helen Foster. Recommend immediate outreach.
+- **Riverview Estates** has now missed 4 consecutive sessions (Dec 2024, Jan 2025, Feb 2025, Mar 2025). Steph noted in the transcript: "I notice Riverview Estates aren't with us again today — that's the fourth session in a row." Primary contact: Helen Foster. Recommend immediate outreach.
 - **Tom Henderson (Millbrook Homes)** attended Carbon Club for the first time. He said: "this is my first Carbon Club session — I'm usually in the Exec Club." He is in the membership database under Executive Club only. Consider adding Carbon Club to his profile.
 
 ---
@@ -177,9 +177,9 @@ Note: Broadland Housing has zero PV installations but is actively interested in 
 
 | Source | Location |
 |--------|----------|
-| Portal thread | Mock portal (http://localhost:5000): Thread "Void Standards and Turnaround Thresholds" |
+| Portal thread | Mock portal: Thread 7 "Void standards and turnaround thresholds" |
 
-Note: The portal also has an exported `.docx` version on OneDrive at `Vantage/Portal Exports/void_standards_portal_thread.docx`. The assistant could use either source.
+Note: The portal also has an exported text version on OneDrive at `Vantage/Portal Exports/void_standards_portal_thread.txt`. The assistant could use either source.
 
 **Expected Answer:**
 
