@@ -36,7 +36,7 @@ _VANTAGE_CONFIG = ActorConfig(
         "team — do not assume the person talking to you is Steph."
     ),
     url_mappings={
-        "https://connect.zoho.com": "http://localhost:4002",
+        "https://connect.zoho.com": "vantage-portal",
     },
 )
 

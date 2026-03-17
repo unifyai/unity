@@ -407,12 +407,7 @@ wsInstance.app.ws('/logs/stream', async (ws: WebSocket, req: Request) => {
 
 
 // --- Demo Sites ---
-// Port-to-directory mapping for local demo site replicas
-const DEMO_SITE_DIRS: Record<number, string> = {
-  4001: 'example',
-  4002: 'vantage-portal',
-};
-
+const DEMO_SITE_BASE_PORT = 4001;
 const demoSiteProcesses: Map<number, ChildProcess> = new Map();
 
 function isPortOpen(port: number): Promise<boolean> {
@@ -450,93 +445,41 @@ function findDemoSitesRoot(): string | null {
   return null;
 }
 
-async function ensureDemoSites(urlMappings: Record<string, string>): Promise<void> {
+async function findFreePort(startFrom: number): Promise<number> {
+  let port = startFrom;
+  while (await isPortOpen(port) || demoSiteProcesses.has(port)) {
+    port++;
+  }
+  return port;
+}
+
+async function ensureDemoSites(urlMappings: Record<string, string>): Promise<Record<string, string>> {
+  const resolved: Record<string, string> = {};
   const demoSitesRoot = findDemoSitesRoot();
   if (!demoSitesRoot) {
     console.warn('[demo-sites] No demo-sites directory found, skipping');
-    return;
+    return resolved;
   }
 
-  // Add /etc/hosts entries and Caddy reverse proxy blocks so the browser
-  // resolves mapped domains to localhost and Caddy terminates TLS with a
-  // self-signed cert. This bypasses patchright's CDP interception blocking.
-  let caddyChanged = false;
-  for (const [original, replacement] of Object.entries(urlMappings)) {
-    try {
-      const origUrl = new URL(original);
-      const origHost = origUrl.hostname;
-      const replPort = new URL(replacement).port || '80';
+  let nextPort = DEMO_SITE_BASE_PORT;
 
-      // /etc/hosts
-      const hostsFile = fs.readFileSync('/etc/hosts', 'utf-8');
-      if (!hostsFile.includes(origHost)) {
-        fs.appendFileSync('/etc/hosts', `\n127.0.0.1 ${origHost}\n`);
-        console.log(`[demo-sites] Added /etc/hosts entry: 127.0.0.1 ${origHost}`);
-      } else {
-        console.log(`[demo-sites] /etc/hosts already has entry for ${origHost}`);
-      }
-
-      // Caddy block (only for https mappings where Caddy needs to terminate TLS)
-      if (origUrl.protocol === 'https:') {
-        const caddyFile = fs.existsSync('/etc/caddy/Caddyfile')
-          ? fs.readFileSync('/etc/caddy/Caddyfile', 'utf-8') : '';
-        if (!caddyFile.includes(origHost + ' {')) {
-          const caddyBlock = `\n${origHost} {\n    tls internal\n    reverse_proxy localhost:${replPort}\n}\n`;
-          fs.appendFileSync('/etc/caddy/Caddyfile', caddyBlock);
-          caddyChanged = true;
-          console.log(`[demo-sites] Added Caddy block: ${origHost} -> localhost:${replPort}`);
-        } else {
-          console.log(`[demo-sites] Caddy already has block for ${origHost}`);
-        }
-      }
-    } catch (e) {
-      console.warn(`[demo-sites] Could not configure hosts/Caddy: ${e}`);
-    }
-  }
-
-  if (caddyChanged) {
-    try {
-      execSync('caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile 2>&1', { timeout: 10000 });
-      console.log('[demo-sites] Caddy reloaded with new demo site routes');
-    } catch (e) {
-      console.warn(`[demo-sites] Caddy reload failed: ${e}`);
-    }
-  }
-
-  for (const [original, replacement] of Object.entries(urlMappings)) {
-    let parsed: URL;
-    try { parsed = new URL(replacement); } catch { continue; }
-
-    const host = parsed.hostname;
-    if (host !== 'localhost' && host !== '127.0.0.1') continue;
-
-    const port = parseInt(parsed.port, 10);
-    if (!port) continue;
-
-    if (await isPortOpen(port)) {
-      console.log(`[demo-sites] Port ${port} already in use, skipping`);
-      continue;
-    }
-
-    if (demoSiteProcesses.has(port)) {
-      const existing = demoSiteProcesses.get(port)!;
-      if (existing.exitCode === null) {
-        console.log(`[demo-sites] Process for port ${port} still running (pid ${existing.pid})`);
-        continue;
-      }
-      console.warn(`[demo-sites] Process for port ${port} exited, restarting`);
-    }
-
-    // Find the matching demo site directory
-    const dirName = DEMO_SITE_DIRS[port];
-    if (!dirName) {
-      console.warn(`[demo-sites] No demo site mapped to port ${port}`);
-      continue;
-    }
-
+  for (const [originalUrl, dirName] of Object.entries(urlMappings)) {
     const siteDir = path.join(demoSitesRoot, dirName);
+    if (!fs.existsSync(siteDir)) {
+      console.warn(`[demo-sites] Directory '${dirName}' not found in ${demoSitesRoot}, skipping`);
+      continue;
+    }
+
     const serverJs = path.join(siteDir, 'server.js');
     const indexHtml = path.join(siteDir, 'index.html');
+
+    if (!fs.existsSync(serverJs) && !fs.existsSync(indexHtml)) {
+      console.warn(`[demo-sites] ${dirName} has no server.js or index.html, skipping`);
+      continue;
+    }
+
+    const port = await findFreePort(nextPort);
+    nextPort = port + 1;
 
     if (fs.existsSync(serverJs)) {
       console.log(`[demo-sites] Starting ${dirName} on port ${port} (node server.js)`);
@@ -548,8 +491,7 @@ async function ensureDemoSites(urlMappings: Record<string, string>): Promise<voi
       proc.stderr?.on('data', (d: Buffer) => console.error(`[demo-sites:${dirName}] ${d.toString().trim()}`));
       proc.on('exit', (code) => console.log(`[demo-sites] ${dirName} exited with code ${code}`));
       demoSiteProcesses.set(port, proc);
-    } else if (fs.existsSync(indexHtml)) {
-      // Fallback: serve static directory with a minimal handler
+    } else {
       console.log(`[demo-sites] Starting static server for ${dirName} on port ${port}`);
       const staticServer = http.createServer((req, res) => {
         const filePath = path.join(siteDir, req.url === '/' ? 'index.html' : req.url || 'index.html');
@@ -562,12 +504,8 @@ async function ensureDemoSites(urlMappings: Record<string, string>): Promise<voi
         });
       });
       staticServer.listen(port, '0.0.0.0');
-      // Wrap in a pseudo-ChildProcess shape for cleanup
       const fakeProc = { exitCode: null, kill: () => { staticServer.close(); } } as unknown as ChildProcess;
       demoSiteProcesses.set(port, fakeProc);
-    } else {
-      console.warn(`[demo-sites] ${dirName} has no server.js or index.html, skipping`);
-      continue;
     }
 
     const ready = await waitForPort(port);
@@ -577,7 +515,49 @@ async function ensureDemoSites(urlMappings: Record<string, string>): Promise<voi
       console.error(`[demo-sites] ${dirName} failed to start on port ${port} within timeout`);
     }
 
+    const localhostUrl = `http://localhost:${port}`;
+    resolved[originalUrl] = localhostUrl;
+
+    // /etc/hosts + Caddy setup so the real domain resolves to the demo site
+    try {
+      const origUrl = new URL(originalUrl);
+      const origHost = origUrl.hostname;
+
+      const hostsFile = fs.readFileSync('/etc/hosts', 'utf-8');
+      if (!hostsFile.includes(origHost)) {
+        fs.appendFileSync('/etc/hosts', `\n127.0.0.1 ${origHost}\n`);
+        console.log(`[demo-sites] Added /etc/hosts entry: 127.0.0.1 ${origHost}`);
+      } else {
+        console.log(`[demo-sites] /etc/hosts already has entry for ${origHost}`);
+      }
+
+      if (origUrl.protocol === 'https:') {
+        const caddyFile = fs.existsSync('/etc/caddy/Caddyfile')
+          ? fs.readFileSync('/etc/caddy/Caddyfile', 'utf-8') : '';
+        if (!caddyFile.includes(origHost + ' {')) {
+          const caddyBlock = `\n${origHost} {\n    tls internal\n    reverse_proxy localhost:${port}\n}\n`;
+          fs.appendFileSync('/etc/caddy/Caddyfile', caddyBlock);
+          console.log(`[demo-sites] Added Caddy block: ${origHost} -> localhost:${port}`);
+        } else {
+          console.log(`[demo-sites] Caddy already has block for ${origHost}`);
+        }
+      }
+    } catch (e) {
+      console.warn(`[demo-sites] Could not configure hosts/Caddy for ${originalUrl}: ${e}`);
+    }
   }
+
+  // Reload Caddy if any new blocks were added
+  try {
+    if (fs.existsSync('/etc/caddy/Caddyfile')) {
+      execSync('caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile 2>&1', { timeout: 10000 });
+      console.log('[demo-sites] Caddy reloaded with new demo site routes');
+    }
+  } catch (e) {
+    console.warn(`[demo-sites] Caddy reload failed: ${e}`);
+  }
+
+  return resolved;
 }
 
 // Cleanup demo site processes on exit
@@ -773,11 +753,9 @@ app.post('/start', async (req: Request, res: Response) => {
   console.log(`[start] BEGIN mode=${mode} sessionId=${sessionId}`);
   try {
     let agent: BrowserAgent;
-    const mappings = urlMappings && typeof urlMappings === 'object' ? urlMappings as Record<string, string> : undefined;
-
-    if (mappings) {
-      await ensureDemoSites(mappings);
-    }
+    const rawMappings = urlMappings && typeof urlMappings === 'object' ? urlMappings as Record<string, string> : undefined;
+    const resolvedMappings = rawMappings ? await ensureDemoSites(rawMappings) : undefined;
+    const mappings = resolvedMappings && Object.keys(resolvedMappings).length > 0 ? resolvedMappings : undefined;
 
     if (mode === "desktop") {
       agent = await startDesktop();

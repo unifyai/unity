@@ -48,9 +48,11 @@ class ActorConfig(BaseModel):
     url_mappings: Optional[Dict[str, str]] = Field(
         default=None,
         description=(
-            "URL origin mappings for demo mode. Keys are original origins "
-            "(e.g. 'https://www.zoho.com'), values are local replacements "
-            "(e.g. 'http://localhost:4001'). Applied via Playwright context.route()."
+            "URL-to-demo-site mappings. Keys are original origins "
+            "(e.g. 'https://connect.zoho.com'), values are demo site directory "
+            "names under agent-service/demo-sites/ (e.g. 'vantage-portal'). "
+            "The agent-service resolves each directory to a localhost URL with "
+            "a dynamically assigned port."
         ),
     )
 
