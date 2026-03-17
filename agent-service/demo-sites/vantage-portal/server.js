@@ -130,6 +130,59 @@ const THREADS = [
       { name: "Lena Morris", org: "Broadland Housing", date: "6 Feb 2025", text: "We\u2019ve been struggling with this \u2014 currently at 35 cases per 1,000 homes which is above the sector average. We\u2019ve just brought in a specialist surveyor to review our worst-affected properties and develop a remediation programme. Concerned about compliance with the new Awaab\u2019s Law requirements." },
     ],
   },
+  {
+    id: 7, title: "Void standards and turnaround thresholds", date: "22 November 2024",
+    category: "Data & Reporting",
+    op_name: "Karen Blackwell", op_org: "Westmoor Housing Group", op_role: "Head of Sustainability",
+    op_text: "Does anyone have documented void standards they\u2019d be willing to share? We\u2019re reviewing our lettable standard and trying to benchmark our turnaround times. Our board is pushing hard on this \u2014 we\u2019re at 28 days average which I know is above what some of you are achieving.\n\nWhat targets are others working to? And what lettable standards do you use \u2014 Basic, Standard, or Enhanced?",
+    replies: [
+      { name: "Fiona Clarke", org: "Northfield HA", date: "23 Nov 2024", text: "Our target is 18 calendar days key-to-key for standard voids. We\u2019re currently achieving 16 days on average. We use an Enhanced lettable standard which includes full redecoration and new flooring where needed. The key change for us was introducing pre-void inspections 4 weeks before the tenancy ends \u2014 lets us plan the works schedule in advance and order materials early." },
+      { name: "James Thornton", org: "Riverside Community Housing", date: "24 Nov 2024", text: "We\u2019re targeting 16 days but our actual is 22 at the moment \u2014 so we\u2019ve got work to do. We use a Basic standard (safety checks plus clean). We\u2019re piloting \u2018void packs\u2019 with new tenant welcome kits which include cleaning supplies, a small toolkit, and a guide to the property. Early feedback from tenants has been positive." },
+      { name: "Mark Jennings", org: "Greendale Homes", date: "25 Nov 2024", text: "We target 20 days and we\u2019re at 19 on average. Standard lettable standard \u2014 safety checks plus essential repairs. We set up a dedicated void contractor team on a 5-day SLA for each property, which has helped enormously with consistency." },
+      { name: "David Osei", org: "Beacon Dwellings", date: "25 Nov 2024", text: "Target is 15 days, actual is 21. We use an Enhanced standard. We\u2019ve been using the Plentific platform for void works scheduling which has helped with visibility and contractor management, but we\u2019re still not hitting target consistently. Contractor availability is the main bottleneck." },
+      { name: "Priya Sharma", org: "Oaktree Living", date: "26 Nov 2024", text: "We\u2019re at 25 days average with a 20-day target and a Basic standard. Really struggling with contractor availability \u2014 it\u2019s our biggest challenge. We\u2019re seriously exploring setting up an in-house team after hearing about Severn Vale\u2019s experience." },
+      { name: "Tom Henderson", org: "Millbrook Homes", date: "27 Nov 2024", text: "18-day target, 17 days actual. Standard lettable standard. The key for us was integrating void and lettings into a single team \u2014 one team handles everything from the pre-void inspection through to the new tenant sign-up. Eliminated a 3-4 day handover gap we used to have." },
+      { name: "Claire Whitfield", org: "Pennine Valleys Housing", date: "28 Nov 2024", text: "We recently tightened from a 28-day target to 22 days after board scrutiny. Currently at 24 days with a Basic standard. The board presentation on void costs (\u00a38,400 per void period for properties taking over 30 days) was the catalyst for change." },
+      { name: "Andrew Marsh", org: "Severn Vale Homes", date: "29 Nov 2024", text: "We target 16 days and we\u2019re consistently at 15. Enhanced lettable standard. We attribute our performance almost entirely to having an in-house DLO. Setup cost was about \u00a3185k \u2014 8 operatives, vans, tools. Broke even within 14 months through reduced contractor costs and dramatically lower rent loss. Our void turnaround went from 24 days to 15 days." },
+    ],
+  },
+  {
+    id: 8, title: "EV charging infrastructure for housing stock", date: "10 February 2025",
+    category: "Decarbonisation",
+    op_name: "Mei-Lin Chen", op_org: "Wychwood HA", op_role: "Sustainability Lead",
+    op_text: "We\u2019ve started getting requests from tenants about EV charging points. We\u2019ve installed 20 so far in newer developments but need a strategy for older stock where off-street parking is limited.\n\nWhat are others doing? Interested in costs per unit and experience with communal charging hubs.",
+    replies: [
+      { name: "Oliver Grant", org: "Thameside Housing Trust", date: "11 Feb 2025", text: "We\u2019ve got 45 charge points installed \u2014 mainly in new builds and estate car parks. Cost has been about \u00a31,200 per 7kW unit including installation and groundworks. We\u2019re looking at communal hubs for our older estates in south-east London where individual installations aren\u2019t practical." },
+      { name: "Mark Jennings", org: "Greendale Homes", date: "12 Feb 2025", text: "We\u2019ve done 35 across our estate car parks in Nottingham. We partnered with a charge point operator who funded 50% of the installation cost in exchange for managing the network and taking a cut of the charging revenue. Works well for communal locations." },
+      { name: "James Thornton", org: "Riverside Community Housing", date: "13 Feb 2025", text: "30 installed so far. We went with Pod Point who funded the full installation in exchange for a 10-year revenue share. Zero upfront cost to us. Tenants pay a competitive per-kWh rate. Worth exploring if budget is a constraint." },
+      { name: "Ian Calvert", org: "Dales & Moorland Housing", date: "14 Feb 2025", text: "For our rural stock the main challenge is grid capacity. We had to get a transformer upgrade at one estate which added \u00a315k to the cost. Definitely investigate DNO capacity before committing to a location. We\u2019ve done 12 so far but learning as we go." },
+    ],
+  },
+  {
+    id: 9, title: "Stock condition survey approaches", date: "20 January 2025",
+    category: "Data & Reporting",
+    op_name: "James Thornton", op_org: "Riverside Community Housing", op_role: "Head of Property Services",
+    op_text: "We\u2019ve just completed a full stock condition survey across our 15,300 homes and the results have been eye-opening \u2014 20% discrepancy with EPC records, 340 properties needing urgent window replacement, 85 potential damp risks.\n\nHow are others approaching stock condition surveys? Are you doing full surveys or sampling?",
+    replies: [
+      { name: "Sarah Linehan", org: "Meridian Housing Group", date: "21 Jan 2025", text: "We did a 30% sample survey two years ago and then built an asset database from the results. It\u2019s Excel-based but tracks installed measures per property and calculates the expected EPC. Not official but gives us a much better picture for investment planning than relying on the EPC register." },
+      { name: "Rachel Iqbal", org: "Thornbury HA", date: "22 Jan 2025", text: "We\u2019re planning a full survey in 2025/26 \u2014 our board wants accurate data before committing to the EPC C+ target. Budget is about \u00a3120 per property for an external surveyor. For 8,900 homes that\u2019s over \u00a31m which is a significant investment." },
+      { name: "Wayne Kirkpatrick", org: "Stonebridge Housing Group", date: "23 Jan 2025", text: "We took a phased approach \u2014 started with our worst-performing stock (pre-1960 build) which is about 3,000 properties. Found that 25% had incorrect EPCs. Now working through the rest of the stock in batches. Keeps the annual spend manageable." },
+      { name: "George Kaplan", org: "Maplewood Living", date: "24 Jan 2025", text: "We used our housing officers to do basic assessments during routine visits \u2014 a checklist covering insulation type, window condition, heating system, and visible defects. Not as rigorous as a professional survey but covers a lot of ground quickly and at minimal cost." },
+    ],
+  },
+  {
+    id: 10, title: "Awaab\u2019s Law compliance preparation", date: "25 February 2025",
+    category: "Compliance",
+    op_name: "Samira Begum", op_org: "Ironbridge Homes", op_role: "Head of Compliance",
+    op_text: "With Awaab\u2019s Law now in force, I\u2019m reviewing our damp and mould response processes. We\u2019re currently targeting 5 working days for initial inspection but from what I heard at the last session, several members are moving much faster.\n\nWhat specific changes have you made to meet the new requirements? And how are you managing the additional workload?",
+    replies: [
+      { name: "Fiona Clarke", org: "Northfield HA", date: "26 Feb 2025", text: "We\u2019ve moved to a three-tier triage system: emergency (structural risk or health concern \u2014 same day), urgent (visible mould \u2014 48 hours), routine (condensation advice \u2014 5 days). The 48-hour target for urgent cases was the big change. We hired two additional surveyors to handle the volume." },
+      { name: "Chris Doyle", org: "Lakeside Living", date: "27 Feb 2025", text: "Our sensor programme is the key to our compliance approach. 500 environmental sensors flag high humidity before mould develops. We can intervene proactively \u2014 a phone call to advise on ventilation, or sending out a dehumidifier. Our target is 72 hours for inspection once a case is reported, but the sensors mean fewer cases are reported in the first place." },
+      { name: "Helen Foster", org: "Riverview Estates", date: "28 Feb 2025", text: "Honestly, we\u2019re struggling. We\u2019re at 42 cases per 1,000 homes and the team is overwhelmed. We\u2019ve brought in agency surveyors to help with the backlog but it\u2019s not sustainable. The new requirements are right in principle but resourcing is a real challenge for organisations our size." },
+      { name: "Joanna Briggs", org: "Harrowfield Homes", date: "1 Mar 2025", text: "We\u2019ve rolled out damp and mould assessment training for all housing officers \u2014 half-day sessions covering visual identification, moisture meter use, and when to escalate. The idea is that officers spot issues during routine visits before tenants report them. Early results are promising." },
+      { name: "Emma Stubbs", org: "Avondale Community Homes", date: "2 Mar 2025", text: "We\u2019re a smaller organisation so we couldn\u2019t justify hiring dedicated surveyors. Instead we\u2019ve trained our maintenance team and created a fast-track process. Any D&M report gets a same-day phone assessment and a visit within 72 hours. The key was simplifying the process rather than adding more resource." },
+    ],
+  },
 ];
 
 const CATEGORIES = [...new Set(THREADS.map(t => t.category))];
