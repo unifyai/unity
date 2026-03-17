@@ -46,6 +46,7 @@ _events_processed = 0
 def configure(settings: kopf.OperatorSettings, **_):
     settings.posting.enabled = False
     settings.persistence.finalizer = None
+    settings.scanning.disabled = True
 
     logging.getLogger("kopf").setLevel(logging.WARNING)
     logging.getLogger("httpx").setLevel(logging.WARNING)
