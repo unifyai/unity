@@ -192,21 +192,20 @@ class SyncManager:
         LOGGER.debug(f"{ICONS['file_sync']} [FileSync] Created sentinel: {sentinel}")
 
     async def _get_ssh_private_key(self) -> Optional[str]:
-        """Retrieve SSH private key from Orchestra assistant record."""
+        """Retrieve SSH private key from Orchestra assistant record.
+
+        Uses the global admin list endpoint filtered by agent_id so that
+        both personal and org-level assistants are found.
+        """
         from unity.session_details import SESSION_DETAILS
         from unity.settings import SETTINGS
 
         assistant_id = SESSION_DETAILS.assistant.agent_id
-        user_id = SESSION_DETAILS.user_id
         base_url = SETTINGS.ORCHESTRA_URL
         admin_key = SETTINGS.ORCHESTRA_ADMIN_KEY.get_secret_value()
 
         if assistant_id is None:
             LOGGER.debug(f"{ICONS['file_sync']} [FileSync] No assistant_id configured")
-            return None
-
-        if not user_id:
-            LOGGER.debug(f"{ICONS['file_sync']} [FileSync] No user_id configured")
             return None
 
         if not base_url:
@@ -219,12 +218,14 @@ class SyncManager:
             )
             return None
 
-        url = f"{base_url}/admin/assistant/user/{user_id}"
+        url = f"{base_url}/admin/assistant"
         headers = {"Authorization": f"Bearer {admin_key}"}
+        params = {"agent_id": str(assistant_id)}
 
-        LOGGER.debug(f"{ICONS['file_sync']} [FileSync] Retrieving SSH key from {url}")
+        LOGGER.debug(
+            f"{ICONS['file_sync']} [FileSync] Retrieving SSH key for assistant {assistant_id}",
+        )
 
-        # Retry loop for SSH key retrieval
         max_retries = self.config.max_retries
         retry_delay = self.config.retry_delay_seconds
 
@@ -235,27 +236,19 @@ class SyncManager:
                 LOGGER.debug(
                     f"{ICONS['file_sync']} [FileSync] Fetching SSH key (attempt {attempt}/{max_retries})...",
                 )
-                resp = http.get(url, headers=headers, timeout=30)
+                resp = http.get(url, headers=headers, params=params, timeout=30)
 
                 if resp.status_code == 200:
                     data = resp.json()
                     assistants = data.get("info", [])
 
-                    # Find assistant by matching agent_id
-                    matched = None
-                    for assistant in assistants:
-                        if str(assistant.get("agent_id")) == str(assistant_id):
-                            matched = assistant
-                            break
-
-                    if not matched:
+                    if not assistants:
                         LOGGER.debug(
-                            f"{ICONS['file_sync']} [FileSync] Assistant {assistant_id} not found in "
-                            f"{len(assistants)} assistants for user {user_id}",
+                            f"{ICONS['file_sync']} [FileSync] Assistant {assistant_id} not found",
                         )
                         return None
 
-                    key = matched.get("desktop_filesync_sshkey")
+                    key = assistants[0].get("desktop_filesync_sshkey")
 
                     if key:
                         LOGGER.debug(
