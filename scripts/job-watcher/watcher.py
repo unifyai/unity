@@ -34,14 +34,20 @@ import kopf
 
 from assistant_jobs_api import expire_assistant_records, release_pool_vm
 
-log = logging.getLogger("job-watcher")
-
 COMMS_URL = os.environ["UNITY_COMMS_URL"]
 SHARED_UNIFY_KEY = os.environ["SHARED_UNIFY_KEY"]
 ADMIN_KEY = os.environ["ORCHESTRA_ADMIN_KEY"]
 MAX_EVENT_AGE = datetime.timedelta(hours=1)
 
 _events_processed = 0
+
+
+@kopf.on.startup()
+def configure(settings: kopf.OperatorSettings, **_):
+    settings.posting.enabled = False
+    settings.persistence.finalizer = None
+
+    logging.getLogger("kopf").setLevel(logging.WARNING)
 
 
 def _parse_k8s_timestamp(ts: str) -> datetime.datetime | None:
@@ -82,16 +88,13 @@ def on_job_event(event, **_):
     job_name = metadata.get("name", "unknown")
     assistant_id = labels.get("assistant-id")
 
-    log.info(
-        "Job %s terminal (condition=%s, assistant-id=%s)",
-        job_name,
-        terminal["type"],
-        assistant_id,
+    print(
+        f"Job {job_name} terminal (condition={terminal['type']}, assistant-id={assistant_id})"
     )
     _events_processed += 1
 
     if not assistant_id:
-        log.info("No assistant-id label on %s — skipping cleanup", job_name)
+        print(f"No assistant-id label on {job_name} — skipping cleanup")
         return
 
     expire_assistant_records(SHARED_UNIFY_KEY, assistant_id)
