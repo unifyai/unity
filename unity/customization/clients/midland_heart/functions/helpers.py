@@ -174,7 +174,7 @@ def resolve_group_by(
     if group_by is None:
         return None
 
-    key = group_by.lower()
+    key = (group_by.value if hasattr(group_by, "value") else group_by).lower()
 
     date_columns = {
         "completion": "WorksOrderReportedCompletedDateDay",

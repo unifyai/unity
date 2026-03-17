@@ -53,6 +53,8 @@ from .helpers import (
     discover_repairs_table,
     discover_telematics_tables,
     extract_count,
+    extract_plot_succeeded,
+    extract_plot_url,
     extract_sum,
     normalize_grouped_result,
     resolve_group_by,
@@ -65,36 +67,6 @@ SKIPPED_METRICS: dict[str, str] = {
     "travel_time": "Blocked: HH:MM:SS string parsing not supported by backend",
     "complaints_rate": "Blocked: no complaints column in available data",
 }
-
-
-# =============================================================================
-# HELPER: common preamble for repairs metrics
-# =============================================================================
-
-
-def _resolve_group_by_str(group_by) -> str | None:
-    """Coerce group_by (which may be an Enum) to a plain string or None."""
-    if group_by is None:
-        return None
-    return group_by.value if hasattr(group_by, "value") else str(group_by)
-
-
-def _make_plot_entry(result, title: str) -> dict:
-    """Build a standardised plot entry dict from a plot result."""
-    url = None
-    succeeded = False
-    error = None
-    if result is not None:
-        if hasattr(result, "url"):
-            url = result.url
-        elif isinstance(result, dict):
-            url = result.get("url") or result.get("image_url")
-        if hasattr(result, "error"):
-            error = result.error
-        elif isinstance(result, dict):
-            error = result.get("error")
-        succeeded = bool(url) and not error
-    return {"url": url, "title": title, "succeeded": succeeded, "error": error}
 
 
 # =============================================================================
@@ -165,8 +137,7 @@ async def repairs_kpi_jobs_completed(
     if not context:
         raise ValueError("Failed to discover repairs table")
 
-    group_by_str = _resolve_group_by_str(group_by)
-    group_by_field = resolve_group_by(group_by_str)
+    group_by_field = resolve_group_by(group_by)
 
     completed_filter = "`WorksOrderStatusDescription` in ['Complete', 'Closed']"
     filter_expr = build_filter([completed_filter], start_date, end_date)
@@ -190,7 +161,7 @@ async def repairs_kpi_jobs_completed(
 
     plots = []
     if include_plots and group_by_field:
-        title = f"Jobs Completed by {(group_by_str or 'Group').title()}"
+        title = f"Jobs Completed by {(group_by or 'Group').title()}"
         try:
             plot_result = await data_primitives.plot(
                 context,
@@ -200,7 +171,13 @@ async def repairs_kpi_jobs_completed(
                 filter=filter_expr,
                 title=title,
             )
-            plots.append(_make_plot_entry(plot_result, title))
+            plots.append(
+                {
+                    "url": extract_plot_url(plot_result),
+                    "title": title,
+                    "succeeded": extract_plot_succeeded(plot_result),
+                },
+            )
         except Exception as e:
             plots.append(
                 {"url": None, "title": title, "succeeded": False, "error": str(e)},
@@ -208,7 +185,7 @@ async def repairs_kpi_jobs_completed(
 
     return build_metric_result(
         metric_name=metric_name,
-        group_by=group_by_str,
+        group_by=group_by,
         time_period=time_period,
         start_date=start_date,
         end_date=end_date,
@@ -275,8 +252,7 @@ async def repairs_kpi_no_access_rate(
     if not context:
         raise ValueError("Failed to discover repairs table")
 
-    group_by_str = _resolve_group_by_str(group_by)
-    group_by_field = resolve_group_by(group_by_str)
+    group_by_field = resolve_group_by(group_by)
 
     no_access_filter = build_filter(
         ["`NoAccess` != 'None' and `NoAccess` != ''"],
@@ -356,7 +332,7 @@ async def repairs_kpi_no_access_rate(
 
     plots = []
     if include_plots and group_by_field:
-        title = f"No-Access Rate by {(group_by_str or 'Group').title()}"
+        title = f"No-Access Rate by {(group_by or 'Group').title()}"
         try:
             plot_result = await data_primitives.plot(
                 context,
@@ -366,7 +342,13 @@ async def repairs_kpi_no_access_rate(
                 filter=no_access_filter,
                 title=title,
             )
-            plots.append(_make_plot_entry(plot_result, title))
+            plots.append(
+                {
+                    "url": extract_plot_url(plot_result),
+                    "title": title,
+                    "succeeded": extract_plot_succeeded(plot_result),
+                },
+            )
         except Exception as e:
             plots.append(
                 {"url": None, "title": title, "succeeded": False, "error": str(e)},
@@ -374,7 +356,7 @@ async def repairs_kpi_no_access_rate(
 
     return build_metric_result(
         metric_name=metric_name,
-        group_by=group_by_str,
+        group_by=group_by,
         time_period=time_period,
         start_date=start_date,
         end_date=end_date,
@@ -442,8 +424,7 @@ async def repairs_kpi_first_time_fix_rate(
     if not context:
         raise ValueError("Failed to discover repairs table")
 
-    group_by_str = _resolve_group_by_str(group_by)
-    group_by_field = resolve_group_by(group_by_str)
+    group_by_field = resolve_group_by(group_by)
 
     ftf_filter = build_filter(["`FirstTimeFix` == 'Yes'"], start_date, end_date)
     raw_ftf = await data_primitives.reduce(
@@ -518,7 +499,7 @@ async def repairs_kpi_first_time_fix_rate(
 
     plots = []
     if include_plots and group_by_field:
-        title = f"First-Time Fix by {(group_by_str or 'Group').title()}"
+        title = f"First-Time Fix by {(group_by or 'Group').title()}"
         try:
             plot_result = await data_primitives.plot(
                 context,
@@ -528,7 +509,13 @@ async def repairs_kpi_first_time_fix_rate(
                 filter=ftf_filter,
                 title=title,
             )
-            plots.append(_make_plot_entry(plot_result, title))
+            plots.append(
+                {
+                    "url": extract_plot_url(plot_result),
+                    "title": title,
+                    "succeeded": extract_plot_succeeded(plot_result),
+                },
+            )
         except Exception as e:
             plots.append(
                 {"url": None, "title": title, "succeeded": False, "error": str(e)},
@@ -536,7 +523,7 @@ async def repairs_kpi_first_time_fix_rate(
 
     return build_metric_result(
         metric_name=metric_name,
-        group_by=group_by_str,
+        group_by=group_by,
         time_period=time_period,
         start_date=start_date,
         end_date=end_date,
@@ -605,8 +592,7 @@ async def repairs_kpi_follow_on_required_rate(
     if not context:
         raise ValueError("Failed to discover repairs table")
 
-    group_by_str = _resolve_group_by_str(group_by)
-    group_by_field = resolve_group_by(group_by_str)
+    group_by_field = resolve_group_by(group_by)
 
     fo_filter = build_filter(
         [
@@ -688,7 +674,7 @@ async def repairs_kpi_follow_on_required_rate(
 
     plots = []
     if include_plots and group_by_field:
-        title = f"Follow-On Required by {(group_by_str or 'Group').title()}"
+        title = f"Follow-On Required by {(group_by or 'Group').title()}"
         try:
             plot_result = await data_primitives.plot(
                 context,
@@ -698,7 +684,13 @@ async def repairs_kpi_follow_on_required_rate(
                 filter=fo_filter,
                 title=title,
             )
-            plots.append(_make_plot_entry(plot_result, title))
+            plots.append(
+                {
+                    "url": extract_plot_url(plot_result),
+                    "title": title,
+                    "succeeded": extract_plot_succeeded(plot_result),
+                },
+            )
         except Exception as e:
             plots.append(
                 {"url": None, "title": title, "succeeded": False, "error": str(e)},
@@ -706,7 +698,7 @@ async def repairs_kpi_follow_on_required_rate(
 
     return build_metric_result(
         metric_name=metric_name,
-        group_by=group_by_str,
+        group_by=group_by,
         time_period=time_period,
         start_date=start_date,
         end_date=end_date,
@@ -775,8 +767,7 @@ async def repairs_kpi_follow_on_materials_rate(
     if not context:
         raise ValueError("Failed to discover repairs table")
 
-    group_by_str = _resolve_group_by_str(group_by)
-    group_by_field = resolve_group_by(group_by_str)
+    group_by_field = resolve_group_by(group_by)
 
     fo_filter = build_filter(["`FollowOn` == 'Yes'"], start_date, end_date)
     raw_total_fo = await data_primitives.reduce(
@@ -852,7 +843,7 @@ async def repairs_kpi_follow_on_materials_rate(
 
     plots = []
     if include_plots and group_by_field:
-        title = f"Follow-On Materials by {(group_by_str or 'Group').title()}"
+        title = f"Follow-On Materials by {(group_by or 'Group').title()}"
         try:
             plot_result = await data_primitives.plot(
                 context,
@@ -862,7 +853,13 @@ async def repairs_kpi_follow_on_materials_rate(
                 filter=materials_filter,
                 title=title,
             )
-            plots.append(_make_plot_entry(plot_result, title))
+            plots.append(
+                {
+                    "url": extract_plot_url(plot_result),
+                    "title": title,
+                    "succeeded": extract_plot_succeeded(plot_result),
+                },
+            )
         except Exception as e:
             plots.append(
                 {"url": None, "title": title, "succeeded": False, "error": str(e)},
@@ -870,7 +867,7 @@ async def repairs_kpi_follow_on_materials_rate(
 
     return build_metric_result(
         metric_name=metric_name,
-        group_by=group_by_str,
+        group_by=group_by,
         time_period=time_period,
         start_date=start_date,
         end_date=end_date,
@@ -943,8 +940,7 @@ async def repairs_kpi_job_completed_on_time_rate(
     if not context:
         raise ValueError("Failed to discover repairs table")
 
-    group_by_str = _resolve_group_by_str(group_by)
-    group_by_field = resolve_group_by(group_by_str)
+    group_by_field = resolve_group_by(group_by)
 
     on_time_condition = (
         "(`WorksOrderStatusDescription` in ['Complete', 'Closed']) "
@@ -1025,7 +1021,7 @@ async def repairs_kpi_job_completed_on_time_rate(
 
     plots = []
     if include_plots and group_by_field:
-        title = f"On-Time Completions by {(group_by_str or 'Group').title()}"
+        title = f"On-Time Completions by {(group_by or 'Group').title()}"
         try:
             plot_result = await data_primitives.plot(
                 context,
@@ -1035,7 +1031,13 @@ async def repairs_kpi_job_completed_on_time_rate(
                 filter=on_time_filter,
                 title=title,
             )
-            plots.append(_make_plot_entry(plot_result, title))
+            plots.append(
+                {
+                    "url": extract_plot_url(plot_result),
+                    "title": title,
+                    "succeeded": extract_plot_succeeded(plot_result),
+                },
+            )
         except Exception as e:
             plots.append(
                 {"url": None, "title": title, "succeeded": False, "error": str(e)},
@@ -1043,7 +1045,7 @@ async def repairs_kpi_job_completed_on_time_rate(
 
     return build_metric_result(
         metric_name=metric_name,
-        group_by=group_by_str,
+        group_by=group_by,
         time_period=time_period,
         start_date=start_date,
         end_date=end_date,
@@ -1112,8 +1114,7 @@ async def repairs_kpi_total_distance_travelled(
     if not telematics_tables:
         raise ValueError("Failed to discover telematics tables")
 
-    group_by_str = _resolve_group_by_str(group_by)
-    group_by_field = resolve_group_by(group_by_str, telematics=True)
+    group_by_field = resolve_group_by(group_by, telematics=True)
 
     base_filter = "`Business distance` != 'None'"
 
@@ -1147,7 +1148,7 @@ async def repairs_kpi_total_distance_travelled(
 
     plots = []
     if include_plots and group_by_field:
-        title = f"Distance Travelled by {(group_by_str or 'Group').title()}"
+        title = f"Distance Travelled by {(group_by or 'Group').title()}"
         try:
             plot_result = await data_primitives.plot(
                 telematics_tables[0],
@@ -1156,7 +1157,13 @@ async def repairs_kpi_total_distance_travelled(
                 aggregate="sum",
                 title=title,
             )
-            plots.append(_make_plot_entry(plot_result, title))
+            plots.append(
+                {
+                    "url": extract_plot_url(plot_result),
+                    "title": title,
+                    "succeeded": extract_plot_succeeded(plot_result),
+                },
+            )
         except Exception as e:
             plots.append(
                 {"url": None, "title": title, "succeeded": False, "error": str(e)},
@@ -1164,7 +1171,7 @@ async def repairs_kpi_total_distance_travelled(
 
     return build_metric_result(
         metric_name=metric_name,
-        group_by=group_by_str,
+        group_by=group_by,
         time_period=time_period,
         start_date=start_date,
         end_date=end_date,
@@ -1233,8 +1240,7 @@ async def repairs_kpi_jobs_issued(
     if not context:
         raise ValueError("Failed to discover repairs table")
 
-    group_by_str = _resolve_group_by_str(group_by)
-    group_by_field = resolve_group_by(group_by_str, date_context="issued")
+    group_by_field = resolve_group_by(group_by, date_context="issued")
 
     filter_expr = build_filter(
         ["`WorksOrderStatusDescription` == 'Issued'"],
@@ -1262,7 +1268,7 @@ async def repairs_kpi_jobs_issued(
 
     plots = []
     if include_plots and group_by_field:
-        title = f"Jobs Issued by {(group_by_str or 'Group').title()}"
+        title = f"Jobs Issued by {(group_by or 'Group').title()}"
         try:
             plot_result = await data_primitives.plot(
                 context,
@@ -1272,7 +1278,13 @@ async def repairs_kpi_jobs_issued(
                 filter=filter_expr,
                 title=title,
             )
-            plots.append(_make_plot_entry(plot_result, title))
+            plots.append(
+                {
+                    "url": extract_plot_url(plot_result),
+                    "title": title,
+                    "succeeded": extract_plot_succeeded(plot_result),
+                },
+            )
         except Exception as e:
             plots.append(
                 {"url": None, "title": title, "succeeded": False, "error": str(e)},
@@ -1280,7 +1292,7 @@ async def repairs_kpi_jobs_issued(
 
     return build_metric_result(
         metric_name=metric_name,
-        group_by=group_by_str,
+        group_by=group_by,
         time_period=time_period,
         start_date=start_date,
         end_date=end_date,
@@ -1348,8 +1360,7 @@ async def repairs_kpi_jobs_requiring_materials_rate(
     if not context:
         raise ValueError("Failed to discover repairs table")
 
-    group_by_str = _resolve_group_by_str(group_by)
-    group_by_field = resolve_group_by(group_by_str)
+    group_by_field = resolve_group_by(group_by)
 
     materials_condition = (
         "(`WorksOrderStatusDescription` in ['Complete', 'Closed']) and "
@@ -1428,7 +1439,7 @@ async def repairs_kpi_jobs_requiring_materials_rate(
 
     plots = []
     if include_plots and group_by_field:
-        title = f"Jobs Requiring Materials by {(group_by_str or 'Group').title()}"
+        title = f"Jobs Requiring Materials by {(group_by or 'Group').title()}"
         try:
             plot_result = await data_primitives.plot(
                 context,
@@ -1438,7 +1449,13 @@ async def repairs_kpi_jobs_requiring_materials_rate(
                 filter=materials_filter,
                 title=title,
             )
-            plots.append(_make_plot_entry(plot_result, title))
+            plots.append(
+                {
+                    "url": extract_plot_url(plot_result),
+                    "title": title,
+                    "succeeded": extract_plot_succeeded(plot_result),
+                },
+            )
         except Exception as e:
             plots.append(
                 {"url": None, "title": title, "succeeded": False, "error": str(e)},
@@ -1446,7 +1463,7 @@ async def repairs_kpi_jobs_requiring_materials_rate(
 
     return build_metric_result(
         metric_name=metric_name,
-        group_by=group_by_str,
+        group_by=group_by,
         time_period=time_period,
         start_date=start_date,
         end_date=end_date,
@@ -1516,7 +1533,7 @@ async def repairs_kpi_avg_repairs_per_property(
     if not context:
         raise ValueError("Failed to discover repairs table")
 
-    group_by_str = _resolve_group_by_str(group_by)
+    group_by_field = resolve_group_by(group_by)
 
     filter_expr = build_filter(
         ["`WorksOrderStatusDescription` in ['Complete', 'Closed']"],
@@ -1554,7 +1571,7 @@ async def repairs_kpi_avg_repairs_per_property(
 
         return build_metric_result(
             metric_name=metric_name,
-            group_by=group_by_str,
+            group_by=group_by,
             time_period=time_period,
             start_date=start_date,
             end_date=end_date,
@@ -1575,7 +1592,7 @@ async def repairs_kpi_avg_repairs_per_property(
     else:
         return build_metric_result(
             metric_name=metric_name,
-            group_by=group_by_str,
+            group_by=group_by,
             time_period=time_period,
             start_date=start_date,
             end_date=end_date,
@@ -1647,8 +1664,7 @@ async def repairs_kpi_appointment_adherence_rate(
     if not context:
         raise ValueError("Failed to discover repairs table")
 
-    group_by_str = _resolve_group_by_str(group_by)
-    group_by_field = resolve_group_by(group_by_str, date_context="scheduled")
+    group_by_field = resolve_group_by(group_by, date_context="scheduled")
 
     # Check if required columns exist
     try:
@@ -1666,7 +1682,7 @@ async def repairs_kpi_appointment_adherence_rate(
             if missing_cols:
                 return build_metric_result(
                     metric_name=metric_name,
-                    group_by=group_by_str,
+                    group_by=group_by,
                     time_period=time_period,
                     start_date=start_date,
                     end_date=end_date,
@@ -1783,7 +1799,7 @@ async def repairs_kpi_appointment_adherence_rate(
 
     plots = []
     if include_plots and group_by_field:
-        title = f"Scheduled Jobs by {(group_by_str or 'Group').title()}"
+        title = f"Scheduled Jobs by {(group_by or 'Group').title()}"
         try:
             plot_result = await data_primitives.plot(
                 context,
@@ -1793,7 +1809,13 @@ async def repairs_kpi_appointment_adherence_rate(
                 filter=base_filter,
                 title=title,
             )
-            plots.append(_make_plot_entry(plot_result, title))
+            plots.append(
+                {
+                    "url": extract_plot_url(plot_result),
+                    "title": title,
+                    "succeeded": extract_plot_succeeded(plot_result),
+                },
+            )
         except Exception as e:
             plots.append(
                 {"url": None, "title": title, "succeeded": False, "error": str(e)},
@@ -1801,7 +1823,7 @@ async def repairs_kpi_appointment_adherence_rate(
 
     return build_metric_result(
         metric_name=metric_name,
-        group_by=group_by_str,
+        group_by=group_by,
         time_period=time_period,
         start_date=start_date,
         end_date=end_date,
