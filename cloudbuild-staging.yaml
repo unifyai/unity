@@ -89,6 +89,7 @@ steps:
   args:
   - '-c'
   - |
+    set -e
     ADAPTERS=https://unity-adapters-staging-ky4ja5fxna-uc.a.run.app
     AUTH="Authorization: Bearer $$ORCHESTRA_ADMIN_KEY"
 
