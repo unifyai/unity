@@ -103,25 +103,41 @@ def patch_job_label(
     job_name: str,
     status: str,
     assistant_id: str | None = None,
+    timeout: float = 30,
+    retries: int = 0,
 ) -> bool:
     """Patch the K8s Job ``unity-status`` label.  Returns True on success."""
     labels: dict[str, str] = {"unity-status": status}
     if assistant_id is not None:
         labels["assistant-id"] = str(assistant_id).lower().replace("_", "-")
-    try:
-        resp = requests.patch(
-            f"{comms_url}/infra/job/labels",
-            data={
-                "job_name": job_name,
-                "labels": json.dumps(labels),
-            },
-            headers={"Authorization": f"Bearer {admin_key}"},
-            timeout=30,
-        )
-        return resp.ok
-    except Exception:
-        log.exception("Error patching label for %s", job_name)
-        return False
+    for attempt in range(1 + retries):
+        try:
+            resp = requests.patch(
+                f"{comms_url}/infra/job/labels",
+                data={
+                    "job_name": job_name,
+                    "labels": json.dumps(labels),
+                },
+                headers={"Authorization": f"Bearer {admin_key}"},
+                timeout=timeout,
+            )
+            if resp.ok:
+                return True
+            log.warning(
+                "Label patch for %s returned %s (attempt %d/%d)",
+                job_name,
+                resp.status_code,
+                attempt + 1,
+                1 + retries,
+            )
+        except Exception:
+            log.exception(
+                "Error patching label for %s (attempt %d/%d)",
+                job_name,
+                attempt + 1,
+                1 + retries,
+            )
+    return False
 
 
 # ---------------------------------------------------------------------------

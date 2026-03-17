@@ -172,8 +172,8 @@ Business rules:
   click through quickly, producing very short visit durations.
 - VisitDate is the default date column for date-range filtering in KPIs.
 - Derived day columns exist for temporal grouping:
-  WorksOrderReportedCompletedDateDay, WorksOrderIssuedDateDay,
-  ArrivedOnSiteDay, ScheduledAppointmentStartDay.\
+  WorksOrderReportedCompletedDate_Day, WorksOrderIssuedDate_Day,
+  ArrivedOnSite_Date, ScheduledAppointmentStart_Date.\
 """
 
 _TELEMATICS_SCHEMA_GUIDANCE = """\
@@ -303,7 +303,10 @@ Anti-patterns to avoid:
   default, but WorksOrderIssuedDate or ArrivedOnSite may be more
   appropriate depending on the question.
 - Forgetting that NoAccess and FollowOn store string values ("Yes"/reason),
-  not booleans — filter with != 'None' and != '', not == True.\
+  not booleans — filter with != 'None' and != '', not == True.
+- Filtering datetime columns with only != 'None' (string comparison).
+  Datetime columns store actual Python None for missing values, so always
+  combine both guards: != 'None' and is not None.\
 """
 
 _BUSINESS_RULES_GUIDANCE = """\
@@ -329,7 +332,7 @@ Appointment data:
   ScheduledAppointmentStart/End represent the booked window.
   JobTicketLinePlannedStartDate/EndDate are set by the scheduling team
   and may differ from the appointment window.
-  ScheduledAppointmentStartDay values of "1900-01-02" indicate missing
+  ScheduledAppointmentStart_Date values of "1900-01-02" indicate missing
   or placeholder data — exclude from appointment adherence calculations.
 
 Follow-on analysis:
@@ -340,7 +343,14 @@ Follow-on analysis:
 Telematics data quality:
   Distance, speed, and travel time fields may be empty or null for
   non-travel segments (idling events, ignition-on stops). Filter with
-  `Business distance` != 'None' for meaningful distance aggregations.
+  `Business distance` != 'None' and `Business distance` is not None
+  for meaningful distance aggregations.
+
+Null handling in datetime columns:
+  Datetime columns (e.g. WorksOrderReportedCompletedDate, ArrivedOnSite)
+  store actual Python None for missing values, not the string "None".
+  Always combine both guards: != 'None' (for string artefacts) and
+  is not None (for actual nulls).
 
 Date coverage:
   All data spans July 2025 through November 2025. Queries outside this

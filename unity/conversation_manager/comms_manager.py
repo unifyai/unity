@@ -290,6 +290,8 @@ class CommsManager:
                             args=(SETTINGS.conversation.JOB_NAME, "running"),
                             kwargs={
                                 "assistant_id": str(event.get("assistant_id", "")),
+                                "timeout": 60,
+                                "retries": 2,
                             },
                             daemon=True,
                         ).start()
