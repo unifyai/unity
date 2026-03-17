@@ -96,7 +96,7 @@
                 "VisitDate": "Timestamp when the operative accepts the job ticket on their tablet. This marks when the operative acknowledges and begins work on the job.",
                 "FirstTimeFix": "Indicator (boolean or flag) showing if the job was completed successfully on the first visit. True indicates successful first-time completion.",
                 "SecondTimeFix": "Indicator showing if the job required a second visit to complete. True indicates the job was not completed on the first attempt.",
-                "ThirdTimeFix": "Indicator showing if the job required a third visit to complete. True indicates multiple attempts were needed.",
+                "ThirdTimePlusFix": "Indicator showing if the job required a third visit to complete. True indicates multiple attempts were needed.",
                 "FollowOnNotes": "Free-text notes explaining why a follow-on visit is required. Provides context for why the job could not be completed in a single visit.",
                 "RepairsRegion": "Region where the repair job is located. Divided into geographical regions e.g. North, South, Central North, Central South, etc.",
                 "RepairsPatch": "Sub-region where the repair job is located in a region. Divided into geographical patches e.g. South Patch, North Patch 4, etc."
