@@ -113,6 +113,16 @@ async def shutdown_metrics() -> None:
     """Shut down the metrics provider (flushes + releases resources)."""
     if _provider is not None:
         try:
+            # The shutdown flush often races with the last periodic export.
+            # Cloud Monitoring rejects points written <10s apart for the same
+            # time series, which the exporter logs as a noisy ERROR traceback.
+            # This is harmless (data was already written), so suppress it.
+            _exporter_logger = logging.getLogger(
+                "opentelemetry.exporter.cloud_monitoring",
+            )
+            prev_level = _exporter_logger.level
+            _exporter_logger.setLevel(logging.CRITICAL)
+
             # Wrap shutdown in a timeout to prevent hangs during container exit.
             # Cloud Monitoring flushes can be slow or fail on flaky connections.
             await asyncio.wait_for(
@@ -127,3 +137,5 @@ async def shutdown_metrics() -> None:
             )
         except Exception as exc:
             LOGGER.error(f"{ICONS['metrics']} [metrics] Shutdown failed: {exc}")
+        finally:
+            _exporter_logger.setLevel(prev_level)
