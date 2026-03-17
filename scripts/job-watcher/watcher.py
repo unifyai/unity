@@ -37,7 +37,7 @@ from assistant_jobs_api import expire_assistant_records, release_pool_vm
 COMMS_URL = os.environ["UNITY_COMMS_URL"]
 SHARED_UNIFY_KEY = os.environ["SHARED_UNIFY_KEY"]
 ADMIN_KEY = os.environ["ORCHESTRA_ADMIN_KEY"]
-MAX_EVENT_AGE = datetime.timedelta(hours=1)
+MAX_EVENT_AGE = datetime.timedelta(minutes=5)
 
 _events_processed = 0
 
@@ -64,7 +64,14 @@ def on_job_event(event, **_):
     global _events_processed
 
     job = event.get("object", {})
-    conditions = job.get("status", {}).get("conditions", [])
+    status = job.get("status", {})
+    print("job", job)
+    print("status", status)
+
+    if status.get("active", 0) >= 1:
+        return
+
+    conditions = status.get("conditions", [])
 
     terminal = next(
         (
