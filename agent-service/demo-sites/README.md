@@ -17,45 +17,44 @@ desktop).
 Demo sites use **pure HTML/CSS/JS** with a standalone `server.js` (Node.js
 built-in `http` module, zero npm dependencies). No Python, no frameworks.
 
-## Port Convention
+## Ports
 
-| Port  | Site                          |
-|-------|-------------------------------|
-| 4001  | example (Pawsome Dog Rescue)  |
-| 4002  | vantage-portal (Zoho Connect) |
-
-Agent-service uses port 3000. Demo sites start at 4001 to avoid conflicts.
+Ports are assigned dynamically starting from 4001. Agent-service uses port 3000.
 
 ## Creating a New Demo Site
 
 1. Create a directory: `demo-sites/<site-name>/`
 2. Add a `server.js` that accepts a port as the first CLI argument:
    ```bash
-   node server.js 4003
+   node server.js <port>
    ```
-3. Register the port mapping in `agent-service/src/index.ts` (`DEMO_SITE_DIRS`)
-4. Register the URL mapping in `unity/customization/clients/<client>/__init__.py`:
+3. Reference the directory name in `unity/customization/clients/<client>/__init__.py`:
 
 ```python
 register_org(
     org_id=...,
     config=ActorConfig(
         url_mappings={
-            "https://www.example.com": "http://localhost:<port>",
+            "https://www.example.com": "<site-name>",
         },
     ),
 )
 ```
 
+No registration in agent-service code is needed -- it discovers the directory
+automatically at startup.
+
 ## How It Works
 
 1. **Customization** (`unity/customization/`) -- per-org/team/user/assistant config
-   defines `url_mappings` (e.g. `{"https://connect.zoho.com": "http://localhost:4002"}`)
+   defines `url_mappings` mapping real URLs to demo site directory names
+   (e.g. `{"https://connect.zoho.com": "vantage-portal"}`)
 2. **ComputerPrimitives** -- passes mappings to MagnitudeBackend
 3. **Agent-service** `/start` -- receives `urlMappings`, calls `ensureDemoSites()`
-   to spawn the matching `server.js` on the correct port
+   which finds the directory, assigns a free port, spawns `server.js`, and
+   returns resolved `localhost` URLs
 4. **BrowserConnector** -- registers `context.route()` handlers that intercept
-   requests to the real domain and proxy them to `localhost:<port>`
+   requests to the real domain and proxy them to the resolved `localhost:<port>`
 
 The browser navigates to the real URL (e.g. `https://connect.zoho.com/`), but
 Playwright intercepts the network request and serves it from the local demo

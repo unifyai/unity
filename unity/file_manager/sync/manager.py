@@ -20,7 +20,7 @@ class SyncManager:
     1. start() - Called on job start: setup + initial sync from remote
     2. on_file_write() - Called after file writes: sync file to remote
     3. sync_remote_changes() - Called periodically: bisync for remote changes
-    4. stop() - Called on job end: final sync + cleanup
+    4. stop() - Called on job end: cleanup
 
     Conflict resolution: Latest wins (by modification time)
     """
@@ -154,7 +154,7 @@ class SyncManager:
         return await self._rclone.bisync()
 
     async def stop(self) -> None:
-        """Stop sync manager: final sync + cleanup."""
+        """Stop sync manager: cancel polling + cleanup."""
         if not self._started:
             return
 
@@ -169,10 +169,7 @@ class SyncManager:
                 pass
             self._poll_task = None
 
-        # Final bisync to push any pending changes and pull remote state
         if self._rclone:
-            LOGGER.debug(f"{ICONS['file_sync']} [FileSync] Final bisync...")
-            await self._rclone.bisync()
             self._rclone.cleanup()
             self._rclone = None
 
