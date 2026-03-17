@@ -87,7 +87,8 @@ steps:
   args:
   - '-c'
   - |
-    ADAPTERS=https://unity-adapters-1021024874437.us-central1.run.app
+    set -e
+    ADAPTERS=https://unity-adapters-ky4ja5fxna-uc.a.run.app
     AUTH="Authorization: Bearer $$ORCHESTRA_ADMIN_KEY"
 
     echo "Refreshing idle jobs with new image..."
