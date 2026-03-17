@@ -104,7 +104,7 @@ class BaseDataManager(BaseStateManager):
         context: str,
         *,
         description: Optional[str] = None,
-        fields: Optional[Dict[str, str]] = None,
+        fields: Optional[Dict[str, Any]] = None,
         unique_keys: Optional[Dict[str, str]] = None,
         auto_counting: Optional[Dict[str, Optional[str]]] = None,
     ) -> str:
@@ -2092,7 +2092,7 @@ class BaseDataManager(BaseStateManager):
         rows: List[Dict[str, Any]],
         *,
         description: Optional[str] = None,
-        fields: Optional[Dict[str, str]] = None,
+        fields: Optional[Dict[str, Any]] = None,
         unique_keys: Optional[Dict[str, str]] = None,
         embed_columns: Optional[List[str]] = None,
         embed_strategy: str = "along",
