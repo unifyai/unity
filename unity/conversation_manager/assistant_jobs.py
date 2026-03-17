@@ -69,7 +69,13 @@ def _record_running_job_count(api_key: str) -> None:
         )
 
 
-def mark_job_label(job_name: str, status: str, assistant_id: str | None = None):
+def mark_job_label(
+    job_name: str,
+    status: str,
+    assistant_id: str | None = None,
+    timeout: float = 30,
+    retries: int = 0,
+):
     """Patch the K8s Job unity-status label via the communication service."""
     comms_url = SETTINGS.conversation.COMMS_URL.rstrip("/")
     admin_key = SETTINGS.ORCHESTRA_ADMIN_KEY.get_secret_value()
@@ -78,7 +84,15 @@ def mark_job_label(job_name: str, status: str, assistant_id: str | None = None):
             f"{ICONS['assistant_jobs']} [assistant_jobs] Skipping label update: COMMS_URL or admin key not configured",
         )
         return
-    ok = patch_job_label(comms_url, admin_key, job_name, status, assistant_id)
+    ok = patch_job_label(
+        comms_url,
+        admin_key,
+        job_name,
+        status,
+        assistant_id,
+        timeout=timeout,
+        retries=retries,
+    )
     if ok:
         LOGGER.debug(
             f"{ICONS['assistant_jobs']} [assistant_jobs] Marked job as {status}: {job_name}",
