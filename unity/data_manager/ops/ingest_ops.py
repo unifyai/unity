@@ -30,7 +30,12 @@ import time
 import uuid
 from typing import Any, Dict, List, Optional, TYPE_CHECKING
 
-from unity.common.embed_utils import ensure_vector_column as _ensure_vector_column
+import unify as _unify
+
+from unity.common.embed_utils import (
+    ensure_derived_column as _ensure_derived_column,
+    ensure_vector_column as _ensure_vector_column,
+)
 from unity.data_manager.ops.mutation_ops import insert_rows_impl
 from unity.data_manager.ops.table_ops import create_table_impl
 from unity.data_manager.types.ingest import IngestExecutionConfig, IngestResult
@@ -101,11 +106,57 @@ def _chunk_rows(
     return [rows[i : i + chunk_size] for i in range(0, len(rows), chunk_size)]
 
 
+def _derive_date_column_name(field_name: str) -> str:
+    """Derive a date-only column name from a datetime field name.
+
+    Always preserves the full original name and appends an underscore-separated
+    suffix whose casing matches the source convention:
+
+    - Title/PascalCase fields containing "date" -> ``_Day``
+    - Title/PascalCase fields without "date"    -> ``_Date``
+    - snake_case / lowercase fields with "date" -> ``_day``
+    - snake_case / lowercase fields without      -> ``_date``
+    """
+    is_title = field_name[:1].isupper()
+    has_date = "date" in field_name.lower()
+
+    if is_title:
+        return f"{field_name}_Day" if has_date else f"{field_name}_Date"
+
+    return f"{field_name}_day" if has_date else f"{field_name}_date"
+
+
+def _ensure_date_derived_columns(context: str) -> list[str]:
+    """Create date-only derived columns for every datetime field in *context*.
+
+    Calls ``unify.get_fields`` to discover datetime fields, then creates a
+    derived column for each using ``date({lg:<field>})``.  Returns the list
+    of derived column names that were created (or already existed).
+    """
+    fields = _unify.get_fields(context=context) or {}
+    created: list[str] = []
+    for name, info in fields.items():
+        if name.startswith("_"):
+            continue
+        dtype = info.get("data_type", "") if isinstance(info, dict) else str(info)
+        if dtype != "datetime":
+            continue
+        target = _derive_date_column_name(name)
+        _ensure_derived_column(
+            context,
+            key=target,
+            equation=f"date({{lg:{name}}})",
+            referenced_logs_context=context,
+        )
+        created.append(target)
+    return created
+
+
 def _make_create_table_func(
     context: str,
     *,
     description: Optional[str],
-    fields: Optional[Dict[str, str]],
+    fields: Optional[Dict[str, Any]],
     unique_keys: Optional[Dict[str, str]],
     auto_counting: Optional[Dict[str, Optional[str]]],
     infer_untyped_fields: bool,
@@ -238,7 +289,7 @@ def _build_ingest_graph(
     chunks: List[List[Dict[str, Any]]],
     *,
     description: Optional[str],
-    fields: Optional[Dict[str, str]],
+    fields: Optional[Dict[str, Any]],
     unique_keys: Optional[Dict[str, str]],
     embed_columns: Optional[List[str]],
     embed_strategy: str,
@@ -419,7 +470,7 @@ def run_ingest(
     rows: List[Dict[str, Any]],
     *,
     description: Optional[str] = None,
-    fields: Optional[Dict[str, str]] = None,
+    fields: Optional[Dict[str, Any]] = None,
     unique_keys: Optional[Dict[str, str]] = None,
     embed_columns: Optional[List[str]] = None,
     embed_strategy: str = "along",
@@ -501,6 +552,23 @@ def run_ingest(
     duration_ms = (time.perf_counter() - start) * 1000
 
     ingest_result = _aggregate_results(context, graph, results, duration_ms)
+
+    # Post-ingestion: create date-only derived columns for datetime fields
+    try:
+        derived_cols = _ensure_date_derived_columns(context)
+        if derived_cols:
+            logger.info(
+                "Created %d date derived columns for %s: %s",
+                len(derived_cols),
+                context,
+                ", ".join(derived_cols),
+            )
+    except Exception:
+        logger.warning(
+            "Failed to create date derived columns for %s",
+            context,
+            exc_info=True,
+        )
 
     # Log summary
     summary = graph.get_summary()

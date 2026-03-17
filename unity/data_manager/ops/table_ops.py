@@ -22,7 +22,7 @@ def create_table_impl(
     context: str,
     *,
     description: Optional[str] = None,
-    fields: Optional[Dict[str, str]] = None,
+    fields: Optional[Dict[str, Any]] = None,
     unique_keys: Optional[Dict[str, str]] = None,
     auto_counting: Optional[Dict[str, Optional[str]]] = None,
 ) -> str:
@@ -37,8 +37,9 @@ def create_table_impl(
         Fully-qualified Unify context path.
     description : str | None
         Human-readable description of the table purpose.
-    fields : dict[str, str] | None
-        Mapping of field names to Unify types.
+    fields : dict[str, Any] | None
+        Mapping of field names to Unify types (simple ``{name: type_str}``)
+        or richer payloads (``{name: {"type": ..., "description": ...}}``).
     unique_keys : dict[str, str] | None
         Mapping of unique key columns to their types.
     auto_counting : dict[str, str | None] | None
