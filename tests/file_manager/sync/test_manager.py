@@ -199,3 +199,86 @@ class TestSyncManagerStop:
 
         assert bisync_called is True
         assert manager._started is False
+
+
+class TestSyncManagerSSHKeyRetrieval:
+    """Tests for SSH key retrieval via the admin endpoint."""
+
+    @pytest.mark.asyncio
+    async def test_uses_agent_id_endpoint_not_user_scoped(self, sync_config):
+        """SSH key retrieval should use GET /admin/assistant?agent_id=X,
+        not the user-scoped endpoint that excludes org assistants."""
+        manager = SyncManager(config=sync_config)
+
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {
+            "info": [
+                {
+                    "agent_id": 42,
+                    "desktop_filesync_sshkey": "fake-ssh-key-content",
+                },
+            ],
+        }
+
+        with (
+            patch(
+                "unity.session_details.SESSION_DETAILS",
+            ) as mock_sd,
+            patch(
+                "unity.settings.SETTINGS",
+            ) as mock_settings,
+            patch(
+                "unify.utils.http.get",
+                return_value=mock_response,
+            ) as mock_get,
+        ):
+            mock_sd.assistant.agent_id = 42
+            mock_settings.ORCHESTRA_URL = "https://api.example.com/v0"
+            mock_settings.ORCHESTRA_ADMIN_KEY.get_secret_value.return_value = (
+                "test-admin-key"
+            )
+
+            key = await manager._get_ssh_private_key()
+
+        assert key == "fake-ssh-key-content"
+        mock_get.assert_called_once()
+        call_url = mock_get.call_args[0][0]
+        call_params = mock_get.call_args[1].get(
+            "params",
+            mock_get.call_args.kwargs.get("params"),
+        )
+        assert call_url == "https://api.example.com/v0/admin/assistant"
+        assert call_params == {"agent_id": "42"}
+        assert "/user/" not in call_url
+
+    @pytest.mark.asyncio
+    async def test_returns_none_when_assistant_not_found(self, sync_config):
+        """Should return None when the admin endpoint returns an empty list."""
+        manager = SyncManager(config=sync_config)
+
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {"info": []}
+
+        with (
+            patch(
+                "unity.session_details.SESSION_DETAILS",
+            ) as mock_sd,
+            patch(
+                "unity.settings.SETTINGS",
+            ) as mock_settings,
+            patch(
+                "unify.utils.http.get",
+                return_value=mock_response,
+            ),
+        ):
+            mock_sd.assistant.agent_id = 999
+            mock_settings.ORCHESTRA_URL = "https://api.example.com/v0"
+            mock_settings.ORCHESTRA_ADMIN_KEY.get_secret_value.return_value = (
+                "test-admin-key"
+            )
+
+            key = await manager._get_ssh_private_key()
+
+        assert key is None
