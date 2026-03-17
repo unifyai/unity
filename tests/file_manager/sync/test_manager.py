@@ -176,20 +176,12 @@ class TestSyncManagerStop:
         await manager.stop()  # Should not raise
 
     @pytest.mark.asyncio
-    async def test_stop_calls_bisync(self, sync_config):
-        """Test stop calls bisync for final sync."""
+    async def test_stop_cleans_up_without_bisync(self, sync_config):
+        """Test stop cleans up rclone without running a final bisync."""
         manager = SyncManager(config=sync_config)
         manager._started = True
 
-        bisync_called = False
-
-        async def mock_bisync(force_resync=False):
-            nonlocal bisync_called
-            bisync_called = True
-            return SyncResult(success=True)
-
         mock_rclone = MagicMock()
-        mock_rclone.bisync = mock_bisync
         mock_rclone.cleanup = MagicMock()
 
         manager._rclone = mock_rclone
@@ -197,7 +189,9 @@ class TestSyncManagerStop:
 
         await manager.stop()
 
-        assert bisync_called is True
+        mock_rclone.bisync.assert_not_called()
+        mock_rclone.cleanup.assert_called_once()
+        assert manager._rclone is None
         assert manager._started is False
 
 

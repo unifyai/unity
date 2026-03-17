@@ -18,4 +18,4 @@ RUN DEP_BRANCH=$([ "$BRANCH" = "main" ] && echo "main" || echo "staging") && \
 COPY unity/conversation_manager/assistant_jobs_api.py .
 COPY scripts/job-watcher/watcher.py .
 
-CMD ["kopf", "run", "watcher.py", "--liveness=http://0.0.0.0:8080/healthz", "--verbose"]
+CMD ["kopf", "run", "watcher.py", "--liveness=http://0.0.0.0:8080/healthz"]
