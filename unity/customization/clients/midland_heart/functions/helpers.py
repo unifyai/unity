@@ -150,10 +150,10 @@ def resolve_group_by(
         If True, use telematics column mappings (Vehicle instead of Operative).
     date_context : str
         Context for temporal grouping to select appropriate date column:
-        - "completion": WorksOrderReportedCompletedDateDay (default)
-        - "issued": WorksOrderIssuedDateDay
-        - "arrival": ArrivedOnSiteDay
-        - "scheduled": ScheduledAppointmentStartDay
+        - "completion": WorksOrderReportedCompletedDate_Day (default)
+        - "issued": WorksOrderIssuedDate_Day
+        - "arrival": ArrivedOnSite_Date
+        - "scheduled": ScheduledAppointmentStart_Date
 
     Returns
     -------
@@ -167,7 +167,7 @@ def resolve_group_by(
     >>> resolve_group_by("operative", telematics=True)
     'Vehicle'
     >>> resolve_group_by("day", date_context="completion")
-    'WorksOrderReportedCompletedDateDay'
+    'WorksOrderReportedCompletedDate_Day'
     >>> resolve_group_by(None)
     None
     """
@@ -177,15 +177,15 @@ def resolve_group_by(
     key = (group_by.value if hasattr(group_by, "value") else group_by).lower()
 
     date_columns = {
-        "completion": "WorksOrderReportedCompletedDateDay",
-        "issued": "WorksOrderIssuedDateDay",
-        "arrival": "ArrivedOnSiteDay",
-        "scheduled": "ScheduledAppointmentStartDay",
+        "completion": "WorksOrderReportedCompletedDate_Day",
+        "issued": "WorksOrderIssuedDate_Day",
+        "arrival": "ArrivedOnSite_Date",
+        "scheduled": "ScheduledAppointmentStart_Date",
     }
 
     telematics_mapping = {
         "operative": "Vehicle",
-        "day": "ArrivalDay",
+        "day": "Arrival_Date",
     }
 
     repairs_mapping = {
@@ -193,7 +193,7 @@ def resolve_group_by(
         "patch": "RepairsPatch",
         "region": "RepairsRegion",
         "trade": "Trade",
-        "day": date_columns.get(date_context, "WorksOrderReportedCompletedDateDay"),
+        "day": date_columns.get(date_context, "WorksOrderReportedCompletedDate_Day"),
     }
 
     mapping = telematics_mapping if telematics else repairs_mapping

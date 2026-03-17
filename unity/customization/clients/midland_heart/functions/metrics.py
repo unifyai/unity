@@ -909,7 +909,9 @@ async def repairs_kpi_job_completed_on_time_rate(
     - On-time numerator:
       (``WorksOrderStatusDescription`` in ['Complete', 'Closed']) and
       ``WorksOrderReportedCompletedDate`` != 'None' and
+      ``WorksOrderReportedCompletedDate`` is not None and
       ``WorksOrderTargetDate`` != 'None' and
+      ``WorksOrderTargetDate`` is not None and
       ``WorksOrderReportedCompletedDate`` <= ``WorksOrderTargetDate``
     - Completed denominator: ``WorksOrderStatusDescription`` in ['Complete', 'Closed']
 
@@ -945,7 +947,9 @@ async def repairs_kpi_job_completed_on_time_rate(
     on_time_condition = (
         "(`WorksOrderStatusDescription` in ['Complete', 'Closed']) "
         "and `WorksOrderReportedCompletedDate` != 'None' "
+        "and `WorksOrderReportedCompletedDate` is not None "
         "and `WorksOrderTargetDate` != 'None' "
+        "and `WorksOrderTargetDate` is not None "
         "and `WorksOrderReportedCompletedDate` <= `WorksOrderTargetDate`"
     )
     on_time_filter = build_filter([on_time_condition], start_date, end_date)
@@ -1090,7 +1094,7 @@ async def repairs_kpi_total_distance_travelled(
         DataManager primitives (async).
     group_by : str | None
         For telematics grouping, ``resolve_group_by(..., telematics=True)`` is used.
-        Supported: "operative" (Vehicle), "day" (ArrivalDay), or None.
+        Supported: "operative" (Vehicle), "day" (Arrival_Date), or None.
     start_date, end_date : str | None
         Currently unused for telematics tables (kept for API consistency).
     time_period : str
@@ -1629,9 +1633,9 @@ async def repairs_kpi_appointment_adherence_rate(
     Filter expressions
     ------------------
     Universe ("scheduled appointments with arrival times"):
-    - ScheduledAppointmentStart is not empty/None
-    - ScheduledAppointmentStartDay not in ['1900-01-02', 'None', '']
-    - ArrivedOnSite is not empty/None
+    - ScheduledAppointmentStart != '' and != 'None' and is not None
+    - ScheduledAppointmentStart_Date not in ['1900-01-02', 'None', '']
+    - ArrivedOnSite != '' and != 'None' and is not None
 
     On-time condition:
     - ``ArrivedOnSite`` <= ``ScheduledAppointmentEnd``
@@ -1701,9 +1705,11 @@ async def repairs_kpi_appointment_adherence_rate(
 
     scheduled_condition = (
         "`ScheduledAppointmentStart` != '' and "
+        "`ScheduledAppointmentStart` != 'None' and "
         "`ScheduledAppointmentStart` is not None and "
-        "`ScheduledAppointmentStartDay` not in ['1900-01-02', 'None', ''] and "
+        "`ScheduledAppointmentStart_Date` not in ['1900-01-02', 'None', ''] and "
         "`ArrivedOnSite` != '' and "
+        "`ArrivedOnSite` != 'None' and "
         "`ArrivedOnSite` is not None"
     )
     base_filter = build_filter([scheduled_condition], start_date, end_date)
