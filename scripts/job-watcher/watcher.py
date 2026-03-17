@@ -48,6 +48,8 @@ def configure(settings: kopf.OperatorSettings, **_):
     settings.persistence.finalizer = None
 
     logging.getLogger("kopf").setLevel(logging.WARNING)
+    logging.getLogger("httpx").setLevel(logging.WARNING)
+    logging.getLogger("aiohttp").setLevel(logging.WARNING)
 
 
 def _parse_k8s_timestamp(ts: str) -> datetime.datetime | None:
@@ -65,8 +67,9 @@ def on_job_event(event, **_):
 
     job = event.get("object", {})
     status = job.get("status", {})
-    print("job", job)
-    print("status", status)
+    print(
+        f"job_name: {job.get('metadata', {}).get('name', 'unknown')} status: {status}"
+    )
 
     if status.get("active", 0) >= 1:
         return
