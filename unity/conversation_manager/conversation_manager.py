@@ -1454,7 +1454,6 @@ class ConversationManager(metaclass=SingletonABCMeta):
         await self.store_chat_history()
         await self.call_manager.cleanup_call_proc()
 
-        # Stop file sync to ensure final sync to VM
         await self._stop_file_sync()
 
         if self.job_name and self.assistant_id is not None:
@@ -1466,7 +1465,7 @@ class ConversationManager(metaclass=SingletonABCMeta):
         self.stop.set()
 
     async def _stop_file_sync(self) -> None:
-        """Stop file sync with managed VM, performing final sync."""
+        """Stop file sync with managed VM."""
         try:
             from unity.file_manager.managers.local import LocalFileManager
 

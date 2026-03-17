@@ -27,7 +27,7 @@ class LocalFileSystemAdapter(BaseFileSystemAdapter):
     - Job start: Bidirectional sync with --resync (start_sync → bisync)
     - File write: Push changed file to VM (notify_file_write)
     - Periodic: Bidirectional sync for remote changes (bisync every 30s)
-    - Job end: Final bisync to VM (stop_sync → bisync)
+    - Job end: Cancel polling + cleanup (stop_sync)
     """
 
     def __init__(
@@ -415,7 +415,7 @@ class LocalFileSystemAdapter(BaseFileSystemAdapter):
         return await self._sync_manager.start()
 
     async def stop_sync(self) -> None:
-        """Stop file synchronization with final sync to VM."""
+        """Stop file synchronization and clean up sync resources."""
         if self._sync_manager is not None:
             await self._sync_manager.stop()
 
