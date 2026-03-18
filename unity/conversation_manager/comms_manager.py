@@ -315,6 +315,23 @@ class CommsManager:
                 system_message = event.get("message")
                 reason = str(system_message) if system_message is not None else ""
 
+                # Desktop-ready events are only valid within 5 minutes of
+                # publish; stale ones from previous sessions must be discarded
+                # to avoid falsely marking the desktop as ready.
+                _DESKTOP_READY_TTL = 300
+                if (
+                    system_event_type == "assistant_desktop_ready"
+                    and publish_timestamp is not None
+                    and time.time() - publish_timestamp > _DESKTOP_READY_TTL
+                ):
+                    age = time.time() - publish_timestamp
+                    LOGGER.warning(
+                        f"{DEFAULT_ICON} Discarding stale assistant_desktop_ready "
+                        f"(age={age:.0f}s, TTL={_DESKTOP_READY_TTL}s)",
+                    )
+                    self._ack_with_latency(message, publish_timestamp, topic)
+                    return
+
                 # Map system event types to internal event classes.
                 _SYSTEM_EVENT_MAP = {
                     "sync_contacts": lambda r: SyncContacts(
