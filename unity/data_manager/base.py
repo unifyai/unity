@@ -2385,6 +2385,7 @@ class BaseDataManager(BaseStateManager):
         y: Optional[str] = None,
         group_by: Optional[str] = None,
         aggregate: Optional[str] = None,
+        metric: Optional[str] = None,
         filter: Optional[str] = None,
         title: Optional[str] = None,
         scale_x: Optional[str] = None,
@@ -2422,8 +2423,15 @@ class BaseDataManager(BaseStateManager):
             Column to group/color data points by. Creates multiple series.
 
         aggregate : str | None, default ``None``
-            Aggregation for bar charts: ``"sum"``, ``"count"``, ``"avg"``,
-            ``"min"``, ``"max"``. When set, bars show aggregate values.
+            Aggregation function applied when ``group_by`` is set. Changes what's
+            plotted from raw data points to aggregated group metrics. Requires
+            ``group_by``. Valid values: ``"sum"``, ``"mean"``, ``"count"``,
+            ``"min"``, ``"max"``. Works with all plot types.
+
+        metric : str | None, default ``None``
+            Statistic used to compute Y-axis values on bar charts. Valid values:
+            ``"sum"``, ``"mean"``, ``"count"``, ``"min"``, ``"max"``. Only applies
+            to bar charts; other plot types ignore this parameter.
 
         filter : str | None, default ``None``
             Filter expression to subset data before plotting.
@@ -2452,14 +2460,25 @@ class BaseDataManager(BaseStateManager):
 
         Usage Examples
         --------------
-        # Bar chart: revenue by region
+        # Bar chart: total revenue by region
         result = dm.plot(
             "Data/sales",
             plot_type="bar",
             x="region",
             y="revenue",
-            aggregate="sum",
+            metric="sum",
             title="Revenue by Region"
+        )
+
+        # Bar chart: average score per department (grouped & aggregated)
+        result = dm.plot(
+            "Data/performance",
+            plot_type="bar",
+            x="department",
+            y="score",
+            group_by="team",
+            aggregate="mean",
+            title="Avg Score by Department"
         )
         if result.succeeded:
             print(f"Plot URL: {result.url}")
@@ -2493,11 +2512,20 @@ class BaseDataManager(BaseStateManager):
 
         Anti-patterns
         -------------
-        - WRONG: Plotting very large datasets without filter
-          CORRECT: Filter to a reasonable sample for visualization
+        - WRONG: ``plot(..., aggregate="count")`` without ``group_by``
+          ``aggregate`` requires ``group_by`` to be set.
 
-        - WRONG: Using histogram with both x and y
-          CORRECT: Histogram only uses x (single variable distribution)
+        - WRONG: ``plot(..., plot_type="histogram", y="col")``
+          Histogram only uses ``x`` (single variable distribution).
+
+        - WRONG: ``plot(..., plot_type="bar", show_regression=True)``
+          ``show_regression`` is scatter-only.
+
+        - WRONG: Omitting ``y`` for bar, scatter, or line plots.
+          All non-histogram plot types require both ``x`` and ``y``.
+
+        - WRONG: Plotting very large datasets without ``filter``.
+          Filter to a reasonable subset for visualization.
 
         Notes
         -----
@@ -2516,6 +2544,7 @@ class BaseDataManager(BaseStateManager):
         y: Optional[str] = None,
         group_by: Optional[str] = None,
         aggregate: Optional[str] = None,
+        metric: Optional[str] = None,
         filter: Optional[str] = None,
         title: Optional[str] = None,
         **kwargs: Any,
@@ -2531,7 +2560,7 @@ class BaseDataManager(BaseStateManager):
         contexts : list[str]
             List of context paths to generate plots for.
 
-        plot_type, x, y, group_by, aggregate, filter, title, **kwargs
+        plot_type, x, y, group_by, aggregate, metric, filter, title, **kwargs
             Same parameters as ``plot()``. Applied to all contexts.
 
         Returns
@@ -2542,7 +2571,7 @@ class BaseDataManager(BaseStateManager):
 
         Usage Examples
         --------------
-        # Compare quarterly data
+        # Compare quarterly revenue across quarters
         results = dm.plot_batch(
             contexts=[
                 "Data/sales/Q1",
@@ -2553,7 +2582,8 @@ class BaseDataManager(BaseStateManager):
             plot_type="bar",
             x="category",
             y="revenue",
-            aggregate="sum"
+            metric="sum",
+            title="Revenue by Category"
         )
 
         for ctx, result in zip(contexts, results):

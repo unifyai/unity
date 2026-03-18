@@ -1022,6 +1022,7 @@ class SimulatedDataManager(BaseDataManager):
         y: Optional[str] = None,
         group_by: Optional[str] = None,
         aggregate: Optional[str] = None,
+        metric: Optional[str] = None,
         filter: Optional[str] = None,
         title: Optional[str] = None,
         scale_x: Optional[str] = None,
@@ -1048,6 +1049,7 @@ class SimulatedDataManager(BaseDataManager):
         y: Optional[str] = None,
         group_by: Optional[str] = None,
         aggregate: Optional[str] = None,
+        metric: Optional[str] = None,
         filter: Optional[str] = None,
         title: Optional[str] = None,
         **kwargs: Any,
@@ -1060,6 +1062,7 @@ class SimulatedDataManager(BaseDataManager):
                 y=y,
                 group_by=group_by,
                 aggregate=aggregate,
+                metric=metric,
                 filter=filter,
                 title=title,
             )
