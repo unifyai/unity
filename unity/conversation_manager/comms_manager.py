@@ -69,8 +69,8 @@ project_id = "responsive-city-458413-a2"
 def _get_subscription_id() -> str:
     """Build subscription ID from current assistant context."""
     agent_id = SESSION_DETAILS.assistant.agent_id
-    staging_suffix = "-staging" if SETTINGS.STAGING and agent_id is not None else ""
-    return f"unity-{agent_id}{staging_suffix}-sub"
+    env_suffix = SETTINGS.ENV_SUFFIX if agent_id is not None else ""
+    return f"unity-{agent_id}{env_suffix}-sub"
 
 
 def _get_local_contact() -> dict:

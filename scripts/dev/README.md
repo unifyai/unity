@@ -9,7 +9,7 @@ export UNITY_COMMS_URL="https://..."
 export ORCHESTRA_ADMIN_KEY="..."
 ```
 
-Scripts that talk to the adapters service pick the correct URL automatically based on `--staging` (override with `--adapters-url`).
+Scripts that talk to the adapters service pick the correct URL automatically based on `--env` (override with `--adapters-url`).
 
 ---
 
@@ -23,10 +23,11 @@ Create fresh idle K8s jobs and clean up stale ones. Designed to run after a Unit
 - Lists all job names before, after creation, and after cleanup (disable with `--no-list-jobs`).
 
 ```bash
-python scripts/dev/idle_job_refresh.py                 # staging (default)
-python scripts/dev/idle_job_refresh.py --production    # production
-python scripts/dev/idle_job_refresh.py --no-list-jobs  # skip job listing
-python scripts/dev/idle_job_refresh.py --delay 45      # custom wait
+python scripts/dev/idle_job_refresh.py                       # staging (default)
+python scripts/dev/idle_job_refresh.py --env production      # production
+python scripts/dev/idle_job_refresh.py --env preview         # preview
+python scripts/dev/idle_job_refresh.py --no-list-jobs        # skip job listing
+python scripts/dev/idle_job_refresh.py --delay 45            # custom wait
 ```
 
 ## suspend_job.py
@@ -34,8 +35,9 @@ python scripts/dev/idle_job_refresh.py --delay 45      # custom wait
 Suspend (stop) a running Unity K8s job by name via the comms `/infra/job/stop` endpoint.
 
 ```bash
-python scripts/dev/suspend_job.py unity-2026-02-25-12-00-00              # prod
-python scripts/dev/suspend_job.py unity-2026-02-25-12-00-00 --staging    # staging
+python scripts/dev/suspend_job.py                                        # auto-detect staging
+python scripts/dev/suspend_job.py --env production                       # auto-detect production
+python scripts/dev/suspend_job.py unity-2026-02-25-12-00-00              # explicit job
 python scripts/dev/suspend_job.py unity-2026-02-25-12-00-00 --namespace custom-ns
 ```
 
@@ -62,9 +64,10 @@ python scripts/dev/local_assistant.py --api-key YOUR_KEY --name "Dev" > .env.loc
 Keep a deployed Unity pod alive by sending periodic keepalive pings to its Pub/Sub topic. Prevents the inactivity timeout from shutting down the container while you're debugging or developing.
 
 ```bash
-./scripts/dev/keep_pod_alive.sh 25                    # staging (default), ping every 30s
-./scripts/dev/keep_pod_alive.sh 25 --production       # production
-./scripts/dev/keep_pod_alive.sh 25 --interval 60      # custom interval
+./scripts/dev/keep_pod_alive.sh 25                        # staging (default), ping every 30s
+./scripts/dev/keep_pod_alive.sh 25 --env production       # production
+./scripts/dev/keep_pod_alive.sh 25 --env preview          # preview
+./scripts/dev/keep_pod_alive.sh 25 --interval 60          # custom interval
 ```
 
 Requires `gcloud` CLI authenticated with access to the `responsive-city-458413-a2` project.

@@ -4,8 +4,9 @@ import os
 import sys
 
 ORCHESTRA_URLS = {
-    "staging": "https://api.staging.internal.saas.unify.ai/v0",
     "production": "https://api.unify.ai/v0",
+    "staging": "https://api.staging.internal.saas.unify.ai/v0",
+    "preview": "https://api.staging.internal.saas.unify.ai/v0",
 }
 
 RED = "\033[0;31m"
@@ -74,10 +75,7 @@ def _find_latest_job_entry(
         job_name = log.entries.get("job_name")
         if not job_name:
             continue
-        is_staging_job = job_name.endswith("-staging")
-        if namespace == "staging" and not is_staging_job:
-            continue
-        if namespace == "production" and is_staging_job:
+        if not job_name.endswith(f"-{namespace}"):
             continue
         running = str(log.entries.get("running", "false")).lower() == "true"
         if running_only and not running:
@@ -135,10 +133,15 @@ if __name__ == "__main__":
         "command",
         choices=["assistant-id"],
     )
-    parser.add_argument("--production", action="store_true")
+    parser.add_argument(
+        "--env",
+        choices=["production", "staging", "preview"],
+        default="staging",
+        help="Target deploy environment (default: staging)",
+    )
     args = parser.parse_args()
 
-    namespace = "production" if args.production else "staging"
+    namespace = args.env
     os.environ["ORCHESTRA_URL"] = ORCHESTRA_URLS[namespace]
 
     from dotenv import load_dotenv

@@ -647,7 +647,8 @@ class TestSubscriptionIdGeneration:
             with patch(
                 "unity.conversation_manager.comms_manager.SETTINGS",
             ) as mock_settings:
-                mock_settings.STAGING = False
+                mock_settings.DEPLOY_ENV = "production"
+                mock_settings.ENV_SUFFIX = ""
 
                 sub_id = _get_subscription_id()
                 assert sub_id == "unity-42-sub", f"Wrong production sub ID: {sub_id}"
@@ -667,7 +668,8 @@ class TestSubscriptionIdGeneration:
             with patch(
                 "unity.conversation_manager.comms_manager.SETTINGS",
             ) as mock_settings:
-                mock_settings.STAGING = True
+                mock_settings.DEPLOY_ENV = "staging"
+                mock_settings.ENV_SUFFIX = "-staging"
 
                 sub_id = _get_subscription_id()
                 assert (
@@ -681,7 +683,7 @@ class TestSubscriptionIdGeneration:
         """Test that startup subscription ID constants are correct."""
         from unity.conversation_manager.comms_manager import startup_subscription_id
 
-        # The module-level constant should be set based on SETTINGS.STAGING
+        # The module-level constant should be set based on SETTINGS.DEPLOY_ENV
         # We verify the format is correct (includes -sub suffix)
         assert startup_subscription_id.endswith(
             "-sub",
