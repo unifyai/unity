@@ -168,6 +168,7 @@ async def repairs_kpi_jobs_completed(
                 plot_type="bar",
                 x=group_by_field,
                 aggregate="count",
+                metric="count",
                 filter=filter_expr,
                 title=title,
             )
@@ -339,6 +340,7 @@ async def repairs_kpi_no_access_rate(
                 plot_type="bar",
                 x=group_by_field,
                 aggregate="count",
+                metric="count",
                 filter=no_access_filter,
                 title=title,
             )
@@ -506,6 +508,7 @@ async def repairs_kpi_first_time_fix_rate(
                 plot_type="bar",
                 x=group_by_field,
                 aggregate="count",
+                metric="count",
                 filter=ftf_filter,
                 title=title,
             )
@@ -681,6 +684,7 @@ async def repairs_kpi_follow_on_required_rate(
                 plot_type="bar",
                 x=group_by_field,
                 aggregate="count",
+                metric="count",
                 filter=fo_filter,
                 title=title,
             )
@@ -850,6 +854,7 @@ async def repairs_kpi_follow_on_materials_rate(
                 plot_type="bar",
                 x=group_by_field,
                 aggregate="count",
+                metric="count",
                 filter=materials_filter,
                 title=title,
             )
@@ -1032,6 +1037,7 @@ async def repairs_kpi_job_completed_on_time_rate(
                 plot_type="bar",
                 x=group_by_field,
                 aggregate="count",
+                metric="count",
                 filter=on_time_filter,
                 title=title,
             )
@@ -1159,6 +1165,7 @@ async def repairs_kpi_total_distance_travelled(
                 plot_type="bar",
                 x="Driver",
                 aggregate="sum",
+                metric="sum",
                 title=title,
             )
             plots.append(
@@ -1279,6 +1286,7 @@ async def repairs_kpi_jobs_issued(
                 plot_type="bar",
                 x=group_by_field,
                 aggregate="count",
+                metric="count",
                 filter=filter_expr,
                 title=title,
             )
@@ -1450,6 +1458,7 @@ async def repairs_kpi_jobs_requiring_materials_rate(
                 plot_type="bar",
                 x=group_by_field,
                 aggregate="count",
+                metric="count",
                 filter=materials_filter,
                 title=title,
             )
@@ -1812,6 +1821,7 @@ async def repairs_kpi_appointment_adherence_rate(
                 plot_type="bar",
                 x=group_by_field,
                 aggregate="count",
+                metric="count",
                 filter=base_filter,
                 title=title,
             )
