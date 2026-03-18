@@ -224,18 +224,12 @@ def mark_job_done(job_name: str, inactivity_timeout: float = 0.0):
     comms_url = SETTINGS.conversation.COMMS_URL.rstrip("/")
     admin_key = SETTINGS.ORCHESTRA_ADMIN_KEY.get_secret_value()
 
-    # Release pool VM first so the VM is freed even if later steps are slow
-    if (
-        comms_url
-        and admin_key
-        and SESSION_DETAILS.assistant.desktop_mode in ("windows", "ubuntu")
-    ):
-        release_pool_vm(comms_url, admin_key, assistant_id)
-
     if api_key:
         expire_assistant_records(api_key, assistant_id)
+        # X1: record running job count right after the record is updated
         _record_running_job_count(api_key)
 
+    # U9: session duration (log_job_startup → mark_job_done), excluding idle tail
     if _session_start_perf is not None:
         total_dur = time.perf_counter() - _session_start_perf
         active_dur = max(0.0, total_dur - inactivity_timeout)
@@ -244,3 +238,11 @@ def mark_job_done(job_name: str, inactivity_timeout: float = 0.0):
             f"{ICONS['assistant_jobs']} [assistant_jobs] Session duration: "
             f"{total_dur:.1f}s total, {inactivity_timeout:.1f}s idle, {active_dur:.1f}s active",
         )
+
+    # Release pool VM if applicable (managed VM, not user's own desktop)
+    if (
+        comms_url
+        and admin_key
+        and SESSION_DETAILS.assistant.desktop_mode in ("windows", "ubuntu")
+    ):
+        release_pool_vm(comms_url, admin_key, assistant_id)
