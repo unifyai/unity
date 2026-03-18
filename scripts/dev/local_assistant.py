@@ -90,7 +90,6 @@ def _create(
     payload = {
         "first_name": first_name,
         "surname": surname,
-        "deploy_env": deploy_env,
         "age": age,
         "nationality": nationality,
         "about": about,
@@ -98,6 +97,8 @@ def _create(
         "voice_provider": voice_provider,
         "is_local": True,
     }
+    if deploy_env == "preview":
+        payload["deploy_env"] = "preview"
     resp = requests.post(
         f"{orchestra_url}/assistant",
         json=payload,
