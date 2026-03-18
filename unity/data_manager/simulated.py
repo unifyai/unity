@@ -85,6 +85,9 @@ class SimulatedDataManager(BaseDataManager):
 
     def _resolve_context(self, context: str) -> str:
         """Resolve context path (passthrough for simulated manager)."""
+        context = context.lstrip("/")
+        if not context:
+            raise ValueError("Empty context path")
         if context.startswith(("Data/", "Files/", "Knowledge/")):
             return context
         return f"{self._base_ctx}/{context}"

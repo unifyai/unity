@@ -156,3 +156,94 @@ def test_context_registry_get_known_base_contexts():
     # Should include Data and potentially others
     assert isinstance(bases, list)
     assert "Data" in bases
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# Regression: context path pollution (Data//FileRecords/Local)
+# ────────────────────────────────────────────────────────────────────────────
+
+
+def test_get_context_with_empty_contextvar_raises():
+    """get_context must raise when ContextVar is empty and no base was stashed.
+
+    Previously, an empty ContextVar caused get_context to produce a
+    leading-slash path like "/FileRecords", which DataManager._resolve_context
+    then turned into "user/68/Data//FileRecords/Local" (double slash, 404).
+    """
+    from unittest.mock import patch
+    from unify.logs import CONTEXT_READ, CONTEXT_WRITE
+    from unity.file_manager.managers.file_manager import FileManager
+
+    ContextRegistry.clear()
+    CONTEXT_READ.set("")
+    CONTEXT_WRITE.set("")
+
+    with patch("unity.common.context_registry._create_context_with_retry"):
+        with patch("unity.common.context_registry.create_fields"):
+            try:
+                ContextRegistry.get_context(FileManager, "FileRecords")
+                assert False, "Expected RuntimeError for empty context"
+            except RuntimeError as e:
+                assert "no base context available" in str(e)
+
+
+def test_get_context_uses_stashed_base_after_clear():
+    """After clear(), get_context should use the stashed base context from
+    the last setup() call rather than re-reading a potentially empty or
+    polluted ContextVar.
+    """
+    from unittest.mock import patch
+    from unify.logs import CONTEXT_READ, CONTEXT_WRITE
+    from unity.file_manager.managers.file_manager import FileManager
+
+    ContextRegistry.clear()
+
+    base = "user123/68"
+    CONTEXT_READ.set(base)
+    CONTEXT_WRITE.set(base)
+
+    with patch("unity.common.context_registry._create_context_with_retry"):
+        with patch("unity.common.context_registry.create_fields"):
+            ContextRegistry.setup()
+
+    cached = ContextRegistry._registry.get(("FileManager", "FileRecords"))
+    assert cached == f"{base}/FileRecords"
+
+    # clear() resets _registry, _setup_complete, and _base_context
+    ContextRegistry.clear()
+    assert ContextRegistry._base_context is None
+    assert ContextRegistry._setup_complete is False
+
+    # Re-setup with the same base restores everything
+    CONTEXT_READ.set(base)
+    CONTEXT_WRITE.set(base)
+    with patch("unity.common.context_registry._create_context_with_retry"):
+        with patch("unity.common.context_registry.create_fields"):
+            ContextRegistry.setup()
+
+    result = ContextRegistry.get_context(FileManager, "FileRecords")
+    assert (
+        result == f"{base}/FileRecords"
+    ), f"Expected '{base}/FileRecords', got '{result}'"
+    assert "//" not in result, f"Double slash in context path: {result}"
+    assert not result.startswith("/"), f"Leading slash in context path: {result}"
+
+
+def test_resolve_context_strips_leading_slash():
+    """_resolve_context must not produce Data//FileRecords from a
+    leading-slash input like "/FileRecords/Local".
+
+    This is the defense-in-depth layer: even if a leading-slash path
+    somehow reaches _resolve_context, the lstrip("/") normalization
+    ensures _ABSOLUTE_PREFIXES matching works correctly.
+    """
+    from unity.data_manager.data_manager import DataManager
+
+    dm = DataManager.__new__(DataManager)
+    dm._base_ctx = "org123/42/Data"
+
+    resolved = dm._resolve_context("/FileRecords/Local")
+    assert (
+        resolved == "FileRecords/Local"
+    ), f"Expected 'FileRecords/Local', got '{resolved}'"
+    assert "//" not in resolved, f"Double slash in resolved path: {resolved}"
