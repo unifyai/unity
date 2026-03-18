@@ -16,6 +16,9 @@ from dotenv import load_dotenv
 load_dotenv()
 import time
 import traceback
+from datetime import datetime, timezone
+
+import unify
 
 from unity.logger import LOGGER
 from unity.common.hierarchical_logger import ICONS
@@ -104,12 +107,14 @@ def mark_job_label(
 
 
 def log_job_startup(job_name: str, user_id: str, assistant_id: str):
-    """Update the running job record with job_name.
+    """Create or update the running job record with job_name.
 
-    The adapter already created the running=True record with all assistant info.
-    This function adds the container-specific job_name.  The liveview_url is
-    set later by ``update_liveview_url`` when the ``AssistantDesktopReady``
-    event arrives.
+    If a running record already exists, updates it with the current
+    job_name.  Otherwise creates a fresh record with all available
+    session metadata from ``SESSION_DETAILS``.
+
+    The liveview_url is set later by ``update_liveview_url`` when the
+    ``AssistantDesktopReady`` event arrives.
     """
     api_key = SESSION_DETAILS.shared_unify_key or None
     if not api_key:
@@ -137,26 +142,40 @@ def log_job_startup(job_name: str, user_id: str, assistant_id: str):
         if existing_logs:
             existing_logs[0].update_entries(job_name=job_name)
             LOGGER.debug(
-                f"{ICONS['assistant_jobs']} [assistant_jobs] Updated record with job_name={job_name}",
+                f"{ICONS['assistant_jobs']} [assistant_jobs] Updated existing record with job_name={job_name}",
             )
-
-            # X1: record running job count right after the record is updated
-            _record_running_job_count(api_key)
-
-            # Mark session start for U9 duration measurement
-            global _session_start_perf
-            _session_start_perf = time.perf_counter()
         else:
-            # No record found - adapter's mark_job_running() must have failed
-            # Log warning but don't fail; liveview just won't be tracked
-            LOGGER.error(
-                f"{ICONS['assistant_jobs']} [assistant_jobs] WARNING: No running record found for "
+            LOGGER.warning(
+                f"{ICONS['assistant_jobs']} [assistant_jobs] No running record found for "
                 f"user_id={user_id}, assistant_id={assistant_id}. "
-                f"Adapter may have failed to create the record.",
+                f"Creating record from container.",
             )
+            unify.log(
+                project="AssistantJobs",
+                context="startup_events",
+                api_key=api_key,
+                user_id=user_id,
+                assistant_id=assistant_id,
+                job_name=job_name,
+                timestamp=datetime.now(tz=timezone.utc).isoformat(),
+                running=True,
+                assistant_name=SESSION_DETAILS.assistant.name,
+                user_name=SESSION_DETAILS.user.name,
+                user_number=SESSION_DETAILS.user.number,
+                assistant_number=SESSION_DETAILS.assistant.number,
+                user_email=SESSION_DETAILS.user.email,
+                assistant_email=SESSION_DETAILS.assistant.email,
+            )
+
+        # X1: record running job count right after the record is updated
+        _record_running_job_count(api_key)
+
+        # Mark session start for U9 duration measurement
+        global _session_start_perf
+        _session_start_perf = time.perf_counter()
     except Exception as e:
         LOGGER.error(
-            f"{ICONS['assistant_jobs']} [assistant_jobs] Error updating job record: {e}",
+            f"{ICONS['assistant_jobs']} [assistant_jobs] Error in log_job_startup: {e}",
         )
         traceback.print_exc()
 
