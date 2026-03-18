@@ -2064,6 +2064,7 @@ class FunctionManager(BaseFunctionManager):
                 context=self._primitives_ctx,
                 entries=entries,
                 batched=True,
+                recompute_derived=True,
             )
             logger.debug(f"Inserted {len(entries)} primitives")
         except Exception as e:
@@ -2253,6 +2254,7 @@ class FunctionManager(BaseFunctionManager):
             context=self._compositional_ctx,
             entries=[insert_data],
             add_to_all_context=self.include_in_multi_assistant_table,
+            recompute_derived=True,
         )
         # unity_create_logs can return either a dict or a list of Log objects
         if isinstance(result, list) and len(result) > 0:
@@ -2846,6 +2848,7 @@ class FunctionManager(BaseFunctionManager):
                     entries=entries_to_create,
                     batched=True,
                     add_to_all_context=self.include_in_multi_assistant_table,
+                    recompute_derived=True,
                 )
             except Exception as e:
                 logger.error(
@@ -3013,6 +3016,7 @@ class FunctionManager(BaseFunctionManager):
                     entries=entries_to_create,
                     batched=True,
                     add_to_all_context=self.include_in_multi_assistant_table,
+                    recompute_derived=True,
                 )
             except Exception as e:
                 logger.error(
