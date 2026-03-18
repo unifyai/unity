@@ -155,6 +155,10 @@ class DataManager(BaseDataManager):
         str
             Fully resolved context path.
         """
+        context = context.lstrip("/")
+        if not context:
+            raise ValueError("Empty context path")
+
         # Short-form absolute: starts with a known context root name
         if any(context.startswith(p) for p in _ABSOLUTE_PREFIXES):
             return context

@@ -20,6 +20,7 @@ class TableContext(BaseModel):
 class ContextRegistry:
     _setup_complete = False
     _registry = {}
+    _base_context: Optional[str] = None
 
     @staticmethod
     def _get_active_context() -> str:
@@ -252,6 +253,8 @@ class ContextRegistry:
     def clear(cls) -> None:
         """Remove all cached contexts from the registry, primarily for test isolation."""
         cls._registry.clear()
+        cls._setup_complete = False
+        cls._base_context = None
 
     @classmethod
     def get_context(
@@ -264,8 +267,14 @@ class ContextRegistry:
         key = (manager_name, ctx_name)
         ret = cls._registry.get(key)
         if ret is None:
-            active_context = cls._get_active_context()
-            contexts = cls._get_contexts_for_manager(manager, active_context)
+            base = cls._base_context or cls._get_active_context()
+            if not base:
+                raise RuntimeError(
+                    f"Cannot resolve context for {manager_name}.{ctx_name}: "
+                    "no base context available (ContextRegistry.setup() has not "
+                    "run or the active Unify context is empty)",
+                )
+            contexts = cls._get_contexts_for_manager(manager, base)
             ret = cls._create_context_wrapper(
                 manager_name,
                 contexts[ctx_name],
@@ -280,6 +289,7 @@ class ContextRegistry:
             return
 
         current_context = cls._get_active_context()
+        cls._base_context = current_context
 
         with ThreadPoolExecutor() as executor:
             futures = []
