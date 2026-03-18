@@ -123,6 +123,14 @@ a:hover { text-decoration: underline; }
 /* Tool calls & thinking */
 .tool-call { background: #1a1520; border: 1px solid #3d2d50; border-radius: 6px; padding: 10px 14px; margin: 8px 14px; font-size: 12px; }
 .tool-call .fn-name { color: var(--orange); font-weight: 600; }
+.tool-call .tc-thought { color: var(--text-dim); font-style: italic; font-size: 12px; margin: 6px 0; line-height: 1.5; }
+.tool-call .tc-badges { display: flex; gap: 6px; margin: 6px 0; }
+.tool-call .tc-badge { font-size: 10px; padding: 2px 8px; border-radius: 4px; background: rgba(188,140,255,0.12); color: var(--purple); font-family: var(--mono); }
+.tool-call .tc-code { background: #0d1117; border: 1px solid var(--border); border-radius: 6px; margin: 6px 0 0; padding: 12px; font-size: 12px; line-height: 1.5; overflow-x: auto; }
+.tool-call .tc-code.tc-collapsed { max-height: 300px; overflow: hidden; position: relative; }
+.tool-call .tc-code.tc-collapsed::after { content: ''; position: absolute; bottom: 0; left: 0; right: 0; height: 40px; background: linear-gradient(transparent, #0d1117); pointer-events: none; }
+.tool-call .tc-code.tc-expanded { max-height: 80vh; overflow-y: auto; }
+.tool-call .tc-code code { font-family: var(--mono); color: var(--text); white-space: pre; }
 .tool-call pre { margin-top: 6px; color: var(--text-dim); overflow-x: auto; white-space: pre-wrap; max-height: 200px; overflow-y: auto; position: relative; }
 .tool-call pre.tc-collapsed { max-height: 100px; overflow: hidden; }
 .tool-call pre.tc-collapsed::after { content: ''; position: absolute; bottom: 0; left: 0; right: 0; height: 30px; background: linear-gradient(transparent, #1a1520); pointer-events: none; }
@@ -631,12 +639,43 @@ async function renderLLMDetail(jobName, filename) {
         const fn = tc.function || tc;
         let args = fn.arguments || fn.args || '';
         if (typeof args === 'object') args = JSON.stringify(args, null, 2);
-        const isLongTc = typeof args === 'string' && args.length > 300;
         const tcId = `tc-${i}-${ti}`;
-        if (isLongTc) _msgContents.set(tcId, args);
+
         main += `<div class="tool-call"><span class="fn-name">${esc(fn.name||'tool')}</span> <span style="color:var(--text-dimmer)">${tc.id||''}</span>`;
-        main += `<pre id="${tcId}" class="${isLongTc ? 'tc-collapsed' : ''}">${esc(isLongTc ? args.slice(0, 300) : args)}</pre>`;
-        if (isLongTc) main += `<span class="tc-toggle" onclick="toggleTc('${tcId}')">${Math.round(args.length/1000)}k chars \u2014 expand</span>`;
+
+        // Try to parse as structured code tool call
+        let parsed = null;
+        if (typeof args === 'string') {
+          try { parsed = JSON.parse(args); } catch(e) {}
+        }
+
+        if (parsed && parsed.code) {
+          const lang = (parsed.language || 'python').toLowerCase();
+          const prismLang = (lang === 'bash' || lang === 'zsh' || lang === 'sh') ? 'bash' : 'python';
+          const code = parsed.code;
+          const lineCount = code.split('\n').length;
+          const isLongCode = lineCount > 20;
+
+          if (parsed.thought) {
+            main += `<div class="tc-thought">${esc(parsed.thought)}</div>`;
+          }
+          main += '<div class="tc-badges">';
+          main += `<span class="tc-badge">${esc(lang)}</span>`;
+          if (parsed.state_mode) main += `<span class="tc-badge">${esc(parsed.state_mode)}</span>`;
+          main += `<span class="tc-badge">${lineCount} lines</span>`;
+          main += '</div>';
+
+          if (isLongCode) _msgContents.set(tcId, code);
+          main += `<pre class="tc-code ${isLongCode ? 'tc-collapsed' : ''}" id="${tcId}"><code class="language-${prismLang}" id="${tcId}-code">${esc(isLongCode ? code.split('\n').slice(0, 20).join('\n') : code)}</code></pre>`;
+          if (isLongCode) main += `<span class="tc-toggle" onclick="toggleCodeTc('${tcId}', '${prismLang}')">${lineCount} lines \u2014 click to expand</span>`;
+        } else {
+          // Fallback: raw args display
+          const isLongTc = typeof args === 'string' && args.length > 300;
+          if (isLongTc) _msgContents.set(tcId, args);
+          main += `<pre id="${tcId}" class="${isLongTc ? 'tc-collapsed' : ''}">${esc(isLongTc ? args.slice(0, 300) : args)}</pre>`;
+          if (isLongTc) main += `<span class="tc-toggle" onclick="toggleTc('${tcId}')">${Math.round(args.length/1000)}k chars \u2014 expand</span>`;
+        }
+
         main += '</div>';
       });
     }
@@ -671,6 +710,13 @@ async function renderLLMDetail(jobName, filename) {
   // Scroll active sidebar item into view
   const activeEl = document.getElementById('active-sidebar-item');
   if (activeEl) activeEl.scrollIntoView({ block: 'center', behavior: 'instant' });
+
+  // Syntax-highlight all code blocks in tool calls
+  if (window.Prism) {
+    document.querySelectorAll('.tc-code code[class*="language-"]').forEach(el => {
+      Prism.highlightElement(el);
+    });
+  }
 }
 
 function toggleMsg(idx) {
@@ -709,6 +755,25 @@ function toggleTc(tcId) {
     pre.classList.add('tc-collapsed');
     toggle.textContent = Math.round(full.length/1000) + 'k chars \u2014 expand';
   }
+}
+
+function toggleCodeTc(tcId, lang) {
+  const pre = document.getElementById(tcId);
+  const codeEl = document.getElementById(tcId + '-code');
+  const toggle = pre.nextElementSibling;
+  const full = _msgContents.get(tcId) || '';
+  if (pre.classList.contains('tc-collapsed')) {
+    codeEl.textContent = full;
+    pre.classList.remove('tc-collapsed');
+    pre.classList.add('tc-expanded');
+    toggle.textContent = 'Collapse';
+  } else {
+    codeEl.textContent = full.split('\n').slice(0, 20).join('\n');
+    pre.classList.remove('tc-expanded');
+    pre.classList.add('tc-collapsed');
+    toggle.textContent = full.split('\n').length + ' lines \u2014 click to expand';
+  }
+  if (window.Prism) Prism.highlightElement(codeEl);
 }
 
 // ---------------------------------------------------------------------------
