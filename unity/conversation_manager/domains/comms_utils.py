@@ -80,8 +80,8 @@ async def send_unify_message(
         dict with "success" key indicating delivery status.
     """
     agent_id = SESSION_DETAILS.assistant.agent_id
-    staging_suffix = "-staging" if SETTINGS.STAGING and agent_id is not None else ""
-    topic_name = f"unity-{agent_id}{staging_suffix}"
+    env_suffix = SETTINGS.ENV_SUFFIX if agent_id is not None else ""
+    topic_name = f"unity-{agent_id}{env_suffix}"
     publisher = _get_publisher()
     topic_path = publisher.topic_path("responsive-city-458413-a2", topic_name)
 
@@ -161,8 +161,8 @@ async def publish_assistant_desktop_ready(
     The Console subscribes to this thread to update the liveview iframe.
     """
     agent_id = SESSION_DETAILS.assistant.agent_id
-    staging_suffix = "-staging" if SETTINGS.STAGING and agent_id is not None else ""
-    topic_name = f"unity-{agent_id}{staging_suffix}"
+    env_suffix = SETTINGS.ENV_SUFFIX if agent_id is not None else ""
+    topic_name = f"unity-{agent_id}{env_suffix}"
     publisher = _get_publisher()
     topic_path = publisher.topic_path("responsive-city-458413-a2", topic_name)
 

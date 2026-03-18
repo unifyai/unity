@@ -13,11 +13,15 @@ from __future__ import annotations
 
 import json
 import logging
+import time
+import traceback
 
 import requests
 import unify
 
 log = logging.getLogger(__name__)
+
+VM_RELEASE_ATTEMPTS = 3
 
 PROJECT_NAME = "AssistantJobs"
 CONTEXT = "startup_events"
@@ -93,30 +97,6 @@ def expire_assistant_records(api_key: str, assistant_id: str) -> None:
 # ---------------------------------------------------------------------------
 
 
-def read_own_job(
-    comms_url: str,
-    admin_key: str,
-    job_name: str,
-) -> dict | None:
-    """Read the current state of a Job from the comms app.
-
-    Returns ``{labels, annotations, active}`` or None on any error
-    (fail-silent so the polling loop continues).
-    """
-    try:
-        resp = requests.get(
-            f"{comms_url}/infra/job/{job_name}",
-            headers={"Authorization": f"Bearer {admin_key}"},
-            timeout=10,
-        )
-        if resp.status_code == 200:
-            return resp.json()
-        return None
-    except Exception:
-        log.debug("Failed to read own job %s (will retry)", job_name, exc_info=True)
-        return None
-
-
 def patch_job_label(
     comms_url: str,
     admin_key: str,
@@ -165,25 +145,84 @@ def patch_job_label(
 # ---------------------------------------------------------------------------
 
 
-def release_pool_vm(
+def detach_disk(
     comms_url: str,
     admin_key: str,
     assistant_id: str,
 ) -> None:
-    """Fire-and-forget request to release the pool VM for *assistant_id*.
-
-    The communication service handles the actual GCP release. The
-    job-watcher provides crash-safe coverage if this request is lost.
-    """
+    """Best-effort detach of the assistant's persistent disk."""
+    headers = {"Authorization": f"Bearer {admin_key}"}
     try:
-        requests.post(
-            f"{comms_url}/infra/vm/pool/release",
-            json={"assistant_id": assistant_id},
-            headers={"Authorization": f"Bearer {admin_key}"},
-            timeout=0.1,
+        resp = requests.post(
+            f"{comms_url}/infra/vm/pool/disk/detach/{assistant_id}",
+            headers=headers,
+            timeout=60,
         )
-        log.info("Pool VM release dispatched for %s", assistant_id)
-    except requests.exceptions.Timeout:
-        log.info("Pool VM release dispatched for %s (timeout)", assistant_id)
+        if resp.ok:
+            log.info("Disk detached for %s: %s", assistant_id, resp.json())
+        else:
+            log.error(
+                "Failed to detach disk for %s: %d %s",
+                assistant_id,
+                resp.status_code,
+                resp.text,
+            )
     except Exception:
-        log.exception("Error dispatching pool VM release for %s", assistant_id)
+        log.exception("Error detaching disk for %s", assistant_id)
+        traceback.print_exc()
+
+
+def release_pool_vm(
+    comms_url: str,
+    admin_key: str,
+    assistant_id: str,
+    max_attempts: int = VM_RELEASE_ATTEMPTS,
+) -> None:
+    """Release the pool VM assigned to *assistant_id* (with retries)."""
+    headers = {"Authorization": f"Bearer {admin_key}"}
+
+    for attempt in range(1, max_attempts + 1):
+        try:
+            resp = requests.post(
+                f"{comms_url}/infra/vm/pool/release",
+                json={"assistant_id": assistant_id},
+                headers=headers,
+                timeout=60,
+            )
+            if resp.ok:
+                body = resp.json()
+                if body.get("released"):
+                    log.info("Pool VM released for %s: %s", assistant_id, body)
+                    return
+
+                log.warning(
+                    "Release returned released=false for %s: %s — "
+                    "attempting disk detach",
+                    assistant_id,
+                    body,
+                )
+                detach_disk(comms_url, admin_key, assistant_id)
+                return
+
+            if resp.status_code >= 500 and attempt < max_attempts:
+                log.warning(
+                    "Pool VM release got %d for %s, retrying (%d/%d)",
+                    resp.status_code,
+                    assistant_id,
+                    attempt,
+                    max_attempts,
+                )
+                time.sleep(attempt)
+                continue
+
+            log.error(
+                "Failed to release pool VM for %s: %d %s",
+                assistant_id,
+                resp.status_code,
+                resp.text,
+            )
+            return
+        except Exception:
+            log.exception("Error releasing pool VM for %s", assistant_id)
+            traceback.print_exc()
+            return

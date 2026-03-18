@@ -334,7 +334,8 @@ class TestSendUnifyMessage:
                 "unity.conversation_manager.domains.comms_utils.SETTINGS",
             ) as mock_settings,
         ):
-            mock_settings.STAGING = False
+            mock_settings.DEPLOY_ENV = "production"
+            mock_settings.ENV_SUFFIX = ""
             mock_session.assistant.agent_id = 42
 
             mock_publisher = MagicMock()
@@ -369,7 +370,8 @@ class TestSendUnifyMessage:
                 "unity.conversation_manager.domains.comms_utils.SETTINGS",
             ) as mock_settings,
         ):
-            mock_settings.STAGING = False
+            mock_settings.DEPLOY_ENV = "production"
+            mock_settings.ENV_SUFFIX = ""
             mock_session.assistant.agent_id = 42
 
             mock_publisher = MagicMock()
