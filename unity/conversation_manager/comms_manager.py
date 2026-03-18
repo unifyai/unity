@@ -65,7 +65,7 @@ if TYPE_CHECKING:
 # Subscription IDs
 project_id = "responsive-city-458413-a2"
 startup_subscription_id = (
-    "unity-startup" + ("-staging" if SETTINGS.STAGING else "") + "-sub"
+    "unity-startup" + SETTINGS.ENV_SUFFIX + "-sub"
 )
 
 
