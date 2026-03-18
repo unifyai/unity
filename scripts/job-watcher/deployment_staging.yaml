@@ -94,6 +94,8 @@ spec:
         env:
         - name: WATCH_NAMESPACE
           value: staging
+        - name: DEPLOY_ENV
+          value: staging
         - name: UNITY_COMMS_URL
           value: "https://unity-comms-app-staging-262420637606.us-central1.run.app"
         - name: ORCHESTRA_URL

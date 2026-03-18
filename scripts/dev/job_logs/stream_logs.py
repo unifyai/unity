@@ -5,7 +5,8 @@ stream_logs.py — View logs for a Unity GKE job.
 Usage:
     python stream_logs.py                       # auto-detect latest staging job
     python stream_logs.py --job <job_name>      # explicit job, staging namespace
-    python stream_logs.py --production          # auto-detect latest production job
+    python stream_logs.py --env production      # auto-detect latest production job
+    python stream_logs.py --env preview         # auto-detect latest preview job
 
 Behaviour:
     1. If --job is omitted, resolves the caller's email from UNIFY_KEY and finds
@@ -44,12 +45,13 @@ from job_utils import (
 
 # The unify SDK reads ORCHESTRA_URL at import time, and .env sets it to
 # localhost for local development. This script needs the real backend, so
-# derive the URL from --production before importing anything else.
+# derive the URL from --env before importing anything else.
 
 
 def _parse_namespace_early() -> str:
-    if "--production" in sys.argv:
-        return "production"
+    for i, arg in enumerate(sys.argv):
+        if arg == "--env" and i + 1 < len(sys.argv):
+            return sys.argv[i + 1]
     return "staging"
 
 
@@ -91,8 +93,8 @@ class Keepalive:
 
     def __init__(self, assistant_id: str, namespace: str):
         topic = f"unity-{assistant_id}"
-        if namespace == "staging":
-            topic += "-staging"
+        if namespace != "production":
+            topic += f"-{namespace}"
         self._topic = topic
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
@@ -578,8 +580,9 @@ def main():
             "AssistantJobs for your most recent session.\n"
             "\n"
             "Examples:\n"
-            "  python stream_logs.py                        # latest staging job\n"
-            "  python stream_logs.py --production            # latest production job\n"
+            "  python stream_logs.py                          # latest staging job\n"
+            "  python stream_logs.py --env production         # latest production job\n"
+            "  python stream_logs.py --env preview            # latest preview job\n"
             "  python stream_logs.py --job unity-2026-02-10-17-30-53-staging"
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -590,9 +593,10 @@ def main():
         help="Name of the GKE job. If omitted, auto-detects the latest job for your account.",
     )
     parser.add_argument(
-        "--production",
-        action="store_true",
-        help="Target the production environment (default: staging)",
+        "--env",
+        choices=["production", "staging", "preview"],
+        default="staging",
+        help="Target deploy environment (default: staging)",
     )
     parser.add_argument(
         "--no-mirror",
@@ -630,7 +634,7 @@ def main():
     )
     args = parser.parse_args()
 
-    namespace = "production" if args.production else "staging"
+    namespace = args.env
     mirror = not args.no_mirror
     sync_all = args.sync_all_logs and not args.no_sync
     mirror_base = Path(args.mirror_dir).resolve() if args.mirror_dir else MIRROR_BASE

@@ -996,10 +996,8 @@ class EventBus:
             from ..settings import SETTINGS
 
             agent_id = str(SESSION_DETAILS.assistant.agent_id)
-            staging_suffix = (
-                "-staging" if SETTINGS.STAGING and agent_id is not None else ""
-            )
-            topic_name = f"unity-{agent_id}{staging_suffix}"
+            env_suffix = SETTINGS.ENV_SUFFIX if agent_id is not None else ""
+            topic_name = f"unity-{agent_id}{env_suffix}"
 
             publisher = self._get_pubsub_publisher()
             topic_path = publisher.topic_path(self._GCP_PROJECT, topic_name)
