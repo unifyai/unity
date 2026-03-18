@@ -93,30 +93,6 @@ def expire_assistant_records(api_key: str, assistant_id: str) -> None:
 # ---------------------------------------------------------------------------
 
 
-def read_own_job(
-    comms_url: str,
-    admin_key: str,
-    job_name: str,
-) -> dict | None:
-    """Read the current state of a Job from the comms app.
-
-    Returns ``{labels, annotations, active}`` or None on any error
-    (fail-silent so the polling loop continues).
-    """
-    try:
-        resp = requests.get(
-            f"{comms_url}/infra/job/{job_name}",
-            headers={"Authorization": f"Bearer {admin_key}"},
-            timeout=10,
-        )
-        if resp.status_code == 200:
-            return resp.json()
-        return None
-    except Exception:
-        log.debug("Failed to read own job %s (will retry)", job_name, exc_info=True)
-        return None
-
-
 def patch_job_label(
     comms_url: str,
     admin_key: str,
