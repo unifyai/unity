@@ -10,10 +10,11 @@ after a cloud build completes (~10 minutes):
   3. Streams the assistant's container logs
 
 Usage:
-    python scripts/wake_and_watch.py                      # staging (default)
-    python scripts/wake_and_watch.py --production         # production
-    python scripts/wake_and_watch.py --assistant-id 464   # explicit assistant
-    python scripts/wake_and_watch.py --skip-refresh       # skip idle container refresh
+    python scripts/wake_and_watch.py                        # staging (default)
+    python scripts/wake_and_watch.py --env production      # production
+    python scripts/wake_and_watch.py --env preview         # preview
+    python scripts/wake_and_watch.py --assistant-id 464    # explicit assistant
+    python scripts/wake_and_watch.py --skip-refresh        # skip idle container refresh
 
 Environment:
     UNIFY_KEY          Required. Resolves caller identity and assistant.
@@ -28,22 +29,24 @@ import time
 # ─── Constants ────────────────────────────────────────────────────────────────
 
 ORCHESTRA_URLS = {
-    "staging": "https://api.staging.internal.saas.unify.ai/v0",
     "production": "https://api.unify.ai/v0",
+    "staging": "https://api.staging.internal.saas.unify.ai/v0",
+    "preview": "https://api.staging.internal.saas.unify.ai/v0",
 }
 
 ADAPTERS_URLS = {
-    "staging": "https://unity-adapters-staging-ky4ja5fxna-uc.a.run.app",
     "production": "https://unity-adapters-1021024874437.us-central1.run.app",
+    "staging": "https://unity-adapters-staging-ky4ja5fxna-uc.a.run.app",
+    "preview": "https://unity-adapters-preview-ky4ja5fxna-uc.a.run.app",
 }
 
 # ─── Early env setup (before imports that read ORCHESTRA_URL) ─────────────────
 
 
 def _parse_env_early() -> str:
-    for arg in sys.argv:
-        if arg == "--production":
-            return "production"
+    for i, arg in enumerate(sys.argv):
+        if arg == "--env" and i + 1 < len(sys.argv):
+            return sys.argv[i + 1]
     return "staging"
 
 
@@ -244,9 +247,7 @@ def stream_logs(job_name: str | None):
         "job_logs",
         "stream_logs.py",
     )
-    argv = [sys.executable, script]
-    if ENV == "production":
-        argv.append("--production")
+    argv = [sys.executable, script, "--env", ENV]
     if job_name:
         argv += ["--job", job_name]
     info(f"Handing off to stream_logs.py...")
@@ -264,9 +265,10 @@ def main():
         description="Refresh containers, wake assistant, stream logs.",
     )
     parser.add_argument(
-        "--production",
-        action="store_true",
-        help="Target production (default: staging)",
+        "--env",
+        choices=["production", "staging", "preview"],
+        default="staging",
+        help="Target deploy environment (default: staging)",
     )
     parser.add_argument(
         "--assistant-id",

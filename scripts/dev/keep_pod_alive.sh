@@ -9,8 +9,9 @@
 # Usage:
 #   ./scripts/dev/keep_pod_alive.sh                                 # auto-detect latest staging pod
 #   ./scripts/dev/keep_pod_alive.sh <assistant_id>                  # explicit assistant, staging
-#   ./scripts/dev/keep_pod_alive.sh --production                    # auto-detect latest production pod
-#   ./scripts/dev/keep_pod_alive.sh <assistant_id> --production     # explicit assistant, production
+#   ./scripts/dev/keep_pod_alive.sh --env production                # auto-detect latest production pod
+#   ./scripts/dev/keep_pod_alive.sh --env preview                   # auto-detect latest preview pod
+#   ./scripts/dev/keep_pod_alive.sh <assistant_id> --env production # explicit assistant, production
 #   ./scripts/dev/keep_pod_alive.sh <assistant_id> --interval 60    # custom interval
 #
 # Requires:
@@ -27,7 +28,7 @@ GCP_PROJECT="responsive-city-458413-a2"
 DEFAULT_INTERVAL=30
 
 usage() {
-    echo "Usage: $0 [assistant_id] [--production] [--interval SECONDS]"
+    echo "Usage: $0 [assistant_id] [--env ENV] [--interval SECONDS]"
     echo
     echo "Keep a Unity pod alive by sending periodic keepalive pings via Pub/Sub."
     echo
@@ -36,7 +37,7 @@ usage() {
     echo "                        your latest running pod when omitted)"
     echo
     echo "Options:"
-    echo "  --production          Target the production environment (default: staging)"
+    echo "  --env ENV             Target environment: production, staging, or preview (default: staging)"
     echo "  --interval SECONDS    Ping interval in seconds (default: ${DEFAULT_INTERVAL})"
     echo "  -h, --help            Show this help message"
     exit 1
@@ -45,14 +46,18 @@ usage() {
 # --- Parse arguments ---
 
 ASSISTANT_ID=""
-STAGING=true
+DEPLOY_ENV=staging
 INTERVAL=$DEFAULT_INTERVAL
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
-        --production)
-            STAGING=false
-            shift
+        --env)
+            DEPLOY_ENV="$2"
+            case "$DEPLOY_ENV" in
+                production|staging|preview) ;;
+                *) echo "Invalid --env value: $DEPLOY_ENV" >&2; usage ;;
+            esac
+            shift 2
             ;;
         --interval)
             INTERVAL="$2"
@@ -80,16 +85,14 @@ done
 # --- Auto-detect assistant_id if not provided ---
 
 if [[ -z "$ASSISTANT_ID" ]]; then
-    NAMESPACE_FLAG=""
-    [[ "$STAGING" == "false" ]] && NAMESPACE_FLAG="--production"
-    ASSISTANT_ID=$("$PYTHON" "${SCRIPT_DIR}/job_utils.py" assistant-id $NAMESPACE_FLAG)
+    ASSISTANT_ID=$("$PYTHON" "${SCRIPT_DIR}/job_utils.py" assistant-id --env "$DEPLOY_ENV")
 fi
 
 # --- Build topic name ---
 
 TOPIC="unity-${ASSISTANT_ID}"
-if [[ "$STAGING" == "true" ]]; then
-    TOPIC="${TOPIC}-staging"
+if [[ "$DEPLOY_ENV" != "production" ]]; then
+    TOPIC="${TOPIC}-${DEPLOY_ENV}"
 fi
 
 PING_MESSAGE='{"thread":"ping","event":{}}'
@@ -97,7 +100,7 @@ PING_MESSAGE='{"thread":"ping","event":{}}'
 echo "Keeping pod alive:"
 echo "  Project:      ${GCP_PROJECT}"
 echo "  Topic:        ${TOPIC}"
-echo "  Environment:  $(if [[ "$STAGING" == "true" ]]; then echo staging; else echo production; fi)"
+echo "  Environment:  ${DEPLOY_ENV}"
 echo "  Interval:     ${INTERVAL}s"
 echo
 echo "Press Ctrl+C to stop."
