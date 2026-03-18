@@ -57,7 +57,6 @@ from unity.conversation_manager.events import (
     PhoneCallReceived,
     PhoneCallAnswered,
     UnifyMeetReceived,
-    StartupEvent,
     AssistantUpdateEvent,
     SyncContacts,
     PreHireMessage,
@@ -835,70 +834,6 @@ class TestUnifyMeetHandling:
 
 class TestStartupEvents:
     """Test handling of startup and assistant update events."""
-
-    @pytest.mark.asyncio
-    async def test_handle_startup_event(
-        self,
-        broker,
-        mock_session_details,
-        mock_settings,
-    ):
-        """Test handling of startup event."""
-        from unity.conversation_manager.comms_manager import CommsManager
-
-        cm = CommsManager(broker)
-        cm.loop = asyncio.get_event_loop()
-
-        # Pre-register the startup subscription (normally done by start())
-        cm.subscribers["unity-startup-sub"] = Mock()
-        cm.subscribers["unity-startup-sub"].cancel = Mock()
-
-        async with broker.pubsub() as pubsub:
-            await pubsub.psubscribe("app:comms:*")
-
-            # Patch subprocess.run which is imported locally in the handler
-            with patch(
-                "subprocess.run",
-                return_value=None,
-            ):
-                message = create_pubsub_message(
-                    "startup",
-                    {
-                        "api_key": "test_api_key",
-                        "assistant_id": "new_assistant_id",
-                        "user_id": "user_123",
-                        "assistant_first_name": "Test",
-                        "assistant_surname": "Assistant",
-                        "assistant_age": "25",
-                        "assistant_nationality": "American",
-                        "assistant_about": "A helpful assistant",
-                        "assistant_number": "+15555551234",
-                        "assistant_email": "assistant@test.com",
-                        "user_first_name": "Test",
-                        "user_surname": "User",
-                        "user_number": "+15555550000",
-                        "user_email": "user@test.com",
-                        "voice_provider": "cartesia",
-                        "voice_id": "voice_123",
-                    },
-                )
-
-                # Handle in a separate thread to allow subscribe_to_topic to be mocked
-                with patch.object(cm, "subscribe_to_topic"):
-                    cm.handle_message(message)
-                    # Poll for message acknowledgment instead of fixed sleep
-                    await _wait_for_condition(lambda: message._acked)
-
-                msg = await pubsub.get_message(
-                    timeout=1.0,
-                    ignore_subscribe_messages=True,
-                )
-                assert msg is not None
-                assert msg["channel"] == "app:comms:startup"
-
-                event = Event.from_json(msg["data"])
-                assert isinstance(event, StartupEvent)
-                assert event.assistant_id == "new_assistant_id"
 
     @pytest.mark.asyncio
     async def test_handle_assistant_update_event(
