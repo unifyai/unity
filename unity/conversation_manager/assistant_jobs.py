@@ -5,9 +5,10 @@ values (``SESSION_DETAILS``, ``SETTINGS``) and records Prometheus
 metrics.  All actual HTTP operations live in ``assistant_jobs_api.py``
 which is shared with the job-watcher operator.
 
-AssistantJobs records are a passive audit log: created once at startup
-and never mutated afterwards.  The job-watcher operator handles
-crash-safe VM release independently.
+``log_job_startup`` creates the AssistantJobs audit record with all
+assistant/user info from ``SESSION_DETAILS`` plus the container-specific
+``job_name``.  ``update_liveview_url`` may later add the desktop URL.
+The job-watcher operator handles crash-safe VM release independently.
 """
 
 from dotenv import load_dotenv
@@ -15,6 +16,7 @@ from dotenv import load_dotenv
 load_dotenv()
 import time
 import traceback
+from datetime import datetime, timezone
 
 from unity.logger import LOGGER
 from unity.common.hierarchical_logger import ICONS
@@ -86,11 +88,17 @@ def mark_job_label(
         )
 
 
-def log_job_startup(job_name: str, user_id: str, assistant_id: str):
-    """Create a passive audit record for this container session.
+def log_job_startup(
+    job_name: str,
+    user_id: str,
+    assistant_id: str,
+    medium: str = "",
+):
+    """Create an AssistantJobs audit record for this container session.
 
-    The record captures ``user_id``, ``assistant_id``, ``job_name`` and a
-    timestamp.  ``update_liveview_url`` may later add the desktop URL.
+    Logs all available assistant/user info from ``SESSION_DETAILS`` plus
+    the container-specific ``job_name``.  ``update_liveview_url`` may
+    later add the desktop URL.
     """
     api_key = SESSION_DETAILS.shared_unify_key or None
     if not api_key:
@@ -102,14 +110,20 @@ def log_job_startup(job_name: str, user_id: str, assistant_id: str):
     _ensure_project_exists(api_key)
 
     try:
-        from datetime import datetime, timezone
-
+        sd = SESSION_DETAILS
         create_assistant_log(
             api_key,
             user_id=user_id,
             assistant_id=assistant_id,
             job_name=job_name,
             timestamp=datetime.now(tz=timezone.utc).isoformat(),
+            medium=medium,
+            user_name=f"{sd.user.first_name} {sd.user.surname}".strip(),
+            assistant_name=f"{sd.assistant.first_name} {sd.assistant.surname}".strip(),
+            user_number=sd.user.number,
+            assistant_number=sd.assistant.number,
+            user_email=sd.user.email,
+            assistant_email=sd.assistant.email,
         )
         LOGGER.debug(
             f"{ICONS['assistant_jobs']} [assistant_jobs] Created audit record: "
