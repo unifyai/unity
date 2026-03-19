@@ -618,6 +618,38 @@ def test_plot_bar_with_aggregate(seeded_dm):
     assert result.title == "Price by Category"
 
 
+def test_plot_bar_with_metric(seeded_dm):
+    """Bar chart with metric parameter is accepted and returns a valid PlotResult."""
+    result = seeded_dm.plot(
+        "test/products",
+        plot_type="bar",
+        x="category",
+        y="price",
+        metric="count",
+        title="Product Count by Category",
+    )
+
+    assert isinstance(result, PlotResult)
+    assert result.succeeded
+    assert result.url is not None
+    assert result.title == "Product Count by Category"
+
+
+def test_plot_batch_with_metric(seeded_dm):
+    """plot_batch forwards metric without error."""
+    contexts = ["test/products", "test/orders"]
+    results = seeded_dm.plot_batch(
+        contexts,
+        plot_type="bar",
+        x="id",
+        y="id",
+        metric="sum",
+    )
+
+    assert len(results) == len(contexts)
+    assert all(r.succeeded for r in results)
+
+
 def test_plot_line_with_group_by(seeded_dm):
     """Line chart with group_by propagates all params and succeeds."""
     result = seeded_dm.plot(

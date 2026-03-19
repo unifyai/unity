@@ -1,0 +1,875 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Session Visualizer</title>
+<style>
+:root {
+  --bg: #0d1117;
+  --bg-card: #161b22;
+  --bg-hover: #1c2129;
+  --border: #30363d;
+  --text: #e6edf3;
+  --text-dim: #8b949e;
+  --text-dimmer: #6e7681;
+  --accent: #58a6ff;
+  --green: #3fb950;
+  --yellow: #d29922;
+  --red: #f85149;
+  --purple: #bc8cff;
+  --orange: #f0883e;
+  --radius: 8px;
+  --mono: 'JetBrains Mono', 'Fira Code', 'Cascadia Code', monospace;
+  --sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
+}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: var(--sans); background: var(--bg); color: var(--text); line-height: 1.5; }
+a { color: var(--accent); text-decoration: none; }
+a:hover { text-decoration: underline; }
+
+.app { max-width: 1400px; margin: 0 auto; padding: 20px; }
+.header { display: flex; justify-content: space-between; align-items: center; padding: 16px 0; border-bottom: 1px solid var(--border); margin-bottom: 24px; }
+.header h1 { font-size: 20px; font-weight: 600; }
+.header .subtitle { color: var(--text-dim); font-size: 13px; }
+.breadcrumb { display: flex; gap: 8px; align-items: center; color: var(--text-dim); font-size: 13px; margin-bottom: 16px; }
+.breadcrumb a { color: var(--text-dim); }
+.breadcrumb a:hover { color: var(--accent); }
+.breadcrumb .sep { color: var(--text-dimmer); }
+
+.stats-row { display: flex; gap: 12px; margin-bottom: 20px; flex-wrap: wrap; }
+.stat-card { background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--radius); padding: 14px 18px; flex: 1; min-width: 120px; }
+.stat-card .label { font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; color: var(--text-dim); margin-bottom: 2px; }
+.stat-card .value { font-size: 22px; font-weight: 600; font-family: var(--mono); }
+
+/* Assistant cards */
+.asst-row { display: flex; gap: 12px; margin-bottom: 24px; flex-wrap: wrap; }
+.asst-card { background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--radius); padding: 14px 18px; flex: 1; min-width: 200px; cursor: pointer; transition: border-color 0.15s; }
+.asst-card:hover { border-color: var(--accent); }
+.asst-card .asst-name { font-weight: 600; font-size: 14px; }
+.asst-card .asst-owner { color: var(--text-dim); font-size: 12px; margin-bottom: 8px; }
+.asst-card .asst-stats { display: flex; gap: 12px; font-size: 11px; color: var(--text-dimmer); font-family: var(--mono); }
+
+/* Session list */
+.session-list { display: flex; flex-direction: column; gap: 6px; }
+.session-card { background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--radius); padding: 12px 16px; cursor: pointer; transition: border-color 0.15s; display: grid; grid-template-columns: 1fr auto; gap: 8px; align-items: center; }
+.session-card:hover { border-color: var(--accent); background: var(--bg-hover); }
+.session-card .top { display: flex; align-items: center; gap: 10px; }
+.session-card .date { font-family: var(--mono); font-size: 13px; color: var(--accent); }
+.session-card .badge { font-size: 11px; padding: 2px 8px; border-radius: 10px; background: #1f2937; color: var(--text-dim); }
+.session-card .preview { color: var(--text-dim); font-size: 13px; margin-top: 3px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 700px; }
+.session-card .metrics { display: flex; gap: 14px; font-size: 12px; color: var(--text-dim); font-family: var(--mono); white-space: nowrap; }
+.session-card .metrics .err { color: var(--red); }
+
+.day-group .day-label { font-size: 12px; color: var(--text-dimmer); text-transform: uppercase; letter-spacing: 0.5px; margin: 16px 0 8px 4px; font-weight: 600; }
+
+/* Tabs */
+.tabs { display: flex; gap: 0; border-bottom: 1px solid var(--border); margin-bottom: 20px; }
+.tab { padding: 10px 18px; font-size: 13px; color: var(--text-dim); cursor: pointer; border-bottom: 2px solid transparent; transition: all 0.15s; }
+.tab:hover { color: var(--text); }
+.tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+
+/* Timeline */
+.timeline { display: flex; flex-direction: column; gap: 1px; }
+.tl-event { display: grid; grid-template-columns: 90px 160px 1fr; gap: 12px; padding: 5px 10px; font-size: 13px; border-radius: 4px; }
+.tl-event:hover { background: var(--bg-hover); }
+.tl-event .time { font-family: var(--mono); color: var(--text-dimmer); font-size: 12px; }
+.tl-event .comp { color: var(--purple); font-size: 12px; font-family: var(--mono); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tl-event .msg { color: var(--text); word-break: break-word; }
+.tl-event.error .msg { color: var(--red); }
+.tl-event.warning .msg { color: var(--yellow); }
+.tl-event.user-msg { background: rgba(88,166,255,0.06); border-left: 3px solid var(--accent); }
+
+/* Tables */
+.call-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.call-table th { text-align: left; padding: 8px 12px; color: var(--text-dim); font-weight: 500; border-bottom: 1px solid var(--border); font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; }
+.call-table td { padding: 8px 12px; border-bottom: 1px solid var(--border); }
+.call-table tr:hover { background: var(--bg-hover); }
+.call-table.clickable tr { cursor: pointer; }
+.call-table .api-detail-row td { padding: 0; border-bottom: 1px solid var(--border); }
+.api-detail-content { padding: 12px 16px; background: var(--bg); font-size: 12px; font-family: var(--mono); }
+.api-detail-content pre { white-space: pre-wrap; word-break: break-word; max-height: 300px; overflow-y: auto; color: var(--text-dim); margin: 4px 0 8px; background: var(--bg-card); padding: 8px; border-radius: 4px; }
+.api-detail-content .api-section { margin-bottom: 8px; }
+.api-detail-content .api-label { color: var(--purple); font-weight: 600; font-size: 11px; text-transform: uppercase; margin-bottom: 2px; }
+.call-table .origin { color: var(--purple); font-family: var(--mono); font-size: 12px; }
+.call-table .model { color: var(--text-dim); font-family: var(--mono); font-size: 12px; }
+.cache-hit { background: rgba(63,185,80,0.15); color: var(--green); }
+.cache-miss { background: rgba(210,153,34,0.15); color: var(--yellow); }
+.cache-none { background: rgba(139,148,158,0.1); color: var(--text-dim); }
+.cache-pending { background: rgba(188,140,255,0.15); color: var(--purple); }
+.cache-badge { font-size: 11px; padding: 2px 6px; border-radius: 4px; }
+.status-ok { color: var(--green); }
+.status-err { color: var(--red); }
+.duration-slow { color: var(--yellow); }
+
+/* LLM message thread */
+.msg-thread { display: flex; flex-direction: column; gap: 10px; }
+.msg-bubble { border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; }
+.msg-header { padding: 8px 14px; font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; display: flex; justify-content: space-between; align-items: center; }
+.msg-body { padding: 14px; font-size: 13px; white-space: pre-wrap; word-break: break-word; font-family: var(--mono); line-height: 1.6; position: relative; }
+.msg-body.collapsed { max-height: 300px; overflow: hidden; }
+.msg-body.collapsed::after { content: ''; position: absolute; bottom: 0; left: 0; right: 0; height: 60px; background: linear-gradient(transparent, var(--bg-card)); pointer-events: none; }
+.msg-body.expanded { max-height: 80vh; overflow-y: auto; }
+.msg-toggle { padding: 6px 14px; font-size: 12px; color: var(--accent); cursor: pointer; border-top: 1px solid var(--border); background: var(--bg-card); }
+.msg-toggle:hover { background: var(--bg-hover); }
+.role-system .msg-header { background: #1c1c2e; color: #8b8bae; }
+.role-user .msg-header { background: #0d2818; color: var(--green); }
+.role-assistant .msg-header { background: #0d1a2e; color: var(--accent); }
+.role-assistant.response .msg-header { border-left: 3px solid var(--accent); }
+.role-tool .msg-header { background: #2e1c0d; color: var(--orange); }
+.usage-bar { display: flex; gap: 16px; padding: 12px 16px; background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--radius); font-family: var(--mono); font-size: 12px; color: var(--text-dim); margin-top: 12px; flex-wrap: wrap; }
+.usage-bar span { color: var(--text); font-weight: 600; }
+
+/* Tool calls & thinking */
+.tool-call { background: #1a1520; border: 1px solid #3d2d50; border-radius: 6px; padding: 10px 14px; margin: 8px 14px; font-size: 12px; }
+.tool-call .fn-name { color: var(--orange); font-weight: 600; }
+.tool-call .tc-thought { color: var(--text-dim); font-style: italic; font-size: 12px; margin: 6px 0; line-height: 1.5; }
+.tool-call .tc-badges { display: flex; gap: 6px; margin: 6px 0; }
+.tool-call .tc-badge { font-size: 10px; padding: 2px 8px; border-radius: 4px; background: rgba(188,140,255,0.12); color: var(--purple); font-family: var(--mono); }
+.tool-call .tc-code { background: #0d1117; border: 1px solid var(--border); border-radius: 6px; margin: 6px 0 0; padding: 12px; font-size: 12px; line-height: 1.5; overflow-x: auto; }
+.tool-call .tc-code.tc-collapsed { max-height: 300px; overflow: hidden; position: relative; }
+.tool-call .tc-code.tc-collapsed::after { content: ''; position: absolute; bottom: 0; left: 0; right: 0; height: 40px; background: linear-gradient(transparent, #0d1117); pointer-events: none; }
+.tool-call .tc-code.tc-expanded { max-height: 80vh; overflow-y: auto; }
+.tool-call .tc-code code { font-family: var(--mono); color: var(--text); white-space: pre; }
+.tool-call pre { margin-top: 6px; color: var(--text-dim); overflow-x: auto; white-space: pre-wrap; max-height: 200px; overflow-y: auto; position: relative; }
+.tool-call pre.tc-collapsed { max-height: 100px; overflow: hidden; }
+.tool-call pre.tc-collapsed::after { content: ''; position: absolute; bottom: 0; left: 0; right: 0; height: 30px; background: linear-gradient(transparent, #1a1520); pointer-events: none; }
+.tool-call pre.tc-expanded { max-height: 400px; overflow-y: auto; }
+.tool-call .tc-toggle { color: var(--accent); cursor: pointer; font-size: 11px; margin-top: 4px; display: inline-block; font-family: var(--sans); }
+.thinking-block { background: #1a1a2e; border: 1px solid #2d2d50; border-radius: 6px; padding: 10px 14px; margin: 4px 14px 8px; font-size: 12px; color: var(--text-dim); max-height: 200px; overflow-y: auto; white-space: pre-wrap; }
+.toggle-link { color: var(--purple); cursor: pointer; font-size: 12px; padding: 4px 14px; display: inline-block; }
+
+/* Guidance / Functions / Files panels */
+.detail-panel { background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--radius); margin-bottom: 12px; overflow: hidden; }
+.detail-panel .dp-header { padding: 10px 14px; font-weight: 600; font-size: 13px; border-bottom: 1px solid var(--border); cursor: pointer; display: flex; justify-content: space-between; }
+.detail-panel .dp-header:hover { background: var(--bg-hover); }
+.detail-panel .dp-body { padding: 12px 14px; font-size: 13px; white-space: pre-wrap; word-break: break-word; max-height: 400px; overflow-y: auto; display: none; }
+.detail-panel .dp-body.open { display: block; }
+.detail-panel .dp-meta { font-size: 12px; color: var(--text-dim); padding: 8px 14px; white-space: pre-wrap; line-height: 1.5; max-height: 150px; overflow-y: auto; border-bottom: 1px solid var(--border); }
+.fn-sig { color: var(--orange); font-family: var(--mono); font-size: 12px; }
+.fn-code { background: #0d1117; border: 1px solid var(--border); border-radius: 6px; margin: 0; padding: 12px 14px; font-size: 12px; line-height: 1.5; overflow-x: auto; max-height: 400px; overflow-y: auto; display: none; }
+.fn-code.open { display: block; }
+.fn-code code { font-family: var(--mono); color: var(--text); }
+.file-row { display: grid; grid-template-columns: 1fr 60px 70px 80px; gap: 8px; padding: 8px 0; border-bottom: 1px solid var(--border); font-size: 13px; align-items: start; cursor: pointer; }
+.file-row:last-child { border-bottom: none; }
+.file-row:hover { background: var(--bg-hover); margin: 0 -14px; padding-left: 14px; padding-right: 14px; }
+.file-summary { font-size: 12px; color: var(--text-dim); padding: 4px 0 8px; white-space: pre-wrap; max-height: 200px; overflow-y: auto; display: none; }
+.file-summary.open { display: block; }
+
+/* LLM sidebar */
+.llm-layout { display: grid; grid-template-columns: 240px 1fr; gap: 0; }
+.llm-sidebar { border-right: 1px solid var(--border); height: calc(100vh - 160px); overflow-y: auto; position: sticky; top: 20px; }
+.llm-sidebar-item { padding: 6px 12px; font-size: 11px; cursor: pointer; border-left: 3px solid transparent; display: flex; gap: 8px; align-items: baseline; transition: background 0.1s; }
+.llm-sidebar-item:hover { background: var(--bg-hover); }
+.llm-sidebar-item.active { background: rgba(88,166,255,0.08); border-left-color: var(--accent); }
+.llm-sidebar-item .sb-time { font-family: var(--mono); color: var(--text-dimmer); white-space: nowrap; min-width: 52px; }
+.llm-sidebar-item .sb-origin { color: var(--text-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.llm-sidebar-item.active .sb-origin { color: var(--accent); }
+.llm-main { padding: 0 0 0 20px; min-width: 0; }
+@media (max-width: 900px) { .llm-layout { grid-template-columns: 1fr; } .llm-sidebar { display: none; } .llm-main { padding: 0; } }
+
+/* File actions */
+.file-action { font-size: 11px; color: var(--accent); text-decoration: none; }
+.file-action:hover { text-decoration: underline; }
+
+/* Filter pills */
+.filter-bar { display: flex; gap: 6px; margin-bottom: 16px; flex-wrap: wrap; }
+.pill { padding: 5px 14px; font-size: 12px; border-radius: 16px; border: 1px solid var(--border); background: var(--bg-card); color: var(--text-dim); cursor: pointer; transition: all 0.15s; }
+.pill:hover { border-color: var(--accent); color: var(--text); }
+.pill.active { background: rgba(88,166,255,0.15); border-color: var(--accent); color: var(--accent); }
+
+/* Nav */
+.nav-row { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; }
+.btn { padding: 6px 14px; font-size: 12px; background: var(--bg-card); border: 1px solid var(--border); border-radius: 6px; color: var(--text-dim); cursor: pointer; font-family: var(--sans); }
+.btn:hover { border-color: var(--accent); color: var(--accent); }
+.btn:disabled { opacity: 0.3; cursor: default; }
+
+.loading { text-align: center; padding: 60px; color: var(--text-dim); }
+.spinner { display: inline-block; width: 18px; height: 18px; border: 2px solid var(--border); border-top-color: var(--accent); border-radius: 50%; animation: spin 0.6s linear infinite; margin-right: 8px; vertical-align: middle; }
+@keyframes spin { to { transform: rotate(360deg); } }
+.empty { text-align: center; padding: 40px; color: var(--text-dim); }
+
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: var(--bg); }
+::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: var(--text-dimmer); }
+</style>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/themes/prism-tomorrow.min.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/prism.min.js" defer></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-python.min.js" defer></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-bash.min.js" defer></script>
+</head>
+<body>
+<div class="app">
+  <div class="header">
+    <div>
+      <h1 id="org-title">Session Visualizer</h1>
+      <div class="subtitle" id="org-subtitle">Loading...</div>
+    </div>
+    <div style="font-size:12px;color:var(--text-dimmer)" id="org-detail"></div>
+  </div>
+  <div id="content"><div class="loading"><span class="spinner"></span>Loading...</div></div>
+</div>
+
+<script>
+const API = '';
+let _sessions = [];
+let _currentCalls = [];
+let _msgContents = new Map();
+
+async function api(path) {
+  const r = await fetch(API + path);
+  if (!r.ok) throw new Error(`API ${r.status}`);
+  return r.json();
+}
+
+function esc(s) {
+  if (s == null) return '';
+  const d = document.createElement('div');
+  d.textContent = String(s);
+  return d.innerHTML;
+}
+
+function truncate(s, n) { return (!s || s.length <= n) ? (s || '') : s.slice(0, n) + '...'; }
+function fmtSize(b) { return b > 1048576 ? (b/1048576).toFixed(1)+'MB' : b > 1024 ? (b/1024).toFixed(0)+'KB' : b+'B'; }
+function fmtDate(iso) {
+  if (!iso) return '';
+  try { return new Date(iso).toLocaleDateString('en-US', { month:'short', day:'numeric', year:'numeric' }); } catch(e) { return ''; }
+}
+function gcsFilename(filePath) {
+  if (!filePath) return '';
+  return filePath.replace(/^Attachments\//, '').replace(/^Outputs\//, '');
+}
+function cleanFilePath(p) {
+  if (!p) return '';
+  return p.replace(/^Attachments\/[0-9a-f-]+_/i, '').replace(/^Outputs\//, '');
+}
+function extractSummaryPreview(s) {
+  if (!s) return '';
+  let clean = s.replace(/^#+\s*\d*\)?\s*/gm, '').replace(/\*\*/g, '');
+  const first = clean.split('\n').filter(l => l.trim().length > 10)[0] || '';
+  return truncate(first.trim(), 120);
+}
+
+// ---------------------------------------------------------------------------
+// Boot: load org info for header
+// ---------------------------------------------------------------------------
+(async function boot() {
+  try {
+    const info = await api('/api/info');
+    document.getElementById('org-title').textContent = info.org_name || 'Session Visualizer';
+    document.getElementById('org-subtitle').textContent = `${info.total_sessions} sessions across ${info.assistants?.length || 0} assistant(s)`;
+    const names = (info.assistants || []).map(a => `${a.name} (${a.owner_name})`).join(' · ');
+    document.getElementById('org-detail').textContent = names;
+  } catch(e) {}
+  route();
+})();
+
+// ---------------------------------------------------------------------------
+// Router
+// ---------------------------------------------------------------------------
+function route() {
+  const h = location.hash || '#/';
+  const p = h.slice(2).split('/');
+  if (p[0]==='session' && p[1] && p[2]==='llm' && p[3]) renderLLMDetail(p[1], decodeURIComponent(p[3]));
+  else if (p[0]==='session' && p[1] && p[2]==='tab' && p[3]) renderSession(p[1], p[3]);
+  else if (p[0]==='session' && p[1]) renderSession(p[1]);
+  else if (p[0]==='assistant' && p[1]) renderAssistant(p[1]);
+  else renderDashboard();
+}
+window.addEventListener('hashchange', route);
+
+// ---------------------------------------------------------------------------
+// Dashboard
+// ---------------------------------------------------------------------------
+async function renderDashboard() {
+  const el = document.getElementById('content');
+  el.innerHTML = '<div class="loading"><span class="spinner"></span>Loading...</div>';
+
+  const [sessData, asstData] = await Promise.all([api('/api/sessions'), api('/api/assistants')]);
+  _sessions = sessData.sessions;
+
+  const dates = _sessions.map(s => s.timestamp?.slice(0,10)).filter(Boolean);
+  const range = dates.length ? `${dates[dates.length-1]} — ${dates[0]}` : '-';
+
+  let html = `<div class="stats-row">
+    <div class="stat-card"><div class="label">Sessions</div><div class="value">${_sessions.length}</div></div>
+    <div class="stat-card"><div class="label">Assistants</div><div class="value">${asstData.assistants.length}</div></div>
+    <div class="stat-card"><div class="label">Date range</div><div class="value" style="font-size:13px">${range}</div></div>
+  </div>`;
+
+  // Assistant cards
+  if (asstData.assistants.length) {
+    html += '<div class="asst-row">';
+    for (const a of asstData.assistants) {
+      html += `<div class="asst-card" onclick="location.hash='#/assistant/${a.assistant_id}'">
+        <div class="asst-name">${esc(a.name)} <span style="color:var(--text-dimmer);font-weight:400;font-size:12px">#${a.assistant_id}</span></div>
+        <div class="asst-owner">${esc(a.owner_name)} · ${esc(a.owner_email)}</div>
+        <div class="asst-stats">
+          <span>${a.session_count} sessions</span>
+          <span>${a.guidance_count} guidance</span>
+          <span>${a.functions_count} functions</span>
+          <span>${a.files_count} files</span>
+        </div>
+      </div>`;
+    }
+    html += '</div>';
+  }
+
+  // Filter pills
+  const aIds = [...new Set(_sessions.map(s => s.assistant_id).filter(Boolean))];
+  html += '<div class="filter-bar" id="filter-bar"><span class="pill active" data-aid="all" onclick="filterSessions(\'all\')">All</span>';
+  for (const aid of aIds) {
+    const aName = _sessions.find(s => s.assistant_id === aid)?.assistant_name || aid;
+    html += `<span class="pill" data-aid="${aid}" onclick="filterSessions('${aid}')">${esc(aName)} #${aid}</span>`;
+  }
+  html += '</div>';
+
+  // Sessions grouped by day
+  html += '<div id="sessions-container">';
+  const groups = {};
+  for (const s of _sessions) {
+    const day = s.timestamp?.slice(0,10) || 'unknown';
+    if (!groups[day]) groups[day] = [];
+    groups[day].push(s);
+  }
+  for (const [day, sessions] of Object.entries(groups)) {
+    const d = new Date(day + 'T00:00:00Z');
+    const label = d.toLocaleDateString('en-US', { weekday:'long', month:'short', day:'numeric', year:'numeric', timeZone:'UTC' });
+    html += `<div class="day-group" data-day="${day}"><div class="day-label">${label} (<span class="day-count">${sessions.length}</span>)</div><div class="session-list">`;
+    for (const s of sessions) {
+      const time = s.timestamp?.slice(11,19) || '';
+      const cl = s.cloud_logging_downloaded ? s.cloud_logging_lines+' lines' : 'no logs';
+      const pod = s.pod_logs_downloaded ? '\u2713 pods' : '';
+      html += `<div class="session-card" data-assistant-id="${s.assistant_id}" onclick="location.hash='#/session/${s.job_name}'">
+        <div>
+          <div class="top">
+            <span class="date">${time}</span>
+            <span class="badge">${esc(s.medium)}</span>
+            <span class="badge">${esc(s.assistant_name)} #${esc(s.assistant_id)}</span>
+          </div>
+          <div class="preview">${esc(s.job_name)}</div>
+        </div>
+        <div class="metrics"><span>${cl}</span><span>${pod}</span></div>
+      </div>`;
+    }
+    html += '</div></div>';
+  }
+  html += '</div>';
+  el.innerHTML = html;
+}
+
+function filterSessions(aid) {
+  document.querySelectorAll('#filter-bar .pill').forEach(p => p.classList.toggle('active', p.dataset.aid === aid));
+  document.querySelectorAll('.session-card').forEach(c => {
+    c.style.display = (aid === 'all' || c.dataset.assistantId === aid) ? '' : 'none';
+  });
+  document.querySelectorAll('.day-group').forEach(g => {
+    const visible = g.querySelectorAll('.session-card:not([style*="display: none"])').length;
+    g.style.display = visible > 0 ? '' : 'none';
+    const countEl = g.querySelector('.day-count');
+    if (countEl) countEl.textContent = visible;
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Assistant detail
+// ---------------------------------------------------------------------------
+async function renderAssistant(aid) {
+  const el = document.getElementById('content');
+  el.innerHTML = '<div class="loading"><span class="spinner"></span>Loading...</div>';
+
+  const [gd, fn, fl] = await Promise.all([
+    api(`/api/assistants/${aid}/guidance`),
+    api(`/api/assistants/${aid}/functions`),
+    api(`/api/assistants/${aid}/files`),
+  ]);
+
+  let html = `<div class="breadcrumb"><a href="#/">Dashboard</a><span class="sep">/</span><span>Assistant #${aid}</span></div>`;
+
+  html += `<div class="stats-row">
+    <div class="stat-card"><div class="label">Guidance</div><div class="value">${gd.total}</div></div>
+    <div class="stat-card"><div class="label">Functions</div><div class="value">${fn.total}</div></div>
+    <div class="stat-card"><div class="label">Files</div><div class="value">${fl.total}</div></div>
+  </div>`;
+
+  // Guidance
+  html += '<h3 style="margin:16px 0 8px;font-size:14px;color:var(--text-dim)">Guidance Entries</h3>';
+  for (const g of gd.entries) {
+    html += `<div class="detail-panel">
+      <div class="dp-header" onclick="this.nextElementSibling.classList.toggle('open')">
+        <span>${esc(g.title || 'Untitled')}</span><span style="color:var(--text-dimmer)">${(g.content||'').length} chars</span>
+      </div>
+      <div class="dp-body">${esc(g.content || '')}</div>
+    </div>`;
+  }
+  if (!gd.entries.length) html += '<div class="empty">No guidance entries</div>';
+
+  // Functions
+  html += '<h3 style="margin:16px 0 8px;font-size:14px;color:var(--text-dim)">Stored Functions</h3>';
+  fn.entries.forEach((f, fi) => {
+    const codeId = 'fncode-' + fi;
+    const lang = (f.language || 'python').toLowerCase();
+    const prismLang = lang === 'bash' || lang === 'zsh' || lang === 'sh' ? 'bash' : 'python';
+    html += `<div class="detail-panel">
+      <div class="dp-header" onclick="var el=document.getElementById('${codeId}');el.classList.toggle('open');if(el.classList.contains('open')&&window.Prism)Prism.highlightAllUnder(el)">
+        <span class="fn-sig">${esc(f.name || 'unnamed')}</span><span style="color:var(--text-dimmer)">${esc(f.language || 'python')}</span>
+      </div>
+      <div class="dp-meta">${esc(f.docstring || '')}</div>
+      <pre class="fn-code" id="${codeId}"><code class="language-${prismLang}">${esc(f.implementation || f.argspec || 'No implementation')}</code></pre>
+    </div>`;
+  });
+  if (!fn.entries.length) html += '<div class="empty">No stored functions</div>';
+
+  // Files
+  html += '<h3 style="margin:16px 0 8px;font-size:14px;color:var(--text-dim)">File Records</h3>';
+  if (fl.entries.length) {
+    html += '<div style="background:var(--bg-card);border:1px solid var(--border);border-radius:var(--radius);padding:12px 14px">';
+    fl.entries.forEach((f, fi) => {
+      const fname = cleanFilePath(f.file_path || '');
+      const gcsFn = gcsFilename(f.file_path || '');
+      const sumId = 'fsum-' + fi;
+      const preview = extractSummaryPreview(f.summary);
+      const date = fmtDate(f._created_at);
+      const viewable = ['pdf'].includes((f.file_format||'').toLowerCase());
+      const fileUrl = `/api/assistants/${aid}/files/download/${encodeURIComponent(gcsFn)}`;
+      html += `<div>
+        <div class="file-row" onclick="document.getElementById('${sumId}').classList.toggle('open')">
+          <div>
+            <div>${esc(fname)}</div>
+            ${preview ? `<div style="font-size:11px;color:var(--text-dimmer);margin-top:2px">${esc(preview)}</div>` : ''}
+          </div>
+          <div style="color:var(--purple);font-size:12px">${esc(f.file_format || '')}</div>
+          <div style="color:var(--text-dimmer);font-size:12px">${f.file_size ? fmtSize(f.file_size) : ''}</div>
+          <div style="font-size:11px;text-align:right">
+            ${date ? `<div style="color:var(--text-dimmer)">${date}</div>` : ''}
+            <a class="file-action" href="${fileUrl}" ${viewable ? 'target="_blank"' : `download="${esc(fname)}"`} onclick="event.stopPropagation()">${viewable ? 'View' : 'Download'}</a>
+          </div>
+        </div>
+        <div class="file-summary" id="${sumId}">${esc(f.summary || 'No summary available')}</div>
+      </div>`;
+    });
+    html += '</div>';
+  } else {
+    html += '<div class="empty">No file records</div>';
+  }
+
+  el.innerHTML = html;
+}
+
+// ---------------------------------------------------------------------------
+// Session detail
+// ---------------------------------------------------------------------------
+async function renderSession(jobName, initialTab) {
+  const el = document.getElementById('content');
+  el.innerHTML = '<div class="loading"><span class="spinner"></span>Loading...</div>';
+  const activeTab = initialTab || 'timeline';
+
+  const summary = await api(`/api/sessions/${jobName}/summary`);
+  const session = _sessions.find(s => s.job_name === jobName) || {};
+  const time = session.timestamp?.slice(0,19)?.replace('T',' ') || jobName;
+
+  const tabs = ['timeline','llm','api','system'];
+  let html = `<div class="breadcrumb"><a href="#/">Dashboard</a><span class="sep">/</span><span>${esc(jobName)}</span></div>
+    <div class="stats-row">
+      <div class="stat-card"><div class="label">Time</div><div class="value" style="font-size:13px">${time}</div></div>
+      <div class="stat-card"><div class="label">Assistant</div><div class="value" style="font-size:13px">${esc(session.assistant_name||'')} #${esc(session.assistant_id||'')}</div></div>
+      <div class="stat-card"><div class="label">LLM Calls</div><div class="value">${summary.llm_call_count}</div></div>
+      <div class="stat-card"><div class="label">API Calls</div><div class="value">${summary.api_call_count}</div></div>
+      <div class="stat-card"><div class="label">Errors</div><div class="value" style="color:${summary.error_count>0?'var(--red)':'var(--green)'}">${summary.error_count}</div></div>
+    </div>`;
+
+  if (summary.user_messages?.length) {
+    html += '<div style="margin-bottom:16px">';
+    for (const um of summary.user_messages) {
+      html += `<div class="tl-event user-msg"><div class="time">${esc(um.time)}</div><div class="comp">${esc(um.from)}</div><div class="msg">${esc(um.message)}</div></div>`;
+    }
+    html += '</div>';
+  }
+
+  html += '<div class="tabs" id="session-tabs">';
+  for (const t of tabs) {
+    const label = {timeline:'Timeline',llm:'LLM Calls',api:'API Calls',system:'System Logs'}[t];
+    html += `<div class="tab ${t===activeTab?'active':''}" data-tab="${t}">${label}</div>`;
+  }
+  html += '</div><div id="tab-content"></div>';
+
+  el.innerHTML = html;
+  document.getElementById('session-tabs').addEventListener('click', e => {
+    const t = e.target.closest('.tab');
+    if (!t) return;
+    document.querySelectorAll('#session-tabs .tab').forEach(x => x.classList.remove('active'));
+    t.classList.add('active');
+    history.replaceState(null, '', `#/session/${jobName}/tab/${t.dataset.tab}`);
+    loadTab(jobName, t.dataset.tab);
+  });
+  loadTab(jobName, activeTab);
+}
+
+async function loadTab(jobName, tab) {
+  const el = document.getElementById('tab-content');
+  el.innerHTML = '<div class="loading"><span class="spinner"></span>Loading...</div>';
+
+  if (tab === 'timeline') {
+    const data = await api(`/api/sessions/${jobName}/cloud-log`);
+    if (!data.events?.length) { el.innerHTML = '<div class="empty">No cloud logging events</div>'; return; }
+    let h = '<div class="timeline">';
+    for (const ev of data.events) {
+      const cls = ev.level==='error'?'error':ev.level==='warning'?'warning':'';
+      const um = ev.message.includes('Message from');
+      h += `<div class="tl-event ${cls} ${um?'user-msg':''}"><div class="time">${esc(ev.time)}</div><div class="comp">${esc(ev.component)}</div><div class="msg">${esc(ev.message)}</div></div>`;
+    }
+    el.innerHTML = h + '</div>';
+
+  } else if (tab === 'llm') {
+    const data = await api(`/api/sessions/${jobName}/llm-calls`);
+    _currentCalls = data.calls || [];
+    if (!_currentCalls.length) { el.innerHTML = '<div class="empty">No LLM calls</div>'; return; }
+    let h = '<table class="call-table clickable"><thead><tr><th>Time</th><th>Origin</th><th>Model</th><th>Cache</th></tr></thead><tbody>';
+    for (const c of _currentCalls) {
+      h += `<tr onclick="location.hash='#/session/${jobName}/llm/${encodeURIComponent(c.filename)}'">
+        <td style="font-family:var(--mono);font-size:12px;color:var(--text-dimmer)">${esc(c.time)}</td>
+        <td class="origin">${esc(c.origin)}</td>
+        <td class="model">${esc(c.model||'')}</td>
+        <td><span class="cache-badge cache-${c.cache_status||'none'}">${esc(c.cache_status||'none')}</span></td>
+      </tr>`;
+    }
+    el.innerHTML = h + '</tbody></table>';
+
+  } else if (tab === 'api') {
+    const data = await api(`/api/sessions/${jobName}/api-calls`);
+    const calls = data.calls || [];
+    if (!calls.length) { el.innerHTML = '<div class="empty">No API calls</div>'; return; }
+    let h = '<table class="call-table" id="api-table"><thead><tr><th>Time</th><th>Method</th><th>Route</th><th>Status</th><th>Duration</th></tr></thead><tbody>';
+    calls.forEach((c, ci) => {
+      const ts = c.timestamp?.slice(11,19) || '';
+      const sc = c.status_code || '';
+      h += `<tr style="cursor:pointer" onclick="toggleApiDetail('${jobName}','${esc(c.filename)}',${ci})">
+        <td style="font-family:var(--mono);font-size:12px;color:var(--text-dimmer)">${esc(ts)}</td>
+        <td style="font-weight:600;font-size:12px">${esc(c.method)}</td>
+        <td style="font-family:var(--mono);font-size:12px">${esc(c.route)}</td>
+        <td class="${sc>=400?'status-err':sc?'status-ok':''}" style="font-family:var(--mono);font-size:12px">${sc}</td>
+        <td class="${c.duration_ms>1000?'duration-slow':''}" style="font-family:var(--mono);font-size:12px">${c.duration_ms!=null?c.duration_ms+'ms':''}</td></tr>`;
+      h += `<tr class="api-detail-row" id="api-detail-${ci}" style="display:none"><td colspan="5"></td></tr>`;
+    });
+    el.innerHTML = h + '</tbody></table>';
+
+  } else if (tab === 'system') {
+    _sysLogOffset = 0;
+    _sysLogJobName = jobName;
+    await loadSystemLogPage(el, jobName, 0);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// LLM call detail (fixed rendering)
+// ---------------------------------------------------------------------------
+async function renderLLMDetail(jobName, filename) {
+  const el = document.getElementById('content');
+  el.innerHTML = '<div class="loading"><span class="spinner"></span>Loading...</div>';
+
+  // If _currentCalls is empty (direct navigation), fetch the list
+  if (!_currentCalls.length) {
+    try {
+      const d = await api(`/api/sessions/${jobName}/llm-calls`);
+      _currentCalls = d.calls || [];
+    } catch(e) {}
+  }
+
+  const data = await api(`/api/sessions/${jobName}/llm-calls/${encodeURIComponent(filename)}`);
+
+  _msgContents = new Map();
+  const msgs = data.messages || [];
+  msgs.forEach((m, i) => _msgContents.set(i, m.content || ''));
+
+  // Sidebar
+  let sidebar = '<div class="llm-sidebar">';
+  for (const c of _currentCalls) {
+    const isActive = c.filename === filename;
+    sidebar += `<div class="llm-sidebar-item ${isActive?'active':''}" onclick="location.hash='#/session/${jobName}/llm/${encodeURIComponent(c.filename)}'" ${isActive?'id="active-sidebar-item"':''}>
+      <span class="sb-time">${esc(c.time)}</span>
+      <span class="sb-origin">${esc(c.origin)}</span>
+    </div>`;
+  }
+  sidebar += '</div>';
+
+  // Main content
+  let main = `<div class="llm-main">
+    <div class="breadcrumb">
+      <a href="#/">Dashboard</a><span class="sep">/</span>
+      <a href="#/session/${jobName}/tab/llm">${jobName.slice(-20)}</a><span class="sep">/</span>
+      <span>${esc(data.origin || filename)}</span>
+      <span style="color:var(--text-dimmer);margin-left:8px">${msgs.length} msgs</span>
+    </div>
+    <div style="font-size:12px;color:var(--text-dim);margin-bottom:12px">${esc(data.model||'')} &middot; ${esc(data.cache_status||'')}</div>
+    <div class="msg-thread">`;
+
+  for (let i = 0; i < msgs.length; i++) {
+    const m = msgs[i];
+    const role = m.role || 'unknown';
+    const respCls = m.is_response ? ' response' : '';
+    const label = m.is_response ? 'ASSISTANT (RESPONSE)' : role.toUpperCase();
+    const content = m.content || '';
+    const isLong = content.length > 500;
+
+    main += `<div class="msg-bubble role-${role}${respCls}">
+      <div class="msg-header"><span>${label}${m.tool_call_id ? ' \u00b7 tool:'+esc(m.tool_call_id) : ''}</span>
+        <span style="font-weight:400;font-size:11px;color:var(--text-dimmer)">${m.content_length>0 ? m.content_length.toLocaleString()+' chars' : ''}</span>
+      </div>`;
+
+    if (m.thinking?.length) {
+      const tid = 'think-'+i;
+      main += `<div><span class="toggle-link" onclick="document.getElementById('${tid}').style.display=document.getElementById('${tid}').style.display==='none'?'block':'none'">Thinking (${m.thinking.length} blocks)</span>
+        <div id="${tid}" style="display:none">`;
+      for (const tb of m.thinking) {
+        const t = typeof tb==='string' ? tb : (tb.thinking||tb.text||JSON.stringify(tb));
+        main += `<div class="thinking-block">${esc(truncate(t,3000))}</div>`;
+      }
+      main += '</div></div>';
+    }
+
+    if (m.reasoning) {
+      const rid = 'reason-'+i;
+      main += `<div><span class="toggle-link" onclick="document.getElementById('${rid}').style.display=document.getElementById('${rid}').style.display==='none'?'block':'none'">Reasoning</span>
+        <div class="thinking-block" id="${rid}" style="display:none">${esc(truncate(m.reasoning,3000))}</div></div>`;
+    }
+
+    if (m.tool_calls?.length) {
+      m.tool_calls.forEach((tc, ti) => {
+        const fn = tc.function || tc;
+        let args = fn.arguments || fn.args || '';
+        if (typeof args === 'object') args = JSON.stringify(args, null, 2);
+        const tcId = `tc-${i}-${ti}`;
+
+        main += `<div class="tool-call"><span class="fn-name">${esc(fn.name||'tool')}</span> <span style="color:var(--text-dimmer)">${tc.id||''}</span>`;
+
+        // Try to parse as structured code tool call
+        let parsed = null;
+        if (typeof args === 'string') {
+          try { parsed = JSON.parse(args); } catch(e) {}
+        }
+
+        if (parsed && parsed.code) {
+          const lang = (parsed.language || 'python').toLowerCase();
+          const prismLang = (lang === 'bash' || lang === 'zsh' || lang === 'sh') ? 'bash' : 'python';
+          const code = parsed.code;
+          const lineCount = code.split('\n').length;
+          const isLongCode = lineCount > 20;
+
+          if (parsed.thought) {
+            main += `<div class="tc-thought">${esc(parsed.thought)}</div>`;
+          }
+          main += '<div class="tc-badges">';
+          main += `<span class="tc-badge">${esc(lang)}</span>`;
+          if (parsed.state_mode) main += `<span class="tc-badge">${esc(parsed.state_mode)}</span>`;
+          main += `<span class="tc-badge">${lineCount} lines</span>`;
+          main += '</div>';
+
+          if (isLongCode) _msgContents.set(tcId, code);
+          main += `<pre class="tc-code ${isLongCode ? 'tc-collapsed' : ''}" id="${tcId}"><code class="language-${prismLang}" id="${tcId}-code">${esc(isLongCode ? code.split('\n').slice(0, 20).join('\n') : code)}</code></pre>`;
+          if (isLongCode) main += `<span class="tc-toggle" onclick="toggleCodeTc('${tcId}', '${prismLang}')">${lineCount} lines \u2014 click to expand</span>`;
+        } else {
+          // Fallback: raw args display
+          const isLongTc = typeof args === 'string' && args.length > 300;
+          if (isLongTc) _msgContents.set(tcId, args);
+          main += `<pre id="${tcId}" class="${isLongTc ? 'tc-collapsed' : ''}">${esc(isLongTc ? args.slice(0, 300) : args)}</pre>`;
+          if (isLongTc) main += `<span class="tc-toggle" onclick="toggleTc('${tcId}')">${Math.round(args.length/1000)}k chars \u2014 expand</span>`;
+        }
+
+        main += '</div>';
+      });
+    }
+
+    if (content) {
+      const bodyId = 'mbody-' + i;
+      const displayContent = isLong ? content.slice(0, 500) : content;
+      main += `<div class="msg-body ${isLong ? 'collapsed' : ''}" id="${bodyId}" data-idx="${i}">${esc(displayContent)}</div>`;
+      if (isLong) {
+        main += `<div class="msg-toggle" data-idx="${i}" onclick="toggleMsg(${i})">${Math.round(content.length/1000)}k chars \u2014 click to expand</div>`;
+      }
+    }
+
+    main += '</div>';
+  }
+  main += '</div>';
+
+  if (data.usage) {
+    const u = data.usage;
+    main += `<div class="usage-bar">
+      <div>Prompt: <span>${(u.prompt_tokens||0).toLocaleString()}</span></div>
+      <div>Completion: <span>${(u.completion_tokens||0).toLocaleString()}</span></div>
+      <div>Total: <span>${(u.total_tokens||0).toLocaleString()}</span></div>`;
+    const cached = u.prompt_tokens_details?.cached_tokens;
+    if (cached) main += `<div>Cached: <span>${cached.toLocaleString()}</span></div>`;
+    main += '</div>';
+  }
+  main += '</div>';
+
+  el.innerHTML = `<div class="llm-layout">${sidebar}${main}</div>`;
+
+  // Scroll active sidebar item into view
+  const activeEl = document.getElementById('active-sidebar-item');
+  if (activeEl) activeEl.scrollIntoView({ block: 'center', behavior: 'instant' });
+
+  // Syntax-highlight all code blocks in tool calls
+  if (window.Prism) {
+    document.querySelectorAll('.tc-code code[class*="language-"]').forEach(el => {
+      Prism.highlightElement(el);
+    });
+  }
+}
+
+function toggleMsg(idx) {
+  const body = document.getElementById('mbody-' + idx);
+  const toggle = document.querySelector(`.msg-toggle[data-idx="${idx}"]`);
+  const full = _msgContents.get(idx) || '';
+
+  if (body.classList.contains('collapsed')) {
+    body.textContent = full;
+    body.classList.remove('collapsed');
+    body.classList.add('expanded');
+    toggle.textContent = 'Collapse';
+  } else {
+    body.textContent = full.slice(0, 500);
+    body.classList.remove('expanded');
+    body.classList.add('collapsed');
+    toggle.textContent = Math.round(full.length/1000) + 'k chars \u2014 click to expand';
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Tool call expand/collapse
+// ---------------------------------------------------------------------------
+function toggleTc(tcId) {
+  const pre = document.getElementById(tcId);
+  const toggle = pre.nextElementSibling;
+  const full = _msgContents.get(tcId) || '';
+  if (pre.classList.contains('tc-collapsed')) {
+    pre.textContent = full;
+    pre.classList.remove('tc-collapsed');
+    pre.classList.add('tc-expanded');
+    toggle.textContent = 'Collapse';
+  } else {
+    pre.textContent = full.slice(0, 300);
+    pre.classList.remove('tc-expanded');
+    pre.classList.add('tc-collapsed');
+    toggle.textContent = Math.round(full.length/1000) + 'k chars \u2014 expand';
+  }
+}
+
+function toggleCodeTc(tcId, lang) {
+  const pre = document.getElementById(tcId);
+  const codeEl = document.getElementById(tcId + '-code');
+  const toggle = pre.nextElementSibling;
+  const full = _msgContents.get(tcId) || '';
+  if (pre.classList.contains('tc-collapsed')) {
+    codeEl.textContent = full;
+    pre.classList.remove('tc-collapsed');
+    pre.classList.add('tc-expanded');
+    toggle.textContent = 'Collapse';
+  } else {
+    codeEl.textContent = full.split('\n').slice(0, 20).join('\n');
+    pre.classList.remove('tc-expanded');
+    pre.classList.add('tc-collapsed');
+    toggle.textContent = full.split('\n').length + ' lines \u2014 click to expand';
+  }
+  if (window.Prism) Prism.highlightElement(codeEl);
+}
+
+// ---------------------------------------------------------------------------
+// API call inline detail
+// ---------------------------------------------------------------------------
+const _apiDetailCache = new Map();
+
+async function toggleApiDetail(jobName, filename, idx) {
+  const row = document.getElementById('api-detail-' + idx);
+  if (row.style.display !== 'none') { row.style.display = 'none'; return; }
+
+  const td = row.querySelector('td');
+  if (!_apiDetailCache.has(filename)) {
+    td.innerHTML = '<div class="api-detail-content">Loading...</div>';
+    row.style.display = '';
+    try {
+      const d = await api(`/api/sessions/${jobName}/api-calls/${encodeURIComponent(filename)}`);
+      _apiDetailCache.set(filename, d);
+    } catch(e) {
+      td.innerHTML = '<div class="api-detail-content">Failed to load detail</div>';
+      return;
+    }
+  }
+
+  const d = _apiDetailCache.get(filename);
+  let html = '<div class="api-detail-content">';
+  html += `<div class="api-section"><span class="api-label">URL</span><div style="color:var(--text-dim)">${esc(d.url)}</div></div>`;
+  if (d.request_params && Object.keys(d.request_params).length) {
+    html += `<div class="api-section"><span class="api-label">Request Params</span><pre>${esc(JSON.stringify(d.request_params, null, 2))}</pre></div>`;
+  }
+  if (d.request_body) {
+    html += `<div class="api-section"><span class="api-label">Request Body</span><pre>${esc(typeof d.request_body === 'string' ? d.request_body : JSON.stringify(d.request_body, null, 2))}</pre></div>`;
+  }
+  if (d.response_body) {
+    html += `<div class="api-section"><span class="api-label">Response (${d.status_code || '?'})</span><pre>${esc(typeof d.response_body === 'string' ? d.response_body : JSON.stringify(d.response_body, null, 2))}</pre></div>`;
+  }
+  html += '</div>';
+  td.innerHTML = html;
+  row.style.display = '';
+}
+
+// ---------------------------------------------------------------------------
+// System log pagination
+// ---------------------------------------------------------------------------
+let _sysLogOffset = 0;
+let _sysLogJobName = '';
+const SYS_PAGE_SIZE = 500;
+
+async function loadSystemLogPage(el, jobName, offset) {
+  _sysLogOffset = offset;
+  const data = await api(`/api/sessions/${jobName}/framework-log?limit=${SYS_PAGE_SIZE}&offset=${offset}`);
+  const entries = data.entries || [];
+  if (!entries.length && offset === 0) { el.innerHTML = '<div class="empty">No framework logs</div>'; return; }
+
+  let h = '';
+  if (data.total > SYS_PAGE_SIZE) {
+    const from = offset + 1;
+    const to = Math.min(offset + entries.length, data.total);
+    h += `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+      <span style="font-size:12px;color:var(--text-dim)">Showing ${from}\u2013${to} of ${data.total}</span>
+      <div style="display:flex;gap:8px">
+        <button class="btn" ${offset===0?'disabled':''} onclick="loadSystemLogPage(document.getElementById('tab-content'),'${jobName}',${Math.max(0,offset-SYS_PAGE_SIZE)})">\u2190 Previous</button>
+        <button class="btn" ${offset+entries.length>=data.total?'disabled':''} onclick="loadSystemLogPage(document.getElementById('tab-content'),'${jobName}',${offset+SYS_PAGE_SIZE})">Next \u2192</button>
+      </div>
+    </div>`;
+  }
+  h += '<div class="timeline">';
+  for (const e of entries) {
+    const cls = e.level==='ERROR'?'error':e.level==='WARNING'?'warning':'';
+    h += `<div class="tl-event ${cls}"><div class="time" style="font-size:11px">${esc(e.timestamp?.slice(11)||'')}</div><div class="comp">${esc(e.component)}</div><div class="msg">${esc(truncate(e.message,300))}</div></div>`;
+  }
+  h += '</div>';
+
+  if (data.total > SYS_PAGE_SIZE) {
+    const from = offset + 1;
+    const to = Math.min(offset + entries.length, data.total);
+    h += `<div style="display:flex;justify-content:space-between;align-items:center;margin-top:12px">
+      <span style="font-size:12px;color:var(--text-dim)">Showing ${from}\u2013${to} of ${data.total}</span>
+      <div style="display:flex;gap:8px">
+        <button class="btn" ${offset===0?'disabled':''} onclick="loadSystemLogPage(document.getElementById('tab-content'),'${jobName}',${Math.max(0,offset-SYS_PAGE_SIZE)})">\u2190 Previous</button>
+        <button class="btn" ${offset+entries.length>=data.total?'disabled':''} onclick="loadSystemLogPage(document.getElementById('tab-content'),'${jobName}',${offset+SYS_PAGE_SIZE})">Next \u2192</button>
+      </div>
+    </div>`;
+  }
+  el.innerHTML = h;
+}
+
+// ---------------------------------------------------------------------------
+// Keyboard
+// ---------------------------------------------------------------------------
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape') location.hash = '#/';
+  if (e.key === 'Backspace' && !['INPUT','TEXTAREA'].includes(document.activeElement?.tagName)) {
+    e.preventDefault(); history.back();
+  }
+});
+</script>
+</body>
+</html>

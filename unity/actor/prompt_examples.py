@@ -1019,6 +1019,22 @@ async def plot_repairs_by_category(context: str = "Data/MidlandHeart/Repairs") -
     if result.succeeded:
         return result.url
     return f"Plot failed: {result.error}"
+
+# Example: Grouped bar chart with aggregation
+async def plot_cost_by_category_and_priority(context: str = "Data/MidlandHeart/Repairs") -> str:
+    """Generate a grouped bar chart of average repair cost by category, colored by priority."""
+    result = await primitives.data.plot(
+        context=context,
+        plot_type="bar",
+        x="SORGroupDescription",
+        y="TotalCost",
+        group_by="Priority",
+        aggregate="mean",
+        title="Avg Repair Cost by Category & Priority",
+    )
+    if result.succeeded:
+        return result.url
+    return f"Plot failed: {result.error}"
 '''
 
 
