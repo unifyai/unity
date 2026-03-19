@@ -145,8 +145,7 @@ def update_liveview_url(assistant_id: str, user_id: str, liveview_url: str) -> N
     try:
         existing_logs = get_assistant_logs(
             api_key,
-            f"assistant_id == '{assistant_id}' and "
-            f"job_name == '{job_name}'",
+            f"assistant_id == '{assistant_id}' and " f"job_name == '{job_name}'",
         )
         if existing_logs:
             existing_logs[0].update_entries(liveview_url=liveview_url)
