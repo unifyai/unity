@@ -205,7 +205,8 @@ def query_assistant_jobs(job_name: str) -> dict | None:
 
 
 def query_job_status(
-    job_name: str, namespace: str,
+    job_name: str,
+    namespace: str,
 ) -> tuple[bool | None, dict | None]:
     """Determine whether *job_name* is running.
 

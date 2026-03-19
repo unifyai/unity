@@ -230,11 +230,7 @@ def wait_for_new_job(
             )
             for log in logs:
                 jn = log.entries.get("job_name")
-                if (
-                    jn
-                    and jn.endswith(namespace_suffix)
-                    and jn not in old_job_names
-                ):
+                if jn and jn.endswith(namespace_suffix) and jn not in old_job_names:
                     return jn
         except Exception as e:
             warn(f"Poll error: {e}")
