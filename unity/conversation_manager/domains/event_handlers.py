@@ -1480,7 +1480,12 @@ async def _(
 ):
     cm.notifications_bar.push_notif(
         "System",
-        "Initialization complete — all actions are now available.",
+        (
+            "Initialization complete — all actions are now available and "
+            "full conversation history has been loaded. Review any earlier "
+            "responses you gave during initialization and follow up if "
+            "needed (correct, elaborate, or confirm)."
+        ),
         event.timestamp,
     )
     cm._session_logger.debug("initialization", "Initialization complete")
