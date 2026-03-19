@@ -138,6 +138,7 @@ def _ensure_stream_router_installed() -> None:
 # Display function for rich output (images, etc.)
 # ---------------------------------------------------------------------------
 _IMAGE_BASE64_LIMIT = 5_242_880  # Anthropic's per-image limit (5 MB)
+_IMAGE_MAX_EDGE = 8_000  # Anthropic hard-rejects images with any edge > 8000px
 
 
 def _make_display(
@@ -165,12 +166,20 @@ def _make_display(
 
 
 def _encode_image_for_llm(img: Any) -> tuple[str, str]:
-    """Encode a PIL Image to base64, ensuring it stays within the API size limit.
+    """Encode a PIL Image to base64, ensuring it stays within API limits.
 
-    Tries PNG first for lossless quality.  If the result exceeds the limit,
-    falls back to JPEG with progressive quality reduction.  Raises if the
-    image cannot be brought under the limit.
+    Downscales images whose largest edge exceeds the provider's hard pixel
+    limit, then tries PNG for lossless quality.  If the result exceeds the
+    base64 size limit, falls back to JPEG with progressive quality reduction.
+    Raises if the image cannot be brought under the limit.
     """
+    w, h = img.size
+    if max(w, h) > _IMAGE_MAX_EDGE:
+        scale = _IMAGE_MAX_EDGE / max(w, h)
+        from PIL import Image as _Image
+
+        img = img.resize((round(w * scale), round(h * scale)), _Image.LANCZOS)
+
     buf = io.BytesIO()
     img.save(buf, format="PNG")
     b64_data = base64.b64encode(buf.getvalue()).decode("ascii")
