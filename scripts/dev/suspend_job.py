@@ -5,8 +5,8 @@ Suspend a running Unity Kubernetes job.
 Usage:
     python scripts/dev/suspend_job.py                                           # auto-detect latest running staging job
     python scripts/dev/suspend_job.py unity-2026-02-25-12-00-00                 # explicit job, staging (default)
-    python scripts/dev/suspend_job.py --production                              # auto-detect latest running production job
-    python scripts/dev/suspend_job.py unity-2026-02-25-12-00-00 --production    # explicit job, production
+    python scripts/dev/suspend_job.py --env production                          # auto-detect latest running production job
+    python scripts/dev/suspend_job.py --env preview                             # auto-detect latest running preview job
     python scripts/dev/suspend_job.py unity-2026-02-25-12-00-00 --namespace my-ns
 """
 
@@ -17,8 +17,9 @@ from job_utils import ORCHESTRA_URLS
 
 
 def _parse_namespace_early() -> str:
-    if "--production" in sys.argv:
-        return "production"
+    for i, arg in enumerate(sys.argv):
+        if arg == "--env" and i + 1 < len(sys.argv):
+            return sys.argv[i + 1]
     return "staging"
 
 
@@ -35,13 +36,9 @@ import requests
 from job_utils import resolve_latest_job
 
 COMMS_URLS = {
-    "prod": "https://unity-comms-app-262420637606.us-central1.run.app",
+    "production": "https://unity-comms-app-262420637606.us-central1.run.app",
     "staging": "https://unity-comms-app-staging-262420637606.us-central1.run.app",
-}
-
-DEFAULT_NAMESPACES = {
-    "prod": "production",
-    "staging": "staging",
+    "preview": "https://unity-comms-app-preview-262420637606.us-central1.run.app",
 }
 
 
@@ -79,7 +76,8 @@ def main():
             "\n"
             "Examples:\n"
             "  python scripts/dev/suspend_job.py                          # latest running staging job\n"
-            "  python scripts/dev/suspend_job.py --production             # latest running production job\n"
+            "  python scripts/dev/suspend_job.py --env production         # latest running production job\n"
+            "  python scripts/dev/suspend_job.py --env preview            # latest running preview job\n"
             "  python scripts/dev/suspend_job.py unity-2026-02-25-12-00-00-staging"
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -91,19 +89,20 @@ def main():
         help="Name of the K8s job to suspend. If omitted, auto-detects the latest running job for your account.",
     )
     parser.add_argument(
-        "--production",
-        action="store_true",
-        help="Target the production environment (default: staging)",
+        "--env",
+        choices=["production", "staging", "preview"],
+        default="staging",
+        help="Target deploy environment (default: staging)",
     )
     parser.add_argument(
         "--namespace",
         default=None,
-        help="K8s namespace (default: 'staging' for staging, 'production' for prod)",
+        help="K8s namespace (defaults to the value of --env)",
     )
     args = parser.parse_args()
 
-    env = "prod" if args.production else "staging"
-    namespace = args.namespace or DEFAULT_NAMESPACES[env]
+    env = args.env
+    namespace = args.namespace or env
     comms_url = COMMS_URLS[env]
     admin_key = os.getenv("ORCHESTRA_ADMIN_KEY")
 

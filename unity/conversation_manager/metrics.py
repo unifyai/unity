@@ -60,14 +60,3 @@ pubsub_e2e_latency = meter.create_histogram(
     description="End-to-end latency from Pub/Sub publish to ack.",
     unit="s",
 )
-
-# ---------------------------------------------------------------------------
-# X1  Running job count (cluster-wide snapshot)
-# ---------------------------------------------------------------------------
-running_job_count = meter.create_gauge(
-    name="unity_running_job_count",
-    description=(
-        "Number of assistant jobs with running==True at the moment a "
-        "StartupEvent is received or a session shuts down."
-    ),
-)

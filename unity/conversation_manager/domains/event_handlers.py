@@ -532,6 +532,7 @@ async def _(
 
     await cm.call_manager.cleanup_call_proc()
     await cm.cancel_proactive_speech()
+    await _cleanup_computer_sessions(cm)
 
     # Clear all session state after cleanup.
     cm.call_manager.conference_name = None
@@ -546,6 +547,38 @@ async def _(
         cancel_running=True,
         triggering_contact_id=contact_id,
     )
+
+
+async def _cleanup_computer_sessions(cm: "ConversationManager") -> None:
+    """Stop in-flight actor sessions and close web browser sessions.
+
+    Called on call end so resource cleanup is deterministic rather than
+    relying on the slow brain to remember to call stop/close tools.
+    """
+    # Stop in-flight actor sessions
+    for handle_id, action_data in list(cm.in_flight_actions.items()):
+        handle = action_data.get("handle")
+        if handle and not handle.done():
+            try:
+                await handle.stop("Call ended")
+            except Exception:
+                pass
+        stopped = cm.in_flight_actions.pop(handle_id, None)
+        if stopped:
+            cm.completed_actions[handle_id] = stopped
+
+    # Close active web browser sessions
+    cp = cm.computer_primitives
+    if cp is not None:
+        try:
+            active_sessions = cp.web.list_sessions(active_only=True)
+            for session in active_sessions:
+                try:
+                    await session.stop()
+                except Exception:
+                    pass
+        except Exception:
+            pass
 
 
 @EventHandler.register(RecordingReady)
@@ -1003,7 +1036,7 @@ async def _(event: UnknownContactCreated, cm: "ConversationManager", *args, **kw
     )
 
 
-async def _startup_sequence(cm: "ConversationManager"):
+async def _startup_sequence(cm: "ConversationManager", medium: str = ""):
     """Run job startup logging.
 
     VM readiness, desktop session warm-up, and file sync are now driven by
@@ -1014,6 +1047,7 @@ async def _startup_sequence(cm: "ConversationManager"):
         job_name=cm.job_name,
         user_id=cm.user_id,
         assistant_id=cm.assistant_id,
+        medium=medium,
     )
 
 
@@ -1050,9 +1084,15 @@ async def _(event: StartupEvent, cm: "ConversationManager", *args, **kwargs):
         )
 
         cm.call_manager.set_config(cm.get_call_config())
-        cm.call_manager.start_persistent_worker()
+        try:
+            cm.call_manager.start_persistent_worker()
+        except Exception as e:
+            LOGGER.error(
+                "LiveKit worker failed to start, voice calls unavailable: %s",
+                e,
+            )
 
-        asyncio.create_task(_startup_sequence(cm))
+        asyncio.create_task(_startup_sequence(cm, medium=event.medium))
 
         # Manager initialization runs in parallel
         asyncio.create_task(managers_utils.init_conv_manager(cm))
@@ -1428,6 +1468,47 @@ async def _(
         event.timestamp,
     )
     cm._session_logger.debug("file_sync", "File sync complete")
+    await cm.request_llm_run(delay=0)
+
+
+@EventHandler.register((InitializationComplete,))
+async def _(
+    event: "InitializationComplete",
+    cm: "ConversationManager",
+    *args,
+    **kwargs,
+):
+    cm.notifications_bar.push_notif(
+        "System",
+        (
+            "Initialization complete — all actions are now available and "
+            "full conversation history has been loaded. Review any earlier "
+            "responses you gave during initialization and follow up if "
+            "needed (correct, elaborate, or confirm)."
+        ),
+        event.timestamp,
+    )
+    cm._session_logger.debug("initialization", "Initialization complete")
+
+    # Notify the fast brain (voice agent) directly via the call manager's
+    # IPC socket — the same channel used for meet_interaction and other
+    # direct fast brain notifications.  This bypasses the CM's own event
+    # broker subscription so the notification reaches only the subprocess.
+    if cm.call_manager and cm.call_manager._socket_server:
+        fast_brain_notification = FastBrainNotification(
+            contact={},
+            content=(
+                "Initialization complete — all actions are now available. "
+                "Full conversation history has been loaded."
+            ),
+            should_speak=False,
+            source="initialization",
+        )
+        await cm.call_manager._socket_server.queue_for_clients(
+            "app:call:notification",
+            fast_brain_notification.to_json(),
+        )
+
     await cm.request_llm_run(delay=0)
 
 

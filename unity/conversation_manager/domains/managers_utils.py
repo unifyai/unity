@@ -1,5 +1,6 @@
 from datetime import timedelta
 import asyncio
+import os
 from time import perf_counter
 from typing import TYPE_CHECKING
 
@@ -1025,31 +1026,36 @@ def _init_managers(
 
     # 5. Initialize MemoryManager (optional - respects SETTINGS.memory.ENABLED and IMPL)
     if SETTINGS.memory.ENABLED:
-        from unity.memory_manager.memory_manager import MemoryManager
+        try:
+            from unity.memory_manager.memory_manager import MemoryManager
 
-        LOGGER.info(
-            f"{ICONS['managers_worker']} [ManagersWorker] Initializing MemoryManager...",
-        )
-        local_start_time = perf_counter()
-        mem_cfg = MemoryManager.MemoryConfig(
-            contacts=SETTINGS.memory.CONTACTS,
-            bios=SETTINGS.memory.BIOS,
-            rolling_summaries=SETTINGS.memory.ROLLING_SUMMARIES,
-            response_policies=SETTINGS.memory.RESPONSE_POLICIES,
-            knowledge=SETTINGS.memory.KNOWLEDGE,
-            tasks=SETTINGS.memory.TASKS,
-        )
-        cm.memory_manager = ManagerRegistry.get_memory_manager(
-            transcript_manager=cm.transcript_manager,
-            contact_manager=cm.contact_manager,
-            config=mem_cfg,
-            loop=loop,
-        )
-        _memory_dur = perf_counter() - local_start_time
-        LOGGER.info(
-            f"{ICONS['managers_worker']} [ManagersWorker] MemoryManager initialized in {_memory_dur:.2f} seconds",
-        )
-        per_manager_init.record(_memory_dur, {"manager": "memory_manager"})
+            LOGGER.info(
+                f"{ICONS['managers_worker']} [ManagersWorker] Initializing MemoryManager...",
+            )
+            local_start_time = perf_counter()
+            mem_cfg = MemoryManager.MemoryConfig(
+                contacts=SETTINGS.memory.CONTACTS,
+                bios=SETTINGS.memory.BIOS,
+                rolling_summaries=SETTINGS.memory.ROLLING_SUMMARIES,
+                response_policies=SETTINGS.memory.RESPONSE_POLICIES,
+                knowledge=SETTINGS.memory.KNOWLEDGE,
+                tasks=SETTINGS.memory.TASKS,
+            )
+            cm.memory_manager = ManagerRegistry.get_memory_manager(
+                transcript_manager=cm.transcript_manager,
+                contact_manager=cm.contact_manager,
+                config=mem_cfg,
+                loop=loop,
+            )
+            _memory_dur = perf_counter() - local_start_time
+            LOGGER.info(
+                f"{ICONS['managers_worker']} [ManagersWorker] MemoryManager initialized in {_memory_dur:.2f} seconds",
+            )
+            per_manager_init.record(_memory_dur, {"manager": "memory_manager"})
+        except Exception as e:
+            LOGGER.warning(
+                f"{ICONS['managers_worker']} [ManagersWorker] MemoryManager init failed (degraded): {e}",
+            )
     else:
         LOGGER.info(
             f"{ICONS['managers_worker']} [ManagersWorker] MemoryManager disabled (SETTINGS.memory.ENABLED=False)",
@@ -1119,27 +1125,32 @@ def _init_managers(
 
     # 9. Sync custom functions/venvs from client customization
     if resolved.function_dirs or resolved.venv_dirs:
-        LOGGER.debug(
-            f"{ICONS['customization']} [ManagersWorker] Syncing custom functions...",
-        )
-        local_start_time = perf_counter()
-        from unity.function_manager.custom_functions import (
-            collect_functions_from_directories,
-            collect_venvs_from_directories,
-        )
-
-        source_fns = collect_functions_from_directories(resolved.function_dirs)
-        source_venvs = collect_venvs_from_directories(resolved.venv_dirs)
-        fm = ManagerRegistry.get_function_manager()
-        if source_fns or source_venvs:
-            fm.sync_custom(
-                source_functions=source_fns,
-                source_venvs=source_venvs,
+        try:
+            LOGGER.debug(
+                f"{ICONS['customization']} [ManagersWorker] Syncing custom functions...",
             )
-        _func_dur = perf_counter() - local_start_time
-        LOGGER.info(
-            f"{ICONS['customization']} [ManagersWorker] Custom functions synced in {_func_dur:.2f} seconds",
-        )
+            local_start_time = perf_counter()
+            from unity.function_manager.custom_functions import (
+                collect_functions_from_directories,
+                collect_venvs_from_directories,
+            )
+
+            source_fns = collect_functions_from_directories(resolved.function_dirs)
+            source_venvs = collect_venvs_from_directories(resolved.venv_dirs)
+            fm = ManagerRegistry.get_function_manager()
+            if source_fns or source_venvs:
+                fm.sync_custom(
+                    source_functions=source_fns,
+                    source_venvs=source_venvs,
+                )
+            _func_dur = perf_counter() - local_start_time
+            LOGGER.info(
+                f"{ICONS['customization']} [ManagersWorker] Custom functions synced in {_func_dur:.2f} seconds",
+            )
+        except Exception as e:
+            LOGGER.warning(
+                f"{ICONS['managers_worker']} [ManagersWorker] Custom function sync failed (degraded): {e}",
+            )
 
     # 10. Initialize Actor (use provided actor or create via ManagerRegistry)
     LOGGER.debug(f"{ICONS['managers_worker']} [ManagersWorker] Initializing Actor...")
@@ -1184,22 +1195,27 @@ def _init_managers(
 
     # 11. Initialize FileManager (eagerly, so the FileRecords context exists
     #     before any file operations or background tasks attempt to use it)
-    LOGGER.info(
-        f"{ICONS['managers_worker']} [ManagersWorker] Initializing FileManager...",
-    )
-    local_start_time = perf_counter()
-    fm = ManagerRegistry.get_file_manager()
-    # Force the lazy DataManager property to resolve now while ContextVars
-    # are correct.  The ingestion pipeline later accesses _data_manager from
-    # ThreadPoolExecutor workers where ContextVars may not propagate — eager
-    # init avoids the resulting empty-context / double-slash paths.
-    _ = fm._data_manager  # noqa: F841
-    _file_dur = perf_counter() - local_start_time
-    LOGGER.info(
-        f"{ICONS['managers_worker']} [ManagersWorker] FileManager initialized in "
-        f"{_file_dur:.2f} seconds",
-    )
-    per_manager_init.record(_file_dur, {"manager": "file_manager"})
+    try:
+        LOGGER.info(
+            f"{ICONS['managers_worker']} [ManagersWorker] Initializing FileManager...",
+        )
+        local_start_time = perf_counter()
+        fm = ManagerRegistry.get_file_manager()
+        # Force the lazy DataManager property to resolve now while ContextVars
+        # are correct.  The ingestion pipeline later accesses _data_manager from
+        # ThreadPoolExecutor workers where ContextVars may not propagate — eager
+        # init avoids the resulting empty-context / double-slash paths.
+        _ = fm._data_manager  # noqa: F841
+        _file_dur = perf_counter() - local_start_time
+        LOGGER.info(
+            f"{ICONS['managers_worker']} [ManagersWorker] FileManager initialized in "
+            f"{_file_dur:.2f} seconds",
+        )
+        per_manager_init.record(_file_dur, {"manager": "file_manager"})
+    except Exception as e:
+        LOGGER.warning(
+            f"{ICONS['managers_worker']} [ManagersWorker] FileManager init failed (degraded): {e}",
+        )
 
     # U2: Total manager init duration
     _total_dur = perf_counter() - start_time
@@ -1211,31 +1227,41 @@ def _init_managers(
     # 12. Eager primitive sync (avoids ~7s cold-start on first execute_function).
     #     Must run after all managers are initialised so the primitive registry
     #     contains every manager's methods (actor, files, contacts, …).
-    LOGGER.debug(
-        f"{ICONS['managers_worker']} [ManagersWorker] Syncing primitives...",
-    )
-    local_start_time = perf_counter()
-    _init_fm = ManagerRegistry.get_function_manager()
-    _init_fm.sync_primitives()
-    _prim_dur = perf_counter() - local_start_time
-    LOGGER.info(
-        f"{ICONS['managers_worker']} [ManagersWorker] Primitives synced in {_prim_dur:.2f} seconds",
-    )
+    try:
+        LOGGER.debug(
+            f"{ICONS['managers_worker']} [ManagersWorker] Syncing primitives...",
+        )
+        local_start_time = perf_counter()
+        _init_fm = ManagerRegistry.get_function_manager()
+        _init_fm.sync_primitives()
+        _prim_dur = perf_counter() - local_start_time
+        LOGGER.info(
+            f"{ICONS['managers_worker']} [ManagersWorker] Primitives synced in {_prim_dur:.2f} seconds",
+        )
+    except Exception as e:
+        LOGGER.warning(
+            f"{ICONS['managers_worker']} [ManagersWorker] Primitive sync failed (degraded): {e}",
+        )
 
     # 13. Pre-warm embedding columns for all managers (best-effort, avoids
     #     cold-start latency on the first vector search after a fresh hire).
     #     Also explicitly warm the FunctionManager (not in the singleton cache
     #     due to _force_new=True) so Primitives embeddings are ready.
-    LOGGER.debug(
-        f"{ICONS['managers_worker']} [ManagersWorker] Warming embedding columns...",
-    )
-    local_start_time = perf_counter()
-    ManagerRegistry.warm_all_embeddings()
-    _init_fm.warm_embeddings()
-    _warm_dur = perf_counter() - local_start_time
-    LOGGER.info(
-        f"{ICONS['managers_worker']} [ManagersWorker] Embedding columns warmed in {_warm_dur:.2f} seconds",
-    )
+    try:
+        LOGGER.debug(
+            f"{ICONS['managers_worker']} [ManagersWorker] Warming embedding columns...",
+        )
+        local_start_time = perf_counter()
+        ManagerRegistry.warm_all_embeddings()
+        _init_fm.warm_embeddings()
+        _warm_dur = perf_counter() - local_start_time
+        LOGGER.info(
+            f"{ICONS['managers_worker']} [ManagersWorker] Embedding columns warmed in {_warm_dur:.2f} seconds",
+        )
+    except Exception as e:
+        LOGGER.warning(
+            f"{ICONS['managers_worker']} [ManagersWorker] Embedding warm-up failed (degraded): {e}",
+        )
 
 
 async def _start_file_sync() -> None:
@@ -1409,16 +1435,15 @@ async def init_conv_manager(
 
             await _register_computer_act_completed_callback(cm)
 
-            # Publish initialization complete event for test synchronization
+            os.environ["UNITY_CM_INITIALIZED"] = "1"
+
+            # Publish initialization complete event.  The registered
+            # InitializationComplete handler pushes a notification and
+            # triggers a brain turn so it can follow up on deferred requests.
             await event_broker.publish(
                 "app:comms:initialization_complete",
                 InitializationComplete().to_json(),
             )
-
-            # Brain is now safe to run: managers are initialized and the
-            # global thread is hydrated with conversation history.
-            cm.ready_for_brain = True
-            await cm.flush_llm_requests()
 
             _init_dur = perf_counter() - start_time
             LOGGER.info(
@@ -1430,12 +1455,28 @@ async def init_conv_manager(
                     write_memory_dump,
                 )
 
-                dump_path = write_memory_dump("startup_memory_dump.txt")
-                if dump_path:
-                    LOGGER.info(
-                        f"{ICONS['managers_worker']} [ManagersWorker] "
-                        f"Startup memory dump written to {dump_path}",
-                    )
+                loop = asyncio.get_running_loop()
+
+                def _on_dump_done(fut):
+                    try:
+                        dump_path = fut.result()
+                        if dump_path:
+                            LOGGER.info(
+                                f"{ICONS['managers_worker']} [ManagersWorker] "
+                                f"Startup memory dump written to {dump_path}",
+                            )
+                    except Exception as exc:
+                        LOGGER.warning(
+                            f"{ICONS['managers_worker']} [ManagersWorker] "
+                            f"Startup memory dump failed: {exc}",
+                        )
+
+                fut = loop.run_in_executor(
+                    None,
+                    write_memory_dump,
+                    "startup_memory_dump.txt",
+                )
+                fut.add_done_callback(_on_dump_done)
             except Exception as exc:
                 LOGGER.warning(
                     f"{ICONS['managers_worker']} [ManagersWorker] "

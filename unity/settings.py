@@ -8,7 +8,7 @@ These settings are used in the deployed system and are inherited by test setting
 All settings can be overridden via environment variables or .env file.
 """
 
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import Field, field_validator, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -36,6 +36,16 @@ def _parse_bool(v: Any) -> bool:
     if isinstance(v, str):
         return v.lower() in ("true", "yes", "1", "on")
     return bool(v)
+
+
+def _parse_deploy_env(v: Any) -> str:
+    """Parse the deployment environment setting."""
+    if v is None:
+        return "production"
+    env = str(v).strip().lower() or "production"
+    if env not in {"production", "staging", "preview"}:
+        raise ValueError("DEPLOY_ENV must be one of production, staging, or preview")
+    return env
 
 
 class ProductionSettings(BaseSettings):
@@ -152,7 +162,7 @@ class ProductionSettings(BaseSettings):
     UNITY_READONLY_ASK_GUARD: bool = True
     FIRST_ASK_TOOL_IS_SEARCH: bool = False
     FIRST_MUTATION_TOOL_IS_ASK: bool = False
-    STAGING: bool = False
+    DEPLOY_ENV: Literal["production", "staging", "preview"] = "production"
     DEMO_MODE: bool = False
     DEMO_ID: int | None = None  # Demo assistant metadata ID (if DEMO_MODE is True)
 
@@ -198,7 +208,6 @@ class ProductionSettings(BaseSettings):
         "UNITY_READONLY_ASK_GUARD",
         "FIRST_ASK_TOOL_IS_SEARCH",
         "FIRST_MUTATION_TOOL_IS_ASK",
-        "STAGING",
         "TEST",
         "UNITY_VALIDATE_LLM_PROVIDERS",
         "UNITY_OTEL",
@@ -208,11 +217,21 @@ class ProductionSettings(BaseSettings):
     def parse_bool_fields(cls, v: Any) -> bool:
         return _parse_bool(v)
 
+    @field_validator("DEPLOY_ENV", mode="before")
+    @classmethod
+    def parse_deploy_env_field(cls, v: Any) -> str:
+        return _parse_deploy_env(v)
+
     model_config = SettingsConfigDict(
         env_file=".env",
         case_sensitive=True,
         extra="ignore",
     )
+
+    @property
+    def ENV_SUFFIX(self) -> str:
+        """Return the environment suffix used in shared resource names."""
+        return "" if self.DEPLOY_ENV == "production" else f"-{self.DEPLOY_ENV}"
 
     def validate_llm_providers(self) -> None:
         """Validate that all required LLM provider credentials are set.

@@ -3,9 +3,9 @@
 Create or fetch a local assistant and print the env vars needed to run
 unity locally.
 
-A "local assistant" is stored in production Orchestra (is_local=True) and
-uses production adapters/communication, but runs unity on your machine
-instead of on GKE.
+A "local assistant" is stored in Orchestra with `is_local=True` and runs
+unity on your machine instead of on GKE. Preview assistants are stored in
+staging Orchestra but use preview communication/adapters at runtime.
 
 Usage:
     # Create a new local assistant (or fetch existing by name):
@@ -15,7 +15,10 @@ Usage:
     python scripts/dev/local_assistant.py --id 42
 
     # Target production:
-    python scripts/dev/local_assistant.py --name "Dev" --production
+    python scripts/dev/local_assistant.py --name "Dev" --env production
+
+    # Target preview:
+    python scripts/dev/local_assistant.py --name "Dev" --env preview
 
     # Source directly into your shell:
     source <(python scripts/dev/local_assistant.py --name "Dev")
@@ -36,12 +39,14 @@ import requests
 load_dotenv()
 
 ORCHESTRA_URLS = {
-    "prod": "https://api.unify.ai/v0",
+    "production": "https://api.unify.ai/v0",
     "staging": "https://api.staging.internal.saas.unify.ai/v0",
+    "preview": "https://api.staging.internal.saas.unify.ai/v0",
 }
 COMMS_URLS = {
-    "prod": "https://unity-comms-app-262420637606.us-central1.run.app",
+    "production": "https://unity-comms-app-262420637606.us-central1.run.app",
     "staging": "https://unity-comms-app-staging-262420637606.us-central1.run.app",
+    "preview": "https://unity-comms-app-preview-262420637606.us-central1.run.app",
 }
 
 
@@ -74,6 +79,7 @@ def _create(
     api_key: str,
     first_name: str,
     surname: str,
+    deploy_env: str,
     age: int = 25,
     nationality: str = "US",
     about: str = "Local Assistant",
@@ -91,6 +97,8 @@ def _create(
         "voice_provider": voice_provider,
         "is_local": True,
     }
+    if deploy_env == "preview":
+        payload["deploy_env"] = "preview"
     resp = requests.post(
         f"{orchestra_url}/assistant",
         json=payload,
@@ -113,13 +121,12 @@ def _v(val):
     return str(val)
 
 
-def _print_env(assistant: dict, user: dict, api_key: str, production: bool):
+def _print_env(assistant: dict, user: dict, api_key: str, deploy_env: str):
     """Print a .env file matching the unity .env structure.
 
     Assistant and user fields are populated from the API response.
     Secrets and service keys are left blank for the developer to fill in.
     """
-    env = "prod" if production else "staging"
     first = _v(assistant.get("first_name"))
     surname = _v(assistant.get("surname"))
     name = f"{first} {surname}".strip() if first else ""
@@ -128,7 +135,7 @@ def _print_env(assistant: dict, user: dict, api_key: str, production: bool):
     user_name = f"{user_first} {user_last}".strip() if user_first else ""
 
     lines = [
-        f"UNIFY_BASE_URL={ORCHESTRA_URLS[env]}",
+        f"UNIFY_BASE_URL={ORCHESTRA_URLS[deploy_env]}",
         "LIVEKIT_SIP_URI=",
         "LIVEKIT_URL=",
         "LIVEKIT_API_KEY=",
@@ -137,7 +144,7 @@ def _print_env(assistant: dict, user: dict, api_key: str, production: bool):
         "ANTHROPIC_API_KEY=",
         f"USER_ID={_v(assistant.get('user_id'))}",
         f"UNIFY_KEY={api_key}",
-        f"UNITY_COMMS_URL={COMMS_URLS[env]}",
+        f"UNITY_COMMS_URL={COMMS_URLS[deploy_env]}",
         "DEEPGRAM_API_KEY=",
         "CARTESIA_API_KEY=",
         "ELEVEN_API_KEY=",
@@ -153,7 +160,7 @@ def _print_env(assistant: dict, user: dict, api_key: str, production: bool):
         f"USER_NUMBER={_v(user.get('phone_number'))}",
         f"USER_EMAIL={_v(user.get('email'))}",
         "ORCHESTRA_ADMIN_KEY=",
-        "STAGING=true" if not production else "",
+        f"DEPLOY_ENV={deploy_env}",
         "SHARED_UNIFY_KEY=",
         f"VOICE_PROVIDER={_v(assistant.get('voice_provider'))}",
         f"VOICE_ID={_v(assistant.get('voice_id'))}",
@@ -178,9 +185,10 @@ def main():
     )
     group.add_argument("--id", type=int, help="Existing assistant agent_id")
     parser.add_argument(
-        "--production",
-        action="store_true",
-        help="Target the production environment (default: staging)",
+        "--env",
+        choices=["production", "staging", "preview"],
+        default="staging",
+        help="Target deploy environment (default: staging)",
     )
     parser.add_argument(
         "--age",
@@ -212,7 +220,7 @@ def main():
     )
     args = parser.parse_args()
 
-    env = "prod" if args.production else "staging"
+    env = args.env
     orchestra_url = ORCHESTRA_URLS[env]
     api_key = os.getenv("UNIFY_KEY")
     if not api_key:
@@ -248,6 +256,7 @@ def main():
                 api_key,
                 first_name,
                 surname,
+                deploy_env=env,
                 age=args.age,
                 nationality=args.nationality,
                 about=args.about,
@@ -260,7 +269,7 @@ def main():
             )
 
     user = _get_user_info(orchestra_url, api_key)
-    _print_env(assistant, user, api_key, production=args.production)
+    _print_env(assistant, user, api_key, deploy_env=env)
 
 
 if __name__ == "__main__":

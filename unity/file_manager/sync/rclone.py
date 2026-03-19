@@ -110,7 +110,11 @@ key_file = {self.config.ssh_key_path}
         result = await self._run_with_retry(cmd, operation="connection test")
         return result.success
 
-    async def bisync(self, force_resync: bool = False) -> SyncResult:
+    async def bisync(
+        self,
+        force_resync: bool = False,
+        max_retries: Optional[int] = None,
+    ) -> SyncResult:
         """Bidirectional sync with 'latest wins' conflict resolution.
 
         Uses rclone bisync which:
@@ -119,6 +123,7 @@ key_file = {self.config.ssh_key_path}
 
         Args:
             force_resync: If True, always use --resync flag (for initialization)
+            max_retries: Override per-command retry count (None = use config default)
         """
         async with self._op_lock:
             remote = f"{self.REMOTE_NAME}:{self.config.remote_root}"
@@ -134,6 +139,7 @@ key_file = {self.config.ssh_key_path}
                 "newer",  # Latest wins
                 "--max-delete",
                 str(self.config.max_delete_percent),
+                "--no-update-modtime",
                 *self._exclude_args(),
                 "-v",
             ]
@@ -145,12 +151,14 @@ key_file = {self.config.ssh_key_path}
                 return await self._run_with_retry(
                     self._build_cmd([*base_args, "--resync"]),
                     operation="bisync",
+                    max_retries=max_retries,
                 )
 
             # Try without --resync, auto-recover if rclone says it needs it
             result = await self._run_with_retry(
                 self._build_cmd(base_args),
                 operation="bisync",
+                max_retries=max_retries,
             )
 
             if not result.success and self._needs_resync_recovery(result.errors):
@@ -160,6 +168,7 @@ key_file = {self.config.ssh_key_path}
                 result = await self._run_with_retry(
                     self._build_cmd([*base_args, "--resync"]),
                     operation="bisync (recovery)",
+                    max_retries=max_retries,
                 )
 
             return result
@@ -244,13 +253,19 @@ key_file = {self.config.ssh_key_path}
             args.extend(["--exclude", pattern])
         return args
 
-    async def _run_with_retry(self, cmd: List[str], operation: str) -> SyncResult:
+    async def _run_with_retry(
+        self,
+        cmd: List[str],
+        operation: str,
+        max_retries: Optional[int] = None,
+    ) -> SyncResult:
         """Run rclone command with retry logic."""
+        retries = max_retries if max_retries is not None else self.config.max_retries
         last_error = None
 
-        for attempt in range(1, self.config.max_retries + 1):
+        for attempt in range(1, retries + 1):
             LOGGER.debug(
-                f"{ICONS['file_sync']} [FileSync] {operation} (attempt {attempt}/{self.config.max_retries})",
+                f"{ICONS['file_sync']} [FileSync] {operation} (attempt {attempt}/{retries})",
             )
             LOGGER.debug(f"{ICONS['file_sync']} [FileSync] cmd: {' '.join(cmd)}")
 
@@ -289,7 +304,6 @@ key_file = {self.config.ssh_key_path}
                 LOGGER.error(
                     f"{ICONS['file_sync']} [FileSync] {operation} failed: {last_error}",
                 )
-                # Don't retry if rclone isn't installed
                 break
             except Exception as e:
                 last_error = str(e)
@@ -300,13 +314,13 @@ key_file = {self.config.ssh_key_path}
 
                 traceback.print_exc()
 
-            if attempt < self.config.max_retries:
+            if attempt < retries:
                 delay = self.config.retry_delay_seconds * attempt
                 LOGGER.debug(f"{ICONS['file_sync']} [FileSync] Retrying in {delay}s...")
                 await asyncio.sleep(delay)
 
         LOGGER.error(
-            f"{ICONS['file_sync']} [FileSync] {operation} failed after {self.config.max_retries} attempts",
+            f"{ICONS['file_sync']} [FileSync] {operation} failed after {retries} attempts",
         )
         return SyncResult(success=False, errors=[last_error or "Unknown error"])
 

@@ -6,8 +6,9 @@ Intended to run after a Unity Cloud Build completes, replacing the
 hourly Cloud Scheduler cron with an event-driven trigger.
 
 Usage:
-    python scripts/dev/idle_job_refresh.py                 # staging (default, lists jobs)
-    python scripts/dev/idle_job_refresh.py --production    # production
+    python scripts/dev/idle_job_refresh.py                       # staging (default, lists jobs)
+    python scripts/dev/idle_job_refresh.py --env production    # production
+    python scripts/dev/idle_job_refresh.py --env preview       # preview
     python scripts/dev/idle_job_refresh.py --no-list-jobs  # skip job listing
     python scripts/dev/idle_job_refresh.py --delay 45
 """
@@ -23,12 +24,14 @@ import requests
 load_dotenv()
 
 ADAPTERS_URLS = {
-    "prod": "https://unity-adapters-1021024874437.us-central1.run.app",
+    "production": "https://unity-adapters-1021024874437.us-central1.run.app",
     "staging": "https://unity-adapters-staging-ky4ja5fxna-uc.a.run.app",
+    "preview": "https://unity-adapters-preview-ky4ja5fxna-uc.a.run.app",
 }
 COMMS_URLS = {
-    "prod": "https://unity-comms-app-262420637606.us-central1.run.app",
+    "production": "https://unity-comms-app-262420637606.us-central1.run.app",
     "staging": "https://unity-comms-app-staging-262420637606.us-central1.run.app",
+    "preview": "https://unity-comms-app-preview-262420637606.us-central1.run.app",
 }
 
 
@@ -104,9 +107,10 @@ def main():
         description="Create fresh idle jobs and clean up stale ones.",
     )
     parser.add_argument(
-        "--production",
-        action="store_true",
-        help="Target the production environment (default: staging)",
+        "--env",
+        choices=["production", "staging", "preview"],
+        default="staging",
+        help="Target deploy environment (default: staging)",
     )
     parser.add_argument(
         "--delay",
@@ -121,7 +125,7 @@ def main():
     )
     args = parser.parse_args()
 
-    env = "prod" if args.production else "staging"
+    env = args.env
     adapters_url = ADAPTERS_URLS[env]
     admin_key = os.environ["ORCHESTRA_ADMIN_KEY"]
     print(f"Environment: {env}")

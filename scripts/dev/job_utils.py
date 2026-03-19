@@ -3,9 +3,18 @@
 import os
 import sys
 
+import requests
+
 ORCHESTRA_URLS = {
-    "staging": "https://api.staging.internal.saas.unify.ai/v0",
     "production": "https://api.unify.ai/v0",
+    "staging": "https://api.staging.internal.saas.unify.ai/v0",
+    "preview": "https://api.staging.internal.saas.unify.ai/v0",
+}
+
+COMMS_URLS = {
+    "production": "https://unity-comms-app-262420637606.us-central1.run.app",
+    "staging": "https://unity-comms-app-staging-262420637606.us-central1.run.app",
+    "preview": "https://unity-comms-app-preview-262420637606.us-central1.run.app",
 }
 
 RED = "\033[0;31m"
@@ -31,6 +40,88 @@ def error(msg):
 
 def success(msg):
     print(f"{GREEN}[OK]{NC} {msg}")
+
+
+# ─── Comms service helpers ────────────────────────────────────────────────────
+
+
+def _comms_url(namespace: str) -> str:
+    """Resolve the comms service URL for a namespace.
+
+    Prefers the ``UNITY_COMMS_URL`` env var (set in ``.env``); falls back
+    to the per-environment URL mapping.
+    """
+    return os.environ.get("UNITY_COMMS_URL", "").rstrip("/") or COMMS_URLS[namespace]
+
+
+def _admin_key() -> str:
+    return os.environ.get("ORCHESTRA_ADMIN_KEY", "")
+
+
+def fetch_running_jobs(namespace: str) -> list[dict]:
+    """Fetch all running Unity jobs from the comms ``/infra/jobs`` endpoint.
+
+    Returns a list of job dicts, each containing at least ``job_name``,
+    ``assistant_id``, ``status``, and ``labels``.
+    """
+    url = _comms_url(namespace)
+    key = _admin_key()
+    if not url or not key:
+        error("UNITY_COMMS_URL and ORCHESTRA_ADMIN_KEY must be set.")
+        sys.exit(1)
+
+    resp = requests.get(
+        f"{url}/infra/jobs",
+        params={"label_selector": "app=unity,unity-status=running"},
+        headers={"Authorization": f"Bearer {key}"},
+    )
+    resp.raise_for_status()
+    return resp.json().get("jobs", [])
+
+
+def is_job_running(job_name: str, namespace: str) -> bool:
+    """Check whether a specific job is running via the comms service."""
+    url = _comms_url(namespace)
+    key = _admin_key()
+    if not url or not key:
+        return False
+
+    try:
+        resp = requests.get(
+            f"{url}/infra/jobs",
+            params={"label_selector": f"app=unity,assistant-id={job_name}"},
+            headers={"Authorization": f"Bearer {key}"},
+        )
+        if resp.status_code != 200:
+            return False
+        jobs = resp.json().get("jobs", [])
+        return any(j.get("status") == "Running" for j in jobs)
+    except Exception:
+        return False
+
+
+def is_job_name_running(job_name: str, namespace: str) -> bool:
+    """Check whether a K8s job with the given name is currently running."""
+    url = _comms_url(namespace)
+    key = _admin_key()
+    if not url or not key:
+        return False
+
+    try:
+        resp = requests.get(
+            f"{url}/infra/jobs",
+            params={"label_selector": "app=unity,unity-status=running"},
+            headers={"Authorization": f"Bearer {key}"},
+        )
+        if resp.status_code != 200:
+            return False
+        jobs = resp.json().get("jobs", [])
+        return any(j.get("job_name") == job_name for j in jobs)
+    except Exception:
+        return False
+
+
+# ─── AssistantJobs + comms lookup ─────────────────────────────────────────────
 
 
 def _find_latest_job_entry(
@@ -74,12 +165,9 @@ def _find_latest_job_entry(
         job_name = log.entries.get("job_name")
         if not job_name:
             continue
-        is_staging_job = job_name.endswith("-staging")
-        if namespace == "staging" and not is_staging_job:
+        if not job_name.endswith(f"-{namespace}"):
             continue
-        if namespace == "production" and is_staging_job:
-            continue
-        running = str(log.entries.get("running", "false")).lower() == "true"
+        running = is_job_name_running(job_name, namespace)
         if running_only and not running:
             continue
         status = f"{GREEN}running{NC}" if running else f"{YELLOW}completed{NC}"
@@ -103,8 +191,8 @@ def resolve_latest_job(
     identify the caller. Queries AssistantJobs for the most recent job whose
     name ends with ``-{namespace}``.
 
-    When *running_only* is True, only jobs with running status are
-    considered — useful for suspension where completed jobs are irrelevant.
+    When *running_only* is True, only jobs whose K8s pod is currently
+    running are considered.
     """
     return _find_latest_job_entry(
         namespace,
@@ -135,10 +223,15 @@ if __name__ == "__main__":
         "command",
         choices=["assistant-id"],
     )
-    parser.add_argument("--production", action="store_true")
+    parser.add_argument(
+        "--env",
+        choices=["production", "staging", "preview"],
+        default="staging",
+        help="Target deploy environment (default: staging)",
+    )
     args = parser.parse_args()
 
-    namespace = "production" if args.production else "staging"
+    namespace = args.env
     os.environ["ORCHESTRA_URL"] = ORCHESTRA_URLS[namespace]
 
     from dotenv import load_dotenv

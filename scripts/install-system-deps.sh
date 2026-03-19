@@ -33,7 +33,8 @@ apt-get install -y --no-install-recommends \
     python3-dev \
     git \
     curl \
-    sudo
+    sudo \
+    tzdata
 
 # =============================================================================
 # GITHUB CLI (for downloading CI artifacts and GitHub operations)

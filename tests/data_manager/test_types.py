@@ -170,7 +170,7 @@ def test_plot_config_full():
         x_axis="experience",
         y_axis="salary",
         group_by="department",
-        aggregate="avg",
+        aggregate="mean",
         scale_x="log",
         scale_y="linear",
         show_regression=True,

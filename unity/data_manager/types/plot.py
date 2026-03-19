@@ -53,14 +53,14 @@ class PlotConfig(BaseModel):
     group_by : str | None
         Column to group/color data points by.
     metric : str | None
-        Metric for Y-axis values on bar charts (e.g., "sum", "count", "mean", "min", "max").
-        Used only for bar charts regardless of grouping. For comparing aggregate
-        values of different data clusters, use ``aggregate`` with ``group_by`` instead.
+        Statistic used to compute Y-axis values on bar charts. Valid values:
+        ``"sum"``, ``"mean"``, ``"count"``, ``"min"``, ``"max"``. Only applies
+        to bar charts; other plot types ignore this parameter.
     aggregate : str | None
-        Aggregation function applied when ``group_by`` is set. Fundamentally changes
-        what's plotted: instead of raw data points, you plot the aggregated metric
-        of each group. Supports: "sum", "count", "mean", "min", "max".
-        Works with all plot types, not just bar charts.
+        Aggregation function applied when ``group_by`` is set. Requires
+        ``group_by``. Changes what's plotted from raw data points to aggregated
+        group metrics. Valid values: ``"sum"``, ``"mean"``, ``"count"``,
+        ``"min"``, ``"max"``. Works with all plot types, not just bar charts.
     scale_x : str | None
         X-axis scale: "linear" or "log".
     scale_y : str | None
@@ -78,7 +78,7 @@ class PlotConfig(BaseModel):
     ...     plot_type="bar",
     ...     x_axis="category",
     ...     y_axis="revenue",
-    ...     aggregate="sum",
+    ...     metric="sum",
     ...     title="Revenue by Category"
     ... )
     """

@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import logging
 from typing import Any, Dict
 
 import unify
 from unify.utils.http import RequestError
+
+_log = logging.getLogger(__name__)
 
 from ..knowledge_manager.types import ColumnType
 from ..session_details import (
@@ -78,8 +81,20 @@ def _resolve_user_details(self) -> Dict[str, Any]:
         }
 
     # In production (SESSION_DETAILS initialized), fetch real user info
+    try:
+        data: Any = unify.get_user_basic_info()
+    except Exception:
+        _log.warning(
+            "Failed to fetch user details from Orchestra, using session details",
+        )
+        return {
+            "first_name": SESSION_DETAILS.user.first_name
+            or PLACEHOLDER_USER_FIRST_NAME,
+            "last_name": SESSION_DETAILS.user.surname or PLACEHOLDER_USER_SURNAME,
+            "email": SESSION_DETAILS.user.email or PLACEHOLDER_USER_EMAIL,
+        }
+
     user_info: Dict[str, Any] = {}
-    data: Any = unify.get_user_basic_info()
     mapped: Dict[str, Any] = {
         "first_name": data.get("first"),
         "last_name": data.get("last"),

@@ -5,10 +5,10 @@ values (``SESSION_DETAILS``, ``SETTINGS``) and records Prometheus
 metrics.  All actual HTTP operations live in ``assistant_jobs_api.py``
 which is shared with the job-watcher operator.
 
-On graceful exit, ``mark_job_done`` also runs record expiry and VM
-release for immediate cleanup.  The job-watcher operator
-(``scripts/job-watcher/``) repeats the same idempotent operations
-externally to cover crash scenarios.
+``log_job_startup`` creates the AssistantJobs audit record with all
+assistant/user info from ``SESSION_DETAILS`` plus the container-specific
+``job_name``.  ``update_liveview_url`` may later add the desktop URL.
+The job-watcher operator handles crash-safe VM release independently.
 """
 
 from dotenv import load_dotenv
@@ -16,19 +16,18 @@ from dotenv import load_dotenv
 load_dotenv()
 import time
 import traceback
+from datetime import datetime, timezone
 
 from unity.logger import LOGGER
 from unity.common.hierarchical_logger import ICONS
 from unity.conversation_manager.assistant_jobs_api import (
+    create_assistant_log,
     ensure_project_exists,
-    expire_assistant_records,
     get_assistant_logs,
-    get_running_count,
     patch_job_label,
     release_pool_vm,
 )
 from unity.conversation_manager.metrics import (
-    running_job_count as _m_running_jobs,
     session_duration as _m_session_dur,
 )
 from unity.session_details import SESSION_DETAILS
@@ -52,20 +51,6 @@ def _ensure_project_exists(api_key: str) -> None:
     except Exception as e:
         LOGGER.error(
             f"{ICONS['assistant_jobs']} [assistant_jobs] Could not verify/create AssistantJobs project: {e}",
-        )
-
-
-def _record_running_job_count(api_key: str) -> None:
-    """Query running jobs and record the count as a metric (best-effort)."""
-    try:
-        count = get_running_count(api_key)
-        _m_running_jobs.set(count)
-        LOGGER.debug(
-            f"{ICONS['assistant_jobs']} [assistant_jobs] Running job count: {count}",
-        )
-    except Exception as exc:
-        LOGGER.error(
-            f"{ICONS['assistant_jobs']} [assistant_jobs] Failed to record running job count: {exc}",
         )
 
 
@@ -103,13 +88,17 @@ def mark_job_label(
         )
 
 
-def log_job_startup(job_name: str, user_id: str, assistant_id: str):
-    """Update the running job record with job_name.
+def log_job_startup(
+    job_name: str,
+    user_id: str,
+    assistant_id: str,
+    medium: str = "",
+):
+    """Create an AssistantJobs audit record for this container session.
 
-    The adapter already created the running=True record with all assistant info.
-    This function adds the container-specific job_name.  The liveview_url is
-    set later by ``update_liveview_url`` when the ``AssistantDesktopReady``
-    event arrives.
+    Logs all available assistant/user info from ``SESSION_DETAILS`` plus
+    the container-specific ``job_name``.  ``update_liveview_url`` may
+    later add the desktop URL.
     """
     api_key = SESSION_DETAILS.shared_unify_key or None
     if not api_key:
@@ -121,42 +110,31 @@ def log_job_startup(job_name: str, user_id: str, assistant_id: str):
     _ensure_project_exists(api_key)
 
     try:
-        LOGGER.debug(
-            f"{ICONS['assistant_jobs']} [assistant_jobs] Getting existing logs for user_id={user_id}, assistant_id={assistant_id}",
-        )
-        existing_logs = get_assistant_logs(
+        sd = SESSION_DETAILS
+        create_assistant_log(
             api_key,
-            f"user_id == '{user_id}' and "
-            f"assistant_id == '{assistant_id}' and "
-            f"running == 'true'",
+            user_id=user_id,
+            assistant_id=assistant_id,
+            job_name=job_name,
+            timestamp=datetime.now(tz=timezone.utc).isoformat(),
+            medium=medium,
+            user_name=f"{sd.user.first_name} {sd.user.surname}".strip(),
+            assistant_name=f"{sd.assistant.first_name} {sd.assistant.surname}".strip(),
+            user_number=sd.user.number,
+            assistant_number=sd.assistant.number,
+            user_email=sd.user.email,
+            assistant_email=sd.assistant.email,
         )
         LOGGER.debug(
-            f"{ICONS['assistant_jobs']} [assistant_jobs] Found {len(existing_logs)} running records",
+            f"{ICONS['assistant_jobs']} [assistant_jobs] Created audit record: "
+            f"job_name={job_name}, assistant_id={assistant_id}",
         )
 
-        if existing_logs:
-            existing_logs[0].update_entries(job_name=job_name)
-            LOGGER.debug(
-                f"{ICONS['assistant_jobs']} [assistant_jobs] Updated record with job_name={job_name}",
-            )
-
-            # X1: record running job count right after the record is updated
-            _record_running_job_count(api_key)
-
-            # Mark session start for U9 duration measurement
-            global _session_start_perf
-            _session_start_perf = time.perf_counter()
-        else:
-            # No record found - adapter's mark_job_running() must have failed
-            # Log warning but don't fail; liveview just won't be tracked
-            LOGGER.error(
-                f"{ICONS['assistant_jobs']} [assistant_jobs] WARNING: No running record found for "
-                f"user_id={user_id}, assistant_id={assistant_id}. "
-                f"Adapter may have failed to create the record.",
-            )
+        global _session_start_perf
+        _session_start_perf = time.perf_counter()
     except Exception as e:
         LOGGER.error(
-            f"{ICONS['assistant_jobs']} [assistant_jobs] Error updating job record: {e}",
+            f"{ICONS['assistant_jobs']} [assistant_jobs] Error creating job record: {e}",
         )
         traceback.print_exc()
 
@@ -165,10 +143,15 @@ def update_liveview_url(assistant_id: str, user_id: str, liveview_url: str) -> N
     """Update the AssistantJobs record with the resolved liveview_url.
 
     Called by the ``AssistantDesktopReady`` event handler once the VM is
-    confirmed ready.
+    confirmed ready.  Finds the record by ``assistant_id`` + ``job_name``
+    (unique to this container session).
     """
     api_key = SESSION_DETAILS.shared_unify_key or None
     if not api_key:
+        return
+
+    job_name = SETTINGS.conversation.JOB_NAME
+    if not job_name:
         return
 
     _ensure_project_exists(api_key)
@@ -176,9 +159,7 @@ def update_liveview_url(assistant_id: str, user_id: str, liveview_url: str) -> N
     try:
         existing_logs = get_assistant_logs(
             api_key,
-            f"user_id == '{user_id}' and "
-            f"assistant_id == '{assistant_id}' and "
-            f"running == 'true'",
+            f"assistant_id == '{assistant_id}' and " f"job_name == '{job_name}'",
         )
         if existing_logs:
             existing_logs[0].update_entries(liveview_url=liveview_url)
@@ -192,25 +173,17 @@ def update_liveview_url(assistant_id: str, user_id: str, liveview_url: str) -> N
 
 
 def mark_job_done(job_name: str, inactivity_timeout: float = 0.0):
-    """Mark a job as done, expire records, release VM, and record metrics.
+    """Mark a job as done, release VM, and record session duration.
 
-    The job-watcher operator repeats the same expire/release calls
-    externally (crash-safe).  Both paths are idempotent so running
-    them here as well gives immediate cleanup on graceful exit.
+    The job-watcher operator performs crash-safe VM release independently.
     """
     mark_job_label(job_name, "done")
 
     assistant_id = str(SESSION_DETAILS.assistant.agent_id)
-    api_key = SESSION_DETAILS.shared_unify_key or None
     comms_url = SETTINGS.conversation.COMMS_URL.rstrip("/")
     admin_key = SETTINGS.ORCHESTRA_ADMIN_KEY.get_secret_value()
 
-    if api_key:
-        expire_assistant_records(api_key, assistant_id)
-        # X1: record running job count right after the record is updated
-        _record_running_job_count(api_key)
-
-    # U9: session duration (log_job_startup → mark_job_done), excluding idle tail
+    # U9: session duration (log_job_startup -> mark_job_done), excluding idle tail
     if _session_start_perf is not None:
         total_dur = time.perf_counter() - _session_start_perf
         active_dur = max(0.0, total_dur - inactivity_timeout)

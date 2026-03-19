@@ -80,8 +80,8 @@ async def send_unify_message(
         dict with "success" key indicating delivery status.
     """
     agent_id = SESSION_DETAILS.assistant.agent_id
-    staging_suffix = "-staging" if SETTINGS.STAGING and agent_id is not None else ""
-    topic_name = f"unity-{agent_id}{staging_suffix}"
+    env_suffix = SETTINGS.ENV_SUFFIX if agent_id is not None else ""
+    topic_name = f"unity-{agent_id}{env_suffix}"
     publisher = _get_publisher()
     topic_path = publisher.topic_path("responsive-city-458413-a2", topic_name)
 
@@ -161,8 +161,8 @@ async def publish_assistant_desktop_ready(
     The Console subscribes to this thread to update the liveview iframe.
     """
     agent_id = SESSION_DETAILS.assistant.agent_id
-    staging_suffix = "-staging" if SETTINGS.STAGING and agent_id is not None else ""
-    topic_name = f"unity-{agent_id}{staging_suffix}"
+    env_suffix = SETTINGS.ENV_SUFFIX if agent_id is not None else ""
+    topic_name = f"unity-{agent_id}{env_suffix}"
     publisher = _get_publisher()
     topic_path = publisher.topic_path("responsive-city-458413-a2", topic_name)
 
@@ -529,7 +529,10 @@ async def add_unify_message_attachments(
 
     # Phase 2: Ingest all saved files (parse, index, embed) in parallel.
     # Files are already on disk and accessible to the assistant.
-    if saved_display_names:
+    # Gated behind IMPLICIT_INGESTION because the Docling pipeline can
+    # consume multiple GB of memory per file and OOM the container before
+    # the CodeActActor gets a chance to process the user's request.
+    if saved_display_names and SETTINGS.file.IMPLICIT_INGESTION:
         try:
             from unity.file_manager.types.config import FilePipelineConfig
 

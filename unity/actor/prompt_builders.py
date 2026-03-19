@@ -183,15 +183,23 @@ _EXECUTION_RULES = textwrap.dedent("""
 
        - `send_notification(message="Sending the email now.")` —
          in-progress (default, `completed=False`).
+       - `send_notification(message="Done — email sent to John.", completed=True)` —
+         completion of a step the user is waiting for.
        - `notify({"message": "Step 2/3: verifying results."})` —
-         in-progress (default).
+         in-progress (default, inside `execute_code`).
        - `notify({"message": "All 3 steps complete.", "completed": True})` —
-         completion announcement (inside `execute_code` only).
+         completion announcement (inside `execute_code`).
 
-       Use `completed=True` inside `execute_code` via `notify()` when a
-       multi-step workflow finishes. At the top level, the final answer
-       itself signals completion — end with a tool-less assistant message
-       rather than calling `send_notification(completed=True)`.
+       Set `completed=True` whenever the work described in the message
+       is **verifiably finished** — whether via `send_notification` at
+       the top level or `notify()` inside `execute_code`. The downstream
+       voice pipeline uses this flag to decide how to relay the message;
+       omitting it on a genuine completion causes a ~20s delay before
+       the user hears the result.
+
+       When you are fully done with the entire task (no more steps),
+       provide the final answer as a tool-less assistant message rather
+       than a notification.
        Notifications that surface a blocker or request user action
        (e.g. an MFA approval prompt) are in-progress — the work is
        paused, not finished.

@@ -1,3 +1,4 @@
+import logging
 import unify
 from unify import create_fields
 from unity.common.state_managers import BaseStateManager
@@ -5,6 +6,8 @@ from unity.common.context_store import _PRIVATE_FIELDS, _create_context_with_ret
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import List, Dict, Optional, Any, Union, Type
 from pydantic import BaseModel
+
+_log = logging.getLogger(__name__)
 
 
 class TableContext(BaseModel):
@@ -308,7 +311,10 @@ class ContextRegistry:
                     )
 
             for future in as_completed(futures):
-                future.result()
+                try:
+                    future.result()
+                except Exception as e:
+                    _log.warning("Context creation failed (will retry lazily): %s", e)
 
         cls._setup_complete = True
 

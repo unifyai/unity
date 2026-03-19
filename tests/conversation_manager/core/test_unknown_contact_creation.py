@@ -84,7 +84,8 @@ def mock_session_details():
 def mock_settings():
     """Mock SETTINGS for testing."""
     with patch("unity.conversation_manager.comms_manager.SETTINGS") as mock:
-        mock.STAGING = False
+        mock.DEPLOY_ENV = "production"
+        mock.ENV_SUFFIX = ""
         yield mock
 
 

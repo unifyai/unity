@@ -64,16 +64,14 @@ if TYPE_CHECKING:
 
 # Subscription IDs
 project_id = "responsive-city-458413-a2"
-startup_subscription_id = (
-    "unity-startup" + ("-staging" if SETTINGS.STAGING else "") + "-sub"
-)
+startup_subscription_id = "unity-startup" + SETTINGS.ENV_SUFFIX + "-sub"
 
 
 def _get_subscription_id() -> str:
     """Build subscription ID from current assistant context."""
     agent_id = SESSION_DETAILS.assistant.agent_id
-    staging_suffix = "-staging" if SETTINGS.STAGING and agent_id is not None else ""
-    return f"unity-{agent_id}{staging_suffix}-sub"
+    env_suffix = SETTINGS.ENV_SUFFIX if agent_id is not None else ""
+    return f"unity-{agent_id}{env_suffix}-sub"
 
 
 def _get_local_contact() -> dict:
@@ -361,6 +359,23 @@ class CommsManager:
                 system_event_type = event.get("event_type")
                 system_message = event.get("message")
                 reason = str(system_message) if system_message is not None else ""
+
+                # Desktop-ready events are only valid within 5 minutes of
+                # publish; stale ones from previous sessions must be discarded
+                # to avoid falsely marking the desktop as ready.
+                _DESKTOP_READY_TTL = 300
+                if (
+                    system_event_type == "assistant_desktop_ready"
+                    and publish_timestamp is not None
+                    and time.time() - publish_timestamp > _DESKTOP_READY_TTL
+                ):
+                    age = time.time() - publish_timestamp
+                    LOGGER.warning(
+                        f"{DEFAULT_ICON} Discarding stale assistant_desktop_ready "
+                        f"(age={age:.0f}s, TTL={_DESKTOP_READY_TTL}s)",
+                    )
+                    self._ack_with_latency(message, publish_timestamp, topic)
+                    return
 
                 # Map system event types to internal event classes.
                 _SYSTEM_EVENT_MAP = {
