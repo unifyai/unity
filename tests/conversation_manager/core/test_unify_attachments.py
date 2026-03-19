@@ -164,7 +164,12 @@ class TestAddUnifyMessageAttachments:
                 "unity.manager_registry.ManagerRegistry.get_file_manager",
                 return_value=mock_file_manager,
             ),
+            patch(
+                "unity.conversation_manager.domains.comms_utils.SETTINGS",
+            ) as mock_settings,
         ):
+            mock_settings.file.IMPLICIT_INGESTION = True
+
             attachments = [
                 {
                     "id": "att-1",
@@ -313,6 +318,7 @@ class TestAddUnifyMessageAttachments:
             ) as mock_settings,
         ):
             mock_settings.ORCHESTRA_URL = "http://localhost:8000"
+            mock_settings.file.IMPLICIT_INGESTION = True
 
             attachments = [
                 {

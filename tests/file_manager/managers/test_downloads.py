@@ -5,9 +5,11 @@ Tests for FileManager.save_attachment
 from __future__ import annotations
 
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 from tests.helpers import _handle_project
+from unity.settings import SETTINGS
 
 
 @pytest.mark.asyncio
@@ -68,11 +70,12 @@ async def test_save_attachment_unparseable_file_still_indexed(
     """
     fm = file_manager
 
-    display_name = fm.save_attachment(
-        "att-corrupt",
-        "corrupt.pdf",
-        b"not-a-real-pdf-just-garbage-bytes",
-    )
+    with patch.object(SETTINGS.file, "IMPLICIT_INGESTION", True):
+        display_name = fm.save_attachment(
+            "att-corrupt",
+            "corrupt.pdf",
+            b"not-a-real-pdf-just-garbage-bytes",
+        )
 
     # The file is on disk.
     assert fm.exists(display_name)

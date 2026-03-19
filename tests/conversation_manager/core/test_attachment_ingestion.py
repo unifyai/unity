@@ -21,6 +21,7 @@ import pytest
 
 from unity.conversation_manager.domains import comms_utils
 from unity.file_manager.managers.local import LocalFileManager
+from unity.settings import SETTINGS
 
 # Valid plain-text content that the parser can handle.
 SAMPLE_TEXT_CONTENT = (
@@ -108,8 +109,10 @@ class TestAttachmentIngestion:
             patch(
                 "unity.conversation_manager.domains.comms_utils.SETTINGS",
             ) as mock_settings,
+            patch.object(SETTINGS.file, "IMPLICIT_INGESTION", True),
         ):
             mock_settings.conversation.COMMS_URL = "http://localhost:8080"
+            mock_settings.file.IMPLICIT_INGESTION = True
 
             attachments = [
                 {"id": "att-email-1", "filename": "data.csv"},
@@ -154,7 +157,14 @@ class TestHydrationAttachmentMaterialization:
         mock_session.__aenter__ = AsyncMock(return_value=mock_session)
         mock_session.__aexit__ = AsyncMock(return_value=None)
 
-        with patch("aiohttp.ClientSession", return_value=mock_session):
+        with (
+            patch("aiohttp.ClientSession", return_value=mock_session),
+            patch.object(
+                SETTINGS.file,
+                "IMPLICIT_INGESTION",
+                True,
+            ),
+        ):
             await comms_utils.add_unify_message_attachments(
                 [
                     {

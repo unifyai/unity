@@ -529,7 +529,10 @@ async def add_unify_message_attachments(
 
     # Phase 2: Ingest all saved files (parse, index, embed) in parallel.
     # Files are already on disk and accessible to the assistant.
-    if saved_display_names:
+    # Gated behind IMPLICIT_INGESTION because the Docling pipeline can
+    # consume multiple GB of memory per file and OOM the container before
+    # the CodeActActor gets a chance to process the user's request.
+    if saved_display_names and SETTINGS.file.IMPLICIT_INGESTION:
         try:
             from unity.file_manager.types.config import FilePipelineConfig
 
