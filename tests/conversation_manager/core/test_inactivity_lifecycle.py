@@ -790,7 +790,7 @@ class TestFullLifecycleIntegration:
 
         with patch(
             "unity.conversation_manager.conversation_manager.assistant_jobs.mark_job_done",
-            side_effect=lambda x: call_order.append("mark_job_done"),
+            side_effect=lambda *args: call_order.append("mark_job_done"),
         ):
             await cm.cleanup()
 
