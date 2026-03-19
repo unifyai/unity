@@ -1489,6 +1489,26 @@ async def _(
         event.timestamp,
     )
     cm._session_logger.debug("initialization", "Initialization complete")
+
+    # Notify the fast brain (voice agent) directly via the call manager's
+    # IPC socket — the same channel used for meet_interaction and other
+    # direct fast brain notifications.  This bypasses the CM's own event
+    # broker subscription so the notification reaches only the subprocess.
+    if cm.call_manager and cm.call_manager._socket_server:
+        fast_brain_notification = FastBrainNotification(
+            contact={},
+            content=(
+                "Initialization complete — all actions are now available. "
+                "Full conversation history has been loaded."
+            ),
+            should_speak=False,
+            source="initialization",
+        )
+        await cm.call_manager._socket_server.queue_for_clients(
+            "app:call:notification",
+            fast_brain_notification.to_json(),
+        )
+
     await cm.request_llm_run(delay=0)
 
 

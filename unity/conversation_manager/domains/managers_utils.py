@@ -1,5 +1,6 @@
 from datetime import timedelta
 import asyncio
+import os
 from time import perf_counter
 from typing import TYPE_CHECKING
 
@@ -1433,6 +1434,8 @@ async def init_conv_manager(
                     cm._hydration_future = None
 
             await _register_computer_act_completed_callback(cm)
+
+            os.environ["UNITY_CM_INITIALIZED"] = "1"
 
             # Publish initialization complete event.  The registered
             # InitializationComplete handler pushes a notification and
