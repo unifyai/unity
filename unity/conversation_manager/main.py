@@ -245,7 +245,7 @@ async def run_conversation_manager(
 
     # Start background tasks
     asyncio.create_task(cm.wait_for_events()).add_done_callback(log_task_exc)
-    asyncio.create_task(cm.check_inactivity())
+    asyncio.create_task(cm.check_inactivity()).add_done_callback(log_task_exc)
 
     # For local development (non-idle containers), trigger initialization directly.
     # In cloud deployment, initialization is triggered by StartupEvent from CommsManager.

@@ -1084,7 +1084,13 @@ async def _(event: StartupEvent, cm: "ConversationManager", *args, **kwargs):
         )
 
         cm.call_manager.set_config(cm.get_call_config())
-        cm.call_manager.start_persistent_worker()
+        try:
+            cm.call_manager.start_persistent_worker()
+        except Exception as e:
+            LOGGER.error(
+                "LiveKit worker failed to start, voice calls unavailable: %s",
+                e,
+            )
 
         asyncio.create_task(_startup_sequence(cm, medium=event.medium))
 
@@ -1462,6 +1468,22 @@ async def _(
         event.timestamp,
     )
     cm._session_logger.debug("file_sync", "File sync complete")
+    await cm.request_llm_run(delay=0)
+
+
+@EventHandler.register((InitializationComplete,))
+async def _(
+    event: "InitializationComplete",
+    cm: "ConversationManager",
+    *args,
+    **kwargs,
+):
+    cm.notifications_bar.push_notif(
+        "System",
+        "Initialization complete — all actions are now available.",
+        event.timestamp,
+    )
+    cm._session_logger.debug("initialization", "Initialization complete")
     await cm.request_llm_run(delay=0)
 
 
