@@ -5,12 +5,13 @@ stream_logs.py — View logs for a Unity GKE job.
 Usage:
     python stream_logs.py                       # auto-detect latest staging job
     python stream_logs.py --job <job_name>      # explicit job, staging namespace
-    python stream_logs.py --production          # auto-detect latest production job
+    python stream_logs.py --env production      # auto-detect latest production job
+    python stream_logs.py --env preview         # auto-detect latest preview job
 
 Behaviour:
     1. If --job is omitted, resolves the caller's email from UNIFY_KEY and finds
        the most recent job for that email in the AssistantJobs project.
-    2. Queries the AssistantJobs Unify project to check if the job is running.
+    2. Checks K8s pod status via kubectl to determine if the job is running.
     3. If running  → prints all existing logs AND streams new ones via kubectl -f.
     4. If not running → prints historical logs via gcloud.
 
@@ -37,6 +38,7 @@ from job_utils import (
     YELLOW,
     error,
     info,
+    is_job_name_running,
     resolve_latest_job,
     success,
     warn,
@@ -44,12 +46,13 @@ from job_utils import (
 
 # The unify SDK reads ORCHESTRA_URL at import time, and .env sets it to
 # localhost for local development. This script needs the real backend, so
-# derive the URL from --production before importing anything else.
+# derive the URL from --env before importing anything else.
 
 
 def _parse_namespace_early() -> str:
-    if "--production" in sys.argv:
-        return "production"
+    for i, arg in enumerate(sys.argv):
+        if arg == "--env" and i + 1 < len(sys.argv):
+            return sys.argv[i + 1]
     return "staging"
 
 
@@ -91,8 +94,8 @@ class Keepalive:
 
     def __init__(self, assistant_id: str, namespace: str):
         topic = f"unity-{assistant_id}"
-        if namespace == "staging":
-            topic += "-staging"
+        if namespace != "production":
+            topic += f"-{namespace}"
         self._topic = topic
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
@@ -201,18 +204,24 @@ def query_assistant_jobs(job_name: str) -> dict | None:
     return None
 
 
-def query_job_status(job_name: str) -> tuple[bool | None, dict | None]:
-    """Query AssistantJobs for the job's running status.
+def query_job_status(
+    job_name: str,
+    namespace: str,
+) -> tuple[bool | None, dict | None]:
+    """Determine whether *job_name* is running.
+
+    Combines AssistantJobs metadata (for display) with a live check
+    against the comms ``/infra/jobs`` endpoint (for the actual running
+    status, since the ``running`` column no longer exists).
 
     Returns (is_running, metadata_dict_or_none).
-    is_running is None when no AssistantJobs record exists.
+    is_running is None when neither an AssistantJobs record nor a
+    running job can be found.
     """
     info(f"Querying AssistantJobs for job '{job_name}'...")
-
     entry = query_assistant_jobs(job_name)
 
     if entry is not None:
-        # Print session metadata.
         assistant = entry.get("assistant_name", "unknown")
         assistant_id = entry.get("assistant_id", "?")
         user = entry.get("user_name", "unknown")
@@ -224,15 +233,18 @@ def query_job_status(job_name: str) -> tuple[bool | None, dict | None]:
         print(f"  Medium    : {medium}")
         print(f"  Started   : {timestamp}\n")
 
-        running = str(entry.get("running", "false")).lower() == "true"
-        if running:
-            success(f"Job is currently {GREEN}running{NC}.")
-        else:
-            info(f"Job is {YELLOW}not running{NC} (completed/suspended).")
-        return running, entry
+    info("Checking job status via comms service...")
+    running = is_job_name_running(job_name, namespace)
 
-    warn("No AssistantJobs record found.")
-    return None, None
+    if running:
+        success(f"Job is currently {GREEN}running{NC}.")
+    elif entry is not None:
+        info(f"Job is {YELLOW}not running{NC} (completed/suspended).")
+    else:
+        warn("No AssistantJobs record found and no running job.")
+        return None, None
+
+    return running, entry
 
 
 # ─── Pod resolution ───────────────────────────────────────────────────────────
@@ -545,7 +557,7 @@ def _gcloud_logging_read(log_filter: str):
 def fetch_historical_logs(job_name: str, namespace: str):
     """Fetch historical logs from Cloud Logging.
 
-    Called when the running flag is False, meaning the pod is gone.
+    Called when no running pod is found, meaning the pod is gone.
     Goes straight to gcloud — no kubectl attempt needed.
     """
     info(f"Fetching historical logs from Cloud Logging for '{job_name}'...")
@@ -578,8 +590,9 @@ def main():
             "AssistantJobs for your most recent session.\n"
             "\n"
             "Examples:\n"
-            "  python stream_logs.py                        # latest staging job\n"
-            "  python stream_logs.py --production            # latest production job\n"
+            "  python stream_logs.py                          # latest staging job\n"
+            "  python stream_logs.py --env production         # latest production job\n"
+            "  python stream_logs.py --env preview            # latest preview job\n"
             "  python stream_logs.py --job unity-2026-02-10-17-30-53-staging"
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -590,9 +603,10 @@ def main():
         help="Name of the GKE job. If omitted, auto-detects the latest job for your account.",
     )
     parser.add_argument(
-        "--production",
-        action="store_true",
-        help="Target the production environment (default: staging)",
+        "--env",
+        choices=["production", "staging", "preview"],
+        default="staging",
+        help="Target deploy environment (default: staging)",
     )
     parser.add_argument(
         "--no-mirror",
@@ -630,7 +644,7 @@ def main():
     )
     args = parser.parse_args()
 
-    namespace = "production" if args.production else "staging"
+    namespace = args.env
     mirror = not args.no_mirror
     sync_all = args.sync_all_logs and not args.no_sync
     mirror_base = Path(args.mirror_dir).resolve() if args.mirror_dir else MIRROR_BASE
@@ -647,7 +661,7 @@ def main():
     print(f"{BOLD}{'═' * 56}{NC}")
     print()
 
-    running, metadata = query_job_status(job_name)
+    running, metadata = query_job_status(job_name, namespace)
 
     keepalive: Keepalive | None = None
     if not args.no_keepalive and metadata:

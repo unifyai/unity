@@ -32,6 +32,14 @@ from opentelemetry.sdk.resources import Resource
 _provider: MeterProvider | None = None
 
 
+def _deploy_env() -> str:
+    """Return the current deployment environment."""
+    deploy_env = (os.getenv("DEPLOY_ENV") or "production").strip().lower()
+    if deploy_env not in {"production", "staging", "preview"}:
+        return "production"
+    return deploy_env
+
+
 def init_metrics() -> None:
     """Initialise the OTel MeterProvider with the GCP Monitoring exporter.
 
@@ -68,7 +76,7 @@ def init_metrics() -> None:
         # Without k8s.namespace.name, k8s.pod.name, and k8s.container.name the
         # exporter can't map to the k8s_container monitored resource type and
         # data points are silently rejected.  Supply them from the environment.
-        namespace = "staging" if os.getenv("STAGING") else "production"
+        namespace = _deploy_env()
         resource = detected.merge(
             Resource.create(
                 {

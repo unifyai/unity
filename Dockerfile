@@ -40,8 +40,8 @@ RUN git config --global url."https://${GITHUB_TOKEN}@github.com/".insteadOf "htt
 RUN uv pip install --system --no-cache torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu
 
 # Clone unify and unillm repos (no PyPI releases; pyproject.toml references ../unify and ../unillm)
-# Branch logic mirrors CI: main→main, otherwise→staging
-# This ensures staging deployments get staging branches (with latest fixes)
+# Branch logic mirrors CI: main→main, staging/preview→staging
+# This keeps preview aligned with the existing staging dependency branches.
 RUN DEP_BRANCH=$([ "$BRANCH" = "main" ] && echo "main" || echo "staging") && \
     git clone --depth 1 --branch $DEP_BRANCH https://github.com/unifyai/unify.git /unify && \
     git clone --depth 1 --branch $DEP_BRANCH https://github.com/unifyai/unillm.git /unillm

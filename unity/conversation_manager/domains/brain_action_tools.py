@@ -1390,61 +1390,49 @@ class ConversationManagerBrainActionTools:
         if response_format is not None:
             pydantic_response_format = schema_dict_to_pydantic(response_format)
 
-        # Invoke the actor. If managers are already initialized, run
-        # directly so in_flight_actions is populated before we return.
-        # Otherwise queue via listen_to_operations() which defers until
-        # initialization completes.
         cm = self._cm
-
-        async def _invoke_actor():
-            _bat_log.debug(f"⏱️ [CM.act tool +{_bat_ms()}] calling cm.actor.act()")
-            handle = await cm.actor.act(
-                query,
-                _parent_chat_context=parent_context,
-                response_format=pydantic_response_format,
-                persist=persist,
-            )
-            _bat_log.debug(
-                f"⏱️ [CM.act tool +{_bat_ms()}] cm.actor.act() returned handle",
-            )
-
-            # Capture the snapshot state for incremental diff computation.
-            # This is used when interjecting to send only changed state, avoiding duplication.
-            initial_snapshot_state: SnapshotState | None = None
-            if hasattr(self._cm, "_current_snapshot_state"):
-                initial_snapshot_state = self._cm._current_snapshot_state
-
-            self._cm.in_flight_actions[handle_id] = {
-                "handle": handle,
-                "query": query,
-                "persist": persist,
-                "action_type": "act",
-                "handle_actions": [
-                    {
-                        "action_name": "act_started",
-                        "query": query,
-                        "timestamp": prompt_now(),
-                    },
-                ],
-                "initial_snapshot_state": initial_snapshot_state,
-                "context_opted_in": include_conversation_context,
-            }
-            asyncio.create_task(managers_utils.actor_watch_result(handle_id, handle))
-            asyncio.create_task(
-                managers_utils.actor_watch_notifications(handle_id, handle),
-            )
-            asyncio.create_task(
-                managers_utils.actor_watch_clarifications(handle_id, handle),
-            )
-            _bat_log.debug(f"⏱️ [CM.act tool +{_bat_ms()}] watchers started")
 
         handle_id = _next_handle_id
         _next_handle_id += 1
 
-        if cm.initialized:
-            await _invoke_actor()
-        else:
-            await managers_utils.queue_operation(_invoke_actor)
+        _bat_log.debug(f"⏱️ [CM.act tool +{_bat_ms()}] calling cm.actor.act()")
+        handle = await cm.actor.act(
+            query,
+            _parent_chat_context=parent_context,
+            response_format=pydantic_response_format,
+            persist=persist,
+        )
+        _bat_log.debug(
+            f"⏱️ [CM.act tool +{_bat_ms()}] cm.actor.act() returned handle",
+        )
+
+        initial_snapshot_state: SnapshotState | None = None
+        if hasattr(self._cm, "_current_snapshot_state"):
+            initial_snapshot_state = self._cm._current_snapshot_state
+
+        self._cm.in_flight_actions[handle_id] = {
+            "handle": handle,
+            "query": query,
+            "persist": persist,
+            "action_type": "act",
+            "handle_actions": [
+                {
+                    "action_name": "act_started",
+                    "query": query,
+                    "timestamp": prompt_now(),
+                },
+            ],
+            "initial_snapshot_state": initial_snapshot_state,
+            "context_opted_in": include_conversation_context,
+        }
+        asyncio.create_task(managers_utils.actor_watch_result(handle_id, handle))
+        asyncio.create_task(
+            managers_utils.actor_watch_notifications(handle_id, handle),
+        )
+        asyncio.create_task(
+            managers_utils.actor_watch_clarifications(handle_id, handle),
+        )
+        _bat_log.debug(f"⏱️ [CM.act tool +{_bat_ms()}] watchers started")
 
         _bat_log.debug(f"⏱️ [CM.act tool +{_bat_ms()}] publishing ActorHandleStarted")
         await self._event_broker.publish(
@@ -1472,7 +1460,7 @@ class ConversationManagerBrainActionTools:
     ) -> dict[str, Any]:
         """Shared lifecycle for direct manager tools (contact and transcript actions).
 
-        Follows the same pattern as ``act``: queue invocation, store handle in
+        Follows the same pattern as ``act``: store handle in
         ``in_flight_actions``, spawn watcher tasks, publish started event.
         """
         global _next_handle_id
@@ -1494,50 +1482,44 @@ class ConversationManagerBrainActionTools:
 
         cm = self._cm
 
-        async def _invoke():
-            method = getattr(manager, method_name)
-            handle = await method(
-                text,
-                response_format=pydantic_response_format,
-                _parent_chat_context=parent_context,
-            )
-
-            initial_snapshot_state: SnapshotState | None = None
-            if hasattr(cm, "_current_snapshot_state"):
-                initial_snapshot_state = cm._current_snapshot_state
-
-            cm.in_flight_actions[handle_id] = {
-                "handle": handle,
-                "query": text,
-                "persist": False,
-                "action_type": action_type,
-                "handle_actions": [
-                    {
-                        "action_name": f"{action_type}_started",
-                        "query": text,
-                        "timestamp": prompt_now(),
-                    },
-                ],
-                "initial_snapshot_state": initial_snapshot_state,
-                "context_opted_in": include_conversation_context,
-            }
-            asyncio.create_task(
-                managers_utils.actor_watch_result(handle_id, handle),
-            )
-            asyncio.create_task(
-                managers_utils.actor_watch_notifications(handle_id, handle),
-            )
-            asyncio.create_task(
-                managers_utils.actor_watch_clarifications(handle_id, handle),
-            )
-
         handle_id = _next_handle_id
         _next_handle_id += 1
 
-        if cm.initialized:
-            await _invoke()
-        else:
-            await managers_utils.queue_operation(_invoke)
+        method = getattr(manager, method_name)
+        handle = await method(
+            text,
+            response_format=pydantic_response_format,
+            _parent_chat_context=parent_context,
+        )
+
+        initial_snapshot_state: SnapshotState | None = None
+        if hasattr(cm, "_current_snapshot_state"):
+            initial_snapshot_state = cm._current_snapshot_state
+
+        cm.in_flight_actions[handle_id] = {
+            "handle": handle,
+            "query": text,
+            "persist": False,
+            "action_type": action_type,
+            "handle_actions": [
+                {
+                    "action_name": f"{action_type}_started",
+                    "query": text,
+                    "timestamp": prompt_now(),
+                },
+            ],
+            "initial_snapshot_state": initial_snapshot_state,
+            "context_opted_in": include_conversation_context,
+        }
+        asyncio.create_task(
+            managers_utils.actor_watch_result(handle_id, handle),
+        )
+        asyncio.create_task(
+            managers_utils.actor_watch_notifications(handle_id, handle),
+        )
+        asyncio.create_task(
+            managers_utils.actor_watch_clarifications(handle_id, handle),
+        )
 
         await self._event_broker.publish(
             f"app:actor:actor_started_handle_{handle_id}",
@@ -2053,7 +2035,7 @@ class ConversationManagerBrainActionTools:
             tools["guide_voice_agent"] = self.guide_voice_agent
         if SETTINGS.DEMO_MODE:
             tools["set_boss_details"] = self.set_boss_details
-        else:
+        elif self._cm.initialized:
             tools["act"] = self.act
             tools["ask_about_contacts"] = self.ask_about_contacts
             tools["update_contacts"] = self.update_contacts

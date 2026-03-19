@@ -105,6 +105,7 @@ if [ ! -z "$UNITY_CONVERSATION_JOB_NAME" ]; then
     _GCS_BUCKET="${GCS_LOG_BUCKET:-unity-pod-logs}"
     # Derive namespace from job name suffix
     case "$UNITY_CONVERSATION_JOB_NAME" in
+        *-preview)    _NS="preview" ;;
         *-staging)    _NS="staging" ;;
         *-production) _NS="production" ;;
         *)            _NS="unknown" ;;

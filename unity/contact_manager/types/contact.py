@@ -1,3 +1,4 @@
+import logging
 import zoneinfo
 from pydantic import (
     BaseModel,
@@ -9,6 +10,8 @@ from pydantic import (
     SerializerFunctionWrapHandler,
 )
 from typing import Optional, ClassVar
+
+_log = logging.getLogger(__name__)
 
 UNICODE_NAME_RE = r"^[^\W\d_](?:[^\W\d_]|[ .'-])*$"  # ← one reusable constant
 
@@ -194,11 +197,10 @@ class Contact(BaseModel):
             return None
         try:
             zoneinfo.ZoneInfo(v_str)
+            return v_str
         except Exception:
-            raise ValueError(
-                f"Invalid timezone identifier '{v}'. Please use a valid IANA timezone (e.g., 'America/New_York').",
-            )
-        return v_str
+            _log.warning("Unrecognised timezone '%s', falling back to None", v_str)
+            return None
 
     model_config = {"extra": "allow"}
 

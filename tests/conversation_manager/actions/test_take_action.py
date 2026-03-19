@@ -412,6 +412,8 @@ async def test_email_summarize_attachment_triggers_act_with_filepath(initialized
     so the LLM should know the file location and include it in the act query.
     """
     cm = initialized_cm
+    cm.cm.vm_ready = True
+    cm.cm.file_sync_complete = True
 
     result = await cm.step_until_wait(
         EmailReceived(
@@ -462,6 +464,8 @@ async def test_unify_message_summarize_attachment_triggers_act_with_filepath(
     so the LLM should know the file location and include it in the act query.
     """
     cm = initialized_cm
+    cm.cm.vm_ready = True
+    cm.cm.file_sync_complete = True
 
     result = await cm.step_until_wait(
         UnifyMessageReceived(

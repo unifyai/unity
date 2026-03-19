@@ -1,33 +1,31 @@
-from dotenv import load_dotenv
 import os
+import sys
+from pathlib import Path
+
+from dotenv import load_dotenv
 
 load_dotenv()
 import requests
-import unify
 
-COMMS_URL = os.getenv("UNITY_COMMS_URL", "").rstrip("/")
-ADMIN_KEY = os.getenv("ORCHESTRA_ADMIN_KEY", "")
-NAMESPACE = os.getenv("UNITY_NAMESPACE", "staging")
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "dev"))
 
-api_key = os.getenv("SHARED_UNIFY_KEY")
-unify.activate("AssistantJobs", api_key=api_key)
-jobs = unify.get_logs(
-    context="startup_events",
-    api_key=api_key,
-    filter="running == 'true'",
-    limit=10,
-)
+from job_utils import _admin_key, _comms_url, fetch_running_jobs
 
-print(f"Found {len(jobs)} running job(s)\n")
+namespace = os.getenv("UNITY_NAMESPACE", "staging")
+comms_url = _comms_url(namespace)
+admin_key = _admin_key()
 
-if not COMMS_URL or not ADMIN_KEY:
+if not comms_url or not admin_key:
     print("Error: UNITY_COMMS_URL and ORCHESTRA_ADMIN_KEY must be set")
     exit(1)
 
+jobs = fetch_running_jobs(namespace)
+print(f"Found {len(jobs)} running job(s)\n")
+
 for idx, job in enumerate(jobs):
+    job_name = job.get("job_name", "")
+    assistant_id = job.get("assistant_id", "")
     print("--------------------------------")
-    job_name = job.entries.get("job_name", "")
-    assistant_id = job.entries.get("assistant_id", "")
     print(f"{idx+1}. {job_name} --> {assistant_id}")
 
     if not job_name:
@@ -36,9 +34,9 @@ for idx, job in enumerate(jobs):
 
     try:
         resp = requests.post(
-            f"{COMMS_URL}/infra/job/stop",
-            data={"job_name": job_name, "namespace": NAMESPACE},
-            headers={"Authorization": f"Bearer {ADMIN_KEY}"},
+            f"{comms_url}/infra/job/stop",
+            data={"job_name": job_name, "namespace": namespace},
+            headers={"Authorization": f"Bearer {admin_key}"},
             timeout=30,
         )
         resp.raise_for_status()

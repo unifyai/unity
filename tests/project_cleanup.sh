@@ -31,7 +31,7 @@ DELETE_RANDOM=1
 
 usage() {
   cat <<'USAGE'
-Usage: project_cleanup.sh [--dry-run] [-y|--yes] [--shared-only|--random-only] [--staging|-s|--production|-p]
+Usage: project_cleanup.sh [--dry-run] [-y|--yes] [--shared-only|--random-only] [--env ENV]
 
 Options:
   --dry-run           Show matching projects without deleting
@@ -39,8 +39,7 @@ Options:
   --shared-only       Only delete the shared "UnityTests" project (not random ones)
   --random-only       Only delete random "UnityTests_*" projects (not the shared one)
   --prefix PREFIX     Override prefix for random projects (default: UnityTests_)
-  -s, --staging       Use staging environment (skips prompt)
-  -p, --production    Use production environment (skips prompt)
+  --env ENV           Target environment: production, staging, or preview (skips prompt)
   -h, --help          Show this help
 
 By default, both the shared "UnityTests" project and all "UnityTests_*" random
@@ -80,11 +79,13 @@ while (( "$#" )); do
     --include_main)
       DELETE_SHARED=1
       ;;
-    -s|--staging)
-      EXPLICIT_ENV="staging"
-      ;;
-    -p|--production)
-      EXPLICIT_ENV="production"
+    --env)
+      shift
+      EXPLICIT_ENV="${1:-}"
+      case "$EXPLICIT_ENV" in
+        production|staging|preview) ;;
+        *) echo "Invalid --env value: $EXPLICIT_ENV (expected production, staging, or preview)" >&2; exit 2 ;;
+      esac
       ;;
     -h|--help)
       usage
@@ -119,19 +120,19 @@ if [[ -n "${ORCHESTRA_URL:-}" ]]; then
   API_BASE="$ORCHESTRA_URL"
 else
   if [[ -z "$EXPLICIT_ENV" ]]; then
-    read -r -p "Select Unify environment: [s]taging or [p]roduction? (default: p) " env_ans
+    read -r -p "Select Unify environment: [p]roduction, [s]taging, or pre[v]iew? (default: p) " env_ans
     env_ans_lc=$(printf '%s' "$env_ans" | tr '[:upper:]' '[:lower:]')
     case "$env_ans_lc" in
       s|staging) EXPLICIT_ENV="staging" ;;
+      v|preview) EXPLICIT_ENV="preview" ;;
       p|production|"") EXPLICIT_ENV="production" ;;
       *) EXPLICIT_ENV="production" ;;
     esac
   fi
-  if [[ "$EXPLICIT_ENV" == "staging" ]]; then
-    API_BASE="https://api.staging.internal.saas.unify.ai/v0"
-  else
-    API_BASE="https://api.unify.ai/v0"
-  fi
+  case "$EXPLICIT_ENV" in
+    staging|preview) API_BASE="https://api.staging.internal.saas.unify.ai/v0" ;;
+    *) API_BASE="https://api.unify.ai/v0" ;;
+  esac
 fi
 
 echo "Listing projects from $API_BASE ..." >&2

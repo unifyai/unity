@@ -1,20 +1,22 @@
-from dotenv import load_dotenv
 import os
+import sys
+from pathlib import Path
+
+from dotenv import load_dotenv
 
 load_dotenv()
-import unify
 
-unify.activate("AssistantJobs", api_key=os.getenv("SHARED_UNIFY_KEY"))
-jobs = unify.get_logs(
-    context="startup_events",
-    api_key=os.getenv("SHARED_UNIFY_KEY"),
-    filter="running == 'true'",
-    limit=100,
-)
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "dev"))
+
+from job_utils import fetch_running_jobs
+
+namespace = os.getenv("UNITY_NAMESPACE", "staging")
+jobs = fetch_running_jobs(namespace)
+
+print(f"Found {len(jobs)} running job(s)\n")
+
 for idx, job in enumerate(jobs):
+    job_name = job.get("job_name", "?")
+    assistant_id = job.get("assistant_id", "?")
     print("--------------------------------")
-    job_name = ""
-    if "job_name" in job.entries:
-        job_name = job.entries.get("job_name")
-    assistant_id = job.entries.get("assistant_id")
     print(f"{idx+1}. {job_name} --> {assistant_id}")

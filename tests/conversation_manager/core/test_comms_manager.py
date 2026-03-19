@@ -167,7 +167,8 @@ def mock_session_details():
 def mock_settings():
     """Mock SETTINGS for testing."""
     with patch("unity.conversation_manager.comms_manager.SETTINGS") as mock:
-        mock.STAGING = False
+        mock.DEPLOY_ENV = "production"
+        mock.ENV_SUFFIX = ""
         yield mock
 
 
@@ -244,7 +245,8 @@ class TestHelperFunctions:
         from unity.conversation_manager.comms_manager import _get_subscription_id
 
         mock_session_details.assistant.agent_id = 123
-        mock_settings.STAGING = False
+        mock_settings.DEPLOY_ENV = "production"
+        mock_settings.ENV_SUFFIX = ""
 
         result = _get_subscription_id()
         assert result == "unity-123-sub"
@@ -254,7 +256,8 @@ class TestHelperFunctions:
         from unity.conversation_manager.comms_manager import _get_subscription_id
 
         mock_session_details.assistant.agent_id = 123
-        mock_settings.STAGING = True
+        mock_settings.DEPLOY_ENV = "staging"
+        mock_settings.ENV_SUFFIX = "-staging"
 
         result = _get_subscription_id()
         assert result == "unity-123-staging-sub"
