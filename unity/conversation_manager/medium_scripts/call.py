@@ -946,7 +946,7 @@ async def entrypoint(ctx: agents.JobContext):
                 role="system",
                 content=[notification_message],
             )
-            if notification_source != "meet_interaction":
+            if notification_source not in ("meet_interaction", "initialization"):
                 _schedule_notification_eval()
 
     def maybe_speak_queued() -> None:
@@ -1115,6 +1115,23 @@ async def entrypoint(ctx: agents.JobContext):
                 llm_log_path=llm_log_path,
             )
         pending_notifications.clear()
+
+    if not os.environ.get("UNITY_CM_INITIALIZED"):
+        _init_note = (
+            "[system] You have just started up and your systems are still "
+            "syncing — loading files, pulling up previous conversations, "
+            "and connecting to your tools. This takes a few moments. "
+            "If the user asks you to do something that requires looking "
+            "things up or taking action, let them know naturally that "
+            "you are still getting set up (e.g. 'I'm just pulling up our "
+            "previous sessions — give me a moment and I'll get right on "
+            "that'). Do NOT say 'I can't do that' — frame it as a brief "
+            "delay, not a limitation. You will receive a notification "
+            "when everything is ready."
+        )
+        assistant._chat_ctx.add_message(role="system", content=[_init_note])
+        session._chat_ctx.add_message(role="system", content=[_init_note])
+        _log.info("Injected initializing-state system message (CM not yet initialized)")
 
     # Pre-generate the opening greeting via a direct sidecar LLM call so that
     # the full LLM latency is absorbed before audio playback begins.
