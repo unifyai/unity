@@ -37,6 +37,7 @@ from unity.logger import LOGGER
 from unity.common.hierarchical_logger import DEFAULT_ICON, ICONS
 from unity.settings import SETTINGS
 from unity.conversation_manager.assistant_jobs import mark_job_label
+from unity.conversation_manager.assistant_jobs_api import read_own_job
 from unity.conversation_manager.domains.comms_utils import (
     add_email_attachments,
     add_unify_message_attachments,
@@ -53,8 +54,7 @@ load_dotenv()
 # Lock for unknown contact creation to prevent duplicates
 _unknown_contact_lock = threading.Lock()
 
-# Lock for startup transition to prevent multiple messages being acked by the same container
-_startup_lock = threading.Lock()
+ASSIGNMENT_POLL_INTERVAL = 0.5
 
 
 if TYPE_CHECKING:
@@ -65,7 +65,6 @@ if TYPE_CHECKING:
 
 # Subscription IDs
 project_id = SETTINGS.GCP_PROJECT_ID
-startup_subscription_id = "unity-startup" + SETTINGS.ENV_SUFFIX + "-sub"
 
 
 def _get_subscription_id() -> str:
@@ -267,64 +266,8 @@ class CommsManager:
             LOGGER.debug(
                 f"{DEFAULT_ICON} Received message from {thread}: {message.data.decode('utf-8')}",
             )
-            if thread in ["startup", "assistant_update"]:
-                if thread == "startup":
-                    with _startup_lock:
-                        # If already assigned, nack the message so another idle container can pick it up
-                        if SESSION_DETAILS.assistant.agent_id is not None:
-                            LOGGER.debug(
-                                f"{DEFAULT_ICON} Already assigned to assistant {SESSION_DETAILS.assistant.agent_id}, "
-                                f"nacking startup message for {event.get('assistant_id')}",
-                            )
-                            message.nack()
-                            return
-
-                        assistant_id_str = str(event.get("assistant_id", ""))
-                        job_name = SETTINGS.conversation.JOB_NAME
-
-                        # Block on label patch so cleanup cannot delete
-                        # this job between ack and the label becoming
-                        # visible. Single attempt with a 10s timeout,
-                        # within the 15s Pub/Sub ack deadline.
-                        t0 = time.monotonic()
-                        label_ok = mark_job_label(
-                            job_name,
-                            "running",
-                            assistant_id=assistant_id_str,
-                            timeout=10,
-                        )
-                        label_ms = (time.monotonic() - t0) * 1000
-
-                        if label_ok:
-                            self._ack_with_latency(message, publish_timestamp, topic)
-                            LOGGER.info(
-                                f"{DEFAULT_ICON} Startup label patched and message acked "
-                                f"for assistant {assistant_id_str} "
-                                f"(job={job_name}, label_ms={label_ms:.0f})",
-                            )
-                        else:
-                            message.nack()
-                            LOGGER.warning(
-                                f"{DEFAULT_ICON} Label patch failed for assistant "
-                                f"{assistant_id_str} (job={job_name}, "
-                                f"label_ms={label_ms:.0f}), nacking startup message",
-                            )
-                            return
-
-                        # cancel startup subscription
-                        while startup_subscription_id not in self.subscribers:
-                            time.sleep(0.1)
-                        self.subscribers[startup_subscription_id].cancel()
-                        self.subscribers.pop(startup_subscription_id)
-
-                    # Update assistant context and subscribe to the assistant's subscription
-                    # Note: Full context is populated by ConversationManager.set_details()
-                    # Here we just need to set assistant_id early for subscription
-                    SESSION_DETAILS.assistant.agent_id = int(event["assistant_id"])
-                    self.subscribe_to_topic(_get_subscription_id(), max_messages=10)
-                else:
-                    # assistant_update - always ack
-                    self._ack_with_latency(message, publish_timestamp, topic)
+            if thread == "assistant_update":
+                self._ack_with_latency(message, publish_timestamp, topic)
 
                 # publish
                 details = {
@@ -359,12 +302,8 @@ class CommsManager:
                     "demo_id": event.get("demo_id"),
                 }
                 self._publish_from_callback(
-                    f"app:comms:{thread}",
-                    (
-                        StartupEvent(**details)
-                        if thread == "startup"
-                        else AssistantUpdateEvent(**details)
-                    ).to_json(),
+                    "app:comms:assistant_update",
+                    AssistantUpdateEvent(**details).to_json(),
                 )
             elif thread == "ping":
                 self._publish_from_callback(
@@ -889,20 +828,109 @@ class CommsManager:
                 f"{ICONS['subscription']} Error setting up subscription {subscription_id}: {e}",
             )
 
+    async def _poll_for_assignment(self):
+        """Poll own Job's labels until the comms app assigns this container.
+
+        The /infra/job/start endpoint atomically claims an idle container
+        by patching its K8s labels to ``unity-status=running`` and writing
+        the startup configuration as an annotation.  This loop detects
+        that transition and triggers the startup sequence.
+        """
+        comms_url = (SETTINGS.conversation.COMMS_URL or "").rstrip("/")
+        admin_key = SETTINGS.ORCHESTRA_ADMIN_KEY.get_secret_value()
+        job_name = SETTINGS.conversation.JOB_NAME
+
+        if not comms_url or not admin_key or not job_name:
+            LOGGER.error(
+                f"{DEFAULT_ICON} Cannot poll for assignment: "
+                f"COMMS_URL, ORCHESTRA_ADMIN_KEY, or JOB_NAME not configured",
+            )
+            return
+
+        LOGGER.debug(
+            f"{DEFAULT_ICON} Polling for assignment on {job_name} "
+            f"(interval={ASSIGNMENT_POLL_INTERVAL}s)",
+        )
+
+        while True:
+            await asyncio.sleep(ASSIGNMENT_POLL_INTERVAL)
+            job_data = await asyncio.to_thread(
+                read_own_job,
+                comms_url,
+                admin_key,
+                job_name,
+            )
+            if not job_data:
+                continue
+
+            labels = job_data.get("labels", {})
+            if labels.get("unity-status") != "running":
+                continue
+
+            config_json = job_data.get("annotations", {}).get("unity-startup-config")
+            if not config_json:
+                LOGGER.warning(
+                    f"{DEFAULT_ICON} Job {job_name} is running but has no "
+                    f"unity-startup-config annotation",
+                )
+                continue
+
+            event = json.loads(config_json)
+            LOGGER.debug(
+                f"{DEFAULT_ICON} Assignment detected for assistant "
+                f"{event.get('assistant_id')} on {job_name}",
+            )
+
+            SESSION_DETAILS.assistant.agent_id = int(event["assistant_id"])
+            self.subscribe_to_topic(_get_subscription_id(), max_messages=10)
+
+            details = {
+                "api_key": event["api_key"],
+                "medium": event.get("medium", "startup"),
+                "assistant_id": event["assistant_id"],
+                "user_id": event["user_id"],
+                "assistant_first_name": event["assistant_first_name"],
+                "assistant_surname": event["assistant_surname"],
+                "assistant_age": event["assistant_age"],
+                "assistant_nationality": event["assistant_nationality"],
+                "assistant_timezone": event.get("assistant_timezone", ""),
+                "assistant_about": event["assistant_about"],
+                "assistant_number": event["assistant_number"],
+                "assistant_email": event["assistant_email"],
+                "user_first_name": event["user_first_name"],
+                "user_surname": event["user_surname"],
+                "user_number": event["user_number"],
+                "user_email": event["user_email"],
+                "voice_provider": event["voice_provider"],
+                "voice_id": event["voice_id"],
+                "desktop_mode": event.get("desktop_mode", "ubuntu"),
+                "user_desktop_mode": event.get("user_desktop_mode"),
+                "user_desktop_filesys_sync": event.get(
+                    "user_desktop_filesys_sync",
+                    False,
+                ),
+                "user_desktop_url": event.get("user_desktop_url"),
+                "org_id": event.get("org_id"),
+                "org_name": event.get("org_name", ""),
+                "team_ids": event.get("team_ids") or [],
+                "demo_id": event.get("demo_id"),
+            }
+
+            await self.event_broker.publish(
+                "app:comms:startup",
+                StartupEvent(**details).to_json(),
+            )
+            return
+
     async def start(self):
         """Start all subscriptions and maintain connection to event manager."""
         if SESSION_DETAILS.assistant.agent_id is None:
-            # Start the startup subscription with max_messages=1 to prevent batch stealing
-            self.subscribe_to_topic(startup_subscription_id, max_messages=1)
-
             job_name = SETTINGS.conversation.JOB_NAME
             comms_url = (SETTINGS.conversation.COMMS_URL or "").rstrip("/")
             admin_key = SETTINGS.ORCHESTRA_ADMIN_KEY.get_secret_value()
 
             already_claimed = False
             if comms_url and admin_key and job_name:
-                from unity.conversation_manager.assistant_jobs_api import read_own_job
-
                 job_data = read_own_job(comms_url, admin_key, job_name)
                 if job_data:
                     labels = job_data.get("labels", {})
@@ -916,19 +944,16 @@ class CommsManager:
                     daemon=True,
                 ).start()
 
-            # Start ping mechanism for idle containers
+            asyncio.create_task(self._poll_for_assignment())
             asyncio.create_task(self.send_pings())
         else:
-            # Start subscription for live assistant
             self.subscribe_to_topic(_get_subscription_id(), max_messages=10)
 
-        # Keep the connection alive
         try:
             while True:
                 await asyncio.sleep(1)
         except KeyboardInterrupt:
             LOGGER.debug(f"{ICONS['lifecycle']} Shutting down...")
-            # Cleanup subscriptions
             for future in self.subscribers.values():
                 future.cancel()
 

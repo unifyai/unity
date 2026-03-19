@@ -85,8 +85,8 @@ def read_own_job(
 ) -> dict | None:
     """Read the current state of this container's Job from the comms service.
 
-    Returns ``{job_name, labels, resource_version, active}`` or ``None`` on
-    any error (fail-silent so startup continues unblocked).
+    Returns ``{job_name, labels, annotations, resource_version, active}``
+    or ``None`` on any error (fail-silent so the polling loop continues).
     """
     try:
         resp = requests.get(
