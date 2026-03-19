@@ -63,33 +63,14 @@ def get_assistant_logs(
     )
 
 
-def get_running_count(api_key: str) -> int:
-    """Return the number of records where ``running == 'true'``."""
-    logs = get_assistant_logs(api_key, "running == 'true'")
-    return len(logs)
-
-
-# ---------------------------------------------------------------------------
-# Record mutations
-# ---------------------------------------------------------------------------
-
-
-def expire_assistant_records(api_key: str, assistant_id: str) -> None:
-    """Set ``running=False`` on all records for *assistant_id*."""
-    try:
-        logs = get_assistant_logs(
-            api_key,
-            f"assistant_id == '{assistant_id}' and running == 'true'",
-        )
-        if not logs:
-            log.info("No running records for %s — already clean", assistant_id)
-            return
-
-        for entry in logs:
-            entry.update_entries(running=False)
-        log.info("Expired %d record(s) for assistant %s", len(logs), assistant_id)
-    except Exception:
-        log.exception("Error expiring records for %s", assistant_id)
+def create_assistant_log(api_key: str, **entries) -> "unify.Log":
+    """Create a new AssistantJobs audit log entry."""
+    return unify.log(
+        project=PROJECT_NAME,
+        context=CONTEXT,
+        api_key=api_key,
+        **entries,
+    )
 
 
 # ---------------------------------------------------------------------------
