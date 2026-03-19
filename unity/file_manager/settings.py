@@ -47,6 +47,7 @@ class FileSettings(BaseSettings):
 
     ENABLED: bool = False
     IMPL: str = "real"
+    IMPLICIT_INGESTION: bool = False
 
     # Plot API settings
     PLOT_API_ENDPOINT: str = "/logs/plot"
