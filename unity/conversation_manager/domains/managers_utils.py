@@ -1430,12 +1430,28 @@ async def init_conv_manager(
                     write_memory_dump,
                 )
 
-                dump_path = write_memory_dump("startup_memory_dump.txt")
-                if dump_path:
-                    LOGGER.info(
-                        f"{ICONS['managers_worker']} [ManagersWorker] "
-                        f"Startup memory dump written to {dump_path}",
-                    )
+                loop = asyncio.get_running_loop()
+
+                def _on_dump_done(fut):
+                    try:
+                        dump_path = fut.result()
+                        if dump_path:
+                            LOGGER.info(
+                                f"{ICONS['managers_worker']} [ManagersWorker] "
+                                f"Startup memory dump written to {dump_path}",
+                            )
+                    except Exception as exc:
+                        LOGGER.warning(
+                            f"{ICONS['managers_worker']} [ManagersWorker] "
+                            f"Startup memory dump failed: {exc}",
+                        )
+
+                fut = loop.run_in_executor(
+                    None,
+                    write_memory_dump,
+                    "startup_memory_dump.txt",
+                )
+                fut.add_done_callback(_on_dump_done)
             except Exception as exc:
                 LOGGER.warning(
                     f"{ICONS['managers_worker']} [ManagersWorker] "
