@@ -207,7 +207,12 @@ def wait_for_new_job(
     old_job_names: set[str],
     timeout: int = 180,
 ) -> str | None:
-    """Poll AssistantJobs until a new job_name appears that we haven't seen."""
+    """Poll AssistantJobs until a new job_name appears that we haven't seen.
+
+    The AssistantJobs record is created by Unity's ``log_job_startup``
+    after the container starts, so the mere appearance of a new job_name
+    means the container is alive.
+    """
     namespace_suffix = f"-{ENV}"
     start = time.time()
 
@@ -225,11 +230,9 @@ def wait_for_new_job(
             )
             for log in logs:
                 jn = log.entries.get("job_name")
-                running = str(log.entries.get("running", "false")).lower() == "true"
                 if (
                     jn
                     and jn.endswith(namespace_suffix)
-                    and running
                     and jn not in old_job_names
                 ):
                     return jn

@@ -601,7 +601,6 @@ def generate_index(
                 "assistant_name": e.get("assistant_name", ""),
                 "timestamp": e.get("timestamp", ""),
                 "medium": e.get("medium", ""),
-                "running": e.get("running", False),
                 "user_name": e.get("user_name", ""),
                 "user_email": e.get("user_email", ""),
                 "log_id": session.get("id"),

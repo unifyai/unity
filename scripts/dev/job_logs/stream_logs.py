@@ -11,7 +11,7 @@ Usage:
 Behaviour:
     1. If --job is omitted, resolves the caller's email from UNIFY_KEY and finds
        the most recent job for that email in the AssistantJobs project.
-    2. Queries the AssistantJobs Unify project to check if the job is running.
+    2. Checks K8s pod status via kubectl to determine if the job is running.
     3. If running  → prints all existing logs AND streams new ones via kubectl -f.
     4. If not running → prints historical logs via gcloud.
 
@@ -38,6 +38,7 @@ from job_utils import (
     YELLOW,
     error,
     info,
+    is_job_name_running,
     resolve_latest_job,
     success,
     warn,
@@ -203,18 +204,23 @@ def query_assistant_jobs(job_name: str) -> dict | None:
     return None
 
 
-def query_job_status(job_name: str) -> tuple[bool | None, dict | None]:
-    """Query AssistantJobs for the job's running status.
+def query_job_status(
+    job_name: str, namespace: str,
+) -> tuple[bool | None, dict | None]:
+    """Determine whether *job_name* is running.
+
+    Combines AssistantJobs metadata (for display) with a live check
+    against the comms ``/infra/jobs`` endpoint (for the actual running
+    status, since the ``running`` column no longer exists).
 
     Returns (is_running, metadata_dict_or_none).
-    is_running is None when no AssistantJobs record exists.
+    is_running is None when neither an AssistantJobs record nor a
+    running job can be found.
     """
     info(f"Querying AssistantJobs for job '{job_name}'...")
-
     entry = query_assistant_jobs(job_name)
 
     if entry is not None:
-        # Print session metadata.
         assistant = entry.get("assistant_name", "unknown")
         assistant_id = entry.get("assistant_id", "?")
         user = entry.get("user_name", "unknown")
@@ -226,15 +232,18 @@ def query_job_status(job_name: str) -> tuple[bool | None, dict | None]:
         print(f"  Medium    : {medium}")
         print(f"  Started   : {timestamp}\n")
 
-        running = str(entry.get("running", "false")).lower() == "true"
-        if running:
-            success(f"Job is currently {GREEN}running{NC}.")
-        else:
-            info(f"Job is {YELLOW}not running{NC} (completed/suspended).")
-        return running, entry
+    info("Checking job status via comms service...")
+    running = is_job_name_running(job_name, namespace)
 
-    warn("No AssistantJobs record found.")
-    return None, None
+    if running:
+        success(f"Job is currently {GREEN}running{NC}.")
+    elif entry is not None:
+        info(f"Job is {YELLOW}not running{NC} (completed/suspended).")
+    else:
+        warn("No AssistantJobs record found and no running job.")
+        return None, None
+
+    return running, entry
 
 
 # ─── Pod resolution ───────────────────────────────────────────────────────────
@@ -547,7 +556,7 @@ def _gcloud_logging_read(log_filter: str):
 def fetch_historical_logs(job_name: str, namespace: str):
     """Fetch historical logs from Cloud Logging.
 
-    Called when the running flag is False, meaning the pod is gone.
+    Called when no running pod is found, meaning the pod is gone.
     Goes straight to gcloud — no kubectl attempt needed.
     """
     info(f"Fetching historical logs from Cloud Logging for '{job_name}'...")
@@ -651,7 +660,7 @@ def main():
     print(f"{BOLD}{'═' * 56}{NC}")
     print()
 
-    running, metadata = query_job_status(job_name)
+    running, metadata = query_job_status(job_name, namespace)
 
     keepalive: Keepalive | None = None
     if not args.no_keepalive and metadata:
