@@ -911,16 +911,19 @@ class ConversationManager(metaclass=SingletonABCMeta):
 
     async def _run_llm(self, trace_meta: dict[str, str] | None = None) -> list[str]:
         """Run a single LLM decision and return all tool names that were called."""
-        # Capture when slow brain starts thinking (for guidance staleness detection)
+        import time as _rl_time
+
         from datetime import datetime, timezone
 
         from ..events.cost_attribution import COST_ATTRIBUTION
 
+        _preamble_t0 = _rl_time.perf_counter()
+
+        def _ms_since_start() -> str:
+            return f"{(_rl_time.perf_counter() - _preamble_t0) * 1000:.0f}ms"
+
         trace_meta = trace_meta or {}
 
-        # Set cost attribution for the brain's own LLM calls based on who
-        # triggered this brain run.  Only meaningful in org context (personal
-        # accounts have a single user so all spend goes to the supervisor).
         if SESSION_DETAILS.org_id is not None:
             triggering_contact_id = trace_meta.get("triggering_contact_id")
             attributed_user_id = None
@@ -953,23 +956,12 @@ class ConversationManager(metaclass=SingletonABCMeta):
 
         slow_brain_start_time = datetime.now(timezone.utc)
 
-        # Peek at buffered screenshots (non-destructive).  The buffer is
-        # only committed after the full turn succeeds, so if this turn is
-        # cancelled mid-flight the screenshots remain available for retry.
         screenshots = self.peek_screenshot_buffer()
 
-        # Compute deterministic filepaths for each screenshot (no I/O).
-        # The actual disk writes are deferred to the background task — the
-        # LLM only needs the path strings for prompt labels, and the
-        # CodeActActor won't read the files for 17+ seconds (behind its own
-        # LLM call), so they'll be on disk long before they're needed.
         screenshot_paths = [
             s.filepath or generate_screenshot_path(s) for s in screenshots
         ]
 
-        # Annotate CM Message objects with screenshot filepaths so the
-        # rendered state includes path references.  This is a fast in-memory
-        # loop with no I/O — only needs the paths computed above.
         if screenshots:
             msg_to_paths: dict[int, list[str]] = {}
             for entry, path in zip(screenshots, screenshot_paths):
@@ -1003,6 +995,7 @@ class ConversationManager(metaclass=SingletonABCMeta):
                         active_only=True,
                     )
 
+        _t0 = _rl_time.perf_counter()
         _has_desktop = SESSION_DETAILS.assistant.desktop_mode in ("ubuntu", "windows")
         snapshot_state = self.prompt_renderer.render_state(
             self.contact_index,
@@ -1020,12 +1013,17 @@ class ConversationManager(metaclass=SingletonABCMeta):
             file_sync_complete=self.file_sync_complete,
             has_desktop=_has_desktop,
         )
+        _render_ms = (_rl_time.perf_counter() - _t0) * 1000
+
+        _t0 = _rl_time.perf_counter()
         brain_spec = build_brain_spec(
             self,
             snapshot_state=snapshot_state,
             screenshots=screenshots,
             screenshot_paths=screenshot_paths,
         )
+        _brain_spec_ms = (_rl_time.perf_counter() - _t0) * 1000
+
         if screenshots:
             self._session_logger.debug(
                 "screen_share",
@@ -1034,12 +1032,8 @@ class ConversationManager(metaclass=SingletonABCMeta):
         input_message = brain_spec.state_message()
         system_prompt = brain_spec.system_prompt
 
-        # Store current state snapshot for tools to access during execution.
-        # Tools (act, steering) need the fresh rendered state, not the stale chat_history.
         self._current_state_snapshot = input_message
 
-        # Reuse the same SnapshotState for incremental diff computation.
-        # This enables interject operations to send only changes since the initial act().
         self._current_snapshot_state = snapshot_state
 
         reason = (trace_meta or {}).get("origin_event_name", "")
@@ -1048,12 +1042,11 @@ class ConversationManager(metaclass=SingletonABCMeta):
             f"LLM thinking... ({reason})" if reason else "LLM thinking...",
         )
 
-        # Build response model dynamically with current in-flight actions
         response_model = brain_spec.response_model
 
+        _t0 = _rl_time.perf_counter()
         brain_tools = ConversationManagerBrainTools(self)
         action_tools = ConversationManagerBrainActionTools(self)
-        # Combine static tools with dynamic action steering tools
         tools = {
             **brain_tools.as_tools(),
             **action_tools.as_tools(),
@@ -1073,8 +1066,9 @@ class ConversationManager(metaclass=SingletonABCMeta):
             tools["desktop_act"] = action_tools.desktop_act
             tools["web_act"] = action_tools.web_act
             tools["close_web_session"] = action_tools.close_web_session
+        _tools_ms = (_rl_time.perf_counter() - _t0) * 1000
 
-        # Single-shot LLM call: one decision, one action
+        _t0 = _rl_time.perf_counter()
         client = new_llm_client(
             SETTINGS.UNIFY_MODEL,
             origin="ConversationManager",
@@ -1090,8 +1084,9 @@ class ConversationManager(metaclass=SingletonABCMeta):
         client.set_system_message(system_prompt.to_list())
         client.set_prompt_caching(["system"])
         messages = self._preprocess_messages(self.chat_history + [input_message])
+        _client_ms = (_rl_time.perf_counter() - _t0) * 1000
+
         _source_token = _EVENT_SOURCE.set("ConversationManager")
-        import time as _rl_time
 
         _rl_t0 = _rl_time.perf_counter()
 
@@ -1100,7 +1095,12 @@ class ConversationManager(metaclass=SingletonABCMeta):
 
         self._session_logger.debug(
             "perf",
-            f"[_run_llm +{_rl_ms()}] calling single_shot_tool_decision ({len(tools)} tools, {len(messages)} msgs)",
+            (
+                f"[_run_llm preamble={_ms_since_start()}] "
+                f"render_state={_render_ms:.0f}ms brain_spec={_brain_spec_ms:.0f}ms "
+                f"tools={_tools_ms:.0f}ms client={_client_ms:.0f}ms | "
+                f"calling single_shot_tool_decision ({len(tools)} tools, {len(messages)} msgs)"
+            ),
         )
         try:
             result = await single_shot_tool_decision(
