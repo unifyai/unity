@@ -60,7 +60,7 @@ class TestBisync:
 
         captured_cmd = []
 
-        async def mock_run_with_retry(cmd, operation):
+        async def mock_run_with_retry(cmd, operation, **kwargs):
             captured_cmd.clear()
             captured_cmd.extend(cmd)
             return SyncResult(success=True)
@@ -81,7 +81,7 @@ class TestBisync:
 
         captured_cmd = []
 
-        async def mock_run_with_retry(cmd, operation):
+        async def mock_run_with_retry(cmd, operation, **kwargs):
             captured_cmd.clear()
             captured_cmd.extend(cmd)
             return SyncResult(success=True)
@@ -102,7 +102,7 @@ class TestBisync:
         call_count = 0
         captured_cmds = []
 
-        async def mock_run_with_retry(cmd, operation):
+        async def mock_run_with_retry(cmd, operation, **kwargs):
             nonlocal call_count
             call_count += 1
             captured_cmds.append(list(cmd))
@@ -169,7 +169,7 @@ class TestOperationLock:
 
         lock_was_held = False
 
-        async def mock_run_with_retry(cmd, operation):
+        async def mock_run_with_retry(cmd, operation, **kwargs):
             nonlocal lock_was_held
             lock_was_held = rclone_sync._op_lock.locked()
             return SyncResult(success=True)
@@ -189,7 +189,7 @@ class TestOperationLock:
         execution_order = []
         operation_active = False
 
-        async def mock_run_with_retry(cmd, operation):
+        async def mock_run_with_retry(cmd, operation, **kwargs):
             nonlocal operation_active
             # Check no other operation is active (would indicate race)
             assert operation_active is False, "Operations should be serialized"

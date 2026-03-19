@@ -282,7 +282,12 @@ class SyncManager:
         return None
 
     async def _poll_remote_changes(self) -> None:
-        """Background task to periodically sync remote changes."""
+        """Background task to periodically sync remote changes.
+
+        Each cycle: try bisync once, if it fails try resync once, then
+        move on to the next interval regardless. No per-command retries
+        during polling — the interval loop itself provides the retry cadence.
+        """
         interval = self.config.poll_interval_seconds
         LOGGER.debug(
             f"{ICONS['file_sync']} [FileSync] Starting remote change polling (interval={interval}s)",
@@ -296,7 +301,7 @@ class SyncManager:
                     LOGGER.debug(
                         f"{ICONS['file_sync']} [FileSync] Polling: running bisync...",
                     )
-                    result = await self._rclone.bisync()
+                    result = await self._rclone.bisync(max_retries=1)
                     if result.success:
                         LOGGER.debug(
                             f"{ICONS['file_sync']} [FileSync] Polling: bisync completed successfully",
@@ -314,4 +319,3 @@ class SyncManager:
                 import traceback
 
                 traceback.print_exc()
-                # Continue polling despite errors
