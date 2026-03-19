@@ -139,7 +139,7 @@ key_file = {self.config.ssh_key_path}
                 "newer",  # Latest wins
                 "--max-delete",
                 str(self.config.max_delete_percent),
-                "--no-set-modtime",
+                "--no-update-modtime",
                 *self._exclude_args(),
                 "-v",
             ]
