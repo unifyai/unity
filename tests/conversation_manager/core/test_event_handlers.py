@@ -456,7 +456,6 @@ class TestTextMessageHandlers:
             await EventHandler.handle_event(event, mock_cm)
 
         mock_cm.request_llm_run.assert_called_once_with(
-            delay=2,
             triggering_contact_id=2,
         )
 
