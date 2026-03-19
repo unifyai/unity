@@ -194,11 +194,9 @@ class Contact(BaseModel):
             return None
         try:
             zoneinfo.ZoneInfo(v_str)
+            return v_str
         except Exception:
-            raise ValueError(
-                f"Invalid timezone identifier '{v}'. Please use a valid IANA timezone (e.g., 'America/New_York').",
-            )
-        return v_str
+            return None
 
     model_config = {"extra": "allow"}
 
