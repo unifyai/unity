@@ -1036,7 +1036,7 @@ async def _(event: UnknownContactCreated, cm: "ConversationManager", *args, **kw
     )
 
 
-async def _startup_sequence(cm: "ConversationManager"):
+async def _startup_sequence(cm: "ConversationManager", medium: str = ""):
     """Run job startup logging.
 
     VM readiness, desktop session warm-up, and file sync are now driven by
@@ -1047,6 +1047,7 @@ async def _startup_sequence(cm: "ConversationManager"):
         job_name=cm.job_name,
         user_id=cm.user_id,
         assistant_id=cm.assistant_id,
+        medium=medium,
     )
 
 
@@ -1085,7 +1086,7 @@ async def _(event: StartupEvent, cm: "ConversationManager", *args, **kwargs):
         cm.call_manager.set_config(cm.get_call_config())
         cm.call_manager.start_persistent_worker()
 
-        asyncio.create_task(_startup_sequence(cm))
+        asyncio.create_task(_startup_sequence(cm, medium=event.medium))
 
         # Manager initialization runs in parallel
         asyncio.create_task(managers_utils.init_conv_manager(cm))
