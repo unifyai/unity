@@ -133,7 +133,7 @@ class ConversationManager(metaclass=SingletonABCMeta):
 
         # initialization state
         self.initialized: bool = False
-        self.ready_for_brain: bool = False
+        self.ready_for_brain: bool = True
         self.vm_ready: bool = False
         self.file_sync_complete: bool = False
         # logging
@@ -1015,6 +1015,7 @@ class ConversationManager(metaclass=SingletonABCMeta):
             user_webcam_active=self.user_webcam_active,
             user_remote_control_active=self.user_remote_control_active,
             active_web_sessions=web_sessions,
+            managers_initialized=self.initialized,
             vm_ready=self.vm_ready,
             file_sync_complete=self.file_sync_complete,
             has_desktop=_has_desktop,

@@ -246,11 +246,6 @@ async def conversation_manager(request) -> CMStepDriver:
             raise RuntimeError(
                 "ConversationManager managers failed to initialize - check logs for errors",
             )
-        if not cm.ready_for_brain:
-            raise RuntimeError(
-                "ConversationManager ready_for_brain not set after init - "
-                "hydration may have failed catastrophically",
-            )
         print("✅ Managers initialized")
 
         # Update system contacts in ContactManager with proper names and test defaults.

@@ -147,10 +147,6 @@ async def conversation_manager(request) -> CMStepDriver:
         await managers_utils.init_conv_manager(cm, actor=actor)
         if not cm.initialized:
             raise RuntimeError("ConversationManager failed to initialize in demo mode")
-        if not cm.ready_for_brain:
-            raise RuntimeError(
-                "ConversationManager ready_for_brain not set after init in demo mode",
-            )
         print("✅ Managers initialized (demo mode)")
 
         if cm.contact_manager is not None:

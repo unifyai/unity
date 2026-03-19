@@ -479,6 +479,7 @@ class Renderer:
         user_webcam_active: bool = False,
         user_remote_control_active: bool = False,
         active_web_sessions: list | None = None,
+        managers_initialized: bool = True,
         vm_ready: bool = True,
         file_sync_complete: bool = True,
         has_desktop: bool = False,
@@ -495,6 +496,7 @@ class Renderer:
         action_elements: list[ActionElement] = []
 
         infra_render = self.render_infrastructure_state(
+            managers_initialized=managers_initialized,
             vm_ready=vm_ready,
             file_sync_complete=file_sync_complete,
             has_desktop=has_desktop,
@@ -560,20 +562,39 @@ class Renderer:
     @staticmethod
     def render_infrastructure_state(
         *,
+        managers_initialized: bool = True,
         vm_ready: bool,
         file_sync_complete: bool,
         has_desktop: bool,
     ) -> str:
-        """Render pending infrastructure state (VM boot, filesystem sync).
+        """Render pending infrastructure state (init, VM boot, filesystem sync).
 
         Returns XML sections only while the relevant subsystem is still
-        initialising.  Once both are ready (or no desktop is configured),
-        returns an empty string so the snapshot is not cluttered.
+        initialising.  Once everything is ready, returns an empty string
+        so the snapshot is not cluttered.
         """
-        if not has_desktop:
-            return ""
-
         parts: list[str] = []
+
+        if not managers_initialized:
+            parts.append(
+                "<infrastructure status='initializing'>\n"
+                "Your system is still initializing. Complex actions (act, "
+                "contact queries, transcript queries) are not available yet — "
+                "these tools will appear once initialization completes. "
+                "Conversation history from previous sessions is also still "
+                "loading; messages above may only reflect the current session. "
+                "If the user sends a message, acknowledge it promptly and "
+                "respond as best you can with the context available. "
+                "You will receive a notification once initialization is "
+                "complete, at which point you will have full conversation "
+                "history and all tools. Use that turn to review your earlier "
+                "responses and follow up — correct, elaborate, or confirm "
+                "as needed.\n"
+                "</infrastructure>",
+            )
+
+        if not has_desktop:
+            return "\n".join(parts)
 
         if not vm_ready:
             parts.append(
