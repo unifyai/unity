@@ -1,21 +1,18 @@
 #!/usr/bin/env python3
-"""Watch Unity job terminations and run exit cleanup.
+"""Watch Unity job terminations and run crash-safe VM cleanup.
 
 Uses kopf (Kubernetes Operator Pythonic Framework) to watch Jobs labelled
 ``app=unity``.  When a Job reaches a terminal condition (*Complete* or
-*Failed*), the handler:
-
-1. Marks ``running=False`` on the assistant's ``AssistantJobs`` record in
-   Orchestra so the reverse-lookup directory stays accurate.
-2. Releases any pool VM still assigned to the assistant (prevents leaked
-   VMs lingering in "assigned" state after a crash).
+*Failed*), the handler releases any pool VM still assigned to the
+assistant (prevents leaked VMs lingering in "assigned" state after a
+crash).
 
 The ``assistant-id`` label is set on the Job (not the Pod) by
 ``mark_job_label`` during startup, so we must watch Jobs to read it.
 
 On graceful exit, ``mark_job_done`` in the Unity container performs the
-same idempotent cleanup.  The job-watcher covers crash scenarios where
-in-container cleanup never runs.
+same idempotent VM release.  The job-watcher covers crash scenarios
+where in-container cleanup never runs.
 
 Cleanup logic lives in ``assistant_jobs_api.py`` (shared with the
 Unity codebase) and is copied into this container at build time.
@@ -32,10 +29,9 @@ import os
 
 import kopf
 
-from assistant_jobs_api import expire_assistant_records, release_pool_vm
+from assistant_jobs_api import release_pool_vm
 
 COMMS_URL = os.environ["UNITY_COMMS_URL"]
-SHARED_UNIFY_KEY = os.environ["SHARED_UNIFY_KEY"]
 ADMIN_KEY = os.environ["ORCHESTRA_ADMIN_KEY"]
 MAX_EVENT_AGE = datetime.timedelta(minutes=5)
 
@@ -108,7 +104,6 @@ def on_job_event(event, **_):
         print(f"No assistant-id label on {job_name} — skipping cleanup")
         return
 
-    expire_assistant_records(SHARED_UNIFY_KEY, assistant_id)
     release_pool_vm(COMMS_URL, ADMIN_KEY, assistant_id)
 
 
