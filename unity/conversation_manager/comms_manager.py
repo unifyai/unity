@@ -283,15 +283,14 @@ class CommsManager:
 
                         # Block on label patch so cleanup cannot delete
                         # this job between ack and the label becoming
-                        # visible. Timeout/retries are tight to stay well
-                        # within the 10s Pub/Sub ack deadline.
+                        # visible. Single attempt with a 10s timeout,
+                        # within the 15s Pub/Sub ack deadline.
                         t0 = time.monotonic()
                         label_ok = mark_job_label(
                             job_name,
                             "running",
                             assistant_id=assistant_id_str,
-                            timeout=3,
-                            retries=1,
+                            timeout=10,
                         )
                         label_ms = (time.monotonic() - t0) * 1000
 
