@@ -114,7 +114,7 @@ def log_job_startup(
         create_assistant_log(
             api_key,
             user_id=user_id,
-            assistant_id=assistant_id,
+            assistant_id=str(assistant_id),
             job_name=job_name,
             timestamp=datetime.now(tz=timezone.utc).isoformat(),
             medium=medium,
