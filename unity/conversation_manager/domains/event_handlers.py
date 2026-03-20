@@ -839,7 +839,6 @@ async def _(event, cm: "ConversationManager", *args, **kwargs):
             cm.notifications_bar.push_notif("comms", notif_content, event.timestamp)
             if cm._outbound_suppress_gen != cm._llm_gen:
                 await cm.request_llm_run(
-                    delay=2,
                     triggering_contact_id=contact_id,
                 )
             return  # Early return - email handling is complete
@@ -874,7 +873,6 @@ async def _(event, cm: "ConversationManager", *args, **kwargs):
             cm.notifications_bar.push_notif("comms", notif_content, event.timestamp)
             await cm.cancel_proactive_speech()
             await cm.request_llm_run(
-                delay=2,
                 triggering_contact_id=contact_id,
             )
             return  # Early return - email handling is complete
@@ -948,7 +946,6 @@ async def _(event, cm: "ConversationManager", *args, **kwargs):
 
     if role == "user" or cm._outbound_suppress_gen != cm._llm_gen:
         await cm.request_llm_run(
-            delay=2,
             triggering_contact_id=contact_id,
         )
 
@@ -1031,7 +1028,6 @@ async def _(event: UnknownContactCreated, cm: "ConversationManager", *args, **kw
 
     # Trigger LLM run so assistant can decide how to handle
     await cm.request_llm_run(
-        delay=2,
         triggering_contact_id=contact.get("contact_id"),
     )
 
