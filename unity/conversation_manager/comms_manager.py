@@ -278,21 +278,38 @@ class CommsManager:
                             message.nack()
                             return
 
-                        # Acknowledge message only when we're sure we're taking it
-                        self._ack_with_latency(message, publish_timestamp, topic)
+                        assistant_id_str = str(event.get("assistant_id", ""))
+                        job_name = SETTINGS.conversation.JOB_NAME
 
-                        # can't use asyncio.to_thread because this code runs on a pubsub
-                        # thread pool thread rather than the main event loop
-                        threading.Thread(
-                            target=mark_job_label,
-                            args=(SETTINGS.conversation.JOB_NAME, "running"),
-                            kwargs={
-                                "assistant_id": str(event.get("assistant_id", "")),
-                                "timeout": 60,
-                                "retries": 2,
-                            },
-                            daemon=True,
-                        ).start()
+                        # Block on label patch so cleanup cannot delete
+                        # this job between ack and the label becoming
+                        # visible. Timeout/retries are tight to stay well
+                        # within the 10s Pub/Sub ack deadline.
+                        t0 = time.monotonic()
+                        label_ok = mark_job_label(
+                            job_name,
+                            "running",
+                            assistant_id=assistant_id_str,
+                            timeout=3,
+                            retries=1,
+                        )
+                        label_ms = (time.monotonic() - t0) * 1000
+
+                        if label_ok:
+                            self._ack_with_latency(message, publish_timestamp, topic)
+                            LOGGER.info(
+                                f"{DEFAULT_ICON} Startup label patched and message acked "
+                                f"for assistant {assistant_id_str} "
+                                f"(job={job_name}, label_ms={label_ms:.0f})",
+                            )
+                        else:
+                            message.nack()
+                            LOGGER.warning(
+                                f"{DEFAULT_ICON} Label patch failed for assistant "
+                                f"{assistant_id_str} (job={job_name}, "
+                                f"label_ms={label_ms:.0f}), nacking startup message",
+                            )
+                            return
 
                         # cancel startup subscription
                         while startup_subscription_id not in self.subscribers:
