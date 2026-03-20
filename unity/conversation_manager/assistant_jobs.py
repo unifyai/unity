@@ -60,15 +60,18 @@ def mark_job_label(
     assistant_id: str | None = None,
     timeout: float = 30,
     retries: int = 0,
-):
-    """Patch the K8s Job unity-status label via the communication service."""
+) -> bool:
+    """Patch the K8s Job unity-status label via the communication service.
+
+    Returns True on success, False on failure or if config is missing.
+    """
     comms_url = SETTINGS.conversation.COMMS_URL.rstrip("/")
     admin_key = SETTINGS.ORCHESTRA_ADMIN_KEY.get_secret_value()
     if not comms_url or not admin_key:
         LOGGER.debug(
             f"{ICONS['assistant_jobs']} [assistant_jobs] Skipping label update: COMMS_URL or admin key not configured",
         )
-        return
+        return False
     ok = patch_job_label(
         comms_url,
         admin_key,
@@ -86,6 +89,7 @@ def mark_job_label(
         LOGGER.warning(
             f"{ICONS['assistant_jobs']} [assistant_jobs] Failed to mark job as {status}: {job_name}",
         )
+    return ok
 
 
 def log_job_startup(
@@ -114,7 +118,7 @@ def log_job_startup(
         create_assistant_log(
             api_key,
             user_id=user_id,
-            assistant_id=assistant_id,
+            assistant_id=str(assistant_id),
             job_name=job_name,
             timestamp=datetime.now(tz=timezone.utc).isoformat(),
             medium=medium,
