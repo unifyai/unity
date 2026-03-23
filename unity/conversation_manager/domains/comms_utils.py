@@ -141,7 +141,9 @@ def publish_system_error(error_message: str) -> None:
             thread="system_error",
         )
         future.result(timeout=5)
-        LOGGER.debug(f"{ICONS['comms_outbound']} Published system error: {error_message}")
+        LOGGER.debug(
+            f"{ICONS['comms_outbound']} Published system error: {error_message}"
+        )
     except Exception as e:
         LOGGER.error(f"{ICONS['comms_outbound']} Failed to publish system error: {e}")
 
