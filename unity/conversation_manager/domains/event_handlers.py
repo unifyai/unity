@@ -10,6 +10,7 @@ from unity.common.hierarchical_logger import DEFAULT_ICON
 from unity.conversation_manager import assistant_jobs
 from unity.conversation_manager.events import *
 from unity.conversation_manager.domains import managers_utils
+from unity.conversation_manager.domains.comms_utils import publish_system_error
 from unity.conversation_manager.types import Medium, Mode
 from unity.logger import LOGGER
 from unity.session_details import SESSION_DETAILS
@@ -1096,6 +1097,9 @@ async def _(event: StartupEvent, cm: "ConversationManager", *args, **kwargs):
     except Exception as e:
         cm._session_logger.error("startup", f"Error in startup sequence: {e}")
         traceback.print_exc()
+        publish_system_error(
+            "The assistant failed to start up. Please try again shortly.",
+        )
 
 
 @EventHandler.register(AssistantUpdateEvent)

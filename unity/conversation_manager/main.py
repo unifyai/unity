@@ -313,6 +313,9 @@ async def main(project_name: str = "Assistants"):
         LOGGER.warning(
             f"{ICONS['lifecycle']} Shutdown triggered by memory pressure (OOM prevention)",
         )
+        comms_utils.publish_system_error(
+            "The assistant ran out of memory. " "Please wait a moment and try again.",
+        )
         try:
             from unity.conversation_manager.memory_dump import write_oom_memory_dump
 

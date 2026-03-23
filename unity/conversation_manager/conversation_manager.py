@@ -24,6 +24,7 @@ from unity.conversation_manager.domains.brain_action_tools import (
     ConversationManagerBrainActionTools,
 )
 from unity.conversation_manager.domains.brain_tools import ConversationManagerBrainTools
+from unity.conversation_manager.domains.comms_utils import publish_system_error
 from unity.conversation_manager.domains.event_handlers import EventHandler
 from unity.conversation_manager.domains.renderer import Renderer
 from unity.conversation_manager.events import *
@@ -1290,6 +1291,10 @@ class ConversationManager(metaclass=SingletonABCMeta):
                         f"event_id={event_id} event={event_name} "
                         f"channel={channel or '-'}: {exc}",
                         exc_info=True,
+                    )
+                    publish_system_error(
+                        "An unexpected error occurred. The assistant is "
+                        "attempting to recover.",
                     )
                 finally:
                     self._current_event_trace = None
