@@ -113,6 +113,39 @@ async def send_unify_message(
         return {"success": False, "error": str(e)}
 
 
+def publish_system_error(error_message: str) -> None:
+    """Publish a system error to the assistant's Pub/Sub topic.
+
+    This is a best-effort, fire-and-forget publish used to notify the console
+    that the container hit an unrecoverable error (OOM, unhandled exception, etc.)
+    so the UI can show red system text instead of going silent.
+
+    Uses a synchronous publish (no await) so it can be called from both sync
+    and async contexts, including signal handlers and thread-pool callbacks.
+    """
+    agent_id = SESSION_DETAILS.assistant.agent_id
+    if agent_id is None:
+        return
+    env_suffix = SETTINGS.ENV_SUFFIX if agent_id is not None else ""
+    topic_name = f"unity-{agent_id}{env_suffix}"
+    try:
+        publisher = _get_publisher()
+        topic_path = publisher.topic_path("responsive-city-458413-a2", topic_name)
+        message_data = {
+            "thread": "system_error",
+            "event": {"content": error_message},
+        }
+        future = publisher.publish(
+            topic_path,
+            json.dumps(message_data).encode("utf-8"),
+            thread="system_error",
+        )
+        future.result(timeout=5)
+        LOGGER.debug(f"{ICONS['comms_outbound']} Published system error: {error_message}")
+    except Exception as e:
+        LOGGER.error(f"{ICONS['comms_outbound']} Failed to publish system error: {e}")
+
+
 async def complete_api_message(
     api_message_id: str,
     response: str | None = None,
