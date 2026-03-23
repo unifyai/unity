@@ -16,6 +16,7 @@ from unity.conversation_manager.metrics import (
 )
 from unity.common.async_tool_loop import SteerableToolHandle
 from unity.contact_manager.types.contact import UNASSIGNED
+from unity.conversation_manager.domains.comms_utils import publish_system_error
 from unity.conversation_manager.event_broker import get_event_broker
 from unity.conversation_manager.events import *
 from unity.common.prompt_helpers import now as prompt_now
@@ -1486,5 +1487,9 @@ async def init_conv_manager(
         except Exception as e:
             LOGGER.error(
                 f"{ICONS['managers_worker']} [ManagersWorker] Error during initialization: {e}",
+            )
+            publish_system_error(
+                "The assistant failed to initialize and may not respond "
+                "correctly. Please try again shortly.",
             )
             raise
