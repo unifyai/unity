@@ -113,12 +113,18 @@ async def send_unify_message(
         return {"success": False, "error": str(e)}
 
 
-def publish_system_error(error_message: str) -> None:
+def publish_system_error(error_message: str, error_type: str = "unknown") -> None:
     """Publish a system error to the assistant's Pub/Sub topic.
 
     This is a best-effort, fire-and-forget publish used to notify the console
     that the container hit an unrecoverable error (OOM, unhandled exception, etc.)
-    so the UI can show red system text instead of going silent.
+    so the UI can show a user-friendly warning instead of going silent.
+
+    Args:
+        error_message: Human-readable description of the error.
+        error_type: Structured error type for console classification. One of:
+            ``oom``, ``startup_failed``, ``init_failed``, ``message_failed``,
+            ``recovering``, ``unknown``.
 
     Uses a synchronous publish (no await) so it can be called from both sync
     and async contexts, including signal handlers and thread-pool callbacks.
@@ -133,7 +139,10 @@ def publish_system_error(error_message: str) -> None:
         topic_path = publisher.topic_path("responsive-city-458413-a2", topic_name)
         message_data = {
             "thread": "system_error",
-            "event": {"content": error_message},
+            "event": {
+                "content": error_message,
+                "error_type": error_type,
+            },
         }
         future = publisher.publish(
             topic_path,
@@ -142,7 +151,7 @@ def publish_system_error(error_message: str) -> None:
         )
         future.result(timeout=5)
         LOGGER.debug(
-            f"{ICONS['comms_outbound']} Published system error: {error_message}"
+            f"{ICONS['comms_outbound']} Published system error [{error_type}]: {error_message}"
         )
     except Exception as e:
         LOGGER.error(f"{ICONS['comms_outbound']} Failed to publish system error: {e}")

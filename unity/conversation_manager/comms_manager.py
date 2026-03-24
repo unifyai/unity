@@ -847,6 +847,7 @@ class CommsManager:
             publish_system_error(
                 "An internal error occurred while processing a message. "
                 "The assistant may not have received your last message.",
+                error_type="message_failed",
             )
             message.ack()
 

@@ -1295,6 +1295,7 @@ class ConversationManager(metaclass=SingletonABCMeta):
                     publish_system_error(
                         "An unexpected error occurred. The assistant is "
                         "attempting to recover.",
+                        error_type="recovering",
                     )
                 finally:
                     self._current_event_trace = None

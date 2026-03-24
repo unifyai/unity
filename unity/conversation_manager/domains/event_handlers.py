@@ -1099,6 +1099,7 @@ async def _(event: StartupEvent, cm: "ConversationManager", *args, **kwargs):
         traceback.print_exc()
         publish_system_error(
             "The assistant failed to start up. Please try again shortly.",
+            error_type="startup_failed",
         )
 
 
