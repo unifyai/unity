@@ -140,8 +140,8 @@ set_modtime = false
                 "newer",  # Latest wins
                 "--max-delete",
                 str(self.config.max_delete_percent),
-                "--sftp-set-modtime",
-                "false",
+                "--no-update-modtime",
+                "--no-update-dir-modtime",
                 *self._exclude_args(),
                 "-v",
             ]
