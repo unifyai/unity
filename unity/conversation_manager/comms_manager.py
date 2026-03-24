@@ -64,7 +64,7 @@ if TYPE_CHECKING:
 
 
 # Subscription IDs
-project_id = "responsive-city-458413-a2"
+project_id = SETTINGS.GCP_PROJECT_ID
 startup_subscription_id = "unity-startup" + SETTINGS.ENV_SUFFIX + "-sub"
 
 

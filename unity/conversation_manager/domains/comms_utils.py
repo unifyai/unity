@@ -83,7 +83,7 @@ async def send_unify_message(
     env_suffix = SETTINGS.ENV_SUFFIX if agent_id is not None else ""
     topic_name = f"unity-{agent_id}{env_suffix}"
     publisher = _get_publisher()
-    topic_path = publisher.topic_path("responsive-city-458413-a2", topic_name)
+    topic_path = publisher.topic_path(SETTINGS.GCP_PROJECT_ID, topic_name)
 
     event_data = {"content": content, "role": "assistant", "contact_id": contact_id}
     if attachment:
@@ -136,7 +136,7 @@ def publish_system_error(error_message: str, error_type: str = "unknown") -> Non
     topic_name = f"unity-{agent_id}{env_suffix}"
     try:
         publisher = _get_publisher()
-        topic_path = publisher.topic_path("responsive-city-458413-a2", topic_name)
+        topic_path = publisher.topic_path(SETTINGS.GCP_PROJECT_ID, topic_name)
         message_data = {
             "thread": "system_error",
             "event": {
@@ -208,7 +208,7 @@ async def publish_assistant_desktop_ready(
     env_suffix = SETTINGS.ENV_SUFFIX if agent_id is not None else ""
     topic_name = f"unity-{agent_id}{env_suffix}"
     publisher = _get_publisher()
-    topic_path = publisher.topic_path("responsive-city-458413-a2", topic_name)
+    topic_path = publisher.topic_path(SETTINGS.GCP_PROJECT_ID, topic_name)
 
     message_data = {
         "thread": "assistant_desktop_ready",
