@@ -2,52 +2,161 @@
   "source_files": [
     {
       "file_path": "intranet/repairs/MDH Repairs Data July - Nov 25 - DL V1.xlsx",
-      "sheets": ["Raised 01-07-2025 to 30-11-2025"]
+      "tables": [
+        {
+          "sheet": "Raised 01-07-2025 to 30-11-2025",
+          "context": "MidlandHeart/Repairs2025",
+          "description": "Midland Heart repairs jobs data for July to November 2025. Contains works orders, job tickets, operative assignments, completion statuses, and visit tracking information for repair jobs carried out by operatives.",
+          "chunk_size": 1000
+        }
+      ]
     },
     {
       "file_path": "intranet/repairs/MDH Telematics Data July - Nov 25 - DL V1.xlsx",
-      "sheets": [
-        "July 2025",
-        "August 2025",
-        "September 2025",
-        "October 2025",
-        "November 2025"
+      "tables": [
+        {
+          "sheet": "July 2025",
+          "context": "MidlandHeart/Telematics2025/July",
+          "description": "Midland Heart telematics data for July 2025. Contains vehicle trip logs showing operative movements, travel times, distances, and locations for repair job visits.",
+          "chunk_size": 1000,
+          "post_ingest": {
+            "derived_columns": [
+              {
+                "kind": "explicit",
+                "source_field": "Subtrip travel time",
+                "target_name": "Subtrip travel time duration seconds",
+                "equation": "duration_seconds({lg:{field}})"
+              },
+              {
+                "kind": "explicit",
+                "source_field": "Trip travel time",
+                "target_name": "Trip travel time duration seconds",
+                "equation": "duration_seconds({lg:{field}})"
+              },
+              {
+                "kind": "explicit",
+                "source_field": "Idling time",
+                "target_name": "Idling time duration seconds",
+                "equation": "duration_seconds({lg:{field}})"
+              }
+            ]
+          }
+        },
+        {
+          "sheet": "August 2025",
+          "context": "MidlandHeart/Telematics2025/August",
+          "description": "Midland Heart telematics data for August 2025. Contains vehicle trip logs showing operative movements, travel times, distances, and locations for repair job visits.",
+          "chunk_size": 1000,
+          "post_ingest": {
+            "derived_columns": [
+              {
+                "kind": "explicit",
+                "source_field": "Subtrip travel time",
+                "target_name": "Subtrip travel time duration seconds",
+                "equation": "duration_seconds({lg:{field}})"
+              },
+              {
+                "kind": "explicit",
+                "source_field": "Trip travel time",
+                "target_name": "Trip travel time duration seconds",
+                "equation": "duration_seconds({lg:{field}})"
+              },
+              {
+                "kind": "explicit",
+                "source_field": "Idling time",
+                "target_name": "Idling time duration seconds",
+                "equation": "duration_seconds({lg:{field}})"
+              }
+            ]
+          }
+        },
+        {
+          "sheet": "September 2025",
+          "context": "MidlandHeart/Telematics2025/September",
+          "description": "Midland Heart telematics data for September 2025. Contains vehicle trip logs showing operative movements, travel times, distances, and locations for repair job visits.",
+          "chunk_size": 1000,
+          "post_ingest": {
+            "derived_columns": [
+              {
+                "kind": "explicit",
+                "source_field": "Subtrip travel time",
+                "target_name": "Subtrip travel time duration seconds",
+                "equation": "duration_seconds({lg:{field}})"
+              },
+              {
+                "kind": "explicit",
+                "source_field": "Trip travel time",
+                "target_name": "Trip travel time duration seconds",
+                "equation": "duration_seconds({lg:{field}})"
+              },
+              {
+                "kind": "explicit",
+                "source_field": "Idling time",
+                "target_name": "Idling time duration seconds",
+                "equation": "duration_seconds({lg:{field}})"
+              }
+            ]
+          }
+        },
+        {
+          "sheet": "October 2025",
+          "context": "MidlandHeart/Telematics2025/October",
+          "description": "Midland Heart telematics data for October 2025. Contains vehicle trip logs showing operative movements, travel times, distances, and locations for repair job visits.",
+          "chunk_size": 1000,
+          "post_ingest": {
+            "derived_columns": [
+              {
+                "kind": "explicit",
+                "source_field": "Subtrip travel time",
+                "target_name": "Subtrip travel time duration seconds",
+                "equation": "duration_seconds({lg:{field}})"
+              },
+              {
+                "kind": "explicit",
+                "source_field": "Trip travel time",
+                "target_name": "Trip travel time duration seconds",
+                "equation": "duration_seconds({lg:{field}})"
+              },
+              {
+                "kind": "explicit",
+                "source_field": "Idling time",
+                "target_name": "Idling time duration seconds",
+                "equation": "duration_seconds({lg:{field}})"
+              }
+            ]
+          }
+        },
+        {
+          "sheet": "November 2025",
+          "context": "MidlandHeart/Telematics2025/November",
+          "description": "Midland Heart telematics data for November 2025. Contains vehicle trip logs showing operative movements, travel times, distances, and locations for repair job visits.",
+          "chunk_size": 1000,
+          "post_ingest": {
+            "derived_columns": [
+              {
+                "kind": "explicit",
+                "source_field": "Subtrip travel time",
+                "target_name": "Subtrip travel time duration seconds",
+                "equation": "duration_seconds({lg:{field}})"
+              },
+              {
+                "kind": "explicit",
+                "source_field": "Trip travel time",
+                "target_name": "Trip travel time duration seconds",
+                "equation": "duration_seconds({lg:{field}})"
+              },
+              {
+                "kind": "explicit",
+                "source_field": "Idling time",
+                "target_name": "Idling time duration seconds",
+                "equation": "duration_seconds({lg:{field}})"
+              }
+            ]
+          }
+        }
       ]
     }
   ],
-
-  "dm_contexts": {
-    "Raised 01-07-2025 to 30-11-2025": {
-      "context": "MidlandHeart/Repairs2025",
-      "description": "Midland Heart repairs jobs data for July to November 2025. Contains works orders, job tickets, operative assignments, completion statuses, and visit tracking information for repair jobs carried out by operatives.",
-      "chunk_size": 1000
-    },
-    "July 2025": {
-      "context": "MidlandHeart/Telematics2025/July",
-      "description": "Midland Heart telematics data for July 2025. Contains vehicle trip logs showing operative movements, travel times, distances, and locations for repair job visits.",
-      "chunk_size": 1000
-    },
-    "August 2025": {
-      "context": "MidlandHeart/Telematics2025/August",
-      "description": "Midland Heart telematics data for August 2025. Contains vehicle trip logs showing operative movements, travel times, distances, and locations for repair job visits.",
-      "chunk_size": 1000
-    },
-    "September 2025": {
-      "context": "MidlandHeart/Telematics2025/September",
-      "description": "Midland Heart telematics data for September 2025. Contains vehicle trip logs showing operative movements, travel times, distances, and locations for repair job visits.",
-      "chunk_size": 1000
-    },
-    "October 2025": {
-      "context": "MidlandHeart/Telematics2025/October",
-      "description": "Midland Heart telematics data for October 2025. Contains vehicle trip logs showing operative movements, travel times, distances, and locations for repair job visits.",
-      "chunk_size": 1000
-    },
-    "November 2025": {
-      "context": "MidlandHeart/Telematics2025/November",
-      "description": "Midland Heart telematics data for November 2025. Contains vehicle trip logs showing operative movements, travel times, distances, and locations for repair job visits.",
-      "chunk_size": 1000
-    }
-  },
 
   "parse": {
     "max_concurrent_parses": 3
@@ -224,6 +333,17 @@
         }
       ]
     }
+  },
+
+  "post_ingest": {
+    "derived_columns": [
+      {
+        "kind": "auto",
+        "source_type": "datetime",
+        "target_suffix": "Date",
+        "equation": "date({lg:{field}})"
+      }
+    ]
   },
 
   "embed": {
