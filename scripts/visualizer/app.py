@@ -92,6 +92,26 @@ def _load_assistant_json(aid: str, filename: str) -> list[dict]:
 
 
 # ---------------------------------------------------------------------------
+# Cached parser wrappers (data is static on disk)
+# ---------------------------------------------------------------------------
+
+
+@lru_cache(maxsize=64)
+def _cached_cloud_log(path: str) -> dict:
+    return parse_cloud_log(Path(path))
+
+
+@lru_cache(maxsize=64)
+def _cached_llm_calls(path: str) -> list[dict]:
+    return list_llm_calls(Path(path))
+
+
+@lru_cache(maxsize=64)
+def _cached_api_calls(path: str) -> list[dict]:
+    return list_api_calls(Path(path))
+
+
+# ---------------------------------------------------------------------------
 # HTML
 # ---------------------------------------------------------------------------
 
@@ -233,40 +253,41 @@ def get_sessions():
 @app.get("/api/sessions/{job_name}/summary")
 def get_session_summary(job_name: str):
     sd = _session_dir(job_name)
-    cloud = parse_cloud_log(sd / "cloud_logging.txt")
-    llm_calls = list_llm_calls(sd / "pod_logs" / "unillm")
-    api_calls = list_api_calls(sd / "pod_logs" / "unify")
 
-    api_errors = sum(
-        1 for c in api_calls if c.get("status_code") and c["status_code"] >= 400
-    )
-    durations = [c["duration_ms"] for c in api_calls if c.get("duration_ms")]
-    api_avg_ms = sum(durations) / len(durations) if durations else 0
+    llm_dir = sd / "pod_logs" / "unillm"
+    api_dir = sd / "pod_logs" / "unify"
+    llm_count = len(list(llm_dir.glob("*.txt"))) if llm_dir.is_dir() else 0
+    api_count = len(list(api_dir.glob("*.json"))) if api_dir.is_dir() else 0
+
+    cloud_path = sd / "cloud_logging.txt"
+    cloud_lines = 0
+    if cloud_path.exists():
+        try:
+            cloud_lines = cloud_path.read_text(
+                encoding="utf-8",
+                errors="replace",
+            ).count("\n")
+        except Exception:
+            pass
 
     return {
         "job_name": job_name,
-        "cloud_log_lines": cloud["raw_lines"],
-        "cloud_events": len(cloud["events"]),
-        "user_messages": cloud["user_messages"],
-        "errors": cloud["errors"][:20],
-        "error_count": len(cloud["errors"]),
-        "llm_call_count": len(llm_calls),
-        "api_call_count": len(api_calls),
-        "api_error_count": api_errors,
-        "api_avg_duration_ms": round(api_avg_ms, 1),
+        "cloud_log_lines": cloud_lines,
+        "llm_call_count": llm_count,
+        "api_call_count": api_count,
     }
 
 
 @app.get("/api/sessions/{job_name}/cloud-log")
 def get_cloud_log(job_name: str):
     sd = _session_dir(job_name)
-    return parse_cloud_log(sd / "cloud_logging.txt")
+    return _cached_cloud_log(str(sd / "cloud_logging.txt"))
 
 
 @app.get("/api/sessions/{job_name}/llm-calls")
 def get_llm_calls(job_name: str):
     sd = _session_dir(job_name)
-    calls = list_llm_calls(sd / "pod_logs" / "unillm")
+    calls = _cached_llm_calls(str(sd / "pod_logs" / "unillm"))
     return {"calls": calls, "total": len(calls)}
 
 
@@ -282,7 +303,7 @@ def get_llm_call_detail(job_name: str, filename: str):
 @app.get("/api/sessions/{job_name}/api-calls")
 def get_api_calls(job_name: str):
     sd = _session_dir(job_name)
-    calls = list_api_calls(sd / "pod_logs" / "unify")
+    calls = _cached_api_calls(str(sd / "pod_logs" / "unify"))
     return {"calls": calls, "total": len(calls)}
 
 
@@ -318,6 +339,9 @@ def refresh_data():
     _load_index.cache_clear()
     _load_org_info.cache_clear()
     _load_sessions_meta.cache_clear()
+    _cached_cloud_log.cache_clear()
+    _cached_llm_calls.cache_clear()
+    _cached_api_calls.cache_clear()
     return {"status": "ok"}
 
 
