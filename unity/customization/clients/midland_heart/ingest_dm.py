@@ -26,41 +26,28 @@ import argparse
 import logging
 import sys
 import time
-from typing import Any, Dict, List, Optional
+from typing import TYPE_CHECKING, List, Optional
+
+if TYPE_CHECKING:
+    from unity.customization.types.pipeline_config import (
+        PipelineConfig,
+        SourceTableSpec,
+    )
 
 logger = logging.getLogger(__name__)
 
 
 def _resolve_embed_columns(
-    config: Dict[str, Any],
+    config: PipelineConfig,
     file_path: str,
     sheet_name: str,
 ) -> Optional[List[str]]:
     """Look up embed source columns for a given file + sheet from config."""
-    embed_cfg = config.get("embed", {})
-    for spec in embed_cfg.get("file_specs", []):
-        if spec["file_path"] in file_path or spec["file_path"] == "*":
-            for table_spec in spec.get("tables", []):
-                if table_spec["table"] == sheet_name:
-                    return table_spec.get("source_columns")
-    return None
-
-
-def _resolve_table_description(
-    config: Dict[str, Any],
-    sheet_name: str,
-) -> Optional[str]:
-    """Look up table description from business_contexts or dm_contexts."""
-    dm_ctx = config.get("dm_contexts", {}).get(sheet_name, {})
-    if dm_ctx.get("description"):
-        return dm_ctx["description"]
-
-    ingest_cfg = config.get("ingest", {})
-    biz = ingest_cfg.get("business_contexts", config.get("business_contexts", {}))
-    for fc in biz.get("file_contexts", []):
-        for tc in fc.get("table_contexts", []):
-            if tc.get("table") == sheet_name:
-                return tc.get("table_description")
+    for spec in config.embed.file_specs:
+        if spec.file_path in file_path or spec.file_path == "*":
+            for table_spec in spec.tables:
+                if table_spec.table == sheet_name:
+                    return list(table_spec.source_columns)
     return None
 
 
@@ -163,14 +150,14 @@ def main() -> int:
     logger.info("Run directory: %s", run_dir)
     pipeline_start = time.perf_counter()
 
-    # Load shared config
+    # Load shared config (strongly typed)
     config = load_pipeline_config(args.config, project_root=project_root)
 
     # Activate project
     activate_project(args.project, overwrite=args.overwrite)
 
     # Create progress reporter (uses same run_dir)
-    diagnostics = config.get("diagnostics", {})
+    diagnostics = config.diagnostics.model_dump()
     reporter, run_dir = create_pipeline_reporter(
         diagnostics,
         "ingest_dm",
@@ -178,7 +165,7 @@ def main() -> int:
         progress_file_override=args.progress_file,
         verbosity_override=args.verbosity,
     )
-    verbosity = args.verbosity or diagnostics.get("verbosity", "medium")
+    verbosity = args.verbosity or config.diagnostics.verbosity
 
     from unity.file_manager.managers.utils.progress import create_progress_event
 
@@ -195,14 +182,15 @@ def main() -> int:
 
     file_parser = FileParser()
 
-    source_files = config["source_files"]
     parse_requests: list[FileParseRequest] = []
-    for entry in source_files:
-        fp = entry["file_path"]
+    for sf in config.source_files:
         parse_requests.append(
-            FileParseRequest(logical_path=fp, source_local_path=fp),
+            FileParseRequest(
+                logical_path=sf.file_path,
+                source_local_path=sf.file_path,
+            ),
         )
-        logger.info("Queued for parsing: %s", fp)
+        logger.info("Queued for parsing: %s", sf.file_path)
 
     # Emit parse/started events
     parse_start = time.perf_counter()
@@ -272,14 +260,16 @@ def main() -> int:
     from unity.data_manager.data_manager import DataManager
 
     dm = DataManager()
-    dm_contexts = config.get("dm_contexts", {})
-    embed_cfg = config.get("embed", {})
-    embed_strategy = "off" if args.no_embed else embed_cfg.get("strategy", "along")
-    infer_untyped = config.get("ingest", {}).get("infer_untyped_fields", False)
-    max_table_workers = config.get("execution", {}).get(
-        "max_table_workers",
-        config.get("execution", {}).get("max_file_workers", 8),
-    )
+
+    # Build sheet-name -> SourceTableSpec lookup from the typed config
+    table_specs: dict[str, SourceTableSpec] = {}
+    for sf in config.source_files:
+        for ts in sf.tables:
+            table_specs[ts.sheet] = ts
+
+    embed_strategy = "off" if args.no_embed else config.embed.strategy
+    infer_untyped = config.ingest.infer_untyped_fields
+    max_table_workers = config.execution.max_table_workers
     total_tables = 0
     total_rows = 0
     failed_tables = 0
@@ -303,14 +293,14 @@ def main() -> int:
                 meta.update(val)
 
             phase = f"ingest_table/{task.task_type}"
-            status = "completed" if result.success else "failed"
+            chunk_status = "completed" if result.success else "failed"
             elapsed_ms = (time.perf_counter() - pipeline_start) * 1000
 
             reporter.report(
                 create_progress_event(
                     lp,
                     phase,
-                    status,
+                    chunk_status,
                     duration_ms=result.duration_ms,
                     elapsed_ms=elapsed_ms,
                     error=result.error if not result.success else None,
@@ -322,7 +312,7 @@ def main() -> int:
                 "  [%s] %s %s (%.0fms) batch=%s/%s",
                 sheet_name,
                 task.task_type,
-                status,
+                chunk_status,
                 result.duration_ms,
                 meta.get("chunk_index", "?"),
                 meta.get("total_chunks", "?"),
@@ -333,26 +323,19 @@ def main() -> int:
     def _ingest_table(
         table,
         lp: str,
+        table_spec: SourceTableSpec,
     ) -> tuple[bool, str, int]:
         """Ingest a single table. Returns (success, context_path, row_count)."""
-        sheet_name = table.sheet_name or table.label
-
-        ctx_entry = dm_contexts.get(sheet_name)
-        if ctx_entry is None:
-            logger.warning(
-                "No dm_contexts mapping for sheet '%s' -- skipping",
-                sheet_name,
-            )
-            return (True, "", 0)
-
-        context_path = ctx_entry["context"]
-        description = _resolve_table_description(config, sheet_name)
+        sheet_name = table_spec.sheet
+        context_path = table_spec.context
+        description = table_spec.description or None
         embed_columns = (
             _resolve_embed_columns(config, lp, sheet_name)
             if not args.no_embed
             else None
         )
-        chunk_size = args.chunk_size or ctx_entry.get("chunk_size", 1000)
+        chunk_size = args.chunk_size or table_spec.chunk_size
+        post_ingest_config = config.effective_post_ingest(table_spec)
         rows = table.rows
 
         if not rows:
@@ -406,6 +389,7 @@ def main() -> int:
                 chunk_size=chunk_size,
                 infer_untyped_fields=infer_untyped,
                 add_to_all_context=not args.skip_all_context,
+                post_ingest=post_ingest_config,
                 on_task_complete=chunk_callback,
             )
 
@@ -473,9 +457,9 @@ def main() -> int:
             )
             return (False, context_path, 0)
 
-    # Collect all (table, logical_path) pairs across all files
-    all_work: list[tuple] = []  # (table, logical_path)
-    file_tracking: dict[str, dict] = {}  # lp -> {start, tables, rows, failures}
+    # Collect all (table, logical_path, table_spec) triples across all files
+    all_work: list[tuple] = []
+    file_tracking: dict[str, dict] = {}
 
     for pr in parse_results:
         if pr.status != "success" or not pr.tables:
@@ -489,12 +473,13 @@ def main() -> int:
         }
         for t in pr.tables:
             label = t.sheet_name or t.label
-            if dm_contexts.get(label) is None:
+            spec = table_specs.get(label)
+            if spec is None:
                 continue
             if args.tables and not any(f in label for f in args.tables):
                 logger.info("Skipping '%s' (not in --tables filter)", label)
                 continue
-            all_work.append((t, lp))
+            all_work.append((t, lp, spec))
 
     logger.info(
         "Ingestion plan: %d tables across %d files (parallel=%s)",
@@ -525,14 +510,16 @@ def main() -> int:
             max_table_workers,
         )
         with ThreadPoolExecutor(max_workers=max_table_workers) as pool:
-            futures = {pool.submit(_ingest_table, t, lp): lp for t, lp in all_work}
+            futures = {
+                pool.submit(_ingest_table, t, lp, spec): lp for t, lp, spec in all_work
+            }
             for fut in as_completed(futures):
                 lp = futures[fut]
                 ok, ctx, rows_inserted = fut.result()
                 _collect(ok, ctx, rows_inserted, lp)
     else:
-        for table, lp in all_work:
-            ok, ctx, rows_inserted = _ingest_table(table, lp)
+        for table, lp, spec in all_work:
+            ok, ctx, rows_inserted = _ingest_table(table, lp, spec)
             _collect(ok, ctx, rows_inserted, lp)
 
     # Emit file_complete events
