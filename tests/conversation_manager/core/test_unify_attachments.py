@@ -72,7 +72,7 @@ class TestUnifyMessageReceivedAttachments:
             {
                 "id": "att-uuid-1",
                 "filename": "report.pdf",
-                "gs_url": "gs://unify-message-attachments/12345/att-uuid-1_report.pdf",
+                "gs_url": "gs://assistant-message-attachments-production/12345/att-uuid-1_report.pdf",
                 "content_type": "application/pdf",
                 "size_bytes": 1024,
             },
@@ -113,7 +113,7 @@ class TestUnifyMessageSentAttachments:
             {
                 "id": "att-uuid-2",
                 "filename": "output.csv",
-                "gs_url": "gs://unify-message-attachments/12345/att-uuid-2_output.csv",
+                "gs_url": "gs://assistant-message-attachments-production/12345/att-uuid-2_output.csv",
                 "content_type": "text/csv",
                 "size_bytes": 512,
             },
@@ -324,7 +324,7 @@ class TestAddUnifyMessageAttachments:
                 {
                     "id": "att-1",
                     "filename": "report.pdf",
-                    "gs_url": "gs://unify-message-attachments/12345/att-1_report.pdf",
+                    "gs_url": "gs://assistant-message-attachments-production/12345/att-1_report.pdf",
                     # No "url" - should generate from gs_url
                 },
             ]
@@ -557,7 +557,7 @@ class TestUploadUnifyAttachmentEnhanced:
             "id": "test-uuid-123",
             "filename": "document.pdf",
             "url": "https://storage.googleapis.com/signed-url",
-            "gs_url": "gs://unify-message-attachments/12345/test-uuid_document.pdf",
+            "gs_url": "gs://assistant-message-attachments-production/12345/test-uuid_document.pdf",
             "content_type": "application/pdf",
             "size_bytes": 2048,
         }
