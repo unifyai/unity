@@ -1491,5 +1491,6 @@ async def init_conv_manager(
             publish_system_error(
                 "The assistant failed to initialize and may not respond "
                 "correctly. Please try again shortly.",
+                error_type="init_failed",
             )
             raise
