@@ -17,7 +17,11 @@ from unity.common.state_managers import BaseStateManager
 from unity.data_manager.types.table import TableDescription
 from unity.data_manager.types.plot import PlotResult
 from unity.data_manager.types.table_view import TableViewResult
-from unity.data_manager.types.ingest import IngestExecutionConfig, IngestResult
+from unity.data_manager.types.ingest import (
+    IngestExecutionConfig,
+    IngestResult,
+    PostIngestConfig,
+)
 
 
 class BaseDataManager(BaseStateManager):
@@ -2101,6 +2105,7 @@ class BaseDataManager(BaseStateManager):
         infer_untyped_fields: bool = False,
         add_to_all_context: bool = False,
         execution: Optional["IngestExecutionConfig"] = None,
+        post_ingest: Optional["PostIngestConfig"] = None,
         on_task_complete: Optional[Callable] = None,
     ) -> "IngestResult":
         """
@@ -2182,6 +2187,11 @@ class BaseDataManager(BaseStateManager):
         execution : IngestExecutionConfig | None, default ``None``
             Advanced pipeline knobs (max_workers, retries, backoff,
             fail_fast).  Defaults are suitable for most workloads.
+        post_ingest : PostIngestConfig | None, default ``None``
+            Declarative rules for creating derived columns after the
+            ingest pipeline completes.  When ``None``, no post-ingest
+            processing occurs.  Rules are executed sequentially; failures
+            are logged but do not abort the ingest.
         on_task_complete : callable | None, default ``None``
             Optional ``(Task, TaskResult) -> None`` callback fired after each
             internal pipeline task finishes (insert chunk, embed chunk, etc.).

@@ -38,7 +38,11 @@ from unity.common.embed_utils import (
 )
 from unity.data_manager.ops.mutation_ops import insert_rows_impl
 from unity.data_manager.ops.table_ops import create_table_impl
-from unity.data_manager.types.ingest import IngestExecutionConfig, IngestResult
+from unity.data_manager.types.ingest import (
+    IngestExecutionConfig,
+    IngestResult,
+    PostIngestConfig,
+)
 from unity.data_manager.utils.pipeline import (
     ExecutionConfig,
     PipelineExecutor,
@@ -106,49 +110,97 @@ def _chunk_rows(
     return [rows[i : i + chunk_size] for i in range(0, len(rows), chunk_size)]
 
 
-def _derive_date_column_name(field_name: str) -> str:
-    """Derive a date-only column name from a datetime field name.
+def _derive_target_name(field_name: str, suffix: str) -> str:
+    """Build a target column name by appending *suffix* to *field_name*.
 
-    Always preserves the full original name and appends an underscore-separated
-    suffix whose casing matches the source convention:
+    The separator and suffix casing are chosen to match the naming
+    convention of the source field:
 
-    - Title/PascalCase fields containing "date" -> ``_Day``
-    - Title/PascalCase fields without "date"    -> ``_Date``
-    - snake_case / lowercase fields with "date" -> ``_day``
-    - snake_case / lowercase fields without      -> ``_date``
+    * **Whitespace-separated** (``"Subtrip travel time"`` + ``"Date"``)
+      → ``"Subtrip travel time Date"`` (space join, suffix as-is)
+    * **Underscore-separated** (``"subtrip_travel_time"`` + ``"Date"``)
+      → ``"subtrip_travel_time_date"`` (underscore join, suffix
+      lowercased)
+    * **PascalCase / single word starting uppercase**
+      (``"VisitDate"`` + ``"Date"``) → ``"VisitDate_Date"``
+      (underscore join, suffix words title-cased)
+    * **camelCase / lowercase single word**
+      (``"visitDate"`` + ``"Date"``) → ``"visitDate_date"``
+      (underscore join, suffix lowercased)
     """
-    is_title = field_name[:1].isupper()
-    has_date = "date" in field_name.lower()
+    if " " in field_name:
+        return f"{field_name} {suffix}"
+    if "_" in field_name:
+        return f"{field_name}_{suffix.replace(' ', '_').lower()}"
+    if field_name[:1].isupper():
+        titled = "".join(w.capitalize() for w in suffix.split())
+        return f"{field_name}_{titled}"
+    return f"{field_name}_{suffix.replace(' ', '_').lower()}"
 
-    if is_title:
-        return f"{field_name}_Day" if has_date else f"{field_name}_Date"
 
-    return f"{field_name}_day" if has_date else f"{field_name}_date"
+def _run_post_ingest_rules(
+    context: str,
+    config: PostIngestConfig,
+) -> list[str]:
+    """Execute post-ingest derived column rules for *context*.
 
+    Each rule resolves an ``equation`` (containing a ``{field}``
+    placeholder) and creates derived columns via :func:`_ensure_derived_column`.
 
-def _ensure_date_derived_columns(context: str) -> list[str]:
-    """Create date-only derived columns for every datetime field in *context*.
+    Rule dispatch is based on the ``kind`` discriminator:
 
-    Calls ``unify.get_fields`` to discover datetime fields, then creates a
-    derived column for each using ``date({lg:<field>})``.  Returns the list
-    of derived column names that were created (or already existed).
+    * ``"explicit"`` (:class:`ExplicitDerivedColumn`): one derived column
+      from a named ``source_field`` / ``target_name`` pair.
+    * ``"auto"`` (:class:`AutoDerivedColumn`): scans all fields in the
+      context matching ``source_type`` and creates a derived column for each.
+      The target name is derived from the source field name and
+      ``target_suffix`` using :func:`_derive_target_name`, which
+      automatically matches the separator convention of the source field.
+
+    Returns the list of derived column names that were created or
+    already existed.
     """
-    fields = _unify.get_fields(context=context) or {}
+    from unity.data_manager.types.ingest import AutoDerivedColumn, ExplicitDerivedColumn
+
+    if not config.derived_columns:
+        return []
+
+    fields: dict | None = None
     created: list[str] = []
-    for name, info in fields.items():
-        if name.startswith("_"):
-            continue
-        dtype = info.get("data_type", "") if isinstance(info, dict) else str(info)
-        if dtype != "datetime":
-            continue
-        target = _derive_date_column_name(name)
-        _ensure_derived_column(
-            context,
-            key=target,
-            equation=f"date({{lg:{name}}})",
-            referenced_logs_context=context,
-        )
-        created.append(target)
+
+    for rule in config.derived_columns:
+        if isinstance(rule, ExplicitDerivedColumn):
+            equation = rule.equation.replace("{field}", rule.source_field)
+            _ensure_derived_column(
+                context,
+                key=rule.target_name,
+                equation=equation,
+                referenced_logs_context=context,
+            )
+            created.append(rule.target_name)
+
+        elif isinstance(rule, AutoDerivedColumn):
+            if fields is None:
+                fields = _unify.get_fields(context=context) or {}
+
+            for name, info in fields.items():
+                if name.startswith("_"):
+                    continue
+                dtype = (
+                    info.get("data_type", "") if isinstance(info, dict) else str(info)
+                )
+                if dtype != rule.source_type:
+                    continue
+                target = _derive_target_name(name, rule.target_suffix)
+                equation = rule.equation.replace("{field}", name)
+                _ensure_derived_column(
+                    context,
+                    key=target,
+                    equation=equation,
+                    referenced_logs_context=context,
+                )
+                created.append(target)
+
     return created
 
 
@@ -479,6 +531,7 @@ def run_ingest(
     infer_untyped_fields: bool = False,
     add_to_all_context: bool = False,
     execution: Optional[IngestExecutionConfig] = None,
+    post_ingest: Optional[PostIngestConfig] = None,
     on_task_complete=None,
 ) -> IngestResult:
     """Execute a full ingest pipeline: create table, insert rows, optionally embed.
@@ -502,6 +555,10 @@ def run_ingest(
         See :meth:`DataManager.ingest` for semantics.
     execution : IngestExecutionConfig | None
         Pipeline execution settings.
+    post_ingest : PostIngestConfig | None
+        Post-ingest derived column rules.  When provided, rules are
+        executed after the pipeline graph completes.  When ``None``,
+        no post-ingest processing occurs.
 
     Returns
     -------
@@ -553,22 +610,24 @@ def run_ingest(
 
     ingest_result = _aggregate_results(context, graph, results, duration_ms)
 
-    # Post-ingestion: create date-only derived columns for datetime fields
-    try:
-        derived_cols = _ensure_date_derived_columns(context)
-        if derived_cols:
-            logger.info(
-                "Created %d date derived columns for %s: %s",
-                len(derived_cols),
+    # Post-ingestion: run config-driven derived column rules
+    if post_ingest and post_ingest.derived_columns:
+        try:
+            derived_cols = _run_post_ingest_rules(context, post_ingest)
+            if derived_cols:
+                ingest_result.derived_columns_created = derived_cols
+                logger.info(
+                    "Created %d derived columns for %s: %s",
+                    len(derived_cols),
+                    context,
+                    ", ".join(derived_cols),
+                )
+        except Exception:
+            logger.warning(
+                "Failed to create post-ingest derived columns for %s",
                 context,
-                ", ".join(derived_cols),
+                exc_info=True,
             )
-    except Exception:
-        logger.warning(
-            "Failed to create date derived columns for %s",
-            context,
-            exc_info=True,
-        )
 
     # Log summary
     summary = graph.get_summary()

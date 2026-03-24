@@ -19,7 +19,11 @@ from unity.data_manager.base import BaseDataManager
 from unity.data_manager.types.table import TableDescription
 from unity.data_manager.types.plot import PlotConfig, PlotResult
 from unity.data_manager.types.table_view import TableViewConfig, TableViewResult
-from unity.data_manager.types.ingest import IngestExecutionConfig, IngestResult
+from unity.data_manager.types.ingest import (
+    IngestExecutionConfig,
+    IngestResult,
+    PostIngestConfig,
+)
 from unity.data_manager.ops.table_ops import (
     create_table_impl,
     describe_table_impl,
@@ -580,6 +584,7 @@ class DataManager(BaseDataManager):
         infer_untyped_fields: bool = False,
         add_to_all_context: bool = False,
         execution: Optional["IngestExecutionConfig"] = None,
+        post_ingest: Optional["PostIngestConfig"] = None,
         on_task_complete=None,
     ) -> "IngestResult":
         resolved = self._resolve_context(context)
@@ -602,6 +607,7 @@ class DataManager(BaseDataManager):
             infer_untyped_fields=infer_untyped_fields,
             add_to_all_context=add_to_all_context,
             execution=execution,
+            post_ingest=post_ingest,
             on_task_complete=on_task_complete,
         )
 
