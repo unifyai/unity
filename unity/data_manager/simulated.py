@@ -25,7 +25,11 @@ from unity.data_manager.types.table import (
 )
 from unity.data_manager.types.plot import PlotResult
 from unity.data_manager.types.table_view import TableViewResult
-from unity.data_manager.types.ingest import IngestExecutionConfig, IngestResult
+from unity.data_manager.types.ingest import (
+    IngestExecutionConfig,
+    IngestResult,
+    PostIngestConfig,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -931,6 +935,7 @@ class SimulatedDataManager(BaseDataManager):
         infer_untyped_fields: bool = False,
         add_to_all_context: bool = False,
         execution: Optional[IngestExecutionConfig] = None,
+        post_ingest: Optional[PostIngestConfig] = None,
         on_task_complete=None,
     ) -> IngestResult:
         start = time.perf_counter()
