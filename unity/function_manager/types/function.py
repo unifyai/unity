@@ -45,17 +45,10 @@ class Function(BaseModel):
     depends_on: List[str] = Field(
         [],
         description=(
-            "Functions this function depends on.  Both bare and dotted names "
-            "are auto-detected from the AST at storage time (see "
-            "dependency_analysis.py) and injected into the execution namespace "
-            "at runtime (see FunctionManager._inject_dependencies).\n\n"
-            "Bare names (e.g. 'helper') refer to other compositional functions "
-            "whose implementations are exec'd into the namespace.\n\n"
-            "Dotted names (e.g. 'primitives.contacts.ask', 'primitives.actor.act') refer "
-            "to environment-provided namespaces.  The root segment (e.g. "
-            "'actor', 'primitives') is resolved via "
-            "registry.construct_sandbox_root() which constructs a fresh "
-            "instance of the appropriate class on demand."
+            "Functions this function depends on, auto-detected from the AST "
+            "at storage time. Bare names (e.g. 'helper') are compositional "
+            "functions. Dotted names (e.g. 'primitives.contacts.ask') are "
+            "environment namespaces; root segments resolve to fresh instances."
         ),
     )
     embedding_text: str = Field(
@@ -106,21 +99,18 @@ class Function(BaseModel):
     venv_id: Optional[int] = Field(
         None,
         description=(
-            "Optional reference to a VirtualEnv.venv_id specifying which Python virtual "
-            "environment to use when executing this function. Only applicable when "
-            "language='python'. Ignored for other languages. If None, the function "
-            "runs in the project's default Python environment."
+            "VirtualEnv.venv_id for the Python virtual environment to use when "
+            "executing this function. Only applies when language='python'. "
+            "If None, uses the project's default environment."
         ),
     )
 
     windows_os_required: bool = Field(
         False,
         description=(
-            "Whether this function requires execution on a Windows OS. "
-            "When True and the assistant has desktop_mode='windows', "
-            "execution routes to the remote Windows VM. "
-            "Typically used for functions that depend on Windows-only libraries "
-            "like xlwings or other COM automation tools."
+            "Whether this function requires Windows OS execution. When True "
+            "and desktop_mode='windows', routes to the remote Windows VM. "
+            "Used for functions depending on Windows-only libraries like xlwings."
         ),
     )
 
