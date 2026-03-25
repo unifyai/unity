@@ -1,2 +1,2 @@
-kopf
+kopf<1.44.3
 requests

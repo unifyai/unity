@@ -19,9 +19,96 @@ DataManager.insert_rows : Low-level row insertion.
 
 from __future__ import annotations
 
-from typing import List
+from typing import Annotated, List, Literal, Union
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Discriminator, Field, Tag
+
+
+class ExplicitDerivedColumn(BaseModel):
+    """A derived column targeting a specific source/target field pair.
+
+    Example JSON::
+
+        {
+            "kind": "explicit",
+            "source_field": "Trip travel time",
+            "target_name": "Trip travel time duration seconds",
+            "equation": "duration_seconds({lg:{field}})"
+        }
+    """
+
+    kind: Literal["explicit"] = "explicit"
+    source_field: str
+    target_name: str
+    equation: str
+
+
+class AutoDerivedColumn(BaseModel):
+    """A derived column rule that auto-discovers fields by data type.
+
+    All fields in the context matching ``source_type`` get a derived
+    column whose name is built from the source field name and
+    ``target_suffix`` via :func:`_derive_target_name`.
+
+    ``target_suffix`` is a **semantic word or phrase** (e.g. ``"Date"``,
+    ``"duration seconds"``), *not* a literal string to concatenate.  The
+    separator and casing are inferred from each source field's naming
+    convention so that a single suffix adapts to heterogeneous field
+    styles within the same context:
+
+    +--------------------------+--------+------------------------------+
+    | Source field              | Suffix | Derived target name          |
+    +==========================+========+==============================+
+    | ``"Arrived On Site"``    | Date   | ``"Arrived On Site Date"``   |
+    +--------------------------+--------+------------------------------+
+    | ``"arrived_on_site"``    | Date   | ``"arrived_on_site_date"``   |
+    +--------------------------+--------+------------------------------+
+    | ``"ArrivedOnSite"``      | Date   | ``"ArrivedOnSite_Date"``     |
+    +--------------------------+--------+------------------------------+
+    | ``"arrivedOnSite"``      | Date   | ``"arrivedOnSite_date"``     |
+    +--------------------------+--------+------------------------------+
+
+    Example JSON::
+
+        {
+            "kind": "auto",
+            "source_type": "datetime",
+            "target_suffix": "Date",
+            "equation": "date({lg:{field}})"
+        }
+    """
+
+    kind: Literal["auto"] = "auto"
+    source_type: str
+    target_suffix: str
+    equation: str
+
+
+DerivedColumnRule = Annotated[
+    Union[
+        Annotated[ExplicitDerivedColumn, Tag("explicit")],
+        Annotated[AutoDerivedColumn, Tag("auto")],
+    ],
+    Discriminator("kind"),
+]
+"""A post-ingest derived column rule (tagged union).
+
+Discriminated on the ``kind`` field:
+
+* ``"explicit"`` -- :class:`ExplicitDerivedColumn`
+* ``"auto"``     -- :class:`AutoDerivedColumn`
+"""
+
+
+class PostIngestConfig(BaseModel):
+    """Configuration for post-ingest derived column creation.
+
+    Evaluated after the ingest pipeline completes.  Each rule in
+    ``derived_columns`` is executed sequentially; failures are logged
+    but do not abort the ingest.
+    """
+
+    derived_columns: List[DerivedColumnRule] = Field(default_factory=list)
 
 
 class IngestExecutionConfig(BaseModel):
@@ -96,3 +183,4 @@ class IngestResult(BaseModel):
     log_ids: List[int] = Field(default_factory=list)
     duration_ms: float = 0.0
     chunks_processed: int = 0
+    derived_columns_created: List[str] = Field(default_factory=list)

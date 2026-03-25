@@ -83,7 +83,7 @@ async def send_unify_message(
     env_suffix = SETTINGS.ENV_SUFFIX if agent_id is not None else ""
     topic_name = f"unity-{agent_id}{env_suffix}"
     publisher = _get_publisher()
-    topic_path = publisher.topic_path("responsive-city-458413-a2", topic_name)
+    topic_path = publisher.topic_path(SETTINGS.GCP_PROJECT_ID, topic_name)
 
     event_data = {"content": content, "role": "assistant", "contact_id": contact_id}
     if attachment:
@@ -111,6 +111,50 @@ async def send_unify_message(
     except Exception as e:
         LOGGER.error(f"{ICONS['comms_outbound']} Error sending unify message: {e}")
         return {"success": False, "error": str(e)}
+
+
+def publish_system_error(error_message: str, error_type: str = "unknown") -> None:
+    """Publish a system error to the assistant's Pub/Sub topic.
+
+    This is a best-effort, fire-and-forget publish used to notify the console
+    that the container hit an unrecoverable error (OOM, unhandled exception, etc.)
+    so the UI can show a user-friendly warning instead of going silent.
+
+    Args:
+        error_message: Human-readable description of the error.
+        error_type: Structured error type for console classification. One of:
+            ``oom``, ``startup_failed``, ``init_failed``, ``message_failed``,
+            ``recovering``, ``unknown``.
+
+    Uses a synchronous publish (no await) so it can be called from both sync
+    and async contexts, including signal handlers and thread-pool callbacks.
+    """
+    agent_id = SESSION_DETAILS.assistant.agent_id
+    if agent_id is None:
+        return
+    env_suffix = SETTINGS.ENV_SUFFIX if agent_id is not None else ""
+    topic_name = f"unity-{agent_id}{env_suffix}"
+    try:
+        publisher = _get_publisher()
+        topic_path = publisher.topic_path(SETTINGS.GCP_PROJECT_ID, topic_name)
+        message_data = {
+            "thread": "system_error",
+            "event": {
+                "content": error_message,
+                "error_type": error_type,
+            },
+        }
+        future = publisher.publish(
+            topic_path,
+            json.dumps(message_data).encode("utf-8"),
+            thread="system_error",
+        )
+        future.result(timeout=5)
+        LOGGER.debug(
+            f"{ICONS['comms_outbound']} Published system error [{error_type}]: {error_message}"
+        )
+    except Exception as e:
+        LOGGER.error(f"{ICONS['comms_outbound']} Failed to publish system error: {e}")
 
 
 async def complete_api_message(
@@ -164,7 +208,7 @@ async def publish_assistant_desktop_ready(
     env_suffix = SETTINGS.ENV_SUFFIX if agent_id is not None else ""
     topic_name = f"unity-{agent_id}{env_suffix}"
     publisher = _get_publisher()
-    topic_path = publisher.topic_path("responsive-city-458413-a2", topic_name)
+    topic_path = publisher.topic_path(SETTINGS.GCP_PROJECT_ID, topic_name)
 
     message_data = {
         "thread": "assistant_desktop_ready",

@@ -158,7 +158,9 @@ a:hover { text-decoration: underline; }
 
 /* LLM sidebar */
 .llm-layout { display: grid; grid-template-columns: 240px 1fr; gap: 0; }
-.llm-sidebar { border-right: 1px solid var(--border); height: calc(100vh - 160px); overflow-y: auto; position: sticky; top: 20px; }
+.llm-sidebar { border-right: 1px solid var(--border); height: calc(100vh - 160px); position: sticky; top: 20px; display: flex; flex-direction: column; }
+.llm-sidebar-filters { flex-shrink: 0; padding: 8px 8px 4px; border-bottom: 1px solid var(--border); display: flex; gap: 4px; flex-wrap: wrap; }
+.llm-sidebar-list { flex: 1; overflow-y: auto; }
 .llm-sidebar-item { padding: 6px 12px; font-size: 11px; cursor: pointer; border-left: 3px solid transparent; display: flex; gap: 8px; align-items: baseline; transition: background 0.1s; }
 .llm-sidebar-item:hover { background: var(--bg-hover); }
 .llm-sidebar-item.active { background: rgba(88,166,255,0.08); border-left-color: var(--accent); }
@@ -167,6 +169,23 @@ a:hover { text-decoration: underline; }
 .llm-sidebar-item.active .sb-origin { color: var(--accent); }
 .llm-main { padding: 0 0 0 20px; min-width: 0; }
 @media (max-width: 900px) { .llm-layout { grid-template-columns: 1fr; } .llm-sidebar { display: none; } .llm-main { padding: 0; } }
+
+/* Session sidebar */
+.session-layout { display: grid; grid-template-columns: 220px 1fr; gap: 0; }
+.session-sidebar { border-right: 1px solid var(--border); height: calc(100vh - 80px); position: sticky; top: 20px; display: flex; flex-direction: column; }
+.session-sidebar-filters { flex-shrink: 0; padding: 8px 8px 4px; border-bottom: 1px solid var(--border); display: flex; gap: 4px; flex-wrap: wrap; }
+.session-sidebar-list { flex: 1; overflow-y: auto; }
+.session-sidebar-group { display: block; }
+.session-sidebar-item { padding: 6px 10px; font-size: 11px; cursor: pointer; border-left: 3px solid transparent; display: flex; flex-direction: column; gap: 1px; transition: background 0.1s; }
+.session-sidebar-item:hover { background: var(--bg-hover); }
+.session-sidebar-item.active { background: rgba(88,166,255,0.08); border-left-color: var(--accent); }
+.session-sidebar-item .ss-time { font-family: var(--mono); color: var(--text-dimmer); white-space: nowrap; font-size: 10px; }
+.session-sidebar-item .ss-name { color: var(--text-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; }
+.session-sidebar-item.active .ss-name { color: var(--accent); }
+.session-sidebar-item .ss-badge { font-size: 9px; color: var(--text-dimmer); }
+.session-sidebar-day { padding: 6px 10px 3px; font-size: 9px; color: var(--text-dimmer); text-transform: uppercase; letter-spacing: 0.5px; font-weight: 600; }
+.session-main { padding: 0 0 0 20px; min-width: 0; }
+@media (max-width: 900px) { .session-layout { grid-template-columns: 1fr; } .session-sidebar { display: none; } .session-main { padding: 0; } }
 
 /* File actions */
 .file-action { font-size: 11px; color: var(--accent); text-decoration: none; }
@@ -216,6 +235,13 @@ const API = '';
 let _sessions = [];
 let _currentCalls = [];
 let _msgContents = new Map();
+let _llmOriginFilter = new Set();
+let _activeAssistantFilter = 'all';
+
+function originType(origin) {
+  if (!origin) return '';
+  return origin.replace(/_[0-9a-f]{3,}$/i, '');
+}
 
 async function api(path) {
   const r = await fetch(API + path);
@@ -360,6 +386,7 @@ async function renderDashboard() {
 }
 
 function filterSessions(aid) {
+  _activeAssistantFilter = aid;
   document.querySelectorAll('#filter-bar .pill').forEach(p => p.classList.toggle('active', p.dataset.aid === aid));
   document.querySelectorAll('.session-card').forEach(c => {
     c.style.display = (aid === 'all' || c.dataset.assistantId === aid) ? '' : 'none';
@@ -369,6 +396,42 @@ function filterSessions(aid) {
     g.style.display = visible > 0 ? '' : 'none';
     const countEl = g.querySelector('.day-count');
     if (countEl) countEl.textContent = visible;
+  });
+}
+
+function filterSessionSidebar(aid) {
+  _activeAssistantFilter = aid;
+  document.querySelectorAll('.session-sidebar-filters .pill').forEach(p => p.classList.toggle('active', p.dataset.aid === aid));
+  document.querySelectorAll('.session-sidebar-item').forEach(item => {
+    item.style.display = (aid === 'all' || item.dataset.assistantId === aid) ? '' : 'none';
+  });
+  document.querySelectorAll('.session-sidebar-group').forEach(group => {
+    const visible = [...group.querySelectorAll('.session-sidebar-item')]
+      .filter(item => item.style.display !== 'none').length;
+    group.style.display = visible > 0 ? '' : 'none';
+  });
+}
+
+function filterLLMCalls(ot) {
+  if (ot === 'all') {
+    _llmOriginFilter.clear();
+  } else if (_llmOriginFilter.has(ot)) {
+    _llmOriginFilter.delete(ot);
+  } else {
+    _llmOriginFilter.add(ot);
+  }
+  const showAll = _llmOriginFilter.size === 0;
+  document.querySelectorAll('#llm-filter-bar .pill, .llm-sidebar .pill').forEach(p => {
+    if (p.dataset.origin === 'all') p.classList.toggle('active', showAll);
+    else p.classList.toggle('active', _llmOriginFilter.has(p.dataset.origin));
+  });
+  document.querySelectorAll('.call-table tbody tr').forEach(r => {
+    if (!r.dataset.originType) return;
+    r.style.display = (showAll || _llmOriginFilter.has(r.dataset.originType)) ? '' : 'none';
+  });
+  document.querySelectorAll('.llm-sidebar-item').forEach(item => {
+    const itemOrigin = originType(item.querySelector('.sb-origin')?.textContent || '');
+    item.style.display = (showAll || _llmOriginFilter.has(itemOrigin)) ? '' : 'none';
   });
 }
 
@@ -398,7 +461,7 @@ async function renderAssistant(aid) {
   for (const g of gd.entries) {
     html += `<div class="detail-panel">
       <div class="dp-header" onclick="this.nextElementSibling.classList.toggle('open')">
-        <span>${esc(g.title || 'Untitled')}</span><span style="color:var(--text-dimmer)">${(g.content||'').length} chars</span>
+        <span>${esc(g.title || 'Untitled')}</span><span style="color:var(--text-dimmer)">${fmtDate(g._created_at) ? fmtDate(g._created_at)+' · ' : ''}${(g.content||'').length} chars</span>
       </div>
       <div class="dp-body">${esc(g.content || '')}</div>
     </div>`;
@@ -413,7 +476,7 @@ async function renderAssistant(aid) {
     const prismLang = lang === 'bash' || lang === 'zsh' || lang === 'sh' ? 'bash' : 'python';
     html += `<div class="detail-panel">
       <div class="dp-header" onclick="var el=document.getElementById('${codeId}');el.classList.toggle('open');if(el.classList.contains('open')&&window.Prism)Prism.highlightAllUnder(el)">
-        <span class="fn-sig">${esc(f.name || 'unnamed')}</span><span style="color:var(--text-dimmer)">${esc(f.language || 'python')}</span>
+        <span class="fn-sig">${esc(f.name || 'unnamed')}</span><span style="color:var(--text-dimmer)">${fmtDate(f._created_at) ? fmtDate(f._created_at)+' · ' : ''}${esc(f.language || 'python')}</span>
       </div>
       <div class="dp-meta">${esc(f.docstring || '')}</div>
       <pre class="fn-code" id="${codeId}"><code class="language-${prismLang}">${esc(f.implementation || f.argspec || 'No implementation')}</code></pre>
@@ -464,37 +527,78 @@ async function renderSession(jobName, initialTab) {
   const el = document.getElementById('content');
   el.innerHTML = '<div class="loading"><span class="spinner"></span>Loading...</div>';
   const activeTab = initialTab || 'timeline';
+  _llmOriginFilter = new Set();
+
+  // Ensure sessions are loaded for the sidebar
+  if (!_sessions.length) {
+    try {
+      const sd = await api('/api/sessions');
+      _sessions = sd.sessions;
+    } catch(e) {}
+  }
 
   const summary = await api(`/api/sessions/${jobName}/summary`);
   const session = _sessions.find(s => s.job_name === jobName) || {};
   const time = session.timestamp?.slice(0,19)?.replace('T',' ') || jobName;
 
+  // Build session sidebar
+  const sidebarAssistantIds = [...new Set(_sessions.map(s => String(s.assistant_id)).filter(Boolean))];
+  const filteredSessions = _activeAssistantFilter === 'all'
+    ? _sessions
+    : _sessions.filter(s => String(s.assistant_id) === String(_activeAssistantFilter));
+  let sidebar = '<div class="session-sidebar">';
+  sidebar += '<div class="session-sidebar-filters">';
+  sidebar += `<span class="pill ${_activeAssistantFilter==='all'?'active':''}" style="padding:3px 10px;font-size:10px" data-aid="all" onclick="filterSessionSidebar('all')">All</span>`;
+  for (const aid of sidebarAssistantIds) {
+    const aName = _sessions.find(s => String(s.assistant_id) === aid)?.assistant_name || aid;
+    sidebar += `<span class="pill ${String(_activeAssistantFilter)===aid?'active':''}" style="padding:3px 10px;font-size:10px" data-aid="${aid}" onclick="filterSessionSidebar('${aid}')">${esc(aName)} #${aid}</span>`;
+  }
+  sidebar += '</div>';
+  sidebar += '<div class="session-sidebar-list">';
+  let lastDay = '';
+  for (const s of filteredSessions) {
+    const day = s.timestamp?.slice(0,10) || '';
+    if (day !== lastDay) {
+      lastDay = day;
+      const d = new Date(day + 'T00:00:00Z');
+      const dayLabel = d.toLocaleDateString('en-US', { month:'short', day:'numeric', timeZone:'UTC' });
+      sidebar += `<div class="session-sidebar-group"><div class="session-sidebar-day">${dayLabel}</div>`;
+    }
+    const isActive = s.job_name === jobName;
+    const sTime = s.timestamp?.slice(11,16) || '';
+    sidebar += `<div class="session-sidebar-item ${isActive?'active':''}" data-assistant-id="${s.assistant_id}" onclick="location.hash='#/session/${s.job_name}'" ${isActive?'id="active-session-sidebar"':''}>
+      <span class="ss-time">${esc(sTime)} <span class="ss-badge">${esc(s.medium||'')}</span></span>
+      <span class="ss-name">${esc(s.assistant_name||'')} #${esc(s.assistant_id||'')}</span>
+    </div>`;
+    const nextDay = filteredSessions[filteredSessions.indexOf(s) + 1]?.timestamp?.slice(0,10) || '';
+    if (day !== nextDay) sidebar += '</div>';
+  }
+  sidebar += '</div></div>';
+
+  // Build main content
   const tabs = ['timeline','llm','api','system'];
-  let html = `<div class="breadcrumb"><a href="#/">Dashboard</a><span class="sep">/</span><span>${esc(jobName)}</span></div>
+  let main = `<div class="session-main">
+    <div class="breadcrumb"><a href="#/">Dashboard</a><span class="sep">/</span><span>${esc(jobName)}</span></div>
     <div class="stats-row">
       <div class="stat-card"><div class="label">Time</div><div class="value" style="font-size:13px">${time}</div></div>
       <div class="stat-card"><div class="label">Assistant</div><div class="value" style="font-size:13px">${esc(session.assistant_name||'')} #${esc(session.assistant_id||'')}</div></div>
       <div class="stat-card"><div class="label">LLM Calls</div><div class="value">${summary.llm_call_count}</div></div>
       <div class="stat-card"><div class="label">API Calls</div><div class="value">${summary.api_call_count}</div></div>
-      <div class="stat-card"><div class="label">Errors</div><div class="value" style="color:${summary.error_count>0?'var(--red)':'var(--green)'}">${summary.error_count}</div></div>
     </div>`;
 
-  if (summary.user_messages?.length) {
-    html += '<div style="margin-bottom:16px">';
-    for (const um of summary.user_messages) {
-      html += `<div class="tl-event user-msg"><div class="time">${esc(um.time)}</div><div class="comp">${esc(um.from)}</div><div class="msg">${esc(um.message)}</div></div>`;
-    }
-    html += '</div>';
-  }
-
-  html += '<div class="tabs" id="session-tabs">';
+  main += '<div class="tabs" id="session-tabs">';
   for (const t of tabs) {
     const label = {timeline:'Timeline',llm:'LLM Calls',api:'API Calls',system:'System Logs'}[t];
-    html += `<div class="tab ${t===activeTab?'active':''}" data-tab="${t}">${label}</div>`;
+    main += `<div class="tab ${t===activeTab?'active':''}" data-tab="${t}">${label}</div>`;
   }
-  html += '</div><div id="tab-content"></div>';
+  main += '</div><div id="tab-content"></div></div>';
 
-  el.innerHTML = html;
+  el.innerHTML = `<div class="session-layout">${sidebar}${main}</div>`;
+
+  // Scroll active session sidebar item into view
+  const activeSess = document.getElementById('active-session-sidebar');
+  if (activeSess) activeSess.scrollIntoView({ block: 'center', behavior: 'instant' });
+
   document.getElementById('session-tabs').addEventListener('click', e => {
     const t = e.target.closest('.tab');
     if (!t) return;
@@ -525,9 +629,20 @@ async function loadTab(jobName, tab) {
     const data = await api(`/api/sessions/${jobName}/llm-calls`);
     _currentCalls = data.calls || [];
     if (!_currentCalls.length) { el.innerHTML = '<div class="empty">No LLM calls</div>'; return; }
-    let h = '<table class="call-table clickable"><thead><tr><th>Time</th><th>Origin</th><th>Model</th><th>Cache</th></tr></thead><tbody>';
+    const origins = [...new Set(_currentCalls.map(c => originType(c.origin)).filter(Boolean))];
+    const showAll = _llmOriginFilter.size === 0;
+    let h = '<div class="filter-bar" id="llm-filter-bar">';
+    h += `<span class="pill ${showAll?'active':''}" data-origin="all" onclick="filterLLMCalls('all')">All (${_currentCalls.length})</span>`;
+    for (const o of origins) {
+      const cnt = _currentCalls.filter(c => originType(c.origin) === o).length;
+      h += `<span class="pill ${_llmOriginFilter.has(o)?'active':''}" data-origin="${esc(o)}" onclick="filterLLMCalls('${esc(o)}')">${esc(o)} (${cnt})</span>`;
+    }
+    h += '</div>';
+    h += '<table class="call-table clickable"><thead><tr><th>Time</th><th>Origin</th><th>Model</th><th>Cache</th></tr></thead><tbody>';
     for (const c of _currentCalls) {
-      h += `<tr onclick="location.hash='#/session/${jobName}/llm/${encodeURIComponent(c.filename)}'">
+      const ot = originType(c.origin);
+      const hidden = !showAll && !_llmOriginFilter.has(ot);
+      h += `<tr data-origin-type="${esc(ot)}" ${hidden?'style="display:none"':''} onclick="location.hash='#/session/${jobName}/llm/${encodeURIComponent(c.filename)}'">
         <td style="font-family:var(--mono);font-size:12px;color:var(--text-dimmer)">${esc(c.time)}</td>
         <td class="origin">${esc(c.origin)}</td>
         <td class="model">${esc(c.model||'')}</td>
@@ -582,16 +697,29 @@ async function renderLLMDetail(jobName, filename) {
   const msgs = data.messages || [];
   msgs.forEach((m, i) => _msgContents.set(i, m.content || ''));
 
-  // Sidebar
+  // Sidebar with origin filter
   let sidebar = '<div class="llm-sidebar">';
+  const sidebarOrigins = [...new Set(_currentCalls.map(c => originType(c.origin)).filter(Boolean))];
+  const sbShowAll = _llmOriginFilter.size === 0;
+  if (sidebarOrigins.length > 1) {
+    sidebar += '<div class="llm-sidebar-filters">';
+    sidebar += `<span class="pill ${sbShowAll?'active':''}" style="padding:3px 10px;font-size:10px" data-origin="all" onclick="filterLLMCalls('all')">All</span>`;
+    for (const o of sidebarOrigins) {
+      sidebar += `<span class="pill ${_llmOriginFilter.has(o)?'active':''}" style="padding:3px 10px;font-size:10px" data-origin="${esc(o)}" onclick="filterLLMCalls('${esc(o)}')">${esc(o)}</span>`;
+    }
+    sidebar += '</div>';
+  }
+  sidebar += '<div class="llm-sidebar-list">';
   for (const c of _currentCalls) {
     const isActive = c.filename === filename;
-    sidebar += `<div class="llm-sidebar-item ${isActive?'active':''}" onclick="location.hash='#/session/${jobName}/llm/${encodeURIComponent(c.filename)}'" ${isActive?'id="active-sidebar-item"':''}>
+    const ot = originType(c.origin);
+    const hidden = !sbShowAll && !_llmOriginFilter.has(ot);
+    sidebar += `<div class="llm-sidebar-item ${isActive?'active':''}" ${hidden?'style="display:none"':''} onclick="location.hash='#/session/${jobName}/llm/${encodeURIComponent(c.filename)}'" ${isActive?'id="active-sidebar-item"':''}>
       <span class="sb-time">${esc(c.time)}</span>
       <span class="sb-origin">${esc(c.origin)}</span>
     </div>`;
   }
-  sidebar += '</div>';
+  sidebar += '</div></div>';
 
   // Main content
   let main = `<div class="llm-main">
@@ -602,7 +730,7 @@ async function renderLLMDetail(jobName, filename) {
       <span style="color:var(--text-dimmer);margin-left:8px">${msgs.length} msgs</span>
     </div>
     <div style="font-size:12px;color:var(--text-dim);margin-bottom:12px">${esc(data.model||'')} &middot; ${esc(data.cache_status||'')}</div>
-    <div class="msg-thread">`;
+    <div class="msg-thread" id="llm-message-thread">`;
 
   for (let i = 0; i < msgs.length; i++) {
     const m = msgs[i];
@@ -703,13 +831,20 @@ async function renderLLMDetail(jobName, filename) {
     if (cached) main += `<div>Cached: <span>${cached.toLocaleString()}</span></div>`;
     main += '</div>';
   }
+  main += '<div id="llm-message-end"></div>';
   main += '</div>';
 
   el.innerHTML = `<div class="llm-layout">${sidebar}${main}</div>`;
 
-  // Scroll active sidebar item into view
+  // Scroll active sidebar item into view within its scroll container
   const activeEl = document.getElementById('active-sidebar-item');
-  if (activeEl) activeEl.scrollIntoView({ block: 'center', behavior: 'instant' });
+  if (activeEl) {
+    const listEl = activeEl.closest('.llm-sidebar-list');
+    if (listEl) {
+      const itemTop = activeEl.offsetTop - listEl.offsetTop;
+      listEl.scrollTop = itemTop - listEl.clientHeight / 2 + activeEl.clientHeight / 2;
+    }
+  }
 
   // Syntax-highlight all code blocks in tool calls
   if (window.Prism) {
@@ -717,6 +852,15 @@ async function renderLLMDetail(jobName, filename) {
       Prism.highlightElement(el);
     });
   }
+
+  // Scroll the main trace area to the final rendered message after layout settles
+  const scrollTraceToEnd = () => {
+    const endEl = document.getElementById('llm-message-end');
+    const lastMsg =
+      document.querySelector('#llm-message-thread .msg-bubble:last-child') || endEl;
+    (lastMsg || endEl)?.scrollIntoView({ block: 'end', behavior: 'auto' });
+  };
+  requestAnimationFrame(() => requestAnimationFrame(scrollTraceToEnd));
 }
 
 function toggleMsg(idx) {

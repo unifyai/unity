@@ -25,6 +25,7 @@ import subprocess
 import sys
 import tarfile
 import tempfile
+import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
@@ -43,6 +44,8 @@ GKE_CLUSTER = "unity"
 GCS_BUCKET = "gs://unity-pod-logs/unknown"
 ORCHESTRA_URL = "https://api.unify.ai/v0"
 GCLOUD = shutil.which("gcloud") or "gcloud"
+POD_LOG_COPY_TIMEOUT_SECONDS = 900
+POD_LOG_COPY_MAX_RETRIES = 3
 
 # ---------------------------------------------------------------------------
 # Logging helpers
@@ -505,34 +508,60 @@ def download_gcs_pod_log(job_name: str, gcs_prefix: str, session_dir: Path) -> b
     if not tar_files:
         return False
 
+    downloaded_any = False
     with tempfile.TemporaryDirectory() as tmpdir:
         for tar_url in tar_files:
             tar_name = tar_url.rsplit("/", 1)[-1]
             local_tar = Path(tmpdir) / tar_name
-            dl = subprocess.run(
-                [
-                    GCLOUD,
-                    "storage",
-                    "cp",
-                    tar_url,
-                    str(local_tar),
-                    f"--project={GCP_PROJECT}",
-                ],
-                capture_output=True,
-                text=True,
-                timeout=120,
-            )
-            if dl.returncode != 0:
+            copied = False
+            for attempt in range(1, POD_LOG_COPY_MAX_RETRIES + 1):
+                try:
+                    dl = subprocess.run(
+                        [
+                            GCLOUD,
+                            "storage",
+                            "cp",
+                            tar_url,
+                            str(local_tar),
+                            f"--project={GCP_PROJECT}",
+                        ],
+                        capture_output=True,
+                        text=True,
+                        timeout=POD_LOG_COPY_TIMEOUT_SECONDS,
+                    )
+                except subprocess.TimeoutExpired:
+                    warn(
+                        f"  Pod log copy timed out for {job_name} ({tar_name}) "
+                        f"attempt {attempt}/{POD_LOG_COPY_MAX_RETRIES}",
+                    )
+                    if attempt < POD_LOG_COPY_MAX_RETRIES:
+                        time.sleep(min(5 * attempt, 15))
+                    continue
+
+                if dl.returncode == 0:
+                    copied = True
+                    break
+
+                warn(
+                    f"  Pod log copy failed for {job_name} ({tar_name}) "
+                    f"attempt {attempt}/{POD_LOG_COPY_MAX_RETRIES}: "
+                    f"{dl.stderr[:200]}",
+                )
+                if attempt < POD_LOG_COPY_MAX_RETRIES:
+                    time.sleep(min(5 * attempt, 15))
+
+            if not copied:
                 continue
             pod_dir.mkdir(parents=True, exist_ok=True)
             try:
                 with tarfile.open(local_tar, "r:gz") as tf:
                     tf.extractall(path=pod_dir, filter="data")
                 ok(f"  Pod logs: {job_name}")
+                downloaded_any = True
             except Exception as e:
                 warn(f"  Extract failed for {tar_name}: {e}")
                 return False
-    return True
+    return downloaded_any
 
 
 def download_all_gcs_pod_logs(
@@ -560,6 +589,16 @@ def download_all_gcs_pod_logs(
     total = sum(1 for v in gcs_mapping.values() if v is not None)
     ok(f"GCS pod logs: {succeeded}/{total} downloaded")
     return results
+
+
+def _has_cloud_log(session_dir: Path) -> bool:
+    cl_file = session_dir / "cloud_logging.txt"
+    return cl_file.exists() and cl_file.stat().st_size > 100
+
+
+def _has_pod_logs(session_dir: Path) -> bool:
+    pod_dir = session_dir / "pod_logs"
+    return pod_dir.exists() and any(pod_dir.iterdir())
 
 
 # ---------------------------------------------------------------------------
@@ -711,15 +750,28 @@ def main():
         info(f"{len(new_jobs)} new session(s), {skipped} already on disk")
     else:
         info(f"All {len(job_names)} sessions already downloaded -- checking for gaps")
-        new_jobs = job_names
+    cloud_jobs = [
+        jn
+        for jn in job_names
+        if jn in new_jobs or not _has_cloud_log(out / "sessions" / jn)
+    ]
+    pod_jobs = [
+        jn
+        for jn in job_names
+        if jn in new_jobs or not _has_pod_logs(out / "sessions" / jn)
+    ]
+    info(
+        f"Need Cloud Logging for {len(cloud_jobs)} session(s); "
+        f"pod logs for {len(pod_jobs)} session(s)",
+    )
     print()
 
     # Step 4: cloud logging
-    cl_results = download_all_cloud_logging(new_jobs, out)
+    cl_results = download_all_cloud_logging(cloud_jobs, out)
     print()
 
     # Step 5: GCS pod logs
-    gcs_mapping = list_gcs_pod_logs(new_jobs)
+    gcs_mapping = list_gcs_pod_logs(pod_jobs)
     gcs_results = download_all_gcs_pod_logs(gcs_mapping, out)
     print()
 
@@ -752,6 +804,13 @@ def main():
     print(f"  Size:       {total_size / 1024 / 1024:.1f} MB")
     if new_jobs and new_jobs != job_names:
         print(f"  New:        {len(new_jobs)}")
+    missing_pod_jobs = [jn for jn in job_names if not gcs_results.get(jn, False)]
+    if missing_pod_jobs:
+        print(f"  Missing pod logs: {len(missing_pod_jobs)}")
+        for jn in missing_pod_jobs[:10]:
+            print(f"    - {jn}")
+        if len(missing_pod_jobs) > 10:
+            print(f"    ... and {len(missing_pod_jobs) - 10} more")
     print("=" * 60)
     print()
 

@@ -328,7 +328,7 @@ class EventBus:
     last_publish_monotonic: float = 0.0
 
     # ── Pub/Sub streaming for Live Actions ────────────────────────────────
-    _GCP_PROJECT = "responsive-city-458413-a2"
+    _GCP_PROJECT: str | None = None
     _ACTION_EVENT_TYPES = frozenset({"ManagerMethod", "ToolLoop"})
     _pubsub_publisher = None
     _pubsub_streaming_enabled: bool | None = None
@@ -998,6 +998,9 @@ class EventBus:
             agent_id = str(SESSION_DETAILS.assistant.agent_id)
             env_suffix = SETTINGS.ENV_SUFFIX if agent_id is not None else ""
             topic_name = f"unity-{agent_id}{env_suffix}"
+
+            if EventBus._GCP_PROJECT is None:
+                EventBus._GCP_PROJECT = SETTINGS.GCP_PROJECT_ID
 
             publisher = self._get_pubsub_publisher()
             topic_path = publisher.topic_path(self._GCP_PROJECT, topic_name)

@@ -1171,6 +1171,89 @@ class TestLimitBoundary:
 
 
 # ===========================================================================
+# Part 4b: Credit Balance Gating (unit tests)
+# ===========================================================================
+
+
+class TestCreditBalanceGating:
+    """Tests for credit balance gating in check_spending_limits_callback.
+
+    The spending limit callback piggybacks credit_balance from the admin spend
+    endpoints.  When credit_balance <= 0, the callback must deny the request.
+    This mirrors the Vantage bug fix: after a deduction drives the balance
+    negative, subsequent LLM calls should be blocked.
+    """
+
+    async def _run_callback_with_credit_balance(
+        self, credit_balance, cumulative_spend=10.0, limit=100.0
+    ):
+        """Helper: invoke the callback with a mocked spend response that
+        includes the given credit_balance."""
+        from unity.spending_limits import check_spending_limits_callback
+
+        mock_response = MagicMock()
+        mock_response.json.return_value = {
+            "cumulative_spend": cumulative_spend,
+            "limit": limit,
+            "credit_balance": credit_balance,
+        }
+        mock_response.raise_for_status = MagicMock()
+
+        with patch("unity.spending_limits._get_api_key", return_value="test-key"):
+            with patch(
+                "unity.spending_limits._get_base_url",
+                return_value="http://test/v0",
+            ):
+                with patch("unity.session_details.SESSION_DETAILS") as mock_session:
+                    mock_session.assistant.agent_id = 123
+                    mock_session.user_id = "user_456"
+                    mock_session.org_id = None
+                    mock_session.assistant.timezone = "UTC"
+
+                    with patch(
+                        "unity.spending_limits._get_http_client",
+                    ) as mock_get_client:
+                        mock_instance = MagicMock()
+                        mock_instance.get = AsyncMock(return_value=mock_response)
+                        mock_get_client.return_value = mock_instance
+
+                        request = LimitCheckRequest(model="gpt-4", endpoint="test")
+                        return await check_spending_limits_callback(request)
+
+    @pytest.mark.asyncio
+    async def test_positive_balance_allows(self):
+        """Positive credit balance should allow the request."""
+        response = await self._run_callback_with_credit_balance(10.0)
+        assert response.allowed is True
+
+    @pytest.mark.asyncio
+    async def test_tiny_positive_balance_allows(self):
+        """Tiny residual positive balance ($0.004) should allow the request."""
+        response = await self._run_callback_with_credit_balance(0.004128)
+        assert response.allowed is True
+
+    @pytest.mark.asyncio
+    async def test_zero_balance_denies(self):
+        """Zero credit balance should deny the request."""
+        response = await self._run_callback_with_credit_balance(0.0)
+        assert response.allowed is False
+        assert "Insufficient credits" in response.reason
+
+    @pytest.mark.asyncio
+    async def test_negative_balance_denies(self):
+        """Negative credit balance should deny the request."""
+        response = await self._run_callback_with_credit_balance(-0.065448)
+        assert response.allowed is False
+        assert "Insufficient credits" in response.reason
+
+    @pytest.mark.asyncio
+    async def test_null_balance_allows(self):
+        """When credit_balance is None (spend endpoints unreachable or no
+        billing account), the credit check is skipped — fail-open."""
+        response = await self._run_callback_with_credit_balance(None)
+        assert response.allowed is True
+
+# ===========================================================================
 # Part 5: E2E Tests (require Orchestra)
 # ===========================================================================
 # These tests require a running Orchestra server and make real API calls.
@@ -1989,6 +2072,7 @@ class TestE2ESpendingLimits:
                 user_first_name="Test",
                 user_surname="User",
             )
+
 
 
 # ===========================================================================
