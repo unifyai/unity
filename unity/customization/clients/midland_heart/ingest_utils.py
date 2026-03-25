@@ -7,12 +7,14 @@ and progress reporter creation used by both ``ingest_fm.py`` and
 
 from __future__ import annotations
 
-import json
 import logging
 import os
 import sys
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from unity.customization.types.pipeline_config import PipelineConfig
 
 logger = logging.getLogger(__name__)
 
@@ -160,8 +162,8 @@ def load_pipeline_config(
     config_path: Optional[str] = None,
     *,
     project_root: Optional[Path] = None,
-) -> Dict[str, Any]:
-    """Load and resolve the shared pipeline JSON config.
+) -> "PipelineConfig":
+    """Load, validate, and resolve the shared pipeline JSON config.
 
     Parameters
     ----------
@@ -169,41 +171,25 @@ def load_pipeline_config(
         Path to the JSON file. If None, defaults to ``pipeline_config.json``
         in the same directory as this module.
     project_root : Path | None
-        Project root for resolving relative ``source_files[].file_path``
-        entries. Defaults to ``get_project_root()``.
+        Project root for resolving relative ``file_path`` entries.
+        Defaults to ``get_project_root()``.
 
     Returns
     -------
-    dict
-        The parsed config with resolved file paths.
+    PipelineConfig
+        A validated, path-resolved configuration object.
     """
+    from unity.customization.types.pipeline_config import PipelineConfig
+
     if config_path is None:
         config_path = str(Path(__file__).parent / "pipeline_config.json")
 
-    config_file = Path(config_path).expanduser().resolve()
-    if not config_file.exists():
-        raise FileNotFoundError(f"Config file not found: {config_file}")
-
-    with open(config_file, "r", encoding="utf-8") as f:
-        config = json.load(f)
+    config = PipelineConfig.from_file(config_path)
 
     root = project_root or get_project_root()
+    config.resolve_paths(root)
 
-    def _resolve(rel: str) -> str:
-        p = Path(rel)
-        return str(root / p) if not p.is_absolute() else rel
-
-    for entry in config.get("source_files", []):
-        entry["file_path"] = _resolve(entry["file_path"])
-
-    for spec in config.get("embed", {}).get("file_specs", []):
-        spec["file_path"] = _resolve(spec["file_path"])
-
-    ingest_cfg = config.get("ingest", {})
-    for fc in ingest_cfg.get("business_contexts", {}).get("file_contexts", []):
-        fc["file_path"] = _resolve(fc["file_path"])
-
-    logger.info("Loaded pipeline config from %s", config_file)
+    logger.info("Loaded pipeline config from %s", config_path)
     return config
 
 

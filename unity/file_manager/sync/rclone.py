@@ -77,6 +77,7 @@ host = {self.config.ssh_host}
 port = {self.config.ssh_port}
 user = {self.config.ssh_user}
 key_file = {self.config.ssh_key_path}
+set_modtime = false
 """
                 Path(self._config_path).write_text(rclone_config)
                 LOGGER.debug(
@@ -140,6 +141,7 @@ key_file = {self.config.ssh_key_path}
                 "--max-delete",
                 str(self.config.max_delete_percent),
                 "--no-update-modtime",
+                "--no-update-dir-modtime",
                 *self._exclude_args(),
                 "-v",
             ]

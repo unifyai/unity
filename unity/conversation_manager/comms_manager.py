@@ -40,6 +40,7 @@ from unity.conversation_manager.assistant_jobs import mark_job_label
 from unity.conversation_manager.domains.comms_utils import (
     add_email_attachments,
     add_unify_message_attachments,
+    publish_system_error,
 )
 from unity.conversation_manager.events import *
 from unity.conversation_manager.metrics import pubsub_e2e_latency
@@ -63,7 +64,7 @@ if TYPE_CHECKING:
 
 
 # Subscription IDs
-project_id = "responsive-city-458413-a2"
+project_id = SETTINGS.GCP_PROJECT_ID
 startup_subscription_id = "unity-startup" + SETTINGS.ENV_SUFFIX + "-sub"
 
 
@@ -843,6 +844,11 @@ class CommsManager:
                 self._ack_with_latency(message, publish_timestamp, topic)
         except Exception as e:
             LOGGER.error(f"{DEFAULT_ICON} Error processing message: {e}")
+            publish_system_error(
+                "An internal error occurred while processing a message. "
+                "The assistant may not have received your last message.",
+                error_type="message_failed",
+            )
             message.ack()
 
     def subscribe_to_topic(self, subscription_id: str, max_messages: int | None = None):

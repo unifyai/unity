@@ -86,6 +86,14 @@ class ProductionSettings(BaseSettings):
     ORCHESTRA_URL: str = "https://api.unify.ai/v0"
 
     # ─────────────────────────────────────────────────────────────────────────
+    # GCP Project
+    # ─────────────────────────────────────────────────────────────────────────
+    # GCP project ID for Pub/Sub topics and subscriptions. Override via
+    # GCP_PROJECT_ID env var for local development with the Pub/Sub emulator
+    # (e.g. "local-test-project" to match Communication's local.sh).
+    GCP_PROJECT_ID: str = "responsive-city-458413-a2"
+
+    # ─────────────────────────────────────────────────────────────────────────
     # Logging / Observability
     # ─────────────────────────────────────────────────────────────────────────
     PYTEST_LOG_TO_FILE: bool = True

@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Ingest Midland Heart spreadsheets via the FileManager pipeline.
 
-Reads ``pipeline_config.json``, translates it into a ``FilePipelineConfig``,
-and calls ``FileManager.ingest_files()``.  Telemetry is handled internally
-by the FM pipeline via its ``DiagnosticsConfig``.
+Reads ``pipeline_config.json``, translates it into a ``FilePipelineConfig``
+via :meth:`PipelineConfig.to_fm_config`, and calls
+``FileManager.ingest_files()``.  Telemetry is handled internally by the
+FM pipeline via its ``DiagnosticsConfig``.
 
 Usage::
 
@@ -15,59 +16,11 @@ Usage::
 from __future__ import annotations
 
 import argparse
-import json
 import logging
 import sys
-import tempfile
 import time
-from pathlib import Path
-from typing import Any, Dict
 
 logger = logging.getLogger(__name__)
-
-
-def _build_fm_config_json(config: Dict[str, Any], args: argparse.Namespace) -> str:
-    """Build a temporary JSON string with only FM-relevant sections.
-
-    Applies CLI overrides for diagnostics, execution, etc.
-    """
-    fm_sections: Dict[str, Any] = {}
-
-    if "ingest" in config:
-        fm_sections["ingest"] = config["ingest"]
-
-    if "embed" in config:
-        fm_sections["embed"] = dict(config["embed"])
-    if args.no_embed:
-        fm_sections.setdefault("embed", {})["strategy"] = "off"
-
-    if "execution" in config:
-        fm_sections["execution"] = dict(config["execution"])
-    else:
-        fm_sections["execution"] = {}
-
-    if args.parallel:
-        fm_sections["execution"]["parallel_files"] = True
-
-    if "retry" in config:
-        fm_sections["retry"] = config["retry"]
-
-    # Diagnostics -- always enable progress, apply CLI overrides
-    diag = dict(config.get("diagnostics", {}))
-    diag["enable_progress"] = True
-    if args.verbosity:
-        diag["verbosity"] = args.verbosity
-    if args.progress_file:
-        diag["progress_file"] = args.progress_file
-    fm_sections["diagnostics"] = diag
-
-    if "parse" in config:
-        fm_sections["parse"] = config["parse"]
-
-    if "output" in config:
-        fm_sections["output"] = config["output"]
-
-    return json.dumps(fm_sections)
 
 
 def main() -> int:
@@ -144,33 +97,29 @@ def main() -> int:
     logger.info("Run directory: %s", run_dir)
     start_time = time.perf_counter()
 
-    # Load shared config
+    # Load shared config (strongly typed)
     config = load_pipeline_config(args.config, project_root=project_root)
 
     # Collect file paths from source_files
-    file_paths = [entry["file_path"] for entry in config["source_files"]]
+    file_paths = [sf.file_path for sf in config.source_files]
     logger.info("Source files: %s", file_paths)
 
     # Activate project
     activate_project(args.project, overwrite=args.overwrite)
 
-    # Build FM config JSON and write to a temp file so FilePipelineConfig.from_file can parse it
-    fm_json = _build_fm_config_json(config, args)
-    with tempfile.NamedTemporaryFile(
-        mode="w",
-        suffix=".json",
-        delete=False,
-        prefix="fm_config_",
-    ) as tmp:
-        tmp.write(fm_json)
-        tmp_path = tmp.name
+    # Produce a FilePipelineConfig from the unified schema, then apply
+    # CLI overrides directly on the typed object (no JSON round-trip).
+    cfg = config.to_fm_config()
 
-    try:
-        from unity.file_manager.types.config import FilePipelineConfig
-
-        cfg = FilePipelineConfig.from_file(tmp_path)
-    finally:
-        Path(tmp_path).unlink(missing_ok=True)
+    if args.no_embed:
+        cfg.embed.strategy = "off"
+    if args.parallel:
+        cfg.execution.parallel_files = True
+    cfg.diagnostics.enable_progress = True
+    if args.verbosity:
+        cfg.diagnostics.verbosity = args.verbosity
+    if args.progress_file:
+        cfg.diagnostics.progress_file = args.progress_file
 
     logger.info(
         "FM config: parallel=%s, embed_strategy=%s, progress=%s",

@@ -132,6 +132,9 @@ if [ "$MINIMAL" = false ]; then
     # Media processing
     apt-get install -y --no-install-recommends ffmpeg
 
+    # Document conversion (headless LibreOffice for office document → PDF)
+    apt-get install -y --no-install-recommends libreoffice-nogui
+
     # Filesystem utilities (for AppImage support)
     apt-get install -y --no-install-recommends \
         fuse3 \
