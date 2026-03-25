@@ -235,6 +235,7 @@ def create_global_secrets(api_client, namespace="default"):
             "UNITY_WEB_TAVILY_API_KEY",
             "ORCHESTRA_ADMIN_KEY",
             "VERTEXAI_CREDENTIALS",
+            "SHARED_UNIFY_KEY",
         ]
 
         print("🔐 Fetching secrets from GCP Secret Manager...")
