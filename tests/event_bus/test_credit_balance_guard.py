@@ -796,3 +796,64 @@ class TestZeroLatencyOverhead:
                 )
 
         assert call_count == 3  # assistant + member + org, no extra call
+
+
+# ---------------------------------------------------------------------------
+# Sub-penny balance deadlock scenario (documents the Vantage production case)
+# ---------------------------------------------------------------------------
+
+
+class TestSubPennyBalanceDeadlock:
+    """Verify the pre-flight check contract around near-zero balances.
+
+    When deductions work correctly, the balance goes negative after
+    overdraft, and the ``credit_balance <= 0`` check blocks further
+    calls.  If deductions fail silently the balance stays frozen at a
+    sub-penny positive value and the check never fires — this is the
+    deadlock that the ``_safe_deduct_credits`` wrapper in UniLLM
+    addresses by making failures visible.
+    """
+
+    @pytest.mark.asyncio
+    async def test_sub_penny_balance_allows(self):
+        """A sub-penny positive balance (e.g. $0.0008) is still > 0 and must allow."""
+        from unity.spending_limits import check_spending_limits_callback
+
+        resp = _make_spend_response(credit_balance=0.0007923)
+        with _patch_context():
+            with _patch_http(resp):
+                result = await check_spending_limits_callback(
+                    LimitCheckRequest(model="gpt-4", endpoint="test"),
+                )
+
+        assert result.allowed is True
+
+    @pytest.mark.asyncio
+    async def test_exact_zero_blocks(self):
+        """A balance of exactly 0.0 must be caught by the <= 0 gate."""
+        from unity.spending_limits import check_spending_limits_callback
+
+        resp = _make_spend_response(credit_balance=0.0)
+        with _patch_context():
+            with _patch_http(resp):
+                result = await check_spending_limits_callback(
+                    LimitCheckRequest(model="gpt-4", endpoint="test"),
+                )
+
+        assert result.allowed is False
+        assert "insufficient credits" in result.reason.lower()
+
+    @pytest.mark.asyncio
+    async def test_negative_from_overdraft_blocks(self):
+        """After a successful overdraft deduction the balance is negative and must block."""
+        from unity.spending_limits import check_spending_limits_callback
+
+        resp = _make_spend_response(credit_balance=-0.0492077)
+        with _patch_context():
+            with _patch_http(resp):
+                result = await check_spending_limits_callback(
+                    LimitCheckRequest(model="gpt-4", endpoint="test"),
+                )
+
+        assert result.allowed is False
+        assert "insufficient credits" in result.reason.lower()
