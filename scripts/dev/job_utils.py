@@ -161,11 +161,16 @@ def _find_latest_job_entry(
         limit=20,
     )
 
+    _NON_PROD_SUFFIXES = ("-staging", "-preview")
+
     for log in logs:
         job_name = log.entries.get("job_name")
         if not job_name:
             continue
-        if not job_name.endswith(f"-{namespace}"):
+        if namespace == "production":
+            if any(job_name.endswith(s) for s in _NON_PROD_SUFFIXES):
+                continue
+        elif not job_name.endswith(f"-{namespace}"):
             continue
         running = is_job_name_running(job_name, namespace)
         if running_only and not running:
