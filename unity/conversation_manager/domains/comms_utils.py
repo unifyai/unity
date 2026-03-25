@@ -3,6 +3,7 @@ import json
 import asyncio
 import aiohttp
 import os
+from datetime import datetime, timezone
 from pathlib import Path
 
 from unity.logger import LOGGER
@@ -155,6 +156,75 @@ def publish_system_error(error_message: str, error_type: str = "unknown") -> Non
         )
     except Exception as e:
         LOGGER.error(f"{ICONS['comms_outbound']} Failed to publish system error: {e}")
+
+    publish_discord_alert(
+        title=f"System Error — Assistant '{SESSION_DETAILS.assistant.name}' (ID: {agent_id})",
+        description=error_message,
+        severity="error",
+    )
+
+
+_GCP_PROJECT = "responsive-city-458413-a2"
+
+
+def publish_discord_alert(
+    title: str,
+    description: str,
+    severity: str = "error",
+    traceback_str: str | None = None,
+    extra_fields: dict | None = None,
+) -> None:
+    """Publish an alert to the discord-alerts Pub/Sub topic.
+
+    Synchronous, fire-and-forget with a 5s timeout — safe to call from
+    signal handlers and thread-pool callbacks.
+
+    No-op when running outside production or when no assistant is assigned.
+    """
+    if SETTINGS.DEPLOY_ENV != "production":
+        return
+
+    agent_id = SESSION_DETAILS.assistant.agent_id
+    if agent_id is None:
+        return
+
+    topic_name = "discord-alerts"
+
+    fields = {
+        "assistant_id": str(agent_id),
+        "assistant_name": SESSION_DETAILS.assistant.name,
+        "job_name": SETTINGS.conversation.JOB_NAME,
+        "user_name": SESSION_DETAILS.user.name,
+    }
+    if extra_fields:
+        fields.update(extra_fields)
+
+    message = {
+        "title": title,
+        "description": description,
+        "severity": severity,
+        "source": "unity",
+        "environment": SETTINGS.DEPLOY_ENV,
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "fields": fields,
+    }
+    if traceback_str:
+        message["traceback"] = traceback_str
+
+    try:
+        publisher = _get_publisher()
+        topic_path = publisher.topic_path(_GCP_PROJECT, topic_name)
+        future = publisher.publish(
+            topic_path,
+            json.dumps(message).encode("utf-8"),
+            source="unity",
+            severity=severity,
+            environment=SETTINGS.DEPLOY_ENV,
+        )
+        future.result(timeout=5)
+        LOGGER.debug(f"{ICONS['comms_outbound']} Published Discord alert: {title}")
+    except Exception as e:
+        LOGGER.error(f"{ICONS['comms_outbound']} Failed to publish Discord alert: {e}")
 
 
 async def complete_api_message(
