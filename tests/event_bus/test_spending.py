@@ -1253,6 +1253,7 @@ class TestCreditBalanceGating:
         response = await self._run_callback_with_credit_balance(None)
         assert response.allowed is True
 
+
 # ===========================================================================
 # Part 5: E2E Tests (require Orchestra)
 # ===========================================================================
@@ -2072,7 +2073,6 @@ class TestE2ESpendingLimits:
                 user_first_name="Test",
                 user_surname="User",
             )
-
 
 
 # ===========================================================================
