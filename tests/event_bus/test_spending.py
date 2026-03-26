@@ -1185,7 +1185,10 @@ class TestCreditBalanceGating:
     """
 
     async def _run_callback_with_credit_balance(
-        self, credit_balance, cumulative_spend=10.0, limit=100.0
+        self,
+        credit_balance,
+        cumulative_spend=10.0,
+        limit=100.0,
     ):
         """Helper: invoke the callback with a mocked spend response that
         includes the given credit_balance."""
@@ -1252,6 +1255,7 @@ class TestCreditBalanceGating:
         billing account), the credit check is skipped — fail-open."""
         response = await self._run_callback_with_credit_balance(None)
         assert response.allowed is True
+
 
 # ===========================================================================
 # Part 5: E2E Tests (require Orchestra)
@@ -2072,7 +2076,6 @@ class TestE2ESpendingLimits:
                 user_first_name="Test",
                 user_surname="User",
             )
-
 
 
 # ===========================================================================
