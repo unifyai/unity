@@ -47,6 +47,12 @@ class FileParserSettings(BaseSettings):
     # Model repo used by Docling's picture description pipeline.
     PICTURE_DESCRIPTION_MODEL_REPO: str = "HuggingFaceTB/SmolVLM-500M-Instruct"
 
+    # Docling's built-in per-document conversion timeout (PDF pipeline only).
+    # When exceeded, Docling stops processing and returns partial results with
+    # PARTIAL_SUCCESS status — no crash, no hang, just fewer pages extracted.
+    # Set to None to disable.  Recommended: 300s for production.
+    DOCLING_DOCUMENT_TIMEOUT: float | None = 300.0
+
     # ---------------------------------------------------------------------
     # Optional NLP utilities
     # ---------------------------------------------------------------------
@@ -55,7 +61,8 @@ class FileParserSettings(BaseSettings):
     # ---------------------------------------------------------------------
     # Diagnostics / debugging
     # ---------------------------------------------------------------------
-    SAVE_PARSED_RESULTS: bool = False  # replaces UNITY_SAVE_PARSED_RESULTS usage
+    SAVE_PARSED_RESULTS: bool = False
+    PARSED_RESULTS_DIR: str = "logs/parsed_results"
 
     model_config = SettingsConfigDict(
         env_file=".env",
