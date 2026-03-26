@@ -18,6 +18,18 @@ from unity.common.token_utils import (
 )
 
 
+def _post_process_summary(text: str) -> str:
+    """Final cleanup of LLM-generated summaries before storage and embedding.
+
+    LLMs sometimes emit literal escape sequences (``\\n``, ``\\t``) rather than
+    real whitespace.  Decoding them improves downstream embedding quality because
+    tokenizers handle actual whitespace more naturally than backslash-prefixed
+    character pairs.
+    """
+    text = text.replace("\\n", "\n").replace("\\t", "\t").replace("\\r", "")
+    return text.strip()
+
+
 def _build_compression_directive(
     previous_tokens: int,
     max_tokens: int,
@@ -98,8 +110,8 @@ def generate_summary_with_compression(
                 combined = summary_text + "\n\n" + (post_generation_ctx or "")
                 combined_tokens = int(count_tokens_per_utf_byte(combined))
                 if combined_tokens <= max_tokens:
-                    return combined
-            return summary_text
+                    return _post_process_summary(combined)
+            return _post_process_summary(summary_text)
 
         directive = _build_compression_directive(
             previous_tokens=est_tokens,
@@ -108,4 +120,6 @@ def generate_summary_with_compression(
         )
 
     # Final fallback: clip to the embedding limit (never throw)
-    return clip_text_to_token_limit(summary_text or "", max_tokens, enc)
+    return _post_process_summary(
+        clip_text_to_token_limit(summary_text or "", max_tokens, enc),
+    )
