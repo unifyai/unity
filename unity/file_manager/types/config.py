@@ -37,11 +37,59 @@ class ParseConfig(BaseModel):
     Backends can be overridden per file format by providing dotted class paths.
     This enables swapping an entire implementation set OR a single format backend
     (e.g., swap XLSX only) without changing FileParser code.
+
+    Memory-bounded scheduling
+    -------------------------
+    When ``subprocess_isolation`` is enabled, files are classified as "heavy" or
+    "light" based on their on-disk size and a configurable expansion factor.
+    Heavy files are parsed one at a time (serialised) while light files are
+    parsed concurrently — all within isolated subprocesses so arena-fragmented
+    memory is reclaimed by the OS when each child exits.
+
+    Thresholds are expressed as **fractions of total system RAM** (via
+    ``psutil.virtual_memory().total``) so they adapt automatically across local
+    machines, CI runners, and cloud containers with varying memory.
     """
 
     # Controls parse-stage parallelism (number of files processed concurrently).
     # The FileParser enforces a conservative upper bound even if the config asks for more.
     max_concurrent_parses: int = 3
+
+    # When True, each file is parsed in an isolated child process.  This
+    # guarantees that memory allocated by the parser (especially Docling /
+    # openpyxl arena fragments) is fully returned to the OS when the child
+    # exits, preventing unbounded RSS growth across large batches.
+    subprocess_isolation: bool = True
+
+    # A file is "heavy" when  file_size * expansion_factor  exceeds
+    # heavy_file_memory_pct * total_system_ram.  Heavy files are serialised
+    # (one subprocess at a time) to prevent concurrent OOM.
+    heavy_file_memory_pct: float = 0.25
+    expansion_factor: float = 300.0
+
+    # Per-subprocess virtual-address-space cap expressed as a fraction of total
+    # system RAM.  Applied via resource.setrlimit(RLIMIT_AS, ...) on Linux.
+    # Disabled by default because RLIMIT_AS limits *virtual* address space
+    # (not RSS), and Python + Docling routinely map 4–8 GB of virtual memory
+    # even when RSS is well under 1 GB.  Enable and tune this only in
+    # environments where you have measured the baseline virtual footprint.
+    max_subprocess_memory_pct: Optional[float] = None
+
+    # Maximum wall-clock seconds to wait for a single subprocess parse to
+    # finish.  If a child process hangs (e.g., MemoryError leaves it wedged),
+    # the parent will time out, kill the stuck worker, reset the pool, and
+    # continue processing remaining files instead of hanging indefinitely.
+    # This is the *base* timeout; the effective per-file timeout is:
+    #   max(parse_timeout_seconds, file_size_mb * timeout_seconds_per_mb)
+    # so large files automatically get proportionally more time.
+    parse_timeout_seconds: float = 600.0
+
+    # Scaling factor for adaptive per-file timeout.  Large files legitimately
+    # need more wall-clock time (e.g., a 50 MB XLSX might need 25 minutes).
+    # The effective timeout is  max(parse_timeout_seconds, file_size_mb * this).
+    # Set to 0 to disable adaptive scaling and use parse_timeout_seconds as a
+    # flat cap for all files.
+    timeout_seconds_per_mb: float = 30.0
 
     # format -> dotted class path (e.g. "xlsx" -> "pkg.module.CustomExcelBackend")
     backend_class_paths_by_format: Dict[str, str] = Field(
@@ -358,15 +406,33 @@ class FilePipelineConfig(BaseModel):
 
         # Parse config
         if config_file.parse:
-            if "max_concurrent_parses" in config_file.parse:
-                cfg.parse.max_concurrent_parses = int(
-                    config_file.parse["max_concurrent_parses"],
-                )
-            elif "batch_size" in config_file.parse:
+            p = config_file.parse
+            if "max_concurrent_parses" in p:
+                cfg.parse.max_concurrent_parses = int(p["max_concurrent_parses"])
+            elif "batch_size" in p:
                 # Back-compat alias: batch_size historically controlled parse concurrency.
-                cfg.parse.max_concurrent_parses = int(config_file.parse["batch_size"])
-            if "backend_class_paths_by_format" in config_file.parse:
-                m = config_file.parse["backend_class_paths_by_format"]
+                cfg.parse.max_concurrent_parses = int(p["batch_size"])
+            if "subprocess_isolation" in p:
+                cfg.parse.subprocess_isolation = bool(p["subprocess_isolation"])
+            if "heavy_file_memory_pct" in p:
+                cfg.parse.heavy_file_memory_pct = float(p["heavy_file_memory_pct"])
+            if "expansion_factor" in p:
+                cfg.parse.expansion_factor = float(p["expansion_factor"])
+            if "max_subprocess_memory_pct" in p:
+                val = p["max_subprocess_memory_pct"]
+                cfg.parse.max_subprocess_memory_pct = (
+                    float(val) if val is not None else None
+                )
+            if "parse_timeout_seconds" in p:
+                cfg.parse.parse_timeout_seconds = float(
+                    p["parse_timeout_seconds"],
+                )
+            if "timeout_seconds_per_mb" in p:
+                cfg.parse.timeout_seconds_per_mb = float(
+                    p["timeout_seconds_per_mb"],
+                )
+            if "backend_class_paths_by_format" in p:
+                m = p["backend_class_paths_by_format"]
                 if isinstance(m, dict):
                     cfg.parse.backend_class_paths_by_format.update(
                         {str(k): str(v) for k, v in m.items() if v},
