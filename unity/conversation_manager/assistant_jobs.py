@@ -14,6 +14,7 @@ The job-watcher operator handles crash-safe VM release independently.
 from dotenv import load_dotenv
 
 load_dotenv()
+import threading
 import time
 import traceback
 from datetime import datetime, timezone
@@ -38,6 +39,10 @@ _project_verified = False
 
 # Session start time (perf_counter), set by log_job_startup, read by mark_job_done
 _session_start_perf: float | None = None
+
+# Signalled by log_job_startup (success or failure) so that update_liveview_url
+# can wait for the record to exist before attempting to patch it.
+_log_created = threading.Event()
 
 
 def _ensure_project_exists(api_key: str) -> None:
@@ -141,6 +146,8 @@ def log_job_startup(
             f"{ICONS['assistant_jobs']} [assistant_jobs] Error creating job record: {e}",
         )
         traceback.print_exc()
+    finally:
+        _log_created.set()
 
 
 def update_liveview_url(assistant_id: str, user_id: str, liveview_url: str) -> None:
@@ -160,6 +167,13 @@ def update_liveview_url(assistant_id: str, user_id: str, liveview_url: str) -> N
 
     _ensure_project_exists(api_key)
 
+    if not _log_created.wait(timeout=60):
+        LOGGER.warning(
+            f"{ICONS['assistant_jobs']} [assistant_jobs] Timed out waiting for audit record creation; "
+            f"liveview_url update skipped",
+        )
+        return
+
     try:
         existing_logs = get_assistant_logs(
             api_key,
@@ -169,6 +183,11 @@ def update_liveview_url(assistant_id: str, user_id: str, liveview_url: str) -> N
             existing_logs[0].update_entries(liveview_url=liveview_url)
             LOGGER.debug(
                 f"{ICONS['assistant_jobs']} [assistant_jobs] Updated record with liveview_url={liveview_url}",
+            )
+        else:
+            LOGGER.warning(
+                f"{ICONS['assistant_jobs']} [assistant_jobs] No audit record found for "
+                f"assistant_id={assistant_id}, job_name={job_name}; liveview_url not persisted",
             )
     except Exception as e:
         LOGGER.error(
