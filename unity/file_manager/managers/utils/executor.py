@@ -620,6 +620,14 @@ def run_pipeline(
                 enable_progress=enable_progress,
                 verbosity=verbosity,
             )
+            # Release the heavy FileParseResult for this file so its memory
+            # (graph, tables, full_text) can be reclaimed before the next file
+            # starts.  In "full" return_mode the result model already copied
+            # what it needs; all other modes are lightweight references.
+            try:
+                parse_results[idx] = None  # type: ignore[index]
+            except (TypeError, IndexError):
+                pass
     else:
         with _TPE(max_workers=min(len(parse_results), max_workers)) as pool:
             futures = {
