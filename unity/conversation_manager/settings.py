@@ -47,6 +47,7 @@ class ConversationSettings(BaseSettings):
     CONTACT_ID: str = "1"
     BLACKLIST_CHECKS_ENABLED: bool = False
     SPEECH_URGENCY_PREEMPT_ENABLED: bool = True
+    ASSIGNMENT_POLL_INTERVAL: float = 0.5
 
     model_config = SettingsConfigDict(
         env_prefix="UNITY_CONVERSATION_",

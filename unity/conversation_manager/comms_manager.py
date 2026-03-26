@@ -54,17 +54,10 @@ load_dotenv()
 # Lock for unknown contact creation to prevent duplicates
 _unknown_contact_lock = threading.Lock()
 
-ASSIGNMENT_POLL_INTERVAL = 0.5
-
-
 if TYPE_CHECKING:
     from unity.conversation_manager.in_memory_event_broker import InMemoryEventBroker
 
     EventBroker = InMemoryEventBroker
-
-
-# Subscription IDs
-project_id = SETTINGS.GCP_PROJECT_ID
 
 
 def _get_subscription_id() -> str:
@@ -799,7 +792,7 @@ class CommsManager:
             else:
                 subscriber = pubsub_v1.SubscriberClient()
             subscription_path = subscriber.subscription_path(
-                project_id,
+                SETTINGS.GCP_PROJECT_ID,
                 subscription_id,
             )
 
@@ -849,11 +842,11 @@ class CommsManager:
 
         LOGGER.debug(
             f"{DEFAULT_ICON} Polling for assignment on {job_name} "
-            f"(interval={ASSIGNMENT_POLL_INTERVAL}s)",
+            f"(interval={SETTINGS.conversation.ASSIGNMENT_POLL_INTERVAL}s)",
         )
 
         while True:
-            await asyncio.sleep(ASSIGNMENT_POLL_INTERVAL)
+            await asyncio.sleep(SETTINGS.conversation.ASSIGNMENT_POLL_INTERVAL)
             job_data = await asyncio.to_thread(
                 read_own_job,
                 comms_url,
