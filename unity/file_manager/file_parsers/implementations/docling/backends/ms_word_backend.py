@@ -197,6 +197,8 @@ class MsWordBackend(BaseFileParserBackend):
                     step.warnings.append(f"export_to_text failed: {e}")
                     full_text = ""
 
+            del docling_doc, conv, converter, doc_index, merged_tables
+
             if built is None:
                 with traced_step(
                     trace,

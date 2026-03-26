@@ -442,6 +442,7 @@ def build_spreadsheet_graph_from_docling(
                 df = item.export_to_dataframe(doc=docling_doc)
                 columns = [str(c) for c in list(df.columns)]
                 rows = df.to_dict(orient="records")
+                del df
             except Exception:
                 columns = []
                 rows = []

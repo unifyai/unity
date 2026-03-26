@@ -247,6 +247,10 @@ class BaseDocumentBackend(BaseFileParserBackend):
                     step.warnings.append(f"export_to_text failed: {e}")
                     full_text = ""
 
+            # The Docling document holds a parallel copy of all content.
+            # Release it now that graph + full_text have been extracted.
+            del docling_doc, conv, converter, doc_index, merged_tables
+
             if built is None:
                 with traced_step(
                     trace,
