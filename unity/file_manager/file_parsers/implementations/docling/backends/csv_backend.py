@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import gc
 import logging
 import time
 from pathlib import Path
@@ -87,6 +88,9 @@ class CsvBackend(BaseFileParserBackend):
 
             with traced_step(trace, name="build_spreadsheet_graph"):
                 built = build_spreadsheet_graph_from_docling(docling_doc)
+
+            del docling_doc, conv, converter
+            gc.collect()
 
             # Normalize the single-sheet name to the file stem for intuitive contexts.
             sheet_name = (path.stem or "Sheet 1").strip() or "Sheet 1"
