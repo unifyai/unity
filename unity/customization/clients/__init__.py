@@ -567,7 +567,6 @@ def resolve(
 # Add new clients here.
 # ---------------------------------------------------------------------------
 
-from unity.customization.clients import colliers as _colliers  # noqa: F401, E402
 from unity.customization.clients import (
     midland_heart as _midland_heart,
 )  # noqa: F401, E402

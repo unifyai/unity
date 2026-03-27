@@ -46,7 +46,13 @@ def new_docling_converter(*, settings: FileParserSettings):
 
     pipeline_options = PdfPipelineOptions()
     pipeline_options.images_scale = 2.0
-    pipeline_options.generate_picture_images = True
+    pipeline_options.generate_picture_images = settings.PICTURE_DESCRIPTION_ENABLED
+
+    # Docling's built-in graceful per-document timeout.  When exceeded the
+    # pipeline stops and returns partial results (PARTIAL_SUCCESS) rather
+    # than hanging or OOMing.  This is the *inner* defense; the outer
+    # subprocess timeout (parse_timeout_seconds) is the nuclear fallback.
+    pipeline_options.document_timeout = settings.DOCLING_DOCUMENT_TIMEOUT
 
     if settings.PICTURE_DESCRIPTION_ENABLED:
         from docling.datamodel.pipeline_options import (
@@ -68,6 +74,31 @@ def new_docling_converter(*, settings: FileParserSettings):
             InputFormat.PDF: PdfFormatOption(pipeline_options=pipeline_options),
         },
     )
+
+
+def _release_backend(res: object) -> None:
+    """Close and unload the Docling backend to reclaim memory.
+
+    Docling's ``ConversionResult`` holds a reference chain
+    ``res.input._backend`` which keeps format-specific resources alive
+    (e.g. an openpyxl ``Workbook``).  Closing early prevents these
+    objects from lingering until the GC collects the full result graph.
+    """
+    try:
+        backend = getattr(getattr(res, "input", None), "_backend", None)
+        if backend is None:
+            return
+        wb = getattr(backend, "workbook", None)
+        if wb is not None:
+            try:
+                wb.close()
+            except Exception:
+                pass
+            backend.workbook = None
+        if hasattr(backend, "unload"):
+            backend.unload()
+    except Exception:
+        pass
 
 
 def docling_convert(*, converter, source: str) -> DoclingConvertResult:
@@ -112,4 +143,11 @@ def docling_convert(*, converter, source: str) -> DoclingConvertResult:
             ),
         )
 
-    return DoclingConvertResult(ok=True, document=getattr(res, "document", None))
+    doc = getattr(res, "document", None)
+
+    # Eagerly release the backend (especially openpyxl workbooks which hold
+    # ~50x the file size in memory).  The DoclingDocument is independent of
+    # the backend, so this is safe.
+    _release_backend(res)
+
+    return DoclingConvertResult(ok=True, document=doc)

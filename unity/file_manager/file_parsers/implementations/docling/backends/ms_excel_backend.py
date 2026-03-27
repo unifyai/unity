@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import gc
 import logging
 import time
 from pathlib import Path
@@ -84,6 +85,9 @@ class MsExcelBackend(BaseFileParserBackend):
 
             with traced_step(trace, name="build_spreadsheet_graph"):
                 built = build_spreadsheet_graph_from_docling(docling_doc)
+
+            del docling_doc, conv, converter
+            gc.collect()
 
             # Do NOT export full_text for spreadsheets (can be huge and low value)
             profile_text = build_spreadsheet_profile_text(

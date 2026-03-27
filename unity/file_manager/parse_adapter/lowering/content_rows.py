@@ -130,6 +130,57 @@ def _should_emit_content_text(
     return True
 
 
+_CHUNK_SIZE = 20
+
+
+def _summarize_table_profiles_parallel(
+    profiles: List[str],
+    *,
+    settings: "FileParserSettings",
+) -> List[str]:
+    """Summarize table profiles, using threads when there are multiple tables.
+
+    Profiles are processed in chunks of ``_CHUNK_SIZE`` to bound peak memory:
+    each chunk's profile strings are released after its LLM summaries are
+    collected, preventing all profiles from being held simultaneously.
+    """
+    if not profiles:
+        return []
+    if len(profiles) == 1:
+        return [summarize_table_profile(profile_text=profiles[0], settings=settings)]
+
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
+    results: List[Optional[str]] = [None] * len(profiles)
+
+    for chunk_start in range(0, len(profiles), _CHUNK_SIZE):
+        chunk_end = min(chunk_start + _CHUNK_SIZE, len(profiles))
+        chunk_profiles = profiles[chunk_start:chunk_end]
+
+        with ThreadPoolExecutor(max_workers=min(len(chunk_profiles), 8)) as pool:
+            future_to_idx = {
+                pool.submit(
+                    summarize_table_profile,
+                    profile_text=p,
+                    settings=settings,
+                ): (chunk_start + i)
+                for i, p in enumerate(chunk_profiles)
+            }
+            for future in as_completed(future_to_idx):
+                idx = future_to_idx[future]
+                try:
+                    results[idx] = future.result()
+                except Exception:
+                    results[idx] = ""
+
+        # Release this chunk's profile strings — they are no longer needed
+        # once the LLM summaries are collected.
+        for i in range(chunk_start, chunk_end):
+            profiles[i] = ""
+
+    return [r or "" for r in results]
+
+
 def lower_graph_to_content_rows(
     *,
     graph: ContentGraph,
@@ -214,7 +265,16 @@ def lower_graph_to_content_rows(
                 ),
             )
 
-        # Table catalog rows from extracted tables (richer than graph-only)
+        # Table catalog rows from extracted tables (richer than graph-only).
+        #
+        # Phase 1: prepare metadata and profile texts sequentially.
+        # Tables with no data rows get a cheap templated summary instead of
+        # an LLM call — this avoids wasting LLM budget (and memory) on the
+        # many empty/trivial "tables" that Docling's flood-fill produces
+        # (e.g., section headers, navigation labels, single-cell titles).
+        table_prep: List[dict] = []
+        llm_indices: List[int] = []
+
         for tbl in list(tables or []):
             sheet_name = tbl.sheet_name or "Sheet 1"
             sheet_id = sheet_name_to_id.get(sheet_name)
@@ -232,38 +292,83 @@ def lower_graph_to_content_rows(
                     ),
                 )
 
-            # Build bounded profile text and LLM summary
-            profile = build_table_profile_text(
-                tbl,
-                file_path=file_path,
-                business_contexts=business_contexts,
-                max_sample_rows=25,
-            )
-            summary = summarize_table_profile(profile_text=profile, settings=settings)
-
-            # Ensure embed-safe even if model over-produces
-            summary = clip_text_to_token_limit_conservative(
-                summary,
-                settings.EMBEDDING_MAX_INPUT_TOKENS,
-                settings.EMBEDDING_ENCODING,
-            )
-
-            # Prefer stable table_id per sheet using the ordering encoded in table_id suffix when present.
+            # Prefer stable table_id per sheet using the ordering encoded
+            # in table_id suffix when present.
             table_ix = 0
             try:
-                # node_id looks like "table:<n>"
                 if isinstance(tbl.table_id, str) and ":" in tbl.table_id:
                     table_ix = int(tbl.table_id.split(":", 1)[-1])
             except Exception:
                 table_ix = 0
 
+            num_rows = tbl.num_rows or 0
+            num_cols = tbl.num_cols or 0
+
+            if num_rows == 0 or num_cols == 0:
+                # Empty table — use a cheap templated summary, no LLM call.
+                label = tbl.label or ""
+                cols_str = ", ".join((tbl.columns or [])[:5])
+                if tbl.columns and len(tbl.columns) > 5:
+                    cols_str += f" (+{len(tbl.columns) - 5} more)"
+                summary = (
+                    f"Empty table '{label}'"
+                    + (f" on sheet '{sheet_name}'" if sheet_name else "")
+                    + (f" with columns: {cols_str}" if cols_str else "")
+                )
+                table_prep.append(
+                    {
+                        "tbl": tbl,
+                        "profile": "",
+                        "summary": summary,
+                        "sheet_id": sheet_id,
+                        "table_ix": table_ix,
+                        "needs_llm": False,
+                    },
+                )
+            else:
+                profile = build_table_profile_text(
+                    tbl,
+                    file_path=file_path,
+                    business_contexts=business_contexts,
+                    max_sample_rows=25,
+                )
+                llm_indices.append(len(table_prep))
+                table_prep.append(
+                    {
+                        "tbl": tbl,
+                        "profile": profile,
+                        "summary": "",
+                        "sheet_id": sheet_id,
+                        "table_ix": table_ix,
+                        "needs_llm": True,
+                    },
+                )
+
+        # Phase 2: summarize non-empty profiles (LLM calls) — parallel
+        # when >1 table.  Only tables that need LLM summarization are sent.
+        llm_profiles = [table_prep[i]["profile"] for i in llm_indices]
+        llm_summaries = _summarize_table_profiles_parallel(
+            llm_profiles,
+            settings=settings,
+        )
+        for idx, summary in zip(llm_indices, llm_summaries):
+            table_prep[idx]["summary"] = summary
+            table_prep[idx]["profile"] = ""  # release profile string
+
+        # Phase 3: assemble rows in original order.
+        for tp in table_prep:
+            summary = clip_text_to_token_limit_conservative(
+                tp["summary"],
+                settings.EMBEDDING_MAX_INPUT_TOKENS,
+                settings.EMBEDDING_ENCODING,
+            )
             rows.append(
                 _row(
                     content_type=ContentType.TABLE,
-                    title=str(tbl.label),
+                    title=str(tp["tbl"].label),
                     summary=summary,
                     content_text=(
-                        profile
+                        tp["profile"]
                         if _should_emit_content_text(
                             content_type=ContentType.TABLE,
                             file_format=fmt,
@@ -272,8 +377,8 @@ def lower_graph_to_content_rows(
                     ),
                     content_id=_build_content_id(
                         document_id=0,
-                        sheet_id=sheet_id,
-                        table_id=table_ix,
+                        sheet_id=tp["sheet_id"],
+                        table_id=tp["table_ix"],
                     ),
                 ),
             )

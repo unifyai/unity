@@ -86,9 +86,7 @@ def _subscribe_to_topic(project_id: str, topic_name: str) -> None:
     sub_path = _subscriber.subscription_path(project_id, sub_id)
 
     try:
-        _subscriber.create_subscription(
-            request={"name": sub_path, "topic": topic_path}
-        )
+        _subscriber.create_subscription(request={"name": sub_path, "topic": topic_path})
         print(f"[echo-responder] Created subscription: {sub_id}", file=sys.stderr)
     except Exception as exc:
         if "ALREADY_EXISTS" in str(exc) or "409" in str(exc):
@@ -134,7 +132,10 @@ def _subscribe_to_topic(project_id: str, topic_name: str) -> None:
                 thread="unify_message_outbound",
             )
             msg_id = future.result(timeout=10)
-            print(f"[echo-responder] Reply published on {topic_name} (id={msg_id})", file=sys.stderr)
+            print(
+                f"[echo-responder] Reply published on {topic_name} (id={msg_id})",
+                file=sys.stderr,
+            )
         except Exception as exc:
             print(f"[echo-responder] Failed to publish reply: {exc}", file=sys.stderr)
 
@@ -164,7 +165,10 @@ def main() -> None:
 
     emulator = _env("PUBSUB_EMULATOR_HOST")
     if not emulator:
-        print("[echo-responder] PUBSUB_EMULATOR_HOST not set — exiting.", file=sys.stderr)
+        print(
+            "[echo-responder] PUBSUB_EMULATOR_HOST not set — exiting.",
+            file=sys.stderr,
+        )
         sys.exit(1)
 
     print(f"[echo-responder] project={project_id}", file=sys.stderr)
@@ -176,17 +180,30 @@ def main() -> None:
     # Initial topic discovery.
     topics = _discover_topics(project_id)
     if topics:
-        print(f"[echo-responder] Found {len(topics)} topic(s): {', '.join(topics)}", file=sys.stderr)
+        print(
+            f"[echo-responder] Found {len(topics)} topic(s): {', '.join(topics)}",
+            file=sys.stderr,
+        )
         for t in topics:
             _subscribe_to_topic(project_id, t)
     else:
-        print("[echo-responder] No unity-* topics found yet. Will poll for new ones.", file=sys.stderr)
+        print(
+            "[echo-responder] No unity-* topics found yet. Will poll for new ones.",
+            file=sys.stderr,
+        )
 
     # Start background poller for topics created after startup.
-    poller = threading.Thread(target=_poll_for_new_topics, args=(project_id,), daemon=True)
+    poller = threading.Thread(
+        target=_poll_for_new_topics,
+        args=(project_id,),
+        daemon=True,
+    )
     poller.start()
 
-    print("[echo-responder] Ready. Polling for new topics every 5s. (Ctrl+C to stop)", file=sys.stderr)
+    print(
+        "[echo-responder] Ready. Polling for new topics every 5s. (Ctrl+C to stop)",
+        file=sys.stderr,
+    )
 
     def _handle_signal(signum: int, _frame: object) -> None:
         global _stop
