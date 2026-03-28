@@ -8,6 +8,21 @@ steps:
   - |
     docker pull ${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPOSITORY}/unity-preview:latest || true
 
+  # Resolve latest commit SHAs from dependency repos so the Docker layer cache
+  # is busted whenever unify or unillm change.
+- name: 'gcr.io/cloud-builders/git'
+  id: 'resolve-dep-shas'
+  entrypoint: 'bash'
+  args:
+  - '-c'
+  - |
+    UNIFY_SHA=$(git ls-remote https://$$GITHUB_TOKEN@github.com/unifyai/unify.git refs/heads/staging | cut -f1)
+    UNILLM_SHA=$(git ls-remote https://$$GITHUB_TOKEN@github.com/unifyai/unillm.git refs/heads/staging | cut -f1)
+    echo "${UNIFY_SHA}-${UNILLM_SHA}" > /workspace/dep_repos_sha.txt
+    echo "Dependency SHAs: unify=${UNIFY_SHA:0:8} unillm=${UNILLM_SHA:0:8}"
+  secretEnv: ['GITHUB_TOKEN']
+  waitFor: ['-']
+
   # Build Docker image with BuildKit inline cache.
 - name: 'gcr.io/cloud-builders/docker'
   id: 'build-image'
@@ -15,16 +30,18 @@ steps:
   args:
   - '-c'
   - |
+    DEP_SHA=$(cat /workspace/dep_repos_sha.txt)
     DOCKER_BUILDKIT=1 docker build \
       --cache-from ${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPOSITORY}/unity-preview:latest \
       --build-arg BUILDKIT_INLINE_CACHE=1 \
       --build-arg UNIFY_KEY=$$ORCHESTRA_API_KEY \
       --build-arg GITHUB_TOKEN=$$GITHUB_TOKEN \
       --build-arg BRANCH=preview \
+      --build-arg DEP_REPOS_SHA=$${DEP_SHA} \
       -t ${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPOSITORY}/unity-preview:${SHORT_SHA} \
       -t ${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPOSITORY}/unity-preview:latest .
   secretEnv: ['ORCHESTRA_API_KEY', 'GITHUB_TOKEN']
-  waitFor: ['pull-cache']
+  waitFor: ['pull-cache', 'resolve-dep-shas']
 
   # Push Docker Image (SHA and latest tags in parallel)
 - name: 'gcr.io/cloud-builders/docker'
