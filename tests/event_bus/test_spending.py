@@ -17,6 +17,8 @@ import pytest
 from unillm import LLMEvent
 from unillm.limit_hooks import LimitCheckRequest, LimitType
 
+from unify.async_admin import AdminRequestError
+
 from unity.common.log_utils import AtomicUpsertResult, atomic_upsert
 from unity.events.llm_event_hook import (
     _llm_event_to_eventbus,
@@ -648,33 +650,31 @@ class TestCheckSpendingLimitsCallback:
         """Callback should check assistant limit."""
         from unity.spending_limits import check_spending_limits_callback
 
-        mock_response = MagicMock()
-        mock_response.json.return_value = {
-            "cumulative_spend": 50.0,
-            "limit": 100.0,
-        }
-        mock_response.raise_for_status = MagicMock()
+        spend_data = {"cumulative_spend": 50.0, "limit": 100.0}
 
         with patch("unity.spending_limits._get_api_key", return_value="test-key"):
-            with patch(
-                "unity.spending_limits._get_base_url",
-                return_value="http://test/v0",
-            ):
-                with patch("unity.session_details.SESSION_DETAILS") as mock_session:
-                    mock_session.assistant.agent_id = 123
-                    mock_session.user_id = "user_456"
-                    mock_session.org_id = None  # Personal context
-                    mock_session.assistant.timezone = "UTC"
+            with patch("unity.session_details.SESSION_DETAILS") as mock_session:
+                mock_session.assistant.agent_id = 123
+                mock_session.user_id = "user_456"
+                mock_session.org_id = None
+                mock_session.assistant.timezone = "UTC"
 
-                    with patch(
-                        "unity.spending_limits._get_http_client",
-                    ) as mock_get_client:
-                        mock_instance = MagicMock()
-                        mock_instance.get = AsyncMock(return_value=mock_response)
-                        mock_get_client.return_value = mock_instance
+                with patch(
+                    "unity.spending_limits._get_admin_client",
+                ) as mock_get_client:
+                    mock_instance = MagicMock()
+                    mock_instance.closed = False
+                    mock_instance.get_assistant_spend = AsyncMock(
+                        return_value=spend_data,
+                    )
+                    mock_instance.get_user_spend = AsyncMock(return_value=spend_data)
+                    mock_instance.notify_limit_reached = AsyncMock(
+                        return_value={"notified": False},
+                    )
+                    mock_get_client.return_value = mock_instance
 
-                        request = LimitCheckRequest(model="gpt-4", endpoint="test")
-                        response = await check_spending_limits_callback(request)
+                    request = LimitCheckRequest(model="gpt-4", endpoint="test")
+                    response = await check_spending_limits_callback(request)
 
         assert response.allowed is True
 
@@ -683,33 +683,31 @@ class TestCheckSpendingLimitsCallback:
         """Callback should deny request when limit is exceeded."""
         from unity.spending_limits import check_spending_limits_callback
 
-        mock_response = MagicMock()
-        mock_response.json.return_value = {
-            "cumulative_spend": 150.0,
-            "limit": 100.0,
-        }
-        mock_response.raise_for_status = MagicMock()
+        spend_data = {"cumulative_spend": 150.0, "limit": 100.0}
 
         with patch("unity.spending_limits._get_api_key", return_value="test-key"):
-            with patch(
-                "unity.spending_limits._get_base_url",
-                return_value="http://test/v0",
-            ):
-                with patch("unity.session_details.SESSION_DETAILS") as mock_session:
-                    mock_session.assistant.agent_id = 123
-                    mock_session.user_id = "user_456"
-                    mock_session.org_id = None
-                    mock_session.assistant.timezone = "UTC"
+            with patch("unity.session_details.SESSION_DETAILS") as mock_session:
+                mock_session.assistant.agent_id = 123
+                mock_session.user_id = "user_456"
+                mock_session.org_id = None
+                mock_session.assistant.timezone = "UTC"
 
-                    with patch(
-                        "unity.spending_limits._get_http_client",
-                    ) as mock_get_client:
-                        mock_instance = MagicMock()
-                        mock_instance.get = AsyncMock(return_value=mock_response)
-                        mock_get_client.return_value = mock_instance
+                with patch(
+                    "unity.spending_limits._get_admin_client",
+                ) as mock_get_client:
+                    mock_instance = MagicMock()
+                    mock_instance.closed = False
+                    mock_instance.get_assistant_spend = AsyncMock(
+                        return_value=spend_data,
+                    )
+                    mock_instance.get_user_spend = AsyncMock(return_value=spend_data)
+                    mock_instance.notify_limit_reached = AsyncMock(
+                        return_value={"notified": False},
+                    )
+                    mock_get_client.return_value = mock_instance
 
-                        request = LimitCheckRequest(model="gpt-4", endpoint="test")
-                        response = await check_spending_limits_callback(request)
+                    request = LimitCheckRequest(model="gpt-4", endpoint="test")
+                    response = await check_spending_limits_callback(request)
 
         assert response.allowed is False
         assert response.limit_type == LimitType.ASSISTANT
@@ -724,43 +722,37 @@ class TestPersonalContextLimitChecks:
         """Personal context should check user limit."""
         from unity.spending_limits import check_spending_limits_callback
 
-        captured_urls = []
-
-        async def mock_get(url, *args, **kwargs):
-            captured_urls.append(url)
-            mock_response = MagicMock()
-            mock_response.json.return_value = {
-                "cumulative_spend": 50.0,
-                "limit": 100.0,
-            }
-            mock_response.raise_for_status = MagicMock()
-            return mock_response
+        spend_data = {"cumulative_spend": 50.0, "limit": 100.0}
 
         with patch("unity.spending_limits._get_api_key", return_value="test-key"):
-            with patch(
-                "unity.spending_limits._get_base_url",
-                return_value="http://test/v0",
-            ):
-                with patch("unity.session_details.SESSION_DETAILS") as mock_session:
-                    mock_session.assistant.agent_id = 123
-                    mock_session.user_id = "user_456"
-                    mock_session.org_id = None  # Personal context
-                    mock_session.assistant.timezone = "UTC"
+            with patch("unity.session_details.SESSION_DETAILS") as mock_session:
+                mock_session.assistant.agent_id = 123
+                mock_session.user_id = "user_456"
+                mock_session.org_id = None  # Personal context
+                mock_session.assistant.timezone = "UTC"
 
-                    with patch(
-                        "unity.spending_limits._get_http_client",
-                    ) as mock_get_client:
-                        mock_instance = MagicMock()
-                        mock_instance.get = mock_get
-                        mock_get_client.return_value = mock_instance
+                with patch(
+                    "unity.spending_limits._get_admin_client",
+                ) as mock_get_client:
+                    mock_instance = MagicMock()
+                    mock_instance.closed = False
+                    mock_instance.get_assistant_spend = AsyncMock(
+                        return_value=spend_data,
+                    )
+                    mock_instance.get_user_spend = AsyncMock(return_value=spend_data)
+                    mock_instance.notify_limit_reached = AsyncMock(
+                        return_value={"notified": False},
+                    )
+                    mock_get_client.return_value = mock_instance
 
-                        request = LimitCheckRequest(model="gpt-4", endpoint="test")
-                        await check_spending_limits_callback(request)
+                    request = LimitCheckRequest(model="gpt-4", endpoint="test")
+                    await check_spending_limits_callback(request)
 
         # Should check assistant and user limits
-        assert any("assistant" in url for url in captured_urls)
-        assert any("user" in url for url in captured_urls)
-        assert not any("organization" in url for url in captured_urls)
+        mock_instance.get_assistant_spend.assert_called_once()
+        mock_instance.get_user_spend.assert_called_once()
+        mock_instance.get_org_spend.assert_not_called()
+        mock_instance.get_member_spend.assert_not_called()
 
 
 class TestOrgContextLimitChecks:
@@ -771,86 +763,72 @@ class TestOrgContextLimitChecks:
         """Org context should check assistant, member, and org limits."""
         from unity.spending_limits import check_spending_limits_callback
 
-        captured_urls = []
-
-        async def mock_get(url, *args, **kwargs):
-            captured_urls.append(url)
-            mock_response = MagicMock()
-            mock_response.json.return_value = {
-                "cumulative_spend": 50.0,
-                "limit": 100.0,
-            }
-            mock_response.raise_for_status = MagicMock()
-            return mock_response
+        spend_data = {"cumulative_spend": 50.0, "limit": 100.0}
 
         with patch("unity.spending_limits._get_api_key", return_value="test-key"):
-            with patch(
-                "unity.spending_limits._get_base_url",
-                return_value="http://test/v0",
-            ):
-                with patch("unity.session_details.SESSION_DETAILS") as mock_session:
-                    mock_session.assistant.agent_id = 123
-                    mock_session.user_id = "user_456"
-                    mock_session.org_id = 789  # Org context
-                    mock_session.assistant.timezone = "UTC"
+            with patch("unity.session_details.SESSION_DETAILS") as mock_session:
+                mock_session.assistant.agent_id = 123
+                mock_session.user_id = "user_456"
+                mock_session.org_id = 789  # Org context
+                mock_session.assistant.timezone = "UTC"
 
-                    with patch(
-                        "unity.spending_limits._get_http_client",
-                    ) as mock_get_client:
-                        mock_instance = MagicMock()
-                        mock_instance.get = mock_get
-                        mock_get_client.return_value = mock_instance
+                with patch(
+                    "unity.spending_limits._get_admin_client",
+                ) as mock_get_client:
+                    mock_instance = MagicMock()
+                    mock_instance.closed = False
+                    mock_instance.get_assistant_spend = AsyncMock(
+                        return_value=spend_data,
+                    )
+                    mock_instance.get_user_spend = AsyncMock(return_value=spend_data)
+                    mock_instance.get_member_spend = AsyncMock(return_value=spend_data)
+                    mock_instance.get_org_spend = AsyncMock(return_value=spend_data)
+                    mock_instance.notify_limit_reached = AsyncMock(
+                        return_value={"notified": False},
+                    )
+                    mock_get_client.return_value = mock_instance
 
-                        request = LimitCheckRequest(model="gpt-4", endpoint="test")
-                        await check_spending_limits_callback(request)
+                    request = LimitCheckRequest(model="gpt-4", endpoint="test")
+                    await check_spending_limits_callback(request)
 
         # Should check assistant, member, and org limits
-        assert any("assistant" in url for url in captured_urls)
-        assert any("members" in url for url in captured_urls)
-        assert any(
-            "organization" in url and "members" not in url for url in captured_urls
-        )
+        mock_instance.get_assistant_spend.assert_called_once()
+        mock_instance.get_member_spend.assert_called_once()
+        mock_instance.get_org_spend.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_member_limit_exceeded(self):
         """Member limit exceeded should deny request."""
         from unity.spending_limits import check_spending_limits_callback
 
-        async def mock_get(url, *args, **kwargs):
-            mock_response = MagicMock()
-            mock_response.raise_for_status = MagicMock()
-            if "members" in url:
-                mock_response.json.return_value = {
-                    "cumulative_spend": 300.0,
-                    "limit": 200.0,  # Exceeded
-                }
-            else:
-                mock_response.json.return_value = {
-                    "cumulative_spend": 50.0,
-                    "limit": 1000.0,  # Not exceeded
-                }
-            return mock_response
+        ok_data = {"cumulative_spend": 50.0, "limit": 1000.0}
+        exceeded_data = {"cumulative_spend": 300.0, "limit": 200.0}
 
         with patch("unity.spending_limits._get_api_key", return_value="test-key"):
-            with patch(
-                "unity.spending_limits._get_base_url",
-                return_value="http://test/v0",
-            ):
-                with patch("unity.session_details.SESSION_DETAILS") as mock_session:
-                    mock_session.assistant.agent_id = 123
-                    mock_session.user_id = "user_456"
-                    mock_session.org_id = 789
-                    mock_session.assistant.timezone = "UTC"
+            with patch("unity.session_details.SESSION_DETAILS") as mock_session:
+                mock_session.assistant.agent_id = 123
+                mock_session.user_id = "user_456"
+                mock_session.org_id = 789
+                mock_session.assistant.timezone = "UTC"
 
-                    with patch(
-                        "unity.spending_limits._get_http_client",
-                    ) as mock_get_client:
-                        mock_instance = MagicMock()
-                        mock_instance.get = mock_get
-                        mock_get_client.return_value = mock_instance
+                with patch(
+                    "unity.spending_limits._get_admin_client",
+                ) as mock_get_client:
+                    mock_instance = MagicMock()
+                    mock_instance.closed = False
+                    mock_instance.get_assistant_spend = AsyncMock(return_value=ok_data)
+                    mock_instance.get_user_spend = AsyncMock(return_value=ok_data)
+                    mock_instance.get_member_spend = AsyncMock(
+                        return_value=exceeded_data,
+                    )
+                    mock_instance.get_org_spend = AsyncMock(return_value=ok_data)
+                    mock_instance.notify_limit_reached = AsyncMock(
+                        return_value={"notified": False},
+                    )
+                    mock_get_client.return_value = mock_instance
 
-                        request = LimitCheckRequest(model="gpt-4", endpoint="test")
-                        response = await check_spending_limits_callback(request)
+                    request = LimitCheckRequest(model="gpt-4", endpoint="test")
+                    response = await check_spending_limits_callback(request)
 
         assert response.allowed is False
         assert response.limit_type == LimitType.MEMBER
@@ -864,29 +842,31 @@ class TestLimitCheckErrorHandling:
         """Timeout should fail open (allow request)."""
         from unity.spending_limits import check_spending_limits_callback
 
-        async def mock_get(url, *args, **kwargs):
-            raise httpx.TimeoutException("Timeout")
-
         with patch("unity.spending_limits._get_api_key", return_value="test-key"):
-            with patch(
-                "unity.spending_limits._get_base_url",
-                return_value="http://test/v0",
-            ):
-                with patch("unity.session_details.SESSION_DETAILS") as mock_session:
-                    mock_session.assistant.agent_id = 123
-                    mock_session.user_id = "user_456"
-                    mock_session.org_id = None
-                    mock_session.assistant.timezone = "UTC"
+            with patch("unity.session_details.SESSION_DETAILS") as mock_session:
+                mock_session.assistant.agent_id = 123
+                mock_session.user_id = "user_456"
+                mock_session.org_id = None
+                mock_session.assistant.timezone = "UTC"
 
-                    with patch(
-                        "unity.spending_limits._get_http_client",
-                    ) as mock_get_client:
-                        mock_instance = MagicMock()
-                        mock_instance.get = mock_get
-                        mock_get_client.return_value = mock_instance
+                with patch(
+                    "unity.spending_limits._get_admin_client",
+                ) as mock_get_client:
+                    mock_instance = MagicMock()
+                    mock_instance.closed = False
+                    mock_instance.get_assistant_spend = AsyncMock(
+                        side_effect=Exception("Timeout"),
+                    )
+                    mock_instance.get_user_spend = AsyncMock(
+                        side_effect=Exception("Timeout"),
+                    )
+                    mock_instance.notify_limit_reached = AsyncMock(
+                        return_value={"notified": False},
+                    )
+                    mock_get_client.return_value = mock_instance
 
-                        request = LimitCheckRequest(model="gpt-4", endpoint="test")
-                        response = await check_spending_limits_callback(request)
+                    request = LimitCheckRequest(model="gpt-4", endpoint="test")
+                    response = await check_spending_limits_callback(request)
 
         assert response.allowed is True
 
@@ -895,37 +875,34 @@ class TestLimitCheckErrorHandling:
         """404 (entity not found) should fail open."""
         from unity.spending_limits import check_spending_limits_callback
 
-        async def mock_get(url, *args, **kwargs):
-            mock_response = MagicMock()
-            mock_response.status_code = 404
-            error = httpx.HTTPStatusError(
-                "Not Found",
-                request=MagicMock(),
-                response=mock_response,
-            )
-            mock_response.raise_for_status.side_effect = error
-            return mock_response
+        error = AdminRequestError(
+            url="http://test/v0/admin/assistant/123/spend",
+            method="GET",
+            status=404,
+            body="Not found",
+        )
 
         with patch("unity.spending_limits._get_api_key", return_value="test-key"):
-            with patch(
-                "unity.spending_limits._get_base_url",
-                return_value="http://test/v0",
-            ):
-                with patch("unity.session_details.SESSION_DETAILS") as mock_session:
-                    mock_session.assistant.agent_id = 123
-                    mock_session.user_id = "user_456"
-                    mock_session.org_id = None
-                    mock_session.assistant.timezone = "UTC"
+            with patch("unity.session_details.SESSION_DETAILS") as mock_session:
+                mock_session.assistant.agent_id = 123
+                mock_session.user_id = "user_456"
+                mock_session.org_id = None
+                mock_session.assistant.timezone = "UTC"
 
-                    with patch(
-                        "unity.spending_limits._get_http_client",
-                    ) as mock_get_client:
-                        mock_instance = MagicMock()
-                        mock_instance.get = mock_get
-                        mock_get_client.return_value = mock_instance
+                with patch(
+                    "unity.spending_limits._get_admin_client",
+                ) as mock_get_client:
+                    mock_instance = MagicMock()
+                    mock_instance.closed = False
+                    mock_instance.get_assistant_spend = AsyncMock(side_effect=error)
+                    mock_instance.get_user_spend = AsyncMock(side_effect=error)
+                    mock_instance.notify_limit_reached = AsyncMock(
+                        return_value={"notified": False},
+                    )
+                    mock_get_client.return_value = mock_instance
 
-                        request = LimitCheckRequest(model="gpt-4", endpoint="test")
-                        response = await check_spending_limits_callback(request)
+                    request = LimitCheckRequest(model="gpt-4", endpoint="test")
+                    response = await check_spending_limits_callback(request)
 
         assert response.allowed is True
 
@@ -934,37 +911,34 @@ class TestLimitCheckErrorHandling:
         """500 server error should fail open."""
         from unity.spending_limits import check_spending_limits_callback
 
-        async def mock_get(url, *args, **kwargs):
-            mock_response = MagicMock()
-            mock_response.status_code = 500
-            error = httpx.HTTPStatusError(
-                "Server Error",
-                request=MagicMock(),
-                response=mock_response,
-            )
-            mock_response.raise_for_status.side_effect = error
-            return mock_response
+        error = AdminRequestError(
+            url="http://test/v0/admin/assistant/123/spend",
+            method="GET",
+            status=500,
+            body="Internal server error",
+        )
 
         with patch("unity.spending_limits._get_api_key", return_value="test-key"):
-            with patch(
-                "unity.spending_limits._get_base_url",
-                return_value="http://test/v0",
-            ):
-                with patch("unity.session_details.SESSION_DETAILS") as mock_session:
-                    mock_session.assistant.agent_id = 123
-                    mock_session.user_id = "user_456"
-                    mock_session.org_id = None
-                    mock_session.assistant.timezone = "UTC"
+            with patch("unity.session_details.SESSION_DETAILS") as mock_session:
+                mock_session.assistant.agent_id = 123
+                mock_session.user_id = "user_456"
+                mock_session.org_id = None
+                mock_session.assistant.timezone = "UTC"
 
-                    with patch(
-                        "unity.spending_limits._get_http_client",
-                    ) as mock_get_client:
-                        mock_instance = MagicMock()
-                        mock_instance.get = mock_get
-                        mock_get_client.return_value = mock_instance
+                with patch(
+                    "unity.spending_limits._get_admin_client",
+                ) as mock_get_client:
+                    mock_instance = MagicMock()
+                    mock_instance.closed = False
+                    mock_instance.get_assistant_spend = AsyncMock(side_effect=error)
+                    mock_instance.get_user_spend = AsyncMock(side_effect=error)
+                    mock_instance.notify_limit_reached = AsyncMock(
+                        return_value={"notified": False},
+                    )
+                    mock_get_client.return_value = mock_instance
 
-                        request = LimitCheckRequest(model="gpt-4", endpoint="test")
-                        response = await check_spending_limits_callback(request)
+                    request = LimitCheckRequest(model="gpt-4", endpoint="test")
+                    response = await check_spending_limits_callback(request)
 
         assert response.allowed is True
 
@@ -978,40 +952,41 @@ class TestParallelLimitChecks:
         from unity.spending_limits import check_spending_limits_callback
 
         check_times = []
+        spend_data = {"cumulative_spend": 50.0, "limit": 100.0}
 
-        async def mock_get(url, *args, **kwargs):
+        async def delayed_return(*args, **kwargs):
             check_times.append(asyncio.get_event_loop().time())
-            await asyncio.sleep(0.05)  # Simulate network delay
-            mock_response = MagicMock()
-            mock_response.json.return_value = {
-                "cumulative_spend": 50.0,
-                "limit": 100.0,
-            }
-            mock_response.raise_for_status = MagicMock()
-            return mock_response
+            await asyncio.sleep(0.05)
+            return spend_data
 
         with patch("unity.spending_limits._get_api_key", return_value="test-key"):
-            with patch(
-                "unity.spending_limits._get_base_url",
-                return_value="http://test/v0",
-            ):
-                with patch("unity.session_details.SESSION_DETAILS") as mock_session:
-                    mock_session.assistant.agent_id = 123
-                    mock_session.user_id = "user_456"
-                    mock_session.org_id = 789  # Org context (3 checks)
-                    mock_session.assistant.timezone = "UTC"
+            with patch("unity.session_details.SESSION_DETAILS") as mock_session:
+                mock_session.assistant.agent_id = 123
+                mock_session.user_id = "user_456"
+                mock_session.org_id = 789  # Org context (3 checks)
+                mock_session.assistant.timezone = "UTC"
 
-                    with patch(
-                        "unity.spending_limits._get_http_client",
-                    ) as mock_get_client:
-                        mock_instance = MagicMock()
-                        mock_instance.get = mock_get
-                        mock_get_client.return_value = mock_instance
+                with patch(
+                    "unity.spending_limits._get_admin_client",
+                ) as mock_get_client:
+                    mock_instance = MagicMock()
+                    mock_instance.closed = False
+                    mock_instance.get_assistant_spend = AsyncMock(
+                        side_effect=delayed_return,
+                    )
+                    mock_instance.get_member_spend = AsyncMock(
+                        side_effect=delayed_return,
+                    )
+                    mock_instance.get_org_spend = AsyncMock(side_effect=delayed_return)
+                    mock_instance.notify_limit_reached = AsyncMock(
+                        return_value={"notified": False},
+                    )
+                    mock_get_client.return_value = mock_instance
 
-                        start_time = asyncio.get_event_loop().time()
-                        request = LimitCheckRequest(model="gpt-4", endpoint="test")
-                        await check_spending_limits_callback(request)
-                        total_time = asyncio.get_event_loop().time() - start_time
+                    start_time = asyncio.get_event_loop().time()
+                    request = LimitCheckRequest(model="gpt-4", endpoint="test")
+                    await check_spending_limits_callback(request)
+                    total_time = asyncio.get_event_loop().time() - start_time
 
         # Should have 3 checks (assistant, member, org)
         assert len(check_times) == 3
@@ -1032,33 +1007,34 @@ class TestNoLimitSet:
         """No limit set should allow request."""
         from unity.spending_limits import check_spending_limits_callback
 
-        mock_response = MagicMock()
-        mock_response.json.return_value = {
+        spend_data = {
             "cumulative_spend": 1000000.0,  # Large spend
             "limit": None,  # No limit
         }
-        mock_response.raise_for_status = MagicMock()
 
         with patch("unity.spending_limits._get_api_key", return_value="test-key"):
-            with patch(
-                "unity.spending_limits._get_base_url",
-                return_value="http://test/v0",
-            ):
-                with patch("unity.session_details.SESSION_DETAILS") as mock_session:
-                    mock_session.assistant.agent_id = 123
-                    mock_session.user_id = "user_456"
-                    mock_session.org_id = None
-                    mock_session.assistant.timezone = "UTC"
+            with patch("unity.session_details.SESSION_DETAILS") as mock_session:
+                mock_session.assistant.agent_id = 123
+                mock_session.user_id = "user_456"
+                mock_session.org_id = None
+                mock_session.assistant.timezone = "UTC"
 
-                    with patch(
-                        "unity.spending_limits._get_http_client",
-                    ) as mock_get_client:
-                        mock_instance = MagicMock()
-                        mock_instance.get = AsyncMock(return_value=mock_response)
-                        mock_get_client.return_value = mock_instance
+                with patch(
+                    "unity.spending_limits._get_admin_client",
+                ) as mock_get_client:
+                    mock_instance = MagicMock()
+                    mock_instance.closed = False
+                    mock_instance.get_assistant_spend = AsyncMock(
+                        return_value=spend_data,
+                    )
+                    mock_instance.get_user_spend = AsyncMock(return_value=spend_data)
+                    mock_instance.notify_limit_reached = AsyncMock(
+                        return_value={"notified": False},
+                    )
+                    mock_get_client.return_value = mock_instance
 
-                        request = LimitCheckRequest(model="gpt-4", endpoint="test")
-                        response = await check_spending_limits_callback(request)
+                    request = LimitCheckRequest(model="gpt-4", endpoint="test")
+                    response = await check_spending_limits_callback(request)
 
         assert response.allowed is True
 
@@ -1104,33 +1080,34 @@ class TestLimitBoundary:
         """Spend exactly at limit should be denied."""
         from unity.spending_limits import check_spending_limits_callback
 
-        mock_response = MagicMock()
-        mock_response.json.return_value = {
+        spend_data = {
             "cumulative_spend": 100.0,  # Exactly at limit
             "limit": 100.0,
         }
-        mock_response.raise_for_status = MagicMock()
 
         with patch("unity.spending_limits._get_api_key", return_value="test-key"):
-            with patch(
-                "unity.spending_limits._get_base_url",
-                return_value="http://test/v0",
-            ):
-                with patch("unity.session_details.SESSION_DETAILS") as mock_session:
-                    mock_session.assistant.agent_id = 123
-                    mock_session.user_id = "user_456"
-                    mock_session.org_id = None
-                    mock_session.assistant.timezone = "UTC"
+            with patch("unity.session_details.SESSION_DETAILS") as mock_session:
+                mock_session.assistant.agent_id = 123
+                mock_session.user_id = "user_456"
+                mock_session.org_id = None
+                mock_session.assistant.timezone = "UTC"
 
-                    with patch(
-                        "unity.spending_limits._get_http_client",
-                    ) as mock_get_client:
-                        mock_instance = MagicMock()
-                        mock_instance.get = AsyncMock(return_value=mock_response)
-                        mock_get_client.return_value = mock_instance
+                with patch(
+                    "unity.spending_limits._get_admin_client",
+                ) as mock_get_client:
+                    mock_instance = MagicMock()
+                    mock_instance.closed = False
+                    mock_instance.get_assistant_spend = AsyncMock(
+                        return_value=spend_data,
+                    )
+                    mock_instance.get_user_spend = AsyncMock(return_value=spend_data)
+                    mock_instance.notify_limit_reached = AsyncMock(
+                        return_value={"notified": False},
+                    )
+                    mock_get_client.return_value = mock_instance
 
-                        request = LimitCheckRequest(model="gpt-4", endpoint="test")
-                        response = await check_spending_limits_callback(request)
+                    request = LimitCheckRequest(model="gpt-4", endpoint="test")
+                    response = await check_spending_limits_callback(request)
 
         assert response.allowed is False
 
@@ -1139,33 +1116,34 @@ class TestLimitBoundary:
         """Spend just under limit should be allowed."""
         from unity.spending_limits import check_spending_limits_callback
 
-        mock_response = MagicMock()
-        mock_response.json.return_value = {
+        spend_data = {
             "cumulative_spend": 99.99,
             "limit": 100.0,
         }
-        mock_response.raise_for_status = MagicMock()
 
         with patch("unity.spending_limits._get_api_key", return_value="test-key"):
-            with patch(
-                "unity.spending_limits._get_base_url",
-                return_value="http://test/v0",
-            ):
-                with patch("unity.session_details.SESSION_DETAILS") as mock_session:
-                    mock_session.assistant.agent_id = 123
-                    mock_session.user_id = "user_456"
-                    mock_session.org_id = None
-                    mock_session.assistant.timezone = "UTC"
+            with patch("unity.session_details.SESSION_DETAILS") as mock_session:
+                mock_session.assistant.agent_id = 123
+                mock_session.user_id = "user_456"
+                mock_session.org_id = None
+                mock_session.assistant.timezone = "UTC"
 
-                    with patch(
-                        "unity.spending_limits._get_http_client",
-                    ) as mock_get_client:
-                        mock_instance = MagicMock()
-                        mock_instance.get = AsyncMock(return_value=mock_response)
-                        mock_get_client.return_value = mock_instance
+                with patch(
+                    "unity.spending_limits._get_admin_client",
+                ) as mock_get_client:
+                    mock_instance = MagicMock()
+                    mock_instance.closed = False
+                    mock_instance.get_assistant_spend = AsyncMock(
+                        return_value=spend_data,
+                    )
+                    mock_instance.get_user_spend = AsyncMock(return_value=spend_data)
+                    mock_instance.notify_limit_reached = AsyncMock(
+                        return_value={"notified": False},
+                    )
+                    mock_get_client.return_value = mock_instance
 
-                        request = LimitCheckRequest(model="gpt-4", endpoint="test")
-                        response = await check_spending_limits_callback(request)
+                    request = LimitCheckRequest(model="gpt-4", endpoint="test")
+                    response = await check_spending_limits_callback(request)
 
         assert response.allowed is True
 
@@ -1194,34 +1172,35 @@ class TestCreditBalanceGating:
         includes the given credit_balance."""
         from unity.spending_limits import check_spending_limits_callback
 
-        mock_response = MagicMock()
-        mock_response.json.return_value = {
+        spend_data = {
             "cumulative_spend": cumulative_spend,
             "limit": limit,
             "credit_balance": credit_balance,
         }
-        mock_response.raise_for_status = MagicMock()
 
         with patch("unity.spending_limits._get_api_key", return_value="test-key"):
-            with patch(
-                "unity.spending_limits._get_base_url",
-                return_value="http://test/v0",
-            ):
-                with patch("unity.session_details.SESSION_DETAILS") as mock_session:
-                    mock_session.assistant.agent_id = 123
-                    mock_session.user_id = "user_456"
-                    mock_session.org_id = None
-                    mock_session.assistant.timezone = "UTC"
+            with patch("unity.session_details.SESSION_DETAILS") as mock_session:
+                mock_session.assistant.agent_id = 123
+                mock_session.user_id = "user_456"
+                mock_session.org_id = None
+                mock_session.assistant.timezone = "UTC"
 
-                    with patch(
-                        "unity.spending_limits._get_http_client",
-                    ) as mock_get_client:
-                        mock_instance = MagicMock()
-                        mock_instance.get = AsyncMock(return_value=mock_response)
-                        mock_get_client.return_value = mock_instance
+                with patch(
+                    "unity.spending_limits._get_admin_client",
+                ) as mock_get_client:
+                    mock_instance = MagicMock()
+                    mock_instance.closed = False
+                    mock_instance.get_assistant_spend = AsyncMock(
+                        return_value=spend_data,
+                    )
+                    mock_instance.get_user_spend = AsyncMock(return_value=spend_data)
+                    mock_instance.notify_limit_reached = AsyncMock(
+                        return_value={"notified": False},
+                    )
+                    mock_get_client.return_value = mock_instance
 
-                        request = LimitCheckRequest(model="gpt-4", endpoint="test")
-                        return await check_spending_limits_callback(request)
+                    request = LimitCheckRequest(model="gpt-4", endpoint="test")
+                    return await check_spending_limits_callback(request)
 
     @pytest.mark.asyncio
     async def test_positive_balance_allows(self):
@@ -2091,20 +2070,12 @@ class TestNotifyLimitReached:
         """Notification should be sent when limit is exceeded."""
         from unity.spending_limits import _notify_limit_reached, _LimitCheckResult
 
-        captured_request = {}
-
-        mock_response = MagicMock()
-        mock_response.status_code = 200
-        mock_response.json.return_value = {"notified": True, "recipient_count": 1}
-
-        async def capture_post(url, headers=None, json=None):
-            captured_request["url"] = url
-            captured_request["payload"] = json
-            return mock_response
-
-        with patch("unity.spending_limits._get_http_client") as mock_get_client:
+        with patch("unity.spending_limits._get_admin_client") as mock_get_client:
             mock_instance = MagicMock()
-            mock_instance.post = capture_post
+            mock_instance.closed = False
+            mock_instance.notify_limit_reached = AsyncMock(
+                return_value={"notified": True, "recipient_count": 1},
+            )
             mock_get_client.return_value = mock_instance
 
             result = _LimitCheckResult(
@@ -2117,38 +2088,27 @@ class TestNotifyLimitReached:
                 limit_set_at="2026-02-01T10:00:00Z",
             )
 
-            await _notify_limit_reached(
-                result,
-                month="2026-02",
-                base_url="http://test/v0",
-                api_key="test-key",
-            )
+            await _notify_limit_reached(result, month="2026-02")
 
-        assert "spending-limit-reached" in captured_request["url"]
-        assert captured_request["payload"]["limit_type"] == "assistant"
-        assert captured_request["payload"]["entity_id"] == "agent_123"
-        assert captured_request["payload"]["limit_value"] == 100.0
-        assert captured_request["payload"]["month"] == "2026-02"
-        assert captured_request["payload"]["limit_set_at"] == "2026-02-01T10:00:00Z"
+        mock_instance.notify_limit_reached.assert_called_once()
+        payload = mock_instance.notify_limit_reached.call_args[0][0]
+        assert payload["limit_type"] == "assistant"
+        assert payload["entity_id"] == "agent_123"
+        assert payload["limit_value"] == 100.0
+        assert payload["month"] == "2026-02"
+        assert payload["limit_set_at"] == "2026-02-01T10:00:00Z"
 
     @pytest.mark.asyncio
     async def test_notification_includes_org_id_for_member_limit(self):
         """Member limit notification should include organization_id."""
         from unity.spending_limits import _notify_limit_reached, _LimitCheckResult
 
-        captured_request = {}
-
-        mock_response = MagicMock()
-        mock_response.status_code = 200
-        mock_response.json.return_value = {"notified": True, "recipient_count": 1}
-
-        async def capture_post(url, headers=None, json=None):
-            captured_request["payload"] = json
-            return mock_response
-
-        with patch("unity.spending_limits._get_http_client") as mock_get_client:
+        with patch("unity.spending_limits._get_admin_client") as mock_get_client:
             mock_instance = MagicMock()
-            mock_instance.post = capture_post
+            mock_instance.closed = False
+            mock_instance.notify_limit_reached = AsyncMock(
+                return_value={"notified": True, "recipient_count": 1},
+            )
             mock_get_client.return_value = mock_instance
 
             result = _LimitCheckResult(
@@ -2160,26 +2120,22 @@ class TestNotifyLimitReached:
                 organization_id=789,
             )
 
-            await _notify_limit_reached(
-                result,
-                month="2026-02",
-                base_url="http://test/v0",
-                api_key="test-key",
-            )
+            await _notify_limit_reached(result, month="2026-02")
 
-        assert captured_request["payload"]["organization_id"] == 789
+        payload = mock_instance.notify_limit_reached.call_args[0][0]
+        assert payload["organization_id"] == 789
 
     @pytest.mark.asyncio
     async def test_notification_handles_errors_gracefully(self):
         """Notification should not raise on errors (fire-and-forget)."""
         from unity.spending_limits import _notify_limit_reached, _LimitCheckResult
 
-        async def failing_post(url, headers=None, json=None):
-            raise httpx.TimeoutException("Timeout")
-
-        with patch("unity.spending_limits._get_http_client") as mock_get_client:
+        with patch("unity.spending_limits._get_admin_client") as mock_get_client:
             mock_instance = MagicMock()
-            mock_instance.post = failing_post
+            mock_instance.closed = False
+            mock_instance.notify_limit_reached = AsyncMock(
+                side_effect=Exception("Timeout"),
+            )
             mock_get_client.return_value = mock_instance
 
             result = _LimitCheckResult(
@@ -2191,28 +2147,24 @@ class TestNotifyLimitReached:
             )
 
             # Should NOT raise
-            await _notify_limit_reached(
-                result,
-                month="2026-02",
-                base_url="http://test/v0",
-                api_key="test-key",
-            )
+            await _notify_limit_reached(result, month="2026-02")
 
     @pytest.mark.asyncio
     async def test_notification_handles_http_errors_gracefully(self):
         """Notification should not raise on HTTP errors."""
         from unity.spending_limits import _notify_limit_reached, _LimitCheckResult
 
-        mock_response = MagicMock()
-        mock_response.status_code = 500
-        mock_response.json.return_value = {"error": "Internal server error"}
-
-        async def error_post(url, headers=None, json=None):
-            return mock_response
-
-        with patch("unity.spending_limits._get_http_client") as mock_get_client:
+        with patch("unity.spending_limits._get_admin_client") as mock_get_client:
             mock_instance = MagicMock()
-            mock_instance.post = error_post
+            mock_instance.closed = False
+            mock_instance.notify_limit_reached = AsyncMock(
+                side_effect=AdminRequestError(
+                    url="http://test/v0/admin/spending-limit-reached",
+                    method="POST",
+                    status=500,
+                    body="Internal server error",
+                ),
+            )
             mock_get_client.return_value = mock_instance
 
             result = _LimitCheckResult(
@@ -2224,12 +2176,7 @@ class TestNotifyLimitReached:
             )
 
             # Should NOT raise
-            await _notify_limit_reached(
-                result,
-                month="2026-02",
-                base_url="http://test/v0",
-                api_key="test-key",
-            )
+            await _notify_limit_reached(result, month="2026-02")
 
 
 class TestNotificationStress:
@@ -2243,20 +2190,17 @@ class TestNotificationStress:
         notification_count = 0
         lock = asyncio.Lock()
 
-        mock_response = MagicMock()
-        mock_response.status_code = 200
-        mock_response.json.return_value = {"notified": True, "recipient_count": 1}
-
-        async def counting_post(url, headers=None, json=None):
+        async def counting_notify(payload):
             nonlocal notification_count
             await asyncio.sleep(0.01)  # Simulate network delay
             async with lock:
                 notification_count += 1
-            return mock_response
+            return {"notified": True, "recipient_count": 1}
 
-        with patch("unity.spending_limits._get_http_client") as mock_get_client:
+        with patch("unity.spending_limits._get_admin_client") as mock_get_client:
             mock_instance = MagicMock()
-            mock_instance.post = counting_post
+            mock_instance.closed = False
+            mock_instance.notify_limit_reached = AsyncMock(side_effect=counting_notify)
             mock_get_client.return_value = mock_instance
 
             # Launch 10 concurrent notifications
@@ -2270,12 +2214,7 @@ class TestNotificationStress:
                     entity_id=f"agent_{i}",
                 )
                 tasks.append(
-                    _notify_limit_reached(
-                        result,
-                        month="2026-02",
-                        base_url="http://test/v0",
-                        api_key="test-key",
-                    ),
+                    _notify_limit_reached(result, month="2026-02"),
                 )
 
             await asyncio.gather(*tasks)
@@ -2288,62 +2227,51 @@ class TestNotificationStress:
         from unity.spending_limits import check_spending_limits_callback
 
         notification_started = asyncio.Event()
-        notification_completed = asyncio.Event()
 
-        mock_spend_response = MagicMock()
-        mock_spend_response.json.return_value = {
+        spend_data = {
             "cumulative_spend": 150.0,
             "limit": 100.0,
             "limit_set_at": "2026-02-01T10:00:00Z",
         }
-        mock_spend_response.raise_for_status = MagicMock()
 
-        mock_notify_response = MagicMock()
-        mock_notify_response.status_code = 200
-        mock_notify_response.json.return_value = {"notified": True}
-
-        async def mock_get(url, *args, **kwargs):
-            return mock_spend_response
-
-        async def slow_notify_post(url, headers=None, json=None):
+        async def slow_notify(payload):
             notification_started.set()
             await asyncio.sleep(0.5)  # Slow notification
-            notification_completed.set()
-            return mock_notify_response
+            return {"notified": True}
 
         with patch("unity.spending_limits._get_api_key", return_value="test-key"):
-            with patch(
-                "unity.spending_limits._get_base_url",
-                return_value="http://test/v0",
-            ):
-                with patch("unity.session_details.SESSION_DETAILS") as mock_session:
-                    mock_session.assistant.agent_id = 123
-                    mock_session.user_id = "user_456"
-                    mock_session.org_id = None
-                    mock_session.assistant.timezone = "UTC"
+            with patch("unity.session_details.SESSION_DETAILS") as mock_session:
+                mock_session.assistant.agent_id = 123
+                mock_session.user_id = "user_456"
+                mock_session.org_id = None
+                mock_session.assistant.timezone = "UTC"
 
-                    with patch(
-                        "unity.spending_limits._get_http_client",
-                    ) as mock_get_client:
-                        mock_instance = MagicMock()
-                        mock_instance.get = mock_get
-                        mock_instance.post = slow_notify_post
-                        mock_get_client.return_value = mock_instance
+                with patch(
+                    "unity.spending_limits._get_admin_client",
+                ) as mock_get_client:
+                    mock_instance = MagicMock()
+                    mock_instance.closed = False
+                    mock_instance.get_assistant_spend = AsyncMock(
+                        return_value=spend_data,
+                    )
+                    mock_instance.get_user_spend = AsyncMock(return_value=spend_data)
+                    mock_instance.notify_limit_reached = AsyncMock(
+                        side_effect=slow_notify,
+                    )
+                    mock_get_client.return_value = mock_instance
 
-                        start_time = asyncio.get_event_loop().time()
-                        request = LimitCheckRequest(model="gpt-4", endpoint="test")
-                        response = await check_spending_limits_callback(request)
-                        callback_time = asyncio.get_event_loop().time() - start_time
+                    start_time = asyncio.get_event_loop().time()
+                    request = LimitCheckRequest(model="gpt-4", endpoint="test")
+                    response = await check_spending_limits_callback(request)
+                    callback_time = asyncio.get_event_loop().time() - start_time
 
-                        # Response should be fast (not waiting for notification)
-                        assert response.allowed is False
-                        assert callback_time < 0.2  # Should complete in < 200ms
+                    # Response should be fast (not waiting for notification)
+                    assert response.allowed is False
+                    assert callback_time < 0.2  # Should complete in < 200ms
 
-                        # Wait for notification to complete in background
-                        await asyncio.sleep(0.1)
-                        assert (
-                            notification_started.is_set()
-                        )  # Notification was triggered
+                    # Wait for notification to complete in background
+                    await asyncio.sleep(0.1)
+                    assert notification_started.is_set()  # Notification was triggered
 
     @pytest.mark.asyncio
     async def test_rapid_limit_checks_with_notifications(self):
@@ -2352,56 +2280,43 @@ class TestNotificationStress:
 
         notification_calls = []
 
-        mock_spend_response = MagicMock()
-        mock_spend_response.json.return_value = {
-            "cumulative_spend": 150.0,
-            "limit": 100.0,
-        }
-        mock_spend_response.raise_for_status = MagicMock()
+        spend_data = {"cumulative_spend": 150.0, "limit": 100.0}
 
-        mock_notify_response = MagicMock()
-        mock_notify_response.status_code = 200
-        mock_notify_response.json.return_value = {
-            "notified": False,
-            "reason": "already_notified",
-        }
-
-        async def mock_get(url, *args, **kwargs):
-            return mock_spend_response
-
-        async def tracking_post(url, headers=None, json=None):
-            notification_calls.append(json)
-            return mock_notify_response
+        async def tracking_notify(payload):
+            notification_calls.append(payload)
+            return {"notified": False, "reason": "already_notified"}
 
         with patch("unity.spending_limits._get_api_key", return_value="test-key"):
-            with patch(
-                "unity.spending_limits._get_base_url",
-                return_value="http://test/v0",
-            ):
-                with patch("unity.session_details.SESSION_DETAILS") as mock_session:
-                    mock_session.assistant.agent_id = 123
-                    mock_session.user_id = "user_456"
-                    mock_session.org_id = None
-                    mock_session.assistant.timezone = "UTC"
+            with patch("unity.session_details.SESSION_DETAILS") as mock_session:
+                mock_session.assistant.agent_id = 123
+                mock_session.user_id = "user_456"
+                mock_session.org_id = None
+                mock_session.assistant.timezone = "UTC"
 
-                    with patch(
-                        "unity.spending_limits._get_http_client",
-                    ) as mock_get_client:
-                        mock_instance = MagicMock()
-                        mock_instance.get = mock_get
-                        mock_instance.post = tracking_post
-                        mock_get_client.return_value = mock_instance
+                with patch(
+                    "unity.spending_limits._get_admin_client",
+                ) as mock_get_client:
+                    mock_instance = MagicMock()
+                    mock_instance.closed = False
+                    mock_instance.get_assistant_spend = AsyncMock(
+                        return_value=spend_data,
+                    )
+                    mock_instance.get_user_spend = AsyncMock(return_value=spend_data)
+                    mock_instance.notify_limit_reached = AsyncMock(
+                        side_effect=tracking_notify,
+                    )
+                    mock_get_client.return_value = mock_instance
 
-                        # Fire 5 rapid limit checks
-                        tasks = []
-                        for _ in range(5):
-                            request = LimitCheckRequest(model="gpt-4", endpoint="test")
-                            tasks.append(check_spending_limits_callback(request))
+                    # Fire 5 rapid limit checks
+                    tasks = []
+                    for _ in range(5):
+                        request = LimitCheckRequest(model="gpt-4", endpoint="test")
+                        tasks.append(check_spending_limits_callback(request))
 
-                        responses = await asyncio.gather(*tasks)
+                    responses = await asyncio.gather(*tasks)
 
-                        # Wait for background notifications
-                        await asyncio.sleep(0.1)
+                    # Wait for background notifications
+                    await asyncio.sleep(0.1)
 
         # All limit checks should return denied
         assert all(not r.allowed for r in responses)
@@ -2417,17 +2332,14 @@ class TestNotificationStress:
 
         captured_payloads = []
 
-        mock_response = MagicMock()
-        mock_response.status_code = 200
-        mock_response.json.return_value = {"notified": True}
+        async def capture_notify(payload):
+            captured_payloads.append(payload)
+            return {"notified": True}
 
-        async def capture_post(url, headers=None, json=None):
-            captured_payloads.append(json)
-            return mock_response
-
-        with patch("unity.spending_limits._get_http_client") as mock_get_client:
+        with patch("unity.spending_limits._get_admin_client") as mock_get_client:
             mock_instance = MagicMock()
-            mock_instance.post = capture_post
+            mock_instance.closed = False
+            mock_instance.notify_limit_reached = AsyncMock(side_effect=capture_notify)
             mock_get_client.return_value = mock_instance
 
             results = [
@@ -2463,10 +2375,7 @@ class TestNotificationStress:
                 ),
             ]
 
-            tasks = [
-                _notify_limit_reached(r, "2026-02", "http://test/v0", "test-key")
-                for r in results
-            ]
+            tasks = [_notify_limit_reached(r, "2026-02") for r in results]
             await asyncio.gather(*tasks)
 
         assert len(captured_payloads) == 4
@@ -2480,17 +2389,14 @@ class TestNotificationStress:
 
         captured_payload = {}
 
-        mock_response = MagicMock()
-        mock_response.status_code = 200
-        mock_response.json.return_value = {"notified": True}
+        async def capture_notify(payload):
+            captured_payload.update(payload)
+            return {"notified": True}
 
-        async def capture_post(url, headers=None, json=None):
-            captured_payload.update(json)
-            return mock_response
-
-        with patch("unity.spending_limits._get_http_client") as mock_get_client:
+        with patch("unity.spending_limits._get_admin_client") as mock_get_client:
             mock_instance = MagicMock()
-            mock_instance.post = capture_post
+            mock_instance.closed = False
+            mock_instance.notify_limit_reached = AsyncMock(side_effect=capture_notify)
             mock_get_client.return_value = mock_instance
 
             result = _LimitCheckResult(
@@ -2502,12 +2408,7 @@ class TestNotificationStress:
                 # No entity_name, limit_set_at, or organization_id
             )
 
-            await _notify_limit_reached(
-                result,
-                month="2026-02",
-                base_url="http://test/v0",
-                api_key="test-key",
-            )
+            await _notify_limit_reached(result, month="2026-02")
 
         # Required fields present
         assert captured_payload["limit_type"] == "assistant"
