@@ -14,9 +14,9 @@ Limit hierarchy:
 
 All checks run in parallel for minimal latency impact.
 
-Uses a shared httpx.AsyncClient for connection pooling — TCP+TLS connections
-are reused across limit checks, avoiding ConnectTimeout under event loop
-congestion (e.g., during video calls with heavy IPC/screenshot traffic).
+Uses ``unify.AsyncAdminClient`` (aiohttp-backed) for connection pooling,
+automatic retries, and exponential backoff — matching the reliability
+characteristics of the sync ``unify.utils.http`` session.
 """
 
 from __future__ import annotations
@@ -29,35 +29,33 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import TYPE_CHECKING, List, Optional
 
-import httpx
+from unify.async_admin import AdminRequestError, AsyncAdminClient
 
 if TYPE_CHECKING:
     from unillm.limit_hooks import LimitCheckRequest, LimitCheckResponse
 
 logger = logging.getLogger(__name__)
 
-# Default timeout for limit check requests (should be fast)
 LIMIT_CHECK_TIMEOUT = 5.0
 
-# Shared HTTP client for limit checks. Lazily initialized, reuses TCP+TLS
-# connections across calls to avoid ConnectTimeout under event loop congestion.
-# Tracks the event loop it was created on to avoid cross-loop reuse.
-_http_client: Optional[httpx.AsyncClient] = None
-_http_client_loop: Optional[asyncio.AbstractEventLoop] = None
+_admin_client: Optional[AsyncAdminClient] = None
 
 
-def _get_http_client() -> httpx.AsyncClient:
-    """Get or create the shared httpx.AsyncClient for limit checks."""
-    global _http_client, _http_client_loop
-    current_loop = asyncio.get_running_loop()
-    if (
-        _http_client is None
-        or _http_client.is_closed
-        or _http_client_loop is not current_loop
-    ):
-        _http_client = httpx.AsyncClient(timeout=LIMIT_CHECK_TIMEOUT)
-        _http_client_loop = current_loop
-    return _http_client
+def _get_api_key() -> Optional[str]:
+    """Get the admin API key for Orchestra calls."""
+    return os.getenv("ORCHESTRA_ADMIN_KEY")
+
+
+def _get_admin_client() -> AsyncAdminClient:
+    """Get or create the shared AsyncAdminClient for limit checks."""
+    global _admin_client
+    api_key = _get_api_key()
+    if _admin_client is None or _admin_client.closed:
+        _admin_client = AsyncAdminClient(
+            api_key=api_key,
+            timeout=LIMIT_CHECK_TIMEOUT,
+        )
+    return _admin_client
 
 
 @dataclass
@@ -75,16 +73,6 @@ class _LimitCheckResult:
     credit_balance: Optional[float] = None  # Billing account credit balance
 
 
-def _get_api_key() -> Optional[str]:
-    """Get the admin API key for Orchestra calls."""
-    return os.getenv("ORCHESTRA_ADMIN_KEY")
-
-
-def _get_base_url() -> str:
-    """Get the Orchestra API base URL."""
-    return os.getenv("ORCHESTRA_URL", "https://api.unify.ai/v0")
-
-
 def _get_current_month(timezone: str = "UTC") -> str:
     """Get current month string in YYYY-MM format for the given timezone."""
     try:
@@ -94,96 +82,66 @@ def _get_current_month(timezone: str = "UTC") -> str:
     return datetime.now(tz).strftime("%Y-%m")
 
 
+def _parse_spend_result(
+    data: dict,
+    limit_type: str,
+    entity_id: str,
+    *,
+    entity_name: Optional[str] = None,
+    organization_id: Optional[int] = None,
+) -> _LimitCheckResult:
+    """Parse a spend endpoint response into a ``_LimitCheckResult``."""
+    limit = data.get("limit")
+    spend = data.get("cumulative_spend", 0)
+    limit_set_at = data.get("limit_set_at")
+    credit_balance = data.get("credit_balance")
+
+    if limit is None:
+        return _LimitCheckResult(exceeded=False, credit_balance=credit_balance)
+
+    return _LimitCheckResult(
+        exceeded=spend >= limit,
+        limit_type=limit_type,
+        limit_value=limit,
+        current_spend=spend,
+        entity_id=entity_id,
+        entity_name=entity_name or data.get("agent_name"),
+        limit_set_at=limit_set_at,
+        organization_id=organization_id,
+        credit_balance=credit_balance,
+    )
+
+
 async def _check_assistant_limit(
     agent_id: str,
     month: str,
-    base_url: str,
-    api_key: str,
 ) -> _LimitCheckResult:
     """Check if assistant spending limit is exceeded."""
-    url = f"{base_url}/admin/assistant/{agent_id}/spend"
-    headers = {"Authorization": f"Bearer {api_key}"}
-    params = {"month": month}
-
     try:
-        client = _get_http_client()
-        response = await client.get(url, headers=headers, params=params)
-        response.raise_for_status()
-        data = response.json()
-
-        limit = data.get("limit")
-        spend = data.get("cumulative_spend", 0)
-        limit_set_at = data.get("limit_set_at")
-        credit_balance = data.get("credit_balance")
-
-        # No limit set = unlimited
-        if limit is None:
-            return _LimitCheckResult(
-                exceeded=False,
-                credit_balance=credit_balance,
-            )
-
-        exceeded = spend >= limit
-        return _LimitCheckResult(
-            exceeded=exceeded,
-            limit_type="assistant",
-            limit_value=limit,
-            current_spend=spend,
-            entity_id=agent_id,
-            entity_name=data.get("agent_name"),
-            limit_set_at=limit_set_at,
-            credit_balance=credit_balance,
-        )
-    except httpx.HTTPStatusError as e:
-        if e.response.status_code == 404:
+        client = _get_admin_client()
+        data = await client.get_assistant_spend(agent_id=int(agent_id), month=month)
+        return _parse_spend_result(data, "assistant", agent_id)
+    except AdminRequestError as e:
+        if e.status == 404:
             return _LimitCheckResult(exceeded=False)
         logger.warning(f"Failed to check assistant limit: {type(e).__name__}: {e}")
-        return _LimitCheckResult(exceeded=False)  # Fail open
+        return _LimitCheckResult(exceeded=False)
     except Exception as e:
         logger.warning(f"Failed to check assistant limit: {type(e).__name__}: {e}")
-        return _LimitCheckResult(exceeded=False)  # Fail open
+        return _LimitCheckResult(exceeded=False)
 
 
 async def _check_user_limit(
     user_id: str,
     month: str,
-    base_url: str,
-    api_key: str,
 ) -> _LimitCheckResult:
     """Check if user's personal spending limit is exceeded."""
-    url = f"{base_url}/admin/user/{user_id}/spend"
-    headers = {"Authorization": f"Bearer {api_key}"}
-    params = {"month": month}
-
     try:
-        client = _get_http_client()
-        response = await client.get(url, headers=headers, params=params)
-        response.raise_for_status()
-        data = response.json()
-
-        limit = data.get("limit")
-        spend = data.get("cumulative_spend", 0)
-        limit_set_at = data.get("limit_set_at")
-        credit_balance = data.get("credit_balance")
-
-        if limit is None:
-            return _LimitCheckResult(
-                exceeded=False,
-                credit_balance=credit_balance,
-            )
-
-        exceeded = spend >= limit
-        return _LimitCheckResult(
-            exceeded=exceeded,
-            limit_type="user",
-            limit_value=limit,
-            current_spend=spend,
-            entity_id=user_id,
-            limit_set_at=limit_set_at,
-            credit_balance=credit_balance,
-        )
-    except httpx.HTTPStatusError as e:
-        if e.response.status_code == 404:
+        client = _get_admin_client()
+        data = await client.get_user_spend(user_id=user_id, month=month)
+        return _parse_spend_result(data, "user", user_id)
+    except AdminRequestError as e:
+        if e.status == 404:
             return _LimitCheckResult(exceeded=False)
         logger.warning(f"Failed to check user limit: {type(e).__name__}: {e}")
         return _LimitCheckResult(exceeded=False)
@@ -196,44 +154,23 @@ async def _check_member_limit(
     user_id: str,
     org_id: int,
     month: str,
-    base_url: str,
-    api_key: str,
 ) -> _LimitCheckResult:
     """Check if organization member's spending limit is exceeded."""
-    url = f"{base_url}/admin/organization/{org_id}/members/{user_id}/spend"
-    headers = {"Authorization": f"Bearer {api_key}"}
-    params = {"month": month}
-
     try:
-        client = _get_http_client()
-        response = await client.get(url, headers=headers, params=params)
-        response.raise_for_status()
-        data = response.json()
-
-        limit = data.get("limit")
-        spend = data.get("cumulative_spend", 0)
-        limit_set_at = data.get("limit_set_at")
-        credit_balance = data.get("credit_balance")
-
-        if limit is None:
-            return _LimitCheckResult(
-                exceeded=False,
-                credit_balance=credit_balance,
-            )
-
-        exceeded = spend >= limit
-        return _LimitCheckResult(
-            exceeded=exceeded,
-            limit_type="member",
-            limit_value=limit,
-            current_spend=spend,
-            entity_id=user_id,
-            limit_set_at=limit_set_at,
-            organization_id=org_id,
-            credit_balance=credit_balance,
+        client = _get_admin_client()
+        data = await client.get_member_spend(
+            user_id=user_id,
+            org_id=org_id,
+            month=month,
         )
-    except httpx.HTTPStatusError as e:
-        if e.response.status_code == 404:
+        return _parse_spend_result(
+            data,
+            "member",
+            user_id,
+            organization_id=org_id,
+        )
+    except AdminRequestError as e:
+        if e.status == 404:
             return _LimitCheckResult(exceeded=False)
         logger.warning(f"Failed to check member limit: {type(e).__name__}: {e}")
         return _LimitCheckResult(exceeded=False)
@@ -245,44 +182,19 @@ async def _check_member_limit(
 async def _check_org_limit(
     org_id: int,
     month: str,
-    base_url: str,
-    api_key: str,
 ) -> _LimitCheckResult:
     """Check if organization spending limit is exceeded."""
-    url = f"{base_url}/admin/organization/{org_id}/spend"
-    headers = {"Authorization": f"Bearer {api_key}"}
-    params = {"month": month}
-
     try:
-        client = _get_http_client()
-        response = await client.get(url, headers=headers, params=params)
-        response.raise_for_status()
-        data = response.json()
-
-        limit = data.get("limit")
-        spend = data.get("cumulative_spend", 0)
-        limit_set_at = data.get("limit_set_at")
-        credit_balance = data.get("credit_balance")
-
-        if limit is None:
-            return _LimitCheckResult(
-                exceeded=False,
-                credit_balance=credit_balance,
-            )
-
-        exceeded = spend >= limit
-        return _LimitCheckResult(
-            exceeded=exceeded,
-            limit_type="organization",
-            limit_value=limit,
-            current_spend=spend,
-            entity_id=str(org_id),
+        client = _get_admin_client()
+        data = await client.get_org_spend(org_id=org_id, month=month)
+        return _parse_spend_result(
+            data,
+            "organization",
+            str(org_id),
             entity_name=data.get("organization_name"),
-            limit_set_at=limit_set_at,
-            credit_balance=credit_balance,
         )
-    except httpx.HTTPStatusError as e:
-        if e.response.status_code == 404:
+    except AdminRequestError as e:
+        if e.status == 404:
             return _LimitCheckResult(exceeded=False)
         logger.warning(f"Failed to check org limit: {type(e).__name__}: {e}")
         return _LimitCheckResult(exceeded=False)
@@ -294,8 +206,6 @@ async def _check_org_limit(
 async def _notify_limit_reached(
     result: _LimitCheckResult,
     month: str,
-    base_url: str,
-    api_key: str,
 ) -> None:
     """
     Fire-and-forget notification to Orchestra when a limit is reached.
@@ -307,9 +217,6 @@ async def _notify_limit_reached(
 
     Errors are logged but don't affect the limit check response.
     """
-    url = f"{base_url}/admin/spending-limit-reached"
-    headers = {"Authorization": f"Bearer {api_key}"}
-
     payload = {
         "limit_type": result.limit_type,
         "entity_id": result.entity_id,
@@ -319,34 +226,25 @@ async def _notify_limit_reached(
         "entity_name": result.entity_name,
     }
 
-    # Include limit_set_at if available (for re-enable detection)
     if result.limit_set_at:
         payload["limit_set_at"] = result.limit_set_at
 
-    # Include organization_id for member limits
     if result.organization_id:
         payload["organization_id"] = result.organization_id
 
     try:
-        client = _get_http_client()
-        response = await client.post(url, headers=headers, json=payload)
-        if response.status_code == 200:
-            data = response.json()
-            if data.get("notified"):
-                logger.info(
-                    f"Spending limit notification sent for {result.limit_type} "
-                    f"limit (entity_id={result.entity_id}, limit=${result.limit_value})",
-                )
-            else:
-                logger.debug(
-                    f"Spending limit notification skipped: {data.get('reason', 'unknown')}",
-                )
+        client = _get_admin_client()
+        data = await client.notify_limit_reached(payload)
+        if data.get("notified"):
+            logger.info(
+                f"Spending limit notification sent for {result.limit_type} "
+                f"limit (entity_id={result.entity_id}, limit=${result.limit_value})",
+            )
         else:
-            logger.warning(
-                f"Spending limit notification failed: {response.status_code}",
+            logger.debug(
+                f"Spending limit notification skipped: {data.get('reason', 'unknown')}",
             )
     except Exception as e:
-        # Fire-and-forget: log error but don't propagate
         logger.warning(f"Failed to send spending limit notification: {e}")
 
 
@@ -369,66 +267,55 @@ async def check_spending_limits_callback(
 
     from .session_details import SESSION_DETAILS
 
-    # Get API key and base URL
     api_key = _get_api_key()
     if not api_key:
         logger.debug("Spending limit check skipped: no API key")
         return LimitCheckResponse(allowed=True)
-
-    base_url = _get_base_url()
 
     agent_id = SESSION_DETAILS.assistant.agent_id
 
     user_id = SESSION_DETAILS.user_id
     org_id = SESSION_DETAILS.org_id  # None for personal context
 
-    # Get timezone for month calculation
     timezone = "UTC"
     if SESSION_DETAILS.assistant:
         timezone = SESSION_DETAILS.assistant.timezone or "UTC"
 
-    # Skip if we don't have required context
     if not agent_id or not user_id:
         logger.debug("Spending limit check skipped: missing context")
         return LimitCheckResponse(allowed=True)
 
     month = _get_current_month(timezone)
 
-    # Build list of limit checks based on context
     checks: List[asyncio.Task] = []
 
-    # Always check assistant limit
     checks.append(
         asyncio.create_task(
-            _check_assistant_limit(agent_id, month, base_url, api_key),
+            _check_assistant_limit(agent_id, month),
         ),
     )
 
     is_org_context = org_id is not None
     if is_org_context:
-        # Org context: check member + org limits
         checks.append(
             asyncio.create_task(
-                _check_member_limit(user_id, org_id, month, base_url, api_key),
+                _check_member_limit(user_id, org_id, month),
             ),
         )
         checks.append(
             asyncio.create_task(
-                _check_org_limit(org_id, month, base_url, api_key),
+                _check_org_limit(org_id, month),
             ),
         )
     else:
-        # Personal context: check user personal limit
         checks.append(
             asyncio.create_task(
-                _check_user_limit(user_id, month, base_url, api_key),
+                _check_user_limit(user_id, month),
             ),
         )
 
-    # Wait for all checks in parallel
     results = await asyncio.gather(*checks, return_exceptions=True)
 
-    # Convert limit type string to enum
     def _to_limit_type(type_str: Optional[str]) -> Optional[LimitType]:
         if type_str is None:
             return None
@@ -437,17 +324,13 @@ async def check_spending_limits_callback(
         except ValueError:
             return None
 
-    # Collect credit_balance from the first result that has it.
-    # All endpoints return the same billing account's balance, so any one suffices.
     credit_balance: Optional[float] = None
 
-    # Return first exceeded result
     for result in results:
         if isinstance(result, Exception):
             logger.warning(f"Limit check failed with exception: {result}")
             continue
 
-        # Capture credit_balance from the first result that provides it
         if credit_balance is None and result.credit_balance is not None:
             credit_balance = result.credit_balance
 
@@ -458,10 +341,8 @@ async def check_spending_limits_callback(
             limit = f"${result.limit_value:.2f}" if result.limit_value else "unknown"
             reason = f"Monthly spending limit exceeded: {result.limit_type} limit of {limit} reached (current: {current})"
 
-            # Fire-and-forget notification to Orchestra
-            # This triggers email notifications to affected users
             asyncio.create_task(
-                _notify_limit_reached(result, month, base_url, api_key),
+                _notify_limit_reached(result, month),
             )
 
             return LimitCheckResponse(
@@ -474,10 +355,6 @@ async def check_spending_limits_callback(
                 entity_name=result.entity_name,
             )
 
-    # Check credit balance: block if credits are exhausted.
-    # This piggybacks on the existing spending limit HTTP calls — no extra
-    # round-trip. The balance comes from Orchestra's billing account, which
-    # is the authoritative source.
     if credit_balance is not None and credit_balance <= 0:
         return LimitCheckResponse(
             allowed=False,
@@ -498,7 +375,6 @@ def install_limit_check_hook() -> None:
 
     Should be called during unity.init() after SESSION_DETAILS is populated.
     """
-    # Only install if we have an API key configured
     api_key = _get_api_key()
     if not api_key:
         logger.debug("Limit check hook not installed: no API key")
@@ -510,10 +386,8 @@ def install_limit_check_hook() -> None:
         unillm.set_limit_check_hook(check_spending_limits_callback)
         logger.debug("Limit check hook installed")
     except ImportError:
-        # unillm not available - skip hook installation
         pass
     except Exception as e:
-        # Any other error - skip silently to not break initialization
         logger.debug(f"Failed to install limit check hook: {e}")
 
 
