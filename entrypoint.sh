@@ -129,9 +129,9 @@ fi
 echo "⬥ Starting agent-service..."
 # Use pre-compiled JavaScript if available, otherwise fallback to ts-node
 if [ -f "/app/agent-service/dist/index.js" ]; then
-    cd /app/agent-service && node dist/index.js &
+    cd /app/agent-service && node --no-deprecation dist/index.js &
 else
-    cd /app/agent-service && npx ts-node src/index.ts &
+    cd /app/agent-service && NODE_OPTIONS="--no-deprecation" npx ts-node src/index.ts &
 fi
 AGENT_PID=$!
 cd /app
