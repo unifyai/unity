@@ -1473,13 +1473,14 @@ class ConversationManager(metaclass=SingletonABCMeta):
 
     async def _stop_file_sync(self) -> None:
         """Stop file sync with managed VM."""
+        if not self.initialized:
+            return
         try:
             from unity.file_manager.managers.local import LocalFileManager
 
             local_fm = LocalFileManager()
             adapter = local_fm._adapter
 
-            # Check if adapter supports sync
             if not hasattr(adapter, "sync_started"):
                 return
 
