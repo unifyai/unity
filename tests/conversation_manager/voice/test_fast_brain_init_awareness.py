@@ -125,6 +125,40 @@ async def _get_response(
 
 
 # ---------------------------------------------------------------------------
+#  Opening greeting: must not mention initialization state
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+@_handle_project
+async def test_opening_greeting_does_not_mention_init():
+    """The very first utterance on a cold-start call should be a natural
+    greeting ("Hey, how's it going?"), not a deferral like "just getting
+    everything ready".
+
+    In production, the greeting is generated *before* the init note is
+    injected into context, so the LLM should have no awareness of init
+    state.  This test verifies that a clean context (no init note)
+    produces a greeting free of deferral / setup language.
+    """
+    prompt = _build_prompt()
+    messages: list[dict[str, str]] = []
+
+    response = await _get_response(prompt, messages)
+
+    assert not _has_deferral(response), (
+        f"Opening greeting should be a natural hello, not mention "
+        f"initialization or setup.\nResponse: {response}"
+    )
+    low = response.lower()
+    assert not any(
+        kw in low for kw in ["initializing", "setting up", "not available", "syncing"]
+    ), (
+        f"Opening greeting should not reference system state.\n" f"Response: {response}"
+    )
+
+
+# ---------------------------------------------------------------------------
 #  Pre-init: fast brain should defer action requests
 # ---------------------------------------------------------------------------
 

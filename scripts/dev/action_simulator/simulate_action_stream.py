@@ -46,6 +46,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 import time
 from datetime import datetime, timezone
@@ -60,7 +61,9 @@ import requests
 
 ORCHESTRA_BASE = "http://127.0.0.1:8000/v0"
 CONSOLE_BASE = "http://localhost:3333"
-KEY = "BRE8zK0jon7e7Ix6mtKYZkqO6kIMY0w1QgFFcm3zg8o="
+KEY = os.environ.get("UNIFY_KEY", "")
+if not KEY:
+    raise RuntimeError("UNIFY_KEY must be set in the environment.")
 AUTH = {"Authorization": f"Bearer {KEY}"}
 PROJECT = "Assistants"
 ASSISTANT_ID = "1"

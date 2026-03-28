@@ -509,6 +509,11 @@ logging.getLogger("RapidOCR").addFilter(
 # handlers, and attach the DEBUG file handler in configure_log_dir() so the
 # output still lands in unity.log.  NOT wired to unity_info_only.log — that
 # file mirrors the terminal exactly (Unity INFO+ only).
+#
+# "py.warnings" captures Python warnings (e.g. unawaited coroutine
+# RuntimeWarnings from LiteLLM's async bridge during task cancellation).
+# They are harmless but noisy on the terminal; routing through the logging
+# system keeps them in unity.log for debugging without cluttering stdout.
 _FILE_ONLY_LOGGERS = [
     logging.getLogger(name)
     for name in (
@@ -516,11 +521,14 @@ _FILE_ONLY_LOGGERS = [
         "livekit.agents",
         "livekit.plugins",
         "PIL",
+        "py.warnings",
     )
 ]
 for _fo in _FILE_ONLY_LOGGERS:
     _fo.setLevel(logging.DEBUG)
     _fo.propagate = False
+
+logging.captureWarnings(True)
 
 # ─────────────────────────────────────────────────────────────────────────────
 # File-based Logging Configuration

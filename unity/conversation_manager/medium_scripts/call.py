@@ -1116,23 +1116,6 @@ async def entrypoint(ctx: agents.JobContext):
             )
         pending_notifications.clear()
 
-    if not os.environ.get("UNITY_CM_INITIALIZED"):
-        _init_note = (
-            "[system] You have just started up and your systems are still "
-            "syncing — loading files, pulling up previous conversations, "
-            "and connecting to your tools. This takes a few moments. "
-            "If the user asks you to do something that requires looking "
-            "things up or taking action, let them know naturally that "
-            "you are still getting set up (e.g. 'I'm just pulling up our "
-            "previous sessions — give me a moment and I'll get right on "
-            "that'). Do NOT say 'I can't do that' — frame it as a brief "
-            "delay, not a limitation. You will receive a notification "
-            "when everything is ready."
-        )
-        assistant._chat_ctx.add_message(role="system", content=[_init_note])
-        session._chat_ctx.add_message(role="system", content=[_init_note])
-        _log.info("Injected initializing-state system message (CM not yet initialized)")
-
     # Pre-generate the opening greeting via a direct sidecar LLM call so that
     # the full LLM latency is absorbed before audio playback begins.
     # - Meet: hides the delay behind the "waiting for assistant" spinner, then
@@ -1169,6 +1152,29 @@ async def entrypoint(ctx: agents.JobContext):
         allow_interruptions=True,
         add_to_chat_ctx=True,
     )
+
+    # Inject the initializing-state system message *after* the greeting has
+    # been generated and spoken.  Placing it before the greeting caused the
+    # LLM to proactively mention "still setting up" in the opening line,
+    # which sounds odd when no action has been requested yet.  The note only
+    # matters for subsequent turns where the user might ask for something
+    # that requires initialized managers.
+    if not os.environ.get("UNITY_CM_INITIALIZED"):
+        _init_note = (
+            "[system] You have just started up and your systems are still "
+            "syncing — loading files, pulling up previous conversations, "
+            "and connecting to your tools. This takes a few moments. "
+            "If the user asks you to do something that requires looking "
+            "things up or taking action, let them know naturally that "
+            "you are still getting set up (e.g. 'I'm just pulling up our "
+            "previous sessions — give me a moment and I'll get right on "
+            "that'). Do NOT say 'I can't do that' — frame it as a brief "
+            "delay, not a limitation. You will receive a notification "
+            "when everything is ready."
+        )
+        assistant._chat_ctx.add_message(role="system", content=[_init_note])
+        session._chat_ctx.add_message(role="system", content=[_init_note])
+        _log.info("Injected initializing-state system message (CM not yet initialized)")
 
 
 if __name__ == "__main__":
