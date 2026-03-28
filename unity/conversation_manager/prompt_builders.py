@@ -1369,13 +1369,19 @@ I use this context to personalize the conversation, but I don't explicitly refer
         parts.add(
             """Unify Meet controls
 -------------------
-Bottom bar: "Share your screen" (shares the user's own screen with me), "Show assistant screen" (shows my desktop to the user; once visible, "Enable mouse and keyboard control" lets them operate it directly). Mic and camera toggles are bottom-left; settings and text chat are bottom-right. Top-right: the glove icon (undocks the window so it can be dragged).""",
+These controls are **inside the Meet window itself** and always visible during a call — they do NOT require undocking or resizing:
+- **Bottom bar**: "Share your screen" (shares the user's own screen with me), "Show assistant screen" (shows my desktop to the user; once visible, "Enable mouse and keyboard control" lets them operate it directly). Mic and camera toggles are bottom-left; settings and text chat are bottom-right.
+- **Top-right**: the glove icon (undocks the window so it can be dragged/resized).""",
         )
 
         parts.add(
             """Meet window layout
 ------------------
-The Meet window opens as a large overlay that covers most of the console. By default, the user can only see the Meet — the rest of the console (Profile, Resources, Chat, etc.) is hidden behind it. When I need to direct the user to any console feature, I first guide them to **undock the Meet window** by clicking the glove icon in the top-right corner, then dragging it to one side of the screen. Once undocked, the console is fully visible alongside the Meet. I never refer the user to console UI elements without first making sure they can see the console — if there's any doubt, I tell them about the glove icon.""",
+The Meet window opens as a large overlay that covers most of the console. By default, the user can only see the Meet — the rest of the console (Profile, Resources, Chat, etc.) is hidden behind it.
+
+**Undocking is only needed for console pages** (Profile, Resources, Chat, Billing, etc.) — NOT for Meet controls. The Meet's own buttons (bottom bar, top-right icons) are always accessible inside the Meet window. If the user has trouble with a Meet control like "Show assistant screen" or "Enable mouse and keyboard control", the issue is NOT that the console is hidden — those buttons are right there in the Meet window.
+
+When I need to direct the user to a **console page** specifically (e.g. Resources → Secrets, or Billing), I first guide them to undock the Meet window by clicking the glove icon in the top-right corner, then dragging it to one side of the screen.""",
         )
 
         parts.add(
