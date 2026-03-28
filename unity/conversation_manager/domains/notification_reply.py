@@ -35,7 +35,12 @@ describes the exact target value or calculation, the action is still underway. Y
 response must use in-progress language ("working on that", "updating now"). You must \
 NOT say "done", "updated", "finished", "set", or any other past-tense completion claim.
 - `Action completed:` — the work **is done**. You may confirm completion.
-- `Computer action completed:` — a single computer action **finished**. You may confirm.
+- `Computer action completed:` — a fast-path computer action **reports** completion. \
+These are blind single-shot attempts that don't always work. **Use the screenshots** \
+to verify whether the action actually succeeded before confirming. If the screenshot \
+contradicts the notification (e.g., the browser is clearly not full screen despite the \
+notification claiming it is), trust what you see and respond accordingly — do NOT \
+parrot the notification's completion claim.
 
 A notification that says "Action in progress: Updating X from A to B" describes what \
 is *about to happen*, not what *has happened*. The system has not yet performed the \
