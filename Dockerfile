@@ -42,7 +42,12 @@ RUN uv pip install --system --no-cache torch torchvision torchaudio --index-url 
 # Clone unify and unillm repos (no PyPI releases; pyproject.toml references ../unify and ../unillm)
 # Branch logic mirrors CI: main→main, staging/preview→staging
 # This keeps preview aligned with the existing staging dependency branches.
-RUN DEP_BRANCH=$([ "$BRANCH" = "main" ] && echo "main" || echo "staging") && \
+# DEP_REPOS_SHA is set at build time to the latest commit SHAs of unify+unillm;
+# changing it busts the Docker layer cache so stale clones are never reused.
+# The value is referenced in the RUN to ensure Docker includes it in the cache key.
+ARG DEP_REPOS_SHA=unknown
+RUN echo "dep_repos_sha=${DEP_REPOS_SHA}" && \
+    DEP_BRANCH=$([ "$BRANCH" = "main" ] && echo "main" || echo "staging") && \
     git clone --depth 1 --branch $DEP_BRANCH https://github.com/unifyai/unify.git /unify && \
     git clone --depth 1 --branch $DEP_BRANCH https://github.com/unifyai/unillm.git /unillm
 
