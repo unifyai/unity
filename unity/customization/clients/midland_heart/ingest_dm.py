@@ -210,6 +210,7 @@ def main() -> int:
     parse_results: list[FileParseResult] = file_parser.parse_batch(
         parse_requests,
         raises_on_error=False,
+        parse_config=config.parse,
     )
 
     parse_duration_ms = (time.perf_counter() - parse_start) * 1000
