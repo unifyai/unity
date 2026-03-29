@@ -309,9 +309,11 @@ function cacheScreenshot(sessionId: string, screenshot: string, cursorPosition: 
   }
 }
 
-function refreshDesktopCache(excludeSessionId?: string) {
+function refreshDesktopCache(triggerSessionId: string) {
+  const triggerSession = activeSessions.get(triggerSessionId);
+  if (!triggerSession || triggerSession.mode !== "web-vm") return;
   const desktopEntry = [...activeSessions.entries()].find(([, s]) => s.mode === "desktop");
-  if (!desktopEntry || desktopEntry[0] === excludeSessionId) return;
+  if (!desktopEntry) return;
   const [deskId, deskSession] = desktopEntry;
   (async () => {
     try {
