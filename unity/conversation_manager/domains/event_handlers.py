@@ -451,7 +451,11 @@ async def _(event: Event, cm: "ConversationManager", *args, **kwargs):
         cm._claim_pending_user_screenshot(message_id)
 
         if cm.assistant_screen_share_active:
-            await cm.capture_assistant_screenshot(event.content, message_id)
+            await cm.capture_assistant_screenshot(
+                event.content,
+                message_id,
+                cached=True,
+            )
 
         await cm.interject_or_run(
             event.content,
@@ -1685,6 +1689,10 @@ async def _(
                 )
         except Exception:
             pass
+
+    if isinstance(event, UserRemoteControlStopped):
+        if cm.assistant_screen_share_active:
+            await cm.capture_assistant_screenshot("", cached=False)
 
 
 @EventHandler.register(LogMessageResponse)
