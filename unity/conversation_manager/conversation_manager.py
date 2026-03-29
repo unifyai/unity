@@ -295,12 +295,14 @@ class ConversationManager(metaclass=SingletonABCMeta):
         self,
         user_utterance: str,
         local_message_id: int | None = None,
+        *,
+        cached: bool = False,
     ) -> None:
         """Capture the assistant's screen and buffer it for the next slow brain turn.
 
-        Called when an inbound utterance arrives while assistant screen sharing
-        is active. The screenshot is paired with the user's utterance text so
-        the slow brain can align visual context with spoken instructions.
+        When *cached* is True, reads from the agent-service screenshot cache
+        (~0 ms) instead of doing a live Playwright capture (~500 ms).  The
+        cache is updated automatically after every Magnitude action.
 
         Runs the HTTP call in a thread to avoid event loop starvation — the
         main process event loop is shared with the actor and managers, which
@@ -318,18 +320,28 @@ class ConversationManager(metaclass=SingletonABCMeta):
         )
 
         base_url = _resolve_agent_service_url()
-        url = f"{base_url}/screenshot"
+        if cached:
+            url = f"{base_url}/screenshot/latest?sessionId=default"
+        else:
+            url = f"{base_url}/screenshot"
         auth_key = SESSION_DETAILS.unify_key
 
         def _sync_capture() -> dict | None:
             t0 = _time.monotonic()
             try:
-                resp = _requests.post(
-                    url,
-                    json={},
-                    headers={"authorization": f"Bearer {auth_key}"},
-                    timeout=10,
-                )
+                if cached:
+                    resp = _requests.get(
+                        url,
+                        headers={"authorization": f"Bearer {auth_key}"},
+                        timeout=10,
+                    )
+                else:
+                    resp = _requests.post(
+                        url,
+                        json={},
+                        headers={"authorization": f"Bearer {auth_key}"},
+                        timeout=10,
+                    )
                 total_ms = (_time.monotonic() - t0) * 1000
                 if resp.status_code >= 400:
                     self._session_logger.warning(
