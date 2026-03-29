@@ -1268,7 +1268,7 @@ def render_event_for_fast_brain(event_json: str) -> str | None:
         return f"Clarification needed: {event.query}"
     if isinstance(event, ComputerActCompleted):
         snippet = event.summary[:200] if event.summary else event.instruction[:200]
-        return f"Computer action completed: {snippet}"
+        return f"Computer action attempted: {snippet}"
 
     return None
 
