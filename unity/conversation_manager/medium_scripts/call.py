@@ -859,7 +859,6 @@ async def entrypoint(ctx: agents.JobContext):
         )
         chat_messages = _extract_chat_messages(
             session._chat_ctx,
-            strip_images=True,
             tail=SETTINGS.conversation.NOTIFICATION_REPLY_CONTEXT_WINDOW,
         )
         decision, log_path = await evaluator.evaluate(
