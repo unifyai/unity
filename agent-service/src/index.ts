@@ -1283,8 +1283,8 @@ app.post('/screenshot', isAgentReady, async (req: Request, res: Response) => {
   }
 });
 
-app.get('/screenshot/latest', isAgentReady, async (req: Request, res: Response) => {
-  const sessionId = (req.query.sessionId as string) || req.body?.sessionId;
+app.post('/screenshot/latest', isAgentReady, async (req: Request, res: Response) => {
+  const { sessionId } = req.body;
   const session = activeSessions.get(sessionId)!;
   if (session.latestScreenshot) {
     res.json({ screenshot: session.latestScreenshot, cursorPosition: session.latestCursorPosition });
