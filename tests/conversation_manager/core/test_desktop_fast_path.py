@@ -534,7 +534,7 @@ def test_render_event_for_fast_brain_computer_act_completed():
     result = render_event_for_fast_brain(event.to_json())
 
     assert result is not None
-    assert "Computer action attempted" in result
+    assert "Computer action executed" in result
     assert "Clicked the Submit button" in result
 
 
