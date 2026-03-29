@@ -3023,6 +3023,11 @@ async def async_tool_loop_inner(
                             if task_to_cancel
                             else "unknown"
                         )
+                        orig_call_id = (
+                            tools_data.info[task_to_cancel].call_id
+                            if task_to_cancel
+                            else None
+                        )
                         arg_json = (
                             tools_data.info[task_to_cancel].call_dict["function"][
                                 "arguments"
@@ -3074,7 +3079,21 @@ async def async_tool_loop_inner(
                                 _msg_dispatcher,
                             )
 
-                            continue  # helper handled for a live target
+                        # Emit a synthetic tool result for the *original* call_id
+                        # so the frontend can resolve the pending tool-call row.
+                        # Same pattern as the wait() handler above.
+                        with suppress(Exception):
+                            if orig_call_id is not None:
+                                await to_event_bus(
+                                    create_tool_call_message(
+                                        orig_fn,
+                                        orig_call_id,
+                                        json.dumps({"status": "stopped"}),
+                                    ),
+                                    cfg,
+                                )
+
+                        continue  # helper handled for a live target
 
                     # ── _pause helper ────────────────────────────────────────────────
                     elif lname_cf.startswith("pause_") and not lname_cf.startswith(
@@ -3125,6 +3144,21 @@ async def async_tool_loop_inner(
                                 client,
                                 _msg_dispatcher,
                             )
+
+                            # Emit a synthetic tool result for the *original* call_id
+                            # so the frontend can resolve the pending tool-call row
+                            # (stop shimmering while paused).
+                            with suppress(Exception):
+                                orig_call_id = tools_data.info[tgt_task].call_id
+                                await to_event_bus(
+                                    create_tool_call_message(
+                                        orig_fn,
+                                        orig_call_id,
+                                        json.dumps({"status": "paused"}),
+                                    ),
+                                    cfg,
+                                )
+
                             continue  # helper handled for live target; otherwise fall through
 
                     # ── _resume helper ───────────────────────────────────────────────
