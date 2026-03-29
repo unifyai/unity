@@ -321,7 +321,7 @@ class ConversationManager(metaclass=SingletonABCMeta):
 
         base_url = _resolve_agent_service_url()
         if cached:
-            url = f"{base_url}/screenshot/latest?sessionId=default"
+            url = f"{base_url}/screenshot/latest"
         else:
             url = f"{base_url}/screenshot"
         auth_key = SESSION_DETAILS.unify_key
@@ -329,19 +329,12 @@ class ConversationManager(metaclass=SingletonABCMeta):
         def _sync_capture() -> dict | None:
             t0 = _time.monotonic()
             try:
-                if cached:
-                    resp = _requests.get(
-                        url,
-                        headers={"authorization": f"Bearer {auth_key}"},
-                        timeout=10,
-                    )
-                else:
-                    resp = _requests.post(
-                        url,
-                        json={},
-                        headers={"authorization": f"Bearer {auth_key}"},
-                        timeout=10,
-                    )
+                resp = _requests.post(
+                    url,
+                    json={},
+                    headers={"authorization": f"Bearer {auth_key}"},
+                    timeout=10,
+                )
                 total_ms = (_time.monotonic() - t0) * 1000
                 if resp.status_code >= 400:
                     self._session_logger.warning(

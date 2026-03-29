@@ -948,25 +948,6 @@ async def _screenshot_post(
         return resp.status, None, await resp.json()
 
 
-async def _screenshot_get(
-    session,
-    url: str,
-    headers: dict,
-    timeout,
-) -> "tuple[int, str | None, dict | None]":
-    """GET the cached screenshot endpoint and return (status, body_text, json)."""
-    use_ssl = False if "vm.unify.ai" in url else None
-    async with session.get(
-        url,
-        headers=headers,
-        timeout=timeout,
-        ssl=use_ssl,
-    ) as resp:
-        if resp.status >= 400:
-            return resp.status, await resp.text(), None
-        return resp.status, None, await resp.json()
-
-
 async def capture_assistant_screenshot(
     utterance: str,
     *,
@@ -995,7 +976,7 @@ async def capture_assistant_screenshot(
     base_url = agent_service_url or _resolve_agent_service_url()
     auth_key = SESSION_DETAILS.unify_key
     if cached:
-        url = f"{base_url}/screenshot/latest?sessionId=default"
+        url = f"{base_url}/screenshot/latest"
     else:
         url = f"{base_url}/screenshot"
     headers = {"authorization": f"Bearer {auth_key}"}
@@ -1026,8 +1007,7 @@ async def capture_assistant_screenshot(
     # -- Fast path: reuse a persistent session (no per-request DNS/TLS) ------
     if http_session is not None:
         try:
-            _fetch = _screenshot_get if cached else _screenshot_post
-            status, err_body, data = await _fetch(
+            status, err_body, data = await _screenshot_post(
                 http_session,
                 url,
                 headers,
@@ -1041,7 +1021,7 @@ async def capture_assistant_screenshot(
                         f"retrying in 2s (url={url}, total={total_ms:.0f}ms)",
                     )
                     await asyncio.sleep(2)
-                    status, err_body, data = await _fetch(
+                    status, err_body, data = await _screenshot_post(
                         http_session,
                         url,
                         headers,
