@@ -239,7 +239,7 @@ class SecretManager(BaseSecretManager):
 
         key_to_idx: Dict[str, int] = {}
         for idx, raw in enumerate(lines):
-            m = re.match(r"\s*([A-Za-z_][A-Za-z0-9_]*)\s*=", raw)
+            m = re.match(r"\s*([A-Za-z_][A-Za-z0-9_/]*)\s*=", raw)
             if m:
                 key_to_idx[m.group(1)] = idx
         return key_to_idx
