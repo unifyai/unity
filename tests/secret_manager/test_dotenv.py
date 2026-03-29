@@ -136,3 +136,40 @@ def test_env_merge_syncs_os_environ(monkeypatch, secret_manager_context):
         # Delete must remove from os.environ
         sm._delete_secret(name="TEST_SECRET_B")
         assert os.environ.get("TEST_SECRET_B") is None
+
+
+def test_slash_in_secret_name_dotenv_roundtrip(monkeypatch, secret_manager_context):
+    """Secret names with ``/`` (folder structure from Console UI) must
+    survive .env write/parse/update/delete cycles."""
+    import os
+
+    with tempfile.TemporaryDirectory() as td:
+        dotenv_path = str(pathlib.Path(td) / ".env")
+        monkeypatch.setattr(SETTINGS.secret, "DOTENV_PATH", dotenv_path)
+
+        monkeypatch.delenv("aws/prod/ACCESS_KEY", raising=False)
+
+        sm = SecretManager()
+
+        sm._create_secret(
+            name="aws/prod/ACCESS_KEY",
+            value="AKIAIOSFODNN7EXAMPLE",
+            description="AWS access key",
+        )
+
+        content = _read(dotenv_path)
+        assert "aws/prod/ACCESS_KEY=AKIAIOSFODNN7EXAMPLE" in content
+        assert os.environ.get("aws/prod/ACCESS_KEY") == "AKIAIOSFODNN7EXAMPLE"
+
+        # Update must find and overwrite the existing line (not duplicate)
+        sm._update_secret(name="aws/prod/ACCESS_KEY", value="ROTATED")
+        content = _read(dotenv_path)
+        assert "aws/prod/ACCESS_KEY=ROTATED" in content
+        assert content.count("aws/prod/ACCESS_KEY=") == 1
+        assert os.environ.get("aws/prod/ACCESS_KEY") == "ROTATED"
+
+        # Delete must remove the line
+        sm._delete_secret(name="aws/prod/ACCESS_KEY")
+        content = _read(dotenv_path)
+        assert "aws/prod/ACCESS_KEY" not in content
+        assert os.environ.get("aws/prod/ACCESS_KEY") is None
