@@ -1329,7 +1329,7 @@ class ComputerSession(_LowLevelActionsMixin):
         if not verify:
             import json as _json
 
-            summary = _json.dumps({"thoughts": summary, "outcome": "completed"})
+            summary = _json.dumps({"thoughts": summary, "outcome": "attempted"})
         return ActResult(
             summary=summary,
             screenshot=response.get("screenshot", ""),

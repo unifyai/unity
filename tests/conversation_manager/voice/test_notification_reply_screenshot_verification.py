@@ -3,7 +3,7 @@ tests/conversation_manager/voice/test_notification_reply_screenshot_verification
 =====================================================================================
 
 Eval tests for the NotificationReplyEvaluator's ability to cross-reference
-screenshots against ``Computer action completed:`` notifications.
+screenshots against ``Computer action attempted:`` notifications.
 
 Fast-path computer actions are blind single-shot attempts that frequently
 fail silently (e.g., F11 doesn't fullscreen the browser). The evaluator
@@ -105,7 +105,7 @@ def _build_failed_fullscreen_history() -> list[dict]:
 
     The user asked for fullscreen, the screenshot shows a windowed browser
     (visible desktop, title bar, window controls), and the latest notification
-    claims ``Computer action completed``.
+    claims ``Computer action attempted``.
     """
     return [
         {"role": "user", "content": "Could you please make the browser full screen?"},
@@ -128,9 +128,9 @@ def _build_failed_fullscreen_history() -> list[dict]:
         {
             "role": "system",
             "content": (
-                '[notification] Computer action completed: {"thoughts": '
+                '[notification] Computer action attempted: {"thoughts": '
                 '"I need to press F11 to make the browser full screen. '
-                'This is a simple keyboard action.", "outcome": "completed"}'
+                'This is a simple keyboard action.", "outcome": "attempted"}'
             ),
         },
     ]
@@ -181,7 +181,7 @@ async def test_does_not_falsely_confirm_failed_fullscreen(evaluator):
 async def test_confirms_genuinely_completed_action(evaluator):
     """When no screenshot contradicts the notification, the evaluator should
     still be willing to speak a completion confirmation. This ensures the
-    prompt change doesn't over-suppress all ``Computer action completed:``
+    prompt change doesn't over-suppress all ``Computer action attempted:``
     responses.
     """
     messages: list[dict] = [
@@ -228,9 +228,9 @@ async def test_confirms_genuinely_completed_action(evaluator):
         {
             "role": "system",
             "content": (
-                '[notification] Computer action completed: {"thoughts": '
+                '[notification] Computer action attempted: {"thoughts": '
                 '"Opened Chromium and navigated to google.com. The page loaded '
-                'successfully.", "outcome": "completed"}'
+                'successfully.", "outcome": "attempted"}'
             ),
         },
     )
