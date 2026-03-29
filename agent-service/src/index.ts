@@ -297,6 +297,36 @@ interface SessionInfo {
   createdAt: Date;
   lastAccessed: Date;
   actHistory: ActHistoryEntry[];
+  latestScreenshot: string;
+  latestCursorPosition: { x: number; y: number } | null;
+}
+
+function cacheScreenshot(sessionId: string, screenshot: string, cursorPosition: { x: number; y: number } | null) {
+  const session = activeSessions.get(sessionId);
+  if (session && screenshot) {
+    session.latestScreenshot = screenshot;
+    session.latestCursorPosition = cursorPosition;
+  }
+}
+
+function refreshDesktopCache(triggerSessionId: string) {
+  const triggerSession = activeSessions.get(triggerSessionId);
+  if (!triggerSession || triggerSession.mode !== "web-vm") return;
+  const desktopEntry = [...activeSessions.entries()].find(([, s]) => s.mode === "desktop");
+  if (!desktopEntry) return;
+  const [deskId, deskSession] = desktopEntry;
+  (async () => {
+    try {
+      const connector = deskSession.agent.require(BrowserConnector);
+      const harness = connector.getHarness();
+      const rawImage = await harness.screenshot();
+      const image = await connector.transformScreenshot(rawImage);
+      const deskScreenshot = await image.toBase64();
+      cacheScreenshot(deskId, deskScreenshot, harness.getCursorPosition());
+    } catch (err) {
+      console.warn(`[cache] Desktop screenshot refresh failed: ${err}`);
+    }
+  })();
 }
 
 const activeSessions = new Map<string, SessionInfo>();
@@ -864,6 +894,8 @@ app.post('/start', async (req: Request, res: Response) => {
       createdAt: new Date(),
       lastAccessed: new Date(),
       actHistory: [],
+      latestScreenshot: '',
+      latestCursorPosition: null,
     });
 
     console.log(`[start] DONE mode=${mode} sessionId=${sessionId} total=${Date.now() - t0}ms active_sessions=${activeSessions.size}`);
@@ -1080,11 +1112,13 @@ app.post('/act', isAgentReady, async (req: Request, res: Response) => {
       const rawImage = await harness.screenshot();
       const image = await connector.transformScreenshot(rawImage);
       screenshot = await image.toBase64();
+      cacheScreenshot(sessionId, screenshot, harness.getCursorPosition());
     } catch (screenshotErr) {
       console.warn(`[act] Post-act screenshot failed: ${screenshotErr}`);
     }
 
     res.json({ status: 'success', summary: thoughts, screenshot });
+    refreshDesktopCache(sessionId);
   } catch (err) {
     handleAgentError(err, res);
   }
@@ -1104,7 +1138,8 @@ app.post('/execute-actions', isAgentReady, async (req: Request, res: Response) =
     const agent = session.agent;
     const t0 = Date.now();
 
-    console.log(`[execute-actions] Executing ${actions.length} direct action(s) for session ${sessionId}`);
+    const variants = actions.map((a: any) => a.variant).join(', ');
+    console.log(`[execute-actions] Executing ${actions.length} action(s) [${variants}] for session ${sessionId}`);
 
     await agent.executeTrajectory(actions, { memory: agent.memory, recordObservations: false });
 
@@ -1120,11 +1155,13 @@ app.post('/execute-actions', isAgentReady, async (req: Request, res: Response) =
       const image = await connector.transformScreenshot(rawImage);
       screenshot = await image.toBase64();
       cursorPosition = harness.getCursorPosition();
+      cacheScreenshot(sessionId, screenshot, cursorPosition);
     } catch (screenshotErr) {
       console.warn(`[execute-actions] Post-execution screenshot failed: ${screenshotErr}`);
     }
 
     res.json({ status: 'success', screenshot, cursorPosition });
+    refreshDesktopCache(sessionId);
   } catch (err) {
     handleAgentError(err, res);
   }
@@ -1257,6 +1294,7 @@ app.post('/screenshot', isAgentReady, async (req: Request, res: Response) => {
     const tEncode = Date.now();
     console.log(`[screenshot] base64_encode=${tEncode - tCapture}ms b64_len=${base64Image.length} total=${tEncode - t0}ms`);
 
+    cacheScreenshot(sessionId, base64Image, cursorPosition);
     res.json({ screenshot: base64Image, cursorPosition });
     _screenshotInFlight--;
     console.log(`[screenshot] DONE total=${Date.now() - t0}ms in_flight=${_screenshotInFlight}`);
@@ -1264,6 +1302,27 @@ app.post('/screenshot', isAgentReady, async (req: Request, res: Response) => {
     _screenshotInFlight--;
     console.error(`[screenshot] ERROR after ${Date.now() - t0}ms in_flight=${_screenshotInFlight}:`, err);
     handleAgentError(err, res, 'screenshot_failed');
+  }
+});
+
+app.post('/screenshot/latest', isAgentReady, async (req: Request, res: Response) => {
+  const { sessionId } = req.body;
+  const session = activeSessions.get(sessionId)!;
+  if (session.latestScreenshot) {
+    res.json({ screenshot: session.latestScreenshot, cursorPosition: session.latestCursorPosition });
+  } else {
+    try {
+      const connector = session.agent.require(BrowserConnector);
+      const harness = connector.getHarness();
+      const rawImage = await harness.screenshot();
+      const image = await connector.transformScreenshot(rawImage);
+      const screenshot = await image.toBase64();
+      const cursorPosition = harness.getCursorPosition();
+      cacheScreenshot(sessionId!, screenshot, cursorPosition);
+      res.json({ screenshot, cursorPosition });
+    } catch (err) {
+      handleAgentError(err, res, 'screenshot_failed');
+    }
   }
 });
 
