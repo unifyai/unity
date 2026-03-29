@@ -894,12 +894,28 @@ class CommsManager:
         if SESSION_DETAILS.assistant.agent_id is None:
             # Start the startup subscription with max_messages=1 to prevent batch stealing
             self.subscribe_to_topic(startup_subscription_id, max_messages=1)
-            # Label this container as idle so cleanup endpoints can find it
-            threading.Thread(
-                target=mark_job_label,
-                args=(SETTINGS.conversation.JOB_NAME, "idle"),
-                daemon=True,
-            ).start()
+
+            job_name = SETTINGS.conversation.JOB_NAME
+            comms_url = (SETTINGS.conversation.COMMS_URL or "").rstrip("/")
+            admin_key = SETTINGS.ORCHESTRA_ADMIN_KEY.get_secret_value()
+
+            already_claimed = False
+            if comms_url and admin_key and job_name:
+                from unity.conversation_manager.assistant_jobs_api import read_own_job
+
+                job_data = read_own_job(comms_url, admin_key, job_name)
+                if job_data:
+                    labels = job_data.get("labels", {})
+                    if labels.get("unity-status") in ("running", "starting"):
+                        already_claimed = True
+
+            if not already_claimed:
+                threading.Thread(
+                    target=mark_job_label,
+                    args=(job_name, "idle"),
+                    daemon=True,
+                ).start()
+
             # Start ping mechanism for idle containers
             asyncio.create_task(self.send_pings())
         else:

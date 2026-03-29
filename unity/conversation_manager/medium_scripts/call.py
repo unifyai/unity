@@ -512,6 +512,7 @@ async def entrypoint(ctx: agents.JobContext):
     # -- Screenshot state --
     screenshot_history = ScreenshotHistory()
     assistant_screen_share_active = False
+    user_remote_control_active = False
     _agent_service_url: str | None = None
     _visual_ctx_msg_id: str | None = None
     import aiohttp as _aiohttp
@@ -577,6 +578,52 @@ async def entrypoint(ctx: agents.JobContext):
         _inject_visual_context()
         if entry.source != "assistant":
             _publish_screenshot(entry, filepath)
+
+    async def _refresh_screenshots() -> None:
+        """Capture fresh screenshots from all active sources and update visual context.
+
+        Called before any module that needs the latest visual state (e.g., the
+        notification reply evaluator, the fast-brain LLM).  Sync captures
+        (user screen, webcam) are ~1 ms.  The assistant capture reads from the
+        agent-service screenshot cache (~0 ms) unless the user has remote
+        control, in which case a live capture (~500 ms) is used.
+        """
+        from datetime import datetime, timezone
+
+        if screen_capture._latest_frame_data is not None:
+            b64 = screen_capture.capture_screenshot()
+            if b64:
+                _handle_screenshot(
+                    ScreenshotEntry(
+                        b64=b64,
+                        utterance="",
+                        timestamp=datetime.now(timezone.utc),
+                        source="user",
+                    ),
+                )
+
+        if webcam_capture._latest_frame_data is not None:
+            b64 = webcam_capture.capture_screenshot()
+            if b64:
+                _handle_screenshot(
+                    ScreenshotEntry(
+                        b64=b64,
+                        utterance="",
+                        timestamp=datetime.now(timezone.utc),
+                        source="webcam",
+                    ),
+                )
+
+        if assistant_screen_share_active:
+            entry = await capture_assistant_screenshot(
+                utterance="",
+                cached=not user_remote_control_active,
+                fb_logger=_log,
+                agent_service_url=_agent_service_url,
+                http_session=_screenshot_http_session,
+            )
+            if entry and assistant_screen_share_active:
+                _handle_screenshot(entry)
 
     @session.on("conversation_item_added")
     def _on_chat_item_added(ev):
@@ -647,79 +694,26 @@ async def entrypoint(ctx: agents.JobContext):
         """Capture fresh screenshots and inject them into the LLM's chat_ctx.
 
         The LiveKit pipeline passes a **copy** of the chat context to
-        ``llm_node``.  ``_handle_screenshot`` updates the live
+        ``llm_node``.  ``_refresh_screenshots`` updates the live
         ``session._chat_ctx`` (for subsequent turns and IPC), but that copy
-        is stale.  After capturing, we rebuild the visual context content and
-        inject it directly into the ``chat_ctx`` parameter so the current
-        LLM call sees the screenshot.
-
-        Sync captures (user screen / webcam) are negligible (~1 ms).
-        The async assistant capture (~500 ms HTTP) only runs on user turns.
+        is stale.  After refreshing, we rebuild the visual context content
+        and inject it directly into the ``chat_ctx`` parameter so the
+        current LLM call sees the screenshot.
         """
         try:
-            from datetime import datetime, timezone
-
-            captured_any = False
-            utterance = ""
-            is_user_turn = False
-            if chat_ctx.items:
-                last = chat_ctx.items[-1]
-                utterance = getattr(last, "text_content", None) or ""
-                is_user_turn = getattr(last, "role", None) == "user"
-
             copy_visual_id = _visual_ctx_msg_id
 
-            if is_user_turn and screen_capture._latest_frame_data is not None:
-                b64 = screen_capture.capture_screenshot()
-                if b64:
-                    _handle_screenshot(
-                        ScreenshotEntry(
-                            b64=b64,
-                            utterance=utterance,
-                            timestamp=datetime.now(timezone.utc),
-                            source="user",
-                        ),
-                    )
-                    captured_any = True
-            if is_user_turn and webcam_capture._latest_frame_data is not None:
-                b64 = webcam_capture.capture_screenshot()
-                if b64:
-                    _handle_screenshot(
-                        ScreenshotEntry(
-                            b64=b64,
-                            utterance=utterance,
-                            timestamp=datetime.now(timezone.utc),
-                            source="webcam",
-                        ),
-                    )
-                    captured_any = True
-            if assistant_screen_share_active and is_user_turn:
-                entry = await capture_assistant_screenshot(
-                    utterance,
-                    fb_logger=_log,
-                    agent_service_url=_agent_service_url,
-                    http_session=_screenshot_http_session,
-                )
-                if entry:
-                    if not assistant_screen_share_active:
-                        if copy_visual_id is not None:
-                            idx = chat_ctx.index_by_id(copy_visual_id)
-                            if idx is not None:
-                                chat_ctx.items.pop(idx)
-                    else:
-                        _handle_screenshot(entry)
-                        captured_any = True
+            await _refresh_screenshots()
 
-            if captured_any:
-                content = screenshot_history.build_visual_context_content()
-                if content:
-                    if copy_visual_id is not None:
-                        idx = chat_ctx.index_by_id(copy_visual_id)
-                        if idx is not None:
-                            chat_ctx.items.pop(idx)
-                    msg = chat_ctx.add_message(role="user", content=content)
-                    chat_ctx.items.pop()
-                    chat_ctx.items.insert(-1, msg)
+            content = screenshot_history.build_visual_context_content()
+            if content:
+                if copy_visual_id is not None:
+                    idx = chat_ctx.index_by_id(copy_visual_id)
+                    if idx is not None:
+                        chat_ctx.items.pop(idx)
+                msg = chat_ctx.add_message(role="user", content=content)
+                chat_ctx.items.pop()
+                chat_ctx.items.insert(-1, msg)
         except Exception as e:
             print(f"[llm_node] screenshot capture error (non-fatal): {e}")
 
@@ -853,6 +847,8 @@ async def entrypoint(ctx: agents.JobContext):
         from unity.conversation_manager.domains.notification_reply import (
             NotificationReplyEvaluator,
         )
+
+        await _refresh_screenshots()
 
         evaluator = NotificationReplyEvaluator(
             model=SETTINGS.conversation.FAST_BRAIN_MODEL,
@@ -991,6 +987,24 @@ async def entrypoint(ctx: agents.JobContext):
             elif "stopped sharing" in low:
                 source = "user" if "user" in low else "assistant"
                 _clear_visual_context(source=source)
+            elif "took remote control" in low:
+                user_remote_control_active = True
+            elif "released remote control" in low:
+                user_remote_control_active = False
+
+                async def _update_cache_after_remote_control():
+                    entry = await capture_assistant_screenshot(
+                        utterance="",
+                        cached=False,
+                        fb_logger=_log,
+                        agent_service_url=_agent_service_url,
+                        http_session=_screenshot_http_session,
+                    )
+                    if entry and assistant_screen_share_active:
+                        _handle_screenshot(entry)
+
+                if assistant_screen_share_active:
+                    asyncio.create_task(_update_cache_after_remote_control())
         response_text = payload.get("response_text", "")
         should_speak = payload.get("should_speak", False)
         notification_source = payload.get("source", "")

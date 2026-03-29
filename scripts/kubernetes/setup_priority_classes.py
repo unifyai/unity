@@ -74,6 +74,12 @@ def create_priority_classes(api_client):
             "description": "High priority for important Unity assistant jobs",
         },
         {
+            "name": "unity-idle",
+            "value": 500000,
+            "preemptionPolicy": "Never",
+            "description": "Idle pool containers — same scheduling weight as unity-high but will never preempt other pods",
+        },
+        {
             "name": "unity-normal",
             "value": 100000,
             "description": "Normal priority for standard Unity assistant jobs",
@@ -98,6 +104,7 @@ def create_priority_classes(api_client):
                 },
                 "value": pc["value"],
                 "globalDefault": False,
+                "preemptionPolicy": pc.get("preemptionPolicy", "PreemptLowerPriority"),
                 "description": pc["description"],
             }
 
@@ -153,6 +160,7 @@ def delete_priority_classes(api_client):
     unity_priority_classes = [
         "unity-critical",
         "unity-high",
+        "unity-idle",
         "unity-normal",
         "unity-low",
     ]

@@ -950,6 +950,8 @@ async def _screenshot_post(
 
 async def capture_assistant_screenshot(
     utterance: str,
+    *,
+    cached: bool = False,
     fb_logger: FastBrainLogger | None = None,
     agent_service_url: str | None = None,
     http_session=None,
@@ -973,7 +975,10 @@ async def capture_assistant_screenshot(
 
     base_url = agent_service_url or _resolve_agent_service_url()
     auth_key = SESSION_DETAILS.unify_key
-    url = f"{base_url}/screenshot"
+    if cached:
+        url = f"{base_url}/screenshot/latest"
+    else:
+        url = f"{base_url}/screenshot"
     headers = {"authorization": f"Bearer {auth_key}"}
     timeout = aiohttp.ClientTimeout(total=10)
 
