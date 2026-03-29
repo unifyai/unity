@@ -5,11 +5,11 @@ tests/conversation_manager/voice/test_notification_reply_screenshot_verification
 Eval tests for the NotificationReplyEvaluator's ability to cross-reference
 screenshots against ``Computer action executed:`` notifications.
 
-Fast-path computer actions are blind single-shot attempts that frequently
-fail silently (e.g., F11 doesn't fullscreen the browser). The evaluator
-receives the assistant's screen screenshot alongside the notification.
-These tests verify that the evaluator does NOT parrot a false completion
-claim when the screenshot contradicts it.
+Fast-path computer actions are single-shot attempts that can still fail
+silently (e.g., wrong window focused, action intercepted by WM). The
+evaluator receives the assistant's screen screenshot alongside the
+notification. These tests verify that the evaluator does NOT parrot a
+false completion claim when the screenshot contradicts it.
 """
 
 import base64

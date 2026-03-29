@@ -360,6 +360,38 @@ class _LowLevelActionsMixin:
         """
         return await self.execute_actions([{"variant": "keyboard:select_all"}])
 
+    async def press_key(self, key: str) -> dict:
+        """
+        Press a key or key combination.
+
+        Sends a single keypress (or a modifier combo) to the currently
+        focused element.  Use this for non-text keys that ``type_text()``
+        cannot produce: function keys, Escape, arrow keys, and modifier
+        combos.
+
+        Examples::
+
+            await session.press_key("F11")           # toggle fullscreen
+            await session.press_key("Escape")         # dismiss dialog
+            await session.press_key("ArrowDown")      # move selection
+            await session.press_key("Control+c")      # copy
+            await session.press_key("Control+Shift+t")  # reopen closed tab
+
+        Parameters
+        ----------
+        key : str
+            Playwright key name or ``+``-delimited combo.  Common names:
+            ``F1``-``F12``, ``Escape``, ``ArrowUp/Down/Left/Right``,
+            ``Home``, ``End``, ``PageUp``, ``PageDown``, ``Delete``,
+            ``Control``, ``Shift``, ``Alt``, ``Meta``.
+
+        Returns
+        -------
+        dict
+            Execution result with ``status`` and ``screenshot``.
+        """
+        return await self.execute_actions([{"variant": "keyboard:key", "key": key}])
+
     async def switch_tab(self, index: int) -> dict:
         """
         Switch to a browser tab by its index.
@@ -504,6 +536,7 @@ class _LowLevelActionsMixin:
         - ``{"variant": "keyboard:tab"}``
         - ``{"variant": "keyboard:backspace"}``
         - ``{"variant": "keyboard:select_all"}``
+        - ``{"variant": "keyboard:key", "key": str}``
         - ``{"variant": "browser:tab:switch", "index": int}``
         - ``{"variant": "browser:tab:close", "index": int}``
         - ``{"variant": "browser:tab:new"}``
