@@ -309,6 +309,24 @@ function cacheScreenshot(sessionId: string, screenshot: string, cursorPosition: 
   }
 }
 
+function refreshDesktopCache(excludeSessionId?: string) {
+  const desktopEntry = [...activeSessions.entries()].find(([, s]) => s.mode === "desktop");
+  if (!desktopEntry || desktopEntry[0] === excludeSessionId) return;
+  const [deskId, deskSession] = desktopEntry;
+  (async () => {
+    try {
+      const connector = deskSession.agent.require(BrowserConnector);
+      const harness = connector.getHarness();
+      const rawImage = await harness.screenshot();
+      const image = await connector.transformScreenshot(rawImage);
+      const deskScreenshot = await image.toBase64();
+      cacheScreenshot(deskId, deskScreenshot, harness.getCursorPosition());
+    } catch (err) {
+      console.warn(`[cache] Desktop screenshot refresh failed: ${err}`);
+    }
+  })();
+}
+
 const activeSessions = new Map<string, SessionInfo>();
 const SESSION_TIMEOUT_MS = 30 * 60 * 1000; // 30 minutes
 
@@ -1098,6 +1116,7 @@ app.post('/act', isAgentReady, async (req: Request, res: Response) => {
     }
 
     res.json({ status: 'success', summary: thoughts, screenshot });
+    refreshDesktopCache(sessionId);
   } catch (err) {
     handleAgentError(err, res);
   }
@@ -1140,6 +1159,7 @@ app.post('/execute-actions', isAgentReady, async (req: Request, res: Response) =
     }
 
     res.json({ status: 'success', screenshot, cursorPosition });
+    refreshDesktopCache(sessionId);
   } catch (err) {
     handleAgentError(err, res);
   }
