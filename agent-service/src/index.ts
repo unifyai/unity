@@ -1104,7 +1104,8 @@ app.post('/execute-actions', isAgentReady, async (req: Request, res: Response) =
     const agent = session.agent;
     const t0 = Date.now();
 
-    console.log(`[execute-actions] Executing ${actions.length} direct action(s) for session ${sessionId}`);
+    const variants = actions.map((a: any) => a.variant).join(', ');
+    console.log(`[execute-actions] Executing ${actions.length} action(s) [${variants}] for session ${sessionId}`);
 
     await agent.executeTrajectory(actions, { memory: agent.memory, recordObservations: false });
 
