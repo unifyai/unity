@@ -1274,7 +1274,7 @@ async def _(
     snippet = event.summary[:120] if event.summary else event.instruction[:120]
     cm.notifications_bar.push_notif(
         "Computer",
-        f"Computer action attempted: {snippet}",
+        f"Computer action executed: {snippet}",
         event.timestamp,
     )
     await cm.request_llm_run()
