@@ -36,6 +36,7 @@ from unity.common.embed_utils import (
     ensure_derived_column as _ensure_derived_column,
     ensure_vector_column as _ensure_vector_column,
 )
+from unity.common.type_utils import types_match as _types_match
 from unity.data_manager.ops.mutation_ops import insert_rows_impl
 from unity.data_manager.ops.table_ops import create_table_impl
 from unity.data_manager.types.ingest import (
@@ -189,7 +190,7 @@ def _run_post_ingest_rules(
                 dtype = (
                     info.get("data_type", "") if isinstance(info, dict) else str(info)
                 )
-                if dtype != rule.source_type:
+                if not _types_match(rule.source_type, dtype):
                     continue
                 target = _derive_target_name(name, rule.target_suffix)
                 equation = rule.equation.replace("{field}", name)
@@ -533,6 +534,7 @@ def run_ingest(
     execution: Optional[IngestExecutionConfig] = None,
     post_ingest: Optional[PostIngestConfig] = None,
     on_task_complete=None,
+    coerce_types: bool = True,
 ) -> IngestResult:
     """Execute a full ingest pipeline: create table, insert rows, optionally embed.
 
@@ -567,6 +569,47 @@ def run_ingest(
     """
     if not rows:
         return IngestResult(context=context)
+
+    from unity.data_manager.ops.type_prescan import (
+        coerce_empty_strings,
+        coerce_rows,
+        prescan_column_types,
+    )
+
+    coercion_stats = None
+    if coerce_types:
+        column_types = prescan_column_types(rows)
+        rows, coercion_stats = coerce_rows(rows, column_types)
+        logger.info(
+            "coerce_types prescan for %s: %d columns typed, %d empty strings coerced, "
+            "%d type mismatches coerced (%d total cells)",
+            context,
+            len(column_types),
+            coercion_stats.empty_strings_coerced,
+            coercion_stats.type_coerced,
+            coercion_stats.total_cells,
+        )
+
+        # Merge prescan types into fields for create_table (unify.create_fields)
+        fields = dict(fields or {})
+        for col, col_type in column_types.items():
+            if col not in fields:
+                fields[col] = col_type
+
+        # Inject explicit_types into every row so Orchestra bypasses its own inference
+        explicit_types = {
+            col: {"type": col_type} for col, col_type in column_types.items()
+        }
+        for row in rows:
+            row["explicit_types"] = explicit_types
+    else:
+        rows, empty_count = coerce_empty_strings(rows)
+        if empty_count:
+            logger.info(
+                "Coerced %d empty strings to None for %s (coerce_types=False)",
+                empty_count,
+                context,
+            )
 
     exec_cfg = execution or IngestExecutionConfig()
 
@@ -609,6 +652,11 @@ def run_ingest(
     duration_ms = (time.perf_counter() - start) * 1000
 
     ingest_result = _aggregate_results(context, graph, results, duration_ms)
+
+    if coercion_stats is not None:
+        from dataclasses import asdict
+
+        ingest_result.coercion_stats = asdict(coercion_stats)
 
     # Post-ingestion: run config-driven derived column rules
     if post_ingest and post_ingest.derived_columns:

@@ -937,6 +937,7 @@ class SimulatedDataManager(BaseDataManager):
         execution: Optional[IngestExecutionConfig] = None,
         post_ingest: Optional[PostIngestConfig] = None,
         on_task_complete=None,
+        coerce_types: bool = True,
     ) -> IngestResult:
         start = time.perf_counter()
         resolved = self._resolve_context(context)

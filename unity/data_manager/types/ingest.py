@@ -19,7 +19,7 @@ DataManager.insert_rows : Low-level row insertion.
 
 from __future__ import annotations
 
-from typing import Annotated, List, Literal, Union
+from typing import Annotated, Any, Dict, List, Literal, Optional, Union
 
 from pydantic import BaseModel, Discriminator, Field, Tag
 
@@ -184,3 +184,4 @@ class IngestResult(BaseModel):
     duration_ms: float = 0.0
     chunks_processed: int = 0
     derived_columns_created: List[str] = Field(default_factory=list)
+    coercion_stats: Optional[Dict[str, Any]] = None

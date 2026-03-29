@@ -404,3 +404,179 @@ class TestFieldsDescriptionPassthrough:
         create_table_impl("test/ctx", fields=None)
 
         mock_unify.create_fields.assert_not_called()
+
+
+# =============================================================================
+# Auto-derived rule type matching (TDD: failing tests first)
+# =============================================================================
+
+
+class TestAutoRuleTypeMatching:
+    """Tests for auto-derived rule matching with normalized/Optional types.
+
+    These test that ``_run_post_ingest_rules`` correctly matches
+    auto-derived rules when field types use casing variants or Optional
+    wrappers.  The naive ``dtype != rule.source_type`` comparison fails
+    these; the ``types_match`` fix makes them pass.
+    """
+
+    @patch("unity.data_manager.ops.ingest_ops._ensure_derived_column")
+    @patch("unity.data_manager.ops.ingest_ops._unify")
+    def test_auto_rule_matches_normalized_type(self, mock_unify, mock_ensure):
+        """Capital 'DateTime' should match source_type='datetime'."""
+        mock_unify.get_fields.return_value = {
+            "Departure": {"data_type": "DateTime"},
+        }
+        config = PostIngestConfig(
+            derived_columns=[
+                AutoDerivedColumn(
+                    source_type="datetime",
+                    target_suffix="Date",
+                    equation="date({lg:{field}})",
+                ),
+            ],
+        )
+        result = _run_post_ingest_rules("test/ctx", config)
+        assert "Departure_Date" in result
+        mock_ensure.assert_called_once()
+
+    @patch("unity.data_manager.ops.ingest_ops._ensure_derived_column")
+    @patch("unity.data_manager.ops.ingest_ops._unify")
+    def test_auto_rule_matches_optional_type(self, mock_unify, mock_ensure):
+        """Union[datetime, NoneType] should match source_type='datetime'."""
+        mock_unify.get_fields.return_value = {
+            "Departure": {"data_type": "Union[datetime, NoneType]"},
+        }
+        config = PostIngestConfig(
+            derived_columns=[
+                AutoDerivedColumn(
+                    source_type="datetime",
+                    target_suffix="Date",
+                    equation="date({lg:{field}})",
+                ),
+            ],
+        )
+        result = _run_post_ingest_rules("test/ctx", config)
+        assert "Departure_Date" in result
+        mock_ensure.assert_called_once()
+
+
+# =============================================================================
+# run_ingest coerce_types wiring
+# =============================================================================
+
+
+class TestRunIngestCoerceTypes:
+
+    @patch("unity.data_manager.ops.ingest_ops._run_post_ingest_rules")
+    @patch("unity.data_manager.ops.ingest_ops.PipelineExecutor")
+    @patch("unity.data_manager.ops.ingest_ops.create_table_impl")
+    def test_coerce_types_true_injects_explicit_types(
+        self,
+        mock_create,
+        mock_executor_cls,
+        mock_rules,
+    ):
+        from unity.data_manager.ops.ingest_ops import run_ingest
+
+        mock_executor = mock_executor_cls.return_value
+        mock_executor.execute.return_value = {}
+
+        rows = [
+            {"dt": "2025-01-01 12:00:00", "val": 42},
+            {"dt": "2025-01-02 12:00:00", "val": 43},
+        ]
+        run_ingest(None, "test/ctx", rows, coerce_types=True)
+
+        for row in rows:
+            assert "explicit_types" in row
+            assert "dt" in row["explicit_types"]
+            assert "val" in row["explicit_types"]
+
+    @patch("unity.data_manager.ops.ingest_ops._run_post_ingest_rules")
+    @patch("unity.data_manager.ops.ingest_ops.PipelineExecutor")
+    @patch("unity.data_manager.ops.ingest_ops.create_table_impl")
+    def test_coerce_types_false_no_explicit_types(
+        self,
+        mock_create,
+        mock_executor_cls,
+        mock_rules,
+    ):
+        from unity.data_manager.ops.ingest_ops import run_ingest
+
+        mock_executor = mock_executor_cls.return_value
+        mock_executor.execute.return_value = {}
+
+        rows = [{"dt": "2025-01-01 12:00:00", "val": 42}]
+        run_ingest(None, "test/ctx", rows, coerce_types=False)
+
+        for row in rows:
+            assert "explicit_types" not in row
+
+    @patch("unity.data_manager.ops.ingest_ops._run_post_ingest_rules")
+    @patch("unity.data_manager.ops.ingest_ops.PipelineExecutor")
+    @patch("unity.data_manager.ops.ingest_ops.create_table_impl")
+    def test_coerce_types_true_coerces_empty_strings(
+        self,
+        mock_create,
+        mock_executor_cls,
+        mock_rules,
+    ):
+        from unity.data_manager.ops.ingest_ops import run_ingest
+
+        mock_executor = mock_executor_cls.return_value
+        mock_executor.execute.return_value = {}
+
+        rows = [{"a": "", "b": "hello"}]
+        result = run_ingest(None, "test/ctx", rows, coerce_types=True)
+
+        assert rows[0]["a"] is None
+        assert rows[0]["b"] == "hello"
+        assert result.coercion_stats is not None
+        assert result.coercion_stats["empty_strings_coerced"] == 1
+
+    @patch("unity.data_manager.ops.ingest_ops._run_post_ingest_rules")
+    @patch("unity.data_manager.ops.ingest_ops.PipelineExecutor")
+    @patch("unity.data_manager.ops.ingest_ops.create_table_impl")
+    def test_coerce_types_false_coerces_only_empty_strings(
+        self,
+        mock_create,
+        mock_executor_cls,
+        mock_rules,
+    ):
+        from unity.data_manager.ops.ingest_ops import run_ingest
+
+        mock_executor = mock_executor_cls.return_value
+        mock_executor.execute.return_value = {}
+
+        rows = [{"a": "", "b": "garbage_not_a_datetime"}]
+        run_ingest(None, "test/ctx", rows, coerce_types=False)
+
+        assert rows[0]["a"] is None
+        assert rows[0]["b"] == "garbage_not_a_datetime"
+
+    @patch("unity.data_manager.ops.ingest_ops._run_post_ingest_rules")
+    @patch("unity.data_manager.ops.ingest_ops.PipelineExecutor")
+    @patch("unity.data_manager.ops.ingest_ops.create_table_impl")
+    def test_coerce_types_true_coerces_type_mismatches(
+        self,
+        mock_create,
+        mock_executor_cls,
+        mock_rules,
+    ):
+        from unity.data_manager.ops.ingest_ops import run_ingest
+
+        mock_executor = mock_executor_cls.return_value
+        mock_executor.execute.return_value = {}
+
+        rows = [
+            {"dt": "2025-01-01 12:00:00"},
+            {"dt": "2025-01-02 12:00:00"},
+            {"dt": "garbage"},
+        ]
+        result = run_ingest(None, "test/ctx", rows, coerce_types=True)
+
+        assert rows[0]["dt"] == "2025-01-01 12:00:00"
+        assert rows[1]["dt"] == "2025-01-02 12:00:00"
+        assert rows[2]["dt"] is None
+        assert result.coercion_stats["type_coerced"] >= 1

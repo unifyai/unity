@@ -2107,6 +2107,7 @@ class BaseDataManager(BaseStateManager):
         execution: Optional["IngestExecutionConfig"] = None,
         post_ingest: Optional["PostIngestConfig"] = None,
         on_task_complete: Optional[Callable] = None,
+        coerce_types: bool = True,
     ) -> "IngestResult":
         """
         Create a table, insert rows, and optionally embed -- in one call.
@@ -2196,6 +2197,24 @@ class BaseDataManager(BaseStateManager):
             Optional ``(Task, TaskResult) -> None`` callback fired after each
             internal pipeline task finishes (insert chunk, embed chunk, etc.).
             Useful for wiring external progress reporters.
+
+        coerce_types : bool, default ``True``
+            When ``True`` (the default), a pre-scan phase runs before
+            chunking:
+
+            1. A stratified sample of rows is used to determine the
+               dominant type for each column.
+            2. Empty strings (``""``) are universally coerced to ``None``.
+            3. Cell values that do not conform to their column's
+               determined type are coerced to ``None`` rather than
+               causing per-row rejection in Orchestra.
+            4. Determined types are sent as ``explicit_types`` metadata
+               on every row so that Orchestra enforces the schema
+               without re-inferring types from values.
+
+            When ``False``, only the universal empty-string → ``None``
+            coercion is applied; no type inference or type-mismatch
+            coercion occurs, and Orchestra's default inference is used.
 
         Returns
         -------
