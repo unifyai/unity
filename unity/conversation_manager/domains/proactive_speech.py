@@ -48,6 +48,12 @@ that was framed as taking minutes, "still working on it, should just be a few mo
 minutes" is better. Do NOT narrate specific steps ("opening the browser", "clicking \
 on that") or claim the action is done.
 
+For COMPLETED computer actions: these are blind single-shot attempts that don't always \
+achieve their goal. **Use the screenshots** to verify the result before confirming. If \
+the screenshot contradicts the expected outcome (e.g., the browser is clearly not full \
+screen), trust what you see and do NOT claim success. Never ask the user to confirm \
+something you can see for yourself.
+
 ## If you decide to speak
 
 - `delay`: additional seconds to wait before speaking (0 = now, higher = more patient). \
