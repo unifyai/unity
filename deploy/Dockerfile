@@ -69,9 +69,6 @@ RUN git config --global --unset url."https://${GITHUB_TOKEN}@github.com/".instea
 
 # Copy source and install unity with all dependencies
 COPY . /app
-# Strip [tool.uv.sources] — those are local-dev overrides that conflict with
-# how dependencies are resolved inside the container (repos are at /unify, /unillm).
-RUN sed -i '/^unify\s*=\s*{.*path/d; /^unillm\s*=\s*{.*path/d' pyproject.toml
 RUN uv pip install --system --no-cache .
 
 # Link pre-built magnitude into the workspace (agent-service references ../magnitude)
