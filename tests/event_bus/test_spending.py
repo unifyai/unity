@@ -17,7 +17,7 @@ import pytest
 from unillm import LLMEvent
 from unillm.limit_hooks import LimitCheckRequest, LimitType
 
-from unify.async_admin import AdminRequestError
+from unify.async_admin import SpendRequestError
 
 from unity.common.log_utils import AtomicUpsertResult, atomic_upsert
 from unity.events.llm_event_hook import (
@@ -660,7 +660,7 @@ class TestCheckSpendingLimitsCallback:
                 mock_session.assistant.timezone = "UTC"
 
                 with patch(
-                    "unity.spending_limits._get_admin_client",
+                    "unity.spending_limits._get_spend_client",
                 ) as mock_get_client:
                     mock_instance = MagicMock()
                     mock_instance.closed = False
@@ -693,7 +693,7 @@ class TestCheckSpendingLimitsCallback:
                 mock_session.assistant.timezone = "UTC"
 
                 with patch(
-                    "unity.spending_limits._get_admin_client",
+                    "unity.spending_limits._get_spend_client",
                 ) as mock_get_client:
                     mock_instance = MagicMock()
                     mock_instance.closed = False
@@ -732,7 +732,7 @@ class TestPersonalContextLimitChecks:
                 mock_session.assistant.timezone = "UTC"
 
                 with patch(
-                    "unity.spending_limits._get_admin_client",
+                    "unity.spending_limits._get_spend_client",
                 ) as mock_get_client:
                     mock_instance = MagicMock()
                     mock_instance.closed = False
@@ -773,7 +773,7 @@ class TestOrgContextLimitChecks:
                 mock_session.assistant.timezone = "UTC"
 
                 with patch(
-                    "unity.spending_limits._get_admin_client",
+                    "unity.spending_limits._get_spend_client",
                 ) as mock_get_client:
                     mock_instance = MagicMock()
                     mock_instance.closed = False
@@ -812,7 +812,7 @@ class TestOrgContextLimitChecks:
                 mock_session.assistant.timezone = "UTC"
 
                 with patch(
-                    "unity.spending_limits._get_admin_client",
+                    "unity.spending_limits._get_spend_client",
                 ) as mock_get_client:
                     mock_instance = MagicMock()
                     mock_instance.closed = False
@@ -850,7 +850,7 @@ class TestLimitCheckErrorHandling:
                 mock_session.assistant.timezone = "UTC"
 
                 with patch(
-                    "unity.spending_limits._get_admin_client",
+                    "unity.spending_limits._get_spend_client",
                 ) as mock_get_client:
                     mock_instance = MagicMock()
                     mock_instance.closed = False
@@ -875,8 +875,8 @@ class TestLimitCheckErrorHandling:
         """404 (entity not found) should fail open."""
         from unity.spending_limits import check_spending_limits_callback
 
-        error = AdminRequestError(
-            url="http://test/v0/admin/assistant/123/spend",
+        error = SpendRequestError(
+            url="http://test/v0/assistant/123/spend",
             method="GET",
             status=404,
             body="Not found",
@@ -890,7 +890,7 @@ class TestLimitCheckErrorHandling:
                 mock_session.assistant.timezone = "UTC"
 
                 with patch(
-                    "unity.spending_limits._get_admin_client",
+                    "unity.spending_limits._get_spend_client",
                 ) as mock_get_client:
                     mock_instance = MagicMock()
                     mock_instance.closed = False
@@ -911,8 +911,8 @@ class TestLimitCheckErrorHandling:
         """500 server error should fail open."""
         from unity.spending_limits import check_spending_limits_callback
 
-        error = AdminRequestError(
-            url="http://test/v0/admin/assistant/123/spend",
+        error = SpendRequestError(
+            url="http://test/v0/assistant/123/spend",
             method="GET",
             status=500,
             body="Internal server error",
@@ -926,7 +926,7 @@ class TestLimitCheckErrorHandling:
                 mock_session.assistant.timezone = "UTC"
 
                 with patch(
-                    "unity.spending_limits._get_admin_client",
+                    "unity.spending_limits._get_spend_client",
                 ) as mock_get_client:
                     mock_instance = MagicMock()
                     mock_instance.closed = False
@@ -967,7 +967,7 @@ class TestParallelLimitChecks:
                 mock_session.assistant.timezone = "UTC"
 
                 with patch(
-                    "unity.spending_limits._get_admin_client",
+                    "unity.spending_limits._get_spend_client",
                 ) as mock_get_client:
                     mock_instance = MagicMock()
                     mock_instance.closed = False
@@ -1020,7 +1020,7 @@ class TestNoLimitSet:
                 mock_session.assistant.timezone = "UTC"
 
                 with patch(
-                    "unity.spending_limits._get_admin_client",
+                    "unity.spending_limits._get_spend_client",
                 ) as mock_get_client:
                     mock_instance = MagicMock()
                     mock_instance.closed = False
@@ -1093,7 +1093,7 @@ class TestLimitBoundary:
                 mock_session.assistant.timezone = "UTC"
 
                 with patch(
-                    "unity.spending_limits._get_admin_client",
+                    "unity.spending_limits._get_spend_client",
                 ) as mock_get_client:
                     mock_instance = MagicMock()
                     mock_instance.closed = False
@@ -1129,7 +1129,7 @@ class TestLimitBoundary:
                 mock_session.assistant.timezone = "UTC"
 
                 with patch(
-                    "unity.spending_limits._get_admin_client",
+                    "unity.spending_limits._get_spend_client",
                 ) as mock_get_client:
                     mock_instance = MagicMock()
                     mock_instance.closed = False
@@ -1186,7 +1186,7 @@ class TestCreditBalanceGating:
                 mock_session.assistant.timezone = "UTC"
 
                 with patch(
-                    "unity.spending_limits._get_admin_client",
+                    "unity.spending_limits._get_spend_client",
                 ) as mock_get_client:
                     mock_instance = MagicMock()
                     mock_instance.closed = False
@@ -1245,7 +1245,7 @@ class TestCreditBalanceGating:
 # To run these tests:
 #   1. Start Orchestra: cd /workspaces/orchestra && ./scripts/local.sh start
 #   2. Make sure the following keys are present in Unity's .ev
-#   ORCHESTRA_ADMIN_KEY=<orchestra-key>
+#   UNIFY_KEY=<orchestra-key>
 #   OPENAI_API_KEY=<openai-key>
 #   ANTHROPIC_API_KEY=<anthropic-key>
 #   3. Run tests: pytest tests/event_bus/test_spending.py -m requires_orchestra
@@ -1276,7 +1276,7 @@ class E2ETestConfig:
         """Create config from environment variables."""
         base_url = _os.getenv("ORCHESTRA_URL", "http://localhost:8000/v0")
         api_key = _os.getenv("UNIFY_KEY", "local-test-api-key")
-        admin_key = _os.getenv("ORCHESTRA_ADMIN_KEY", api_key)
+        admin_key = _os.getenv("UNIFY_KEY", api_key)
         return cls(base_url=base_url, api_key=api_key, admin_key=admin_key)
 
 
@@ -1291,14 +1291,14 @@ async def e2e_config():
         # Seed test user (required for user spend endpoint tests)
         # Check if user exists first
         response = await client.get(
-            f"{config.base_url}/admin/user/{config.test_user_id}/spend",
+            f"{config.base_url}/user/{config.test_user_id}/spend",
             headers=admin_headers,
             params={"month": "2026-01"},
         )
         if response.status_code == 404:
             # Create the test user
             response = await client.post(
-                f"{config.base_url}/admin/user",
+                f"{config.base_url}/user",
                 headers=admin_headers,
                 json={
                     "email": f"{config.test_user_id}@test.local",
@@ -1443,7 +1443,7 @@ class TestE2ESpendingLimits:
         # Get spend before
         async with httpx.AsyncClient(timeout=10.0) as client:
             response = await client.get(
-                f"{e2e_config.base_url}/admin/assistant/{e2e_config.test_agent_id}/spend",
+                f"{e2e_config.base_url}/assistant/{e2e_config.test_agent_id}/spend",
                 headers=headers,
                 params={"month": datetime.now().strftime("%Y-%m")},
             )
@@ -1469,7 +1469,7 @@ class TestE2ESpendingLimits:
         # Get spend after
         async with httpx.AsyncClient(timeout=10.0) as client:
             response = await client.get(
-                f"{e2e_config.base_url}/admin/assistant/{e2e_config.test_agent_id}/spend",
+                f"{e2e_config.base_url}/assistant/{e2e_config.test_agent_id}/spend",
                 headers=headers,
                 params={"month": datetime.now().strftime("%Y-%m")},
             )
@@ -1677,7 +1677,7 @@ class TestE2ESpendingLimits:
         # Get spend before
         async with httpx.AsyncClient(timeout=10.0) as client:
             response = await client.get(
-                f"{e2e_config.base_url}/admin/assistant/{e2e_config.test_agent_id}/spend",
+                f"{e2e_config.base_url}/assistant/{e2e_config.test_agent_id}/spend",
                 headers=headers,
                 params={"month": datetime.now().strftime("%Y-%m")},
             )
@@ -1718,7 +1718,7 @@ class TestE2ESpendingLimits:
         # Get spend after
         async with httpx.AsyncClient(timeout=10.0) as client:
             response = await client.get(
-                f"{e2e_config.base_url}/admin/assistant/{e2e_config.test_agent_id}/spend",
+                f"{e2e_config.base_url}/assistant/{e2e_config.test_agent_id}/spend",
                 headers=headers,
                 params={"month": datetime.now().strftime("%Y-%m")},
             )
@@ -1841,7 +1841,7 @@ class TestE2ESpendingLimits:
 
         async with httpx.AsyncClient(timeout=10.0) as client:
             response = await client.get(
-                f"{e2e_config.base_url}/admin/user/{e2e_config.test_user_id}/spend",
+                f"{e2e_config.base_url}/user/{e2e_config.test_user_id}/spend",
                 headers=headers,
                 params={"month": current_month},
             )
@@ -1943,7 +1943,7 @@ class TestE2ESpendingLimits:
 
         async with httpx.AsyncClient(timeout=10.0) as client:
             response = await client.get(
-                f"{e2e_config.base_url}/admin/organization/{org_id}/spend",
+                f"{e2e_config.base_url}/organizations/{org_id}/spend",
                 headers=admin_headers,
                 params={"month": current_month},
             )
@@ -2070,7 +2070,7 @@ class TestNotifyLimitReached:
         """Notification should be sent when limit is exceeded."""
         from unity.spending_limits import _notify_limit_reached, _LimitCheckResult
 
-        with patch("unity.spending_limits._get_admin_client") as mock_get_client:
+        with patch("unity.spending_limits._get_spend_client") as mock_get_client:
             mock_instance = MagicMock()
             mock_instance.closed = False
             mock_instance.notify_limit_reached = AsyncMock(
@@ -2103,7 +2103,7 @@ class TestNotifyLimitReached:
         """Member limit notification should include organization_id."""
         from unity.spending_limits import _notify_limit_reached, _LimitCheckResult
 
-        with patch("unity.spending_limits._get_admin_client") as mock_get_client:
+        with patch("unity.spending_limits._get_spend_client") as mock_get_client:
             mock_instance = MagicMock()
             mock_instance.closed = False
             mock_instance.notify_limit_reached = AsyncMock(
@@ -2130,7 +2130,7 @@ class TestNotifyLimitReached:
         """Notification should not raise on errors (fire-and-forget)."""
         from unity.spending_limits import _notify_limit_reached, _LimitCheckResult
 
-        with patch("unity.spending_limits._get_admin_client") as mock_get_client:
+        with patch("unity.spending_limits._get_spend_client") as mock_get_client:
             mock_instance = MagicMock()
             mock_instance.closed = False
             mock_instance.notify_limit_reached = AsyncMock(
@@ -2154,12 +2154,12 @@ class TestNotifyLimitReached:
         """Notification should not raise on HTTP errors."""
         from unity.spending_limits import _notify_limit_reached, _LimitCheckResult
 
-        with patch("unity.spending_limits._get_admin_client") as mock_get_client:
+        with patch("unity.spending_limits._get_spend_client") as mock_get_client:
             mock_instance = MagicMock()
             mock_instance.closed = False
             mock_instance.notify_limit_reached = AsyncMock(
-                side_effect=AdminRequestError(
-                    url="http://test/v0/admin/spending-limit-reached",
+                side_effect=SpendRequestError(
+                    url="http://test/v0/user/spending-limit-reached",
                     method="POST",
                     status=500,
                     body="Internal server error",
@@ -2197,7 +2197,7 @@ class TestNotificationStress:
                 notification_count += 1
             return {"notified": True, "recipient_count": 1}
 
-        with patch("unity.spending_limits._get_admin_client") as mock_get_client:
+        with patch("unity.spending_limits._get_spend_client") as mock_get_client:
             mock_instance = MagicMock()
             mock_instance.closed = False
             mock_instance.notify_limit_reached = AsyncMock(side_effect=counting_notify)
@@ -2247,7 +2247,7 @@ class TestNotificationStress:
                 mock_session.assistant.timezone = "UTC"
 
                 with patch(
-                    "unity.spending_limits._get_admin_client",
+                    "unity.spending_limits._get_spend_client",
                 ) as mock_get_client:
                     mock_instance = MagicMock()
                     mock_instance.closed = False
@@ -2294,7 +2294,7 @@ class TestNotificationStress:
                 mock_session.assistant.timezone = "UTC"
 
                 with patch(
-                    "unity.spending_limits._get_admin_client",
+                    "unity.spending_limits._get_spend_client",
                 ) as mock_get_client:
                     mock_instance = MagicMock()
                     mock_instance.closed = False
@@ -2336,7 +2336,7 @@ class TestNotificationStress:
             captured_payloads.append(payload)
             return {"notified": True}
 
-        with patch("unity.spending_limits._get_admin_client") as mock_get_client:
+        with patch("unity.spending_limits._get_spend_client") as mock_get_client:
             mock_instance = MagicMock()
             mock_instance.closed = False
             mock_instance.notify_limit_reached = AsyncMock(side_effect=capture_notify)
@@ -2393,7 +2393,7 @@ class TestNotificationStress:
             captured_payload.update(payload)
             return {"notified": True}
 
-        with patch("unity.spending_limits._get_admin_client") as mock_get_client:
+        with patch("unity.spending_limits._get_spend_client") as mock_get_client:
             mock_instance = MagicMock()
             mock_instance.closed = False
             mock_instance.notify_limit_reached = AsyncMock(side_effect=capture_notify)

@@ -67,8 +67,8 @@ def _patch_context(*, org_id=None):
     return _Ctx()
 
 
-def _patch_admin_client(spend_data):
-    """Patch ``_get_admin_client`` with a mock returning *spend_data* for all methods.
+def _patch_spend_client(spend_data):
+    """Patch ``_get_spend_client`` with a mock returning *spend_data* for all methods.
 
     *spend_data* can be:
     - A ``dict``: all spend methods return this dict.
@@ -112,7 +112,7 @@ def _patch_admin_client(spend_data):
 
             stack.enter_context(
                 patch(
-                    "unity.spending_limits._get_admin_client",
+                    "unity.spending_limits._get_spend_client",
                     return_value=mock_instance,
                 ),
             )
@@ -140,7 +140,7 @@ class TestCreditBalanceBlocking:
 
         resp = _make_spend_response(credit_balance=0.0)
         with _patch_context():
-            with _patch_admin_client(resp):
+            with _patch_spend_client(resp):
                 result = await check_spending_limits_callback(
                     LimitCheckRequest(model="gpt-4", endpoint="test"),
                 )
@@ -155,7 +155,7 @@ class TestCreditBalanceBlocking:
 
         resp = _make_spend_response(credit_balance=-42.50)
         with _patch_context():
-            with _patch_admin_client(resp):
+            with _patch_spend_client(resp):
                 result = await check_spending_limits_callback(
                     LimitCheckRequest(model="gpt-4", endpoint="test"),
                 )
@@ -170,7 +170,7 @@ class TestCreditBalanceBlocking:
 
         resp = _make_spend_response(credit_balance=0.01)
         with _patch_context():
-            with _patch_admin_client(resp):
+            with _patch_spend_client(resp):
                 result = await check_spending_limits_callback(
                     LimitCheckRequest(model="gpt-4", endpoint="test"),
                 )
@@ -184,7 +184,7 @@ class TestCreditBalanceBlocking:
 
         resp = _make_spend_response(credit_balance=1000.0)
         with _patch_context():
-            with _patch_admin_client(resp):
+            with _patch_spend_client(resp):
                 result = await check_spending_limits_callback(
                     LimitCheckRequest(model="gpt-4", endpoint="test"),
                 )
@@ -199,7 +199,7 @@ class TestCreditBalanceBlocking:
 
         resp = _make_spend_response(credit_balance=balance)
         with _patch_context():
-            with _patch_admin_client(resp):
+            with _patch_spend_client(resp):
                 result = await check_spending_limits_callback(
                     LimitCheckRequest(model="gpt-4", endpoint="test"),
                 )
@@ -226,7 +226,7 @@ class TestCreditBalanceVsSpendingCap:
             credit_balance=0.0,
         )
         with _patch_context():
-            with _patch_admin_client(resp):
+            with _patch_spend_client(resp):
                 result = await check_spending_limits_callback(
                     LimitCheckRequest(model="gpt-4", endpoint="test"),
                 )
@@ -245,7 +245,7 @@ class TestCreditBalanceVsSpendingCap:
             credit_balance=500.0,
         )
         with _patch_context():
-            with _patch_admin_client(resp):
+            with _patch_spend_client(resp):
                 result = await check_spending_limits_callback(
                     LimitCheckRequest(model="gpt-4", endpoint="test"),
                 )
@@ -264,7 +264,7 @@ class TestCreditBalanceVsSpendingCap:
             credit_balance=0.0,
         )
         with _patch_context():
-            with _patch_admin_client(resp):
+            with _patch_spend_client(resp):
                 result = await check_spending_limits_callback(
                     LimitCheckRequest(model="gpt-4", endpoint="test"),
                 )
@@ -283,7 +283,7 @@ class TestCreditBalanceVsSpendingCap:
             credit_balance=0.0,
         )
         with _patch_context():
-            with _patch_admin_client(resp):
+            with _patch_spend_client(resp):
                 result = await check_spending_limits_callback(
                     LimitCheckRequest(model="gpt-4", endpoint="test"),
                 )
@@ -302,7 +302,7 @@ class TestCreditBalanceVsSpendingCap:
             credit_balance=10.0,
         )
         with _patch_context():
-            with _patch_admin_client(resp):
+            with _patch_spend_client(resp):
                 result = await check_spending_limits_callback(
                     LimitCheckRequest(model="gpt-4", endpoint="test"),
                 )
@@ -329,7 +329,7 @@ class TestOrgCreditBalance:
             credit_balance=0.0,
         )
         with _patch_context(org_id=789):
-            with _patch_admin_client(resp):
+            with _patch_spend_client(resp):
                 result = await check_spending_limits_callback(
                     LimitCheckRequest(model="gpt-4", endpoint="test"),
                 )
@@ -348,7 +348,7 @@ class TestOrgCreditBalance:
             credit_balance=50.0,
         )
         with _patch_context(org_id=789):
-            with _patch_admin_client(resp):
+            with _patch_spend_client(resp):
                 result = await check_spending_limits_callback(
                     LimitCheckRequest(model="gpt-4", endpoint="test"),
                 )
@@ -376,7 +376,7 @@ class TestOrgCreditBalance:
             "get_org_spend": normal_data,
         }
         with _patch_context(org_id=789):
-            with _patch_admin_client(methods):
+            with _patch_spend_client(methods):
                 result = await check_spending_limits_callback(
                     LimitCheckRequest(model="gpt-4", endpoint="test"),
                 )
@@ -401,7 +401,7 @@ class TestMissingCreditBalance:
 
         resp = _make_spend_response(credit_balance=None)
         with _patch_context():
-            with _patch_admin_client(resp):
+            with _patch_spend_client(resp):
                 result = await check_spending_limits_callback(
                     LimitCheckRequest(model="gpt-4", endpoint="test"),
                 )
@@ -421,7 +421,7 @@ class TestMissingCreditBalance:
             "get_user_spend": failing,
         }
         with _patch_context():
-            with _patch_admin_client(methods):
+            with _patch_spend_client(methods):
                 result = await check_spending_limits_callback(
                     LimitCheckRequest(model="gpt-4", endpoint="test"),
                 )
@@ -455,7 +455,7 @@ class TestPartialEndpointFailures:
             "get_user_spend": user_data,
         }
         with _patch_context():
-            with _patch_admin_client(methods):
+            with _patch_spend_client(methods):
                 result = await check_spending_limits_callback(
                     LimitCheckRequest(model="gpt-4", endpoint="test"),
                 )
@@ -481,7 +481,7 @@ class TestPartialEndpointFailures:
             "get_user_spend": failing,
         }
         with _patch_context():
-            with _patch_admin_client(methods):
+            with _patch_spend_client(methods):
                 result = await check_spending_limits_callback(
                     LimitCheckRequest(model="gpt-4", endpoint="test"),
                 )
@@ -513,7 +513,7 @@ class TestNonLlmSpendingDrainsCredits:
             credit_balance=0.0,
         )
         with _patch_context():
-            with _patch_admin_client(resp):
+            with _patch_spend_client(resp):
                 result = await check_spending_limits_callback(
                     LimitCheckRequest(model="gpt-4", endpoint="test"),
                 )
@@ -532,7 +532,7 @@ class TestNonLlmSpendingDrainsCredits:
             credit_balance=50.0,
         )
         with _patch_context():
-            with _patch_admin_client(resp):
+            with _patch_spend_client(resp):
                 result = await check_spending_limits_callback(
                     LimitCheckRequest(model="gpt-4", endpoint="test"),
                 )
@@ -555,7 +555,7 @@ class TestReasonMessage:
 
         resp = _make_spend_response(credit_balance=-12.34)
         with _patch_context():
-            with _patch_admin_client(resp):
+            with _patch_spend_client(resp):
                 result = await check_spending_limits_callback(
                     LimitCheckRequest(model="gpt-4", endpoint="test"),
                 )
@@ -570,7 +570,7 @@ class TestReasonMessage:
 
         resp = _make_spend_response(credit_balance=0.0)
         with _patch_context():
-            with _patch_admin_client(resp):
+            with _patch_spend_client(resp):
                 result = await check_spending_limits_callback(
                     LimitCheckRequest(model="gpt-4", endpoint="test"),
                 )
@@ -603,7 +603,7 @@ class TestConcurrentCreditChecks:
             "get_user_spend": slow_return,
         }
         with _patch_context():
-            with _patch_admin_client(methods):
+            with _patch_spend_client(methods):
                 tasks = [
                     check_spending_limits_callback(
                         LimitCheckRequest(model="gpt-4", endpoint="test"),
@@ -631,7 +631,7 @@ class TestConcurrentCreditChecks:
             "get_user_spend": slow_return,
         }
         with _patch_context():
-            with _patch_admin_client(methods):
+            with _patch_spend_client(methods):
                 tasks = [
                     check_spending_limits_callback(
                         LimitCheckRequest(model="gpt-4", endpoint="test"),
@@ -664,7 +664,7 @@ class TestConcurrentCreditChecks:
             "get_user_spend": depleting_spend,
         }
         with _patch_context():
-            with _patch_admin_client(methods):
+            with _patch_spend_client(methods):
                 results = []
                 for _ in range(10):
                     r = await check_spending_limits_callback(
@@ -692,7 +692,7 @@ class TestEdgeCases:
 
         resp = _make_spend_response(credit_balance=0.0)
         with _patch_context():
-            with _patch_admin_client(resp):
+            with _patch_spend_client(resp):
                 result = await check_spending_limits_callback(
                     LimitCheckRequest(model="gpt-4", endpoint="test"),
                 )
@@ -706,7 +706,7 @@ class TestEdgeCases:
 
         resp = _make_spend_response(credit_balance=1e-10)
         with _patch_context():
-            with _patch_admin_client(resp):
+            with _patch_spend_client(resp):
                 result = await check_spending_limits_callback(
                     LimitCheckRequest(model="gpt-4", endpoint="test"),
                 )
@@ -720,7 +720,7 @@ class TestEdgeCases:
 
         resp = _make_spend_response(credit_balance=-1_000_000.0)
         with _patch_context():
-            with _patch_admin_client(resp):
+            with _patch_spend_client(resp):
                 result = await check_spending_limits_callback(
                     LimitCheckRequest(model="gpt-4", endpoint="test"),
                 )
@@ -734,14 +734,14 @@ class TestEdgeCases:
 
         resp_none = _make_spend_response(credit_balance=None)
         with _patch_context():
-            with _patch_admin_client(resp_none):
+            with _patch_spend_client(resp_none):
                 result_none = await check_spending_limits_callback(
                     LimitCheckRequest(model="gpt-4", endpoint="test"),
                 )
 
         resp_zero = _make_spend_response(credit_balance=0.0)
         with _patch_context():
-            with _patch_admin_client(resp_zero):
+            with _patch_spend_client(resp_zero):
                 result_zero = await check_spending_limits_callback(
                     LimitCheckRequest(model="gpt-4", endpoint="test"),
                 )
@@ -794,7 +794,7 @@ class TestZeroLatencyOverhead:
 
         data = _make_spend_response(credit_balance=0.0)
         with _patch_context(org_id=None):
-            with _patch_admin_client(data) as mock_client:
+            with _patch_spend_client(data) as mock_client:
                 await check_spending_limits_callback(
                     LimitCheckRequest(model="gpt-4", endpoint="test"),
                 )
@@ -809,7 +809,7 @@ class TestZeroLatencyOverhead:
 
         data = _make_spend_response(credit_balance=0.0)
         with _patch_context(org_id=789):
-            with _patch_admin_client(data) as mock_client:
+            with _patch_spend_client(data) as mock_client:
                 await check_spending_limits_callback(
                     LimitCheckRequest(model="gpt-4", endpoint="test"),
                 )
@@ -842,7 +842,7 @@ class TestSubPennyBalanceDeadlock:
 
         resp = _make_spend_response(credit_balance=0.0007923)
         with _patch_context():
-            with _patch_admin_client(resp):
+            with _patch_spend_client(resp):
                 result = await check_spending_limits_callback(
                     LimitCheckRequest(model="gpt-4", endpoint="test"),
                 )
@@ -856,7 +856,7 @@ class TestSubPennyBalanceDeadlock:
 
         resp = _make_spend_response(credit_balance=0.0)
         with _patch_context():
-            with _patch_admin_client(resp):
+            with _patch_spend_client(resp):
                 result = await check_spending_limits_callback(
                     LimitCheckRequest(model="gpt-4", endpoint="test"),
                 )
@@ -871,7 +871,7 @@ class TestSubPennyBalanceDeadlock:
 
         resp = _make_spend_response(credit_balance=-0.0492077)
         with _patch_context():
-            with _patch_admin_client(resp):
+            with _patch_spend_client(resp):
                 result = await check_spending_limits_callback(
                     LimitCheckRequest(model="gpt-4", endpoint="test"),
                 )

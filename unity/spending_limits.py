@@ -2,7 +2,7 @@
 Spending limit checking for Unity.
 
 This module implements the limit check callback that UniLLM invokes before
-each LLM call. It queries Orchestra's admin endpoints to check if spending
+each LLM call. It queries Orchestra's spend endpoints to check if spending
 limits have been exceeded for the current assistant, user, or organization.
 
 The callback is registered with UniLLM during unity.init() and uses
@@ -14,7 +14,7 @@ Limit hierarchy:
 
 All checks run in parallel for minimal latency impact.
 
-Uses ``unify.AsyncAdminClient`` (aiohttp-backed) for connection pooling,
+Uses ``unify.AsyncSpendClient`` (aiohttp-backed) for connection pooling,
 automatic retries, and exponential backoff — matching the reliability
 characteristics of the sync ``unify.utils.http`` session.
 """
@@ -29,7 +29,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import TYPE_CHECKING, List, Optional
 
-from unify.async_admin import AdminRequestError, AsyncAdminClient
+from unify.async_admin import AsyncSpendClient, SpendRequestError
 
 if TYPE_CHECKING:
     from unillm.limit_hooks import LimitCheckRequest, LimitCheckResponse
@@ -38,24 +38,24 @@ logger = logging.getLogger(__name__)
 
 LIMIT_CHECK_TIMEOUT = 5.0
 
-_admin_client: Optional[AsyncAdminClient] = None
+_spend_client: Optional[AsyncSpendClient] = None
 
 
 def _get_api_key() -> Optional[str]:
-    """Get the admin API key for Orchestra calls."""
-    return os.getenv("ORCHESTRA_ADMIN_KEY")
+    """Get the user API key for Orchestra calls."""
+    return os.getenv("UNIFY_KEY")
 
 
-def _get_admin_client() -> AsyncAdminClient:
-    """Get or create the shared AsyncAdminClient for limit checks."""
-    global _admin_client
+def _get_spend_client() -> AsyncSpendClient:
+    """Get or create the shared AsyncSpendClient for limit checks."""
+    global _spend_client
     api_key = _get_api_key()
-    if _admin_client is None or _admin_client.closed:
-        _admin_client = AsyncAdminClient(
+    if _spend_client is None or _spend_client.closed:
+        _spend_client = AsyncSpendClient(
             api_key=api_key,
             timeout=LIMIT_CHECK_TIMEOUT,
         )
-    return _admin_client
+    return _spend_client
 
 
 @dataclass
@@ -118,10 +118,10 @@ async def _check_assistant_limit(
 ) -> _LimitCheckResult:
     """Check if assistant spending limit is exceeded."""
     try:
-        client = _get_admin_client()
+        client = _get_spend_client()
         data = await client.get_assistant_spend(agent_id=int(agent_id), month=month)
         return _parse_spend_result(data, "assistant", agent_id)
-    except AdminRequestError as e:
+    except SpendRequestError as e:
         if e.status == 404:
             return _LimitCheckResult(exceeded=False)
         logger.warning(f"Failed to check assistant limit: {type(e).__name__}: {e}")
@@ -137,10 +137,10 @@ async def _check_user_limit(
 ) -> _LimitCheckResult:
     """Check if user's personal spending limit is exceeded."""
     try:
-        client = _get_admin_client()
-        data = await client.get_user_spend(user_id=user_id, month=month)
+        client = _get_spend_client()
+        data = await client.get_user_spend(month=month)
         return _parse_spend_result(data, "user", user_id)
-    except AdminRequestError as e:
+    except SpendRequestError as e:
         if e.status == 404:
             return _LimitCheckResult(exceeded=False)
         logger.warning(f"Failed to check user limit: {type(e).__name__}: {e}")
@@ -157,7 +157,7 @@ async def _check_member_limit(
 ) -> _LimitCheckResult:
     """Check if organization member's spending limit is exceeded."""
     try:
-        client = _get_admin_client()
+        client = _get_spend_client()
         data = await client.get_member_spend(
             user_id=user_id,
             org_id=org_id,
@@ -169,7 +169,7 @@ async def _check_member_limit(
             user_id,
             organization_id=org_id,
         )
-    except AdminRequestError as e:
+    except SpendRequestError as e:
         if e.status == 404:
             return _LimitCheckResult(exceeded=False)
         logger.warning(f"Failed to check member limit: {type(e).__name__}: {e}")
@@ -185,7 +185,7 @@ async def _check_org_limit(
 ) -> _LimitCheckResult:
     """Check if organization spending limit is exceeded."""
     try:
-        client = _get_admin_client()
+        client = _get_spend_client()
         data = await client.get_org_spend(org_id=org_id, month=month)
         return _parse_spend_result(
             data,
@@ -193,7 +193,7 @@ async def _check_org_limit(
             str(org_id),
             entity_name=data.get("organization_name"),
         )
-    except AdminRequestError as e:
+    except SpendRequestError as e:
         if e.status == 404:
             return _LimitCheckResult(exceeded=False)
         logger.warning(f"Failed to check org limit: {type(e).__name__}: {e}")
@@ -233,7 +233,7 @@ async def _notify_limit_reached(
         payload["organization_id"] = result.organization_id
 
     try:
-        client = _get_admin_client()
+        client = _get_spend_client()
         data = await client.notify_limit_reached(payload)
         if data.get("notified"):
             logger.info(

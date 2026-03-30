@@ -1,6 +1,6 @@
-"""Tests for shared admin client in spending limit checks.
+"""Tests for shared spend client in spending limit checks.
 
-Verifies that limit checks use a shared ``unify.AsyncAdminClient`` with
+Verifies that limit checks use a shared ``unify.AsyncSpendClient`` with
 connection pooling and retries, so that connections are reused across checks.
 """
 
@@ -51,7 +51,7 @@ _SPEND_DATA = {
 
 
 def _make_mock_client():
-    """Create a mock AsyncAdminClient that returns valid spend responses."""
+    """Create a mock AsyncSpendClient that returns valid spend responses."""
     mock = MagicMock()
     mock.closed = False
     mock.get_assistant_spend = AsyncMock(return_value=_SPEND_DATA)
@@ -62,8 +62,8 @@ def _make_mock_client():
     return mock
 
 
-class TestSharedAdminClient:
-    """Verifies that limit checks reuse a single shared AsyncAdminClient
+class TestSharedSpendClient:
+    """Verifies that limit checks reuse a single shared AsyncSpendClient
     rather than creating a new one per request."""
 
     @pytest.mark.asyncio
@@ -72,12 +72,12 @@ class TestSharedAdminClient:
         import unity.spending_limits as sl
 
         mock_client = _make_mock_client()
-        sl._admin_client = None
+        sl._spend_client = None
 
         with _patch_context():
             with patch.object(
                 sl,
-                "_get_admin_client",
+                "_get_spend_client",
                 return_value=mock_client,
             ) as mock_getter:
                 await sl.check_spending_limits_callback(
@@ -94,12 +94,12 @@ class TestSharedAdminClient:
         import unity.spending_limits as sl
 
         mock_client = _make_mock_client()
-        sl._admin_client = None
+        sl._spend_client = None
 
         with _patch_context(org_id=789):
             with patch.object(
                 sl,
-                "_get_admin_client",
+                "_get_spend_client",
                 return_value=mock_client,
             ):
                 await sl.check_spending_limits_callback(
@@ -120,12 +120,12 @@ class TestSharedAdminClient:
         import unity.spending_limits as sl
 
         mock_client = _make_mock_client()
-        sl._admin_client = None
+        sl._spend_client = None
 
         with _patch_context():
             with patch.object(
                 sl,
-                "_get_admin_client",
+                "_get_spend_client",
                 return_value=mock_client,
             ) as mock_getter:
                 tasks = [
@@ -142,63 +142,63 @@ class TestSharedAdminClient:
         assert mock_client.get_user_spend.call_count == 5
 
     @pytest.mark.asyncio
-    async def test_get_admin_client_reuses_existing(self):
-        """_get_admin_client should return the same instance on repeated calls."""
+    async def test_get_spend_client_reuses_existing(self):
+        """_get_spend_client should return the same instance on repeated calls."""
         import unity.spending_limits as sl
 
         mock_client = MagicMock()
         mock_client.closed = False
-        sl._admin_client = mock_client
+        sl._spend_client = mock_client
 
         with patch("unity.spending_limits._get_api_key", return_value="test-key"):
-            client1 = sl._get_admin_client()
-            client2 = sl._get_admin_client()
-            client3 = sl._get_admin_client()
+            client1 = sl._get_spend_client()
+            client2 = sl._get_spend_client()
+            client3 = sl._get_spend_client()
 
         assert client1 is client2
         assert client2 is client3
         assert client1 is mock_client
 
-        sl._admin_client = None
+        sl._spend_client = None
 
     @pytest.mark.asyncio
-    async def test_get_admin_client_recreates_if_closed(self):
-        """_get_admin_client should create a new client if the previous one is closed."""
+    async def test_get_spend_client_recreates_if_closed(self):
+        """_get_spend_client should create a new client if the previous one is closed."""
         import unity.spending_limits as sl
 
         mock_client = MagicMock()
         mock_client.closed = True
-        sl._admin_client = mock_client
+        sl._spend_client = mock_client
 
         with patch("unity.spending_limits._get_api_key", return_value="test-key"):
-            new_client = sl._get_admin_client()
+            new_client = sl._get_spend_client()
 
         assert new_client is not mock_client
-        assert sl._admin_client is new_client
+        assert sl._spend_client is new_client
 
-        sl._admin_client = None
+        sl._spend_client = None
 
     @pytest.mark.asyncio
     async def test_no_raw_httpx_usage_during_check(self):
-        """Spending limit checks should use AsyncAdminClient, not raw httpx."""
+        """Spending limit checks should use AsyncSpendClient, not raw httpx."""
         import unity.spending_limits as sl
 
         assert not hasattr(sl, "_get_http_client"), (
             "_get_http_client still exists — spending_limits should use "
-            "AsyncAdminClient via _get_admin_client instead."
+            "AsyncSpendClient via _get_spend_client instead."
         )
 
         mock_client = _make_mock_client()
-        sl._admin_client = None
+        sl._spend_client = None
 
         with _patch_context():
-            with patch.object(sl, "_get_admin_client", return_value=mock_client):
-                with patch("unify.async_admin.AsyncAdminClient") as mock_cls:
+            with patch.object(sl, "_get_spend_client", return_value=mock_client):
+                with patch("unify.async_admin.AsyncSpendClient") as mock_cls:
                     await sl.check_spending_limits_callback(
                         LimitCheckRequest(model="gpt-4", endpoint="test"),
                     )
 
                     assert mock_cls.call_count == 0, (
-                        f"AsyncAdminClient was instantiated {mock_cls.call_count} time(s) "
+                        f"AsyncSpendClient was instantiated {mock_cls.call_count} time(s) "
                         "during a limit check. The shared client should be used instead."
                     )
