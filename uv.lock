@@ -1,5 +1,5 @@
 version = 1
-revision = 2
+revision = 3
 requires-python = ">=3.12"
 resolution-markers = [
     "python_full_version >= '3.14' and sys_platform == 'darwin'",
@@ -2340,7 +2340,7 @@ wheels = [
 
 [[package]]
 name = "litellm"
-version = "1.81.9"
+version = "1.82.5"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "aiohttp" },
@@ -2356,9 +2356,9 @@ dependencies = [
     { name = "tiktoken" },
     { name = "tokenizers" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/ff/8f/2a08f3d86fd008b4b02254649883032068378a8551baed93e8d9dcbbdb5d/litellm-1.81.9.tar.gz", hash = "sha256:a2cd9bc53a88696c21309ef37c55556f03c501392ed59d7f4250f9932917c13c", size = 16276983, upload-time = "2026-02-07T21:14:24.473Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/d7/f0/ec42ee14b388ce1d08a1df638f894ed7f1e6ac35b9daf0588ff7f7d52262/litellm-1.82.5.tar.gz", hash = "sha256:7988a9b48c8ccd9e5ebced80a4dfce9ce87083b303c3f67082450a4ad6dd312f", size = 17406156, upload-time = "2026-03-21T00:03:53.239Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/0b/8b/672fc06c8a2803477e61e0de383d3c6e686e0f0fc62789c21f0317494076/litellm-1.81.9-py3-none-any.whl", hash = "sha256:24ee273bc8a62299fbb754035f83fb7d8d44329c383701a2bd034f4fd1c19084", size = 14433170, upload-time = "2026-02-07T21:14:21.469Z" },
+    { url = "https://files.pythonhosted.org/packages/68/1f/b6c8043eec81eade53a4d0e15a50b788ab0e82661e01a25e0b8536a4dca0/litellm-1.82.5-py3-none-any.whl", hash = "sha256:e1012ab816352215c4e00776dd48b0c68058b537888a8ff82cca62af19e6fb11", size = 15589652, upload-time = "2026-03-21T00:03:48.87Z" },
 ]
 
 [[package]]
@@ -8765,6 +8765,53 @@ wheels = [
 ]
 
 [[package]]
+name = "unify"
+version = "0.9.10"
+source = { editable = "../unify" }
+dependencies = [
+    { name = "aiohttp" },
+    { name = "google-genai" },
+    { name = "jsonlines" },
+    { name = "openai" },
+    { name = "requests" },
+    { name = "requests-toolbelt" },
+    { name = "rich" },
+    { name = "termcolor" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "aiohttp", specifier = ">=3.12.14" },
+    { name = "google-genai", specifier = ">=1.52.0" },
+    { name = "jsonlines", specifier = ">=3.1.0" },
+    { name = "openai", specifier = ">=2.8.1" },
+    { name = "requests", specifier = ">=2.32.4" },
+    { name = "requests-toolbelt", specifier = ">=1.0.0" },
+    { name = "rich", specifier = ">=13.8.1" },
+    { name = "termcolor", specifier = ">=2.5.0" },
+]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "autoflake", specifier = ">=1.6.1" },
+    { name = "black", specifier = "==26.1.0" },
+    { name = "flake8", specifier = ">=4.0.1" },
+    { name = "isort", specifier = ">=5.11.4" },
+    { name = "mypy", specifier = ">=1.1.1" },
+    { name = "opentelemetry-api", specifier = ">=1.20.0" },
+    { name = "opentelemetry-exporter-otlp", specifier = ">=1.20.0" },
+    { name = "opentelemetry-sdk", specifier = ">=1.20.0" },
+    { name = "pre-commit", specifier = ">=3.0.1" },
+    { name = "pytest", specifier = ">=8.3.3" },
+    { name = "pytest-asyncio", specifier = ">=0.24.0" },
+    { name = "pytest-dotenv", specifier = ">=0.5.2" },
+    { name = "pytest-timeout", specifier = ">=2.3.1" },
+    { name = "pytest-xdist", specifier = ">=3.8.0" },
+    { name = "python-dotenv", specifier = ">=1.2.1" },
+    { name = "types-requests" },
+]
+
+[[package]]
 name = "unifyai"
 version = "0.9.10"
 source = { editable = "../unify" }
@@ -8824,7 +8871,7 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
-    { name = "litellm", specifier = ">=1.81.8" },
+    { name = "litellm", specifier = "==1.82.5" },
     { name = "pydantic", specifier = ">=2.12.5" },
     { name = "pydantic-settings", specifier = ">=2.12.0" },
     { name = "unifyai", editable = "../unify" },
@@ -8895,7 +8942,7 @@ dependencies = [
     { name = "textual-dev" },
     { name = "tiktoken" },
     { name = "twilio" },
-    { name = "unifyai" },
+    { name = "unify" },
     { name = "unillm" },
     { name = "uvicorn", extra = ["standard"] },
     { name = "websockify" },
@@ -8969,7 +9016,7 @@ requires-dist = [
     { name = "textual-dev", specifier = ">=1.2.0" },
     { name = "tiktoken", specifier = ">=0.11.0" },
     { name = "twilio", specifier = ">=8.0.0" },
-    { name = "unifyai", editable = "../unify" },
+    { name = "unify", editable = "../unify" },
     { name = "unillm", editable = "../unillm" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.24.0" },
     { name = "websockify", specifier = ">=0.13.0" },

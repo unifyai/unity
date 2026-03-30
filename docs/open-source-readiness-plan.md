@@ -71,15 +71,13 @@ All three repos to be open-sourced need history cleaned before going public. Use
   - Inline the rules directly into the Unity repo (remove submodule, commit contents)
   - Make the `global-cursor-rules` repo public
   - Remove the submodule entirely and keep only Unity-specific rules
-- **Sibling path dependencies in `pyproject.toml`**: `[tool.uv.sources]` pins `unifyai = { path = "../unify" }` and `unillm = { path = "../unillm" }`. For public consumption:
-  - Publish `unifyai` and `unillm` to PyPI (or public index)
-  - Keep path overrides only in a dev/contributor config, not in the distributed `pyproject.toml`
-- **Dockerfile clones private repos**: Lines clone `unifyai/unify`, `unifyai/unillm`, `unifyai/magnitude` using `GITHUB_TOKEN`. Update to reference public repos or published packages.
+- **Sibling path dependencies in `pyproject.toml`**: `[tool.uv.sources]` pins `unify = { path = "../unify" }` and `unillm = { path = "../unillm" }`. These are local dev overrides; CI and Dockerfiles clone the public repos directly.
+- **Dockerfile clones repos**: Lines clone `unifyai/unify`, `unifyai/unillm`, `unifyai/magnitude` using `GITHUB_TOKEN`. Now that unify and unillm are public, these can use unauthenticated HTTPS clones.
 - **`agent-service/package.json`**: References `file:../magnitude/packages/...`. Same pattern — publish or make public.
 
 ### UniLLM
 
-- Same `[tool.uv.sources]` issue: `unifyai = { path = "../unify", editable = true }`. Must point to published PyPI package for release builds.
+- Same `[tool.uv.sources]` pattern: `unify = { path = "../unify", editable = true }`. Local dev override; CI clones the public repo.
 
 ---
 

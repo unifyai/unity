@@ -36,7 +36,7 @@ dependencies = [
     "textual-dev>=1.2.0",
     "twilio>=8.0.0",
     "uvicorn[standard]>=0.24.0",
-    "unifyai",
+    "unify",
     "unillm",
     # Virtual devices and remote browser setup
     "websockify>=0.13.0",
@@ -91,6 +91,6 @@ dev = [
 include = ["unity", "unity.*"]
 
 [tool.uv.sources]
-unifyai = { path = "../unify", editable = true }
+unify = { path = "../unify", editable = true }
 unillm = { path = "../unillm", editable = true }
 en-core-web-sm = { url = "https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl" }
