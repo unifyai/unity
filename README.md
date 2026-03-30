@@ -11,9 +11,9 @@
 
 # Unity
 
-Unity is the brain of an AI assistant. Not a chatbot wrapper, not a tool-calling loop — a distributed system where specialized managers (contacts, knowledge, tasks, transcripts, guidance, memory…) each run their own LLM-powered reasoning, coordinate through a typed event bus, and expose live handles you can pause, resume, interject into, or stop at any time.
+Unity is the brain of an AI assistant. It's a distributed system where specialized managers (contacts, knowledge, tasks, transcripts, guidance, memory…) each run their own LLM-powered reasoning, coordinate through a typed event bus, and expose live handles you can pause, resume, interject into, or stop at any time.
 
-We've been building this for ~10 months. It shares zero code with OpenClaw, Hermes, or any other agent framework. The architectural decisions are fundamentally different, and this README explains why.
+The key abstraction is the **steerable handle**: every operation — from a simple contact lookup to a multi-step task execution — returns a handle that composes and nests to arbitrary depth. This README walks through the architecture.
 
 ---
 
@@ -47,7 +47,7 @@ await handle.resume()
 
 When the Actor calls `primitives.contacts.ask(...)`, the ContactManager starts its own tool loop and returns its own handle — nested inside the Actor's handle, which is nested inside the ConversationManager's. You can steer at any level and it propagates correctly.
 
-We built this because we were tired of agents that go dark the moment they start working. You should be able to talk to your assistant while it's doing things for you, not wait in silence.
+The goal: you should be able to talk to your assistant while it's doing things for you, not wait in silence.
 
 ## CodeAct — the Actor writes programs, not tool calls
 
@@ -83,7 +83,7 @@ They talk over IPC. When the slow brain finishes a task or wants to guide the co
 
 So the assistant keeps talking to you while researching flights in the background. When the results come in, it naturally weaves them into whatever you're discussing. There's also a speech urgency evaluator that can preempt the slow brain if you say something that needs immediate attention.
 
-No other open-source project does this as far as we know. OpenClaw and Hermes both go quiet while working.
+Most agent frameworks go quiet while working. This architecture keeps the conversation alive.
 
 ## Memory that actually consolidates
 
@@ -95,7 +95,7 @@ Every 50 messages, the MemoryManager kicks in and runs a background extraction p
 - Domain knowledge — project details, preferences, long-term facts
 - Tasks — things you committed to, deadlines, follow-ups
 
-This isn't "save the last 15 messages to a markdown file when the session resets" (that's what OpenClaw does). It's structured, queryable, continuous. After a month of use, the system has a genuine understanding of your world — who the people are, what matters, what's in progress — stored in typed tables, not freeform text.
+This is structured, queryable, and continuous. After a month of use, the system has a working model of your world — who the people are, what matters, what's in progress — stored in typed tables, not freeform text.
 
 ## Concurrent actions
 
