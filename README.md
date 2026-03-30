@@ -1,8 +1,21 @@
+<p align="center">
+  <img src="docs/assets/unity-banner.png" alt="Unity" width="100%">
+</p>
+
+<p align="center">
+  <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-blue.svg?style=for-the-badge" alt="MIT License"></a>
+  <a href="https://github.com/unifyai/unity/actions"><img src="https://img.shields.io/github/actions/workflow/status/unifyai/unity/ci.yml?branch=main&style=for-the-badge" alt="CI"></a>
+  <a href="https://discord.gg/unify"><img src="https://img.shields.io/badge/Discord-5865F2?style=for-the-badge&logo=discord&logoColor=white" alt="Discord"></a>
+  <a href="https://unify.ai"><img src="https://img.shields.io/badge/Built%20by-Unify-black?style=for-the-badge" alt="Built by Unify"></a>
+</p>
+
 # Unity
 
 Unity is the brain of an AI assistant. Not a chatbot wrapper, not a tool-calling loop — a distributed system where specialized managers (contacts, knowledge, tasks, transcripts, guidance, memory…) each run their own LLM-powered reasoning, coordinate through a typed event bus, and expose live handles you can pause, resume, interject into, or stop at any time.
 
 We've been building this for ~10 months. It shares zero code with OpenClaw, Hermes, or any other agent framework. The architectural decisions are fundamentally different, and this README explains why.
+
+---
 
 ## The core idea
 
@@ -105,6 +118,8 @@ The ConversationManager tracks everything that's running:
 
 Each action gets its own dynamically generated steering tools. You can ask "how's the flight search going?" or "stop the summary, I'll do that myself" or "for the restaurants, make sure one has a private room" — and only the targeted action is affected.
 
+---
+
 ## Architecture
 
 ```
@@ -146,44 +161,21 @@ State Managers (each runs its own async LLM tool loop)
 
 ## System dependencies
 
-Unity is one piece of a larger system:
-
-```
-User (Voice / SMS / Email / Chat)
-    │
-Communication ─── Webhooks, Twilio, Gmail, LiveKit
-    │
-  Unity ────────── This repo. The brain.
-    │
-  Unify ────────── Python SDK for persistence
-    │
-Orchestra ──────── Backend API + PostgreSQL + pgvector
-    │
-  UniLLM ───────── LLM client (wraps LiteLLM, adds caching + tracing)
-    │
- Console ───────── Web UI + observability dashboard
-```
+Unity is the "brain" in a larger system. It persists state through a backend API (via a Python SDK) and makes LLM calls through a caching/tracing layer:
 
 | Repo | Open? | What it does |
 |------|-------|-------------|
-| **unity** (this) | MIT | The brain — managers, tool loops, CodeAct, orchestration |
-| **[unify](https://github.com/unifyai/unify)** | MIT | Python SDK for Orchestra |
-| **[unillm](https://github.com/unifyai/unillm)** | MIT | LLM abstraction — caching, tracing, cost tracking |
-| orchestra | Private | Backend API, database, auth |
-| communication | Private | Voice, SMS, email gateway |
-| console | Private | Web UI, observability |
+| **unity** (this) | ✅ MIT | The brain — managers, tool loops, CodeAct, orchestration |
+| **[unify](https://github.com/unifyai/unify)** | ✅ MIT | Python SDK for persistence and logging |
+| **[unillm](https://github.com/unifyai/unillm)** | ✅ MIT | LLM abstraction — caching, tracing, cost tracking |
 
-**Can you run this standalone?** The architecture (steerable handles, tool loops, CodeAct, manager composition) is all in this repo and works against simulated backends for development and testing. For production, you need Orchestra or something that speaks the same API. Open-source users interact with Orchestra and Communication through Unify's hosted API at `api.unify.ai`.
+The backend API, communication gateway (voice/SMS/email), and web console are hosted services. The full product — with voice calls, messaging channels, and a management dashboard — runs on [Unify's platform](https://unify.ai).
+
+**Can you run Unity standalone?** The core architecture (steerable handles, tool loops, CodeAct, manager composition) works against simulated backends for development and testing. For production, you need a compatible persistence layer. We're working on making this easier.
+
+---
 
 ## Getting started
-
-### Prerequisites
-
-- Python 3.11+
-- A [Unify API key](https://unify.ai) (`UNIFY_KEY`)
-- At least one LLM provider key (`OPENAI_API_KEY` or `ANTHROPIC_API_KEY`)
-
-### Setup
 
 ```bash
 git clone https://github.com/unifyai/unity.git
@@ -195,20 +187,8 @@ pip install uv && uv sync --all-groups
 source .venv/bin/activate
 
 cp .env.example .env
-# Fill in UNIFY_KEY and at least one LLM provider key
+# Add your UNIFY_KEY, OPENAI_API_KEY, ANTHROPIC_API_KEY
 ```
-
-### Try it
-
-The **ConversationManager sandbox** is the primary way to interact with Unity locally. It runs in your terminal with simulated communications — no external infrastructure needed:
-
-```bash
-python -m sandboxes.conversation_manager.sandbox --project_name MySandbox --overwrite
-```
-
-This gives you a REPL where you can chat with the assistant, send simulated SMS/email/calls, and see the full manager orchestration in action. See [sandboxes/conversation_manager/README.md](sandboxes/conversation_manager/README.md) for all modes and options.
-
-### Tests
 
 Tests use real LLM calls with cached responses — first run hits live APIs, subsequent runs replay instantly:
 
@@ -257,10 +237,9 @@ unity/
 │   ├── secret_manager/
 │   ├── events/
 │   └── manager_registry.py
-├── sandboxes/                    # Interactive playgrounds (start here)
 ├── tests/
 ├── agent-service/                # Node.js desktop/browser automation
-└── deploy/                       # Internal deployment configs (hosted platform)
+└── desktop/                      # Virtual desktop infrastructure
 ```
 
 ## Design convictions
@@ -273,8 +252,16 @@ We don't do defensive coding. No try/except around things that shouldn't fail. N
 
 We think of English as an API. Managers communicate through natural-language interfaces. The Actor orchestrates through English-language primitives. This makes the whole system inspectable without reading implementation code.
 
+---
+
+## Community
+
+- 💬 [Discord](https://discord.gg/unify)
+- 🐛 [Issues](https://github.com/unifyai/unity/issues)
+- 💡 [Discussions](https://github.com/unifyai/unity/discussions)
+
 ## License
 
-MIT
+MIT — see [LICENSE](LICENSE).
 
 Built by the team at [Unify](https://unify.ai).
