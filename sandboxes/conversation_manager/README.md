@@ -217,7 +217,7 @@ These populate `SESSION_DETAILS` and the boss contact record. Without them the s
 
 | Variable | Required | Description |
 |---|---|---|
-| `UNITY_COMMS_URL` | **Yes** | Communication service URL (e.g. `https://unity-comms-app-staging-....run.app`) |
+| `UNITY_COMMS_URL` | **Yes** | Communication service URL |
 | `ORCHESTRA_ADMIN_KEY` | **Yes** | Admin key used by comms service for auth headers |
 | `ASSISTANT_NUMBER` | **Yes** | Twilio-provisioned number for outbound SMS and calls |
 | `ASSISTANT_EMAIL` | **Yes** | Email address for outbound email |
@@ -289,7 +289,7 @@ ASSISTANT_EMAIL=default-assistant-4@unify.ai
 ASSISTANT_ID=4
 
 # Comms
-UNITY_COMMS_URL=https://unity-comms-app-staging-....run.app
+UNITY_COMMS_URL=https://your-comms-service-url
 
 # Voice
 LIVEKIT_URL=wss://your-project.livekit.cloud

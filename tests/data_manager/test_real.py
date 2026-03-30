@@ -793,9 +793,8 @@ def test_join_tables_materialized():
 # ────────────────────────────────────────────────────────────────────────────
 # Visualization
 #
-# Note: Plot tests are marked xfail because the Console Plot API at
-# console.redesign.staging.internal.saas.unify.ai currently returns
-# HTTP 400 "Missing projectConfig.projectName" due to a snake_case vs
+# Note: Plot tests are marked xfail because the Console Plot API currently
+# returns HTTP 400 "Missing projectConfig.projectName" due to a snake_case vs
 # camelCase key mismatch in plot_ops._build_project_config_dict.
 # The tests below verify correct *DataManager* usage regardless.
 # ────────────────────────────────────────────────────────────────────────────

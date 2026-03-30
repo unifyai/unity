@@ -552,8 +552,8 @@ jobs:
       ORCHESTRA_URL: ${{ vars.ORCHESTRA_URL }}
       OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-      # Communication service URL (auto-selected based on branch: main→production, else→staging)
-      UNITY_COMMS_URL: ${{ github.ref_name == 'main' && 'https://unity-comms-app-262420637606.us-central1.run.app' || 'https://unity-comms-app-staging-262420637606.us-central1.run.app' }}
+      # Communication service URL (set via repository variables)
+      UNITY_COMMS_URL: ${{ vars.UNITY_COMMS_URL }}
       # Orchestra GCP configuration (set by google-github-actions/auth step)
       # GOOGLE_APPLICATION_CREDENTIALS is set automatically by the google-github-actions/auth action
       GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}

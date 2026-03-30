@@ -408,23 +408,13 @@ unset _orchestra_repo_path _local_orchestra_script
 # ---------------------------------------------------------------------------
 # Communication Service URL Setup
 # ---------------------------------------------------------------------------
-# UNITY_COMMS_URL is auto-selected based on git branch if not explicitly set:
-# - main branch → production: https://unity-comms-app-262420637606.us-central1.run.app
-# - other branches → staging: https://unity-comms-app-staging-262420637606.us-central1.run.app
-#
-# This mirrors the CI behavior in .github/workflows/tests.yml
-if [[ -z "${UNITY_COMMS_URL:-}" ]]; then
-  _current_branch=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "unknown")
-  if [[ "$_current_branch" == "main" ]]; then
-    export UNITY_COMMS_URL="https://unity-comms-app-262420637606.us-central1.run.app"
-    echo "Using production communication service (main branch)"
-  else
-    export UNITY_COMMS_URL="https://unity-comms-app-staging-262420637606.us-central1.run.app"
-    echo "Using staging communication service (branch: $_current_branch)"
-  fi
-  unset _current_branch
-else
+# UNITY_COMMS_URL must be set via .env or environment for real-comms tests.
+# CI sets this in .github/workflows/tests.yml; local developers set it in .env.
+# Tests that use simulated comms (the default) do not require this.
+if [[ -n "${UNITY_COMMS_URL:-}" ]]; then
   echo "Using communication service: $UNITY_COMMS_URL"
+else
+  echo "UNITY_COMMS_URL not set (simulated comms only — real-comms tests will be skipped)"
 fi
 
 # Build pytest marker filter based on flags

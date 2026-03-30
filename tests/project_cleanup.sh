@@ -130,7 +130,7 @@ else
     esac
   fi
   case "$EXPLICIT_ENV" in
-    staging|preview) API_BASE="https://api.staging.internal.saas.unify.ai/v0" ;;
+    staging|preview) API_BASE="${ORCHESTRA_STAGING_URL:-https://api.unify.ai/v0}" ;;
     *) API_BASE="https://api.unify.ai/v0" ;;
   esac
 fi
