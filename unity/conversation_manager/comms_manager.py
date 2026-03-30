@@ -785,6 +785,12 @@ class CommsManager:
 
     def subscribe_to_topic(self, subscription_id: str, max_messages: int | None = None):
         """Subscribe to a specific PubSub topic and process messages."""
+        if not SETTINGS.GCP_PROJECT_ID:
+            LOGGER.error(
+                f"{ICONS['subscription']} GCP_PROJECT_ID is not set — "
+                f"cannot subscribe to Pub/Sub. Set the GCP_PROJECT_ID environment variable.",
+            )
+            return
         try:
             # Let GCP libraries handle authentication automatically
             if self.credentials:

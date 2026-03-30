@@ -266,6 +266,10 @@ def create_unity_job(
                                         "value": user_phone_number or user_number,
                                     },
                                     {
+                                        "name": "GCP_PROJECT_ID",
+                                        "value": project_id,
+                                    },
+                                    {
                                         "name": "GOOGLE_APPLICATION_CREDENTIALS",
                                         "value": "/secrets/key.json",
                                     },
