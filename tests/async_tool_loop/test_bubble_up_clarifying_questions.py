@@ -109,7 +109,7 @@ async def test_clarification_bubbles_up_two_tiers(llm_config) -> None:
 
     outer_handle = start_async_tool_loop(  # type: ignore[attr-defined]
         outer_client,
-        message="Please email jonathan.smith123@gmail.com and politely tell him I (Dan) will be arriving at the BBQ around 5pm.",
+        message="Please email jonathan.smith@example.com and politely tell him I (Dan) will be arriving at the BBQ around 5pm.",
         tools=outer_tools,
         time_awareness=False,
         clarification_queues=(clar_up_q, clar_down_q),
@@ -148,14 +148,14 @@ async def test_clarification_bubbles_up_two_tiers(llm_config) -> None:
     # 1️⃣ original user request – robust to clients that don't persist system messages
     _first_user = first_user_message(outer_client.messages)
     assert _first_user["content"] == (
-        "Please email jonathan.smith123@gmail.com and politely tell him I (Dan) "
+        "Please email jonathan.smith@example.com and politely tell him I (Dan) "
         "will be arriving at the BBQ around 5pm."
     )
 
     # 2️⃣ assistant chooses `send_email` --------------------------------------
     m1, call1 = first_assistant_tool_call(outer_client.messages, "send_email")
     args1 = json.loads(call1["function"]["arguments"])
-    assert args1["address"] == "jonathan.smith123@gmail.com"
+    assert args1["address"] == "jonathan.smith@example.com"
 
     # 3️⃣ tool asks a clarification question ----------------------------------
     clar_req = first_tool_message_by_name_prefix(

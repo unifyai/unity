@@ -49,7 +49,7 @@ async def test_ask_events():
 async def test_update_events():
     cm = ContactManager()
 
-    nl_cmd = "Create a contact named Logan Paul, email logan@example.com."
+    nl_cmd = "Create a contact named Alex Parker, email logan@example.com."
 
     async with capture_events("ManagerMethod") as events:
         handle = await cm.update(nl_cmd)

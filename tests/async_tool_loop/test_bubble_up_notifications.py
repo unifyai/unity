@@ -139,7 +139,7 @@ async def test_notification_bubbles_up_two_tiers(llm_config) -> None:
 
     outer_handle = start_async_tool_loop(  # type: ignore[attr-defined]
         outer_client,
-        message="Please email jonathan.smith123@gmail.com and politely tell him I (Dan) will be arriving at the BBQ around 5pm.",
+        message="Please email jonathan.smith@example.com and politely tell him I (Dan) will be arriving at the BBQ around 5pm.",
         tools=outer_tools,
         time_awareness=False,
     )
@@ -194,7 +194,7 @@ async def test_notification_bubbles_up_two_tiers(llm_config) -> None:
     # 1️⃣ original user request – robust to clients that don't persist system messages
     first_user_msg = first_user_message(msgs)
     assert first_user_msg["content"] == (
-        "Please email jonathan.smith123@gmail.com and politely tell him I (Dan) "
+        "Please email jonathan.smith@example.com and politely tell him I (Dan) "
         "will be arriving at the BBQ around 5pm."
     )
 
@@ -202,7 +202,7 @@ async def test_notification_bubbles_up_two_tiers(llm_config) -> None:
     # Find the first assistant tool call that requests `send_email` (avoid fixed indices)
     _m1, call1 = first_assistant_tool_call(msgs, "send_email")
     args1 = json.loads(call1["function"]["arguments"])
-    assert args1["address"] == "jonathan.smith123@gmail.com"
+    assert args1["address"] == "jonathan.smith@example.com"
 
     # 3️⃣ We no longer require an interim tool message from the base tool; the assistant
     # decides how to surface updates (via notify_parent).

@@ -15,14 +15,14 @@ CONTACTS = [
         "contact_id": 0,
         "first_name": "John",
         "surname": "Smith",
-        "email_address": "johnsmith11@gmail.com",
+        "email_address": "john.smith@example.com",
         "phone_number": "+1234567890",
     },
     {
         "contact_id": 1,
         "first_name": "Nancy",
         "surname": "Gray",
-        "email_address": "nancy_gray@outlook.com",
+        "email_address": "nancy.gray@example.com",
         "phone_number": "+1987654320",
     },
 ]
