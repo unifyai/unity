@@ -361,7 +361,7 @@ For recording to work end-to-end, the following must be true:
 
 4. **The `/livekit/recording-complete` adapter endpoint** has no application-level auth beyond LiveKit's own webhook signing (verified via `WebhookReceiver`/`TokenVerifier`). If there's infrastructure-level auth (API gateway, load balancer) that blocks unauthenticated requests to the adapters service, the webhook will be rejected.
 
-5. **The GCS bucket `unity-call-recordings` must exist** in the GCP project (`responsive-city-458413-a2`), with the service account from `GCP_SA_KEY` having write access.
+5. **The GCS bucket `unity-call-recordings` must exist** in the GCP project (`<gcp-project-comms>`), with the service account from `GCP_SA_KEY` having write access.
 
 6. **GCP_PROJECT_ID** must be set (already required for all other Pub/Sub publishing).
 

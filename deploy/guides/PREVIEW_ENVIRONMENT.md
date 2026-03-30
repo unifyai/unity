@@ -8,7 +8,7 @@ Staging tracks `main` closely (auto-synced via GitHub Actions) and is the primar
 
 ## Architecture
 
-Preview reuses the same GCP project (`responsive-city-458413-a2`) and GKE cluster (`unity`) as staging and production, but runs in a separate K8s namespace (`preview`) with dedicated Cloud Run services:
+Preview reuses the same GCP project (`<gcp-project-comms>`) and GKE cluster (`unity`) as staging and production, but runs in a separate K8s namespace (`preview`) with dedicated Cloud Run services:
 
 | Component | Production | Staging | Preview |
 |---|---|---|---|
@@ -128,11 +128,11 @@ Before the first preview build succeeds, these one-time setup steps are needed:
    ```bash
    gcloud run services add-iam-policy-binding unity-comms-app-preview \
      --region=us-central1 --member=allUsers --role=roles/run.invoker \
-     --project=responsive-city-458413-a2
+     --project=<gcp-project-comms>
 
    gcloud run services add-iam-policy-binding unity-adapters-preview \
      --region=us-central1 --member=allUsers --role=roles/run.invoker \
-     --project=responsive-city-458413-a2
+     --project=<gcp-project-comms>
    ```
 
    This is a one-time step — the binding persists across deployments. Staging and production already have this.
