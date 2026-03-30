@@ -1,3 +1,4 @@
+---
 apiVersion: scheduling.k8s.io/v1
 kind: PriorityClass
 metadata:
@@ -35,7 +36,7 @@ apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
   name: job-watcher
-  namespace: production
+  namespace: staging
 rules:
 - apiGroups: ["batch"]
   resources: ["jobs"]
@@ -48,11 +49,11 @@ apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata:
   name: job-watcher
-  namespace: production
+  namespace: staging
 subjects:
 - kind: ServiceAccount
   name: comm-sa
-  namespace: production
+  namespace: staging
 roleRef:
   kind: Role
   name: job-watcher
@@ -61,28 +62,28 @@ roleRef:
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: job-watcher
-  namespace: production
+  name: job-watcher-staging
+  namespace: staging
   labels:
-    app: job-watcher
+    app: job-watcher-staging
 spec:
   replicas: 1
   selector:
     matchLabels:
-      app: job-watcher
+      app: job-watcher-staging
   template:
     metadata:
       labels:
-        app: job-watcher
+        app: job-watcher-staging
       annotations:
         cluster-autoscaler.kubernetes.io/safe-to-evict: "false"
     spec:
       priorityClassName: job-watcher-critical
       serviceAccountName: comm-sa
       containers:
-      - name: job-watcher
-        image: us-central1-docker.pkg.dev/responsive-city-458413-a2/unity/job-watcher:latest
-        command: ["kopf", "run", "watcher.py", "--liveness=http://0.0.0.0:8080/healthz", "--namespace=production", "--standalone"]
+      - name: job-watcher-staging
+        image: us-central1-docker.pkg.dev/responsive-city-458413-a2/unity/job-watcher-staging:latest
+        command: ["kopf", "run", "watcher.py", "--liveness=http://0.0.0.0:8080/healthz", "--namespace=staging", "--standalone"]
         ports:
         - containerPort: 8080
           name: health
@@ -93,13 +94,13 @@ spec:
             name: unity-secrets
         env:
         - name: WATCH_NAMESPACE
-          value: production
+          value: staging
         - name: DEPLOY_ENV
-          value: production
+          value: staging
         - name: UNITY_COMMS_URL
-          value: "https://unity-comms-app-262420637606.us-central1.run.app"
+          value: "https://unity-comms-app-staging-262420637606.us-central1.run.app"
         - name: ORCHESTRA_URL
-          value: "https://api.unify.ai/v0"
+          value: "https://api.staging.internal.saas.unify.ai/v0"
         resources:
           requests:
             cpu: 50m

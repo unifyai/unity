@@ -14,7 +14,7 @@ class TestLLMProviderValidation:
     """Tests for validate_llm_providers method."""
 
     def test_validation_fails_when_all_credentials_missing(self):
-        """Validation raises RuntimeError when all credentials are empty."""
+        """Validation raises RuntimeError when no credentials are set."""
         settings = ProductionSettings(
             UNITY_VALIDATE_LLM_PROVIDERS=True,
             OPENAI_API_KEY="",
@@ -24,24 +24,16 @@ class TestLLMProviderValidation:
             settings.validate_llm_providers()
 
         error_msg = str(exc_info.value)
-        assert "Missing required LLM provider credentials" in error_msg
-        assert "OPENAI_API_KEY" in error_msg
-        assert "ANTHROPIC_API_KEY" in error_msg
+        assert "At least one LLM provider credential is required" in error_msg
 
-    def test_validation_fails_when_some_credentials_missing(self):
-        """Validation raises RuntimeError listing only missing credentials."""
+    def test_validation_passes_when_one_credential_provided(self):
+        """Validation succeeds when at least one credential is set."""
         settings = ProductionSettings(
             UNITY_VALIDATE_LLM_PROVIDERS=True,
             OPENAI_API_KEY="sk-test",
             ANTHROPIC_API_KEY="",
         )
-        with pytest.raises(RuntimeError) as exc_info:
-            settings.validate_llm_providers()
-
-        error_msg = str(exc_info.value)
-        assert "ANTHROPIC_API_KEY" in error_msg
-        # This should NOT be in the error since it's provided
-        assert "OPENAI_API_KEY" not in error_msg
+        settings.validate_llm_providers()
 
     def test_validation_passes_when_all_credentials_provided(self):
         """Validation succeeds when all credentials are set."""

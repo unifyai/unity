@@ -1,3 +1,5 @@
+# NOTE: This workflow is configured for Unify's internal CI/CD.
+# Fork users: this will not run without the required secrets.
 name: Sync staging with main
 
 on:

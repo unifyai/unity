@@ -2,11 +2,8 @@ from dotenv import load_dotenv
 
 load_dotenv()
 import os
-import requests
-import json
 import asyncio
 import aiohttp
-import time
 import random
 import string
 
@@ -50,12 +47,12 @@ async def create_assistant(session, index):
             data = await response.json()
             if status_code == 200:
                 print(
-                    f"[{index}] Success: Created assistant {data.get('info', {}).get('agent_id')}"
+                    f"[{index}] Success: Created assistant {data.get('info', {}).get('agent_id')}",
                 )
                 return data
             else:
                 print(
-                    f"[{index}] Failed: {status_code} - {data.get('detail', 'No detail provided')}"
+                    f"[{index}] Failed: {status_code} - {data.get('detail', 'No detail provided')}",
                 )
                 return None
     except Exception as e:
@@ -72,7 +69,7 @@ async def main():
             result = await create_assistant(session, i + 1)
             if result is not None:
                 print(
-                    f"[{i + 1}] Success: Created assistant {result.get('info', {}).get('agent_id')}"
+                    f"[{i + 1}] Success: Created assistant {result.get('info', {}).get('agent_id')}",
                 )
             else:
                 print(f"[{i + 1}] Failed: {result.get('detail', 'No detail provided')}")

@@ -44,7 +44,7 @@ async def send_unify_message(session, assistant_id, message):
                 print(f"[Assistant {assistant_id}] Message sent successfully")
             else:
                 print(
-                    f"[Assistant {assistant_id}] Failed to send message: {status} - {text}"
+                    f"[Assistant {assistant_id}] Failed to send message: {status} - {text}",
                 )
     except Exception as e:
         print(f"[Assistant {assistant_id}] Error sending message: {e}")

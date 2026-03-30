@@ -173,9 +173,17 @@ Orchestra ──────── Backend API + PostgreSQL + pgvector
 | communication | Private | Voice, SMS, email gateway |
 | console | Private | Web UI, observability |
 
-**Can you run this standalone?** The architecture (steerable handles, tool loops, CodeAct, manager composition) is all in this repo and works against simulated backends for development and testing. For production, you need Orchestra or something that speaks the same API. We're working on making this easier.
+**Can you run this standalone?** The architecture (steerable handles, tool loops, CodeAct, manager composition) is all in this repo and works against simulated backends for development and testing. For production, you need Orchestra or something that speaks the same API. Open-source users interact with Orchestra and Communication through Unify's hosted API at `api.unify.ai`.
 
 ## Getting started
+
+### Prerequisites
+
+- Python 3.11+
+- A [Unify API key](https://unify.ai) (`UNIFY_KEY`)
+- At least one LLM provider key (`OPENAI_API_KEY` or `ANTHROPIC_API_KEY`)
+
+### Setup
 
 ```bash
 git clone https://github.com/unifyai/unity.git
@@ -187,8 +195,20 @@ pip install uv && uv sync --all-groups
 source .venv/bin/activate
 
 cp .env.example .env
-# Add your UNIFY_KEY, OPENAI_API_KEY, ANTHROPIC_API_KEY
+# Fill in UNIFY_KEY and at least one LLM provider key
 ```
+
+### Try it
+
+The **ConversationManager sandbox** is the primary way to interact with Unity locally. It runs in your terminal with simulated communications — no external infrastructure needed:
+
+```bash
+python -m sandboxes.conversation_manager.sandbox --project_name MySandbox --overwrite
+```
+
+This gives you a REPL where you can chat with the assistant, send simulated SMS/email/calls, and see the full manager orchestration in action. See [sandboxes/conversation_manager/README.md](sandboxes/conversation_manager/README.md) for all modes and options.
+
+### Tests
 
 Tests use real LLM calls with cached responses — first run hits live APIs, subsequent runs replay instantly:
 
@@ -237,9 +257,10 @@ unity/
 │   ├── secret_manager/
 │   ├── events/
 │   └── manager_registry.py
+├── sandboxes/                    # Interactive playgrounds (start here)
 ├── tests/
 ├── agent-service/                # Node.js desktop/browser automation
-└── desktop/                      # Virtual desktop infrastructure
+└── deploy/                       # Internal deployment configs (hosted platform)
 ```
 
 ## Design convictions

@@ -91,7 +91,7 @@ class ProductionSettings(BaseSettings):
     # GCP project ID for Pub/Sub topics and subscriptions. Override via
     # GCP_PROJECT_ID env var for local development with the Pub/Sub emulator
     # (e.g. "local-test-project" to match Communication's local.sh).
-    GCP_PROJECT_ID: str = "responsive-city-458413-a2"
+    GCP_PROJECT_ID: str = ""
 
     # ─────────────────────────────────────────────────────────────────────────
     # Logging / Observability
@@ -242,22 +242,21 @@ class ProductionSettings(BaseSettings):
         return "" if self.DEPLOY_ENV == "production" else f"-{self.DEPLOY_ENV}"
 
     def validate_llm_providers(self) -> None:
-        """Validate that all required LLM provider credentials are set.
+        """Validate that at least one LLM provider credential is set.
 
         Raises:
-            RuntimeError: If any LLM provider credential is missing or empty.
+            RuntimeError: If no LLM provider credentials are set.
         """
         if not self.UNITY_VALIDATE_LLM_PROVIDERS:
             return
-        required = {
+        available = {
             "OPENAI_API_KEY": self.OPENAI_API_KEY,
             "ANTHROPIC_API_KEY": self.ANTHROPIC_API_KEY,
         }
-        missing = [name for name, value in required.items() if not value]
-        if missing:
+        if not any(available.values()):
             raise RuntimeError(
-                f"Missing required LLM provider credentials: {', '.join(missing)}. "
-                "Set these environment variables before initializing Unity.",
+                "At least one LLM provider credential is required. "
+                "Set OPENAI_API_KEY and/or ANTHROPIC_API_KEY.",
             )
 
 

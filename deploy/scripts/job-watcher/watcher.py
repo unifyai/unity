@@ -65,7 +65,7 @@ def on_job_event(event, **_):
     job = event.get("object", {})
     status = job.get("status", {})
     print(
-        f"job_name: {job.get('metadata', {}).get('name', 'unknown')} status: {status}"
+        f"job_name: {job.get('metadata', {}).get('name', 'unknown')} status: {status}",
     )
 
     if status.get("active", 0) >= 1:
@@ -96,7 +96,7 @@ def on_job_event(event, **_):
     assistant_id = labels.get("assistant-id")
 
     print(
-        f"Job {job_name} terminal (condition={terminal['type']}, assistant-id={assistant_id})"
+        f"Job {job_name} terminal (condition={terminal['type']}, assistant-id={assistant_id})",
     )
     _events_processed += 1
 

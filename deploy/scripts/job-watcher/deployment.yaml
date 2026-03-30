@@ -1,3 +1,4 @@
+---
 apiVersion: scheduling.k8s.io/v1
 kind: PriorityClass
 metadata:
@@ -22,9 +23,6 @@ metadata:
 subjects:
 - kind: ServiceAccount
   name: comm-sa
-  namespace: preview
-- kind: ServiceAccount
-  name: comm-sa
   namespace: staging
 - kind: ServiceAccount
   name: comm-sa
@@ -38,7 +36,7 @@ apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
   name: job-watcher
-  namespace: preview
+  namespace: production
 rules:
 - apiGroups: ["batch"]
   resources: ["jobs"]
@@ -51,11 +49,11 @@ apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata:
   name: job-watcher
-  namespace: preview
+  namespace: production
 subjects:
 - kind: ServiceAccount
   name: comm-sa
-  namespace: preview
+  namespace: production
 roleRef:
   kind: Role
   name: job-watcher
@@ -64,28 +62,28 @@ roleRef:
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: job-watcher-preview
-  namespace: preview
+  name: job-watcher
+  namespace: production
   labels:
-    app: job-watcher-preview
+    app: job-watcher
 spec:
   replicas: 1
   selector:
     matchLabels:
-      app: job-watcher-preview
+      app: job-watcher
   template:
     metadata:
       labels:
-        app: job-watcher-preview
+        app: job-watcher
       annotations:
         cluster-autoscaler.kubernetes.io/safe-to-evict: "false"
     spec:
       priorityClassName: job-watcher-critical
       serviceAccountName: comm-sa
       containers:
-      - name: job-watcher-preview
-        image: us-central1-docker.pkg.dev/responsive-city-458413-a2/unity/job-watcher-preview:latest
-        command: ["kopf", "run", "watcher.py", "--liveness=http://0.0.0.0:8080/healthz", "--namespace=preview", "--standalone"]
+      - name: job-watcher
+        image: us-central1-docker.pkg.dev/responsive-city-458413-a2/unity/job-watcher:latest
+        command: ["kopf", "run", "watcher.py", "--liveness=http://0.0.0.0:8080/healthz", "--namespace=production", "--standalone"]
         ports:
         - containerPort: 8080
           name: health
@@ -96,13 +94,13 @@ spec:
             name: unity-secrets
         env:
         - name: WATCH_NAMESPACE
-          value: preview
+          value: production
         - name: DEPLOY_ENV
-          value: preview
+          value: production
         - name: UNITY_COMMS_URL
-          value: "https://unity-comms-app-preview-262420637606.us-central1.run.app"
+          value: "https://unity-comms-app-262420637606.us-central1.run.app"
         - name: ORCHESTRA_URL
-          value: "https://api.staging.internal.saas.unify.ai/v0"
+          value: "https://api.unify.ai/v0"
         resources:
           requests:
             cpu: 50m

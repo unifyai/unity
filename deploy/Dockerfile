@@ -75,7 +75,7 @@ RUN uv pip install --system --no-cache .
 RUN ln -sfn /opt/magnitude magnitude
 
 # Ensure entrypoint script is executable
-RUN chmod +x /app/entrypoint.sh || true
+RUN chmod +x /app/deploy/entrypoint.sh || true
 
 # Build agent-service
 WORKDIR /app/agent-service
@@ -128,4 +128,4 @@ EXPOSE 8000 3000
 ENTRYPOINT ["/usr/bin/tini", "--"]
 
 # Use bash to run the startup script
-CMD ["/bin/bash", "/app/entrypoint.sh"]
+CMD ["/bin/bash", "/app/deploy/entrypoint.sh"]

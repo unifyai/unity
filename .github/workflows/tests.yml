@@ -1,3 +1,6 @@
+# NOTE: This workflow is configured for Unify's internal CI/CD.
+# Fork users: this will not run without the required secrets.
+# See sandboxes/conversation_manager/README.md for local development and testing.
 name: Tests
 run-name: >-
   ${{

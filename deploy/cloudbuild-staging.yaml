@@ -6,7 +6,7 @@ steps:
   args:
   - '-c'
   - |
-    docker pull ${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPOSITORY}/unity:latest || true
+    docker pull ${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPOSITORY}/unity-staging:latest || true
 
   # Resolve latest commit SHAs from dependency repos so the Docker layer cache
   # is busted whenever unify or unillm change (git clone text is static, so
@@ -17,8 +17,8 @@ steps:
   args:
   - '-c'
   - |
-    UNIFY_SHA=$$(git ls-remote https://$$GITHUB_TOKEN@github.com/unifyai/unify.git refs/heads/main | cut -f1)
-    UNILLM_SHA=$$(git ls-remote https://$$GITHUB_TOKEN@github.com/unifyai/unillm.git refs/heads/main | cut -f1)
+    UNIFY_SHA=$$(git ls-remote https://$$GITHUB_TOKEN@github.com/unifyai/unify.git refs/heads/staging | cut -f1)
+    UNILLM_SHA=$$(git ls-remote https://$$GITHUB_TOKEN@github.com/unifyai/unillm.git refs/heads/staging | cut -f1)
     echo "$${UNIFY_SHA}-$${UNILLM_SHA}" > /workspace/dep_repos_sha.txt
     echo "Dependency SHAs: unify=$${UNIFY_SHA:0:8} unillm=$${UNILLM_SHA:0:8}"
   secretEnv: ['GITHUB_TOKEN']
@@ -35,25 +35,27 @@ steps:
   - |
     DEP_SHA=$$(cat /workspace/dep_repos_sha.txt)
     DOCKER_BUILDKIT=1 docker build \
-      --cache-from ${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPOSITORY}/unity:latest \
+      --cache-from ${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPOSITORY}/unity-staging:latest \
       --build-arg BUILDKIT_INLINE_CACHE=1 \
       --build-arg UNIFY_KEY=$$ORCHESTRA_API_KEY \
       --build-arg GITHUB_TOKEN=$$GITHUB_TOKEN \
+      --build-arg BRANCH=staging \
       --build-arg DEP_REPOS_SHA=$$DEP_SHA \
-      -t ${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPOSITORY}/unity:${SHORT_SHA} \
-      -t ${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPOSITORY}/unity:latest .
+      -f deploy/Dockerfile \
+      -t ${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPOSITORY}/unity-staging:${SHORT_SHA} \
+      -t ${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPOSITORY}/unity-staging:latest .
   secretEnv: ['ORCHESTRA_API_KEY', 'GITHUB_TOKEN']
   waitFor: ['pull-cache', 'resolve-dep-shas']
 
   # Push Docker Image (SHA and latest tags in parallel)
 - name: 'gcr.io/cloud-builders/docker'
   id: 'push-sha-tag'
-  args: ['push', '${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPOSITORY}/unity:${SHORT_SHA}']
+  args: ['push', '${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPOSITORY}/unity-staging:${SHORT_SHA}']
   waitFor: ['build-image']
 
 - name: 'gcr.io/cloud-builders/docker'
   id: 'push-latest-tag'
-  args: ['push', '${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPOSITORY}/unity:latest']
+  args: ['push', '${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPOSITORY}/unity-staging:latest']
   waitFor: ['build-image']
 
   # Build job-watcher image (reuses the same repo root context as Unity)
@@ -65,18 +67,19 @@ steps:
   - |
     DOCKER_BUILDKIT=1 docker build \
       --build-arg GITHUB_TOKEN=$$GITHUB_TOKEN \
-      -f scripts/job-watcher/Dockerfile \
-      -t ${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPOSITORY}/job-watcher:${SHORT_SHA} \
-      -t ${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPOSITORY}/job-watcher:latest .
+      --build-arg BRANCH=staging \
+      -f deploy/scripts/job-watcher/Dockerfile \
+      -t ${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPOSITORY}/job-watcher-staging:${SHORT_SHA} \
+      -t ${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPOSITORY}/job-watcher-staging:latest .
   secretEnv: ['GITHUB_TOKEN']
   waitFor: ['-']
 
 - name: 'gcr.io/cloud-builders/docker'
   id: 'push-job-watcher'
-  args: ['push', '--all-tags', '${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPOSITORY}/job-watcher']
+  args: ['push', '--all-tags', '${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPOSITORY}/job-watcher-staging']
   waitFor: ['build-job-watcher']
 
-  # Deploy job-watcher to production (creates Deployment on first run, updates image on subsequent runs)
+  # Deploy job-watcher to staging (creates Deployment on first run, updates image on subsequent runs)
 - name: 'gcr.io/cloud-builders/kubectl'
   id: 'deploy-job-watcher'
   entrypoint: 'bash'
@@ -84,8 +87,8 @@ steps:
   - '-c'
   - |
     gcloud container clusters get-credentials unity --region ${_REGION} --project ${PROJECT_ID}
-    sed "s|image:.*job-watcher.*|image: ${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPOSITORY}/job-watcher:${SHORT_SHA}|" \
-      scripts/job-watcher/deployment.yaml | kubectl apply -f -
+    sed "s|image:.*job-watcher.*|image: ${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPOSITORY}/job-watcher-staging:${SHORT_SHA}|" \
+      deploy/scripts/job-watcher/deployment_staging.yaml | kubectl apply -f -
   waitFor: ['push-job-watcher']
 
   # Upload SHA to Cloud Storage
@@ -95,7 +98,7 @@ steps:
   args:
   - '-c'
   - |
-    echo ${SHORT_SHA} | gsutil cp - gs://unity-image-hash/image_hash.txt
+    echo ${SHORT_SHA} | gsutil cp - gs://unity-image-hash/image_hash_staging.txt
   waitFor: ['push-latest-tag']
 
   # Refresh idle containers so they pick up the new image
@@ -106,7 +109,7 @@ steps:
   - '-c'
   - |
     set -e
-    ADAPTERS=https://unity-adapters-ky4ja5fxna-uc.a.run.app
+    ADAPTERS=https://unity-adapters-staging-ky4ja5fxna-uc.a.run.app
     AUTH="Authorization: Bearer $$ORCHESTRA_ADMIN_KEY"
 
     echo "Refreshing idle jobs with new image..."
@@ -146,7 +149,7 @@ timeout: '1800s'  # 30 minutes
 
 # Images to be pushed (for Cloud Build history)
 images:
-- '${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPOSITORY}/unity:${SHORT_SHA}'
-- '${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPOSITORY}/unity:latest'
-- '${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPOSITORY}/job-watcher:${SHORT_SHA}'
-- '${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPOSITORY}/job-watcher:latest'
+- '${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPOSITORY}/unity-staging:${SHORT_SHA}'
+- '${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPOSITORY}/unity-staging:latest'
+- '${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPOSITORY}/job-watcher-staging:${SHORT_SHA}'
+- '${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPOSITORY}/job-watcher-staging:latest'
