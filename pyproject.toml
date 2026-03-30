@@ -5,8 +5,9 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "unity"
 version = "0.1.0"
-description = "Framework for building AI agents with browser automation capabilities"
+description = "The brain of an AI assistant — steerable async tool loops, CodeAct, and distributed manager orchestration"
 readme = "README.md"
+license = {text = "MIT"}
 requires-python = ">=3.12"
 dependencies = [
     "aiohttp>=3.8.0",

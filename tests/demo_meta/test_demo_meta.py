@@ -298,7 +298,7 @@ class TestUpdateSessionContactsDemoModeProtection:
                 user_first_name="Demoer",
                 user_surname="Person",  # This is demoer, NOT prospect
                 user_number="+15555551111",
-                user_email="demoer@unify.ai",
+                user_email="demo-user@example.com",
             )
 
             # Verify contact updates
@@ -323,7 +323,7 @@ class TestUpdateSessionContactsDemoModeProtection:
             assert demoer_call.kwargs.get("first_name") == "Demoer"
             assert demoer_call.kwargs.get("surname") == "Person"
             assert demoer_call.kwargs.get("phone_number") == "+15555551111"
-            assert demoer_call.kwargs.get("email_address") == "demoer@unify.ai"
+            assert demoer_call.kwargs.get("email_address") == "demo-user@example.com"
 
         finally:
             SETTINGS.DEMO_MODE = original_demo_mode

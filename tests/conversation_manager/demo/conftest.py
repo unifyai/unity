@@ -47,7 +47,7 @@ DEMO_OPERATOR = {
     "contact_id": 2,
     "first_name": "Daniel",
     "surname": "Lenton",
-    "email_address": "daniel@unify.ai",
+    "email_address": "user@example.com",
     "phone_number": "+15555559999",
     "should_respond": True,
     "is_system": True,

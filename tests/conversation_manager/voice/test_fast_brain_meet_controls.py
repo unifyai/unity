@@ -69,7 +69,7 @@ def _build_meet_prompt() -> str:
         assistant_name="David Miller",
         boss_first_name="Dan",
         boss_surname="Lenton",
-        boss_email_address="dan@unify.ai",
+        boss_email_address="user@example.com",
         is_boss_user=True,
         contact_rolling_summary=None,
         channel="unify_meet",
