@@ -1,482 +1,259 @@
 # Unity
 
-Unity is an AI Assistant framework implemented as a heavily distributed multi-node system. Each node communicates via English-language APIs, with the assistant's intelligence emerging from specialized **state managers** that handle different aspects of cognition, memory, and action.
+Unity is the brain of an AI assistant. Not a chatbot wrapper, not a tool-calling loop — a distributed system where specialized managers (contacts, knowledge, tasks, transcripts, guidance, memory…) each run their own LLM-powered reasoning, coordinate through a typed event bus, and expose live handles you can pause, resume, interject into, or stop at any time.
 
-## System Architecture
+We've been building this for ~10 months. It shares zero code with OpenClaw, Hermes, or any other agent framework. The architectural decisions are fundamentally different, and this README explains why.
 
-Unity is the central "brain" in a multi-repository system:
+## The core idea
 
-```
-         User (Console/Phone/SMS/Email)
-                      │
-    ┌─────────────────┴──────────────────┐
-    │           Communication            │
-    │    (Webhooks, Voice, SMS, Email)   │
-    └────┬───────────────────────────────┘
-         │
-    ┌────┴────┐    ┌─────────┐    ┌─────────┐
-    │  Unity  │    │  Unify  │    │Orchestra│
-    │ (Brain) │───▶│  (SDK)  │───▶│  (API)  │
-    │         │    │         │    │  (DB)   │
-    └────┬────┘    └────┬────┘    └────┬────┘
-         │              ▲              ▲
-         │              │              │
-         │    ┌─────────┴─┐       ┌────┴───────┐
-         └───▶│  UniLLM   │       │  Console   │
-              │ (LLM API) │       │(Interfaces)│
-              └───────────┘       └────────────┘
-```
+Most agent frameworks work like this: one LLM, one loop, one tool call at a time. The model picks a tool, calls it, reads the result, picks the next tool. If you want to interrupt, you cancel and start over.
 
-**This repo (Unity)** is the AI assistant's cognitive core. It depends on:
-- **Unify** — Python SDK for persistence and logging
-- **UniLLM** — LLM client for all inference calls
+Unity works differently. Every operation — whether it's searching contacts, updating knowledge, or executing a multi-step task — runs inside its own async LLM tool loop and returns a **steerable handle**. These handles compose: the ConversationManager steers the Actor, the Actor steers the managers, and the user steers the ConversationManager. Steering propagates through the full depth.
 
-Related repositories:
-- [Orchestra](https://github.com/unifyai/orchestra) — Backend API and database
-- [Communication](https://github.com/unifyai/communication) — External communication gateway (voice, SMS, email)
-- [Console](https://github.com/unifyai/console) — Web UI and observability dashboard
+This means the assistant can:
+- Run several things at once and let you steer each one independently
+- Accept corrections mid-task without restarting ("actually, also include the Q2 numbers")
+- Pause work, handle something urgent, and resume where it left off
+- Hold a real-time voice conversation while doing background work
 
-## Security
+## Steerable handles
 
-### Container Runtime
+The universal return type. Every manager's `ask`, `update`, and `execute` methods return one.
 
-Unity containers run as a non-root `unity` user (UID 1000). The Playwright browser cache and log directories are owned by this user. Tini is used as the init system for proper signal handling.
+```python
+handle = await actor.act("Research flights to Tokyo and draft an itinerary")
 
-### Authentication
+# Twenty seconds later, while it's still working:
+await handle.interject("Also check train options from Tokyo to Osaka")
 
-Unity containers authenticate to all external services using the `ORCHESTRA_ADMIN_KEY`:
-- Calls to the **Communication API** (`UNITY_COMMS_URL`) include `Authorization: Bearer {admin_key}` on all requests (SMS, email, phone, infrastructure management)
-- Calls to the **Adapters** (`UNITY_ADAPTERS_URL`) include the same header for attachment uploads and other adapter endpoints
-- Calls to **Orchestra** (`ORCHESTRA_URL`) use per-user API keys (not the admin key)
-
-### Required Environment Variables (Security)
-
-| Variable | Purpose |
-|----------|---------|
-| `ORCHESTRA_ADMIN_KEY` | Authentication to Communication and Adapter services |
-| `UNIFY_KEY` | API key for Unify SDK operations |
-
-### GCP Infrastructure (not tracked in code)
-
-Unity shares the `responsive-city-458413-a2` GCP project with Communication. The following settings apply:
-
-- **Firewall rules**: All remote-access rules are restricted to the IAP tunnel range (`35.235.240.0/20`). Direct SSH/RDP from the internet is blocked; use `gcloud compute ssh --tunnel-through-iap` instead.
-- **VMs**: Terminated VMs are deleted promptly to release external IPs. No idle VMs with external IPs should remain.
-
-### GitHub Repository Settings (not tracked in code)
-
-- **Branch protection** on `main`: Requires 1 approving pull request review. Force pushes and branch deletions are blocked.
-- **Dependabot**: Vulnerability alerts and automated security fixes are enabled.
-
-## Table of Contents
-
-- [Architecture Overview](#architecture-overview)
-- [State Managers](#state-managers)
-- [Getting Started](#getting-started)
-- [Local Development](#local-development)
-- [Testing](#testing)
-- [Deployment](#deployment)
-
----
-
-## Architecture Overview
-
-Unity's architecture resembles a "back office" where specialized managers handle distinct aspects of the assistant's intelligence:
-
-```
-┌───────────────────────────────────────────────────────────────────────┐
-│                       ConversationManager                             │
-│                    (Live chat orchestration)                          │
-└───────────────────────────────┬───────────────────────────────────────┘
-                                │
-                                ▼
-┌───────────────────────────────────────────────────────────────────────┐
-│                              Actor                                    │
-│              (Top-level code-first orchestrator)                      │
-│                                                                       │
-│                           act (live execution)                        │
-└───────────────────────────────┬───────────────────────────────────────┘
-                                │
-                                ▼
-┌───────────────────────────────────────────────────────────────────────┐
-│                         State Managers                                │
-│                                                                       │
-│  ContactManager    KnowledgeManager   TaskScheduler   SecretManager   │
-│  TranscriptManager GuidanceManager    WebSearcher                     │
-│  FileManager       FunctionManager    ImageManager    MemoryManager   │
-│                                                                       │
-│                             Actor                                     │
-│                   (Real-time action executor)                         │
-└───────────────────────────────────────────────────────────────────────┘
+# Or if something urgent comes up:
+await handle.pause()
+# ... deal with the urgent thing ...
+await handle.resume()
 ```
 
-### Key Concepts
+When the Actor calls `primitives.contacts.ask(...)`, the ContactManager starts its own tool loop and returns its own handle — nested inside the Actor's handle, which is nested inside the ConversationManager's. You can steer at any level and it propagates correctly.
 
-**Asynchronous Tool Loops**: Most manager methods are implemented as async tool loops where an LLM orchestrates lower-level tools that read and mutate backend resources via the Unify Python client.
+We built this because we were tired of agents that go dark the moment they start working. You should be able to talk to your assistant while it's doing things for you, not wait in silence.
 
-**Dynamic Steering**: Manager methods expose handles for mid-flight control—pausing, resuming, interjecting, and stopping operations. These can be nested arbitrarily deep.
+## CodeAct — the Actor writes programs, not tool calls
 
-**Passthrough Steering**: In-flight tools can mark themselves as "passthrough," allowing steering commands to bypass intermediate LLM reasoning and reach inner tools immediately. This enables real-time user control of the assistant's actions.
+The Actor doesn't pick from a menu of JSON tools. It writes Python:
 
----
+```python
+contacts = await primitives.contacts.ask(
+    "Who was involved in the Henderson project?"
+)
+for contact in contacts:
+    history = await primitives.knowledge.ask(
+        f"What was {contact} last working on?"
+    )
+    await primitives.contacts.update(
+        f"Send {contact} a catch-up email referencing {history}"
+    )
+```
 
-## State Managers
+This runs in a sandboxed execution session with the full `primitives.*` API available — the same typed interfaces the rest of the system uses. One program per turn, with variables, loops, and real control flow. This matters because complex tasks that require composing several managers (look up contacts → query knowledge → send communications) can be expressed as a single coherent plan instead of 5+ round-trips where the model re-reads everything each time.
 
-Each manager owns a specific domain. The Actor plans and calls the appropriate manager primitives based on the user's intent.
+## Dual-brain voice
 
-### Core Orchestration
+This is the one we're most proud of.
 
-| Manager | Role |
-|---------|------|
-| **ConversationManager** | Live chat orchestrator. Wires steering (pause/resume/interject/stop) during conversations via the Actor. |
-| **Actor** | Top-level orchestrator unifying all managers. Entry point: `act` (live code-first execution). |
+**Slow brain**: the ConversationManager. Sees the full picture — all conversations, notifications, in-flight actions. Makes deliberate decisions about what to do. Runs in the main process.
 
-### Data & Knowledge
+**Fast brain**: a real-time voice agent on LiveKit, running as a separate subprocess. Sub-second latency. Handles the conversation autonomously.
 
-| Manager | Role |
-|---------|------|
-| **ContactManager** | Source of truth for people/contact records. |
-| **KnowledgeManager** | Source of truth for domain knowledge. Supports `ask`, `update`, and `refactor` operations. |
-| **TranscriptManager** | Store and retrieval for message transcripts. Read-only via `ask`. |
-| **FileManager** | Read-only registry and parsing for received/downloaded files. |
-| **SecretManager** | Secure storage for secrets. Returns metadata only—never raw values. |
-| **GuidanceManager** | Internal guidance, policies, and instructions. |
+They talk over IPC. When the slow brain finishes a task or wants to guide the conversation, it sends the fast brain a notification:
+- **SPEAK** — "say exactly this" (bypasses the fast brain's LLM entirely)
+- **NOTIFY** — "here's some context, decide what to do with it"
+- **BLOCK** — nothing; the fast brain keeps going on its own
 
-### Execution & Action
+So the assistant keeps talking to you while researching flights in the background. When the results come in, it naturally weaves them into whatever you're discussing. There's also a speech urgency evaluator that can preempt the slow brain if you say something that needs immediate attention.
 
-| Manager | Role |
-|---------|------|
-| **Actor** | Ephemeral, real-time action executor. Can invoke functions, control computer interfaces, read files, or use any available capability. Returns a live steerable handle. |
-| **TaskScheduler** | Durable task management and execution. Use `execute` to start work, not `update`. |
-| **FunctionManager** | Catalogue of reusable Python functions (created by the Actor or provided by the user). |
+No other open-source project does this as far as we know. OpenClaw and Hermes both go quiet while working.
 
-### Perception & Communication
+## Memory that actually consolidates
 
-| Manager | Role |
-|---------|------|
-| **ImageManager** | Low-level image store/retrieval. Managers use `ImageHandle` to work with images. |
-| **ScreenShareManager** | Continuous screen-share perception. Emits annotated screenshots during screen sharing. |
-| **WebSearcher** | External/web research orchestration. |
+Every 50 messages, the MemoryManager kicks in and runs a background extraction pass. It pulls out:
 
-### Background Processes
+- Contact profiles — who people are, their roles, relationships
+- Per-contact summaries — what you've been discussing, sentiment, themes
+- Response policies — how each person prefers to communicate
+- Domain knowledge — project details, preferences, long-term facts
+- Tasks — things you committed to, deadlines, follow-ups
 
-| Manager | Role |
-|---------|------|
-| **MemoryManager** | Offline memory maintenance (non-interactive). Distills transcripts into contacts/knowledge. |
-| **EventBus** | Cross-cutting pub/sub backbone for telemetry and coordination. |
+This isn't "save the last 15 messages to a markdown file when the session resets" (that's what OpenClaw does). It's structured, queryable, continuous. After a month of use, the system has a genuine understanding of your world — who the people are, what matters, what's in progress — stored in typed tables, not freeform text.
 
----
+## Concurrent actions
 
-## Getting Started
+The ConversationManager tracks everything that's running:
 
-### Prerequisites
+```
+┌─ In-Flight Actions ────────────────────────────────┐
+│                                                     │
+│  [0] research_flights  ██████████░░░  In progress   │
+│      → ask, interject, stop, pause                  │
+│                                                     │
+│  [1] draft_summary     ████████████░  In progress   │
+│      → ask, interject, stop, pause                  │
+│                                                     │
+│  [2] find_restaurants   ██░░░░░░░░░░  Starting      │
+│      → ask, interject, stop, pause                  │
+│                                                     │
+└─────────────────────────────────────────────────────┘
+```
 
-- Python 3.11+
-- [uv](https://github.com/astral-sh/uv) (Python package manager)
-- Node.js 22+ (for agent-service)
+Each action gets its own dynamically generated steering tools. You can ask "how's the flight search going?" or "stop the summary, I'll do that myself" or "for the restaurants, make sure one has a private room" — and only the targeted action is affected.
 
+## Architecture
 
-### Installation
+```
+ConversationManager (dual-brain orchestration, event-driven scheduling)
+    │
+    │   Slow Brain ◄── IPC ──► Fast Brain (real-time voice, LiveKit)
+    │
+    ▼
+CodeActActor (generates Python plans, calls primitives.* APIs)
+    │
+    ▼
+State Managers (each runs its own async LLM tool loop)
+    │
+    ├── ContactManager        — people and relationships
+    ├── KnowledgeManager      — domain facts, structured knowledge
+    ├── TaskScheduler         — durable tasks, execution with live handles
+    ├── TranscriptManager     — conversation history and search
+    ├── GuidanceManager       — procedures, SOPs, how-to knowledge
+    ├── FileManager           — file parsing and registry
+    ├── ImageManager          — image storage, vision queries
+    ├── FunctionManager       — user-defined functions, primitives registry
+    ├── WebSearcher           — web research orchestration
+    ├── SecretManager         — encrypted secret storage
+    ├── BlacklistManager      — blocked contact details
+    └── DataManager           — low-level data operations
+    │
+    ├── EventBus              — typed pub/sub backbone (Pydantic events)
+    └── MemoryManager         — offline consolidation every 50 messages
+```
+
+### How a request flows
+
+1. User message arrives. The slow brain renders a full state snapshot and makes a single-shot tool decision.
+2. It starts an action via `actor.act(...)` → gets back a `SteerableToolHandle`, registered in `in_flight_actions`.
+3. The Actor generates a Python plan calling typed primitives. Each primitive dispatches to a manager running its own LLM tool loop, returning its own steerable handle.
+4. Meanwhile, the slow brain can start more work, steer existing work, or guide the fast brain during voice calls.
+5. The MemoryManager observes message events and periodically distills conversations into structured knowledge.
+6. The EventBus carries typed events with hierarchy labels aligned to tool-loop lineage, making everything observable.
+
+## System dependencies
+
+Unity is one piece of a larger system:
+
+```
+User (Voice / SMS / Email / Chat)
+    │
+Communication ─── Webhooks, Twilio, Gmail, LiveKit
+    │
+  Unity ────────── This repo. The brain.
+    │
+  Unify ────────── Python SDK for persistence
+    │
+Orchestra ──────── Backend API + PostgreSQL + pgvector
+    │
+  UniLLM ───────── LLM client (wraps LiteLLM, adds caching + tracing)
+    │
+ Console ───────── Web UI + observability dashboard
+```
+
+| Repo | Open? | What it does |
+|------|-------|-------------|
+| **unity** (this) | MIT | The brain — managers, tool loops, CodeAct, orchestration |
+| **[unify](https://github.com/unifyai/unify)** | MIT | Python SDK for Orchestra |
+| **[unillm](https://github.com/unifyai/unillm)** | MIT | LLM abstraction — caching, tracing, cost tracking |
+| orchestra | Private | Backend API, database, auth |
+| communication | Private | Voice, SMS, email gateway |
+| console | Private | Web UI, observability |
+
+**Can you run this standalone?** The architecture (steerable handles, tool loops, CodeAct, manager composition) is all in this repo and works against simulated backends for development and testing. For production, you need Orchestra or something that speaks the same API. We're working on making this easier.
+
+## Getting started
 
 ```bash
-# Clone all three repositories as siblings
-cd ~/projects  # or your preferred directory
-git clone git@github.com:unifyai/unity.git
-git clone git@github.com:unifyai/unify.git
-git clone git@github.com:unifyai/unillm.git
-
-# Directory structure should be:
-# ~/projects/
-# ├── unity/    ← this repo
-# ├── unify/    ← required sibling
-# └── unillm/   ← required sibling
+git clone https://github.com/unifyai/unity.git
+git clone https://github.com/unifyai/unify.git
+git clone https://github.com/unifyai/unillm.git
 
 cd unity
-
-# Install dependencies using uv
-uv sync --all-groups
-
-# Activate the virtual environment
+pip install uv && uv sync --all-groups
 source .venv/bin/activate
+
+cp .env.example .env
+# Add your UNIFY_KEY, OPENAI_API_KEY, ANTHROPIC_API_KEY
 ```
 
-> **Note:** Unity requires local clones of `unify` and `unillm` as sibling directories. This enables rapid cross-repo development—changes to unify/unillm are immediately available without pushing to GitHub.
->
-> If you see `error: Distribution not found at: file:///path/to/unify`, you're missing the sibling clones.
-
-### Environment Variables
-
-Create a `.env` file in the project root:
+Tests use real LLM calls with cached responses — first run hits live APIs, subsequent runs replay instantly:
 
 ```bash
-# Required
-UNIFY_KEY=<your-unify-api-key>
-ORCHESTRA_URL=https://api.unify.ai/v0
-
-# LLM Providers
-OPENAI_API_KEY=<your-openai-key>
-ANTHROPIC_API_KEY=<your-anthropic-key>
-
-# Voice/Audio (optional, for voice features)
-DEEPGRAM_API_KEY=<your-deepgram-key>
-CARTESIA_API_KEY=<your-cartesia-key>
-LIVEKIT_URL=<your-livekit-url>
-LIVEKIT_API_KEY=<your-livekit-key>
-LIVEKIT_API_SECRET=<your-livekit-secret>
-
-# Communication Service (auto-detected if not set)
-# Staging (default for non-main branches):
-UNITY_COMMS_URL=https://unity-comms-app-staging-262420637606.us-central1.run.app
-# Production (main branch only):
-# UNITY_COMMS_URL=https://unity-comms-app-262420637606.us-central1.run.app
-
-# Assistant Configuration
-ASSISTANT_ID=<id>
-ASSISTANT_NAME=<name>
+tests/parallel_run.sh tests/                    # everything
+tests/parallel_run.sh tests/actor/              # one module
+tests/parallel_run.sh tests/contact_manager/    # another
 ```
 
-### Cursor Worktree Mode (Optional)
-
-If you use Cursor's worktree mode for agent windows, install [direnv](https://direnv.net/) to auto-load your `.env`:
-
-```bash
-brew install direnv
-
-# Add hook to ~/.zshrc
-echo 'eval "$(direnv hook zsh)"' >> ~/.zshrc
-
-# Silence verbose output and whitelist unity directories (direnv 2.36+)
-mkdir -p ~/.config/direnv
-cat > ~/.config/direnv/direnv.toml << 'EOF'
-[global]
-hide_env_diff = true
-
-[whitelist]
-prefix = [
-  "/PATH/TO/unity"
-]
-EOF
-
-direnv allow  # run once in the repo
-```
-
-Replace `/PATH/TO/unity` with your actual repo path (e.g. `/Users/you/unity`). The prefix whitelist auto-allows `.envrc` in the main repo **and** any adjacent clones (`unity_*`) created by `clone_adjacent.sh`, so you never need to run `direnv allow` per clone.
-
-Note: Use `~/.zshrc` (not `~/.zshenv`) to ensure Homebrew's PATH is available when the hook runs.
-
-The repo includes an `.envrc` that automatically sources the main repo's `.env` in worktrees and clones.
-
-### Parallel Development with Clones
-
-Cursor's worktree mode (parallel agents) has a known limitation: `.cursor/rules/` files with `alwaysApply: true` are not injected into the agent's context. This means worktree agents operate without any of your project rules.
-
-The workaround is to run multiple independent clones in local mode, where rules work correctly:
-
-```bash
-./clone_adjacent.sh fix_loop_tests    # → ../unity_fix_loop_tests
-./clone_adjacent.sh refactor_actor    # → ../unity_refactor_actor
-```
-
-Each clone checks out `staging`, inits submodules, copies `.env`, and symlinks `.venv` — ready to open in a separate Cursor window with full rule support. The script uses `--reference` to borrow local git objects, so cloning is near-instant.
-
-To pull the latest changes across all adjacent clones at once:
-
-```bash
-./pull_adjacent.sh
-```
-
-This runs `git pull --ff-only` in the current repo and every sibling `unity_*` directory, so all clones stay up to date with a single command.
-
-### Cursor Cloud Agent Secrets (Required)
-
-Cursor Cloud Agents run in isolated VMs and need user-specific secrets. Add these in **Cursor Settings → Cloud Agents → Secrets**:
-
-| Secret Name | Value |
-|-------------|-------|
-| `UNIFY_KEY` | Your personal Unify API key |
-| `GIT_USER_NAME` | Your full name (e.g., `Daniel Lenton`) |
-| `GIT_USER_EMAIL` | Your email (e.g., `daniel@unify.ai`) |
-
-The git identity secrets ensure commits are attributed to you rather than `cursoragent@cursor.com`. A pre-commit hook blocks commits from `cursoragent@cursor.com` as a safety net.
-
-### Cross-Repo Development
-
-Unity is configured to use local sibling clones of `unify` and `unillm` by default. This means:
-
-- **Changes are instant**: Edit code in `../unify` or `../unillm` and it's immediately available in Unity
-- **No push required**: Test local commits before pushing to GitHub
-- **CI uses git**: GitHub Actions automatically replaces local paths with git URLs
-
-**Branch alignment**: Keep your local clones on `staging` for development work:
-
-```bash
-cd ../unify && git checkout staging && git pull
-cd ../unillm && git checkout staging && git pull
-```
-
-**Pulling upstream changes**: When you want the latest from GitHub:
-
-```bash
-cd ../unify && git pull
-cd ../unillm && git pull
-cd ../unity && uv sync --all-groups  # Re-sync to pick up changes
-```
-
----
-
-## Local Development
-
-### Python Interpreter
-
-Always use the project's virtual environment:
-
-```bash
-source .venv/bin/activate
-# Or use .venv/bin/python directly
-```
-
-### Running the Conversation Manager
-
-```bash
-python start.py
-```
-
-### Web Automation (Controller Mode)
-
-**Desktop Mode** (default — full desktop automation):
-
-```bash
-# See desktop/README.md for Docker-based virtual desktop setup
-# Start the agent service
-npx ts-node agent-service/src/index.ts
-
-# Two interfaces:
-#   primitives.computer.desktop.*             -- singleton desktop control (mouse/keyboard)
-#   primitives.computer.web.new_session(...)  -- factory for browser sessions (visible or headless)
-```
-
-### Pre-commit Hooks
-
-Run before committing to ensure code quality:
-
-```bash
-.venv/bin/python -m pre_commit run --all-files
-```
-
-### Dependencies
-
-This project uses `uv` for dependency management:
-
-- Configuration: `pyproject.toml`
-- Lock file: `uv.lock` (do not edit manually)
-
-**Syncing git dependencies:** The lock file pins git dependencies (e.g., `unifyai`, `unillm`) to specific commits. To pull the latest from upstream branches:
-
-```bash
-./scripts/sync.sh
-```
-
-This upgrades git dependencies to their latest commits before syncing. Use this instead of plain `uv sync` when you need the latest upstream changes.
-
----
-
-## Testing
-
-Run tests locally or offload them to GitHub Actions (24 parallel jobs, no local CPU load).
-
-```bash
-# Quick start (local)
-tests/parallel_run.sh tests/                    # Run all tests
-tests/parallel_run.sh tests/actor/         # Run one folder
-tests/parallel_run.sh --timeout 300 tests/      # With 5-minute timeout
-
-# CI trigger (via commit message)
-git commit -m "Fix bug [run-tests]"                           # All tests
-git commit -m "Fix bug [parallel_run.sh tests/actor]"    # Specific folder
-```
-
-See **[tests/README.md](tests/README.md)** for complete documentation:
-- Local testing with `parallel_run.sh` (flags, tmux sessions, debugging)
-- CI/GitHub Actions (triggers, workflow dispatch, log artifacts)
-- Test philosophy (symbolic vs eval spectrum)
-- Grid search, resource monitoring, and more
-
----
-
-## Deployment
-
-### Docker
-
-Build and run with Docker:
-
-```bash
-docker build -t unity .
-docker run -p 8000:8000 -p 6080:6080 unity
-```
-
-The container includes:
-- Virtual desktop (X11/VNC)
-- PipeWire audio
-- Agent service (Node.js)
-### Cloud Deployment
-
-Unity uses Google Cloud Build for CI/CD:
-
-- `cloudbuild.yaml` — Production deployment
-- `cloudbuild-staging.yaml` — Staging deployment
-
-See [INFRA.md](INFRA.md) for detailed infrastructure documentation including:
-
-- GKE architecture and idle container system
-- Pub/Sub notification routing
-- Webhook system for external services
-- Multi-channel communication setup
-
----
-
-## Project Structure
+See [tests/README.md](tests/README.md) for the full philosophy (we never mock the LLM — responses are cached, not faked).
+
+## Where to start reading
+
+| File | What's there |
+|------|-------------|
+| `unity/common/async_tool_loop.py` | `SteerableToolHandle` — the protocol everything returns |
+| `unity/common/_async_tool/loop.py` | The async tool loop engine — nesting, steering, context propagation |
+| `unity/actor/code_act_actor.py` | CodeAct — plan generation, sandbox, primitives |
+| `unity/conversation_manager/conversation_manager.py` | Dual-brain orchestration, debouncing, in-flight actions |
+| `unity/conversation_manager/domains/brain_action_tools.py` | How the brain starts, steers, and tracks concurrent work |
+| `unity/function_manager/primitives/registry.py` | How primitives are assembled into the typed API surface |
+| `unity/events/event_bus.py` | Typed event backbone |
+| `unity/memory_manager/memory_manager.py` | Offline consolidation pipeline |
+
+## Project structure
 
 ```
 unity/
-├── unity/                    # Main package
-│   ├── actor/               # Top Level orchestrator
-│   ├── contact_manager/     # Contact records
-│   ├── conversation_manager/ # Live chat orchestration
-│   ├── controller/          # Computer control layer
-│   ├── events/              # EventBus pub/sub
-│   ├── file_manager/        # File parsing/registry
-│   ├── function_manager/    # User functions
-│   ├── guidance_manager/    # Policies/instructions
-│   ├── image_manager/       # Image storage
-│   ├── knowledge_manager/   # Domain knowledge
-│   ├── memory_manager/      # Offline maintenance
-│   ├── screen_share_manager/ # Screen perception
-│   ├── secret_manager/      # Secrets storage
-│   ├── task_scheduler/      # Task execution
-│   ├── transcript_manager/  # Message transcripts
-│   ├── web_searcher/        # Web research
-│   └── common/              # Shared utilities
-│       └── _async_tool/     # Async tool loop infrastructure
-├── tests/                   # Test suite
-├── agent-service/           # Node.js web/desktop agent
-├── desktop/                 # Virtual desktop setup
-├── scripts/                 # Utility scripts
-└── sandboxes/               # Interactive development sandboxes
+├── unity/
+│   ├── actor/                    # CodeActActor
+│   ├── conversation_manager/     # Dual-brain orchestration
+│   │   └── domains/              # Brain tools, action tracking, rendering
+│   ├── common/
+│   │   ├── async_tool_loop.py    # SteerableToolHandle
+│   │   └── _async_tool/          # Tool loop internals
+│   ├── contact_manager/
+│   ├── knowledge_manager/
+│   ├── task_scheduler/
+│   ├── transcript_manager/
+│   ├── guidance_manager/
+│   ├── memory_manager/
+│   ├── function_manager/
+│   ├── file_manager/
+│   ├── image_manager/
+│   ├── web_searcher/
+│   ├── secret_manager/
+│   ├── events/
+│   └── manager_registry.py
+├── tests/
+├── agent-service/                # Node.js desktop/browser automation
+└── desktop/                      # Virtual desktop infrastructure
 ```
 
----
+## Design convictions
 
-## Contributing
+We don't use regex or substring matching to route user intent. Everything goes through LLM reasoning, guided by prompts and tool docstrings. If the system handles something wrong, we fix the prompt, not add a hardcoded rule.
 
-1. Create a feature branch
-2. Make your changes
-3. Run pre-commit hooks: `.venv/bin/python -m pre_commit run --all-files`
-4. Run relevant tests: `tests/parallel_run.sh tests/<manager>/`
-5. Submit a pull request
+We don't mock LLMs in tests. Every test uses real inference, cached for speed. Delete the cache and you're re-evaluating against live models.
 
-### Code Style
+We don't do defensive coding. No try/except around things that shouldn't fail. No null checks for things that shouldn't be null. The system fails loud when assumptions break.
 
-- Python: Formatted with Black, imports cleaned with autoflake
-- No defensive coding—fail loud and fast
-- No temporal comments ("NEW:", "Updated:")
-- All LLM behavior adjustments via prompts/docstrings, not heuristics
+We think of English as an API. Managers communicate through natural-language interfaces. The Actor orchestrates through English-language primitives. This makes the whole system inspectable without reading implementation code.
+
+## License
+
+MIT
+
+Built by the team at [Unify](https://unify.ai).
