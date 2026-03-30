@@ -57,7 +57,6 @@ from unity.events.manager_event_logging import (
 
 if TYPE_CHECKING:
     from unity.actor.environments.base import BaseEnvironment
-    from unity.customization.clients import ResolvedCustomization
     from unity.function_manager.function_manager import FunctionManager
     from unity.guidance_manager.guidance_manager import GuidanceManager
 
@@ -1539,7 +1538,6 @@ class CodeActActor(BaseCodeActActor):
         prompt_caching: object = _UNSET,
         guidelines: object = _UNSET,
         tool_policy: Union[ToolPolicyFn, None, object] = _USE_DEFAULT,
-        resolved: Optional["ResolvedCustomization"] = None,
     ):
         """
         Initializes the CodeActActor.
@@ -1585,40 +1583,23 @@ class CodeActActor(BaseCodeActActor):
                   the tools.
                 - ``None``: no dynamic policy; only the static ``can_compose`` /
                   ``can_store`` filters apply.
-            resolved: Pre-resolved client customization. When provided, the
-                actor uses it directly for config and environments. When
-                ``None`` (e.g. in tests), resolution is performed internally.
-                Cross-cutting seed sync is the caller's responsibility.
         """
-        if resolved is None:
-            from unity.customization.clients import resolve as _resolve_customization
-            from unity.session_details import SESSION_DETAILS
-
-            resolved = _resolve_customization(
-                org_id=SESSION_DETAILS.org_id,
-                team_ids=SESSION_DETAILS.team_ids or None,
-                user_id=SESSION_DETAILS.user.id,
-                assistant_id=SESSION_DETAILS.assistant.agent_id,
-            )
-
-        merged_environments = resolved.environments + (environments or [])
-
         super().__init__(
-            environments=merged_environments,
+            environments=environments or [],
             function_manager=function_manager,
             guidance_manager=guidance_manager,
         )
 
-        can_compose = _resolve_param(can_compose, resolved.config.can_compose, True)
-        can_store = _resolve_param(can_store, resolved.config.can_store, True)
-        timeout = _resolve_param(timeout, resolved.config.timeout, 3600.0)
-        model = _resolve_param(model, resolved.config.model, None)
-        prompt_caching = _resolve_param(
-            prompt_caching,
-            resolved.config.prompt_caching,
-            ("system", "tools", "messages"),
+        can_compose = can_compose if can_compose is not _UNSET else True
+        can_store = can_store if can_store is not _UNSET else True
+        timeout = timeout if timeout is not _UNSET else 3600.0
+        model = model if model is not _UNSET else None
+        prompt_caching = (
+            prompt_caching
+            if prompt_caching is not _UNSET
+            else ("system", "tools", "messages")
         )
-        guidelines = _resolve_param(guidelines, resolved.config.guidelines, None)
+        guidelines = guidelines if guidelines is not _UNSET else None
         self._base_guidelines = guidelines
 
         # Collect function_ids from all environments, split by context, and set

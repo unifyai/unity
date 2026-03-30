@@ -29,12 +29,18 @@ ADAPTERS_URL = "http://adapters.test:8081"
 
 def _mock_aiohttp_session(response_json=None, raise_on_status=None):
     """Build a mock aiohttp session + response pair."""
+    import json
+
     mock_response = MagicMock()
+    mock_response.status = 200
     if raise_on_status:
         mock_response.raise_for_status = MagicMock(side_effect=raise_on_status)
     else:
         mock_response.raise_for_status = MagicMock()
     mock_response.json = AsyncMock(return_value=response_json or {})
+    mock_response.text = AsyncMock(
+        return_value=json.dumps(response_json or {}),
+    )
 
     mock_session = MagicMock()
     mock_session.post = MagicMock(

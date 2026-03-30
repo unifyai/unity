@@ -1093,67 +1093,7 @@ def _init_managers(
     )
     per_manager_init.record(_cmhandle_dur, {"manager": "conversation_manager_handle"})
 
-    # 7. Resolve client customization (org -> team -> user -> assistant cascade)
-    LOGGER.debug(
-        f"{ICONS['customization']} [ManagersWorker] Resolving customization...",
-    )
-    local_start_time = perf_counter()
-    from unity.customization.clients import resolve as _resolve_customization
-
-    resolved = _resolve_customization(
-        org_id=SESSION_DETAILS.org_id,
-        team_ids=SESSION_DETAILS.team_ids or None,
-        user_id=SESSION_DETAILS.user.id,
-        assistant_id=SESSION_DETAILS.assistant.agent_id,
-    )
-    _resolve_dur = perf_counter() - local_start_time
-    LOGGER.info(
-        f"{ICONS['customization']} [ManagersWorker] Customization resolved in {_resolve_dur:.2f} seconds",
-    )
-
-    # 8. Sync cross-cutting seed data (contacts, guidance, knowledge, secrets, blacklist)
-    LOGGER.debug(
-        f"{ICONS['customization']} [ManagersWorker] Syncing seed data...",
-    )
-    local_start_time = perf_counter()
-    from unity.customization.seed_sync import sync_all_seed_data
-
-    sync_all_seed_data(resolved)
-    _seed_dur = perf_counter() - local_start_time
-    LOGGER.info(
-        f"{ICONS['customization']} [ManagersWorker] Seed data synced in {_seed_dur:.2f} seconds",
-    )
-
-    # 9. Sync custom functions/venvs from client customization
-    if resolved.function_dirs or resolved.venv_dirs:
-        try:
-            LOGGER.debug(
-                f"{ICONS['customization']} [ManagersWorker] Syncing custom functions...",
-            )
-            local_start_time = perf_counter()
-            from unity.function_manager.custom_functions import (
-                collect_functions_from_directories,
-                collect_venvs_from_directories,
-            )
-
-            source_fns = collect_functions_from_directories(resolved.function_dirs)
-            source_venvs = collect_venvs_from_directories(resolved.venv_dirs)
-            fm = ManagerRegistry.get_function_manager()
-            if source_fns or source_venvs:
-                fm.sync_custom(
-                    source_functions=source_fns,
-                    source_venvs=source_venvs,
-                )
-            _func_dur = perf_counter() - local_start_time
-            LOGGER.info(
-                f"{ICONS['customization']} [ManagersWorker] Custom functions synced in {_func_dur:.2f} seconds",
-            )
-        except Exception as e:
-            LOGGER.warning(
-                f"{ICONS['managers_worker']} [ManagersWorker] Custom function sync failed (degraded): {e}",
-            )
-
-    # 10. Initialize Actor (use provided actor or create via ManagerRegistry)
+    # 7. Initialize Actor (use provided actor or create via ManagerRegistry)
     LOGGER.debug(f"{ICONS['managers_worker']} [ManagersWorker] Initializing Actor...")
     try:
         local_start_time = perf_counter()
@@ -1170,8 +1110,6 @@ def _init_managers(
             from unity.function_manager.primitives import ComputerPrimitives
 
             cp = ComputerPrimitives()
-            if resolved.config.url_mappings:
-                cp.url_mappings = resolved.config.url_mappings
 
             cm.actor = ManagerRegistry.get_actor(
                 description="production deployment",
@@ -1180,7 +1118,6 @@ def _init_managers(
                     ComputerEnvironment(cp),
                     ActorEnvironment(),
                 ],
-                resolved=resolved,
             )
         _actor_dur = perf_counter() - local_start_time
         actor_cls = type(cm.actor).__name__
