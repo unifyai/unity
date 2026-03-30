@@ -275,6 +275,6 @@ We think of English as an API. Managers communicate through natural-language int
 
 ## License
 
-Apache 2.0
+MIT
 
 Built by the team at [Unify](https://unify.ai).
