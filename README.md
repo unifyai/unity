@@ -5,7 +5,7 @@
 <p align="center">
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-blue.svg?style=for-the-badge" alt="MIT License"></a>
   <a href="https://github.com/unifyai/unity/actions"><img src="https://img.shields.io/github/actions/workflow/status/unifyai/unity/tests.yml?branch=staging&style=for-the-badge" alt="CI"></a>
-  <a href="https://discord.gg/unify"><img src="https://img.shields.io/badge/Discord-5865F2?style=for-the-badge&logo=discord&logoColor=white" alt="Discord"></a>
+  <a href="https://discord.com/invite/sXyFF8tDtm"><img src="https://img.shields.io/badge/Discord-5865F2?style=for-the-badge&logo=discord&logoColor=white" alt="Discord"></a>
   <a href="https://unify.ai"><img src="https://img.shields.io/badge/Built%20by-Unify-black?style=for-the-badge" alt="Built by Unify"></a>
 </p>
 
@@ -311,7 +311,7 @@ We'll update this list as milestones are completed. Follow [GitHub Issues](https
 
 ## Community
 
-- 💬 [Discord](https://discord.gg/unify)
+- 💬 [Discord](https://discord.com/invite/sXyFF8tDtm)
 - 🐛 [Issues](https://github.com/unifyai/unity/issues)
 - 💡 [Discussions](https://github.com/unifyai/unity/discussions)
 
