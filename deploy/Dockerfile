@@ -69,6 +69,15 @@ RUN git config --global --unset url."https://${GITHUB_TOKEN}@github.com/".instea
 
 # Copy source and install unity with all dependencies
 COPY . /app
+# Strip [tool.uv.sources] — those are local-dev overrides that conflict with
+# how dependencies are resolved inside the container (repos are at /unify, /unillm).
+RUN python -c "
+import tomllib, tomli_w, pathlib
+p = pathlib.Path('pyproject.toml')
+d = tomllib.loads(p.read_text())
+d.get('tool', {}).get('uv', {}).pop('sources', None)
+p.write_text(tomli_w.dumps(d))
+" 2>/dev/null || sed -i '/^\[tool\.uv\.sources\]/,/^\[/{ /^\[tool\.uv\.sources\]/d; /^\[/!d; }' pyproject.toml
 RUN uv pip install --system --no-cache .
 
 # Link pre-built magnitude into the workspace (agent-service references ../magnitude)
