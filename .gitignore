@@ -53,6 +53,7 @@ discord_messages.md
 .cm_sandbox_config
 # Ignore log contents but keep the README and utility scripts
 logs/*
+deploy/logs/*
 !logs/README.md
 !logs/download_ci_logs.sh
 !logs/ci/
