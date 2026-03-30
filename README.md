@@ -11,13 +11,80 @@
 
 # Unity
 
-Unity is the brain of an AI assistant. It's a distributed system where specialized managers (contacts, knowledge, tasks, transcripts, guidance, memory…) each run their own LLM-powered reasoning, coordinate through a typed event bus, and expose live handles you can pause, resume, interject into, or stop at any time.
+The open-source brain of an AI assistant — steerable async tool loops, CodeAct planning, and distributed manager orchestration. Clone it, run it, talk to it.
 
-The key abstraction is the **steerable handle**: every operation — from a simple contact lookup to a multi-step task execution — returns a handle that composes and nests to arbitrary depth. This README walks through the architecture.
+## Quick Start
+
+Get the assistant running in your terminal in under 5 minutes.
+
+### Prerequisites
+
+- **Python 3.12+**
+- **PortAudio** (system dependency for audio support)
+  - macOS: `brew install portaudio`
+  - Ubuntu/Debian: `sudo apt-get install portaudio19-dev python3-dev`
+- **A [Unify](https://unify.ai) account** — sign up free, then grab your API key from the dashboard
+- **An LLM API key** — [OpenAI](https://platform.openai.com/api-keys) or [Anthropic](https://console.anthropic.com/)
+
+### Install
+
+```bash
+# Clone all three repos as siblings
+git clone https://github.com/unifyai/unity.git
+git clone https://github.com/unifyai/unify.git
+git clone https://github.com/unifyai/unillm.git
+
+cd unity
+pip install uv && uv sync
+```
+
+### Configure
+
+```bash
+cp .env.example .env
+```
+
+Open `.env` and fill in the three required keys:
+
+```bash
+UNIFY_KEY=your-unify-key
+OPENAI_API_KEY=sk-...        # and/or ANTHROPIC_API_KEY
+```
+
+Everything else has sensible defaults. The sandbox connects to Unify's hosted backend (`api.unify.ai`) for persistence — no local database or Docker needed.
+
+### Run
+
+```bash
+source .venv/bin/activate
+python -m sandboxes.conversation_manager.sandbox --project_name Sandbox --overwrite
+```
+
+You'll see a configuration prompt — select **Mode 1** (`SandboxSimulatedActor`). This runs the full ConversationManager brain with simulated backends. No external infrastructure required.
+
+### Interact
+
+Once the REPL starts, try:
+
+```
+> msg Hey, can you help me organize my upcoming week?
+> sms I need to reschedule my meeting with Sarah to Thursday
+> email Project Update | Here are the Q3 numbers you asked for...
+```
+
+Commands: `msg` (Unify message), `sms` (SMS), `email` (email), `call` (phone call), `meet` (video meeting). Type `help` for the full list.
+
+**Video walkthrough**: https://www.loom.com/share/44171c4c1aa2475abd539d1251e1baab
+
+### Going deeper
+
+Mode 1 simulates everything to show the ConversationManager's orchestration. For the real CodeAct architecture (where the Actor writes and executes Python plans against the manager APIs), select **Mode 2** at the configuration prompt.
+
+See the full sandbox docs at [`sandboxes/conversation_manager/README.md`](sandboxes/conversation_manager/README.md) — it covers Mode 3 (real computer interface), voice mode, live voice calls, real comms, GUI mode, and more.
 
 ---
 
-## The core idea
+## What is Unity?
 
 Most agent frameworks work like this: one LLM, one loop, one tool call at a time. The model picks a tool, calls it, reads the result, picks the next tool. If you want to interrupt, you cancel and start over.
 
@@ -69,8 +136,6 @@ for contact in contacts:
 This runs in a sandboxed execution session with the full `primitives.*` API available — the same typed interfaces the rest of the system uses. One program per turn, with variables, loops, and real control flow. This matters because complex tasks that require composing several managers (look up contacts → query knowledge → send communications) can be expressed as a single coherent plan instead of 5+ round-trips where the model re-reads everything each time.
 
 ## Dual-brain voice
-
-This is the one we're most proud of.
 
 **Slow brain**: the ConversationManager. Sees the full picture — all conversations, notifications, in-flight actions. Makes deliberate decisions about what to do. Runs in the main process.
 
@@ -173,25 +238,14 @@ The backend API, communication gateway (voice/SMS/email), and web console are ho
 
 ---
 
-## Running locally
+## Running the test suite
 
-> **Status: coming soon.** Unity was built inside a GCP-hosted environment and we're actively decoupling it for standalone local deployment. The core architecture works today in tests against simulated backends, and full local deployment is on the [roadmap](#roadmap). Here's what it will look like — and what works right now.
-
-### What works today
-
-You can clone the repo, run the full test suite, and explore the architecture. Tests exercise the real system (steerable handles, CodeAct, manager composition, nested tool loops) against simulated backends with cached LLM responses:
+Tests exercise the real system (steerable handles, CodeAct, manager composition, nested tool loops) against simulated backends with cached LLM responses:
 
 ```bash
-git clone https://github.com/unifyai/unity.git
-git clone https://github.com/unifyai/unify.git
-git clone https://github.com/unifyai/unillm.git
-
-cd unity
-pip install uv && uv sync --all-groups
+# Install dev dependencies
+uv sync --all-groups
 source .venv/bin/activate
-
-cp .env.example .env
-# Add your OPENAI_API_KEY and/or ANTHROPIC_API_KEY
 
 # Run tests (cached LLM responses — fast after first run)
 tests/parallel_run.sh tests/                    # everything
@@ -200,45 +254,6 @@ tests/parallel_run.sh tests/contact_manager/    # another
 ```
 
 See [tests/README.md](tests/README.md) for the full philosophy (we never mock the LLM — responses are cached, not faked).
-
-### Full local deployment (coming soon)
-
-We're working toward a single `docker compose up` that runs the complete system on your machine:
-
-```bash
-# Coming soon
-git clone https://github.com/unifyai/unity.git
-cd unity
-cp .env.example .env
-# Add your API keys
-
-docker compose up
-# Unity brain + Orchestra (persistence) + Communication (channels)
-# Available at localhost:8080
-```
-
-This will give you:
-
-- **The full brain** — all managers, CodeAct actor, steerable handles, dual-brain voice
-- **Local persistence** — Orchestra running locally with PostgreSQL, replacing the hosted API
-- **Communication channels** — REST endpoints for sending messages, triggering calls, and receiving webhooks
-- **Web console** — local dashboard for managing your assistant
-
-### What's being decoupled
-
-The main work is replacing GCP-specific infrastructure with portable alternatives:
-
-| Component | Current (GCP) | Local target |
-|-----------|---------------|-------------|
-| Event delivery | Pub/Sub topics + subscriptions | Local message broker or direct async queues |
-| Webhook ingress | Cloud Functions (Twilio, Gmail) | Local REST endpoints with adapter layer |
-| Storage | GCS signed URLs | Local filesystem or S3-compatible store |
-| Persistence | Hosted Orchestra API | Local Orchestra instance (PostgreSQL) |
-| Voice | LiveKit Cloud | Local LiveKit server (`brew install livekit`) |
-
-The brain itself (everything under `unity/`) is already infrastructure-agnostic — it talks to Orchestra through the Unify SDK and makes LLM calls through UniLLM. The decoupling work is in the communication layer and deployment glue.
-
-Track progress on the [roadmap](#roadmap) below and in [GitHub Issues](https://github.com/unifyai/unity/issues).
 
 ## Where to start reading
 
@@ -277,6 +292,8 @@ unity/
 │   ├── secret_manager/
 │   ├── events/
 │   └── manager_registry.py
+├── sandboxes/                    # Interactive playgrounds
+│   └── conversation_manager/     # Full ConversationManager sandbox (start here)
 ├── tests/
 ├── agent-service/                # Node.js desktop/browser automation
 └── deploy/                       # Dockerfiles, Kubernetes, virtual desktop
@@ -311,9 +328,9 @@ We'll update this list as milestones are completed. Follow [GitHub Issues](https
 
 ## Community
 
-- 💬 [Discord](https://discord.com/invite/sXyFF8tDtm)
-- 🐛 [Issues](https://github.com/unifyai/unity/issues)
-- 💡 [Discussions](https://github.com/unifyai/unity/discussions)
+- [Discord](https://discord.com/invite/sXyFF8tDtm)
+- [Issues](https://github.com/unifyai/unity/issues)
+- [Discussions](https://github.com/unifyai/unity/discussions)
 
 ## License
 
