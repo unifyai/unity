@@ -1093,7 +1093,40 @@ def _init_managers(
     )
     per_manager_init.record(_cmhandle_dur, {"manager": "conversation_manager_handle"})
 
-    # 7. Initialize Actor (use provided actor or create via ManagerRegistry)
+    # 7. Run startup hooks (environment-gated plugin discovery)
+    _startup_config: dict | None = None
+    _hook_group = os.environ.get("_UNITY_STARTUP_HOOK_GROUP")
+    _hook_package = os.environ.get("_UNITY_STARTUP_HOOK_PACKAGE")
+    if _hook_group:
+        try:
+            from importlib.metadata import entry_points as _eps
+
+            for ep in _eps(group=_hook_group):
+                if _hook_package and ep.dist.name != _hook_package:
+                    LOGGER.warning(
+                        f"{ICONS['managers_worker']} [ManagersWorker] "
+                        f"Ignoring startup hook from unexpected package: {ep.dist.name}",
+                    )
+                    continue
+                LOGGER.info(
+                    f"{ICONS['managers_worker']} [ManagersWorker] "
+                    f"Running startup hook: {ep.name}",
+                )
+                local_start_time = perf_counter()
+                hook_fn = ep.load()
+                _startup_config = hook_fn(cm, SESSION_DETAILS)
+                _hook_dur = perf_counter() - local_start_time
+                LOGGER.info(
+                    f"{ICONS['managers_worker']} [ManagersWorker] "
+                    f"Startup hook '{ep.name}' completed in {_hook_dur:.2f}s",
+                )
+        except Exception as e:
+            LOGGER.warning(
+                f"{ICONS['managers_worker']} [ManagersWorker] "
+                f"Startup hook failed (degraded): {e}",
+            )
+
+    # 8. Initialize Actor (use provided actor or create via ManagerRegistry)
     LOGGER.debug(f"{ICONS['managers_worker']} [ManagersWorker] Initializing Actor...")
     try:
         local_start_time = perf_counter()
@@ -1110,6 +1143,11 @@ def _init_managers(
             from unity.function_manager.primitives import ComputerPrimitives
 
             cp = ComputerPrimitives()
+            if _startup_config and _startup_config.get("url_mappings"):
+                cp.url_mappings = _startup_config["url_mappings"]
+
+            extra_envs = (_startup_config or {}).get("environments", [])
+            actor_kwargs = (_startup_config or {}).get("actor_kwargs", {})
 
             cm.actor = ManagerRegistry.get_actor(
                 description="production deployment",
@@ -1117,7 +1155,9 @@ def _init_managers(
                     StateManagerEnvironment(),
                     ComputerEnvironment(cp),
                     ActorEnvironment(),
-                ],
+                ]
+                + extra_envs,
+                **actor_kwargs,
             )
         _actor_dur = perf_counter() - local_start_time
         actor_cls = type(cm.actor).__name__
