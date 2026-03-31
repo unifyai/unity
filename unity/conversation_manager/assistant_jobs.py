@@ -63,6 +63,7 @@ def mark_job_label(
     job_name: str,
     status: str,
     assistant_id: str | None = None,
+    ack_ts: str | None = None,
     timeout: float = 30,
     retries: int = 0,
 ) -> bool:
@@ -83,6 +84,7 @@ def mark_job_label(
         job_name,
         status,
         assistant_id,
+        ack_ts=ack_ts,
         timeout=timeout,
         retries=retries,
     )

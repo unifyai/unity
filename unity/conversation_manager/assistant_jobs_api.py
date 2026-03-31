@@ -108,6 +108,7 @@ def patch_job_label(
     job_name: str,
     status: str,
     assistant_id: str | None = None,
+    ack_ts: str | None = None,
     timeout: float = 30,
     retries: int = 0,
 ) -> bool:
@@ -115,6 +116,8 @@ def patch_job_label(
     labels: dict[str, str] = {"unity-status": status}
     if assistant_id is not None:
         labels["assistant-id"] = str(assistant_id).lower().replace("_", "-")
+    if ack_ts is not None:
+        labels["unity-startup-ack"] = ack_ts
     for attempt in range(1 + retries):
         try:
             resp = requests.patch(

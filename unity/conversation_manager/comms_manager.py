@@ -883,6 +883,13 @@ class CommsManager:
             SESSION_DETAILS.assistant.agent_id = int(event["assistant_id"])
             self.subscribe_to_topic(_get_subscription_id(), max_messages=10)
 
+            threading.Thread(
+                target=mark_job_label,
+                args=(job_name, "running"),
+                kwargs={"ack_ts": str(int(time.time()))},
+                daemon=True,
+            ).start()
+
             details = {
                 "api_key": event["api_key"],
                 "medium": event.get("medium", "startup"),
