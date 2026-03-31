@@ -1,0 +1,115 @@
+from __future__ import annotations
+
+import base64
+import json
+from pathlib import Path
+from typing import Any
+
+from kubernetes import client as k8s_client, config as k8s_config, watch
+
+from unity.settings import SETTINGS
+
+SESSION_REF_LABEL = "assistantsession.unify.ai/name"
+SESSION_REF_ANNOTATION = "assistantsession.unify.ai/name"
+CONTAINER_READY_ANNOTATION = "assistantsession.unify.ai/container-ready"
+
+_batch_api: k8s_client.BatchV1Api | None = None
+_core_api: k8s_client.CoreV1Api | None = None
+_custom_api: k8s_client.CustomObjectsApi | None = None
+
+
+def _load_clients() -> None:
+    global _batch_api, _core_api, _custom_api
+    if _batch_api and _core_api and _custom_api:
+        return
+    try:
+        k8s_config.load_incluster_config()
+    except Exception:
+        k8s_config.load_kube_config()
+    api_client = k8s_client.ApiClient()
+    _batch_api = k8s_client.BatchV1Api(api_client)
+    _core_api = k8s_client.CoreV1Api(api_client)
+    _custom_api = k8s_client.CustomObjectsApi(api_client)
+
+
+def _namespace() -> str:
+    ns_path = Path("/var/run/secrets/kubernetes.io/serviceaccount/namespace")
+    if ns_path.exists():
+        return ns_path.read_text().strip()
+    return SETTINGS.DEPLOY_ENV
+
+
+def _session_name_from_job(job) -> str | None:
+    labels = job.metadata.labels or {}
+    annotations = job.metadata.annotations or {}
+    return labels.get(SESSION_REF_LABEL) or annotations.get(SESSION_REF_ANNOTATION)
+
+
+def wait_for_assistant_session_name(job_name: str) -> str:
+    _load_clients()
+    assert _batch_api is not None
+
+    namespace = _namespace()
+    while True:
+        job = _batch_api.read_namespaced_job(name=job_name, namespace=namespace)
+        session_name = _session_name_from_job(job)
+        if session_name:
+            return session_name
+
+        watcher = watch.Watch()
+        try:
+            for event in watcher.stream(
+                _batch_api.list_namespaced_job,
+                namespace=namespace,
+                field_selector=f"metadata.name={job_name}",
+                timeout_seconds=30,
+            ):
+                session_name = _session_name_from_job(event["object"])
+                if session_name:
+                    watcher.stop()
+                    return session_name
+        except Exception:
+            continue
+
+
+def read_assistant_session(session_name: str) -> dict[str, Any]:
+    _load_clients()
+    assert _custom_api is not None
+    return _custom_api.get_namespaced_custom_object(
+        group=SETTINGS.conversation.ASSISTANT_SESSION_GROUP,
+        version=SETTINGS.conversation.ASSISTANT_SESSION_VERSION,
+        namespace=_namespace(),
+        plural=SETTINGS.conversation.ASSISTANT_SESSION_PLURAL,
+        name=session_name,
+    )
+
+
+def read_session_bootstrap_secret(secret_name: str) -> dict[str, Any]:
+    _load_clients()
+    assert _core_api is not None
+    secret = _core_api.read_namespaced_secret(name=secret_name, namespace=_namespace())
+    data = secret.data or {}
+    raw = data.get("startup.json", "")
+    if not raw:
+        return {}
+    return json.loads(base64.b64decode(raw).decode("utf-8"))
+
+
+def mark_job_container_ready(job_name: str) -> None:
+    _load_clients()
+    assert _batch_api is not None
+    namespace = _namespace()
+    job = _batch_api.read_namespaced_job(name=job_name, namespace=namespace)
+    annotations = dict(job.metadata.annotations or {})
+    annotations[CONTAINER_READY_ANNOTATION] = "true"
+    body = {
+        "metadata": {
+            "annotations": annotations,
+            "resourceVersion": job.metadata.resource_version,
+        },
+    }
+    _batch_api.patch_namespaced_job(
+        name=job_name,
+        namespace=namespace,
+        body=body,
+    )

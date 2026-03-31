@@ -78,30 +78,6 @@ def create_assistant_log(api_key: str, **entries) -> "unify.Log":
 # ---------------------------------------------------------------------------
 
 
-def read_own_job(
-    comms_url: str,
-    admin_key: str,
-    job_name: str,
-) -> dict | None:
-    """Read the current state of this container's Job from the comms service.
-
-    Returns ``{job_name, labels, annotations, resource_version, active}``
-    or ``None`` on any error (fail-silent so the polling loop continues).
-    """
-    try:
-        resp = requests.get(
-            f"{comms_url}/infra/job/{job_name}",
-            headers={"Authorization": f"Bearer {admin_key}"},
-            timeout=10,
-        )
-        if resp.status_code == 200:
-            return resp.json()
-        return None
-    except Exception:
-        log.debug("Failed to read own job %s (will retry)", job_name, exc_info=True)
-        return None
-
-
 def patch_job_label(
     comms_url: str,
     admin_key: str,
