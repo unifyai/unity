@@ -54,7 +54,7 @@ def _make_startup_event_kwargs() -> dict:
     return dict(
         api_key="test_api_key",
         medium="sms",
-        assistant_id="test_assistant_42",
+        assistant_id="42",
         user_id="test_user_123",
         assistant_first_name="Test",
         assistant_surname="Assistant",
@@ -323,7 +323,7 @@ class TestStartupTriggersInitialization:
         async def mock_listen_to_operations(cm_arg):
             """Mock that does nothing (no real operations to process)."""
 
-        async def mock_startup_sequence(cm_arg):
+        async def mock_startup_sequence(cm_arg, **kwargs):
             """Mock that does nothing (no real job logging)."""
 
         loop_task = asyncio.create_task(cm.wait_for_events())
@@ -418,7 +418,7 @@ class TestFullIdleToLiveFlow:
         async def mock_listen_to_operations(cm_arg):
             pass
 
-        async def mock_startup_sequence(cm_arg):
+        async def mock_startup_sequence(cm_arg, **kwargs):
             pass
 
         loop_task = asyncio.create_task(cm.wait_for_events())
@@ -509,40 +509,30 @@ class TestFullIdleToLiveFlow:
 
 class TestActBeforeInitialization:
     """
-    Tests that act() in brain_action_tools correctly queues work instead
-    of blocking on initialization.
+    Tests that act() in brain_action_tools does not block indefinitely
+    when the ConversationManager has not yet been initialized.
 
-    Commit e7b882a6 added wait_for_initialization() in act(), which would
-    block the slow brain's tool call. Ved's fix (1b367a5c) changed this to
-    queue_operation() so act() returns immediately and the actual actor
-    invocation runs after initialization completes.
+    Originally (commit e7b882a6) act() blocked on wait_for_initialization().
+    The current design calls cm.actor.act() directly, which must complete
+    without deadlocking regardless of cm.initialized state.
     """
 
     @pytest.mark.asyncio
     async def test_act_before_initialization_queued_not_blocking(self, event_broker):
         """
-        Calling act() on an uninitialized CM should return immediately
-        by queueing the actor invocation, not blocking on initialization.
-
-        If act() blocks on wait_for_initialization, this test will timeout.
+        Calling act() on an uninitialized CM should return within a
+        reasonable time — it must not deadlock waiting for initialization.
         """
-        from unity.conversation_manager.domains import managers_utils
         from unity.conversation_manager.domains.brain_action_tools import (
             ConversationManagerBrainActionTools,
         )
-
-        # Drain any leftover operations from other tests
-        while not managers_utils._operations_queue.empty():
-            try:
-                managers_utils._operations_queue.get_nowait()
-            except asyncio.QueueEmpty:
-                break
 
         mock_cm = MagicMock()
         mock_cm.initialized = False
         mock_cm.in_flight_actions = {}
         mock_cm._current_state_snapshot = None
         mock_cm._current_snapshot_state = None
+        mock_cm.actor.act = AsyncMock(return_value=MagicMock())
 
         with patch(
             "unity.conversation_manager.domains.brain_action_tools.get_event_broker",
@@ -553,7 +543,6 @@ class TestActBeforeInitialization:
 
             tools = ConversationManagerBrainActionTools(mock_cm)
 
-            # act() should return within 2 seconds (not block on init)
             try:
                 result = await asyncio.wait_for(
                     tools.act(query="look up the weather", requesting_contact_id=1),
@@ -562,24 +551,7 @@ class TestActBeforeInitialization:
             except asyncio.TimeoutError:
                 pytest.fail(
                     "act() blocked for >2s, likely waiting on initialization. "
-                    "act() should queue the work via queue_operation and "
-                    "return immediately. This is the bug from commit e7b882a6.",
+                    "act() must not deadlock when cm.initialized is False.",
                 )
 
         assert result["status"] == "acting"
-
-        # The actor.act() should NOT have been called yet (queued for later)
-        mock_cm.actor.act.assert_not_called()
-
-        # The operation should be in the queue
-        assert not managers_utils._operations_queue.empty(), (
-            "The actor invocation should be queued via queue_operation, "
-            "not executed synchronously before initialization."
-        )
-
-        # Clean up the queue
-        while not managers_utils._operations_queue.empty():
-            try:
-                managers_utils._operations_queue.get_nowait()
-            except asyncio.QueueEmpty:
-                break
