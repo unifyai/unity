@@ -128,11 +128,14 @@ def _build_missing_email_notice(assistant_has_email: bool) -> str:
 def _build_comms_tool_listing(
     assistant_has_phone: bool,
     assistant_has_email: bool,
+    assistant_has_whatsapp: bool = False,
 ) -> str:
     """Build the communication tools block for the output format section."""
     lines: list[str] = []
     if assistant_has_phone:
         lines.append("- `send_sms`: Send an SMS message to a contact")
+    if assistant_has_whatsapp:
+        lines.append("- `send_whatsapp`: Send a WhatsApp message to a contact")
     if assistant_has_email:
         lines.append("- `send_email`: Send an email to a contact")
     lines.append("- `send_unify_message`: Send a Unify platform message to a contact")
@@ -190,6 +193,7 @@ def build_system_prompt(
     computer_fast_path: bool = False,
     assistant_has_phone: bool = True,
     assistant_has_email: bool = True,
+    assistant_has_whatsapp: bool = False,
 ) -> PromptParts:
     """Build the system prompt for the ConversationManager LLM.
 
@@ -246,6 +250,7 @@ def build_system_prompt(
     comms_tool_listing = _build_comms_tool_listing(
         assistant_has_phone,
         assistant_has_email,
+        assistant_has_whatsapp,
     )
     sms_call_note = (
         " I can send SMS while on a call, but I cannot make a new call"
@@ -545,6 +550,13 @@ I do NOT need to poll or check on actions - the system will wake me when somethi
     available_tool_names = ["send_unify_message", "send_api_response"]
     if assistant_has_phone:
         available_tool_names = ["send_sms"] + available_tool_names + ["make_call"]
+    if assistant_has_whatsapp:
+        idx = (
+            available_tool_names.index("send_sms") + 1
+            if "send_sms" in available_tool_names
+            else 0
+        )
+        available_tool_names.insert(idx, "send_whatsapp")
     if assistant_has_email:
         available_tool_names.insert(
             available_tool_names.index("send_unify_message"),
@@ -556,6 +568,10 @@ I do NOT need to poll or check on actions - the system will wake me when somethi
     if assistant_has_phone:
         inline_detail_examples.append(
             '`send_sms(contact_id=5, content="Hi", phone_number="+15551234567")`',
+        )
+    if assistant_has_whatsapp:
+        inline_detail_examples.append(
+            '`send_whatsapp(contact_id=5, content="Hi", phone_number="+15551234567")`',
         )
     if assistant_has_email:
         inline_detail_examples.append(
@@ -571,6 +587,9 @@ I do NOT need to poll or check on actions - the system will wake me when somethi
     available_channels: list[str] = ["unify messages"]
     if assistant_has_phone:
         available_channels = ["SMS"] + available_channels + ["calls"]
+    if assistant_has_whatsapp:
+        idx = available_channels.index("SMS") + 1 if "SMS" in available_channels else 0
+        available_channels.insert(idx, "WhatsApp")
     if assistant_has_email:
         available_channels.insert(
             available_channels.index("unify messages"),

@@ -27,6 +27,8 @@ from unity.conversation_manager.events import (
     OutboundUnifyMeetUtterance,
     SMSReceived,
     SMSSent,
+    WhatsAppReceived,
+    WhatsAppSent,
     EmailReceived,
     EmailSent,
     UnifyMessageReceived,
@@ -1194,6 +1196,8 @@ def render_participant_comms(event_json: str, participant_ids: set[int]) -> str 
     # Inbound
     if isinstance(event, SMSReceived):
         return f"[SMS from {name}] {event.content}"
+    if isinstance(event, WhatsAppReceived):
+        return f"[WhatsApp from {name}] {event.content}"
     if isinstance(event, EmailReceived):
         subj = event.subject or "(no subject)"
         body_preview = (event.body or "")[:200].strip()
@@ -1206,6 +1210,8 @@ def render_participant_comms(event_json: str, participant_ids: set[int]) -> str 
     # Outbound
     if isinstance(event, SMSSent):
         return f"[You texted {name}] {event.content}"
+    if isinstance(event, WhatsAppSent):
+        return f"[You WhatsApped {name}] {event.content}"
     if isinstance(event, EmailSent):
         subj = event.subject or "(no subject)"
         return f"[You emailed {name}] {subj}"
@@ -1326,6 +1332,14 @@ def _render_history_event(
     if isinstance(event, SMSSent):
         if cid is not None and cid in participant_ids:
             return f"[SMS to {name}] {event.content}"
+        return None
+    if isinstance(event, WhatsAppReceived):
+        if cid is not None and cid in participant_ids:
+            return f"[WhatsApp from {name}] {event.content}"
+        return None
+    if isinstance(event, WhatsAppSent):
+        if cid is not None and cid in participant_ids:
+            return f"[WhatsApp to {name}] {event.content}"
         return None
     if isinstance(event, EmailReceived):
         if cid is not None and cid in participant_ids:

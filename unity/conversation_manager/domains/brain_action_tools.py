@@ -30,6 +30,7 @@ from unity.conversation_manager.event_broker import get_event_broker
 from unity.conversation_manager.events import (
     ApiMessageSent,
     SMSSent,
+    WhatsAppSent,
     UnifyMessageSent,
     EmailSent,
     PhoneCallSent,
@@ -493,6 +494,93 @@ class ConversationManagerBrainActionTools:
             "app:comms:sms_sent",
             contact_id=contact_id,
             medium=Medium.SMS_MESSAGE,
+        )
+
+    async def send_whatsapp(
+        self,
+        *,
+        contact_id: int | str,
+        content: str,
+        phone_number: str | None = None,
+    ) -> dict[str, Any]:
+        """
+        Send a WhatsApp message to an existing contact.
+
+        The contact must already exist in the system.
+
+        - If the contact **already has** a phone number on file (visible in
+          active_conversations), omit ``phone_number`` -- it is not needed.
+        - If the contact **does not have** a phone number on file but you
+          know it (e.g. the boss provided it), pass it via ``phone_number``.
+          It will be saved to the contact record automatically and the
+          WhatsApp message will be sent in one step.
+        - **Do not** pass a ``phone_number`` that differs from the one
+          already on file -- this will be rejected.  Use ``act`` to update
+          the contact's phone number first, then retry.
+
+        Args:
+            contact_id: The contact_id of the recipient (from
+                active_conversations or returned by ``find_contacts`` /
+                ``create_contact``).
+            content: The text content of the WhatsApp message to send.
+            phone_number: The recipient's phone number.  Required when the
+                contact does not yet have a phone number on file; omit when
+                the contact already has one.
+        """
+        contact_id = _coerce_contact_id(contact_id)
+        contact = self._cm.contact_index.get_contact(contact_id)
+
+        outbound_error = _check_outbound_allowed(contact)
+        if outbound_error:
+            return await self._surface_comms_error(
+                outbound_error,
+                "app:comms:whatsapp_sent",
+                contact_id=contact_id,
+                medium=Medium.WHATSAPP_MESSAGE,
+            )
+
+        detail_error, contact = _resolve_or_attach_detail(
+            contact,
+            contact_id,
+            "phone_number",
+            phone_number,
+            "WhatsApp",
+            self._cm.contact_index,
+        )
+        if detail_error:
+            return await self._surface_comms_error(
+                detail_error,
+                "app:comms:whatsapp_sent",
+                contact_id=contact_id,
+                medium=Medium.WHATSAPP_MESSAGE,
+            )
+
+        to_number = contact.get("phone_number")
+        response = await comms_utils.send_whatsapp_message(
+            to_number=to_number,
+            content=content,
+        )
+
+        if response.get("success"):
+            fresh_contact = (
+                self._cm.contact_index.get_contact(phone_number=to_number) or contact
+            )
+            event = WhatsAppSent(contact=fresh_contact, content=content)
+            await self._event_broker.publish(
+                "app:comms:whatsapp_sent",
+                event.to_json(),
+            )
+            return {"status": "ok"}
+
+        if not self._cm.assistant_whatsapp_number:
+            error_msg = "WhatsApp is not enabled for this assistant."
+        else:
+            error_msg = f"Failed to send WhatsApp message to {to_number}"
+        return await self._surface_comms_error(
+            error_msg,
+            "app:comms:whatsapp_sent",
+            contact_id=contact_id,
+            medium=Medium.WHATSAPP_MESSAGE,
         )
 
     async def send_unify_message(
@@ -2029,6 +2117,8 @@ class ConversationManagerBrainActionTools:
             )
             if not call_in_progress:
                 tools["make_call"] = self.make_call
+        if self._cm.assistant_whatsapp_number:
+            tools["send_whatsapp"] = self.send_whatsapp
         if self._cm.assistant_email:
             tools["send_email"] = self.send_email
         if getattr(self._cm.mode, "is_voice", False):

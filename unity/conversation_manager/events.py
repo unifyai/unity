@@ -243,6 +243,15 @@ class SMSReceived(Event):
 
 
 @dataclass
+class WhatsAppReceived(Event):
+    topic: ClassVar[str | None] = "app:comms:whatsapp_message"
+    content_logged: ClassVar[bool] = True
+
+    contact: dict
+    content: str
+
+
+@dataclass
 class UnifyMessageReceived(Event):
     """A message was received via the Unify console chat interface.
 
@@ -342,6 +351,15 @@ class EmailReceived(Event):
 @dataclass
 class SMSSent(Event):
     topic: ClassVar[str | None] = "app:comms:sms_sent"
+    content_logged: ClassVar[bool] = True
+
+    contact: dict
+    content: str
+
+
+@dataclass
+class WhatsAppSent(Event):
+    topic: ClassVar[str | None] = "app:comms:whatsapp_sent"
     content_logged: ClassVar[bool] = True
 
     contact: dict
@@ -466,10 +484,12 @@ class _SessionConfigBase(Event):
     assistant_about: str
     assistant_number: str
     assistant_email: str
+    assistant_whatsapp_number: str = ""
     user_first_name: str
     user_surname: str
     user_number: str
     user_email: str
+    user_whatsapp_number: str = ""
     voice_id: str
     voice_provider: str = "cartesia"
     assistant_timezone: str = (

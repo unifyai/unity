@@ -523,6 +523,8 @@ async def log_message(
         medium = Medium.UNIFY_MEET if "meet" in event_name else Medium.UNIFY_MESSAGE
     elif "phone" in event_name:
         medium = Medium.PHONE_CALL
+    elif "whatsapp" in event_name:
+        medium = Medium.WHATSAPP_MESSAGE
     elif "sms" in event_name:
         medium = Medium.SMS_MESSAGE
     else:

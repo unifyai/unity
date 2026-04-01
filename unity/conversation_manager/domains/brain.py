@@ -207,6 +207,7 @@ def build_brain_spec(
         computer_fast_path=cm.computer_fast_path_eligible,
         assistant_has_phone=bool(cm.assistant_number),
         assistant_has_email=bool(cm.assistant_email),
+        assistant_has_whatsapp=bool(cm.assistant_whatsapp_number),
     )
 
     response_model = _RESPONSE_MODELS[cm.mode]

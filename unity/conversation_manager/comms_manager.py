@@ -75,12 +75,14 @@ def _get_local_contact() -> dict:
         "surname": SESSION_DETAILS.user.surname,
         "phone_number": SESSION_DETAILS.user.number,
         "email_address": SESSION_DETAILS.user.email,
+        "whatsapp_number": SESSION_DETAILS.user.whatsapp_number,
     }
 
 
 # Map subscription IDs to their corresponding event types
 events_map: dict[str, Event] = {
     "msg": SMSReceived,
+    "whatsapp": WhatsAppReceived,
     "email": EmailReceived,
     "unify_message": UnifyMessageReceived,
     "api_message": ApiMessageReceived,
@@ -163,7 +165,9 @@ def _get_or_create_unknown_contact(
             cm = ManagerRegistry.get_contact_manager()
 
             # Determine which field to search/set based on medium
-            if medium in ("sms_message", "phone_call"):
+            if medium == "whatsapp_message":
+                field_name = "whatsapp_number"
+            elif medium in ("sms_message", "phone_call"):
                 field_name = "phone_number"
             elif medium == "email":
                 field_name = "email_address"
@@ -276,10 +280,15 @@ class CommsManager:
                     "assistant_about": event["assistant_about"],
                     "assistant_number": event["assistant_number"],
                     "assistant_email": event["assistant_email"],
+                    "assistant_whatsapp_number": event.get(
+                        "assistant_whatsapp_number",
+                        "",
+                    ),
                     "user_first_name": event["user_first_name"],
                     "user_surname": event["user_surname"],
                     "user_number": event["user_number"],
                     "user_email": event["user_email"],
+                    "user_whatsapp_number": event.get("user_whatsapp_number", ""),
                     "voice_provider": event["voice_provider"],
                     "voice_id": event["voice_id"],
                     "desktop_mode": event.get("desktop_mode", "ubuntu"),
@@ -553,6 +562,65 @@ class CommsManager:
                     except Exception as e:
                         LOGGER.error(
                             f"{DEFAULT_ICON} Failed scheduling api_message attachment download: {e}",
+                        )
+
+                elif thread == "whatsapp":
+                    # Strip whatsapp: prefix from sender number
+                    raw_from = event["from_number"].strip()
+                    contact_detail = (
+                        raw_from.replace("whatsapp:", "")
+                        if raw_from.startswith("whatsapp:")
+                        else raw_from
+                    )
+                    medium_for_blacklist = Medium.WHATSAPP_MESSAGE
+
+                    if _is_blacklisted(medium_for_blacklist, contact_detail):
+                        LOGGER.debug(
+                            f"{DEFAULT_ICON} Ignoring blacklisted WhatsApp from: {contact_detail}",
+                        )
+                        self._ack_with_latency(message, publish_timestamp, topic)
+                        return
+
+                    contact = next(
+                        (
+                            c
+                            for c in contacts
+                            if c.get("whatsapp_number") == contact_detail
+                            or c["phone_number"] == contact_detail
+                        ),
+                        None,
+                    )
+                    is_new_unknown = False
+                    if contact is None:
+                        contact = _get_or_create_unknown_contact(
+                            medium_for_blacklist,
+                            contact_detail,
+                        )
+                        is_new_unknown = contact is not None
+
+                    if contact is None:
+                        LOGGER.error(
+                            f"{DEFAULT_ICON} Failed to resolve contact for WhatsApp from: {contact_detail}",
+                        )
+                        self._ack_with_latency(message, publish_timestamp, topic)
+                        return
+
+                    self._publish_from_callback(
+                        f"app:comms:{thread}_message",
+                        events_map[thread](
+                            content=content,
+                            contact=contact,
+                        ).to_json(),
+                    )
+
+                    if is_new_unknown:
+                        self._publish_from_callback(
+                            "app:comms:unknown_contact_created",
+                            UnknownContactCreated(
+                                contact=contact,
+                                medium=medium_for_blacklist,
+                                message_preview=content[:100] if content else "",
+                            ).to_json(),
                         )
 
                 else:
@@ -903,10 +971,12 @@ class CommsManager:
                 "assistant_about": event["assistant_about"],
                 "assistant_number": event["assistant_number"],
                 "assistant_email": event["assistant_email"],
+                "assistant_whatsapp_number": event.get("assistant_whatsapp_number", ""),
                 "user_first_name": event["user_first_name"],
                 "user_surname": event["user_surname"],
                 "user_number": event["user_number"],
                 "user_email": event["user_email"],
+                "user_whatsapp_number": event.get("user_whatsapp_number", ""),
                 "voice_provider": event["voice_provider"],
                 "voice_id": event["voice_id"],
                 "desktop_mode": event.get("desktop_mode", "ubuntu"),

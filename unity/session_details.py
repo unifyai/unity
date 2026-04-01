@@ -70,6 +70,7 @@ class AssistantDetails:
     about: str = ""
     number: str = ""
     email: str = ""
+    whatsapp_number: str = ""
     contact_id: int = 0  # Contact ID in Contacts table
     desktop_mode: str = "ubuntu"  # "ubuntu" or "windows" - determines VM type
     desktop_url: str | None = None  # URL for managed VM desktop access
@@ -95,6 +96,7 @@ class UserDetails:
     surname: str = ""
     number: str = ""
     email: str = ""
+    whatsapp_number: str = ""
     contact_id: int = 1  # Contact ID in Contacts table
 
     @property
@@ -271,12 +273,14 @@ class SessionDetails:
         assistant_about: str = "",
         assistant_number: str = "",
         assistant_email: str = "",
+        assistant_whatsapp_number: str = "",
         assistant_contact_id: int = 0,
         user_id: str = "",
         user_first_name: str = "",
         user_surname: str = "",
         user_number: str = "",
         user_email: str = "",
+        user_whatsapp_number: str = "",
         org_id: int | None = None,
         org_name: str = "",
         team_ids: list[int] | None = None,
@@ -300,6 +304,7 @@ class SessionDetails:
         self.assistant.about = assistant_about
         self.assistant.number = assistant_number
         self.assistant.email = assistant_email
+        self.assistant.whatsapp_number = assistant_whatsapp_number
         self.assistant.contact_id = assistant_contact_id
         self.assistant.desktop_mode = desktop_mode
         self.assistant.user_desktop_mode = user_desktop_mode
@@ -310,6 +315,7 @@ class SessionDetails:
         self.user.surname = user_surname
         self.user.number = user_number
         self.user.email = user_email
+        self.user.whatsapp_number = user_whatsapp_number
         self.org.id = org_id
         self.org.name = org_name
         self.team.ids = team_ids or []
@@ -346,6 +352,7 @@ class SessionDetails:
         os.environ["ASSISTANT_ABOUT"] = self.assistant.about
         os.environ["ASSISTANT_NUMBER"] = self.assistant.number
         os.environ["ASSISTANT_EMAIL"] = self.assistant.email
+        os.environ["ASSISTANT_WHATSAPP_NUMBER"] = self.assistant.whatsapp_number
         os.environ["ASSISTANT_DESKTOP_MODE"] = self.assistant.desktop_mode
         os.environ["ASSISTANT_DESKTOP_URL"] = self.assistant.desktop_url or ""
         os.environ["ASSISTANT_USER_DESKTOP_MODE"] = (
@@ -361,6 +368,7 @@ class SessionDetails:
         os.environ["USER_NAME"] = self.user.name
         os.environ["USER_NUMBER"] = self.user.number
         os.environ["USER_EMAIL"] = self.user.email
+        os.environ["USER_WHATSAPP_NUMBER"] = self.user.whatsapp_number
         os.environ["ORG_ID"] = str(self.org.id) if self.org.id is not None else ""
         os.environ["ORG_NAME"] = self.org.name
         os.environ["TEAM_IDS"] = (
@@ -403,6 +411,8 @@ class SessionDetails:
             self.assistant.number = val
         if val := os.environ.get("ASSISTANT_EMAIL"):
             self.assistant.email = val
+        if val := os.environ.get("ASSISTANT_WHATSAPP_NUMBER"):
+            self.assistant.whatsapp_number = val
         if val := os.environ.get("ASSISTANT_CONTACT_ID"):
             try:
                 self.assistant.contact_id = int(val)
@@ -428,6 +438,8 @@ class SessionDetails:
             self.user.number = val
         if val := os.environ.get("USER_EMAIL"):
             self.user.email = val
+        if val := os.environ.get("USER_WHATSAPP_NUMBER"):
+            self.user.whatsapp_number = val
         if val := os.environ.get("ORG_ID"):
             try:
                 self.org.id = int(val)

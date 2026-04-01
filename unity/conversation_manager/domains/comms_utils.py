@@ -60,6 +60,42 @@ async def send_sms_message_via_number(to_number: str, content: str) -> str:
             return await response.json()
 
 
+async def send_whatsapp_message(to_number: str, content: str) -> dict:
+    """
+    Send a WhatsApp message via the Communication service.
+
+    The sender pool number is resolved by Communication/Orchestra based on
+    the assistant's assigned WhatsApp pool number.
+
+    Args:
+        to_number: The recipient's WhatsApp number (E.164)
+        content: The message content to send
+
+    Returns:
+        dict with 'success' key indicating delivery status.
+    """
+    agent_id = SESSION_DETAILS.assistant.agent_id
+    if agent_id is None:
+        return {"success": False}
+
+    async with aiohttp.ClientSession() as session:
+        async with session.post(
+            f"{SETTINGS.conversation.COMMS_URL}/whatsapp/send-text",
+            headers=headers,
+            json={
+                "to": to_number,
+                "body": content,
+                "assistant_id": agent_id,
+            },
+        ) as response:
+            try:
+                response.raise_for_status()
+            except Exception as e:
+                LOGGER.error(f"{ICONS['comms_outbound']} WhatsApp send failed: {e}")
+                return {"success": False}
+            return await response.json()
+
+
 async def send_unify_message(
     content: str,
     contact_id: int = 1,
@@ -151,7 +187,7 @@ def publish_system_error(error_message: str, error_type: str = "unknown") -> Non
         )
         future.result(timeout=5)
         LOGGER.debug(
-            f"{ICONS['comms_outbound']} Published system error [{error_type}]: {error_message}"
+            f"{ICONS['comms_outbound']} Published system error [{error_type}]: {error_message}",
         )
     except Exception as e:
         LOGGER.error(f"{ICONS['comms_outbound']} Failed to publish system error: {e}")

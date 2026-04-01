@@ -755,6 +755,8 @@ def _push_email_to_all_contacts(
     (
         SMSSent,
         SMSReceived,
+        WhatsAppSent,
+        WhatsAppReceived,
         EmailSent,
         EmailReceived,
         UnifyMessageSent,
@@ -809,6 +811,26 @@ async def _(event, cm: "ConversationManager", *args, **kwargs):
             cm._session_logger.info(
                 "sms_received",
                 f"SMS from {sender_name}: {event.content}",
+            )
+        case WhatsAppSent():
+            medium = Medium.WHATSAPP_MESSAGE
+            message_content = event.content
+            notif_content = f"WhatsApp sent to {sender_name}"
+            role = "assistant"
+            event_trace = getattr(cm, "_current_event_trace", None) or {}
+            cm._session_logger.info(
+                "whatsapp_sent",
+                f"WhatsApp to {sender_name}: {event.content}",
+            )
+        case WhatsAppReceived():
+            medium = Medium.WHATSAPP_MESSAGE
+            message_content = event.content
+            notif_content = f"WhatsApp received from {sender_name}"
+            role = "user"
+            event_trace = getattr(cm, "_current_event_trace", None) or {}
+            cm._session_logger.info(
+                "whatsapp_received",
+                f"WhatsApp from {sender_name}: {event.content}",
             )
         case EmailSent():
             event_trace = getattr(cm, "_current_event_trace", None) or {}

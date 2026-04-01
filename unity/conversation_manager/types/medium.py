@@ -33,6 +33,7 @@ class Medium(StrEnum):
     UNIFY_MEET = "unify_meet"
     EMAIL = "email"
     SMS_MESSAGE = "sms_message"
+    WHATSAPP_MESSAGE = "whatsapp_message"
     PHONE_CALL = "phone_call"
     API_MESSAGE = "api_message"
 
@@ -72,6 +73,11 @@ MEDIUM_REGISTRY: dict[Medium, MediumInfo] = {
     Medium.SMS_MESSAGE: MediumInfo(
         value=Medium.SMS_MESSAGE,
         description="A standard SMS text message sent via cellular network.",
+        mode=Mode.TEXT,
+    ),
+    Medium.WHATSAPP_MESSAGE: MediumInfo(
+        value=Medium.WHATSAPP_MESSAGE,
+        description="A WhatsApp message sent via Twilio WhatsApp Business API.",
         mode=Mode.TEXT,
     ),
     Medium.PHONE_CALL: MediumInfo(
