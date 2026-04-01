@@ -5,9 +5,15 @@ import json
 from pathlib import Path
 from typing import Any
 
+import logging
+import time
+
 from kubernetes import client as k8s_client, config as k8s_config, watch
+from kubernetes.client.rest import ApiException
 
 from unity.settings import SETTINGS
+
+logger = logging.getLogger(__name__)
 
 SESSION_REF_LABEL = "assistantsession.unify.ai/name"
 SESSION_REF_ANNOTATION = "assistantsession.unify.ai/name"
@@ -95,21 +101,45 @@ def read_session_bootstrap_secret(secret_name: str) -> dict[str, Any]:
     return json.loads(base64.b64decode(raw).decode("utf-8"))
 
 
-def mark_job_container_ready(job_name: str) -> None:
+def mark_job_container_ready(job_name: str, max_retries: int = 3) -> None:
+    """Patch the container-ready annotation on the owning Job.
+
+    Retries on 409 Conflict (stale resourceVersion) by re-reading the
+    Job and re-applying the patch.  Without this retry, a concurrent
+    controller or label patch would silently prevent the annotation
+    from being set, leaving the session stuck in ContainerAssigned.
+    """
     _load_clients()
     assert _batch_api is not None
     namespace = _namespace()
-    job = _batch_api.read_namespaced_job(name=job_name, namespace=namespace)
-    annotations = dict(job.metadata.annotations or {})
-    annotations[CONTAINER_READY_ANNOTATION] = "true"
-    body = {
-        "metadata": {
-            "annotations": annotations,
-            "resourceVersion": job.metadata.resource_version,
-        },
-    }
-    _batch_api.patch_namespaced_job(
-        name=job_name,
-        namespace=namespace,
-        body=body,
-    )
+
+    for attempt in range(max_retries + 1):
+        job = _batch_api.read_namespaced_job(name=job_name, namespace=namespace)
+        annotations = dict(job.metadata.annotations or {})
+        if annotations.get(CONTAINER_READY_ANNOTATION) == "true":
+            return
+        annotations[CONTAINER_READY_ANNOTATION] = "true"
+        body = {
+            "metadata": {
+                "annotations": annotations,
+                "resourceVersion": job.metadata.resource_version,
+            },
+        }
+        try:
+            _batch_api.patch_namespaced_job(
+                name=job_name,
+                namespace=namespace,
+                body=body,
+            )
+            return
+        except ApiException as exc:
+            if exc.status == 409 and attempt < max_retries:
+                logger.warning(
+                    "container-ready patch conflict on %s (attempt %d/%d), retrying",
+                    job_name,
+                    attempt + 1,
+                    max_retries,
+                )
+                time.sleep(0.2 * (attempt + 1))
+                continue
+            raise
