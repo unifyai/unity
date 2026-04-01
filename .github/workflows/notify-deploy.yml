@@ -13,7 +13,7 @@ jobs:
     - name: Trigger downstream rebuild
       uses: peter-evans/repository-dispatch@v3
       with:
-        token: ${{ secrets.CLONE_TOKEN }}
+        token: ${{ secrets.DEPLOY_DISPATCH_TOKEN }}
         repository: ${{ secrets.DEPLOY_REPO }}
         event-type: upstream-updated
         client-payload: '{"branch": "${{ github.ref_name }}", "sha": "${{ github.sha }}"}'
