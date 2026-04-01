@@ -555,10 +555,14 @@ class ConversationManagerBrainActionTools:
                 medium=Medium.WHATSAPP_MESSAGE,
             )
 
+        from unity.session_details import SESSION_DETAILS
+
         to_number = contact.get("whatsapp_number")
         response = await comms_utils.send_whatsapp_message(
             to_number=to_number,
             content=content,
+            user_name=contact.get("first_name", ""),
+            agent_name=SESSION_DETAILS.assistant.first_name,
         )
 
         if response.get("success"):

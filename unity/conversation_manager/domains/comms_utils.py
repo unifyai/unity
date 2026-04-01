@@ -60,16 +60,24 @@ async def send_sms_message_via_number(to_number: str, content: str) -> str:
             return await response.json()
 
 
-async def send_whatsapp_message(to_number: str, content: str) -> dict:
+async def send_whatsapp_message(
+    to_number: str,
+    content: str,
+    user_name: str = "",
+    agent_name: str = "",
+) -> dict:
     """
     Send a WhatsApp message via the Communication service.
 
-    The sender pool number is resolved by Communication/Orchestra based on
-    the assistant's assigned WhatsApp pool number.
+    Communication automatically handles the WhatsApp 24h session window:
+    if the window is open, ``content`` is sent as free-form text; if closed,
+    it falls back to an approved greeting template with ``content`` appended.
 
     Args:
         to_number: The recipient's WhatsApp number (E.164)
         content: The message content to send
+        user_name: Recipient's first name (used in template fallback)
+        agent_name: Assistant's first name (used in template fallback)
 
     Returns:
         dict with 'success' key indicating delivery status.
@@ -80,12 +88,14 @@ async def send_whatsapp_message(to_number: str, content: str) -> dict:
 
     async with aiohttp.ClientSession() as session:
         async with session.post(
-            f"{SETTINGS.conversation.COMMS_URL}/whatsapp/send-text",
+            f"{SETTINGS.conversation.COMMS_URL}/whatsapp/send",
             headers=headers,
             json={
                 "to": to_number,
                 "body": content,
                 "assistant_id": agent_id,
+                "user_name": user_name,
+                "agent_name": agent_name,
             },
         ) as response:
             try:
