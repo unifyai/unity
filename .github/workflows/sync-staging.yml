@@ -13,14 +13,14 @@ jobs:
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
-    - name: Fast-forward staging to main
+    - uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+    - name: Fast-forward staging to main (only if staging has no unreleased work)
       run: |
-        # Get the SHA that main now points to
-        main_sha=$(gh api repos/${{ github.repository }}/git/ref/heads/main --jq '.object.sha')
-        echo "main is at: $main_sha"
-
-        # Get current staging SHA
-        staging_sha=$(gh api repos/${{ github.repository }}/git/ref/heads/staging --jq '.object.sha')
+        main_sha=$(git rev-parse origin/main)
+        staging_sha=$(git rev-parse origin/staging)
+        echo "main is at:    $main_sha"
         echo "staging is at: $staging_sha"
 
         if [ "$main_sha" = "$staging_sha" ]; then
@@ -28,7 +28,14 @@ jobs:
           exit 0
         fi
 
-        # Fast-forward staging to main (no merge commit, exact sync)
+        # Check if staging is an ancestor of main, meaning main already
+        # contains everything on staging (e.g. staging was merged to main).
+        # If staging has commits that main doesn't, skip to avoid data loss.
+        if ! git merge-base --is-ancestor "$staging_sha" "$main_sha"; then
+          echo "::warning::Skipping sync — staging has commits not yet in main"
+          exit 0
+        fi
+
         gh api repos/${{ github.repository }}/git/refs/heads/staging \
           -X PATCH \
           -f sha="$main_sha" \
