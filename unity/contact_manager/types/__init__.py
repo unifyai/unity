@@ -3,6 +3,7 @@ from .contact import (
     ContactDetailsBase,
     ContactDetailsEmail,
     ContactDetailsPhone,
+    ContactDetailsWhatsApp,
     UNASSIGNED,
 )
 
@@ -11,5 +12,6 @@ __all__ = [
     "ContactDetailsBase",
     "ContactDetailsEmail",
     "ContactDetailsPhone",
+    "ContactDetailsWhatsApp",
     "UNASSIGNED",
 ]

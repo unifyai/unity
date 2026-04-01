@@ -213,6 +213,7 @@ class BaseContactManager(BaseStateManager, metaclass=SingletonABCMeta):
         surname: Optional[str] = None,
         email_address: Optional[str] = None,
         phone_number: Optional[str] = None,
+        whatsapp_number: Optional[str] = None,
         description: Optional[str] = None,
         bio: Optional[str] = None,
         rolling_summary: Optional[str] = None,
@@ -233,7 +234,7 @@ class BaseContactManager(BaseStateManager, metaclass=SingletonABCMeta):
         ----------
         contact_id : int
             The unique ``contact_id`` of the record to update.
-        first_name, surname, email_address, phone_number,
+        first_name, surname, email_address, phone_number, whatsapp_number,
         description, bio, rolling_summary, custom_fields
             Same semantics as the public :pyfunc:`update` method.
 

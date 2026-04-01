@@ -820,6 +820,7 @@ class ContactManager(BaseContactManager):
         surname: Optional[str] = None,
         email_address: Optional[str] = None,
         phone_number: Optional[str] = None,
+        whatsapp_number: Optional[str] = None,
         bio: Optional[str] = None,
         timezone: Optional[str] = None,
         rolling_summary: Optional[str] = None,
@@ -847,6 +848,8 @@ class ContactManager(BaseContactManager):
         phone_number : str | None
             New phone number. Digits only unless explicitly provided with leading ``+``.
             Must be unique.
+        whatsapp_number : str | None
+            New WhatsApp number. Digits only unless explicitly provided with leading ``+``.
         bio : str | None
             Free‑form notes/description.
         timezone : str | None
@@ -892,6 +895,7 @@ class ContactManager(BaseContactManager):
             surname=surname,
             email_address=email_address,
             phone_number=phone_number,
+            whatsapp_number=whatsapp_number,
             bio=bio,
             timezone=timezone,
             rolling_summary=rolling_summary,

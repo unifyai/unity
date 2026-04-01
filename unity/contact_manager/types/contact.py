@@ -58,6 +58,16 @@ class ContactDetailsEmail(ContactDetailsBase):
     )
 
 
+class ContactDetailsWhatsApp(ContactDetailsBase):
+    """Contact details with WhatsApp number for WhatsApp communication."""
+
+    whatsapp_number: Optional[str] = Field(
+        default=None,
+        description="WhatsApp number with optional leading +, then digits only",
+        pattern=r"^\+?[0-9]+$",
+    )
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Main Contact model
 # ─────────────────────────────────────────────────────────────────────────────
@@ -71,6 +81,7 @@ class Contact(BaseModel):
         "surname": "sn",
         "email_address": "email",
         "phone_number": "phone",
+        "whatsapp_number": "wa",
         "bio": "bio",
         "rolling_summary": "rs",
         "should_respond": "resp",
@@ -110,6 +121,11 @@ class Contact(BaseModel):
         description="Optional leading +, then digits only",
         pattern=r"^\+?[0-9]+$",
         json_schema_extra={"unique": True},
+    )
+    whatsapp_number: Optional[str] = Field(
+        default=None,
+        description="WhatsApp number — optional leading +, then digits only",
+        pattern=r"^\+?[0-9]+$",
     )
     bio: Optional[str] = Field(
         default=None,
@@ -172,6 +188,7 @@ class Contact(BaseModel):
         "surname",
         "email_address",
         "phone_number",
+        "whatsapp_number",
         "bio",
         "rolling_summary",
         "timezone",

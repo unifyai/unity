@@ -501,31 +501,31 @@ class ConversationManagerBrainActionTools:
         *,
         contact_id: int | str,
         content: str,
-        phone_number: str | None = None,
+        whatsapp_number: str | None = None,
     ) -> dict[str, Any]:
         """
         Send a WhatsApp message to an existing contact.
 
         The contact must already exist in the system.
 
-        - If the contact **already has** a phone number on file (visible in
-          active_conversations), omit ``phone_number`` -- it is not needed.
-        - If the contact **does not have** a phone number on file but you
-          know it (e.g. the boss provided it), pass it via ``phone_number``.
+        - If the contact **already has** a WhatsApp number on file (visible in
+          active_conversations), omit ``whatsapp_number`` -- it is not needed.
+        - If the contact **does not have** a WhatsApp number on file but you
+          know it (e.g. the boss provided it), pass it via ``whatsapp_number``.
           It will be saved to the contact record automatically and the
           WhatsApp message will be sent in one step.
-        - **Do not** pass a ``phone_number`` that differs from the one
+        - **Do not** pass a ``whatsapp_number`` that differs from the one
           already on file -- this will be rejected.  Use ``act`` to update
-          the contact's phone number first, then retry.
+          the contact's WhatsApp number first, then retry.
 
         Args:
             contact_id: The contact_id of the recipient (from
                 active_conversations or returned by ``find_contacts`` /
                 ``create_contact``).
             content: The text content of the WhatsApp message to send.
-            phone_number: The recipient's phone number.  Required when the
-                contact does not yet have a phone number on file; omit when
-                the contact already has one.
+            whatsapp_number: The recipient's WhatsApp number.  Required when
+                the contact does not yet have a WhatsApp number on file;
+                omit when the contact already has one.
         """
         contact_id = _coerce_contact_id(contact_id)
         contact = self._cm.contact_index.get_contact(contact_id)
@@ -542,8 +542,8 @@ class ConversationManagerBrainActionTools:
         detail_error, contact = _resolve_or_attach_detail(
             contact,
             contact_id,
-            "phone_number",
-            phone_number,
+            "whatsapp_number",
+            whatsapp_number,
             "WhatsApp",
             self._cm.contact_index,
         )
@@ -555,7 +555,7 @@ class ConversationManagerBrainActionTools:
                 medium=Medium.WHATSAPP_MESSAGE,
             )
 
-        to_number = contact.get("phone_number")
+        to_number = contact.get("whatsapp_number")
         response = await comms_utils.send_whatsapp_message(
             to_number=to_number,
             content=content,
@@ -563,7 +563,7 @@ class ConversationManagerBrainActionTools:
 
         if response.get("success"):
             fresh_contact = (
-                self._cm.contact_index.get_contact(phone_number=to_number) or contact
+                self._cm.contact_index.get_contact(whatsapp_number=to_number) or contact
             )
             event = WhatsAppSent(contact=fresh_contact, content=content)
             await self._event_broker.publish(
