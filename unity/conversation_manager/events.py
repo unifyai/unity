@@ -484,19 +484,19 @@ class _SessionConfigBase(Event):
     assistant_about: str
     assistant_number: str
     assistant_email: str
-    assistant_whatsapp_number: str = ""
     user_first_name: str
     user_surname: str
     user_number: str
     user_email: str
-    user_whatsapp_number: str = ""
     voice_id: str
     voice_provider: str = "cartesia"
+    assistant_whatsapp_number: str = ""
     assistant_timezone: str = (
         ""  # IANA timezone identifier; default empty for backward compat
     )
     desktop_mode: str = "ubuntu"
     desktop_url: str | None = None
+    user_whatsapp_number: str = ""
     user_desktop_mode: str | None = None
     user_desktop_filesys_sync: bool = False
     user_desktop_url: str | None = None
