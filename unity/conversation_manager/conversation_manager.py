@@ -106,6 +106,7 @@ class ConversationManager(metaclass=SingletonABCMeta):
         voice_provider: str = "cartesia",
         voice_id: str = None,
         assistant_timezone: str = "",
+        assistant_whatsapp_number: str = "",
         past_events: list | None = None,
         conv_context_length: int = 50,
         project_name: str = "Assistants",
@@ -127,7 +128,7 @@ class ConversationManager(metaclass=SingletonABCMeta):
         # contact data
         self.assistant_number = assistant_number
         self.assistant_email = assistant_email
-        self.assistant_whatsapp_number = ""
+        self.assistant_whatsapp_number = assistant_whatsapp_number
         self.user_first_name = user_first_name
         self.user_surname = user_surname
         self.user_number = user_number
