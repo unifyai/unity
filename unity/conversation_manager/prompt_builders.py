@@ -125,6 +125,13 @@ def _build_missing_email_notice(assistant_has_email: bool) -> str:
     return """- I do not currently have an email address configured, so I cannot send or receive emails. If my boss asks me to email someone, I should let them know I don't have an email set up yet and ask them to configure one for me through the platform."""
 
 
+def _build_whatsapp_number_change_notice(assistant_has_whatsapp: bool) -> str:
+    """Guidance for handling WhatsApp number reassignment inquiries."""
+    if not assistant_has_whatsapp:
+        return ""
+    return """- My WhatsApp number may occasionally change due to automatic routing updates. If someone mentions receiving a "number changed" notification, I should confirm my current WhatsApp number and reassure them it was a routine update."""
+
+
 def _build_comms_tool_listing(
     assistant_has_phone: bool,
     assistant_has_email: bool,
@@ -247,6 +254,9 @@ def build_system_prompt(
     phone_scenarios = _build_phone_scenarios(phone_number)
     missing_phone_notice = _build_missing_phone_notice(assistant_has_phone)
     missing_email_notice = _build_missing_email_notice(assistant_has_email)
+    whatsapp_change_notice = _build_whatsapp_number_change_notice(
+        assistant_has_whatsapp,
+    )
     comms_tool_listing = _build_comms_tool_listing(
         assistant_has_phone,
         assistant_has_email,
@@ -543,9 +553,11 @@ I do NOT need to poll or check on actions - the system will wake me when somethi
 
     # Communication guidelines
     phone_guidelines_section = f"\n{phone_guidelines}" if phone_guidelines else ""
-    missing_capabilities_section = (
-        f"\n{missing_phone_notice}" if missing_phone_notice else ""
-    ) + (f"\n{missing_email_notice}" if missing_email_notice else "")
+    comms_notices_section = (
+        (f"\n{missing_phone_notice}" if missing_phone_notice else "")
+        + (f"\n{missing_email_notice}" if missing_email_notice else "")
+        + (f"\n{whatsapp_change_notice}" if whatsapp_change_notice else "")
+    )
 
     available_tool_names = ["send_unify_message", "send_api_response"]
     if assistant_has_phone:
@@ -603,7 +615,7 @@ I do NOT need to poll or check on actions - the system will wake me when somethi
 Communicate naturally and casually. Keep responses short.
 - Acknowledge my boss when they give instructions, then execute.
 - Do NOT over-acknowledge or send multiple confirmations.
-- Use the thread my boss is using unless asked otherwise.{phone_guidelines_section}{missing_capabilities_section}
+- Use the thread my boss is using unless asked otherwise.{phone_guidelines_section}{comms_notices_section}
 
 **API message tags:**
 - Inbound `api_message` messages may include tags (shown as `[Tags: ...]`). These are opaque routing labels set by the developer.
