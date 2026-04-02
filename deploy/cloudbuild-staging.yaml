@@ -91,38 +91,21 @@ steps:
       deploy/scripts/job-watcher/deployment_staging.yaml | kubectl apply -f -
   waitFor: ['push-job-watcher']
 
-  # Upload SHA to Cloud Storage
-- name: 'gcr.io/cloud-builders/gsutil'
-  id: 'upload-sha'
-  entrypoint: 'bash'
+  # Trigger enterprise overlay build in unity-deploy.
+  # Passes the just-pushed base image as a substitution so unity-deploy
+  # builds FROM this exact image (not a stale :latest).
+  # unity-deploy handles GCS upload and idle job refresh.
+- name: 'gcr.io/cloud-builders/gcloud'
+  id: 'trigger-deploy-build'
   args:
-  - '-c'
-  - |
-    echo ${SHORT_SHA} | gsutil cp - gs://unity-image-hash/image_hash_staging.txt
-  waitFor: ['push-latest-tag']
-
-  # Refresh idle containers so they pick up the new image
-- name: 'gcr.io/cloud-builders/curl'
-  id: 'refresh-idle-jobs'
-  entrypoint: 'bash'
-  args:
-  - '-c'
-  - |
-    set -e
-    ADAPTERS=https://unity-adapters-staging-ky4ja5fxna-uc.a.run.app
-    AUTH="Authorization: Bearer $$ORCHESTRA_ADMIN_KEY"
-
-    echo "Refreshing idle jobs with new image..."
-    curl -sf -X POST -H "$${AUTH}" "$${ADAPTERS}/scheduled/jobs/create?refresh=true" && echo
-
-    echo "Waiting 120s for jobs to register as idle..."
-    sleep 120
-
-    echo "Cleaning up stale idle jobs..."
-    curl -sf -X POST -H "$${AUTH}" "$${ADAPTERS}/scheduled/jobs/cleanup" && echo
-    echo "Idle job refresh complete."
-  secretEnv: ['ORCHESTRA_ADMIN_KEY']
-  waitFor: ['upload-sha']
+  - 'builds'
+  - 'triggers'
+  - 'run'
+  - 'unity-deploy-staging'
+  - '--project=${PROJECT_ID}'
+  - '--branch=staging'
+  - '--substitutions=_BASE_IMAGE=${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPOSITORY}/unity-staging:${SHORT_SHA}'
+  waitFor: ['push-sha-tag', 'push-latest-tag']
 
 # Options
 options:
@@ -141,8 +124,6 @@ availableSecrets:
     env: 'ORCHESTRA_API_KEY'
   - versionName: projects/${PROJECT_ID}/secrets/DEVBOT_GITHUB_TOKEN/versions/latest
     env: 'GITHUB_TOKEN'
-  - versionName: projects/${PROJECT_ID}/secrets/ORCHESTRA_ADMIN_KEY/versions/latest
-    env: 'ORCHESTRA_ADMIN_KEY'
 
 # Timeout
 timeout: '1800s'  # 30 minutes
