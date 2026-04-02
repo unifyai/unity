@@ -1158,6 +1158,8 @@ async def _(event: AssistantUpdateEvent, cm: "ConversationManager", *args, **kwa
         event.user_surname,
         event.user_number,
         event.user_email,
+        event.assistant_whatsapp_number,
+        event.user_whatsapp_number,
     )
 
 

@@ -734,6 +734,8 @@ async def update_session_contacts(
     user_surname: str,
     user_number: str,
     user_email: str,
+    assistant_whatsapp_number: str | None = None,
+    user_whatsapp_number: str | None = None,
 ) -> None:
     """
     Update the assistant (contact_id=0) and boss (contact_id=1) contacts
@@ -759,15 +761,21 @@ async def update_session_contacts(
         surname: str,
         phone_number: str,
         email_address: str,
+        whatsapp_number: str | None = None,
     ):
         try:
-            await asyncio.to_thread(
-                cm.contact_manager.update_contact,
+            kwargs: dict = dict(
                 contact_id=contact_id,
                 phone_number=phone_number,
                 email_address=email_address,
                 first_name=first_name,
                 surname=surname,
+            )
+            if whatsapp_number is not None:
+                kwargs["whatsapp_number"] = whatsapp_number
+            await asyncio.to_thread(
+                cm.contact_manager.update_contact,
+                **kwargs,
             )
             LOGGER.info(
                 f"{ICONS['managers_worker']} [ManagersWorker] Updated contact {contact_id}: {first_name} {surname}",
@@ -783,6 +791,7 @@ async def update_session_contacts(
         assistant_surname,
         assistant_number,
         assistant_email,
+        assistant_whatsapp_number,
     )
 
     # In demo mode:
@@ -793,10 +802,24 @@ async def update_session_contacts(
             f"{ICONS['managers_worker']} [ManagersWorker] Demo mode: skipping boss contact (contact_id=1), "
             "updating demoer contact (contact_id=2)",
         )
-        await _update_contact(2, user_first_name, user_surname, user_number, user_email)
+        await _update_contact(
+            2,
+            user_first_name,
+            user_surname,
+            user_number,
+            user_email,
+            user_whatsapp_number,
+        )
         return
 
-    await _update_contact(1, user_first_name, user_surname, user_number, user_email)
+    await _update_contact(
+        1,
+        user_first_name,
+        user_surname,
+        user_number,
+        user_email,
+        user_whatsapp_number,
+    )
 
 
 # Queueing operations that need managers
