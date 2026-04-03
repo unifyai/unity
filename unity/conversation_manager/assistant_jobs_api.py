@@ -124,45 +124,13 @@ def patch_job_label(
     return False
 
 
-# ---------------------------------------------------------------------------
-# VM operations (via comms service)
-# ---------------------------------------------------------------------------
-
-
-def detach_disk(
-    comms_url: str,
-    admin_key: str,
-    assistant_id: str,
-) -> None:
-    """Best-effort detach of the assistant's persistent disk."""
-    headers = {"Authorization": f"Bearer {admin_key}"}
-    try:
-        resp = requests.post(
-            f"{comms_url}/infra/vm/pool/disk/detach/{assistant_id}",
-            headers=headers,
-            timeout=60,
-        )
-        if resp.ok:
-            log.info("Disk detached for %s: %s", assistant_id, resp.json())
-        else:
-            log.error(
-                "Failed to detach disk for %s: %d %s",
-                assistant_id,
-                resp.status_code,
-                resp.text,
-            )
-    except Exception:
-        log.exception("Error detaching disk for %s", assistant_id)
-        traceback.print_exc()
-
-
 def release_pool_vm(
     comms_url: str,
     admin_key: str,
     assistant_id: str,
     max_attempts: int = VM_RELEASE_ATTEMPTS,
 ) -> None:
-    """Release the pool VM assigned to *assistant_id* (with retries)."""
+    """Request pool VM release without bypassing Comms ownership semantics."""
     headers = {"Authorization": f"Bearer {admin_key}"}
 
     for attempt in range(1, max_attempts + 1):
@@ -176,16 +144,22 @@ def release_pool_vm(
             if resp.ok:
                 body = resp.json()
                 if body.get("released"):
-                    log.info("Pool VM released for %s: %s", assistant_id, body)
+                    log.info("Pool VM release accepted for %s: %s", assistant_id, body)
                     return
 
-                log.warning(
-                    "Release returned released=false for %s: %s — "
-                    "attempting disk detach",
+                if body.get("pool_role") == "releasing":
+                    log.info(
+                        "Pool VM release already in progress for %s: %s",
+                        assistant_id,
+                        body,
+                    )
+                    return
+
+                log.info(
+                    "No additional pool VM release action needed for %s: %s",
                     assistant_id,
                     body,
                 )
-                detach_disk(comms_url, admin_key, assistant_id)
                 return
 
             if resp.status_code >= 500 and attempt < max_attempts:
