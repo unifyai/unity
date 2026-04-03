@@ -187,25 +187,28 @@ class LivekitCallManager:
         contact: dict,
         boss: dict,
         outbound: bool,
+        *,
+        extra_metadata: dict | None = None,
     ) -> None:
         """Dispatch a LiveKit job to the persistent worker."""
         socket_path = await self._ensure_socket_server()
 
-        metadata = json.dumps(
-            {
-                "voice_provider": self.voice_provider,
-                "voice_id": self.voice_id,
-                "outbound": outbound,
-                "channel": channel,
-                "contact": contact,
-                "boss": boss,
-                "assistant_bio": self.assistant_bio,
-                "assistant_id": self.assistant_id,
-                "user_id": self.user_id,
-                "assistant_name": self.assistant_name,
-                "ipc_socket_path": socket_path or "",
-            },
-        )
+        meta_dict = {
+            "voice_provider": self.voice_provider,
+            "voice_id": self.voice_id,
+            "outbound": outbound,
+            "channel": channel,
+            "contact": contact,
+            "boss": boss,
+            "assistant_bio": self.assistant_bio,
+            "assistant_id": self.assistant_id,
+            "user_id": self.user_id,
+            "assistant_name": self.assistant_name,
+            "ipc_socket_path": socket_path or "",
+        }
+        if extra_metadata:
+            meta_dict.update(extra_metadata)
+        metadata = json.dumps(meta_dict)
 
         lk = LiveKitAPI(
             url=os.environ.get("LIVEKIT_URL", ""),
@@ -433,6 +436,7 @@ class LivekitCallManager:
 
         self._gmeet_audio_bridge = AudioBridge(room_name=room_name)
         await self._gmeet_audio_bridge.start()
+        # await self._gmeet_audio_bridge.force_browser_audio_routing()
 
         await self._ensure_socket_server()
         if self._socket_server:
@@ -442,8 +446,20 @@ class LivekitCallManager:
         if is_boss:
             self._start_boss_notification_rendering()
 
+        gmeet_extra = {
+            "gmeet_session_id": self._gmeet_session_id or "",
+            "agent_service_url": _resolve_agent_service_url(),
+        }
+
         if self._worker_proc is not None and self._worker_proc.poll() is None:
-            await self._dispatch_job(room_name, "google_meet", contact, boss, False)
+            await self._dispatch_job(
+                room_name,
+                "google_meet",
+                contact,
+                boss,
+                False,
+                extra_metadata=gmeet_extra,
+            )
         else:
             await self._start_call_subprocess(
                 room_name,
@@ -451,6 +467,7 @@ class LivekitCallManager:
                 contact,
                 boss,
                 False,
+                extra_env=gmeet_extra,
             )
 
         self._gmeet_monitor_task = asyncio.create_task(
@@ -541,9 +558,14 @@ class LivekitCallManager:
         contact: dict,
         boss: dict,
         outbound: bool,
+        *,
+        extra_env: dict | None = None,
     ) -> None:
         """Legacy path: spawn a fresh subprocess per call."""
         socket_path = await self._ensure_socket_server()
+        if extra_env:
+            for k, v in extra_env.items():
+                os.environ[k.upper()] = str(v)
         if socket_path:
             os.environ[CM_EVENT_SOCKET_ENV] = socket_path
             LOGGER.debug(

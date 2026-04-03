@@ -280,6 +280,17 @@ async def entrypoint(ctx: agents.JobContext):
         contact = json.loads(SESSION_DETAILS.voice_call.contact_json or "{}")
         boss = json.loads(SESSION_DETAILS.voice_call.boss_json or "{}")
 
+    # Google Meet diarization config
+    gmeet_session_id: str = ""
+    gmeet_agent_service_url: str = ""
+    if channel == "google_meet":
+        if meta:
+            gmeet_session_id = meta.get("gmeet_session_id", "")
+            gmeet_agent_service_url = meta.get("agent_service_url", "")
+        else:
+            gmeet_session_id = os.environ.get("GMEET_SESSION_ID", "")
+            gmeet_agent_service_url = os.environ.get("AGENT_SERVICE_URL", "")
+
     _log.config(
         f"voice_provider={voice_provider} voice_id={voice_id} outbound={outbound} channel={channel}",
     )
@@ -312,6 +323,87 @@ async def entrypoint(ctx: agents.JobContext):
     if STT is None:
         STT = deepgram.STT(model="nova-3", language="en-GB")
         VAD = silero.VAD.load(min_speech_duration=0.15, min_silence_duration=1.0)
+
+    stt_instance = STT
+    if channel == "google_meet":
+        stt_instance = deepgram.STT(
+            model="nova-3",
+            language="en-GB",
+            enable_diarization=True,
+        )
+
+    # --- Google Meet speaker tracker ---
+    # Maps Deepgram speaker IDs (S0, S1, ...) to resolved participant info.
+    _gmeet_speaker_map: dict[str, dict] = {}  # speaker_id → contact dict
+    _gmeet_last_speaker_id: str | None = None
+    _gmeet_auth_key = os.environ.get("UNIFY_KEY", "")
+
+    async def _poll_gmeet_active_speaker() -> str | None:
+        """Fetch the current activeSpeaker name from agent-service."""
+        if not gmeet_session_id or not gmeet_agent_service_url:
+            return None
+        import aiohttp as _aiohttp
+
+        try:
+            async with _aiohttp.ClientSession() as s:
+                resp = await s.get(
+                    f"{gmeet_agent_service_url}/googlemeet/state",
+                    params={"sessionId": gmeet_session_id},
+                    headers={"authorization": f"Bearer {_gmeet_auth_key}"},
+                    timeout=_aiohttp.ClientTimeout(total=5),
+                )
+                if resp.status == 200:
+                    body = await resp.json()
+                    return body.get("activeSpeaker")
+        except Exception:
+            pass
+        return None
+
+    def _resolve_contact_by_name(display_name: str) -> dict | None:
+        """Best-effort contact resolution from a Meet display name.
+
+        Tries an exact first_name+surname match across known contacts
+        (the caller contact and the boss). Falls back to None if no match,
+        letting the caller use the original contact dict.
+        """
+        if not display_name:
+            return None
+        dn_lower = display_name.strip().lower()
+        for candidate in (contact, boss):
+            full = f"{candidate.get('first_name', '')} {candidate.get('surname', '')}".strip()
+            if full.lower() == dn_lower:
+                return candidate
+            if candidate.get("first_name", "").lower() == dn_lower:
+                return candidate
+        return None
+
+    async def _resolve_speaker(speaker_id: str | None) -> tuple[dict, str | None]:
+        """Resolve a Deepgram speaker_id to (contact_dict, display_name).
+
+        Returns the original caller contact if resolution fails.
+        """
+        if not speaker_id or channel != "google_meet":
+            return contact, None
+
+        if speaker_id in _gmeet_speaker_map:
+            resolved = _gmeet_speaker_map[speaker_id]
+            label = f"{resolved.get('first_name', '')} {resolved.get('surname', '')}".strip()
+            return resolved, label or None
+
+        active_name = await _poll_gmeet_active_speaker()
+        if active_name:
+            resolved = _resolve_contact_by_name(active_name)
+            if resolved:
+                _gmeet_speaker_map[speaker_id] = resolved
+                label = f"{resolved.get('first_name', '')} {resolved.get('surname', '')}".strip()
+                return resolved, label or None
+            _gmeet_speaker_map[speaker_id] = {
+                **contact,
+                "_gmeet_display_name": active_name,
+            }
+            return contact, active_name
+
+        return contact, None
 
     from unity.settings import SETTINGS
 
@@ -346,7 +438,7 @@ async def entrypoint(ctx: agents.JobContext):
 
     session = AgentSession(
         llm=llm_model,
-        stt=STT,
+        stt=stt_instance,
         tts=(
             elevenlabs.TTS(
                 voice_id=voice_id if voice_id != "" else elevenlabs.DEFAULT_VOICE_ID,
@@ -526,6 +618,12 @@ async def entrypoint(ctx: agents.JobContext):
         touch_activity()
         _check_quiescence_transition()
 
+    @session.on("user_input_transcribed")
+    def _on_user_input_transcribed(ev):
+        nonlocal _gmeet_last_speaker_id
+        if ev.is_final and ev.speaker_id:
+            _gmeet_last_speaker_id = ev.speaker_id
+
     @session.on("agent_state_changed")
     def _on_agent_state_changed(ev):
         """Try queued speech only after the agent settles into a quiescent state.
@@ -684,7 +782,6 @@ async def entrypoint(ctx: agents.JobContext):
                 log_path = ""
             _log.assistant_speech(text, source=source, llm_log_path=log_path)
         if role == "user":
-            event = user_utterance_event(contact, content=text)
             from datetime import datetime, timezone
 
             b64 = screen_capture.capture_screenshot()
@@ -707,12 +804,36 @@ async def entrypoint(ctx: agents.JobContext):
                         source="webcam",
                     ),
                 )
+
+            async def _publish_user_utterance(
+                text: str,
+                speaker_id: str | None,
+            ) -> None:
+                resolved_contact, speaker_label = await _resolve_speaker(speaker_id)
+                if channel == "google_meet":
+                    event = InboundGoogleMeetUtterance(
+                        contact=resolved_contact,
+                        content=text,
+                        speaker_label=speaker_label,
+                    )
+                else:
+                    event = user_utterance_event(resolved_contact, content=text)
+                await event_broker.publish(
+                    f"app:comms:{channel}_utterance",
+                    event.to_json(),
+                )
+
+            asyncio.create_task(
+                _publish_user_utterance(text, _gmeet_last_speaker_id),
+            )
         else:
             event = assistant_utterance_event(contact, content=text)
-
-        asyncio.create_task(
-            event_broker.publish(f"app:comms:{channel}_utterance", event.to_json()),
-        )
+            asyncio.create_task(
+                event_broker.publish(
+                    f"app:comms:{channel}_utterance",
+                    event.to_json(),
+                ),
+            )
         touch_activity()
 
     assistant = Assistant(
@@ -755,6 +876,14 @@ async def entrypoint(ctx: agents.JobContext):
     rio = RoomInputOptions(
         noise_cancellation=(
             noise_cancellation.BVC() if sys.platform == "darwin" else None
+        ),
+        **(
+            {
+                "participant_identity": "browser-audio-bridge",
+                "close_on_disconnect": False,
+            }
+            if channel == "google_meet"
+            else {}
         ),
     )
 

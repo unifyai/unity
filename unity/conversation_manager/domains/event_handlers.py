@@ -481,8 +481,10 @@ async def _(
     cm.call_manager.room_name = None
     cm.call_manager.call_start_timestamp = None
     cm.call_manager.unify_meet_start_timestamp = None
+    cm.call_manager.google_meet_start_timestamp = None
     cm.call_manager.call_exchange_id = UNASSIGNED
     cm.call_manager.unify_meet_exchange_id = UNASSIGNED
+    cm.call_manager.google_meet_exchange_id = UNASSIGNED
 
     # Build display content
     reason_display = {
@@ -712,6 +714,11 @@ async def _(event: Event, cm: "ConversationManager", *args, **kwargs):
         medium = Medium.WHATSAPP_CALL
     else:
         medium = Medium.PHONE_CALL
+
+    # For diarized Meet utterances, prefer the speaker_label from the event
+    if isinstance(event, InboundGoogleMeetUtterance) and event.speaker_label:
+        sender_name = event.speaker_label
+
     message_id = cm.contact_index.push_message(
         contact_id=contact_id,
         sender_name=sender_name,
@@ -850,8 +857,10 @@ async def _(
     cm.call_manager.room_name = None
     cm.call_manager.call_start_timestamp = None
     cm.call_manager.unify_meet_start_timestamp = None
+    cm.call_manager.google_meet_start_timestamp = None
     cm.call_manager.call_exchange_id = UNASSIGNED
     cm.call_manager.unify_meet_exchange_id = UNASSIGNED
+    cm.call_manager.google_meet_exchange_id = UNASSIGNED
 
     await cm.request_llm_run(
         delay=0,
@@ -2039,6 +2048,11 @@ async def _(event: LogMessageResponse, cm: "ConversationManager", *args, **kwarg
         and cm.call_manager.unify_meet_exchange_id == UNASSIGNED
     ):
         cm.call_manager.unify_meet_exchange_id = event.exchange_id
+    if (
+        event.medium == Medium.GOOGLE_MEET
+        and cm.call_manager.google_meet_exchange_id == UNASSIGNED
+    ):
+        cm.call_manager.google_meet_exchange_id = event.exchange_id
 
 
 @EventHandler.register(PreHireMessage)

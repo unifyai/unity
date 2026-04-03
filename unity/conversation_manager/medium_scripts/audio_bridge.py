@@ -163,6 +163,95 @@ class AudioBridge:
         self._pacat_proc: Optional[asyncio.subprocess.Process] = None
         self._running = False
 
+    async def force_browser_audio_routing(
+        self,
+        *,
+        target_sink: str = "agent_sink",
+        target_source: str = "meet_mic",
+        max_attempts: int = 10,
+        poll_interval: float = 1.0,
+    ) -> bool:
+        """Forcibly redirect all PulseAudio streams to the correct devices.
+
+        Chrome (or Google Meet) may ignore PULSE_SINK/PULSE_SOURCE env vars
+        and route audio through its own device selection.  This method uses
+        ``pactl move-sink-input`` / ``pactl move-source-output`` to override
+        routing at the PulseAudio server level, which cannot be bypassed by
+        the client application.
+
+        Moves ALL sink-inputs to ``target_sink`` and ALL source-outputs to
+        ``target_source``.  Safe because in our container the only audio client
+        is Chrome.  Polls until at least one stream appears (they only exist
+        once Chrome starts playing/capturing audio).
+
+        Returns True if streams were found and redirected.
+        """
+        for attempt in range(1, max_attempts + 1):
+            si_ids = await self._list_stream_ids("sink-inputs")
+            so_ids = await self._list_stream_ids("source-outputs")
+
+            if not si_ids and not so_ids:
+                LOGGER.info(
+                    f"{ICONS['ipc']} {_TAG} No PulseAudio streams yet "
+                    f"(attempt {attempt}/{max_attempts}), retrying...",
+                )
+                await asyncio.sleep(poll_interval)
+                continue
+
+            for idx in si_ids:
+                await self._move_stream("sink-input", idx, target_sink)
+            for idx in so_ids:
+                await self._move_stream("source-output", idx, target_source)
+
+            LOGGER.info(
+                f"{ICONS['ipc']} {_TAG} Redirected {len(si_ids)} sink-input(s) → "
+                f"{target_sink}, {len(so_ids)} source-output(s) → {target_source}",
+            )
+            return True
+
+        LOGGER.warning(
+            f"{ICONS['ipc']} {_TAG} Could not find any PulseAudio streams "
+            f"after {max_attempts} attempts",
+        )
+        return False
+
+    @staticmethod
+    async def _list_stream_ids(kind: str) -> list[str]:
+        """Return stream indices from ``pactl list <kind> short``."""
+        proc = await asyncio.create_subprocess_exec(
+            "pactl",
+            "list",
+            kind,
+            "short",
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        out, _ = await proc.communicate()
+        ids: list[str] = []
+        for line in out.decode().strip().splitlines():
+            parts = line.split()
+            if parts:
+                ids.append(parts[0])
+        return ids
+
+    @staticmethod
+    async def _move_stream(kind: str, idx: str, target: str) -> None:
+        """Run ``pactl move-<kind> <idx> <target>``."""
+        proc = await asyncio.create_subprocess_exec(
+            "pactl",
+            f"move-{kind}",
+            idx,
+            target,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        _, err = await proc.communicate()
+        if proc.returncode != 0:
+            LOGGER.warning(
+                f"{ICONS['ipc']} {_TAG} Failed to move {kind} {idx} → {target}: "
+                f"{err.decode().strip()}",
+            )
+
     async def start(self) -> None:
         """Connect to the LiveKit room and start audio bridging."""
         self._running = True

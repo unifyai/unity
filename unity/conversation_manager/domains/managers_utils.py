@@ -569,6 +569,8 @@ async def log_message(
         )
     elif "sms" in event_name:
         medium = Medium.SMS_MESSAGE
+    elif "googlemeet" in event_name:
+        medium = Medium.GOOGLE_MEET
     else:
         medium = Medium.EMAIL
     role = (
@@ -594,6 +596,8 @@ async def log_message(
             UnifyMessageReceived,
             InboundUnifyMeetUtterance,
             OutboundUnifyMeetUtterance,
+            InboundGoogleMeetUtterance,
+            OutboundGoogleMeetUtterance,
             ApiMessageSent,
             ApiMessageReceived,
         ),
@@ -643,16 +647,21 @@ async def log_message(
         exchange_id = cm.call_manager.call_exchange_id
     elif medium == Medium.UNIFY_MEET:
         exchange_id = cm.call_manager.unify_meet_exchange_id
+    elif medium == Medium.GOOGLE_MEET:
+        exchange_id = cm.call_manager.google_meet_exchange_id
 
     call_utterance_timestamp = ""
-    # Compute utterance timestamp based on active call type.
     call_start = (
         cm.call_manager.call_start_timestamp
         if medium in (Medium.PHONE_CALL, Medium.WHATSAPP_CALL)
         else (
             cm.call_manager.unify_meet_start_timestamp
             if medium == Medium.UNIFY_MEET
-            else None
+            else (
+                cm.call_manager.google_meet_start_timestamp
+                if medium == Medium.GOOGLE_MEET
+                else None
+            )
         )
     )
     if call_start:
