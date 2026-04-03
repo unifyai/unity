@@ -224,4 +224,9 @@ def mark_job_done(job_name: str, inactivity_timeout: float = 0.0):
         and admin_key
         and SESSION_DETAILS.assistant.desktop_mode in ("windows", "ubuntu")
     ):
-        release_pool_vm(comms_url, admin_key, assistant_id)
+        release_pool_vm(
+            comms_url,
+            admin_key,
+            assistant_id,
+            job_name=job_name,
+        )

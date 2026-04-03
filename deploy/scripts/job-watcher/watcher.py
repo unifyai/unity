@@ -104,7 +104,7 @@ def on_job_event(event, **_):
         print(f"No assistant-id label on {job_name} — skipping cleanup")
         return
 
-    release_pool_vm(COMMS_URL, ADMIN_KEY, assistant_id)
+    release_pool_vm(COMMS_URL, ADMIN_KEY, assistant_id, job_name=job_name)
 
 
 @kopf.on.probe(id="health")
