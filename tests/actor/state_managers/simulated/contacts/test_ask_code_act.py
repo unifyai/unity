@@ -15,7 +15,7 @@ from tests.actor.state_managers.utils import (
     make_code_act_actor,
 )
 
-pytestmark = pytest.mark.eval
+pytestmark = [pytest.mark.eval, pytest.mark.llm_call]
 
 
 CONTACT_QUESTIONS: list[str] = [

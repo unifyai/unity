@@ -7,6 +7,8 @@ import unity.actor.code_act_actor as code_act_module
 from unity.actor.code_act_actor import CodeActActor
 from unity.common import async_tool_loop as atl
 
+pytestmark = pytest.mark.llm_call
+
 
 class _DummyLoopClient:
     endpoint = "gpt-4o-mini@openai"

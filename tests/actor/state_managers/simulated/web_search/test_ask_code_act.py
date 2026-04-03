@@ -17,7 +17,7 @@ from tests.actor.state_managers.utils import (
     wait_for_recorded_primitives_call,
 )
 
-pytestmark = pytest.mark.eval
+pytestmark = [pytest.mark.eval, pytest.mark.llm_call]
 
 
 WEB_LIVE_QUESTIONS: list[str] = [

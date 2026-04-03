@@ -146,6 +146,7 @@ async def test_store_skills_tool_absent_without_guidance_manager():
 
 
 @pytest.mark.asyncio
+@pytest.mark.llm_call
 @pytest.mark.timeout(60)
 async def test_store_skills_filtered_when_can_store_false():
     """When can_store=False, ``store_skills`` must be removed by _filter_tools
@@ -191,6 +192,7 @@ async def test_store_skills_filtered_when_can_store_false():
 
 
 @pytest.mark.asyncio
+@pytest.mark.llm_call
 @pytest.mark.timeout(120)
 async def test_proactive_storage_loop_receives_request_and_trajectory():
     """``_start_proactive_storage_loop`` is called with the trajectory snapshot

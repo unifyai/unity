@@ -237,6 +237,7 @@ def test_actor_accessible_via_primitives_class():
 
 
 @pytest.mark.asyncio
+@pytest.mark.llm_call
 @pytest.mark.timeout(60)
 async def test_actor_act_returns_steerable_handle():
     """actor.act() should return a SteerableToolHandle, not a plain string."""
@@ -260,6 +261,7 @@ async def test_actor_act_returns_steerable_handle():
 
 
 @pytest.mark.asyncio
+@pytest.mark.llm_call
 @pytest.mark.timeout(60)
 async def test_actor_act_forwards_capability_flags():
     """
@@ -359,6 +361,7 @@ def test_construct_sandbox_root_unknown_returns_none():
 
 @pytest.mark.eval
 @pytest.mark.asyncio
+@pytest.mark.llm_call
 @pytest.mark.timeout(300)
 async def test_actor_completes_simple_task():
     """
@@ -395,6 +398,7 @@ async def test_actor_completes_simple_task():
 
 @pytest.mark.eval
 @pytest.mark.asyncio
+@pytest.mark.llm_call
 @pytest.mark.timeout(300)
 async def test_stored_actor_function_reexecutes_successfully():
     """A stored compositional function that calls primitives.actor.act() works when re-executed.

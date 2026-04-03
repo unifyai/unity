@@ -22,7 +22,7 @@ from unity.actor.environments import StateManagerEnvironment
 from unity.function_manager.primitives import Primitives, PrimitiveScope
 from unity.manager_registry import ManagerRegistry
 
-pytestmark = pytest.mark.eval
+pytestmark = [pytest.mark.eval, pytest.mark.llm_call]
 
 
 def _force_simulated_contacts(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -41,6 +41,7 @@ async def test_code_act_can_compose_false_requires_function_manager():
 
 @pytest.mark.eval
 @pytest.mark.asyncio
+@pytest.mark.llm_call
 @pytest.mark.timeout(300)
 async def test_code_act_can_compose_false_executes_best_matching_function():
     """
@@ -98,6 +99,7 @@ async def test_code_act_can_compose_false_executes_best_matching_function():
 
 @pytest.mark.eval
 @pytest.mark.asyncio
+@pytest.mark.llm_call
 @pytest.mark.timeout(300)
 async def test_code_act_can_compose_false_no_functions_match():
     """
@@ -141,6 +143,7 @@ async def test_code_act_can_compose_false_no_functions_match():
 
 
 @pytest.mark.asyncio
+@pytest.mark.llm_call
 @pytest.mark.timeout(300)
 async def test_code_act_can_store_false_blocks_add_functions_tool():
     """
@@ -183,6 +186,7 @@ async def test_code_act_can_store_false_blocks_add_functions_tool():
 
 @pytest.mark.eval
 @pytest.mark.asyncio
+@pytest.mark.llm_call
 @pytest.mark.timeout(300)
 async def test_can_store_true_defers_storage_to_review_loop():
     """
@@ -255,6 +259,7 @@ async def test_can_store_true_defers_storage_to_review_loop():
 
 @pytest.mark.eval
 @pytest.mark.asyncio
+@pytest.mark.llm_call
 @pytest.mark.timeout(300)
 async def test_can_store_true_merges_redundant_functions():
     """
@@ -335,6 +340,7 @@ async def test_can_store_true_merges_redundant_functions():
 
 
 @pytest.mark.asyncio
+@pytest.mark.llm_call
 @pytest.mark.timeout(300)
 async def test_code_act_accepts_dict_description():
     """
@@ -363,6 +369,7 @@ async def test_code_act_accepts_dict_description():
 
 
 @pytest.mark.asyncio
+@pytest.mark.llm_call
 @pytest.mark.timeout(300)
 async def test_code_act_accepts_list_description():
     """

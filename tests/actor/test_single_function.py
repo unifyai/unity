@@ -79,6 +79,7 @@ def failing_task() -> str:
 
 
 @pytest.mark.asyncio
+@pytest.mark.llm_call
 @_handle_project
 async def test_execute_sync_function_by_id():
     """Execute a sync function by its ID."""
@@ -102,6 +103,7 @@ async def test_execute_sync_function_by_id():
 
 
 @pytest.mark.asyncio
+@pytest.mark.llm_call
 @_handle_project
 async def test_execute_async_function_by_id():
     """Execute an async function by its ID."""
@@ -125,6 +127,7 @@ async def test_execute_async_function_by_id():
 
 
 @pytest.mark.asyncio
+@pytest.mark.llm_call
 @_handle_project
 async def test_execute_function_by_description():
     """Execute a function found by semantic search."""
@@ -148,6 +151,7 @@ async def test_execute_function_by_description():
 
 
 @pytest.mark.asyncio
+@pytest.mark.llm_call
 @_handle_project
 async def test_semantic_search_selects_best_match():
     """Semantic search should select the most relevant function when multiple exist."""
@@ -187,6 +191,7 @@ def send_email(to: str, subject: str) -> str:
 
 
 @pytest.mark.asyncio
+@pytest.mark.llm_call
 @_handle_project
 async def test_semantic_search_disambiguates_similar_functions():
     """Semantic search should disambiguate between similarly-named functions."""
@@ -223,6 +228,7 @@ def greet_pet(name: str) -> str:
 
 
 @pytest.mark.asyncio
+@pytest.mark.llm_call
 @_handle_project
 async def test_semantic_search_finds_primitive():
     """Semantic search should find primitives by default."""
@@ -253,6 +259,7 @@ async def test_semantic_search_finds_primitive():
 
 
 @pytest.mark.asyncio
+@pytest.mark.llm_call
 @_handle_project
 async def test_semantic_search_excludes_primitives_when_disabled():
     """Semantic search should exclude primitives when include_primitives=False on the instance."""
@@ -286,6 +293,7 @@ def list_my_contacts() -> str:
 
 
 @pytest.mark.asyncio
+@pytest.mark.llm_call
 @_handle_project
 async def test_semantic_search_with_no_user_functions():
     """Semantic search should work with only primitives available."""
@@ -308,6 +316,7 @@ async def test_semantic_search_with_no_user_functions():
 
 
 @pytest.mark.asyncio
+@pytest.mark.llm_call
 @_handle_project
 async def test_execute_function_default_args():
     """Execute a function with default arguments."""
@@ -335,6 +344,7 @@ async def test_execute_function_default_args():
 
 
 @pytest.mark.asyncio
+@pytest.mark.llm_call
 @_handle_project
 async def test_function_not_found_by_id():
     """Error when function ID doesn't exist."""
@@ -350,6 +360,7 @@ async def test_function_not_found_by_id():
 
 
 @pytest.mark.asyncio
+@pytest.mark.llm_call
 @_handle_project
 async def test_function_not_found_by_description(monkeypatch):
     """Error when no function matches description."""
@@ -371,6 +382,7 @@ async def test_function_not_found_by_description(monkeypatch):
 
 
 @pytest.mark.asyncio
+@pytest.mark.llm_call
 @_handle_project
 async def test_no_selection_method_provided():
     """Error when no function_id, primitive_name, or description is provided."""
@@ -386,6 +398,7 @@ async def test_no_selection_method_provided():
 
 
 @pytest.mark.asyncio
+@pytest.mark.llm_call
 @_handle_project
 async def test_function_execution_error():
     """Handle errors during function execution."""
@@ -412,6 +425,7 @@ async def test_function_execution_error():
 
 
 @pytest.mark.asyncio
+@pytest.mark.llm_call
 @_handle_project
 async def test_handle_pause_is_noop():
     """Pause should be a no-op that returns acknowledgment."""
@@ -435,6 +449,7 @@ async def test_handle_pause_is_noop():
 
 
 @pytest.mark.asyncio
+@pytest.mark.llm_call
 @_handle_project
 async def test_handle_resume_is_noop():
     """Resume should be a no-op that returns acknowledgment."""
@@ -457,6 +472,7 @@ async def test_handle_resume_is_noop():
 
 
 @pytest.mark.asyncio
+@pytest.mark.llm_call
 @_handle_project
 async def test_handle_interject_is_noop():
     """Interject should be a no-op that returns acknowledgment."""
@@ -478,6 +494,7 @@ async def test_handle_interject_is_noop():
 
 
 @pytest.mark.asyncio
+@pytest.mark.llm_call
 @_handle_project
 async def test_handle_stop_cancels_execution():
     """Stop should cancel a running function."""
@@ -501,6 +518,7 @@ async def test_handle_stop_cancels_execution():
 
 
 @pytest.mark.asyncio
+@pytest.mark.llm_call
 @_handle_project
 async def test_handle_ask_returns_status():
     """Ask should return information about the function status."""
@@ -530,6 +548,7 @@ async def test_handle_ask_returns_status():
 
 
 @pytest.mark.asyncio
+@pytest.mark.llm_call
 @_handle_project
 async def test_handle_done_property():
     """done() should reflect completion status."""
@@ -550,6 +569,7 @@ async def test_handle_done_property():
 
 
 @pytest.mark.asyncio
+@pytest.mark.llm_call
 @_handle_project
 async def test_handle_get_history_is_empty():
     """get_history() should return empty list for single function."""
@@ -571,6 +591,7 @@ async def test_handle_get_history_is_empty():
 
 
 @pytest.mark.asyncio
+@pytest.mark.llm_call
 @_handle_project
 async def test_handle_clarification_queues_none_when_not_provided():
     """Clarification queues should be None when not provided by caller."""
@@ -592,6 +613,7 @@ async def test_handle_clarification_queues_none_when_not_provided():
 
 
 @pytest.mark.asyncio
+@pytest.mark.llm_call
 @_handle_project
 async def test_handle_clarification_queues_forwarded_when_provided():
     """Clarification queues should be stored on the handle when provided by caller."""
@@ -620,6 +642,7 @@ async def test_handle_clarification_queues_forwarded_when_provided():
 
 
 @pytest.mark.asyncio
+@pytest.mark.llm_call
 @_handle_project
 async def test_handle_clarification_queues_none_when_disabled():
     """Clarification queues should be None when clarification_enabled=False, even if queues provided."""
@@ -654,6 +677,7 @@ async def test_handle_clarification_queues_none_when_disabled():
 
 
 @pytest.mark.asyncio
+@pytest.mark.llm_call
 @_handle_project
 async def test_parent_chat_context_injected_into_globals():
     """_parent_chat_context should be available as __parent_chat_context__ via bare name access."""
@@ -692,6 +716,7 @@ def read_parent_context() -> str:
 
 
 @pytest.mark.asyncio
+@pytest.mark.llm_call
 @_handle_project
 async def test_parent_chat_context_none_when_not_provided():
     """__parent_chat_context__ should be None when not provided by the caller."""
@@ -725,6 +750,7 @@ def check_no_context() -> str:
 
 
 @pytest.mark.asyncio
+@pytest.mark.llm_call
 @_handle_project
 async def test_clarification_queues_injected_into_globals():
     """Clarification queues should be available as __clarification_up_q__/__clarification_down_q__."""
@@ -768,6 +794,7 @@ def check_queues() -> str:
 
 
 @pytest.mark.asyncio
+@pytest.mark.llm_call
 @_handle_project
 async def test_clarification_queues_none_when_disabled():
     """Clarification queues should be None when clarification_enabled=False."""
@@ -814,6 +841,7 @@ def check_queues_disabled() -> str:
 
 @pytest.mark.asyncio
 @pytest.mark.eval
+@pytest.mark.llm_call
 @_handle_project
 async def test_arg_generation_single_string_param():
     """When no call_kwargs are provided and the function takes a query param,
@@ -849,6 +877,7 @@ def echo_query(query: str) -> str:
 
 @pytest.mark.asyncio
 @pytest.mark.eval
+@pytest.mark.llm_call
 @_handle_project
 async def test_arg_generation_skipped_when_kwargs_provided():
     """When explicit call_kwargs are provided, LLM generation should be skipped."""
@@ -881,6 +910,7 @@ def echo_query(query: str) -> str:
 
 
 @pytest.mark.asyncio
+@pytest.mark.llm_call
 @_handle_project
 async def test_arg_generation_skipped_for_no_params():
     """When the function takes no parameters, LLM generation should be skipped."""
@@ -913,6 +943,7 @@ def no_args_task() -> str:
 
 @pytest.mark.asyncio
 @pytest.mark.eval
+@pytest.mark.llm_call
 @_handle_project
 async def test_arg_generation_multiple_params():
     """LLM should generate multiple arguments when the function requires them."""
@@ -1063,6 +1094,7 @@ def cleanup_venvs():
 
 
 @pytest.mark.asyncio
+@pytest.mark.llm_call
 @_handle_project
 async def test_execute_function_in_custom_venv(cleanup_venvs):
     """Execute a function in a custom virtual environment via SingleFunctionActor."""
@@ -1093,6 +1125,7 @@ async def test_execute_function_in_custom_venv(cleanup_venvs):
 
 
 @pytest.mark.asyncio
+@pytest.mark.llm_call
 @_handle_project
 async def test_execute_venv_function_by_description(cleanup_venvs):
     """Find and execute a venv function by semantic search."""
@@ -1120,6 +1153,7 @@ async def test_execute_venv_function_by_description(cleanup_venvs):
 
 
 @pytest.mark.asyncio
+@pytest.mark.llm_call
 @_handle_project
 async def test_venv_function_error_handling(cleanup_venvs):
     """Errors in venv functions should propagate correctly."""
@@ -1153,6 +1187,7 @@ async def venv_error_function() -> str:
 
 
 @pytest.mark.asyncio
+@pytest.mark.llm_call
 @_handle_project
 async def test_venv_function_with_primitives_rpc(cleanup_venvs):
     """Function in venv should access primitives via RPC through the actor."""
@@ -1179,6 +1214,7 @@ async def test_venv_function_with_primitives_rpc(cleanup_venvs):
 
 
 @pytest.mark.asyncio
+@pytest.mark.llm_call
 @_handle_project
 async def test_venv_function_stop_cancels_subprocess(cleanup_venvs):
     """Stopping a venv function should terminate the subprocess."""
@@ -1216,6 +1252,7 @@ async def slow_venv_task() -> str:
 
 
 @pytest.mark.asyncio
+@pytest.mark.llm_call
 @_handle_project
 async def test_sync_function_in_venv(cleanup_venvs):
     """Sync functions should also work in custom venvs."""
@@ -1284,6 +1321,7 @@ async def failed_operation() -> dict:
 
 @pytest.mark.asyncio
 @pytest.mark.eval
+@pytest.mark.llm_call
 @_handle_project
 async def test_verification_passes_for_successful_function():
     """Verification should pass when function clearly succeeds."""
@@ -1311,6 +1349,7 @@ async def test_verification_passes_for_successful_function():
 
 @pytest.mark.asyncio
 @pytest.mark.eval
+@pytest.mark.llm_call
 @_handle_project
 async def test_verification_fails_for_failed_function():
     """Verification should fail when function returns failure indicators."""
@@ -1338,6 +1377,7 @@ async def test_verification_fails_for_failed_function():
 
 
 @pytest.mark.asyncio
+@pytest.mark.llm_call
 @_handle_project
 async def test_verification_disabled_by_default_when_verify_flag_false():
     """Verification should be skipped when function has verify=False."""
@@ -1376,6 +1416,7 @@ async def no_verify_task() -> str:
 
 @pytest.mark.asyncio
 @pytest.mark.eval
+@pytest.mark.llm_call
 @_handle_project
 async def test_verify_param_overrides_function_flag():
     """verify=True on act() should override function's verify=False."""
@@ -1411,6 +1452,7 @@ async def override_verify_task() -> dict:
 
 
 @pytest.mark.asyncio
+@pytest.mark.llm_call
 @_handle_project
 async def test_verify_false_skips_verification():
     """verify=False on act() should skip verification even if function has verify=True."""
@@ -1460,6 +1502,7 @@ async def verified_sum(a: int, b: int) -> dict:
 
 
 @pytest.mark.asyncio
+@pytest.mark.llm_call
 @_handle_project
 async def test_steerable_function_detected_and_forwarded():
     """A function returning a SteerableToolHandle should be detected via
@@ -1516,6 +1559,7 @@ async def steerable_workflow(goal: str):
 
 
 @pytest.mark.asyncio
+@pytest.mark.llm_call
 @_handle_project
 async def test_steerable_function_result_forwarded():
     """result() from a steerable function should forward to the inner handle."""
@@ -1558,6 +1602,7 @@ async def steerable_brief_response(message: str):
 
 
 @pytest.mark.asyncio
+@pytest.mark.llm_call
 @_handle_project
 async def test_steerable_function_stop_forwarded():
     """stop() on a steerable function should forward to the inner handle."""
@@ -1606,6 +1651,7 @@ async def steerable_slow_task(duration: int):
 
 
 @pytest.mark.asyncio
+@pytest.mark.llm_call
 @_handle_project
 async def test_non_steerable_function_not_marked_steerable():
     """A regular function should not be marked as steerable."""
@@ -1629,6 +1675,7 @@ async def test_non_steerable_function_not_marked_steerable():
 
 
 @pytest.mark.asyncio
+@pytest.mark.llm_call
 @_handle_project
 async def test_codeact_actor_compositional_function_steerable():
     """A compositional function wrapping CodeActActor should be steerable."""
@@ -1673,6 +1720,7 @@ async def codeact_workflow(goal: str):
 
 
 @pytest.mark.asyncio
+@pytest.mark.llm_call
 @_handle_project
 async def test_codeact_compositional_search_no_primitives_with_interjection():
     """Search for a CodeActActor compositional function (no primitives) and test interjection passthrough."""
@@ -1732,6 +1780,7 @@ async def counting_workflow(target: int):
 
 
 @pytest.mark.asyncio
+@pytest.mark.llm_call
 @_handle_project
 async def test_compositional_function_forwards_context_and_queues_to_inner_actor():
     """End-to-end: a compositional function reads the SFA-injected globals
@@ -1857,6 +1906,7 @@ async def compute_with_helper(a: int, b: int, c: int) -> int:
 
 
 @pytest.mark.asyncio
+@pytest.mark.llm_call
 @_handle_project
 async def test_dependency_resolution_by_id():
     """Execute a function that depends on another function, retrieving by ID."""
@@ -1880,6 +1930,7 @@ async def test_dependency_resolution_by_id():
 
 
 @pytest.mark.asyncio
+@pytest.mark.llm_call
 @_handle_project
 async def test_dependency_resolution_by_description():
     """Execute a function that depends on another function, retrieving by semantic search."""

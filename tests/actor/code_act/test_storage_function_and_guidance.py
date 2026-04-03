@@ -21,7 +21,7 @@ import pytest
 from unity.actor.code_act_actor import CodeActActor
 from unity.function_manager.function_manager import FunctionManager
 
-pytestmark = pytest.mark.eval
+pytestmark = [pytest.mark.eval, pytest.mark.llm_call]
 
 
 # ---------------------------------------------------------------------------

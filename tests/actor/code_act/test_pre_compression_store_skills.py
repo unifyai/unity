@@ -22,6 +22,8 @@ from unity.actor.code_act_actor import CodeActActor
 from unity.common.async_tool_loop import AsyncToolLoopHandle
 from unity.function_manager.function_manager import FunctionManager
 
+pytestmark = pytest.mark.llm_call
+
 
 class _StubGuidanceManager:
     """Minimal GuidanceManager stand-in with the methods the actor registers."""

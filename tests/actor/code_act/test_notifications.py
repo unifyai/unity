@@ -126,6 +126,7 @@ async def test_execute_code_notifications_with_notification_queue_in_named_state
 
 
 @pytest.mark.asyncio
+@pytest.mark.llm_call
 @pytest.mark.timeout(120)
 async def test_tool_loop_handle_next_notification():
     """
