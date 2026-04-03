@@ -6,7 +6,7 @@ from unity.contact_manager.contact_manager import ContactManager
 from tests.helpers import _handle_project, capture_events
 
 # All tests in this file require EventBus publishing to verify event behavior
-pytestmark = pytest.mark.enable_eventbus
+pytestmark = [pytest.mark.enable_eventbus, pytest.mark.llm_call]
 
 
 @pytest.mark.asyncio
