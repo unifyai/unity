@@ -192,6 +192,7 @@ class TestHookInstallation:
 
 
 @pytest.mark.asyncio
+@pytest.mark.llm_call
 @_handle_project
 async def test_llm_call_publishes_event():
     """A real LLM call should publish an event to EventBus."""
@@ -220,6 +221,7 @@ async def test_llm_call_publishes_event():
 
 
 @pytest.mark.asyncio
+@pytest.mark.llm_call
 @_handle_project
 async def test_llm_call_captures_full_response():
     """LLM events should include the full response dict."""
@@ -244,6 +246,7 @@ async def test_llm_call_captures_full_response():
 
 
 @pytest.mark.asyncio
+@pytest.mark.llm_call
 @_handle_project
 async def test_llm_call_with_tools():
     """LLM events should capture the full request including tools."""
@@ -278,6 +281,7 @@ async def test_llm_call_with_tools():
 
 
 @pytest.mark.asyncio
+@pytest.mark.llm_call
 @_handle_project
 async def test_multiple_sequential_llm_calls():
     """Multiple LLM calls should each publish their own events."""
@@ -305,6 +309,7 @@ async def test_multiple_sequential_llm_calls():
 
 
 @pytest.mark.asyncio
+@pytest.mark.llm_call
 @_handle_project
 async def test_llm_events_searchable_in_eventbus():
     """LLM events should be searchable after publishing."""
@@ -335,6 +340,7 @@ async def test_llm_events_searchable_in_eventbus():
 
 
 @pytest.mark.asyncio
+@pytest.mark.llm_call
 @_handle_project
 async def test_llm_event_includes_cost_fields():
     """LLM events should include provider_cost and billed_cost for cache misses."""
@@ -426,6 +432,7 @@ async def test_llm_events_in_search_by_type():
 
 
 @pytest.mark.asyncio
+@pytest.mark.llm_call
 @_handle_project
 async def test_hook_works_when_installed_from_different_thread():
     """LLM events should be captured when hook is installed from a worker thread.
@@ -477,6 +484,7 @@ async def test_hook_works_when_installed_from_different_thread():
 
 
 @pytest.mark.asyncio
+@pytest.mark.llm_call
 @_handle_project
 async def test_hook_works_when_installed_via_asyncio_to_thread():
     """LLM events should be captured when hook is installed via asyncio.to_thread.
