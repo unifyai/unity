@@ -116,6 +116,9 @@ class Assistant(Agent):
         elif channel == "whatsapp_call":
             self.utterance_event = InboundWhatsAppCallUtterance
             self.assistant_utterance_event = OutboundWhatsAppCallUtterance
+        elif channel == "google_meet":
+            self.utterance_event = InboundGoogleMeetUtterance
+            self.assistant_utterance_event = OutboundGoogleMeetUtterance
         else:
             self.utterance_event = InboundUnifyMeetUtterance
             self.assistant_utterance_event = OutboundUnifyMeetUtterance
@@ -467,6 +470,9 @@ async def entrypoint(ctx: agents.JobContext):
     elif channel == "whatsapp_call":
         user_utterance_event = InboundWhatsAppCallUtterance
         assistant_utterance_event = OutboundWhatsAppCallUtterance
+    elif channel == "google_meet":
+        user_utterance_event = InboundGoogleMeetUtterance
+        assistant_utterance_event = OutboundGoogleMeetUtterance
     else:
         user_utterance_event = InboundUnifyMeetUtterance
         assistant_utterance_event = OutboundUnifyMeetUtterance

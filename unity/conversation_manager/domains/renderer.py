@@ -605,6 +605,8 @@ class Renderer:
                 "notification that the VM is ready. If a user asks you to do "
                 "something on the computer, let them know you will action it "
                 "in just a moment.\n"
+                "Note: join_google_meet does NOT depend on the desktop VM — "
+                "it uses a local browser and is available immediately.\n"
                 "</infrastructure>",
             )
 

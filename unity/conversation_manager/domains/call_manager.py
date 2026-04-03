@@ -7,6 +7,7 @@ import subprocess
 from pathlib import Path
 from typing import TYPE_CHECKING, Callable
 
+import aiohttp
 from livekit.api import CreateAgentDispatchRequest, LiveKitAPI
 
 from unity.contact_manager.types.contact import UNASSIGNED
@@ -25,6 +26,20 @@ from unity.helpers import (
 
 if TYPE_CHECKING:
     from unity.conversation_manager.in_memory_event_broker import InMemoryEventBroker
+    from unity.conversation_manager.medium_scripts.audio_bridge import AudioBridge
+
+
+def _resolve_agent_service_url() -> str:
+    """Resolve agent-service base URL (same logic as common.py)."""
+    from unity.session_details import SESSION_DETAILS
+
+    desktop_url = SESSION_DETAILS.assistant.desktop_url
+    if desktop_url:
+        from urllib.parse import urlparse
+
+        parsed = urlparse(desktop_url)
+        return f"{parsed.scheme}://{parsed.netloc}/api"
+    return "http://localhost:3000"
 
 
 def make_room_name(assistant_id: str, medium: str) -> str:
@@ -83,6 +98,12 @@ class LivekitCallManager:
         self._disconnect_contact: dict | None = None
         self._boss_notification_task: asyncio.Task | None = None
         self._worker_watchdog_task: asyncio.Task | None = None
+        # Google Meet state
+        self._gmeet_session_id: str | None = None
+        self._gmeet_audio_bridge: AudioBridge | None = None
+        self._gmeet_monitor_task: asyncio.Task | None = None
+        self.google_meet_start_timestamp = None
+        self.google_meet_exchange_id = UNASSIGNED
 
     def set_config(self, config: CallConfig):
         self.assistant_id = config.assistant_id
@@ -346,6 +367,173 @@ class LivekitCallManager:
                 False,
             )
 
+    # ------------------------------------------------------------------
+    # Google Meet lifecycle
+    # ------------------------------------------------------------------
+
+    @property
+    def has_active_google_meet(self) -> bool:
+        return self._gmeet_session_id is not None
+
+    async def start_google_meet(
+        self,
+        meet_url: str,
+        contact: dict,
+        boss: dict,
+        display_name: str = "",
+    ) -> None:
+        """Join a Google Meet via agent-service browser and start the audio bridge.
+
+        1. POST /googlemeet/join on agent-service to launch browser + automation.
+        2. Start audio bridge (PulseAudio <-> LiveKit).
+        3. Dispatch a fast brain job into the same LiveKit room.
+        4. Kick off a background monitor that polls /googlemeet/state and
+           publishes GoogleMeetEnded when the meeting terminates.
+        """
+        if self.has_active_call or self.has_active_google_meet:
+            LOGGER.warning(
+                f"{ICONS['ipc']} [LivekitCallManager] start_google_meet ignored: "
+                "session already active",
+            )
+            return
+
+        self._call_channel = "google_meet"
+        self._disconnect_contact = contact
+
+        display_name = display_name or self.assistant_name or "Unity Assistant"
+
+        base_url = _resolve_agent_service_url()
+        auth_key = os.environ.get("UNIFY_KEY", "")
+
+        async with aiohttp.ClientSession() as session:
+            resp = await session.post(
+                f"{base_url}/googlemeet/join",
+                json={"meetUrl": meet_url, "displayName": display_name},
+                headers={"authorization": f"Bearer {auth_key}"},
+                timeout=aiohttp.ClientTimeout(total=120),
+            )
+            body = await resp.json()
+
+        if resp.status != 200:
+            LOGGER.error(
+                f"{ICONS['ipc']} [LivekitCallManager] Google Meet join failed: {body}",
+            )
+            return
+
+        self._gmeet_session_id = body.get("sessionId")
+        LOGGER.info(
+            f"{ICONS['ipc']} [LivekitCallManager] Google Meet joined "
+            f"(session={self._gmeet_session_id})",
+        )
+
+        room_name = make_room_name(self.assistant_id, "gmeet")
+        self.room_name = room_name
+
+        from unity.conversation_manager.medium_scripts.audio_bridge import AudioBridge
+
+        self._gmeet_audio_bridge = AudioBridge(room_name=room_name)
+        await self._gmeet_audio_bridge.start()
+
+        await self._ensure_socket_server()
+        if self._socket_server:
+            await self._socket_server.set_forward_channels(list(_BASE_FORWARD_CHANNELS))
+
+        is_boss = contact.get("contact_id") == 1
+        if is_boss:
+            self._start_boss_notification_rendering()
+
+        if self._worker_proc is not None and self._worker_proc.poll() is None:
+            await self._dispatch_job(room_name, "google_meet", contact, boss, False)
+        else:
+            await self._start_call_subprocess(
+                room_name,
+                "google_meet",
+                contact,
+                boss,
+                False,
+            )
+
+        self._gmeet_monitor_task = asyncio.create_task(
+            self._monitor_google_meet(contact),
+        )
+
+    async def _monitor_google_meet(self, contact: dict) -> None:
+        """Poll agent-service /googlemeet/state and publish GoogleMeetEnded
+        when the meeting terminates or the assistant is removed."""
+        base_url = _resolve_agent_service_url()
+        auth_key = os.environ.get("UNIFY_KEY", "")
+
+        try:
+            async with aiohttp.ClientSession() as session:
+                while self._gmeet_session_id:
+                    await asyncio.sleep(3)
+                    try:
+                        resp = await session.get(
+                            f"{base_url}/googlemeet/state",
+                            params={"sessionId": self._gmeet_session_id},
+                            headers={"authorization": f"Bearer {auth_key}"},
+                            timeout=aiohttp.ClientTimeout(total=10),
+                        )
+                        if resp.status != 200:
+                            continue
+                        body = await resp.json()
+                    except Exception:
+                        continue
+
+                    status = body.get("status", "")
+                    if status in ("ended", "removed", "error"):
+                        LOGGER.info(
+                            f"{ICONS['ipc']} [LivekitCallManager] Google Meet "
+                            f"ended (status={status})",
+                        )
+                        event = GoogleMeetEnded(contact=contact)
+                        if self._event_broker:
+                            await self._event_broker.publish(
+                                event.topic,
+                                event.to_json(),
+                            )
+                        return
+        except asyncio.CancelledError:
+            pass
+
+    async def cleanup_google_meet(self) -> None:
+        """Leave the Google Meet session and tear down the audio bridge."""
+        session_id = self._gmeet_session_id
+        self._gmeet_session_id = None
+        self.google_meet_start_timestamp = None
+        self.google_meet_exchange_id = UNASSIGNED
+
+        if self._gmeet_monitor_task and not self._gmeet_monitor_task.done():
+            self._gmeet_monitor_task.cancel()
+            try:
+                await self._gmeet_monitor_task
+            except asyncio.CancelledError:
+                pass
+        self._gmeet_monitor_task = None
+
+        if self._gmeet_audio_bridge:
+            await self._gmeet_audio_bridge.stop()
+            self._gmeet_audio_bridge = None
+
+        if session_id:
+            base_url = _resolve_agent_service_url()
+            auth_key = os.environ.get("UNIFY_KEY", "")
+            try:
+                async with aiohttp.ClientSession() as session:
+                    await session.post(
+                        f"{base_url}/googlemeet/leave",
+                        json={"sessionId": session_id},
+                        headers={"authorization": f"Bearer {auth_key}"},
+                        timeout=aiohttp.ClientTimeout(total=30),
+                    )
+            except Exception as exc:
+                LOGGER.warning(
+                    f"{ICONS['ipc']} [LivekitCallManager] "
+                    f"Error leaving Google Meet: {exc}",
+                )
+
+        await self.cleanup_call_proc()
+
     async def _start_call_subprocess(
         self,
         room_name: str,
@@ -402,6 +590,8 @@ class LivekitCallManager:
         channel = self._call_channel or "phone_call"
         if channel == "whatsapp_call":
             event = WhatsAppCallEnded(contact=contact)
+        elif channel == "google_meet":
+            event = GoogleMeetEnded(contact=contact)
         elif channel == "phone_call":
             event = PhoneCallEnded(contact=contact)
         else:

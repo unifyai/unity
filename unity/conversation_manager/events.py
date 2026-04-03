@@ -234,6 +234,58 @@ class UnifyMeetEnded(Event):
 
 
 @dataclass
+class GoogleMeetReceived(Event):
+    """A request to join a Google Meet call via browser."""
+
+    topic: ClassVar[str | None] = "app:comms:googlemeet_received"
+    prominent: ClassVar[bool] = True
+
+    contact: dict
+    meet_url: str
+
+
+@dataclass
+class GoogleMeetStarted(Event):
+    """The Google Meet browser session is active and audio bridge is running."""
+
+    topic: ClassVar[str | None] = "app:comms:googlemeet_started"
+    prominent: ClassVar[bool] = True
+
+    contact: dict
+
+
+@dataclass
+class GoogleMeetEnded(Event):
+    """The Google Meet browser session has ended."""
+
+    topic: ClassVar[str | None] = "app:comms:googlemeet_ended"
+    prominent: ClassVar[bool] = True
+
+    contact: dict
+
+
+@dataclass
+class InboundGoogleMeetUtterance(Event):
+    """Utterance received from a participant during a Google Meet call."""
+
+    topic: ClassVar[str | None] = "app:comms:googlemeet_utterance"
+
+    contact: dict
+    content: str
+    speaker_label: str | None = None
+
+
+@dataclass
+class OutboundGoogleMeetUtterance(Event):
+    """Utterance sent by the assistant during a Google Meet call."""
+
+    topic: ClassVar[str | None] = "app:comms:googlemeet_utterance"
+
+    contact: dict
+    content: str
+
+
+@dataclass
 class RecordingReady(Event):
     """A call/meet recording has been processed and is available in GCS."""
 

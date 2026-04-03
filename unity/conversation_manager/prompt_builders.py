@@ -145,7 +145,8 @@ def _build_phone_scenarios(phone_number: str | None) -> str:
     if not phone_number:
         return ""
     return """- If my boss asks me to call someone while I am on a call with them, I should make the call AFTER the call ends — attempting to make a call while on a call will result in an error.
-- If my boss asks me to call someone, I must inform them that I am about to call the person before actually calling them, something like "Sure, will call them now!"."""
+- If my boss asks me to call someone, I must inform them that I am about to call the person before actually calling them, something like "Sure, will call them now!".
+- Calls and Google Meet sessions are mutually exclusive — I cannot join a Google Meet while on a call, or make a call while in a Google Meet. If asked, I should let my boss know I will do it after the current session ends."""
 
 
 def _build_missing_phone_notice(assistant_has_phone: bool) -> str:
@@ -194,6 +195,9 @@ def _build_comms_tool_listing(
             "If call permission hasn't been granted yet, a call invite is sent instead — "
             "the contact sees a 'Call now' button and the call connects when they tap it.",
         )
+    lines.append(
+        "- `join_google_meet`: Join a Google Meet call via browser automation (provide the Meet URL)",
+    )
     return "\n".join(lines)
 
 
@@ -305,9 +309,9 @@ def build_system_prompt(
     )
     sms_call_note = (
         " I can send SMS while on a call, but I cannot make a new call"
-        " while already on one."
+        " or join a Google Meet while already on one (and vice versa)."
         if assistant_has_phone
-        else ""
+        else " I cannot make a call and join a Google Meet at the same time."
     )
     input_format_example = _build_input_format_example()
 
@@ -1174,7 +1178,8 @@ def build_voice_agent_prompt(
         Whether the assistant is operating in demo mode (pre-signup).
     channel : str
         Voice session medium: ``"phone"`` for a regular phone call,
-        ``"meet"`` for a Unify Meet video call.
+        ``"unify_meet"`` for a Unify Meet video call,
+        ``"google_meet"`` for a Google Meet call joined via browser.
 
     Returns
     -------
@@ -1214,9 +1219,10 @@ def build_voice_agent_prompt(
     parts = PromptParts()
 
     # Context
-    call_description = (
-        "a Unify Meet video call" if channel == "unify_meet" else "a phone call"
-    )
+    call_description = {
+        "unify_meet": "a Unify Meet video call",
+        "google_meet": "a Google Meet call (joined via browser — participants may include people I don't know)",
+    }.get(channel, "a phone call")
     parts.add(
         f"""{name_intro} {call_description} with {caller_description}. The call is live — anything I say is heard by the caller immediately.
 I never reference internal systems, backends, or notifications.

@@ -36,6 +36,7 @@ class Medium(StrEnum):
     WHATSAPP_MESSAGE = "whatsapp_message"
     WHATSAPP_CALL = "whatsapp_call"
     PHONE_CALL = "phone_call"
+    GOOGLE_MEET = "google_meet"
     API_MESSAGE = "api_message"
 
     @property
@@ -90,6 +91,11 @@ MEDIUM_REGISTRY: dict[Medium, MediumInfo] = {
         value=Medium.PHONE_CALL,
         description="A standard telephonic voice call.",
         mode=Mode.CALL,
+    ),
+    Medium.GOOGLE_MEET: MediumInfo(
+        value=Medium.GOOGLE_MEET,
+        description="A voice/video meeting conducted via Google Meet, joined by browser.",
+        mode=Mode.MEET,
     ),
     Medium.API_MESSAGE: MediumInfo(
         value=Medium.API_MESSAGE,

@@ -21,6 +21,8 @@ from unity.conversation_manager.events import (
     UnifyMeetReceived,
     UnifyMeetEnded,
     UnifyMeetStarted,
+    GoogleMeetStarted,
+    GoogleMeetEnded,
     InboundPhoneUtterance,
     InboundUnifyMeetUtterance,
     InboundWhatsAppCallUtterance,
@@ -421,6 +423,8 @@ async def publish_call_started(contact: dict, channel: str) -> None:
         event = PhoneCallStarted(contact=contact)
     elif channel == "whatsapp_call":
         event = WhatsAppCallStarted(contact=contact)
+    elif channel == "google_meet":
+        event = GoogleMeetStarted(contact=contact)
     else:
         event = UnifyMeetStarted(contact=contact)
     await event_broker.publish(event.topic, event.to_json())
@@ -431,6 +435,8 @@ async def publish_call_ended(contact: dict, channel: str) -> None:
         event = PhoneCallEnded(contact=contact)
     elif channel == "whatsapp_call":
         event = WhatsAppCallEnded(contact=contact)
+    elif channel == "google_meet":
+        event = GoogleMeetEnded(contact=contact)
     else:
         event = UnifyMeetEnded(contact=contact)
     await event_broker.publish(event.topic, event.to_json())

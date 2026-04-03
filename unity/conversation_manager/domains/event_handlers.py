@@ -308,9 +308,47 @@ async def _(event: CallInitEvents, cm: "ConversationManager", *args, **kwargs):
     )
 
 
-@EventHandler.register((PhoneCallStarted, UnifyMeetStarted, WhatsAppCallStarted))
+@EventHandler.register(GoogleMeetReceived)
 async def _(
-    event: PhoneCallStarted | UnifyMeetStarted | WhatsAppCallStarted,
+    event: GoogleMeetReceived,
+    cm: "ConversationManager",
+    *args,
+    **kwargs,
+):
+    """Handle request to join a Google Meet — spawn browser + audio bridge."""
+    if cm.mode.is_voice or cm.call_manager.has_active_google_meet:
+        return
+
+    boss = cm.contact_index.get_contact(contact_id=1)
+    contact = boss
+
+    contact_id = contact.get("contact_id") if contact else 1
+    sender_name = _get_sender_name(contact)
+
+    await cm.call_manager.start_google_meet(
+        meet_url=event.meet_url,
+        contact=contact,
+        boss=boss,
+    )
+
+    cm.notifications_bar.push_notif(
+        "Comms",
+        f"Joining Google Meet...",
+        event.timestamp,
+    )
+    cm.contact_index.push_message(
+        contact_id=contact_id,
+        sender_name=sender_name,
+        thread_name=Medium.GOOGLE_MEET,
+        message_content="<Joining Google Meet...>",
+        role="assistant",
+        timestamp=event.timestamp,
+    )
+
+
+@EventHandler.register((PhoneCallStarted, UnifyMeetStarted, GoogleMeetStarted, WhatsAppCallStarted))
+async def _(
+    event: PhoneCallStarted | UnifyMeetStarted | GoogleMeetStarted | WhatsAppCallStarted,
     cm: "ConversationManager",
     *args,
     **kwargs,
@@ -319,6 +357,10 @@ async def _(
         cm.mode = Mode.CALL
         phone_number = event.contact["phone_number"]
         contact = cm.contact_index.get_contact(phone_number=phone_number)
+    elif isinstance(event, GoogleMeetStarted):
+        cm.mode = Mode.MEET
+        contact_id = event.contact.get("contact_id")
+        contact = cm.contact_index.get_contact(contact_id=contact_id)
     else:
         cm.mode = Mode.MEET
         contact_id = event.contact.get("contact_id")
@@ -333,23 +375,29 @@ async def _(
     cm.call_manager.call_contact = contact
     if isinstance(event, (PhoneCallStarted, WhatsAppCallStarted)):
         cm.call_manager.call_start_timestamp = event.timestamp
-    else:
+        label = "Phone Call" if isinstance(event, PhoneCallStarted) else "WhatsApp Call"
+    elif isinstance(event, GoogleMeetStarted):
+        cm.call_manager.google_meet_start_timestamp = event.timestamp
+        label = "Google Meet"
+    elif isinstance(event, UnifyMeetStarted):
         cm.call_manager.unify_meet_start_timestamp = event.timestamp
-    label = "WhatsApp Call" if isinstance(event, WhatsAppCallStarted) else "Phone Call"
+        label = "Unify Meet"
+    else:
+        raise ValueError(f"Unknown event type: {event.__class__.__name__}")
+    
     cm.notifications_bar.push_notif(
         "Comms",
         f"{label} started with {sender_name}",
         timestamp=event.timestamp,
     )
-    medium = (
-        Medium.UNIFY_MEET
-        if isinstance(event, UnifyMeetStarted)
-        else (
-            Medium.WHATSAPP_CALL
-            if isinstance(event, WhatsAppCallStarted)
-            else Medium.PHONE_CALL
-        )
-    )
+    if isinstance(event, GoogleMeetStarted):
+        medium = Medium.GOOGLE_MEET
+    elif isinstance(event, PhoneCallStarted):
+        medium = Medium.PHONE_CALL
+    elif isinstance(event, WhatsAppCallStarted):
+        medium = Medium.WHATSAPP_CALL
+    else:
+        medium = Medium.UNIFY_MEET
     cm.contact_index.push_message(
         contact_id=contact_id,
         sender_name=sender_name,
@@ -627,6 +675,8 @@ async def _(
         OutboundPhoneUtterance,
         OutboundUnifyMeetUtterance,
         OutboundWhatsAppCallUtterance,
+        InboundGoogleMeetUtterance,
+        OutboundGoogleMeetUtterance,
     ),
 )
 async def _(event: Event, cm: "ConversationManager", *args, **kwargs):
@@ -646,15 +696,22 @@ async def _(event: Event, cm: "ConversationManager", *args, **kwargs):
         event,
         (InboundWhatsAppCallUtterance, OutboundWhatsAppCallUtterance),
     )
+    is_google_meet = isinstance(
+        event,
+        (InboundGoogleMeetUtterance, OutboundGoogleMeetUtterance),
+    )
     is_unify_meet = isinstance(
         event,
         (InboundUnifyMeetUtterance, OutboundUnifyMeetUtterance),
     )
-    medium = (
-        Medium.WHATSAPP_CALL
-        if is_whatsapp_call
-        else (Medium.UNIFY_MEET if is_unify_meet else Medium.PHONE_CALL)
-    )
+    if is_google_meet:
+        medium = Medium.GOOGLE_MEET
+    elif is_unify_meet:
+        medium = Medium.UNIFY_MEET
+    elif is_whatsapp_call:
+        medium = Medium.WHATSAPP_CALL
+    else:
+        medium = Medium.PHONE_CALL
     message_id = cm.contact_index.push_message(
         contact_id=contact_id,
         sender_name=sender_name,
@@ -706,15 +763,14 @@ async def _(
         contact = event.contact or {}
     sender_name = _get_sender_name(contact)
 
-    medium = (
-        Medium.UNIFY_MEET
-        if cm.mode == Mode.MEET
-        else (
-            Medium.WHATSAPP_CALL
-            if cm.call_manager._call_channel == "whatsapp_call"
-            else Medium.PHONE_CALL
-        )
-    )
+    if cm.call_manager.has_active_google_meet:
+        medium = Medium.GOOGLE_MEET
+    elif cm.mode == Mode.MEET:
+        medium = Medium.UNIFY_MEET
+    elif cm.call_manager._call_channel == "whatsapp_call":
+        medium = Medium.WHATSAPP_CALL
+    else:
+        medium = Medium.PHONE_CALL
     cm.contact_index.push_message(
         contact_id=contact_id,
         sender_name=sender_name,
@@ -727,9 +783,9 @@ async def _(
         await cm.schedule_proactive_speech()
 
 
-@EventHandler.register((PhoneCallEnded, UnifyMeetEnded, WhatsAppCallEnded))
+@EventHandler.register((PhoneCallEnded, UnifyMeetEnded, GoogleMeetEnded, WhatsAppCallEnded))
 async def _(
-    event: PhoneCallEnded | UnifyMeetEnded | WhatsAppCallEnded,
+    event: PhoneCallEnded | UnifyMeetEnded | GoogleMeetEnded | WhatsAppCallEnded,
     cm: "ConversationManager",
     *args,
     **kwargs,
@@ -744,6 +800,14 @@ async def _(
                 {"conference_name": cm.call_manager.conference_name},
             )
             cm._recording_exchange_ids[cm.call_manager.conference_name] = exchange_id
+    elif isinstance(event, GoogleMeetEnded):
+        exchange_id = cm.call_manager.google_meet_exchange_id
+        if exchange_id != UNASSIGNED and cm.call_manager.room_name:
+            cm.transcript_manager.update_exchange_metadata(
+                exchange_id,
+                {"room_name": cm.call_manager.room_name},
+            )
+            cm._recording_exchange_ids[cm.call_manager.room_name] = exchange_id
     else:
         exchange_id = cm.call_manager.unify_meet_exchange_id
         if exchange_id != UNASSIGNED and cm.call_manager.room_name:
@@ -755,7 +819,8 @@ async def _(
 
     cm.mode = Mode.TEXT
     cm.call_manager.call_contact = None
-    if isinstance(event, UnifyMeetEnded):
+
+    if isinstance(event, (UnifyMeetEnded, GoogleMeetEnded)):
         contact_id = event.contact.get("contact_id")
         contact = cm.contact_index.get_contact(contact_id=contact_id)
     else:
@@ -773,7 +838,10 @@ async def _(
     if conv_state:
         conv_state.on_call = False
 
-    await cm.call_manager.cleanup_call_proc()
+    if isinstance(event, GoogleMeetEnded):
+        await cm.call_manager.cleanup_google_meet()
+    else:
+        await cm.call_manager.cleanup_call_proc()
     await cm.cancel_proactive_speech()
     await _cleanup_computer_sessions(cm)
 

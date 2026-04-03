@@ -1507,6 +1507,41 @@ class ConversationManagerBrainActionTools:
                 "you will be briefed with the context you provided."
             ),
         }
+    
+    async def join_google_meet(
+        self,
+        meet_url: str,
+        context: str = "",
+    ) -> dict[str, Any]:
+        """Join a Google Meet call via browser automation.
+
+        The assistant joins the specified Google Meet as a browser participant,
+        establishing an audio bridge so it can listen and speak in the meeting.
+
+        Args:
+            meet_url: The full Google Meet URL (e.g. https://meet.google.com/abc-defg-hij).
+            context: Briefing for the voice agent about the meeting purpose,
+                expected participants, topics to cover, and how to behave.
+                Same guidance principles as make_call's context parameter.
+        """
+        if (
+            self._cm.call_manager.has_active_call
+            or self._cm.call_manager.has_active_google_meet
+        ):
+            return {
+                "status": "error",
+                "message": "A call or meeting is already active.",
+            }
+
+        if context:
+            self._cm.call_manager.initial_notification = context
+
+        from unity.conversation_manager.events import GoogleMeetReceived
+
+        boss = self._cm.contact_index.get_contact(contact_id=1) or {}
+        event = GoogleMeetReceived(contact=boss, meet_url=meet_url)
+        await self._event_broker.publish(event.topic, event.to_json())
+        return {"status": "ok", "message": f"Joining Google Meet at {meet_url}"}
 
     async def act(
         self,
@@ -2303,16 +2338,20 @@ class ConversationManagerBrainActionTools:
             "send_api_response": self.send_api_response,
             "wait": self.wait,
         }
-        call_in_progress = (
-            self._cm.mode.is_voice or self._cm.call_manager._call_proc is not None
+        call_or_meet_in_progress = (
+            self._cm.mode.is_voice
+            or self._cm.call_manager._call_proc is not None
+            or self._cm.call_manager.has_active_google_meet
         )
+        if not call_or_meet_in_progress:
+            tools["join_google_meet"] = self.join_google_meet
         if self._cm.assistant_number:
             tools["send_sms"] = self.send_sms
-            if not call_in_progress:
+            if not call_or_meet_in_progress:
                 tools["make_call"] = self.make_call
         if self._cm.assistant_whatsapp_number:
             tools["send_whatsapp"] = self.send_whatsapp
-            if not call_in_progress:
+            if not call_or_meet_in_progress:
                 tools["make_whatsapp_call"] = self.make_whatsapp_call
         if self._cm.assistant_email:
             tools["send_email"] = self.send_email
