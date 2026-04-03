@@ -77,6 +77,9 @@ class ProactiveSpeech:
         Returns (decision, llm_log_path) where llm_log_path is the unillm
         request+response file for the LLM call that produced this decision.
         """
+        if not chat_history:
+            return ProactiveDecision(should_speak=False), ""
+
         try:
             client = new_llm_client(
                 origin="ProactiveSpeech",

@@ -7,8 +7,16 @@ os.environ["UNITY_TERMINAL_LOG"] = "true"
 
 from dotenv import load_dotenv
 
-from livekit import agents
-from livekit.agents import AgentSession, Agent, RoomInputOptions
+from livekit import agents, rtc
+from livekit.agents import (
+    AgentSession,
+    Agent,
+    RoomInputOptions,
+    utils,
+    tokenize,
+    tts,
+    stt,
+)
 from livekit.plugins import (
     cartesia,
     deepgram,
@@ -182,6 +190,124 @@ class Assistant(Agent):
                 yield chunk
         finally:
             self.user_turn_generating = False
+
+    async def stt_node(
+        self,
+        audio: AsyncIterable[rtc.AudioFrame],
+        model_settings: ModelSettings,
+    ):
+        if self.channel != "google_meet":
+            async for event in super().stt_node(audio, model_settings):
+                yield event
+            return
+
+        import sounddevice as sd
+        import numpy as np
+
+        activity = self._get_activity_or_raise()
+        assert activity.stt is not None
+
+        wrapped_stt = activity.stt
+        if not activity.stt.capabilities.streaming:
+            if not activity.vad:
+                raise RuntimeError(
+                    "STT does not support streaming and no VAD is available",
+                )
+            wrapped_stt = stt.StreamAdapter(stt=wrapped_stt, vad=activity.vad)
+
+        _RATE = 16000
+
+        async def _audio_from_meet_mic():
+            q: asyncio.Queue[bytes] = asyncio.Queue()
+            loop = asyncio.get_event_loop()
+
+            def _callback(indata, frames, time_info, status):
+                pcm = (indata * 32767).astype(np.int16).tobytes()
+                loop.call_soon_threadsafe(q.put_nowait, pcm)
+
+            stream = sd.InputStream(
+                channels=1,
+                samplerate=_RATE,
+                dtype="float32",
+                blocksize=1024,
+                callback=_callback,
+            )
+            with stream:
+                while True:
+                    pcm = await q.get()
+                    samples = len(pcm) // 2
+                    yield rtc.AudioFrame(
+                        data=pcm,
+                        sample_rate=_RATE,
+                        num_channels=1,
+                        samples_per_channel=samples,
+                    )
+
+        async with wrapped_stt.stream() as stt_stream:
+
+            async def _forward():
+                async for frame in _audio_from_meet_mic():
+                    stt_stream.push_frame(frame)
+
+            fwd = asyncio.create_task(_forward())
+            try:
+                async for event in stt_stream:
+                    yield event
+            finally:
+                await utils.aio.cancel_and_wait(fwd)
+
+    async def tts_node(
+        self,
+        text: AsyncIterable[str],
+        model_settings: ModelSettings,
+    ) -> AsyncIterable:
+        if self.channel != "google_meet":
+            async for frame in super().tts_node(text, model_settings):
+                yield frame
+            return
+
+        import sounddevice as sd
+        import numpy as np
+
+        activity = self._get_activity_or_raise()
+        assert activity.tts is not None
+
+        wrapped_tts = activity.tts
+        if not activity.tts.capabilities.streaming:
+            wrapped_tts = tts.StreamAdapter(
+                tts=wrapped_tts,
+                sentence_tokenizer=tokenize.basic.SentenceTokenizer(),
+            )
+
+        async with wrapped_tts.stream() as tts_stream:
+
+            async def _forward_input():
+                async for chunk in text:
+                    tts_stream.push_text(chunk)
+                tts_stream.end_input()
+
+            fwd = asyncio.create_task(_forward_input())
+            try:
+                out_stream = None
+                async for ev in tts_stream:
+                    frame = ev.frame
+                    if out_stream is None:
+                        out_stream = sd.OutputStream(
+                            samplerate=frame.sample_rate,
+                            channels=frame.num_channels,
+                            dtype="int16",
+                            latency="low",
+                        )
+                        out_stream.start()
+                    audio_arr = np.frombuffer(frame.data, dtype=np.int16)
+                    if frame.num_channels > 1:
+                        audio_arr = audio_arr.reshape(-1, frame.num_channels)
+                    await asyncio.to_thread(out_stream.write, audio_arr)
+                if out_stream is not None:
+                    out_stream.stop()
+                    out_stream.close()
+            finally:
+                await utils.aio.cancel_and_wait(fwd)
 
 
 def _load_config_from_metadata(ctx: agents.JobContext) -> dict | None:
@@ -877,14 +1003,6 @@ async def entrypoint(ctx: agents.JobContext):
         noise_cancellation=(
             noise_cancellation.BVC() if sys.platform == "darwin" else None
         ),
-        **(
-            {
-                "participant_identity": "browser-audio-bridge",
-                "close_on_disconnect": False,
-            }
-            if channel == "google_meet"
-            else {}
-        ),
     )
 
     # Publish call started (shared helper)
@@ -1283,16 +1401,17 @@ async def entrypoint(ctx: agents.JobContext):
         _log.call_status("call_answered (arrived during init)")
         assistant.set_call_received()
 
-    _log.session_start("Starting AgentSession")
-    await session.start(room=ctx.room, agent=assistant, room_input_options=rio)
-
-    # Hydrate historical context from EventBus into the fast brain.
-    history_lines = await hydrate_fast_brain_history(
-        participant_ids=participant_ids,
-        is_boss_user=is_boss_user,
-        assistant_name=assistant_name or "Assistant",
-        limit=SETTINGS.conversation.FAST_BRAIN_CONTEXT_WINDOW,
+    _log.session_start("Starting AgentSession + history hydration (parallel)")
+    history_task = asyncio.create_task(
+        hydrate_fast_brain_history(
+            participant_ids=participant_ids,
+            is_boss_user=is_boss_user,
+            assistant_name=assistant_name or "Assistant",
+            limit=SETTINGS.conversation.FAST_BRAIN_CONTEXT_WINDOW,
+        ),
     )
+    await session.start(room=ctx.room, agent=assistant, room_input_options=rio)
+    history_lines = await history_task
     if history_lines:
         history_block = (
             "--- Recent conversation history ---\n"

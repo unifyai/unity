@@ -26,7 +26,6 @@ from unity.helpers import (
 
 if TYPE_CHECKING:
     from unity.conversation_manager.in_memory_event_broker import InMemoryEventBroker
-    from unity.conversation_manager.medium_scripts.audio_bridge import AudioBridge
 
 
 def _resolve_agent_service_url() -> str:
@@ -100,7 +99,6 @@ class LivekitCallManager:
         self._worker_watchdog_task: asyncio.Task | None = None
         # Google Meet state
         self._gmeet_session_id: str | None = None
-        self._gmeet_audio_bridge: AudioBridge | None = None
         self._gmeet_monitor_task: asyncio.Task | None = None
         self.google_meet_start_timestamp = None
         self.google_meet_exchange_id = UNASSIGNED
@@ -408,6 +406,13 @@ class LivekitCallManager:
         base_url = _resolve_agent_service_url()
         auth_key = os.environ.get("UNIFY_KEY", "")
 
+        room_name = make_room_name(self.assistant_id, "gmeet")
+        self.room_name = room_name
+
+        # Socket server in parallel with the browser join
+        # (the slowest step, ~30-60s of LLM-guided UI automation).
+        socket_task = asyncio.create_task(self._ensure_socket_server())
+
         async with aiohttp.ClientSession() as session:
             resp = await session.post(
                 f"{base_url}/googlemeet/join",
@@ -421,6 +426,7 @@ class LivekitCallManager:
             LOGGER.error(
                 f"{ICONS['ipc']} [LivekitCallManager] Google Meet join failed: {body}",
             )
+            socket_task.cancel()
             return
 
         self._gmeet_session_id = body.get("sessionId")
@@ -429,16 +435,7 @@ class LivekitCallManager:
             f"(session={self._gmeet_session_id})",
         )
 
-        room_name = make_room_name(self.assistant_id, "gmeet")
-        self.room_name = room_name
-
-        from unity.conversation_manager.medium_scripts.audio_bridge import AudioBridge
-
-        self._gmeet_audio_bridge = AudioBridge(room_name=room_name)
-        await self._gmeet_audio_bridge.start()
-        # await self._gmeet_audio_bridge.force_browser_audio_routing()
-
-        await self._ensure_socket_server()
+        await socket_task
         if self._socket_server:
             await self._socket_server.set_forward_channels(list(_BASE_FORWARD_CHANNELS))
 
@@ -527,10 +524,6 @@ class LivekitCallManager:
             except asyncio.CancelledError:
                 pass
         self._gmeet_monitor_task = None
-
-        if self._gmeet_audio_bridge:
-            await self._gmeet_audio_bridge.stop()
-            self._gmeet_audio_bridge = None
 
         if session_id:
             base_url = _resolve_agent_service_url()
