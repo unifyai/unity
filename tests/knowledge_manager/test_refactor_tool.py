@@ -28,6 +28,8 @@ from unity.knowledge_manager.knowledge_manager import KnowledgeManager
 # helper – spins up an isolated temporary Unify project
 from tests.helpers import _handle_project
 
+pytestmark = pytest.mark.llm_call
+
 # --------------------------------------------------------------------------- #
 #  refactor()                                                                #
 # --------------------------------------------------------------------------- #

@@ -48,6 +48,7 @@ def test_simulated_km_docstrings_match_base():
 # 2.  Basic start-and-ask                                                    #
 # ────────────────────────────────────────────────────────────────────────────
 @pytest.mark.asyncio
+@pytest.mark.llm_call
 @_handle_project
 async def test_start_and_ask_simulated_km():
     km = SimulatedKnowledgeManager("Demo KB for unit-tests.")
@@ -60,6 +61,7 @@ async def test_start_and_ask_simulated_km():
 # 3.  Stateful memory – serial retrieves                                     #
 # ────────────────────────────────────────────────────────────────────────────
 @pytest.mark.asyncio
+@pytest.mark.llm_call
 @_handle_project
 async def test_km_stateful_serial_retrieves():
     """
@@ -86,6 +88,7 @@ async def test_km_stateful_serial_retrieves():
 # 4.  Update then ask – state carries through                                #
 # ────────────────────────────────────────────────────────────────────────────
 @pytest.mark.asyncio
+@pytest.mark.llm_call
 @_handle_project
 async def test_km_stateful_update_then_retrieve():
     """
@@ -108,6 +111,7 @@ async def test_km_stateful_update_then_retrieve():
 # 5.  Basic refactor                                                         #
 # ────────────────────────────────────────────────────────────────────────────
 @pytest.mark.asyncio
+@pytest.mark.llm_call
 @_handle_project
 async def test_refactor_simulated_km():
     """
@@ -142,6 +146,7 @@ async def test_refactor_simulated_km():
 # 6.  Interject                                                             #
 # ────────────────────────────────────────────────────────────────────────────
 @pytest.mark.asyncio
+@pytest.mark.llm_call
 @_handle_project
 async def test_interject_simulated_km(monkeypatch):
     calls = {"interject": 0}
@@ -166,6 +171,7 @@ async def test_interject_simulated_km(monkeypatch):
 # 7.  Stop                                                                  #
 # ────────────────────────────────────────────────────────────────────────────
 @pytest.mark.asyncio
+@pytest.mark.llm_call
 @_handle_project
 async def test_stop_simulated_km():
     km = SimulatedKnowledgeManager()
@@ -180,6 +186,7 @@ async def test_stop_simulated_km():
 # 8.  Clarification handshake                                               #
 # ────────────────────────────────────────────────────────────────────────────
 @pytest.mark.asyncio
+@pytest.mark.llm_call
 @_handle_project
 async def test_km_requests_clarification():
     km = SimulatedKnowledgeManager()
@@ -207,6 +214,7 @@ async def test_km_requests_clarification():
 # 9.  Pause → Resume round-trip                                              #
 # ────────────────────────────────────────────────────────────────────────────
 @pytest.mark.asyncio
+@pytest.mark.llm_call
 @_handle_project
 async def test_pause_and_resume_simulated_km(monkeypatch):
     """
@@ -270,6 +278,7 @@ async def test_pause_and_resume_simulated_km(monkeypatch):
 # 10. Nested ask on handle                                                   #
 # ────────────────────────────────────────────────────────────────────────────
 @pytest.mark.asyncio
+@pytest.mark.llm_call
 @_handle_project
 async def test_handle_ask():
     """
@@ -305,6 +314,7 @@ async def test_handle_ask():
 # 11. Clear – reset and remain usable                                         #
 # ────────────────────────────────────────────────────────────────────────────
 @pytest.mark.asyncio
+@pytest.mark.llm_call
 @_handle_project
 async def test_simulated_clear():
     """
@@ -351,6 +361,7 @@ def test_simulated_knowledge_manager_reduce_shapes():
 # 12.  Stop while paused should finish immediately                           #
 # ────────────────────────────────────────────────────────────────────────────
 @pytest.mark.asyncio
+@pytest.mark.llm_call
 @_handle_project
 async def test_stop_while_paused_finishes_immediately():
     km = SimulatedKnowledgeManager()
@@ -369,6 +380,7 @@ async def test_stop_while_paused_finishes_immediately():
 # 13.  Stop while waiting for clarification should finish immediately         #
 # ────────────────────────────────────────────────────────────────────────────
 @pytest.mark.asyncio
+@pytest.mark.llm_call
 @_handle_project
 async def test_stop_while_waiting_for_clarification_finishes_immediately():
     km = SimulatedKnowledgeManager()
