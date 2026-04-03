@@ -250,6 +250,7 @@ async def complete_api_message(
 
 
 async def publish_assistant_desktop_ready(
+    binding_id: str,
     desktop_url: str,
     liveview_url: str,
     vm_type: str,
@@ -267,6 +268,7 @@ async def publish_assistant_desktop_ready(
     message_data = {
         "thread": "assistant_desktop_ready",
         "event": {
+            "binding_id": binding_id,
             "desktop_url": desktop_url,
             "liveview_url": liveview_url,
             "vm_type": vm_type,

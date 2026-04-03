@@ -2407,6 +2407,7 @@ class TestAssistantDesktopReadyEvent:
         mock_cm.assistant_id = "84"
         mock_cm.user_id = "test_user"
         event = AssistantDesktopReady(
+            binding_id="binding-84",
             desktop_url="https://unity-pool-ubuntu-1.vm.unify.ai",
             vm_type="ubuntu",
         )
@@ -2435,6 +2436,7 @@ class TestAssistantDesktopReadyEvent:
             ),
         ):
             mock_sd.assistant.desktop_url = ""
+            mock_sd.assistant.binding_id = "binding-84"
             await EventHandler.handle_event(event, mock_cm)
 
         assert mock_cm.vm_ready is True
@@ -2448,6 +2450,7 @@ class TestAssistantDesktopReadyEvent:
         mock_cm.assistant_id = "84"
         mock_cm.user_id = "test_user"
         event = AssistantDesktopReady(
+            binding_id="binding-84",
             desktop_url="https://unity-pool-ubuntu-1.vm.unify.ai",
             vm_type="ubuntu",
         )
@@ -2476,6 +2479,7 @@ class TestAssistantDesktopReadyEvent:
             ),
         ):
             mock_sd.assistant.desktop_url = ""
+            mock_sd.assistant.binding_id = "binding-84"
             await EventHandler.handle_event(event, mock_cm)
 
         mock_cm.request_llm_run.assert_called_with(delay=0)

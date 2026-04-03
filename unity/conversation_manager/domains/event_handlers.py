@@ -1809,6 +1809,14 @@ async def _(
     from unity.function_manager.primitives.runtime import _vm_ready
     from unity.session_details import SESSION_DETAILS
 
+    current_binding_id = SESSION_DETAILS.assistant.binding_id or ""
+    if event.binding_id and current_binding_id and event.binding_id != current_binding_id:
+        cm._session_logger.info(
+            "desktop_ready_stale",
+            f"Ignoring stale desktop_ready for binding {event.binding_id}; current binding is {current_binding_id}",
+        )
+        return
+
     desktop_url = event.desktop_url or SESSION_DETAILS.assistant.desktop_url or ""
 
     cm._session_logger.info(
@@ -1857,6 +1865,7 @@ async def _(
     )
 
     await comms_utils.publish_assistant_desktop_ready(
+        event.binding_id or current_binding_id,
         desktop_url,
         liveview_url,
         event.vm_type,

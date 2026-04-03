@@ -273,6 +273,7 @@ class CommsManager:
                 # publish
                 details = {
                     "api_key": event["api_key"],
+                    "binding_id": event.get("binding_id", ""),
                     "medium": event.get("medium", "assistant_update"),
                     "assistant_id": event["assistant_id"],
                     "user_id": event["user_id"],
@@ -366,6 +367,7 @@ class CommsManager:
                         or "User released remote control of assistant desktop.",
                     ),
                     "assistant_desktop_ready": lambda r: AssistantDesktopReady(
+                        binding_id=event.get("binding_id") or "",
                         desktop_url=event.get("desktop_url")
                         or SESSION_DETAILS.assistant.desktop_url
                         or "",
@@ -1100,6 +1102,9 @@ class CommsManager:
 
                 details = {
                     "api_key": event["api_key"],
+                    "binding_id": (
+                        ((session.get("status") or {}).get("binding") or {}).get("id", "")
+                    ),
                     "medium": event.get("medium", "startup"),
                     "assistant_id": event["assistant_id"],
                     "user_id": event["user_id"],

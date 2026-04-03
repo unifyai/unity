@@ -62,6 +62,7 @@ class AssistantDetails:
     """Details about the assistant."""
 
     agent_id: int | None = None
+    binding_id: str = ""
     first_name: str = ""
     surname: str = ""
     age: str = ""
@@ -286,6 +287,7 @@ class SessionDetails:
         team_ids: list[int] | None = None,
         voice_provider: str = "",
         voice_id: str = "",
+        binding_id: str = "",
         desktop_mode: str = "ubuntu",
         user_desktop_mode: str | None = None,
         user_desktop_filesys_sync: bool = False,
@@ -306,6 +308,7 @@ class SessionDetails:
         self.assistant.email = assistant_email
         self.assistant.whatsapp_number = assistant_whatsapp_number
         self.assistant.contact_id = assistant_contact_id
+        self.assistant.binding_id = binding_id
         self.assistant.desktop_mode = desktop_mode
         self.assistant.user_desktop_mode = user_desktop_mode
         self.assistant.user_desktop_filesys_sync = user_desktop_filesys_sync

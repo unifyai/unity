@@ -34,6 +34,7 @@ from assistant_jobs_api import release_pool_vm
 COMMS_URL = os.environ["UNITY_COMMS_URL"]
 ADMIN_KEY = os.environ["ORCHESTRA_ADMIN_KEY"]
 MAX_EVENT_AGE = datetime.timedelta(minutes=5)
+BINDING_ID_LABEL = "assistantsession.unify.ai/binding-id"
 
 _events_processed = 0
 
@@ -94,17 +95,24 @@ def on_job_event(event, **_):
     labels = metadata.get("labels", {})
     job_name = metadata.get("name", "unknown")
     assistant_id = labels.get("assistant-id")
+    binding_id = labels.get(BINDING_ID_LABEL)
 
     print(
         f"Job {job_name} terminal (condition={terminal['type']}, assistant-id={assistant_id})",
     )
     _events_processed += 1
 
-    if not assistant_id:
-        print(f"No assistant-id label on {job_name} — skipping cleanup")
+    if not assistant_id or not binding_id:
+        print(f"Missing assistant-id/binding-id label on {job_name} — skipping cleanup")
         return
 
-    release_pool_vm(COMMS_URL, ADMIN_KEY, assistant_id, job_name=job_name)
+    release_pool_vm(
+        COMMS_URL,
+        ADMIN_KEY,
+        assistant_id,
+        binding_id,
+        job_name=job_name,
+    )
 
 
 @kopf.on.probe(id="health")

@@ -21,6 +21,7 @@ async def test_poll_for_assignment_bootstraps_from_assistant_session():
             "unity.conversation_manager.comms_manager.read_assistant_session",
             return_value={
                 "spec": {"startupSecretRef": "assistant-session-bootstrap-42"},
+                "status": {"binding": {"id": "binding-42"}},
             },
         ),
         patch(
@@ -77,4 +78,5 @@ async def test_poll_for_assignment_bootstraps_from_assistant_session():
         publish_channel, payload = event_broker.publish.await_args.args
         assert publish_channel == "app:comms:startup"
         assert "assistant_id" in payload
+        assert "binding-42" in payload
         mark_ready.assert_called_once_with("unity-2026-03-30-u1234")

@@ -26,12 +26,13 @@ class TestReleasePoolVm:
             comms_url="http://comms:8080",
             admin_key="key",
             assistant_id="assistant-123",
+            binding_id="binding-123",
             max_attempts=1,
         )
 
         mock_requests.post.assert_called_once_with(
             "http://comms:8080/infra/vm/pool/release",
-            json={"assistant_id": "assistant-123"},
+            json={"assistant_id": "assistant-123", "binding_id": "binding-123"},
             headers={"Authorization": "Bearer key"},
             timeout=60,
         )
@@ -54,6 +55,7 @@ class TestReleasePoolVm:
             comms_url="http://comms:8080",
             admin_key="key",
             assistant_id="assistant-123",
+            binding_id="binding-123",
             max_attempts=1,
         )
 
@@ -77,6 +79,7 @@ class TestReleasePoolVm:
             comms_url="http://comms:8080",
             admin_key="key",
             assistant_id="assistant-123",
+            binding_id="binding-123",
             job_name="unity-job-1",
             max_attempts=1,
         )
@@ -85,6 +88,7 @@ class TestReleasePoolVm:
             "http://comms:8080/infra/vm/pool/release",
             json={
                 "assistant_id": "assistant-123",
+                "binding_id": "binding-123",
                 "job_name": "unity-job-1",
             },
             headers={"Authorization": "Bearer key"},

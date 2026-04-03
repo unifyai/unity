@@ -128,6 +128,7 @@ def release_pool_vm(
     comms_url: str,
     admin_key: str,
     assistant_id: str,
+    binding_id: str,
     max_attempts: int = VM_RELEASE_ATTEMPTS,
     *,
     job_name: str | None = None,
@@ -140,7 +141,7 @@ def release_pool_vm(
     Comms can reject stale cleanup from older runtimes.
     """
     headers = {"Authorization": f"Bearer {admin_key}"}
-    payload = {"assistant_id": assistant_id}
+    payload = {"assistant_id": assistant_id, "binding_id": binding_id}
     if job_name:
         payload["job_name"] = job_name
     if vm_name:

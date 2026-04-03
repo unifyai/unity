@@ -224,9 +224,18 @@ def mark_job_done(job_name: str, inactivity_timeout: float = 0.0):
         and admin_key
         and SESSION_DETAILS.assistant.desktop_mode in ("windows", "ubuntu")
     ):
+        binding_id = SESSION_DETAILS.assistant.binding_id
+        if not binding_id:
+            LOGGER.warning(
+                "%s [assistant_jobs] Skipping pool VM release for %s because binding_id is missing",
+                ICONS["assistant_jobs"],
+                assistant_id,
+            )
+            return
         release_pool_vm(
             comms_url,
             admin_key,
             assistant_id,
+            binding_id,
             job_name=job_name,
         )
