@@ -58,3 +58,35 @@ class TestReleasePoolVm:
         )
 
         assert mock_requests.post.call_count == 1
+
+    @patch("unity.conversation_manager.assistant_jobs_api.requests")
+    def test_release_pool_vm_includes_job_name_target(self, mock_requests):
+        release_pool_vm = importlib.import_module(
+            "unity.conversation_manager.assistant_jobs_api",
+        ).release_pool_vm
+
+        mock_resp = MagicMock()
+        mock_resp.ok = True
+        mock_resp.json.return_value = {
+            "released": True,
+            "pool_role": "releasing",
+        }
+        mock_requests.post.return_value = mock_resp
+
+        release_pool_vm(
+            comms_url="http://comms:8080",
+            admin_key="key",
+            assistant_id="assistant-123",
+            job_name="unity-job-1",
+            max_attempts=1,
+        )
+
+        mock_requests.post.assert_called_once_with(
+            "http://comms:8080/infra/vm/pool/release",
+            json={
+                "assistant_id": "assistant-123",
+                "job_name": "unity-job-1",
+            },
+            headers={"Authorization": "Bearer key"},
+            timeout=60,
+        )

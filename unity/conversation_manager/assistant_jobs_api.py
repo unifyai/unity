@@ -129,15 +129,28 @@ def release_pool_vm(
     admin_key: str,
     assistant_id: str,
     max_attempts: int = VM_RELEASE_ATTEMPTS,
+    *,
+    job_name: str | None = None,
+    vm_name: str | None = None,
 ) -> None:
-    """Request pool VM release without bypassing Comms ownership semantics."""
+    """Request pool VM release for the current job or VM target.
+
+    The caller should pass the most specific runtime identity it has
+    (typically ``job_name`` for Unity containers and the job-watcher) so
+    Comms can reject stale cleanup from older runtimes.
+    """
     headers = {"Authorization": f"Bearer {admin_key}"}
+    payload = {"assistant_id": assistant_id}
+    if job_name:
+        payload["job_name"] = job_name
+    if vm_name:
+        payload["vm_name"] = vm_name
 
     for attempt in range(1, max_attempts + 1):
         try:
             resp = requests.post(
                 f"{comms_url}/infra/vm/pool/release",
-                json={"assistant_id": assistant_id},
+                json=payload,
                 headers=headers,
                 timeout=60,
             )
