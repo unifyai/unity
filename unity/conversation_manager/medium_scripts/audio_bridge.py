@@ -7,13 +7,16 @@ participants and speak into the call.
 Audio routing (per deploy/desktop/device.sh defaults):
 
     Participants → Meet → browser plays to agent_sink (default sink)
-        → agent_sink.monitor → bridge reads → publishes to LiveKit room
+        → agent_sink.monitor → parec reads → publishes to LiveKit room
         → fast brain STT (Deepgram)
 
     Fast brain TTS → LiveKit audio track
-        → bridge subscribes → writes to meet_sink
+        → bridge subscribes → writes to pacat → meet_sink
         → meet_mic (remap of meet_sink.monitor) = browser mic (default source)
         → Meet sends to participants
+
+Uses parec/pacat (PulseAudio CLI tools from pulseaudio-utils) instead of
+PyAudio/PortAudio, bypassing the libportaudio2 PulseAudio backend requirement.
 
 Usage:
     bridge = AudioBridge(room_name="unity_25_gmeet")
@@ -39,12 +42,16 @@ SAMPLE_RATE = 48000
 NUM_CHANNELS = 1
 FRAME_DURATION_MS = 20
 SAMPLES_PER_FRAME = SAMPLE_RATE * FRAME_DURATION_MS // 1000
+BYTES_PER_FRAME = SAMPLES_PER_FRAME * NUM_CHANNELS * 2  # s16le = 2 bytes/sample
+
+INGEST_SOURCE = "agent_sink.monitor"
+PLAYBACK_SINK = "meet_sink"
 
 _TAG = "[AudioBridge]"
 
 
 def _ensure_pulse_env() -> None:
-    """Set PulseAudio env vars so PortAudio discovers PipeWire-PulseAudio.
+    """Set PulseAudio env vars so parec/pacat find PipeWire-PulseAudio.
 
     PipeWire's PulseAudio compatibility layer creates its socket at
     ``$XDG_RUNTIME_DIR/pulse/native``.  If ``PULSE_SERVER`` isn't set,
@@ -65,8 +72,7 @@ def _ensure_pulse_env() -> None:
             )
         else:
             LOGGER.warning(
-                f"{ICONS['ipc']} {_TAG} PulseAudio socket not found at {sock} — "
-                "PortAudio may fall back to ALSA (which has no hardware in containers)",
+                f"{ICONS['ipc']} {_TAG} PulseAudio socket not found at {sock}",
             )
 
     LOGGER.info(
@@ -96,7 +102,8 @@ def _verify_pulse_server() -> bool:
                     LOGGER.info(f"{ICONS['ipc']} {_TAG} pactl: {line.strip()}")
             return True
         LOGGER.warning(
-            f"{ICONS['ipc']} {_TAG} pactl info failed (rc={result.returncode}): {result.stderr.strip()}",
+            f"{ICONS['ipc']} {_TAG} pactl info failed (rc={result.returncode}): "
+            f"{result.stderr.strip()}",
         )
         return False
     except FileNotFoundError:
@@ -109,14 +116,41 @@ def _verify_pulse_server() -> bool:
         return False
 
 
-class AudioBridge:
-    """Bridges PulseAudio virtual devices to a LiveKit room.
+def _verify_pulse_device(device: str, *, is_source: bool) -> bool:
+    """Verify a PulseAudio source or sink exists."""
+    kind = "sources" if is_source else "sinks"
+    try:
+        result = subprocess.run(
+            ["pactl", "list", "short", kind],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        if result.returncode != 0:
+            LOGGER.warning(
+                f"{ICONS['ipc']} {_TAG} pactl list {kind} failed: "
+                f"{result.stderr.strip()}",
+            )
+            return False
+        if device in result.stdout:
+            LOGGER.info(f"{ICONS['ipc']} {_TAG} Verified {kind[:-1]}: {device}")
+            return True
+        LOGGER.warning(
+            f"{ICONS['ipc']} {_TAG} {kind[:-1]} '{device}' not found. "
+            f"Available:\n{result.stdout.strip()}",
+        )
+        return False
+    except Exception as exc:
+        LOGGER.warning(f"{ICONS['ipc']} {_TAG} Device check failed: {exc}")
+        return False
 
-    Connects to the LiveKit room as a hidden "browser-audio" participant and:
-      - Publishes audio captured from ``agent_sink.monitor`` (participant voices)
-        so the fast brain's STT can transcribe it.
-      - Subscribes to the fast brain's published audio track and writes it to
-        ``meet_sink`` so it flows into the browser's microphone input.
+
+class AudioBridge:
+    """Bridges PulseAudio virtual devices to a LiveKit room via parec/pacat.
+
+    Uses PulseAudio CLI tools (from pulseaudio-utils) directly, bypassing
+    PortAudio entirely. This avoids the requirement for libportaudio2 to be
+    compiled with PulseAudio backend support.
     """
 
     def __init__(self, room_name: str) -> None:
@@ -125,6 +159,8 @@ class AudioBridge:
         self._ingest_task: Optional[asyncio.Task] = None
         self._playback_task: Optional[asyncio.Task] = None
         self._audio_source: Optional[lk_rtc.AudioSource] = None
+        self._parec_proc: Optional[asyncio.subprocess.Process] = None
+        self._pacat_proc: Optional[asyncio.subprocess.Process] = None
         self._running = False
 
     async def start(self) -> None:
@@ -132,16 +168,22 @@ class AudioBridge:
         self._running = True
 
         _ensure_pulse_env()
-        _verify_pulse_server()
+        if not _verify_pulse_server():
+            LOGGER.error(
+                f"{ICONS['ipc']} {_TAG} PulseAudio server unreachable — "
+                "cannot start bridge",
+            )
+            return
+
+        _verify_pulse_device(INGEST_SOURCE, is_source=True)
+        _verify_pulse_device(PLAYBACK_SINK, is_source=False)
 
         lk_url = os.environ.get("LIVEKIT_URL", "")
         lk_key = os.environ.get("LIVEKIT_API_KEY", "")
         lk_secret = os.environ.get("LIVEKIT_API_SECRET", "")
 
         if not lk_url:
-            LOGGER.error(
-                f"{ICONS['ipc']} [AudioBridge] LIVEKIT_URL not set, cannot start",
-            )
+            LOGGER.error(f"{ICONS['ipc']} {_TAG} LIVEKIT_URL not set, cannot start")
             return
 
         token = (
@@ -171,9 +213,7 @@ class AudioBridge:
                     )
 
         await self._room.connect(lk_url, token)
-        LOGGER.info(
-            f"{ICONS['ipc']} [AudioBridge] Connected to room {self._room_name}",
-        )
+        LOGGER.info(f"{ICONS['ipc']} {_TAG} Connected to room {self._room_name}")
 
         self._audio_source = lk_rtc.AudioSource(SAMPLE_RATE, NUM_CHANNELS)
         track = lk_rtc.LocalAudioTrack.create_audio_track(
@@ -187,6 +227,17 @@ class AudioBridge:
     async def stop(self) -> None:
         """Disconnect from the LiveKit room and stop all audio tasks."""
         self._running = False
+
+        for proc in (self._parec_proc, self._pacat_proc):
+            if proc and proc.returncode is None:
+                proc.terminate()
+                try:
+                    await asyncio.wait_for(proc.wait(), timeout=3)
+                except asyncio.TimeoutError:
+                    proc.kill()
+
+        self._parec_proc = None
+        self._pacat_proc = None
 
         for task in (self._ingest_task, self._playback_task):
             if task and not task.done():
@@ -203,47 +254,33 @@ class AudioBridge:
             await self._room.disconnect()
             self._room = None
 
-        LOGGER.info(
-            f"{ICONS['ipc']} [AudioBridge] Disconnected from room {self._room_name}",
-        )
+        LOGGER.info(f"{ICONS['ipc']} {_TAG} Disconnected from room {self._room_name}")
 
     async def _ingest_loop(self) -> None:
-        """Read PCM audio from agent_sink.monitor and publish to LiveKit.
+        """Read PCM audio from agent_sink.monitor via parec and publish to LiveKit."""
+        cmd = [
+            "parec",
+            f"--device={INGEST_SOURCE}",
+            "--format=s16le",
+            f"--rate={SAMPLE_RATE}",
+            f"--channels={NUM_CHANNELS}",
+            "--latency-msec=20",
+        ]
+        LOGGER.info(f"{ICONS['ipc']} {_TAG} Starting ingest: {' '.join(cmd)}")
 
-        Uses PyAudio to capture from the PulseAudio monitor source that
-        receives the browser's audio output (meeting participants' voices).
-        """
-        import pyaudio
-
-        pa = pyaudio.PyAudio()
-        self._log_portaudio_host_apis(pa)
-        stream = None
         try:
-            monitor_index = self._find_pulse_source(pa, "agent_sink.monitor")
-            if monitor_index is None:
-                LOGGER.error(
-                    f"{ICONS['ipc']} {_TAG} Cannot find 'agent_sink.monitor' — "
-                    "ingest loop cannot start (check PipeWire/PulseAudio)",
-                )
-                return
-            stream = pa.open(
-                format=pyaudio.paInt16,
-                channels=NUM_CHANNELS,
-                rate=SAMPLE_RATE,
-                input=True,
-                input_device_index=monitor_index,
-                frames_per_buffer=SAMPLES_PER_FRAME,
+            self._parec_proc = await asyncio.create_subprocess_exec(
+                *cmd,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
             )
+            assert self._parec_proc.stdout is not None
             LOGGER.info(
-                f"{ICONS['ipc']} {_TAG} Ingest stream opened (device={monitor_index})",
+                f"{ICONS['ipc']} {_TAG} parec started (pid={self._parec_proc.pid})",
             )
 
             while self._running:
-                data = await asyncio.to_thread(
-                    stream.read,
-                    SAMPLES_PER_FRAME,
-                    exception_on_overflow=False,
-                )
+                data = await self._parec_proc.stdout.readexactly(BYTES_PER_FRAME)
                 frame = lk_rtc.AudioFrame(
                     data=data,
                     sample_rate=SAMPLE_RATE,
@@ -251,115 +288,74 @@ class AudioBridge:
                     samples_per_channel=SAMPLES_PER_FRAME,
                 )
                 await self._audio_source.capture_frame(frame)
+
+        except asyncio.IncompleteReadError:
+            LOGGER.warning(f"{ICONS['ipc']} {_TAG} parec stream ended unexpectedly")
         except asyncio.CancelledError:
             pass
         except Exception as exc:
             LOGGER.error(f"{ICONS['ipc']} {_TAG} Ingest error: {exc}")
         finally:
-            if stream:
-                stream.stop_stream()
-                stream.close()
-            pa.terminate()
+            await self._drain_proc_stderr(self._parec_proc, "parec")
+            if self._parec_proc and self._parec_proc.returncode is None:
+                self._parec_proc.terminate()
 
     async def _playback_loop(self, audio_stream: lk_rtc.AudioStream) -> None:
-        """Subscribe to the fast brain's audio track and write to meet_sink.
+        """Subscribe to fast brain's audio and write to meet_sink via pacat."""
+        cmd = [
+            "pacat",
+            f"--device={PLAYBACK_SINK}",
+            "--format=s16le",
+            f"--rate={SAMPLE_RATE}",
+            f"--channels={NUM_CHANNELS}",
+            "--latency-msec=20",
+        ]
+        LOGGER.info(f"{ICONS['ipc']} {_TAG} Starting playback: {' '.join(cmd)}")
 
-        Writes PCM frames to the PulseAudio null sink whose monitor is mapped
-        as the browser's microphone input, so TTS audio reaches the meeting.
-        """
-        import pyaudio
-
-        pa = pyaudio.PyAudio()
-        stream = None
         try:
-            sink_index = self._find_pulse_sink(pa, "meet_sink")
-            if sink_index is None:
-                LOGGER.error(
-                    f"{ICONS['ipc']} {_TAG} Cannot find 'meet_sink' — "
-                    "playback loop cannot start (check PipeWire/PulseAudio)",
-                )
-                return
-            stream = pa.open(
-                format=pyaudio.paInt16,
-                channels=NUM_CHANNELS,
-                rate=SAMPLE_RATE,
-                output=True,
-                output_device_index=sink_index,
-                frames_per_buffer=SAMPLES_PER_FRAME,
+            self._pacat_proc = await asyncio.create_subprocess_exec(
+                *cmd,
+                stdin=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
             )
+            assert self._pacat_proc.stdin is not None
             LOGGER.info(
-                f"{ICONS['ipc']} {_TAG} Playback stream opened (device={sink_index})",
+                f"{ICONS['ipc']} {_TAG} pacat started (pid={self._pacat_proc.pid})",
             )
 
             async for event in audio_stream:
                 if not self._running:
                     break
                 frame: lk_rtc.AudioFrame = event.frame
-                await asyncio.to_thread(stream.write, bytes(frame.data))
+                self._pacat_proc.stdin.write(bytes(frame.data))
+                await self._pacat_proc.stdin.drain()
+
+        except (BrokenPipeError, ConnectionResetError):
+            LOGGER.warning(
+                f"{ICONS['ipc']} {_TAG} pacat pipe broken — process may have exited",
+            )
         except asyncio.CancelledError:
             pass
         except Exception as exc:
             LOGGER.error(f"{ICONS['ipc']} {_TAG} Playback error: {exc}")
         finally:
-            if stream:
-                stream.stop_stream()
-                stream.close()
-            pa.terminate()
+            await self._drain_proc_stderr(self._pacat_proc, "pacat")
+            if self._pacat_proc and self._pacat_proc.returncode is None:
+                self._pacat_proc.terminate()
 
     @staticmethod
-    def _log_portaudio_host_apis(pa) -> None:
-        """Log all PortAudio host APIs and devices for diagnostics."""
-        api_count = pa.get_host_api_count()
-        apis = []
-        for i in range(api_count):
-            info = pa.get_host_api_info_by_index(i)
-            apis.append(f"{info['name']}(devices={info['deviceCount']})")
-        LOGGER.info(f"{ICONS['ipc']} {_TAG} PortAudio host APIs: {', '.join(apis)}")
-
-        has_pulse = any("pulse" in a.lower() for a in apis)
-        if not has_pulse:
-            LOGGER.warning(
-                f"{ICONS['ipc']} {_TAG} PortAudio has NO PulseAudio backend! "
-                "Audio bridge requires PulseAudio. Ensure libportaudio2 is built "
-                "with PulseAudio support (apt install libportaudio2).",
-            )
-
-    @staticmethod
-    def _find_pulse_source(pa, name: str) -> int | None:
-        """Find a PulseAudio source (input device) by name substring."""
-        sources = []
-        for i in range(pa.get_device_count()):
-            info = pa.get_device_info_by_index(i)
-            if info.get("maxInputChannels", 0) > 0:
-                dev_name = info.get("name", "")
-                sources.append(f"  [{i}] {dev_name} (in={info['maxInputChannels']})")
-                if name in dev_name:
-                    LOGGER.info(
-                        f"{ICONS['ipc']} {_TAG} Found source '{name}' at index {i}",
+    async def _drain_proc_stderr(
+        proc: Optional[asyncio.subprocess.Process],
+        label: str,
+    ) -> None:
+        """Read and log any stderr from a subprocess for diagnostics."""
+        if proc and proc.stderr:
+            try:
+                stderr = await asyncio.wait_for(proc.stderr.read(), timeout=2)
+                if stderr:
+                    LOGGER.warning(
+                        f"{ICONS['ipc']} {_TAG} {label} stderr: "
+                        f"{stderr.decode(errors='replace').strip()}",
                     )
-                    return i
-        LOGGER.warning(
-            f"{ICONS['ipc']} {_TAG} Source '{name}' NOT FOUND. "
-            f"Available input devices ({len(sources)}):\n" + "\n".join(sources),
-        )
-        return None
-
-    @staticmethod
-    def _find_pulse_sink(pa, name: str) -> int | None:
-        """Find a PulseAudio sink (output device) by name substring."""
-        sinks = []
-        for i in range(pa.get_device_count()):
-            info = pa.get_device_info_by_index(i)
-            if info.get("maxOutputChannels", 0) > 0:
-                dev_name = info.get("name", "")
-                sinks.append(f"  [{i}] {dev_name} (out={info['maxOutputChannels']})")
-                if name in dev_name:
-                    LOGGER.info(
-                        f"{ICONS['ipc']} {_TAG} Found sink '{name}' at index {i}",
-                    )
-                    return i
-        LOGGER.warning(
-            f"{ICONS['ipc']} {_TAG} Sink '{name}' NOT FOUND. "
-            f"Available output devices ({len(sinks)}):\n" + "\n".join(sinks),
-        )
-        return None
+            except (asyncio.TimeoutError, Exception):
+                pass
