@@ -42,6 +42,7 @@ def test_docstrings_match_base():
 # 2.  Basic start-and-ask                                                    #
 # ────────────────────────────────────────────────────────────────────────────
 @pytest.mark.asyncio
+@pytest.mark.llm_call
 @_handle_project
 async def test_start_and_ask():
     tm = SimulatedTranscriptManager("Demo transcript DB.")
@@ -54,6 +55,7 @@ async def test_start_and_ask():
 # 3.  Stateful memory – serial asks                                         #
 # ────────────────────────────────────────────────────────────────────────────
 @pytest.mark.asyncio
+@pytest.mark.llm_call
 @_handle_project
 async def test_stateful_memory_serial_asks():
     """
@@ -97,6 +99,7 @@ async def test_stateful_memory_serial_asks():
 # 4.  Interject                                                             #
 # ────────────────────────────────────────────────────────────────────────────
 @pytest.mark.asyncio
+@pytest.mark.llm_call
 @_handle_project
 async def test_handle_interject(monkeypatch):
     counts = {"interject": 0}
@@ -128,6 +131,7 @@ async def test_handle_interject(monkeypatch):
 # 5.  Stop                                                                  #
 # ────────────────────────────────────────────────────────────────────────────
 @pytest.mark.asyncio
+@pytest.mark.llm_call
 @_handle_project
 async def test_handle_stop():
     tm = SimulatedTranscriptManager()
@@ -142,6 +146,7 @@ async def test_handle_stop():
 # 6.  Clarification handshake                                               #
 # ────────────────────────────────────────────────────────────────────────────
 @pytest.mark.asyncio
+@pytest.mark.llm_call
 @_handle_project
 async def test_handle_requests_clarification():
     tm = SimulatedTranscriptManager()
@@ -171,6 +176,7 @@ async def test_handle_requests_clarification():
 # 7.  Pause → Resume round-trip                                              #
 # ────────────────────────────────────────────────────────────────────────────
 @pytest.mark.asyncio
+@pytest.mark.llm_call
 @_handle_project
 async def test_handle_pause_and_resume(monkeypatch):
     """
@@ -236,6 +242,7 @@ async def test_handle_pause_and_resume(monkeypatch):
 # 8.  Nested ask on handle                                                   #
 # ────────────────────────────────────────────────────────────────────────────
 @pytest.mark.asyncio
+@pytest.mark.llm_call
 @_handle_project
 async def test_handle_ask():
     """
@@ -271,6 +278,7 @@ async def test_handle_ask():
 # 10.  Stop while paused should finish immediately                           #
 # ────────────────────────────────────────────────────────────────────────────
 @pytest.mark.asyncio
+@pytest.mark.llm_call
 @_handle_project
 async def test_stop_while_paused():
     tm = SimulatedTranscriptManager()
@@ -289,6 +297,7 @@ async def test_stop_while_paused():
 # 11.  Stop while waiting for clarification should finish immediately         #
 # ────────────────────────────────────────────────────────────────────────────
 @pytest.mark.asyncio
+@pytest.mark.llm_call
 @_handle_project
 async def test_stop_while_waiting_clarification():
     tm = SimulatedTranscriptManager()

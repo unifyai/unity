@@ -20,7 +20,7 @@ from datetime import datetime
 from typing import List
 import pytest
 
-pytestmark = pytest.mark.eval
+pytestmark = [pytest.mark.eval, pytest.mark.llm_call]
 
 import pytest
 import asyncio
