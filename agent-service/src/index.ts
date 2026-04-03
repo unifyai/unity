@@ -765,6 +765,11 @@ const startGoogleMeetBrowser = async (meetUrl: string): Promise<BrowserAgent> =>
             "--disable-features=IsolateOrigins,site-per-process",
             '--auto-select-desktop-capture-source="Entire screen"',
           ],
+          env: {
+            ...process.env,
+            PULSE_SINK: "agent_sink",
+            PULSE_SOURCE: "meet_mic",
+          },
           downloadsPath: defaultBrowserPaths.downloadsPath || undefined,
           tracesDir: defaultBrowserPaths.tracesDir || undefined,
         },
@@ -821,16 +826,68 @@ type GoogleMeetJoinResult =
   | { status: 'active' | 'lobby' }
   | { status: 'error'; reason: string };
 
-const MEET_JOIN_TASK = (displayName: string) =>
-  `You are on a Google Meet join screen. Complete these steps in order:\n` +
+const MEET_PREPARE_TASK = (displayName: string) =>
+  `You are on a Google Meet pre-join screen. Complete these steps in order:\n` +
   `1. Dismiss any popups, tooltips, or overlays (e.g. "Got it" button, cookie banners).\n` +
   `2. If there is a "Your name" text input, clear it and type: ${displayName}\n` +
   `3. Turn OFF the camera if it is on (click its toggle button). Leave the microphone ON.\n` +
-  `4. Click the "Ask to join" or "Join now" button to enter the meeting.\n` +
+  `4. Click the settings gear/cog icon on the pre-join screen to open device settings.\n` +
+  `5. Click the "Audio" tab in the settings dialog.\n` +
+  `6. Check the "Microphone" dropdown — select "meet_mic" if available, otherwise leave as "Default".\n` +
+  `7. Check the "Speakers" dropdown — select "agent_sink" if available, otherwise leave as "Default".\n` +
+  `8. Close the settings dialog (click X or press Escape).\n` +
   `Ignore any warnings about camera/microphone not being found — those are expected.\n` +
   `If the page shows a fatal error like "invalid meeting link" or "this meeting has ended", do nothing — just stop.`;
 
-const MEET_MAX_ITERATIONS = 5;
+const MEET_CLICK_JOIN_TASK =
+  `You are on a Google Meet pre-join screen. The audio devices have already been configured.\n` +
+  `Click the "Ask to join" or "Join now" button to enter the meeting.\n` +
+  `Ignore any warnings about camera/microphone not being found — those are expected.\n` +
+  `If the page shows a fatal error like "invalid meeting link" or "this meeting has ended", do nothing — just stop.`;
+
+const MEET_PREPARE_MAX_ITERATIONS = 5;
+const MEET_JOIN_MAX_ITERATIONS = 3;
+
+async function runMagnitudeLoop(
+  agent: BrowserAgent,
+  task: string,
+  maxIterations: number,
+  label: string,
+): Promise<void> {
+  const memory = new AgentMemory({ promptCaching: true });
+
+  for (let iteration = 0; iteration < maxIterations; iteration++) {
+    if (iteration > 0) {
+      console.log(`[${label}] Iteration ${iteration + 1}: re-observing...`);
+    }
+
+    await agent.recordConnectorObservations(memory);
+    const context = await agent.buildContext(memory);
+    const { reasoning, actions } = await agent.models.partialAct(context, task, [], agent.actions);
+
+    console.log(`[${label}] Iteration ${iteration + 1} reasoning: ${reasoning}`);
+    console.log(`[${label}] Planned ${actions.length} action(s): ${actions.map(a => a.variant).join(', ')}`);
+    memory.recordThought(reasoning);
+
+    if (actions.length === 0) {
+      console.log(`[${label}] LLM planned zero actions — stopping.`);
+      break;
+    }
+
+    const taskDone = actions.some(a => a.variant === 'task:done');
+
+    for (const action of actions) {
+      const actionDef = agent.identifyAction(action);
+      console.log(`[${label}] Executing: ${actionDef.render(action)}`);
+      await agent.exec(action, memory);
+    }
+
+    if (taskDone) {
+      console.log(`[${label}] LLM signalled task:done.`);
+      break;
+    }
+  }
+}
 
 async function googleMeetJoinFlow(agent: BrowserAgent, displayName: string): Promise<GoogleMeetJoinResult> {
   const page = agent.page;
@@ -839,40 +896,13 @@ async function googleMeetJoinFlow(agent: BrowserAgent, displayName: string): Pro
   const pageUrl = page.url?.() ?? 'unknown';
   console.log(`[googlemeet/join] Page loaded: url=${pageUrl}`);
 
-  const memory = new AgentMemory({ promptCaching: true });
-  const task = MEET_JOIN_TASK(displayName);
+  // Phase 1: prepare (name, camera off, audio device selection)
+  console.log('[googlemeet/join] Phase 1: prepare & configure audio devices...');
+  await runMagnitudeLoop(agent, MEET_PREPARE_TASK(displayName), MEET_PREPARE_MAX_ITERATIONS, 'googlemeet/prepare');
 
-  for (let iteration = 0; iteration < MEET_MAX_ITERATIONS; iteration++) {
-    if (iteration > 0) {
-      console.log(`[googlemeet/join] Iteration ${iteration + 1}: re-observing...`);
-    }
-
-    await agent.recordConnectorObservations(memory);
-    const context = await agent.buildContext(memory);
-    const { reasoning, actions } = await agent.models.partialAct(context, task, [], agent.actions);
-
-    console.log(`[googlemeet/join] Iteration ${iteration + 1} reasoning: ${reasoning}`);
-    console.log(`[googlemeet/join] Planned ${actions.length} action(s): ${actions.map(a => a.variant).join(', ')}`);
-    memory.recordThought(reasoning);
-
-    if (actions.length === 0) {
-      console.log('[googlemeet/join] LLM planned zero actions — stopping.');
-      break;
-    }
-
-    const taskDone = actions.some(a => a.variant === 'task:done');
-
-    for (const action of actions) {
-      const actionDef = agent.identifyAction(action);
-      console.log(`[googlemeet/join] Executing: ${actionDef.render(action)}`);
-      await agent.exec(action, memory);
-    }
-
-    if (taskDone) {
-      console.log('[googlemeet/join] LLM signalled task:done.');
-      break;
-    }
-  }
+  // Phase 2: click join
+  console.log('[googlemeet/join] Phase 2: clicking join...');
+  await runMagnitudeLoop(agent, MEET_CLICK_JOIN_TASK, MEET_JOIN_MAX_ITERATIONS, 'googlemeet/click-join');
 
   // Determine outcome by checking the page state after the agent finished
   await sleep(2000);
