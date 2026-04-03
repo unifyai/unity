@@ -643,6 +643,7 @@ class _SessionConfigBase(Event):
     user_number: str
     user_email: str
     voice_id: str
+    binding_id: str = ""
     voice_provider: str = "cartesia"
     assistant_whatsapp_number: str = ""
     assistant_timezone: str = (
@@ -926,6 +927,7 @@ class AssistantDesktopReady(Event):
 
     topic: ClassVar[str | None] = "app:comms:assistant_desktop_ready"
 
+    binding_id: str = ""
     desktop_url: str = ""
     vm_type: str = ""
 
