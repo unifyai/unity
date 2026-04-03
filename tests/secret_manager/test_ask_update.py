@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import pytest
 
-pytestmark = pytest.mark.eval
+pytestmark = [pytest.mark.eval, pytest.mark.llm_call]
 
 from unity.secret_manager.secret_manager import SecretManager
 
