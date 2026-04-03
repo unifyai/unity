@@ -20,6 +20,8 @@ from unity.common.task_execution_context import current_task_execution_delegate
 from unity.task_scheduler.task_scheduler import TaskScheduler
 from unity.task_scheduler.types.status import Status
 
+pytestmark = pytest.mark.llm_call
+
 
 class _Delegate:
     """Test-only TaskExecutionDelegate that triggers a nested execute attempt."""

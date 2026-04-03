@@ -10,6 +10,8 @@ from unity.task_scheduler.types.schedule import Schedule
 from unity.task_scheduler.types.status import Status
 from unity.task_scheduler.types.trigger import Trigger, Medium
 
+pytestmark = pytest.mark.llm_call
+
 # Speed up only this module's SimulatedActor by monkeypatching the class symbols
 # used by TaskScheduler to a shorter-duration variant. This does not affect
 # other test modules.

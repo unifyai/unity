@@ -38,6 +38,7 @@ async def _make_ordered_queue(
 
 
 @pytest.mark.asyncio
+@pytest.mark.llm_call
 @_handle_project
 async def test_direct_delegation_then_switch_to_multitask(monkeypatch):
     """Start with a singleton queue (direct delegation), then append a follower and
@@ -114,6 +115,7 @@ async def test_direct_delegation_then_switch_to_multitask(monkeypatch):
 
 
 @pytest.mark.asyncio
+@pytest.mark.llm_call
 @_handle_project
 async def test_execute_by_numeric_id_forwards_and_runs_followers(monkeypatch):
     # Steps-based actor: immediate completion to avoid timing races
@@ -152,6 +154,7 @@ async def test_execute_by_numeric_id_forwards_and_runs_followers(monkeypatch):
 
 
 @pytest.mark.asyncio
+@pytest.mark.llm_call
 @_handle_project
 async def test_chain_execution_preserves_schedule_and_start_at(monkeypatch):
     """Running a pre-scheduled queue in chained mode must not mutate schedule fields.
@@ -216,6 +219,7 @@ async def test_chain_execution_preserves_schedule_and_start_at(monkeypatch):
 
 
 @pytest.mark.asyncio
+@pytest.mark.llm_call
 @_handle_project
 async def test_execute_then_defer_on_second_stops_queue_and_reinstate(
     monkeypatch,
@@ -303,6 +307,7 @@ async def test_execute_then_defer_on_second_stops_queue_and_reinstate(
 
 
 @pytest.mark.asyncio
+@pytest.mark.llm_call
 @_handle_project
 async def test_execute_by_numeric_id_completes_all(monkeypatch):
     """Numeric id path: starting at head should run through all followers to completion."""
@@ -339,6 +344,7 @@ async def test_execute_by_numeric_id_completes_all(monkeypatch):
 
 
 @pytest.mark.asyncio
+@pytest.mark.llm_call
 @_handle_project
 async def test_pause_resume_and_completion(monkeypatch):
     """
@@ -437,6 +443,7 @@ async def test_pause_resume_and_completion(monkeypatch):
 
 
 @pytest.mark.asyncio
+@pytest.mark.llm_call
 @_handle_project
 async def test_interject_routing_multi_task(monkeypatch):
     """
@@ -576,6 +583,7 @@ async def test_interject_routing_multi_task(monkeypatch):
 
 
 @pytest.mark.asyncio
+@pytest.mark.llm_call
 @_handle_project
 async def test_handle_ask_includes_queue_context(monkeypatch):
     """
@@ -672,6 +680,7 @@ async def test_handle_ask_includes_queue_context(monkeypatch):
 
 
 @pytest.mark.asyncio
+@pytest.mark.llm_call
 @_handle_project
 async def test_result_summarises_all_completed_tasks(monkeypatch):
     """
@@ -709,6 +718,7 @@ async def test_result_summarises_all_completed_tasks(monkeypatch):
 
 
 @pytest.mark.asyncio
+@pytest.mark.llm_call
 @_handle_project
 async def test_dynamic_queue_edit_add_and_remove_followers(monkeypatch):
     """
@@ -836,6 +846,7 @@ async def test_dynamic_queue_edit_add_and_remove_followers(monkeypatch):
 
 
 @pytest.mark.asyncio
+@pytest.mark.llm_call
 @_handle_project
 async def test_append_singleton_adds_follower_and_runs(monkeypatch):
     """
@@ -927,6 +938,7 @@ async def test_append_singleton_adds_follower_and_runs(monkeypatch):
 
 
 @pytest.mark.asyncio
+@pytest.mark.llm_call
 @_handle_project
 async def test_append_emits_notification(monkeypatch):
     """Appending should emit a queue.appended notification event."""
@@ -976,6 +988,7 @@ async def test_append_emits_notification(monkeypatch):
 
 
 @pytest.mark.asyncio
+@pytest.mark.llm_call
 @_handle_project
 async def test_task_done_aggregates_all_when_called_late(monkeypatch):
     """
@@ -1026,6 +1039,7 @@ async def test_task_done_aggregates_all_when_called_late(monkeypatch):
 
 
 @pytest.mark.asyncio
+@pytest.mark.llm_call
 @_handle_project
 async def test_task_done_incremental(monkeypatch):
     """
@@ -1107,6 +1121,7 @@ async def test_task_done_incremental(monkeypatch):
 
 
 @pytest.mark.asyncio
+@pytest.mark.llm_call
 @_handle_project
 async def test_execute_by_id_returns_active_handle(monkeypatch):
     """Executing by id returns an ActiveQueue handle (composite queue wrapper)."""
@@ -1149,6 +1164,7 @@ async def test_execute_by_id_returns_active_handle(monkeypatch):
 
 
 @pytest.mark.asyncio
+@pytest.mark.llm_call
 @_handle_project
 async def test_singleton_direct_delegation_to_inner_handle(monkeypatch):
     """
@@ -1243,6 +1259,7 @@ async def test_singleton_direct_delegation_to_inner_handle(monkeypatch):
 
 
 @pytest.mark.asyncio
+@pytest.mark.llm_call
 @_handle_project
 async def test_emits_notifications(monkeypatch):
     """
@@ -1477,6 +1494,7 @@ async def test_dynamic_helper_append_is_exposed_and_callable():
 
 
 @pytest.mark.asyncio
+@pytest.mark.llm_call
 @_handle_project
 async def test_inner_clarification_bubbles_up_to_outer(monkeypatch):
     """
@@ -1530,6 +1548,7 @@ async def test_inner_clarification_bubbles_up_to_outer(monkeypatch):
 
 
 @pytest.mark.asyncio
+@pytest.mark.llm_call
 @_handle_project
 async def test_requests_clarification_at_queue_level(monkeypatch):
     """

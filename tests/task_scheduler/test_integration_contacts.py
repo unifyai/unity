@@ -37,6 +37,7 @@ from unity.contact_manager.contact_manager import ContactManager
 
 
 @pytest.mark.asyncio
+@pytest.mark.llm_call
 @_handle_project
 async def test_ask_calls_contact_manager_ask(monkeypatch):
     """A contact-oriented question should cause TaskScheduler.ask to call ContactManager.ask exactly once."""
@@ -102,6 +103,7 @@ async def test_ask_calls_contact_manager_ask(monkeypatch):
 
 
 @pytest.mark.asyncio
+@pytest.mark.llm_call
 @_handle_project
 async def test_update_calls_contact_manager_ask(monkeypatch):
     """Trigger-based task creation referencing a contact name must query ContactManager.ask exactly once."""

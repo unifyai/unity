@@ -169,6 +169,7 @@ def test_update_queue_rejects_trigger_tasks():
 
 @_handle_project
 @pytest.mark.asyncio
+@pytest.mark.llm_call
 async def test_triggerable_start_clones_instance():
     """
     Starting a **triggerable** task should:

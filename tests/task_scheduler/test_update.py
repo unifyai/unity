@@ -1,6 +1,6 @@
 import pytest
 
-pytestmark = pytest.mark.eval
+pytestmark = [pytest.mark.eval, pytest.mark.llm_call]
 
 from tests.helpers import _handle_project
 from unity.task_scheduler.task_scheduler import TaskScheduler

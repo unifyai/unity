@@ -77,6 +77,7 @@ async def _make_ordered_queue(ts: TaskScheduler, names: List[str]) -> List[int]:
 
 
 @pytest.mark.asyncio
+@pytest.mark.llm_call
 @_handle_project
 async def test_execute_ask(monkeypatch):
     """`ActiveTask.ask` should forward to the wrapped plan exactly once."""
@@ -113,6 +114,7 @@ async def test_execute_ask(monkeypatch):
 
 
 @pytest.mark.asyncio
+@pytest.mark.llm_call
 @_handle_project
 async def test_execute_interject(monkeypatch):
     """`ActiveTask.interject` should forward to the wrapped plan exactly once."""
@@ -148,6 +150,7 @@ async def test_execute_interject(monkeypatch):
 
 
 @pytest.mark.asyncio
+@pytest.mark.llm_call
 @_handle_project
 async def test_execute_pause_resume(monkeypatch):
     """The wrapper should transparently forward `pause` and `resume`."""
@@ -191,6 +194,7 @@ async def test_execute_pause_resume(monkeypatch):
 
 
 @pytest.mark.asyncio
+@pytest.mark.llm_call
 @_handle_project
 async def test_execute_stop(monkeypatch):
     """Calling `ActiveTask.stop` should proxy to the plan and mark it done."""
@@ -223,6 +227,7 @@ async def test_execute_stop(monkeypatch):
 
 
 @pytest.mark.asyncio
+@pytest.mark.llm_call
 @_handle_project
 async def test_execute_result_and_done():
     """A normal workflow should complete once enough steps have been taken."""
@@ -244,6 +249,7 @@ async def test_execute_result_and_done():
 
 
 @pytest.mark.asyncio
+@pytest.mark.llm_call
 @_handle_project
 async def test_execute_handle_introspection():
     """
@@ -294,6 +300,7 @@ async def test_execute_handle_introspection():
 
 
 @pytest.mark.asyncio
+@pytest.mark.llm_call
 @_handle_project
 async def test_async_tool_loop_calls_append_helper():
     """
@@ -412,6 +419,7 @@ async def test_async_tool_loop_calls_append_helper():
 
 
 @pytest.mark.asyncio
+@pytest.mark.llm_call
 @_handle_project
 async def test_execute_sets_activated_by_explicit():
     """Starting a task explicitly via execute should set activated_by='explicit'."""
@@ -486,6 +494,7 @@ async def test_tasks_table_has_activated_by_column():
 
 
 @pytest.mark.asyncio
+@pytest.mark.llm_call
 @_handle_project
 async def test_isolated_execute_detaches_entirely(monkeypatch):
     """Explicit isolation prompt: Detach the activated task entirely from the queue.
@@ -531,6 +540,7 @@ async def test_isolated_execute_detaches_entirely(monkeypatch):
 
 
 @pytest.mark.asyncio
+@pytest.mark.llm_call
 @_handle_project
 async def test_isolated_execute_start_at_moves(monkeypatch):
     """Branch A (head case): Explicit isolation – if activated task was head, next becomes head and inherits start_at."""
@@ -558,6 +568,7 @@ async def test_isolated_execute_start_at_moves(monkeypatch):
 
 
 @pytest.mark.asyncio
+@pytest.mark.llm_call
 @_handle_project
 async def test_execute_default_keeps_followers():
     """Default behaviour: Keep followers attached when activating a middle task.

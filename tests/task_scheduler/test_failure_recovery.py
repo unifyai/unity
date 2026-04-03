@@ -6,6 +6,7 @@ from unity.task_scheduler.types.status import Status
 
 
 @pytest.mark.asyncio
+@pytest.mark.llm_call
 @_handle_project
 async def test_defer_reinstate_failure_fallback_downgrades_status(monkeypatch):
     """If reinstate fails during a defer stop, status should downgrade to prior or 'queued'."""
@@ -40,6 +41,7 @@ async def test_defer_reinstate_failure_fallback_downgrades_status(monkeypatch):
 
 
 @pytest.mark.asyncio
+@pytest.mark.llm_call
 @_handle_project
 async def test_orphan_active_guard_prevents_new_execution(monkeypatch):
     """If a row is marked 'active' without an active pointer, execute should refuse to start a new task."""
@@ -67,6 +69,7 @@ async def test_orphan_active_guard_prevents_new_execution(monkeypatch):
 
 
 @pytest.mark.asyncio
+@pytest.mark.llm_call
 @_handle_project
 async def test_disallow_internal_status_edits_on_active_task(monkeypatch):
     """Direct updates to the active task's status should be refused and must go through the live handle."""

@@ -26,6 +26,8 @@ from tests.helpers import _handle_project
 #  0. Ask                                                                   //
 # --------------------------------------------------------------------------- #
 
+pytestmark = pytest.mark.llm_call
+
 
 @pytest.mark.asyncio
 @_handle_project
