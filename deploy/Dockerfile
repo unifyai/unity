@@ -95,6 +95,40 @@ ENV MKL_NUM_THREADS=1
 RUN HF_HOME=/opt/hf-cache python unity/conversation_manager/medium_scripts/call.py download-files
 RUN playwright install
 
+# Install Patchright Chromium (same as deploy/desktop/Dockerfile) for non-headless
+# browser sessions (e.g., Google Meet join via local browser with virtual display).
+RUN cd /opt/magnitude/packages/magnitude-core && npx patchright install --with-deps chromium
+
+# Configure Chromium as default browser so XFCE and GUI apps can find it
+RUN CHROME_PATH=$(find /root/.cache/ms-playwright -name "chrome" -type f -executable 2>/dev/null | head -1) && \
+    printf '#!/bin/bash\nexec "%s" --no-sandbox "$@"\n' "$CHROME_PATH" > /usr/local/bin/chromium-browser && \
+    chmod +x /usr/local/bin/chromium-browser && \
+    printf '[Desktop Entry]\nVersion=1.0\nName=Chromium Web Browser\nExec=/usr/local/bin/chromium-browser %%U\nTerminal=false\nType=Application\nIcon=web-browser\nCategories=Network;WebBrowser;\nMimeType=text/html;text/xml;application/xhtml+xml;x-scheme-handler/http;x-scheme-handler/https;\nStartupNotify=true\n' \
+        > /usr/share/applications/chromium-browser.desktop && \
+    update-alternatives --install /usr/bin/x-www-browser x-www-browser /usr/local/bin/chromium-browser 100 && \
+    update-alternatives --set x-www-browser /usr/local/bin/chromium-browser && \
+    update-desktop-database /usr/share/applications/ 2>/dev/null || true && \
+    xdg-mime default chromium-browser.desktop x-scheme-handler/http 2>/dev/null || true && \
+    xdg-mime default chromium-browser.desktop x-scheme-handler/https 2>/dev/null || true && \
+    xdg-mime default chromium-browser.desktop text/html 2>/dev/null || true
+
+# XFCE helper definition so exo-open recognizes Chromium as a browser option
+RUN mkdir -p /usr/share/xfce4/helpers && \
+    printf '[Desktop Entry]\nVersion=1.0\nType=X-XFCE-Helper\nName=Chromium Web Browser\nIcon=web-browser\nX-XFCE-Binaries=chromium-browser;/usr/local/bin/chromium-browser;\nX-XFCE-Category=WebBrowser\nX-XFCE-Commands=%%B;\nX-XFCE-CommandsWithParameter=%%B %%s;\n' \
+        > /usr/share/xfce4/helpers/chromium-browser.desktop
+
+# XFCE configuration: suppress first-run dialogs, disable screensaver/power mgmt
+RUN mkdir -p /root/.config/xfce4/xfconf/xfce-perchannel-xml && \
+    printf '<?xml version="1.0" encoding="UTF-8"?>\n<channel name="xfce4-power-manager" version="1.0">\n  <property name="xfce4-power-manager" type="empty">\n    <property name="dpms-enabled" type="bool" value="false"/>\n    <property name="blank-on-ac" type="int" value="0"/>\n    <property name="dpms-on-ac-sleep" type="uint" value="0"/>\n    <property name="dpms-on-ac-off" type="uint" value="0"/>\n  </property>\n</channel>\n' \
+        > /root/.config/xfce4/xfconf/xfce-perchannel-xml/xfce4-power-manager.xml && \
+    printf '<?xml version="1.0" encoding="UTF-8"?>\n<channel name="xfce4-screensaver" version="1.0">\n  <property name="saver" type="empty">\n    <property name="enabled" type="bool" value="false"/>\n  </property>\n  <property name="lock" type="empty">\n    <property name="enabled" type="bool" value="false"/>\n  </property>\n</channel>\n' \
+        > /root/.config/xfce4/xfconf/xfce-perchannel-xml/xfce4-screensaver.xml && \
+    printf 'WebBrowser=chromium-browser\nTerminalEmulator=xfce4-terminal\n' \
+        > /root/.config/xfce4/helpers.rc
+
+# Virtual display for non-headless browser sessions (Google Meet, etc.)
+ENV DISPLAY=:99
+
 # Set runtime environment variables for memory optimization
 ENV PYTHONUNBUFFERED=1
 ENV OMP_NUM_THREADS=1
@@ -111,12 +145,20 @@ ENV UNILLM_LOG_DIR=/var/log/unillm
 ENV MAGNITUDE_LOG_DIR=/var/log/magnitude
 ENV MAGNITUDE_DEBUG=true
 
+# Pre-create directories that the desktop stack needs but can't create as non-root
+RUN mkdir -p /root/.vnc && chmod 777 /root /root/.vnc && \
+    mkdir -p /tmp/.X11-unix && chmod 1777 /tmp/.X11-unix && \
+    mkdir -p /tmp/.ICE-unix && chmod 1777 /tmp/.ICE-unix
+
 # Create non-root user for runtime
 RUN useradd -m -u 1000 unity && \
-    mkdir -p /var/log/unity /var/log/unify /var/log/unillm /var/log/magnitude /home/unity/.cache && \
+    mkdir -p /var/log/unity /var/log/unify /var/log/unillm /var/log/magnitude /home/unity/.cache /home/unity/.config && \
+    mkdir -p /run/dbus && chmod 777 /run/dbus && \
+    mkdir -p /tmp/runtime-unity && chown unity:unity /tmp/runtime-unity && chmod 700 /tmp/runtime-unity && \
     chown -R unity:unity /app /var/log/unity /var/log/unify /var/log/unillm /var/log/magnitude && \
     cp -r /root/.cache/ms-playwright /home/unity/.cache/ms-playwright && \
-    chown -R unity:unity /home/unity/.cache
+    cp -r /root/.config/xfce4 /home/unity/.config/xfce4 2>/dev/null || true && \
+    chown -R unity:unity /home/unity/.cache /home/unity/.config
 
 USER unity
 

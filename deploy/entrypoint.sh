@@ -11,6 +11,8 @@ export CONTAINER_START_TIME_MS=$(date +%s%3N)
 MAIN_PID=""
 AGENT_PID=""
 WATCHDOG_PID=""
+DISPLAY_PID=""
+DEVICE_PID=""
 
 # Monitor cgroup memory usage and send SIGTERM before the kernel OOM-kills us.
 # Runs as a background process with negligible overhead (reads a sysfs file
@@ -91,6 +93,14 @@ on_signal() {
     fi
 
     stop_agent_service
+
+    if [ ! -z "$DEVICE_PID" ]; then
+        kill $DEVICE_PID 2>/dev/null || true
+    fi
+    if [ ! -z "$DISPLAY_PID" ]; then
+        kill $DISPLAY_PID 2>/dev/null || true
+    fi
+
     echo "Cleanup complete"
     exit 0
 }
@@ -125,6 +135,28 @@ if [ -d /opt/hf-cache ] && [ ! -d /tmp/huggingface ]; then
     cp -r /opt/hf-cache /tmp/huggingface &
 fi
 
+# ── Desktop stack (virtual display + audio devices) ──────────────────────────
+# Reuses deploy/desktop/display.sh and deploy/desktop/device.sh to provide the
+# same TigerVNC + XFCE + PipeWire/PulseAudio environment as the desktop container.
+# Required for non-headless browser sessions (e.g. Google Meet join).
+export XDG_RUNTIME_DIR=/tmp/runtime-unity
+mkdir -p "$XDG_RUNTIME_DIR" 2>/dev/null || true
+chmod 700 "$XDG_RUNTIME_DIR" 2>/dev/null || true
+
+dbus-daemon --system --fork 2>/dev/null || true
+eval "$(dbus-launch)"
+export DBUS_SESSION_BUS_ADDRESS
+
+echo "⬥ Starting virtual display..."
+bash /app/deploy/desktop/display.sh &
+DISPLAY_PID=$!
+
+echo "⬥ Starting virtual audio devices..."
+bash /app/deploy/desktop/device.sh &
+DEVICE_PID=$!
+
+sleep 3
+
 # Start agent-service on port 3000 (for web automation via Magnitude)
 echo "⬥ Starting agent-service..."
 # Use pre-compiled JavaScript if available, otherwise fallback to ts-node
@@ -152,3 +184,5 @@ WATCHDOG_PID=$!
 wait $MAIN_PID || true
 kill $WATCHDOG_PID 2>/dev/null || true
 stop_agent_service
+kill $DEVICE_PID 2>/dev/null || true
+kill $DISPLAY_PID 2>/dev/null || true
