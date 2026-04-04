@@ -191,8 +191,8 @@ def build_brain_spec(
 
     # Get boss contact (contact_id=1) from ContactManager - the source of truth
     boss_contact = cm.contact_index.get_contact(1) or {}
-    is_boss_on_call = cm.mode.is_voice and (
-        (cm.get_active_contact() or {}).get("contact_id") == 1
+    is_boss_on_call = cm.mode.is_voice and bool(
+        (cm.get_active_contact() or {}).get("is_system", False),
     )
     system_prompt = build_system_prompt(
         bio=cm.assistant_about,

@@ -37,7 +37,7 @@ def _build_boss_details_block(
 def _build_voice_output_block(*, is_boss_on_call: bool = False) -> str:
     """Build the voice call output format guidance block."""
     if is_boss_on_call:
-        return """If I am on a voice call with my boss, the Voice Agent receives all system events directly. I do not need to relay information — the Voice Agent handles it autonomously.
+        return """If I am on a voice call with a colleague (an internal/system contact), the Voice Agent receives all system events directly. I do not need to relay information — the Voice Agent handles it autonomously.
 
 **No text messages during voice calls.** I do NOT send text messages (Unify messages, SMS, email) to the person on the call to communicate results, progress, or updates. The Voice Agent handles all communication verbally. Sending a silent text message during a live voice conversation is disorienting — like a colleague on a video call quietly replying via chat instead of speaking. Even if there is a pre-existing text thread from before the call, the voice call is now the active channel.
 
@@ -1132,7 +1132,9 @@ def build_voice_agent_prompt(
                 "a colleague from Unify who is introducing me to my future boss"
             )
     else:
-        caller_description = "my boss" if is_boss_user else "one of my boss's contacts"
+        caller_description = (
+            "a colleague" if is_boss_user else "one of my boss's contacts"
+        )
 
     # Build name intro for context section
     name_intro = f"I'm {assistant_name}, on" if assistant_name else "I'm on"
@@ -1449,12 +1451,12 @@ These are real messages sent by a call participant through a different channel. 
 I keep the relay concise (one or two sentences) and never read out the full message verbatim — I summarise the key point. I never mention tags, channels, or internal systems.""",
         )
 
-    # Boss-on-call: full event visibility (addendum)
+    # Internal call: full event visibility (addendum)
     if is_boss_user and not demo_mode:
         parts.add(
             """Full event visibility
 ---------------------
-Because my boss is on this call, I also receive `[notification]` messages for all other system events:
+Because a colleague is on this call, I also receive `[notification]` messages for all other system events:
 - Action progress updates (work I am doing in the background)
 - Action completion results
 

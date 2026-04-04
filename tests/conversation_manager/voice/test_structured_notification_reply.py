@@ -127,6 +127,7 @@ CONTACT = {
     "surname": "Lenton",
     "phone_number": "+15550100001",
     "email_address": "dan@example.com",
+    "is_system": True,
 }
 BOSS = CONTACT
 

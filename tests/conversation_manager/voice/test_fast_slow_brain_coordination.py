@@ -755,9 +755,9 @@ class TestAskAnswerEventForwarding:
         self,
         initialized_cm,
     ):
-        """guide_voice_agent should be stripped for boss-on-call, preventing
-        stale slow brain guidance. The fast brain receives all relevant state
-        via the notification pipeline instead.
+        """guide_voice_agent should be stripped for internal (system) contacts
+        on call, preventing stale slow brain guidance. The fast brain receives
+        all relevant state via the notification pipeline instead.
         """
         cm = initialized_cm
 
@@ -796,7 +796,7 @@ class TestAskAnswerEventForwarding:
         )
 
         assert "guide_voice_agent" not in cm.all_tool_calls, (
-            f"guide_voice_agent should be stripped for boss-on-call. "
+            f"guide_voice_agent should be stripped for internal contacts on call. "
             f"The fast brain receives ask answers via event forwarding.\n"
             f"Tool calls: {cm.all_tool_calls}"
         )

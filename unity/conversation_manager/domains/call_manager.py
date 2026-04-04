@@ -262,8 +262,7 @@ class LivekitCallManager:
         if self._socket_server:
             await self._socket_server.set_forward_channels(list(_BASE_FORWARD_CHANNELS))
 
-        is_boss = contact.get("contact_id") == 1
-        if is_boss:
+        if contact.get("is_system", False):
             self._start_boss_notification_rendering()
 
         room_name = make_room_name(self.assistant_id, "phone")
@@ -319,8 +318,7 @@ class LivekitCallManager:
         if self._socket_server:
             await self._socket_server.set_forward_channels(list(_BASE_FORWARD_CHANNELS))
 
-        is_boss = contact.get("contact_id") == 1
-        if is_boss:
+        if contact.get("is_system", False):
             self._start_boss_notification_rendering()
 
         room_name = room_name or make_room_name(self.assistant_id, "meet")

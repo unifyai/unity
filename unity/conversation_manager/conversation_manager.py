@@ -1063,10 +1063,10 @@ class ConversationManager(metaclass=SingletonABCMeta):
         }
 
         if "guide_voice_agent" in tools:
-            is_boss_on_call = (self.get_active_contact() or {}).get(
-                "contact_id",
-            ) == 1
-            if is_boss_on_call or not self._has_non_forwarded_event:
+            is_internal_call = bool(
+                (self.get_active_contact() or {}).get("is_system", False),
+            )
+            if is_internal_call or not self._has_non_forwarded_event:
                 tools.pop("guide_voice_agent")
         self._has_non_forwarded_event = False
 
