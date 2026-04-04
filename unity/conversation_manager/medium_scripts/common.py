@@ -1272,6 +1272,8 @@ def render_event_for_fast_brain(event_json: str) -> str | None:
         answer = event.response if event.response else "(no answer)"
         return f"Ask answered ({event.query[:100]}): {answer}"
     if isinstance(event, ActorSessionResponse):
+        if event.content:
+            return f"Action update: {event.content[:200]}"
         return None
     if isinstance(event, NotificationInjectedEvent):
         return event.content
@@ -1370,6 +1372,8 @@ def _render_history_event(
         if isinstance(event, ActorHandleStarted):
             return None
         if isinstance(event, ActorSessionResponse):
+            if event.content:
+                return f"Action update: {event.content[:200]}"
             return None
 
     return None

@@ -325,7 +325,7 @@ async def entrypoint(ctx: agents.JobContext):
         contact_phone_number=contact.get("phone_number", ""),
         contact_email=contact.get("email_address", ""),
         contact_bio=contact.get("bio") or None,
-        is_boss_user=contact.get("contact_id") == 1,
+        is_boss_user=bool(contact.get("is_system", False)),
         contact_rolling_summary=contact.get("rolling_summary", ""),
         demo_mode=SETTINGS.DEMO_MODE,
         channel=channel,
@@ -850,9 +850,7 @@ async def entrypoint(ctx: agents.JobContext):
 
         await _refresh_screenshots()
 
-        evaluator = NotificationReplyEvaluator(
-            model=SETTINGS.conversation.FAST_BRAIN_MODEL,
-        )
+        evaluator = NotificationReplyEvaluator()
         chat_messages = _extract_chat_messages(
             session._chat_ctx,
             tail=SETTINGS.conversation.NOTIFICATION_REPLY_CONTEXT_WINDOW,
@@ -1050,7 +1048,7 @@ async def entrypoint(ctx: agents.JobContext):
     event_broker.register_callback("app:call:notification", on_notification)
 
     # --- Tier 1: Comms from call participants (all calls) ---
-    is_boss_user = contact.get("contact_id") == 1
+    is_boss_user = bool(contact.get("is_system", False))
     participant_ids: set[int] = set()
     if contact.get("contact_id") is not None:
         participant_ids.add(contact["contact_id"])

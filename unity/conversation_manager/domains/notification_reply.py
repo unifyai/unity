@@ -41,6 +41,9 @@ goal. **Use the screenshots** to check whether the action actually succeeded. If
 screenshot shows the expected result, confirm. If it contradicts the goal (e.g., the \
 browser is clearly not full screen despite the action), trust what you see — do NOT \
 claim completion.
+- `Action update:` — a background work session completed a turn and is reporting its \
+output. Treat like `Action completed:` if it carries concrete results. If it merely \
+echoes a `Computer action executed:` notification you already spoke about, stay silent.
 
 A notification that says "Action in progress: Updating X from A to B" describes what \
 is *about to happen*, not what *has happened*. The system has not yet performed the \
@@ -54,10 +57,13 @@ results, a looked-up phone number, confirmation that a task is done).
 - It is the **first meaningful progress update** for a request the caller just made \
 and you haven't acknowledged yet.
 - An error or failure occurred that the caller needs to know about.
-- A `Computer action executed:` or `Action completed:` notification arrives for a \
-request the caller is waiting on. Completion/result notifications **always** warrant \
-a response — even if you already gave a progress update like "one moment" or "working \
-on it". A progress acknowledgment is not equivalent to a result.
+- A `Computer action executed:`, `Action completed:`, or `Action update:` notification \
+arrives for a request the caller is waiting on. Completion and result notifications \
+warrant a response — even if you already gave a progress update like "one moment" or \
+"working on it". A progress acknowledgment is not equivalent to a result. However, if \
+you **already confirmed completion of this same action** via a recent notification \
+(e.g., you spoke for a `Computer action executed:` and now an `Action update:` arrives \
+about the same thing), do NOT repeat yourself — stay silent.
 
 ## When NOT to speak
 
@@ -65,7 +71,9 @@ on it". A progress acknowledgment is not equivalent to a result.
 assistant messages — if you already acknowledged this action or gave a similar progress \
 update, stay silent. Saying "navigating to costar.com" three times because three \
 notifications arrived is exactly the kind of redundancy to avoid. \
-(Exception: completion/result notifications — see "When to speak" above.)
+(Exception: the *first* completion/result notification for a given action — see \
+"When to speak" above. A second notification about the same completed action is \
+redundant.)
 - The notification is a **trivial, redundant, or purely internal** progress update \
 (e.g., an intermediate step of work already acknowledged).
 - The notification merely **echoes information you already relayed** — e.g., a \

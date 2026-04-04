@@ -345,8 +345,13 @@ class TestRenderHistoryEvent:
         result = _render_history_event(ev, {1}, True, ASSISTANT_NAME)
         assert result is None
 
-    def test_actor_session_response_filtered(self):
+    def test_actor_session_response_with_content_rendered(self):
         ev = ActorSessionResponse(handle_id=1, content="Here are the results")
+        result = _render_history_event(ev, {1}, True, ASSISTANT_NAME)
+        assert result == "Action update: Here are the results"
+
+    def test_actor_session_response_empty_filtered(self):
+        ev = ActorSessionResponse(handle_id=1, content="")
         result = _render_history_event(ev, {1}, True, ASSISTANT_NAME)
         assert result is None
 
