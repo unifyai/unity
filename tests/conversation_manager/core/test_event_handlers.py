@@ -2484,6 +2484,62 @@ class TestAssistantDesktopReadyEvent:
 
         mock_cm.request_llm_run.assert_called_with(delay=0)
 
+    @pytest.mark.asyncio
+    async def test_assistant_desktop_ready_ignores_missing_binding_when_session_has_one(
+        self,
+        mock_cm,
+    ):
+        """AssistantDesktopReady should fail closed on missing binding_id."""
+        from unity.conversation_manager.events import AssistantDesktopReady
+
+        mock_cm.vm_ready = False
+        mock_cm.assistant_id = "84"
+        mock_cm.user_id = "test_user"
+        event = AssistantDesktopReady(
+            binding_id="",
+            desktop_url="https://unity-pool-ubuntu-1.vm.unify.ai",
+            vm_type="ubuntu",
+        )
+
+        with (
+            patch(
+                "unity.conversation_manager.assistant_jobs.update_liveview_url",
+            ) as mock_update_liveview_url,
+            patch(
+                "unity.conversation_manager.domains.managers_utils._start_file_sync",
+                new_callable=AsyncMock,
+            ) as mock_start_file_sync,
+            patch(
+                "unity.session_details.SESSION_DETAILS",
+            ) as mock_sd,
+            patch(
+                "unity.function_manager.primitives.runtime._vm_ready",
+            ) as mock_vm_ready,
+            patch(
+                "unity.conversation_manager.domains.event_handlers._ensure_desktop_session",
+                return_value=AsyncMock()(),
+            ) as mock_ensure_desktop_session,
+            patch(
+                "unity.conversation_manager.domains.comms_utils.publish_assistant_desktop_ready",
+                new_callable=AsyncMock,
+            ) as mock_publish_desktop_ready,
+        ):
+            mock_sd.assistant.desktop_url = ""
+            mock_sd.assistant.binding_id = "binding-84"
+            await EventHandler.handle_event(event, mock_cm)
+
+        assert mock_cm.vm_ready is False
+        mock_update_liveview_url.assert_not_called()
+        mock_start_file_sync.assert_not_awaited()
+        mock_publish_desktop_ready.assert_not_awaited()
+        mock_ensure_desktop_session.assert_not_called()
+        mock_vm_ready.set.assert_not_called()
+        mock_cm.request_llm_run.assert_not_called()
+        mock_cm._session_logger.info.assert_any_call(
+            "desktop_ready_missing_binding",
+            "Ignoring desktop_ready without binding_id because the session already has a current binding",
+        )
+
 
 # =============================================================================
 # Renderer: Infrastructure State Tests
