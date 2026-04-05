@@ -1103,7 +1103,10 @@ class CommsManager:
                 details = {
                     "api_key": event["api_key"],
                     "binding_id": (
-                        ((session.get("status") or {}).get("binding") or {}).get("id", "")
+                        ((session.get("status") or {}).get("binding") or {}).get(
+                            "id",
+                            "",
+                        )
                     ),
                     "medium": event.get("medium", "startup"),
                     "assistant_id": event["assistant_id"],
