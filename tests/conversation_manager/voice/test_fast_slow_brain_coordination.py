@@ -712,52 +712,22 @@ class TestFastBrainNotificationSpeakMode:
 
 
 @pytest.mark.asyncio
-class TestAskAnswerEventForwarding:
-    """Verify that ActorHandleResponse events are rendered for the fast brain
-    and that guide_voice_agent is stripped during boss calls.
+class TestGuideVoiceAgentAvailableDuringMeet:
+    """Verify that guide_voice_agent is available during voice calls.
 
-    The fast brain receives ask answers directly via the notification pipeline
-    (render_event_for_fast_brain renders ActorHandleResponse). The slow brain
-    does not need guide_voice_agent on boss calls — all relevant state flows
-    through event-level forwarding.
+    The slow brain is the sole gatekeeper for relaying action results and
+    progress to the fast brain. guide_voice_agent must always be available
+    during voice calls so the slow brain can relay information via SPEAK
+    (verbatim TTS) or NOTIFY (silent context injection).
     """
 
-    def test_render_event_for_fast_brain_renders_ask_answer(self):
-        """render_event_for_fast_brain should render ActorHandleResponse
-        events so _render_boss_notifications forwards them to the fast brain.
-        """
-        from unity.conversation_manager.events import ActorHandleResponse
-        from unity.conversation_manager.medium_scripts.common import (
-            render_event_for_fast_brain,
-        )
-
-        event = ActorHandleResponse(
-            handle_id=0,
-            action_name="ask",
-            query="How did you break down the task?",
-            response=(
-                "I followed the Colliers standard workflow: "
-                "1) searched for guidance, 2) verified all 4 PDFs, "
-                "3) rendered pages 2-3 at a time, 4) extracted into "
-                "FiscalYearData schema, 5) saved JSON, 6) generated "
-                "Excel. Key finding: FYE 2024 had a net loss of "
-                "£136K with interest costs doubling."
-            ),
-            call_id="",
-        )
-        rendered = render_event_for_fast_brain(event.to_json())
-        assert rendered is not None, "ActorHandleResponse should be rendered"
-        assert "Ask answered" in rendered
-        assert "Colliers standard workflow" in rendered
-
     @_handle_project
-    async def test_guide_voice_agent_stripped_during_boss_meet(
+    async def test_guide_voice_agent_available_during_boss_meet(
         self,
         initialized_cm,
     ):
-        """guide_voice_agent should be stripped for internal (system) contacts
-        on call, preventing stale slow brain guidance. The fast brain receives
-        all relevant state via the notification pipeline instead.
+        """guide_voice_agent should be available during voice calls so the
+        slow brain can relay action results to the fast brain.
         """
         cm = initialized_cm
 
@@ -772,12 +742,6 @@ class TestAskAnswerEventForwarding:
                     "action_name": "act_completed",
                     "query": "All 4 PDFs processed, Excel output generated.",
                     "status": "completed",
-                },
-                {
-                    "action_name": "ask_0",
-                    "query": "How did you break down the task?",
-                    "status": "completed",
-                    "response": "I followed the Colliers standard workflow.",
                 },
             ],
         }
@@ -795,9 +759,9 @@ class TestAskAnswerEventForwarding:
             max_steps=5,
         )
 
-        assert "guide_voice_agent" not in cm.all_tool_calls, (
-            f"guide_voice_agent should be stripped for internal contacts on call. "
-            f"The fast brain receives ask answers via event forwarding.\n"
+        assert "guide_voice_agent" in cm.all_tool_calls, (
+            f"guide_voice_agent should be available during voice calls. "
+            f"The slow brain is the sole relay path to the fast brain.\n"
             f"Tool calls: {cm.all_tool_calls}"
         )
 

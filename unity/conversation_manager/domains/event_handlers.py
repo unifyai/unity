@@ -698,10 +698,12 @@ async def _(
     *args,
     **kwargs,
 ):
-    contact_id = event.contact["contact_id"]
-    contact = cm.contact_index.get_contact(contact_id=contact_id)
+    contact_id = event.contact.get("contact_id") if event.contact else None
+    contact = (
+        cm.contact_index.get_contact(contact_id=contact_id) if contact_id else None
+    )
     if contact is None:
-        contact = event.contact
+        contact = event.contact or {}
     sender_name = _get_sender_name(contact)
 
     medium = (
@@ -857,7 +859,6 @@ async def _(
     ),
 )
 async def _(event, cm: "ConversationManager", *args, **kwargs):
-    cm._has_non_forwarded_event = True
     if isinstance(event, ActorClarificationRequest):
         if event.handle_id in cm.in_flight_actions:
             from unity.common.prompt_helpers import now as prompt_now
@@ -1019,13 +1020,6 @@ async def _(event, cm: "ConversationManager", *args, **kwargs):
     # contact_id may be None for external recipients not in contacts
     contact_id = contact.get("contact_id") if isinstance(contact, dict) else None
     sender_name = _get_sender_name(contact)
-
-    # Flag non-participant comms during voice calls. The fast brain only
-    # renders comms from the active call contact; everything else is dropped.
-    if getattr(cm.mode, "is_voice", False):
-        call_contact_id = (cm.call_manager.call_contact or {}).get("contact_id")
-        if contact_id != call_contact_id:
-            cm._has_non_forwarded_event = True
 
     match event:
         case SMSSent():
@@ -1242,7 +1236,6 @@ async def _(event: Error, cm: "ConversationManager", *args, **kwargs):
     lightweight notification and triggers a follow-up brain turn so the brain
     can see the failure and decide how to recover.
     """
-    cm._has_non_forwarded_event = True
     cm.notifications_bar.push_notif("Error", event.message, event.timestamp)
     await cm.request_llm_run(delay=0)
 
@@ -1289,7 +1282,6 @@ async def _(event: UnknownContactCreated, cm: "ConversationManager", *args, **kw
         or "Unknown"
     )
 
-    cm._has_non_forwarded_event = True
     cm._session_logger.info(
         "unknown_contact_created",
         f"New unknown contact created: {contact_name} via {event.medium}",
@@ -1436,7 +1428,6 @@ async def _(
     *args,
     **kwargs,
 ):
-    cm._has_non_forwarded_event = True
     cm._session_logger.info(
         "notification_injected",
         f"Notification: {event.content[:50]}...",
@@ -1471,7 +1462,6 @@ async def _(
 
 @EventHandler.register(ActorResult)
 async def _(event: ActorResult, cm: "ConversationManager", *args, **kwargs):
-    cm._has_non_forwarded_event = True
     action_data = cm.in_flight_actions.get(event.handle_id, {})
 
     # Log completion in handle_actions before moving to completed_actions.
@@ -1501,7 +1491,6 @@ async def _(event: ActorSessionResponse, cm: "ConversationManager", *args, **kwa
     a response means the actor is *done with this turn* and will not proceed
     until the brain interjects with the next instruction.
     """
-    cm._has_non_forwarded_event = True
     action_data = cm.in_flight_actions.get(event.handle_id, {})
 
     from unity.common.prompt_helpers import now as prompt_now
@@ -1550,7 +1539,6 @@ async def _(
 ):
     """A visible computer session's act() call completed somewhere in the
     system. Push a notification and wake the slow brain so it can react."""
-    cm._has_non_forwarded_event = True
     snippet = event.summary[:120] if event.summary else event.instruction[:120]
     cm.notifications_bar.push_notif(
         "Computer",

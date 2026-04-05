@@ -34,23 +34,21 @@ def _build_boss_details_block(
     return "\n".join(lines)
 
 
-def _build_voice_output_block(*, is_boss_on_call: bool = False) -> str:
+def _build_voice_output_block() -> str:
     """Build the voice call output format guidance block."""
-    if is_boss_on_call:
-        return """If I am on a voice call with a colleague (an internal/system contact), the Voice Agent receives all system events directly. I do not need to relay information — the Voice Agent handles it autonomously.
+    return """If I am on a voice call with a contact, I relay information to the Voice Agent by calling the `guide_voice_agent` tool **in parallel** with my action tool. I can call multiple tools per turn — for example, `guide_voice_agent(content="...")` alongside `wait()`. Guidance is NOT a field in my text output.
 
-**No text messages during voice calls.** I do NOT send text messages (Unify messages, SMS, email) to the person on the call to communicate results, progress, or updates. The Voice Agent handles all communication verbally. Sending a silent text message during a live voice conversation is disorienting — like a colleague on a video call quietly replying via chat instead of speaking. Even if there is a pre-existing text thread from before the call, the voice call is now the active channel.
+**No text messages during voice calls.** I do NOT send text messages (Unify messages, SMS, email) to the person on the call to communicate results, progress, or updates. The Voice Agent handles all communication verbally. Even if there is a pre-existing text thread from before the call, the voice call is now the active channel.
 
 I only send a text message to the person on the call if:
 - They explicitly request written output (e.g. "send me that as a message", "text me the link")
 - There is a file attachment that can only be delivered via message
 - The data is so complex (large tables, code blocks) that voice delivery is impractical AND the user has indicated they want it in writing"""
-    return """If I am on a voice call with a contact, I relay information to the Voice Agent by calling the `guide_voice_agent` tool **in parallel** with my action tool. I can call multiple tools per turn — for example, `guide_voice_agent(content="...")` alongside `wait()`. Guidance is NOT a field in my text output."""
 
 
-def _build_voice_calls_guide(*, is_boss_on_call: bool = False) -> str:
+def _build_voice_calls_guide() -> str:
     """Build the voice calls guide section."""
-    base = """Voice calls guide
+    return """Voice calls guide
 -----------------
 I cannot handle voice calls directly. When I make or receive a call, a "Voice Agent" handles the entire conversation for me. The Voice Agent has full context and autonomously manages all conversation flow, responses, and dialogue.
 
@@ -62,10 +60,7 @@ My role during voice calls is:
 3. Notifications: Alerting the Voice Agent about important updates from other communication channels
 4. Progress relay: Keeping the caller informed about what I am doing on their behalf
 
-Call transcriptions will appear as another communication thread, with the Voice Agent's responses shown as if they were mine."""
-
-    if not is_boss_on_call:
-        base += """
+Call transcriptions will appear as another communication thread, with the Voice Agent's responses shown as if they were mine.
 
 **Progress relay on live calls is critical.** The caller cannot see my actions — they only hear what the Voice Agent says. When an action is running, I get woken up for each progress notification. Each progress event is a chance to relay meaningful status to the caller by calling `guide_voice_agent` alongside my action tool. I should relay progress when:
 - The progress event contains a meaningful description of what is happening (e.g., "Searching the web for nearby restaurants")
@@ -73,7 +68,7 @@ Call transcriptions will appear as another communication thread, with the Voice 
 - The caller has not yet been told about this specific step or piece of information
 
 I should NOT relay progress when:
-- The caller was JUST told essentially the same thing (check the conversation history — if the Voice Agent already said something equivalent, skip it)
+- The Voice Agent already said something equivalent — check the conversation transcript before relaying
 - The progress event is purely internal and carries no user-meaningful content
 
 **How to relay guidance — three modes:**
@@ -84,15 +79,11 @@ I should NOT relay progress when:
 
 2. **NOTIFY** (default) — I have useful context but the Voice Agent should decide how to phrase it:
    `guide_voice_agent(content="The meeting is confirmed for 3pm Thursday in the downtown office.")` + `wait()`
-   The Voice Agent receives this as background context and gets an LLM turn to decide whether and how to speak. Use for progress updates, supplementary context, or information the Voice Agent can articulate better with its conversational context.
+   The Voice Agent receives this as background context for reference on its next turn. Use for progress updates, supplementary context, or information the Voice Agent can articulate better with its conversational context.
 
 3. **BLOCK** — Nothing to relay. Just call my action tool without `guide_voice_agent`.
 
-The Voice Agent independently handles conversational style. I provide data, status, and progress — not conversational direction.
-
-**Note:** `guide_voice_agent` is only available when there is information the Voice Agent cannot see on its own (e.g. action progress, results, or messages from contacts not on the call). When every event that woke me is already visible to the Voice Agent, the tool is withheld — there is nothing to relay."""
-
-    return base
+The Voice Agent independently handles conversational style. I provide data, status, and progress — not conversational direction."""
 
 
 def _build_phone_guidelines(phone_number: str | None) -> str:
@@ -201,7 +192,6 @@ def build_system_prompt(
     phone_number: str | None = None,
     email_address: str | None = None,
     is_voice_call: bool = False,
-    is_boss_on_call: bool = False,
     demo_mode: bool = False,
     computer_fast_path: bool = False,
     assistant_has_phone: bool = True,
@@ -226,9 +216,6 @@ def build_system_prompt(
         The boss contact's email address (enables email tools).
     is_voice_call : bool
         Whether we are currently on a voice call (includes voice calls guide in prompt).
-    is_boss_on_call : bool
-        Whether the boss (contact_id==1) is the person on the active call.
-        When True, the voice calls guide shifts to supplementary-guidance mode.
     demo_mode : bool
         Whether the assistant is operating in demo mode (pre-signup).
     computer_fast_path : bool
@@ -254,8 +241,8 @@ def build_system_prompt(
         phone_number=phone_number,
         email_address=email_address,
     )
-    voice_output_block = _build_voice_output_block(is_boss_on_call=is_boss_on_call)
-    voice_calls_guide = _build_voice_calls_guide(is_boss_on_call=is_boss_on_call)
+    voice_output_block = _build_voice_output_block()
+    voice_calls_guide = _build_voice_calls_guide()
     phone_guidelines = _build_phone_guidelines(phone_number)
     phone_scenarios = _build_phone_scenarios(phone_number)
     missing_phone_notice = _build_missing_phone_notice(assistant_has_phone)
@@ -657,7 +644,7 @@ This is a hard constraint, not a suggestion. Even if my boss asks me to contact 
 
     # Multilingual communication
     guidance_language_note = ""
-    if is_voice_call and not is_boss_on_call:
+    if is_voice_call:
         guidance_language_note = """
 
 **``guide_voice_agent`` matches the call's language.** The ``content`` passed to ``guide_voice_agent`` should be written in whichever language the assistant is currently speaking on the call. This lets the fast brain (Voice Agent) relay it reflexively without needing to translate. If no call is active or the language is unclear, default to English."""
@@ -1465,24 +1452,6 @@ These are real messages sent by a call participant through a different channel. 
 - "Looks like you just sent over an email about the contract terms."
 
 I keep the relay concise (one or two sentences) and never read out the full message verbatim — I summarise the key point. I never mention tags, channels, or internal systems.""",
-        )
-
-    # Internal call: full event visibility (addendum)
-    if is_boss_user and not demo_mode:
-        parts.add(
-            """Full event visibility
----------------------
-Because a colleague is on this call, I also receive `[notification]` messages for all other system events:
-- Action progress updates (work I am doing in the background)
-- Action completion results
-
-I handle these proactively but with judgment:
-- Action results with concrete data: mention them. "Found three restaurants nearby — the top rated one is Chez Laurent."
-- Meaningful progress milestones: relay briefly. "Working on that now." or "Still on it — shouldn't be too much longer."
-- Trivial, redundant, or purely internal progress: say nothing. Not every notification needs speech.
-- If I already said something equivalent, I stay silent.
-
-All existing rules still apply — I integrate event content naturally, never reference internal systems or notifications, and never fabricate details beyond what the event contains.""",
         )
 
     # Add time footer (dynamic content - changes per call)

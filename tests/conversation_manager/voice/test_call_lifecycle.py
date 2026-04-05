@@ -1381,17 +1381,14 @@ class TestChannelForwardingTiers:
         channels = mgr._socket_server._forward_channels
         assert "app:comms:*" in channels, "Boss call must forward comms"
         assert "app:call:*" in channels, "Boss call must forward call events"
-        assert (
-            mgr._boss_notification_task is not None
-        ), "Boss call must start notification rendering task"
 
-    async def test_non_boss_call_gets_comms_but_not_actor_channels(
+    async def test_non_boss_call_gets_comms_channels(
         self,
         call_manager_with_broker,
         non_boss_contact,
         boss_contact,
     ):
-        """Non-boss calls forward base channels only, no notification rendering."""
+        """Non-boss calls forward base channels."""
         mgr = call_manager_with_broker
         with patch(
             "unity.conversation_manager.domains.call_manager.run_script",
@@ -1402,16 +1399,13 @@ class TestChannelForwardingTiers:
         channels = mgr._socket_server._forward_channels
         assert "app:comms:*" in channels, "Non-boss call must forward comms"
         assert "app:call:*" in channels, "Non-boss call must forward call events"
-        assert (
-            mgr._boss_notification_task is None
-        ), "Non-boss call must NOT start notification rendering task"
 
-    async def test_unify_meet_boss_gets_full_channels(
+    async def test_unify_meet_boss_gets_base_channels(
         self,
         call_manager_with_broker,
         boss_contact,
     ):
-        """Boss Unify Meet should start notification rendering like a boss phone call."""
+        """Boss Unify Meet should forward base channels."""
         mgr = call_manager_with_broker
         with patch(
             "unity.conversation_manager.domains.call_manager.run_script",
@@ -1426,4 +1420,3 @@ class TestChannelForwardingTiers:
         channels = mgr._socket_server._forward_channels
         assert "app:comms:*" in channels
         assert "app:call:*" in channels
-        assert mgr._boss_notification_task is not None

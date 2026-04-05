@@ -228,7 +228,6 @@ class ConversationManager(metaclass=SingletonABCMeta):
         self._pending_llm_request_meta: list[dict[str, str]] = []
         self._current_event_trace: dict[str, str] | None = None
         self._event_trace_seq: int = 0
-        self._has_non_forwarded_event: bool = False
         self._llm_request_seq: int = 0
         self._llm_run_seq: int = 0
         self._llm_gen: int = 0
@@ -1084,14 +1083,6 @@ class ConversationManager(metaclass=SingletonABCMeta):
             **action_tools.build_action_steering_tools(),
             **action_tools.build_completed_action_tools(),
         }
-
-        if "guide_voice_agent" in tools:
-            is_internal_call = bool(
-                (self.get_active_contact() or {}).get("is_system", False),
-            )
-            if is_internal_call or not self._has_non_forwarded_event:
-                tools.pop("guide_voice_agent")
-        self._has_non_forwarded_event = False
 
         if self.computer_fast_path_eligible:
             tools["desktop_act"] = action_tools.desktop_act

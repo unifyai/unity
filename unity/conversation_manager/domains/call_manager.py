@@ -79,7 +79,6 @@ class LivekitCallManager:
         self.on_pipeline_quiescent: Callable[[bool], None] | None = None
         self._call_channel: str | None = None
         self._disconnect_contact: dict | None = None
-        self._boss_notification_task: asyncio.Task | None = None
         self._worker_watchdog_task: asyncio.Task | None = None
 
     def set_config(self, config: CallConfig):
@@ -325,9 +324,6 @@ class LivekitCallManager:
         if self._socket_server:
             await self._socket_server.set_forward_channels(list(_BASE_FORWARD_CHANNELS))
 
-        if contact.get("is_system", False):
-            self._start_boss_notification_rendering()
-
         room_name = room_name or make_room_name(self.assistant_id, "meet")
         self.room_name = room_name
 
@@ -423,14 +419,6 @@ class LivekitCallManager:
         self._call_channel = None
         self._disconnect_contact = None
 
-        if self._boss_notification_task and not self._boss_notification_task.done():
-            self._boss_notification_task.cancel()
-            try:
-                await self._boss_notification_task
-            except asyncio.CancelledError:
-                pass
-        self._boss_notification_task = None
-
         if self._socket_server:
             await self._socket_server.stop()
             self._socket_server = None
@@ -454,55 +442,3 @@ class LivekitCallManager:
         LOGGER.debug(
             f"{ICONS['ipc']} [LivekitCallManager] Voice agent process terminated",
         )
-
-    # ------------------------------------------------------------------
-    # Boss-call notification rendering
-    # ------------------------------------------------------------------
-
-    def _start_boss_notification_rendering(self) -> None:
-        """Start an async task that renders actor events into notifications."""
-        if self._boss_notification_task and not self._boss_notification_task.done():
-            return
-        self._boss_notification_task = asyncio.create_task(
-            self._render_boss_notifications(),
-        )
-
-    async def _render_boss_notifications(self) -> None:
-        """Subscribe to actor events and publish rendered notifications.
-
-        Runs for boss calls only. Converts raw actor lifecycle events
-        (ActorHandleStarted, ActorSessionResponse, etc.) into
-        FastBrainNotification messages on ``app:call:notification`` so the
-        fast brain receives them through the unified notification channel.
-        """
-        from unity.conversation_manager.medium_scripts.common import (
-            render_event_for_fast_brain,
-        )
-
-        try:
-            async with self._event_broker.pubsub() as pubsub:
-                await pubsub.psubscribe("app:actor:*")
-                while True:
-                    msg = await pubsub.get_message(
-                        timeout=1.0,
-                        ignore_subscribe_messages=True,
-                    )
-                    if msg is None:
-                        continue
-                    data = msg.get("data", "")
-                    if not data:
-                        continue
-                    text = render_event_for_fast_brain(data)
-                    if not text:
-                        continue
-                    notification = FastBrainNotification(
-                        content=text,
-                        source="system",
-                        contact={},
-                    )
-                    await self._event_broker.publish(
-                        "app:call:notification",
-                        notification.to_json(),
-                    )
-        except asyncio.CancelledError:
-            pass

@@ -31,15 +31,10 @@ class ConversationSettings(BaseSettings):
             evaluator for voice mode. When a user speaks while the slow brain is
             mid-run, a sidecar LLM call classifies the utterance as urgent
             (preempt) or not (let the queue proceed). Default False.
-        NOTIFICATION_REPLY_CONTEXT_WINDOW: Maximum number of conversation items
-            the notification reply evaluator keeps. Smaller than the fast brain
-            window because the evaluator only needs recent context to detect
-            redundant speech.
     """
 
     FAST_BRAIN_MODEL: str = "gpt-5-mini@openai"
     FAST_BRAIN_CONTEXT_WINDOW: int = 50
-    NOTIFICATION_REPLY_CONTEXT_WINDOW: int = 8
     IMPL: str = "real"
     COMMS_URL: str = Field(default="", validation_alias="UNITY_COMMS_URL")
     ADAPTERS_URL: str = Field(default="", validation_alias="UNITY_ADAPTERS_URL")

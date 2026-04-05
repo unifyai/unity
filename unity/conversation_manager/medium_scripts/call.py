@@ -356,7 +356,6 @@ async def entrypoint(ctx: agents.JobContext):
     user_state_seq = 0
     _was_quiescent = True
     _pending_reply_timer: asyncio.TimerHandle | None = None
-    _pending_notification_eval_task: asyncio.Task | None = None
     _NOTIFY_COALESCE_S = 0.05
 
     def _log_reply_task(task: asyncio.Task) -> None:
@@ -843,59 +842,6 @@ async def entrypoint(ctx: agents.JobContext):
             messages = messages[-tail:]
         return messages
 
-    async def _evaluate_notification_reply() -> None:
-        """Structured-output sidecar: decide whether to speak for pending notification(s)."""
-        nonlocal _pending_notification_eval_task
-        from unity.conversation_manager.domains.notification_reply import (
-            NotificationReplyEvaluator,
-        )
-
-        await _refresh_screenshots()
-
-        evaluator = NotificationReplyEvaluator()
-        chat_messages = _extract_chat_messages(
-            session._chat_ctx,
-            tail=SETTINGS.conversation.NOTIFICATION_REPLY_CONTEXT_WINDOW,
-        )
-        decision, log_path = await evaluator.evaluate(
-            chat_history=chat_messages,
-        )
-        _pending_notification_eval_task = None
-
-        if decision.speak and decision.content:
-            _say_meta_queue.append(
-                {
-                    "notification_id": "",
-                    "source": "notification_reply",
-                    "text": decision.content,
-                    "llm_log_path": log_path,
-                },
-            )
-            _log.notification_say(
-                decision.content,
-                notification_source="notification_reply",
-            )
-            session.say(
-                decision.content,
-                allow_interruptions=True,
-                add_to_chat_ctx=True,
-            )
-        else:
-            _log._emit("wait", "Decided to wait")
-
-    def _schedule_notification_eval() -> None:
-        """Schedule a structured notification evaluation with the same coalesce window."""
-        nonlocal _pending_notification_eval_task
-        if _pending_notification_eval_task is not None:
-            _pending_notification_eval_task.cancel()
-            _pending_notification_eval_task = None
-
-        async def _debounced_eval():
-            await asyncio.sleep(_NOTIFY_COALESCE_S)
-            await _evaluate_notification_reply()
-
-        _pending_notification_eval_task = asyncio.ensure_future(_debounced_eval())
-
     def apply_notification(
         content: str,
         response_text: str = "",
@@ -941,8 +887,6 @@ async def entrypoint(ctx: agents.JobContext):
                 role="system",
                 content=[notification_message],
             )
-            if notification_source not in ("meet_interaction", "initialization"):
-                _schedule_notification_eval()
 
     def maybe_speak_queued() -> None:
         """Speak the next queued response when user is silent and assistant is idle.
