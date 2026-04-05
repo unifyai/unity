@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import json
+import os
 from pathlib import Path
 from typing import Any
 
@@ -178,3 +179,106 @@ def mark_job_container_ready(job_name: str, max_retries: int = 3) -> None:
                 attempt + 1,
             )
             raise
+
+
+def collect_shutdown_diagnostics(job_name: str) -> dict[str, Any]:
+    """Collect job/session/pod/event state at shutdown time.
+
+    Called from Unity's graceful-shutdown path after SIGTERM is received but
+    before the process exits. This captures the K8s state needed to attribute
+    *why* the pod is being terminated (job suspend, pod deletion, kubelet kill,
+    etc.).
+    """
+    _load_clients()
+    assert _batch_api is not None
+    assert _core_api is not None
+
+    namespace = _namespace()
+    pod_name = os.environ.get("HOSTNAME", "")
+    diagnostics: dict[str, Any] = {
+        "job_name": job_name,
+        "pod_name": pod_name or None,
+        "namespace": namespace,
+    }
+
+    try:
+        job = _batch_api.read_namespaced_job(name=job_name, namespace=namespace)
+        diagnostics["job"] = {
+            "name": job.metadata.name,
+            "resource_version": job.metadata.resource_version,
+            "deletion_timestamp": str(job.metadata.deletion_timestamp or ""),
+            "labels": dict(job.metadata.labels or {}),
+            "annotations": dict(job.metadata.annotations or {}),
+            "suspend": bool(getattr(job.spec, "suspend", False)),
+            "active": int(job.status.active or 0),
+            "succeeded": int(job.status.succeeded or 0),
+            "failed": int(job.status.failed or 0),
+        }
+        session_name = _session_name_from_job(job)
+        if session_name:
+            diagnostics["session_name"] = session_name
+            try:
+                session = read_assistant_session(session_name)
+                diagnostics["assistant_session"] = {
+                    "name": ((session.get("metadata") or {}).get("name") or ""),
+                    "activation_id": ((session.get("spec") or {}).get("activationId") or ""),
+                    "desired_state": ((session.get("spec") or {}).get("desiredState") or ""),
+                    "phase": ((session.get("status") or {}).get("phase") or ""),
+                    "last_error": ((session.get("status") or {}).get("lastError") or ""),
+                    "binding": ((session.get("status") or {}).get("binding") or {}),
+                }
+            except Exception as exc:
+                diagnostics["assistant_session_error"] = str(exc)
+    except Exception as exc:
+        diagnostics["job_error"] = str(exc)
+
+    if pod_name:
+        try:
+            pod = _core_api.read_namespaced_pod(name=pod_name, namespace=namespace)
+            diagnostics["pod"] = {
+                "name": pod.metadata.name,
+                "phase": str(pod.status.phase or ""),
+                "node_name": str(pod.spec.node_name or ""),
+                "deletion_timestamp": str(pod.metadata.deletion_timestamp or ""),
+                "reason": str(getattr(pod.status, "reason", "") or ""),
+                "message": str(getattr(pod.status, "message", "") or ""),
+                "conditions": [
+                    {
+                        "type": str(cond.type or ""),
+                        "status": str(cond.status or ""),
+                        "reason": str(getattr(cond, "reason", "") or ""),
+                        "message": str(getattr(cond, "message", "") or ""),
+                    }
+                    for cond in (pod.status.conditions or [])
+                ],
+            }
+        except Exception as exc:
+            diagnostics["pod_error"] = str(exc)
+
+        try:
+            events = _core_api.list_namespaced_event(
+                namespace=namespace,
+                field_selector=f"involvedObject.kind=Pod,involvedObject.name={pod_name}",
+            )
+            recent_events = sorted(
+                events.items,
+                key=lambda e: (
+                    getattr(getattr(e, "last_timestamp", None), "timestamp", None)
+                    or str(getattr(e, "last_timestamp", "") or "")
+                    or str(getattr(e.metadata, "creation_timestamp", "") or "")
+                ),
+            )
+            diagnostics["pod_events"] = [
+                {
+                    "reason": str(getattr(event, "reason", "") or ""),
+                    "message": str(getattr(event, "message", "") or ""),
+                    "type": str(getattr(event, "type", "") or ""),
+                    "count": int(getattr(event, "count", 0) or 0),
+                    "last_timestamp": str(getattr(event, "last_timestamp", "") or ""),
+                }
+                for event in recent_events[-12:]
+            ]
+        except Exception as exc:
+            diagnostics["pod_events_error"] = str(exc)
+
+    return diagnostics
