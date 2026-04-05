@@ -1043,6 +1043,10 @@ class CommsManager:
 
             # Store the future for cleanup
             self.subscribers[subscription_id] = streaming_pull_future
+            LOGGER.info(
+                f"{ICONS['subscription']} Subscription active: {subscription_path} "
+                f"(max_messages={max_messages})",
+            )
 
         except Exception as e:
             LOGGER.error(
@@ -1070,11 +1074,20 @@ class CommsManager:
             f"{DEFAULT_ICON} Waiting for AssistantSession assignment on {job_name}",
         )
 
+        attempt = 0
         while True:
+            attempt += 1
             try:
+                LOGGER.info(
+                    f"{DEFAULT_ICON} Assignment poll attempt {attempt} for {job_name}",
+                )
                 session_name = await asyncio.to_thread(
                     wait_for_assistant_session_name,
                     job_name,
+                )
+                LOGGER.info(
+                    f"{DEFAULT_ICON} Assignment session discovered for {job_name}: "
+                    f"{session_name}",
                 )
                 session = await asyncio.to_thread(read_assistant_session, session_name)
                 secret_name = str(session.get("spec", {}).get("startupSecretRef", ""))
@@ -1082,6 +1095,12 @@ class CommsManager:
                     raise RuntimeError(
                         f"AssistantSession {session_name} missing startupSecretRef",
                     )
+                LOGGER.info(
+                    f"{DEFAULT_ICON} Assignment session loaded for {job_name}: "
+                    f"phase={((session.get('status') or {}).get('phase') or '')}, "
+                    f"secret={secret_name}, "
+                    f"binding_id={((session.get('status') or {}).get('binding') or {}).get('id', '')}",
+                )
 
                 event = await asyncio.to_thread(
                     read_session_bootstrap_secret,
@@ -1091,6 +1110,10 @@ class CommsManager:
                     raise RuntimeError(
                         f"AssistantSession bootstrap secret {secret_name} is empty",
                     )
+                LOGGER.info(
+                    f"{DEFAULT_ICON} Bootstrap secret read for {job_name}: "
+                    f"assistant_id={event.get('assistant_id')} medium={event.get('medium')}",
+                )
 
                 LOGGER.debug(
                     f"{DEFAULT_ICON} Assignment detected for assistant "
@@ -1099,6 +1122,10 @@ class CommsManager:
 
                 SESSION_DETAILS.assistant.agent_id = int(event["assistant_id"])
                 self.subscribe_to_topic(_get_subscription_id(), max_messages=10)
+                LOGGER.info(
+                    f"{DEFAULT_ICON} Assistant inbound subscription established for "
+                    f"{job_name}: {_get_subscription_id()}",
+                )
 
                 details = {
                     "api_key": event["api_key"],
@@ -1147,11 +1174,19 @@ class CommsManager:
                     "app:comms:startup",
                     StartupEvent(**details).to_json(),
                 )
+                LOGGER.info(
+                    f"{DEFAULT_ICON} StartupEvent published for assistant "
+                    f"{event.get('assistant_id')} on {job_name}",
+                )
                 await asyncio.to_thread(mark_job_container_ready, job_name)
+                LOGGER.info(
+                    f"{DEFAULT_ICON} Container-ready signalled for {job_name}",
+                )
                 return
             except Exception as e:
-                LOGGER.warning(
-                    f"{DEFAULT_ICON} AssistantSession discovery failed for {job_name}: {e}",
+                LOGGER.exception(
+                    f"{DEFAULT_ICON} AssistantSession discovery failed for {job_name} "
+                    f"on attempt {attempt}: {e}",
                 )
                 await asyncio.sleep(5)
 
