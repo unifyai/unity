@@ -56,14 +56,28 @@ def wait_for_assistant_session_name(job_name: str) -> str:
     assert _batch_api is not None
 
     namespace = _namespace()
+    logger.info(
+        "assistant-session wait start for job %s in namespace %s",
+        job_name,
+        namespace,
+    )
     while True:
         job = _batch_api.read_namespaced_job(name=job_name, namespace=namespace)
         session_name = _session_name_from_job(job)
         if session_name:
+            logger.info(
+                "assistant-session found on job %s via direct read: %s",
+                job_name,
+                session_name,
+            )
             return session_name
 
         watcher = watch.Watch()
         try:
+            logger.info(
+                "assistant-session ref missing on %s, watching for label/annotation update",
+                job_name,
+            )
             for event in watcher.stream(
                 _batch_api.list_namespaced_job,
                 namespace=namespace,
@@ -73,8 +87,17 @@ def wait_for_assistant_session_name(job_name: str) -> str:
                 session_name = _session_name_from_job(event["object"])
                 if session_name:
                     watcher.stop()
+                    logger.info(
+                        "assistant-session found on job %s via watch event: %s",
+                        job_name,
+                        session_name,
+                    )
                     return session_name
         except Exception:
+            logger.exception(
+                "assistant-session watch failed for job %s, retrying",
+                job_name,
+            )
             continue
 
 
@@ -117,6 +140,7 @@ def mark_job_container_ready(job_name: str, max_retries: int = 3) -> None:
         job = _batch_api.read_namespaced_job(name=job_name, namespace=namespace)
         annotations = dict(job.metadata.annotations or {})
         if annotations.get(CONTAINER_READY_ANNOTATION) == "true":
+            logger.info("container-ready already set on job %s", job_name)
             return
         annotations[CONTAINER_READY_ANNOTATION] = "true"
         body = {
@@ -131,6 +155,12 @@ def mark_job_container_ready(job_name: str, max_retries: int = 3) -> None:
                 namespace=namespace,
                 body=body,
             )
+            logger.info(
+                "container-ready patched on job %s (attempt %d/%d)",
+                job_name,
+                attempt + 1,
+                max_retries + 1,
+            )
             return
         except ApiException as exc:
             if exc.status == 409 and attempt < max_retries:
@@ -142,4 +172,9 @@ def mark_job_container_ready(job_name: str, max_retries: int = 3) -> None:
                 )
                 time.sleep(0.2 * (attempt + 1))
                 continue
+            logger.exception(
+                "container-ready patch failed on job %s after %d attempt(s)",
+                job_name,
+                attempt + 1,
+            )
             raise

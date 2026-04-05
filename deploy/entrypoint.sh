@@ -14,6 +14,19 @@ WATCHDOG_PID=""
 DISPLAY_PID=""
 DEVICE_PID=""
 
+uptime_ms() {
+    now_ms=$(date +%s%3N)
+    echo $((now_ms - CONTAINER_START_TIME_MS))
+}
+
+shutdown_reason() {
+    if [ -f /tmp/oom_prevention_shutdown ]; then
+        echo "oom_prevention"
+    else
+        echo "external_sigterm"
+    fi
+}
+
 # Monitor cgroup memory usage and send SIGTERM before the kernel OOM-kills us.
 # Runs as a background process with negligible overhead (reads a sysfs file
 # every few seconds).  When usage crosses the threshold, it writes a marker
@@ -80,7 +93,9 @@ stop_agent_service() {
 # Signal handler: forward SIGTERM to the Python process and wait for it to
 # finish its own shutdown sequence (which now includes the GCS log upload).
 on_signal() {
-    echo "$(date '+%Y-%m-%d %H:%M:%S.%3N') - [ENTRYPOINT] Received shutdown signal, cleaning up..."
+    local reason
+    reason=$(shutdown_reason)
+    echo "$(date '+%Y-%m-%d %H:%M:%S.%3N') - [ENTRYPOINT] Received shutdown signal (reason=${reason}, uptime_ms=$(uptime_ms), main_pid=${MAIN_PID:-none}, agent_pid=${AGENT_PID:-none}), cleaning up..."
 
     if [ ! -z "$WATCHDOG_PID" ]; then
         kill $WATCHDOG_PID 2>/dev/null || true
@@ -181,7 +196,9 @@ WATCHDOG_PID=$!
 
 # Wait for the main process to exit (inactivity timeout or other self-initiated shutdown).
 # The SIGTERM path is handled by the on_signal trap above and never reaches here.
-wait $MAIN_PID || true
+MAIN_EXIT_CODE=0
+wait $MAIN_PID || MAIN_EXIT_CODE=$?
+echo "$(date '+%Y-%m-%d %H:%M:%S.%3N') - [ENTRYPOINT] Main process exited (code=${MAIN_EXIT_CODE}, uptime_ms=$(uptime_ms))"
 kill $WATCHDOG_PID 2>/dev/null || true
 stop_agent_service
 kill $DEVICE_PID 2>/dev/null || true
