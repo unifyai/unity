@@ -1359,7 +1359,12 @@ class TestChannelForwardingTiers:
 
     @pytest.fixture
     def boss_contact(self):
-        return {"contact_id": 1, "first_name": "Boss", "surname": "User"}
+        return {
+            "contact_id": 1,
+            "first_name": "Boss",
+            "surname": "User",
+            "is_system": True,
+        }
 
     @pytest.fixture
     def non_boss_contact(self):
@@ -1381,14 +1386,17 @@ class TestChannelForwardingTiers:
         channels = mgr._socket_server._forward_channels
         assert "app:comms:*" in channels, "Boss call must forward comms"
         assert "app:call:*" in channels, "Boss call must forward call events"
+        assert (
+            mgr._boss_notification_task is not None
+        ), "System contact call must start notification rendering task"
 
-    async def test_non_boss_call_gets_comms_channels(
+    async def test_non_boss_call_gets_comms_but_not_actor_channels(
         self,
         call_manager_with_broker,
         non_boss_contact,
         boss_contact,
     ):
-        """Non-boss calls forward base channels."""
+        """Non-system calls forward base channels only, no notification rendering."""
         mgr = call_manager_with_broker
         with patch(
             "unity.conversation_manager.domains.call_manager.run_script",
@@ -1399,13 +1407,16 @@ class TestChannelForwardingTiers:
         channels = mgr._socket_server._forward_channels
         assert "app:comms:*" in channels, "Non-boss call must forward comms"
         assert "app:call:*" in channels, "Non-boss call must forward call events"
+        assert (
+            mgr._boss_notification_task is None
+        ), "Non-system call must NOT start notification rendering task"
 
-    async def test_unify_meet_boss_gets_base_channels(
+    async def test_unify_meet_boss_gets_full_channels(
         self,
         call_manager_with_broker,
         boss_contact,
     ):
-        """Boss Unify Meet should forward base channels."""
+        """System contact Unify Meet should start notification rendering."""
         mgr = call_manager_with_broker
         with patch(
             "unity.conversation_manager.domains.call_manager.run_script",
@@ -1420,3 +1431,4 @@ class TestChannelForwardingTiers:
         channels = mgr._socket_server._forward_channels
         assert "app:comms:*" in channels
         assert "app:call:*" in channels
+        assert mgr._boss_notification_task is not None

@@ -34,9 +34,13 @@ def _build_boss_details_block(
     return "\n".join(lines)
 
 
-def _build_voice_output_block() -> str:
+def _build_voice_output_block(*, is_internal_call: bool = False) -> str:
     """Build the voice call output format guidance block."""
-    return """If I am on a voice call with a contact, I relay information to the Voice Agent by calling the `guide_voice_agent` tool **in parallel** with my action tool. I can call multiple tools per turn — for example, `guide_voice_agent(content="...")` alongside `wait()`. Guidance is NOT a field in my text output.
+    if is_internal_call:
+        block = """The Voice Agent receives system events (action progress, completions, results) directly as silent context. I do not need to relay event content — it is already visible. My role with `guide_voice_agent` is the **speech decision**: when an event contains concrete results or completion status the caller should hear, I call `guide_voice_agent(should_speak=True, response_text="...")` in parallel with my action tool. When the event is trivial or the Voice Agent already acknowledged it, I stay silent (omit the tool)."""
+    else:
+        block = """If I am on a voice call with a contact, I relay information to the Voice Agent by calling the `guide_voice_agent` tool **in parallel** with my action tool. I can call multiple tools per turn — for example, `guide_voice_agent(content="...")` alongside `wait()`. Guidance is NOT a field in my text output."""
+    block += """
 
 **No text messages during voice calls.** I do NOT send text messages (Unify messages, SMS, email) to the person on the call to communicate results, progress, or updates. The Voice Agent handles all communication verbally. Even if there is a pre-existing text thread from before the call, the voice call is now the active channel.
 
@@ -44,11 +48,12 @@ I only send a text message to the person on the call if:
 - They explicitly request written output (e.g. "send me that as a message", "text me the link")
 - There is a file attachment that can only be delivered via message
 - The data is so complex (large tables, code blocks) that voice delivery is impractical AND the user has indicated they want it in writing"""
+    return block
 
 
-def _build_voice_calls_guide() -> str:
+def _build_voice_calls_guide(*, is_internal_call: bool = False) -> str:
     """Build the voice calls guide section."""
-    return """Voice calls guide
+    base = """Voice calls guide
 -----------------
 I cannot handle voice calls directly. When I make or receive a call, a "Voice Agent" handles the entire conversation for me. The Voice Agent has full context and autonomously manages all conversation flow, responses, and dialogue.
 
@@ -60,7 +65,14 @@ My role during voice calls is:
 3. Notifications: Alerting the Voice Agent about important updates from other communication channels
 4. Progress relay: Keeping the caller informed about what I am doing on their behalf
 
-Call transcriptions will appear as another communication thread, with the Voice Agent's responses shown as if they were mine.
+Call transcriptions will appear as another communication thread, with the Voice Agent's responses shown as if they were mine."""
+
+    if is_internal_call:
+        base += """
+
+**Speech decisions on internal calls.** The Voice Agent already receives system events (action progress, completions, results) as silent context. I do not need to relay event content. My job is the **speech decision**: when I am woken by an event that contains concrete results, completion status, or actionable information the caller is waiting for, I call `guide_voice_agent(should_speak=True, response_text="...")` to have it spoken. When the event is trivial, purely internal, or the Voice Agent already acknowledged it (check the transcript), I stay silent."""
+    else:
+        base += """
 
 **Progress relay on live calls is critical.** The caller cannot see my actions — they only hear what the Voice Agent says. When an action is running, I get woken up for each progress notification. Each progress event is a chance to relay meaningful status to the caller by calling `guide_voice_agent` alongside my action tool. I should relay progress when:
 - The progress event contains a meaningful description of what is happening (e.g., "Searching the web for nearby restaurants")
@@ -84,6 +96,8 @@ I should NOT relay progress when:
 3. **BLOCK** — Nothing to relay. Just call my action tool without `guide_voice_agent`.
 
 The Voice Agent independently handles conversational style. I provide data, status, and progress — not conversational direction."""
+
+    return base
 
 
 def _build_phone_guidelines(phone_number: str | None) -> str:
@@ -192,6 +206,7 @@ def build_system_prompt(
     phone_number: str | None = None,
     email_address: str | None = None,
     is_voice_call: bool = False,
+    is_internal_call: bool = False,
     demo_mode: bool = False,
     computer_fast_path: bool = False,
     assistant_has_phone: bool = True,
@@ -241,8 +256,8 @@ def build_system_prompt(
         phone_number=phone_number,
         email_address=email_address,
     )
-    voice_output_block = _build_voice_output_block()
-    voice_calls_guide = _build_voice_calls_guide()
+    voice_output_block = _build_voice_output_block(is_internal_call=is_internal_call)
+    voice_calls_guide = _build_voice_calls_guide(is_internal_call=is_internal_call)
     phone_guidelines = _build_phone_guidelines(phone_number)
     phone_scenarios = _build_phone_scenarios(phone_number)
     missing_phone_notice = _build_missing_phone_notice(assistant_has_phone)
@@ -1452,6 +1467,25 @@ These are real messages sent by a call participant through a different channel. 
 - "Looks like you just sent over an email about the contract terms."
 
 I keep the relay concise (one or two sentences) and never read out the full message verbatim — I summarise the key point. I never mention tags, channels, or internal systems.""",
+        )
+
+    # System event visibility for internal calls
+    if is_boss_user and not demo_mode:
+        parts.add(
+            """Full event visibility
+---------------------
+Because a colleague is on this call, I receive `[notification]` messages for system events:
+- Action progress updates (work being done in the background)
+- Action completion results
+- Computer action confirmations
+
+These arrive as silent context. I handle them with judgment:
+- Concrete results the caller is waiting for: mention them naturally. "Found three restaurants nearby — the top rated one is Chez Laurent."
+- Meaningful progress milestones: relay briefly. "Working on that now." or "Still on it — shouldn't be too much longer."
+- Trivial, redundant, or purely internal progress: say nothing.
+- If I already said something equivalent, I stay silent.
+
+I integrate event content naturally, never reference internal systems or notifications, and never fabricate details beyond what the event contains.""",
         )
 
     # Add time footer (dynamic content - changes per call)

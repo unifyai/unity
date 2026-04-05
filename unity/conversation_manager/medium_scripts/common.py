@@ -41,7 +41,11 @@ from unity.conversation_manager.events import (
     ActorNotification,
     ActorResult,
     ActorHandleStarted,
+    ActorHandleResponse,
     ActorSessionResponse,
+    ActorClarificationRequest,
+    ComputerActCompleted,
+    NotificationInjectedEvent,
     UserScreenShareStarted,
     UserScreenShareStopped,
     UserWebcamStarted,
@@ -1250,6 +1254,49 @@ def _render_actor_result(event) -> str:
     if snippet:
         return f"Action completed: {snippet}"
     return "Action finished with no results returned"
+
+
+def render_event_for_fast_brain(event_json: str) -> str | None:
+    """Render an actor lifecycle event as a human-readable string.
+
+    Called from ``LivekitCallManager._render_boss_notifications`` to convert
+    raw actor events into notification content before publishing them to the
+    fast brain via ``app:call:notification``.  These arrive as silent context
+    (guaranteed delivery, zero LLM latency).  The slow brain separately
+    decides whether to speak via ``guide_voice_agent``.
+
+    Returns None for event types that should not be surfaced.
+    """
+    try:
+        event = Event.from_json(event_json)
+    except Exception:
+        return None
+
+    if isinstance(event, ActorNotification):
+        prefix = "Action completed" if event.completed else "Action in progress"
+        return f"{prefix}: {event.response}"
+    if isinstance(event, ActorResult):
+        if getattr(event, "action_type", "") in ("desktop_act", "web_act"):
+            return None
+        return _render_actor_result(event)
+    if isinstance(event, ActorHandleStarted):
+        return None
+    if isinstance(event, ActorHandleResponse):
+        answer = event.response if event.response else "(no answer)"
+        return f"Ask answered ({event.query[:100]}): {answer}"
+    if isinstance(event, ActorSessionResponse):
+        if event.content:
+            return f"Action update: {event.content[:200]}"
+        return None
+    if isinstance(event, NotificationInjectedEvent):
+        return event.content
+    if isinstance(event, ActorClarificationRequest):
+        return f"Clarification needed: {event.query}"
+    if isinstance(event, ComputerActCompleted):
+        snippet = event.summary[:200] if event.summary else event.instruction[:200]
+        return f"Computer action executed: {snippet}"
+
+    return None
 
 
 # -------- Fast brain history hydration & context windowing -------- #

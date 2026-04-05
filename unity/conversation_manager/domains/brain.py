@@ -191,6 +191,9 @@ def build_brain_spec(
 
     # Get boss contact (contact_id=1) from ContactManager - the source of truth
     boss_contact = cm.contact_index.get_contact(1) or {}
+    is_internal_call = cm.mode.is_voice and bool(
+        (cm.get_active_contact() or {}).get("is_system", False),
+    )
     system_prompt = build_system_prompt(
         bio=cm.assistant_about,
         contact_id=1,
@@ -199,6 +202,7 @@ def build_brain_spec(
         phone_number=boss_contact.get("phone_number"),
         email_address=boss_contact.get("email_address"),
         is_voice_call=cm.mode.is_voice,
+        is_internal_call=is_internal_call,
         demo_mode=SETTINGS.DEMO_MODE,
         computer_fast_path=cm.computer_fast_path_eligible,
         assistant_has_phone=bool(cm.assistant_number),
