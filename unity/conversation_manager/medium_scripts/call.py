@@ -110,16 +110,15 @@ class Assistant(Agent):
         self.contact = contact
         self.boss = boss
         self.channel = channel
-        self.utterance_event = (
-            InboundPhoneUtterance
-            if channel == "phone_call"
-            else InboundUnifyMeetUtterance
-        )
-        self.assistant_utterance_event = (
-            OutboundPhoneUtterance
-            if channel == "phone_call"
-            else OutboundUnifyMeetUtterance
-        )
+        if channel == "phone_call":
+            self.utterance_event = InboundPhoneUtterance
+            self.assistant_utterance_event = OutboundPhoneUtterance
+        elif channel == "whatsapp_call":
+            self.utterance_event = InboundWhatsAppCallUtterance
+            self.assistant_utterance_event = OutboundWhatsAppCallUtterance
+        else:
+            self.utterance_event = InboundUnifyMeetUtterance
+            self.assistant_utterance_event = OutboundUnifyMeetUtterance
         self.call_received = not outbound
         self._user_speech_logged = False
 
@@ -440,6 +439,9 @@ async def entrypoint(ctx: agents.JobContext):
     if channel == "phone_call":
         user_utterance_event = InboundPhoneUtterance
         assistant_utterance_event = OutboundPhoneUtterance
+    elif channel == "whatsapp_call":
+        user_utterance_event = InboundWhatsAppCallUtterance
+        assistant_utterance_event = OutboundWhatsAppCallUtterance
     else:
         user_utterance_event = InboundUnifyMeetUtterance
         assistant_utterance_event = OutboundUnifyMeetUtterance

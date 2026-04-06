@@ -602,8 +602,10 @@ async def _(
     (
         InboundPhoneUtterance,
         InboundUnifyMeetUtterance,
+        InboundWhatsAppCallUtterance,
         OutboundPhoneUtterance,
         OutboundUnifyMeetUtterance,
+        OutboundWhatsAppCallUtterance,
     ),
 )
 async def _(event: Event, cm: "ConversationManager", *args, **kwargs):
@@ -619,18 +621,18 @@ async def _(event: Event, cm: "ConversationManager", *args, **kwargs):
     sender_name = _get_sender_name(contact)
     role = "user" if event.__class__.__name__.startswith("Inbound") else "assistant"
 
+    is_whatsapp_call = isinstance(
+        event,
+        (InboundWhatsAppCallUtterance, OutboundWhatsAppCallUtterance),
+    )
     is_unify_meet = isinstance(
         event,
         (InboundUnifyMeetUtterance, OutboundUnifyMeetUtterance),
     )
     medium = (
-        Medium.UNIFY_MEET
-        if is_unify_meet
-        else (
-            Medium.WHATSAPP_CALL
-            if cm.call_manager._call_channel == "whatsapp_call"
-            else Medium.PHONE_CALL
-        )
+        Medium.WHATSAPP_CALL
+        if is_whatsapp_call
+        else (Medium.UNIFY_MEET if is_unify_meet else Medium.PHONE_CALL)
     )
     message_id = cm.contact_index.push_message(
         contact_id=contact_id,
@@ -1951,7 +1953,7 @@ async def _(
 @EventHandler.register(LogMessageResponse)
 async def _(event: LogMessageResponse, cm: "ConversationManager", *args, **kwargs):
     if (
-        event.medium == Medium.PHONE_CALL
+        event.medium in (Medium.PHONE_CALL, Medium.WHATSAPP_CALL)
         and cm.call_manager.call_exchange_id == UNASSIGNED
     ):
         cm.call_manager.call_exchange_id = event.exchange_id

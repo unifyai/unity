@@ -711,6 +711,7 @@ class ConversationManager(metaclass=SingletonABCMeta):
         {
             "InboundPhoneUtterance",
             "InboundUnifyMeetUtterance",
+            "InboundWhatsAppCallUtterance",
         },
     )
 

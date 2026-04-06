@@ -197,6 +197,16 @@ class InboundUnifyMeetUtterance(Event):
 
 
 @dataclass
+class InboundWhatsAppCallUtterance(Event):
+    """Utterance received from the other party during a WhatsApp voice call."""
+
+    topic: ClassVar[str | None] = "app:comms:whatsapp_call_utterance"
+
+    contact: dict
+    content: str
+
+
+@dataclass
 class VoiceInterrupt(Event):
     """User interrupted the assistant during a voice call."""
 
@@ -371,6 +381,16 @@ class OutboundUnifyMeetUtterance(Event):
     """Utterance sent by the assistant during a web-based voice/video meeting."""
 
     topic: ClassVar[str | None] = "app:comms:unify_utterance"
+
+    contact: dict
+    content: str
+
+
+@dataclass
+class OutboundWhatsAppCallUtterance(Event):
+    """Utterance sent by the assistant during a WhatsApp voice call."""
+
+    topic: ClassVar[str | None] = "app:comms:whatsapp_call_utterance"
 
     contact: dict
     content: str

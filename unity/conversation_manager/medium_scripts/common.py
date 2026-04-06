@@ -23,8 +23,10 @@ from unity.conversation_manager.events import (
     UnifyMeetStarted,
     InboundPhoneUtterance,
     InboundUnifyMeetUtterance,
+    InboundWhatsAppCallUtterance,
     OutboundPhoneUtterance,
     OutboundUnifyMeetUtterance,
+    OutboundWhatsAppCallUtterance,
     SMSReceived,
     SMSSent,
     WhatsAppReceived,
@@ -410,20 +412,22 @@ DEFAULT_INACTIVITY_TIMEOUT = 300  # 5 minutes
 
 
 async def publish_call_started(contact: dict, channel: str) -> None:
-    event = (
-        PhoneCallStarted(contact=contact)
-        if channel == "phone_call"
-        else UnifyMeetStarted(contact=contact)
-    )
+    if channel == "phone_call":
+        event = PhoneCallStarted(contact=contact)
+    elif channel == "whatsapp_call":
+        event = WhatsAppCallStarted(contact=contact)
+    else:
+        event = UnifyMeetStarted(contact=contact)
     await event_broker.publish(event.topic, event.to_json())
 
 
 async def publish_call_ended(contact: dict, channel: str) -> None:
-    event = (
-        PhoneCallEnded(contact=contact)
-        if channel == "phone_call"
-        else UnifyMeetEnded(contact=contact)
-    )
+    if channel == "phone_call":
+        event = PhoneCallEnded(contact=contact)
+    elif channel == "whatsapp_call":
+        event = WhatsAppCallEnded(contact=contact)
+    else:
+        event = UnifyMeetEnded(contact=contact)
     await event_broker.publish(event.topic, event.to_json())
 
 
@@ -1312,11 +1316,25 @@ def _render_history_event(
     name = _contact_name(getattr(event, "contact", {}) or {})
 
     # -- Utterances (transcript lines) --
-    if isinstance(event, (InboundPhoneUtterance, InboundUnifyMeetUtterance)):
+    if isinstance(
+        event,
+        (
+            InboundPhoneUtterance,
+            InboundUnifyMeetUtterance,
+            InboundWhatsAppCallUtterance,
+        ),
+    ):
         if cid is not None and cid in participant_ids:
             return f"{name}: {event.content}"
         return None
-    if isinstance(event, (OutboundPhoneUtterance, OutboundUnifyMeetUtterance)):
+    if isinstance(
+        event,
+        (
+            OutboundPhoneUtterance,
+            OutboundUnifyMeetUtterance,
+            OutboundWhatsAppCallUtterance,
+        ),
+    ):
         return f"{assistant_name}: {event.content}"
 
     # -- Call lifecycle markers --

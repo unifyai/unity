@@ -74,6 +74,8 @@ _MESSAGE_PRODUCING_EVENTS = {
     "OutboundPhoneUtterance",
     "InboundUnifyMeetUtterance",
     "OutboundUnifyMeetUtterance",
+    "InboundWhatsAppCallUtterance",
+    "OutboundWhatsAppCallUtterance",
     "FastBrainNotification",
     "PhoneCallReceived",
     "PhoneCallSent",
@@ -276,6 +278,24 @@ async def hydrate_global_thread(cm: "ConversationManager") -> None:
                     contact_id=contact_id,
                     sender_name=sender_name,
                     thread_name=Medium.UNIFY_MEET,
+                    message_content=cm_event.content,
+                    role="assistant",
+                    timestamp=ts,
+                )
+            case "InboundWhatsAppCallUtterance":
+                entry = cm.contact_index.build_message(
+                    contact_id=contact_id,
+                    sender_name=sender_name,
+                    thread_name=Medium.WHATSAPP_CALL,
+                    message_content=cm_event.content,
+                    role="user",
+                    timestamp=ts,
+                )
+            case "OutboundWhatsAppCallUtterance":
+                entry = cm.contact_index.build_message(
+                    contact_id=contact_id,
+                    sender_name=sender_name,
+                    thread_name=Medium.WHATSAPP_CALL,
                     message_content=cm_event.content,
                     role="assistant",
                     timestamp=ts,
@@ -544,12 +564,18 @@ async def log_message(
     elif "phone" in event_name:
         medium = Medium.PHONE_CALL
     elif "whatsapp" in event_name:
-        medium = Medium.WHATSAPP_MESSAGE
+        medium = (
+            Medium.WHATSAPP_CALL if "call" in event_name else Medium.WHATSAPP_MESSAGE
+        )
     elif "sms" in event_name:
         medium = Medium.SMS_MESSAGE
     else:
         medium = Medium.EMAIL
-    role = "Assistant" if "sent" in event_name or "assistant" in event_name else "User"
+    role = (
+        "Assistant"
+        if "sent" in event_name or "assistant" in event_name or "outbound" in event_name
+        else "User"
+    )
     if "prehire" in event_name:
         role = event.role.capitalize()
     if isinstance(event, (EmailSent, EmailReceived)):
@@ -613,7 +639,7 @@ async def log_message(
         if _pre_hire_exchange_id is not None:
             exchange_id = _pre_hire_exchange_id
         # else: stays UNASSIGNED, will create new exchange
-    elif medium == Medium.PHONE_CALL:
+    elif medium in (Medium.PHONE_CALL, Medium.WHATSAPP_CALL):
         exchange_id = cm.call_manager.call_exchange_id
     elif medium == Medium.UNIFY_MEET:
         exchange_id = cm.call_manager.unify_meet_exchange_id
@@ -622,7 +648,7 @@ async def log_message(
     # Compute utterance timestamp based on active call type.
     call_start = (
         cm.call_manager.call_start_timestamp
-        if medium == Medium.PHONE_CALL
+        if medium in (Medium.PHONE_CALL, Medium.WHATSAPP_CALL)
         else (
             cm.call_manager.unify_meet_start_timestamp
             if medium == Medium.UNIFY_MEET
