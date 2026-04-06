@@ -566,14 +566,31 @@ class ConversationManagerBrainActionTools:
         )
 
         if response.get("success"):
+            via_template = response.get("method") == "template"
             fresh_contact = (
                 self._cm.contact_index.get_contact(whatsapp_number=to_number) or contact
             )
-            event = WhatsAppSent(contact=fresh_contact, content=content)
+            event = WhatsAppSent(
+                contact=fresh_contact,
+                content=content,
+                via_template=via_template,
+            )
             await self._event_broker.publish(
                 "app:comms:whatsapp_sent",
                 event.to_json(),
             )
+            if via_template:
+                self._cm._pending_whatsapp_resends[contact_id] = content
+                return {
+                    "status": "ok",
+                    "via_template": True,
+                    "note": (
+                        "The 24h WhatsApp window was closed, so a greeting "
+                        "template was sent instead of the exact message. "
+                        "When the contact replies (opening the window), you "
+                        "will be notified and can resend or rework the message."
+                    ),
+                }
             return {"status": "ok"}
 
         if not self._cm.assistant_whatsapp_number:

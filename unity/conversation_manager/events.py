@@ -364,6 +364,7 @@ class WhatsAppSent(Event):
 
     contact: dict
     content: str
+    via_template: bool = False
 
 
 @dataclass

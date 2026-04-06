@@ -234,6 +234,11 @@ class ConversationManager(metaclass=SingletonABCMeta):
         self._llm_gen: int = 0
         self._outbound_suppress_gen: int = -1
 
+        # WhatsApp messages that were sent via greeting template (outside 24h
+        # window). When the contact replies, the brain is notified so it can
+        # resend or rework the original message.  Maps contact_id → content.
+        self._pending_whatsapp_resends: dict[int, str] = {}
+
         # Hierarchical session logger for consistent nested logging
         self._session_logger = SessionLogger("ConversationManager")
         self._session_logger.debug(

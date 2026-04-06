@@ -832,6 +832,23 @@ async def _(event, cm: "ConversationManager", *args, **kwargs):
                 "whatsapp_received",
                 f"WhatsApp from {sender_name}: {event.content}",
             )
+            pending_content = (
+                cm._pending_whatsapp_resends.pop(contact_id, None)
+                if contact_id is not None
+                else None
+            )
+            if pending_content is not None:
+                cm.notifications_bar.push_notif(
+                    "comms",
+                    (
+                        f"WhatsApp window now open for {sender_name}. "
+                        f"Your earlier message was sent as a greeting "
+                        f"template, not verbatim. Original message: "
+                        f'"{pending_content}". Consider resending or '
+                        f"rewording via send_whatsapp."
+                    ),
+                    event.timestamp,
+                )
         case EmailSent():
             event_trace = getattr(cm, "_current_event_trace", None) or {}
             recipients = ", ".join((event.to or [])[:2])
