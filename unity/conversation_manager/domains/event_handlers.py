@@ -557,10 +557,31 @@ async def _(
         timestamp=event.timestamp,
     )
 
-    # When accepted with a pending context, the inbound WhatsApp call is
-    # expected to arrive momentarily — don't wake the brain (it would see
-    # permission granted + make_whatsapp_call still available → duplicate).
     if event.accepted and has_pending_context:
+        # Permission granted after we sent a VOICE_CALL_REQUEST template.
+        # Place the outbound call directly — no LLM round-trip needed.
+        from unity.conversation_manager.domains import comms_utils
+        from unity.conversation_manager.domains.call_manager import make_room_name
+
+        context = cm._pending_whatsapp_call_contexts.pop(contact_id)
+        cm.call_manager.initial_notification = context
+
+        whatsapp_number = contact.get("whatsapp_number")
+        assistant_id = str(SESSION_DETAILS.assistant.agent_id)
+        agent_name = SESSION_DETAILS.assistant.name or ""
+        room_name = make_room_name(assistant_id, "whatsapp_call")
+
+        response = await comms_utils.start_whatsapp_call(
+            to_number=whatsapp_number,
+            agent_name=agent_name,
+            room_name=room_name,
+        )
+        if response.get("success"):
+            call_event = WhatsAppCallSent(contact=contact)
+            await cm._event_broker.publish(
+                "app:comms:whatsapp_call_sent",
+                call_event.to_json(),
+            )
         return
 
     await cm.request_llm_run(
