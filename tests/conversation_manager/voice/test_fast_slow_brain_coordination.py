@@ -799,12 +799,11 @@ class TestSymbolicForwardingAndSpeechGating:
 @pytest.mark.eval
 @pytest.mark.asyncio
 class TestSlowBrainSuppressesTextDuringVoiceCall:
-    """During a Unify Meet with the boss, the fast brain receives all system
-    events directly and handles verbal communication autonomously.  The slow
-    brain should NOT silently send text messages (Unify messages, SMS) to relay
-    results that the fast brain is already handling — this manifests as the
-    caller receiving an unexpected text notification during a live voice
-    conversation with no verbal acknowledgement.
+    """During a voice call, the slow brain is the sole route for event-driven
+    speech via guide_voice_agent. It should NOT silently send text messages
+    (Unify messages, SMS) to relay results — this manifests as the caller
+    receiving an unexpected text notification during a live voice conversation
+    with no verbal acknowledgement.
     """
 
     @_handle_project
@@ -812,22 +811,19 @@ class TestSlowBrainSuppressesTextDuringVoiceCall:
         self,
         initialized_cm,
     ):
-        """When an action completes during a boss Unify Meet, the slow brain
-        should call wait() — not send_unify_message — because the fast brain
-        already receives the ActorResult via the notification pipeline and
-        will relay results verbally.
+        """When an action completes during a Unify Meet, the slow brain should
+        use guide_voice_agent or wait() — not send_unify_message. The slow
+        brain is the sole route for event-driven speech; text messages during
+        a live call are disorienting.
 
         Regression: in production the slow brain consistently sent detailed
-        Unify messages with action results during live voice calls, even
-        though the fast brain was simultaneously verbalising the same
-        information.  The caller would get a silent text notification with
-        no verbal indication that anything was sent.
+        Unify messages with action results during live voice calls. The caller
+        would get a silent text notification with no verbal indication that
+        anything was sent.
 
         The production scenario had an active Unify message thread alongside
         the meet (the user had sent text messages before joining the call),
         which biased the LLM toward replying in that same text channel.
-        The brain was woken by the ActorResult itself — not by a user
-        utterance — and decided to "deliver" the results via text.
         """
         from unity.conversation_manager.events import (
             ActorResult,
@@ -893,11 +889,119 @@ class TestSlowBrainSuppressesTextDuringVoiceCall:
         text_tools = {"send_unify_message", "send_sms", "send_email"}
         used_text_tools = text_tools & set(cm.all_tool_calls)
         assert not used_text_tools, (
-            f"During a Unify Meet with the boss, the slow brain must not "
-            f"send text messages to relay action results — the fast brain "
-            f"handles verbal communication autonomously.  An active text "
-            f"thread from before the call does not justify switching to "
-            f"text mid-conversation.\n"
+            f"During a Unify Meet, the slow brain must not send text "
+            f"messages to relay action results — it should use "
+            f"guide_voice_agent for verbal relay instead.\n"
             f"Text tools called: {used_text_tools}\n"
             f"All tool calls: {cm.all_tool_calls}"
+        )
+
+
+# =============================================================================
+# Test: slow brain speaks action results + participant comms via guide_voice_agent
+# =============================================================================
+
+
+@pytest.mark.eval
+@pytest.mark.asyncio
+class TestSlowBrainSpeaksViaGuideVoiceAgent:
+    """The slow brain is the sole route for event-driven speech. When woken by
+    an action result or participant comms during a voice call, it must call
+    guide_voice_agent to relay the information verbally — not stay silent.
+    """
+
+    @_handle_project
+    async def test_slow_brain_speaks_on_action_completion(
+        self,
+        initialized_cm,
+    ):
+        """When an action completes with concrete results during a Meet,
+        the slow brain must call guide_voice_agent to relay the result.
+        Without this, the caller hears nothing — the fast brain does not
+        proactively speak about system events.
+        """
+        cm = initialized_cm
+
+        await cm.step(UnifyMeetReceived(contact=BOSS))
+        await cm.step(UnifyMeetStarted(contact=BOSS))
+        assert cm.cm.mode == Mode.MEET
+
+        cm.cm.completed_actions[0] = {
+            "query": "Count unread emails in Gmail inbox",
+            "handle_actions": [
+                {
+                    "action_name": "act_completed",
+                    "query": "You have 201 unread emails in your inbox.",
+                    "status": "completed",
+                },
+            ],
+        }
+
+        cm.all_tool_calls.clear()
+
+        await cm.step_until_wait(
+            InboundUnifyMeetUtterance(
+                contact=BOSS,
+                content="How did the email check go? How many unread do I have?",
+            ),
+            max_steps=5,
+        )
+
+        assert "guide_voice_agent" in cm.all_tool_calls, (
+            f"The slow brain must call guide_voice_agent to relay action "
+            f"results during a voice call — it is the sole route for "
+            f"event-driven speech.\n"
+            f"Tool calls: {cm.all_tool_calls}"
+        )
+
+    @_handle_project
+    async def test_slow_brain_speaks_on_cross_channel_sms(
+        self,
+        initialized_cm,
+    ):
+        """When an SMS arrives during a Meet from a third party, the slow
+        brain must call guide_voice_agent to relay it verbally. The fast
+        brain sees the SMS as silent context but will not proactively
+        mention it.
+
+        Scenario: boss is on a Meet, a colleague texts about something
+        the boss was waiting for. The slow brain should relay it.
+        """
+        from unity.conversation_manager.events import SMSReceived
+
+        cm = initialized_cm
+
+        await cm.step(UnifyMeetReceived(contact=BOSS))
+        await cm.step(UnifyMeetStarted(contact=BOSS))
+        assert cm.cm.mode == Mode.MEET
+
+        # Boss asks about something they're expecting
+        await cm.step(
+            InboundUnifyMeetUtterance(
+                contact=BOSS,
+                content="Has Alice sent through those contract updates yet?",
+            ),
+        )
+
+        cm.all_tool_calls.clear()
+
+        # The SMS arrives from Alice (a different contact)
+        alice = TEST_CONTACTS[2]
+        await cm.step_until_wait(
+            SMSReceived(
+                contact=alice,
+                content=(
+                    "Hi, just sent the updated contract to your email. "
+                    "Key changes: payment terms moved to net-45, liability "
+                    "cap at $500K as discussed."
+                ),
+            ),
+            max_steps=5,
+        )
+
+        assert "guide_voice_agent" in cm.all_tool_calls, (
+            f"The slow brain must call guide_voice_agent to relay "
+            f"cross-channel SMS during a voice call — the fast brain "
+            f"will not proactively mention it.\n"
+            f"Tool calls: {cm.all_tool_calls}"
         )
