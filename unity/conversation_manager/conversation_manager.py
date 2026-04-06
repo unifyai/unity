@@ -957,6 +957,17 @@ class ConversationManager(metaclass=SingletonABCMeta):
             else:
                 COST_ATTRIBUTION.set([SESSION_DETAILS.user.id])
 
+            try:
+                import unillm
+
+                unillm.set_billing_context(
+                    assistant_id=SESSION_DETAILS.assistant.agent_id,
+                    user_id=attributed_user_id or SESSION_DETAILS.user.id,
+                    organization_id=SESSION_DETAILS.org_id,
+                )
+            except (ImportError, Exception):
+                pass
+
         self._llm_gen += 1
         run_id = trace_meta.get("run_id", "llmrun-unknown")
         request_id = trace_meta.get("request_id", "")

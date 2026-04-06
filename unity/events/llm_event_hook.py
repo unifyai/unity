@@ -10,6 +10,10 @@ lifetime of the process.
 Additionally, this module logs cumulative spending to the Assistants project
 for monthly spending limit tracking. After each LLM call, the billed_cost is
 atomically added to the cumulative_spend for the current month.
+
+Note: credit_transaction ledger rows are also written (via deduct_credits in
+UniLLM) so both systems receive cost data in parallel.  Once the ledger is
+validated in production, the cumulative-spend upserts here can be removed.
 """
 
 from __future__ import annotations

@@ -1629,6 +1629,7 @@ class ConversationManagerBrainActionTools:
             attributed_user_id = (
                 contact.get("user_id") if contact and contact.get("is_system") else None
             )
+            effective_user_id = attributed_user_id or SESSION_DETAILS.user.id
             COST_ATTRIBUTION.set(
                 (
                     [attributed_user_id]
@@ -1636,6 +1637,17 @@ class ConversationManagerBrainActionTools:
                     else [SESSION_DETAILS.user.id]
                 ),
             )
+
+            try:
+                import unillm
+
+                unillm.set_billing_context(
+                    assistant_id=SESSION_DETAILS.assistant.agent_id,
+                    user_id=effective_user_id,
+                    organization_id=SESSION_DETAILS.org_id,
+                )
+            except (ImportError, Exception):
+                pass
 
         # Pass the fresh rendered state snapshot as context for the Actor,
         # unless the LLM opted out.

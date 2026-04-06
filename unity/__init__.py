@@ -115,6 +115,18 @@ def init(
 
     install_limit_check_hook()
 
+    # Set billing context so UniLLM credit deductions include attribution
+    try:
+        import unillm
+
+        unillm.set_billing_context(
+            assistant_id=SESSION_DETAILS.assistant.agent_id,
+            user_id=SESSION_DETAILS.user.id,
+            organization_id=SESSION_DETAILS.org_id,
+        )
+    except (ImportError, Exception):
+        pass
+
     _INITIALISED = True
 
 
