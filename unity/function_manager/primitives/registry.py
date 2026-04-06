@@ -91,24 +91,53 @@ _MANAGER_SPECS: tuple[ManagerSpec, ...] = (
         examples="'Who is our contact at Acme Corp?', 'Find Alice's email', 'Contacts in Berlin?'",
     ),
     ManagerSpec(
+        manager_alias="dashboards",
+        manager_registry_key="dashboards",
+        primitive_class_path="unity.dashboard_manager.dashboard_manager.DashboardManager",
+        excluded_methods=frozenset(),
+        priority=8,
+        domain="Visualizations & Dashboards",
+        description=(
+            "Create HTML visualization tiles (charts, plots, KPI cards, tables) "
+            "and compose them into dashboard grid layouts"
+        ),
+        use_when=(
+            "Generate any visualization, chart, plot, dashboard, KPI card, "
+            "or interactive HTML output for the user to view"
+        ),
+        examples=(
+            "'Plot repairs by category', 'Show me a bar chart of revenue', "
+            "'Create a dashboard with KPIs and charts', "
+            "'Generate an interactive table of orders'"
+        ),
+        special_note=(
+            "Generate HTML in Python (Plotly, Bokeh, matplotlib, custom HTML) "
+            "then pass to create_tile(). Compose tiles into dashboards with "
+            "create_dashboard(). Supports baked-in data and live data bridge. "
+            "For live-data tiles, include query params (filter, columns, "
+            "order_by, etc.) in each DataBinding so create_tile auto-validates "
+            "them via DataManager.filter(limit=5) before storing the tile. "
+            "If any binding fails, result.error explains the problem."
+        ),
+    ),
+    ManagerSpec(
         manager_alias="data",
         manager_registry_key="data",
         primitive_class_path="unity.data_manager.data_manager.DataManager",
         excluded_methods=frozenset(),
         priority=9,
-        domain="Data Operations, Visualizations & Ingestion",
+        domain="Data Operations & Ingestion",
         description=(
             "Low-level and high-level data operations on any Unify context "
-            "(filter, search, reduce, join, ingest, vectorize, plot, table_view)"
+            "(filter, search, reduce, join, ingest, vectorize)"
         ),
         use_when=(
-            "Data operations, aggregations, visualizations, "
+            "Data operations, aggregations, "
             "data ingestion from APIs/warehouses, cross-context joins"
         ),
         examples=(
             "'Filter rows where amount > 1000', 'Join repairs with telematics', "
-            "'Sum revenue by region', 'Plot repairs by category', "
-            "'Show me a table view of orders', 'Ingest this API data'"
+            "'Sum revenue by region', 'Ingest this API data'"
         ),
         special_note=(
             "DataManager operates on any Unify context path. "
@@ -288,11 +317,10 @@ _ROUTING_GUIDANCE: List[Dict[str, Any]] = [
             (
                 "data",
                 "Use for **ALL analytical and data operations** -- filtering, searching, "
-                "aggregating, joining, plotting, table views, and data ingestion. Works on "
+                "aggregating, joining, and data ingestion. Works on "
                 "any Unify context (`Data/*`, `Files/*`, `Knowledge/*`). Use when the question "
                 "is about DATA INSIDE tables, regardless of where those tables came from. "
-                "Also use for ingesting data from APIs/warehouses and for generating "
-                "visualizations (plots, table views).",
+                "Also use for ingesting data from APIs/warehouses.",
             ),
             (
                 "files",
@@ -304,31 +332,6 @@ _ROUTING_GUIDANCE: List[Dict[str, Any]] = [
             ),
         ],
         "examples": [
-            (
-                "Plot the distribution of repair types",
-                "data",
-                "primitives.data.plot(...)",
-            ),
-            (
-                "Show me a table view of the top 10 records",
-                "data",
-                "primitives.data.table_view(...)",
-            ),
-            (
-                "Ingest this API response into the database",
-                "data",
-                "primitives.data.ingest(...)",
-            ),
-            (
-                "Sum the amount column grouped by region",
-                "data",
-                "primitives.data.reduce(...)",
-            ),
-            (
-                "Filter rows where status is active",
-                "data",
-                "primitives.data.filter(...)",
-            ),
             (
                 "What tables exist under Data/MidlandHeart?",
                 "data",
@@ -391,9 +394,12 @@ _EXAMPLE_GENERATORS: Dict[str, List[str]] = {
     "data": [
         "get_primitives_data_filter_example",
         "get_primitives_data_reduce_example",
-        "get_primitives_data_plot_example",
-        "get_primitives_data_table_view_example",
         "get_primitives_data_ingest_example",
+    ],
+    "dashboards": [
+        "get_primitives_dashboards_baked_in_example",
+        "get_primitives_dashboards_live_data_example",
+        "get_primitives_dashboards_composition_example",
     ],
 }
 
