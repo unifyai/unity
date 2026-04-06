@@ -239,6 +239,11 @@ class ConversationManager(metaclass=SingletonABCMeta):
         # resend or rework the original message.  Maps contact_id → content.
         self._pending_whatsapp_resends: dict[int, str] = {}
 
+        # Outbound WhatsApp call contexts stashed while awaiting call permission.
+        # When the contact grants permission (taps "Call now"), the context is
+        # injected as call_manager.initial_notification.  Maps contact_id → context.
+        self._pending_whatsapp_call_contexts: dict[int, str] = {}
+
         # Hierarchical session logger for consistent nested logging
         self._session_logger = SessionLogger("ConversationManager")
         self._session_logger.debug(

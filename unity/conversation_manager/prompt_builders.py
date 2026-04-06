@@ -151,6 +151,12 @@ def _build_comms_tool_listing(
     )
     if assistant_has_phone:
         lines.append("- `make_call`: Start an outbound phone call to a contact")
+    if assistant_has_whatsapp:
+        lines.append(
+            "- `make_whatsapp_call`: Start a WhatsApp voice call to a contact. "
+            "If call permission hasn't been granted yet, a call invite is sent instead — "
+            "the contact sees a 'Call now' button and the call connects when they tap it.",
+        )
     return "\n".join(lines)
 
 
@@ -548,6 +554,8 @@ I do NOT need to poll or check on actions - the system will wake me when somethi
 **Recognizing actions I just took**:
 - `**NEW** [You @ ...]: <message>` = I just sent this message
 - `**NEW** [You @ ...]: <Sending Call...>` = I just initiated a call
+- `**NEW** [You @ ...]: <Sending WhatsApp Call...>` = I just placed a WhatsApp call
+- `**NEW** [You @ ...]: <WhatsApp Call Invite Sent>` = I sent a call invite (permission pending)
 - If I see these, the action is DONE - call `wait`, do NOT repeat the action""",
     )
 
@@ -569,6 +577,14 @@ I do NOT need to poll or check on actions - the system will wake me when somethi
             else 0
         )
         available_tool_names.insert(idx, "send_whatsapp")
+        # Place make_whatsapp_call after make_call if present, else at end
+        if "make_call" in available_tool_names:
+            available_tool_names.insert(
+                available_tool_names.index("make_call") + 1,
+                "make_whatsapp_call",
+            )
+        else:
+            available_tool_names.append("make_whatsapp_call")
     if assistant_has_email:
         available_tool_names.insert(
             available_tool_names.index("send_unify_message"),

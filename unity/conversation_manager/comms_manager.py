@@ -565,6 +565,46 @@ class CommsManager:
                         )
 
                 elif thread == "whatsapp":
+                    # Call permission responses arrive on the whatsapp thread
+                    # with a special type field — intercept before normal flow.
+                    if event.get("type") == "call_permission_response":
+                        contact_number = event.get("contact_number", "")
+                        accepted = event.get("payload") == "ACCEPTED"
+                        contact = next(
+                            (
+                                c
+                                for c in contacts
+                                if c.get("whatsapp_number") == contact_number
+                            ),
+                            None,
+                        )
+                        if contact is None:
+                            contact = next(
+                                (
+                                    c
+                                    for c in contacts
+                                    if c.get("phone_number") == contact_number
+                                ),
+                                None,
+                            )
+                        if contact is None:
+                            LOGGER.error(
+                                f"{DEFAULT_ICON} Failed to resolve contact for WhatsApp call permission from: {contact_number}",
+                            )
+                            self._ack_with_latency(message, publish_timestamp, topic)
+                            return
+
+                        perm_event = WhatsAppCallPermissionResponse(
+                            contact=contact,
+                            accepted=accepted,
+                        )
+                        self._publish_from_callback(
+                            "app:comms:whatsapp_call_permission",
+                            perm_event.to_json(),
+                        )
+                        self._ack_with_latency(message, publish_timestamp, topic)
+                        return
+
                     # Strip whatsapp: prefix from sender number
                     raw_from = event["from_number"].strip()
                     contact_detail = (
@@ -837,8 +877,53 @@ class CommsManager:
                                     message_preview="Incoming phone call",
                                 ).to_json(),
                             )
+                    elif thread == "whatsapp_call_answered":
+                        number = event.get("user_number")
+                        if number and number.startswith("whatsapp:"):
+                            number = number[len("whatsapp:") :]
+                        contact = next(
+                            (c for c in contacts if c.get("whatsapp_number") == number),
+                            None,
+                        )
+                        if contact is None:
+                            contact = next(
+                                (
+                                    c
+                                    for c in contacts
+                                    if c.get("phone_number") == number
+                                ),
+                                None,
+                            )
+                        if contact is None:
+                            contact = next(c for c in contacts if c["contact_id"] == 1)
+                        call_event = WhatsAppCallAnswered(contact=contact)
+                        topic = "app:comms:whatsapp_call_answered"
+                    elif thread == "whatsapp_call_not_answered":
+                        number = event.get("user_number")
+                        if number and number.startswith("whatsapp:"):
+                            number = number[len("whatsapp:") :]
+                        call_status = event.get("call_status", "no-answer")
+                        contact = next(
+                            (c for c in contacts if c.get("whatsapp_number") == number),
+                            None,
+                        )
+                        if contact is None:
+                            contact = next(
+                                (
+                                    c
+                                    for c in contacts
+                                    if c.get("phone_number") == number
+                                ),
+                                None,
+                            )
+                        if contact is None:
+                            contact = next(c for c in contacts if c["contact_id"] == 1)
+                        call_event = WhatsAppCallNotAnswered(
+                            contact=contact,
+                            reason=call_status,
+                        )
+                        topic = "app:comms:whatsapp_call_not_answered"
                     elif thread == "call_not_answered":
-                        # Outbound call was not answered (no-answer, busy, canceled, failed)
                         number = event.get("user_number")
                         call_status = event.get("call_status", "no-answer")
                         contact = next(
@@ -846,25 +931,28 @@ class CommsManager:
                             None,
                         )
                         if contact is None:
-                            # Fallback to boss contact
                             contact = next(c for c in contacts if c["contact_id"] == 1)
                         call_event = PhoneCallNotAnswered(
                             contact=contact,
                             reason=call_status,
                         )
                         topic = "app:comms:call_not_answered"
-                    else:
-                        # call_answered - typically from known contacts initiating outbound
+                    elif thread == "call_answered":
                         number = event.get("user_number")
                         contact = next(
                             (c for c in contacts if c["phone_number"] == number),
                             None,
                         )
                         if contact is None:
-                            # Fallback to boss contact for answered calls
                             contact = next(c for c in contacts if c["contact_id"] == 1)
                         call_event = PhoneCallAnswered(contact=contact)
                         topic = "app:comms:call_answered"
+                    else:
+                        LOGGER.warning(
+                            f"{DEFAULT_ICON} Unhandled call/meet thread: {thread}",
+                        )
+                        self._ack_with_latency(message, publish_timestamp, topic)
+                        return
 
                     # Publish the event (blocking wait for call events)
                     future = asyncio.run_coroutine_threadsafe(

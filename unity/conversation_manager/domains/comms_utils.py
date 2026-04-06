@@ -443,6 +443,51 @@ async def start_call(to_number: str) -> str:
             return await response.json()
 
 
+async def start_whatsapp_call(
+    to_number: str,
+    agent_name: str,
+    room_name: str,
+) -> dict:
+    """
+    Initiate a WhatsApp voice call via the Communication service.
+
+    Communication checks call permission with Orchestra and decides the method:
+    - Permission granted → places outbound call directly (returns method: "direct")
+    - Permission not granted → sends invite template (returns method: "invite")
+
+    Args:
+        to_number: The recipient's WhatsApp number (E.164)
+        agent_name: Assistant's first name (used in invite template)
+        room_name: Pre-built LiveKit room name
+
+    Returns:
+        dict with 'success', 'method' ("direct"|"invite"), and other fields.
+    """
+    agent_id = SESSION_DETAILS.assistant.agent_id
+    if agent_id is None:
+        return {"success": False}
+
+    async with aiohttp.ClientSession() as session:
+        async with session.post(
+            f"{SETTINGS.conversation.COMMS_URL}/whatsapp/send-call",
+            headers=headers,
+            json={
+                "to": to_number,
+                "assistant_id": agent_id,
+                "agent_name": agent_name,
+                "room_name": room_name,
+            },
+        ) as response:
+            try:
+                response.raise_for_status()
+            except Exception:
+                return {
+                    "success": False,
+                    "error": f"Failed to initiate WhatsApp call to {to_number}",
+                }
+            return await response.json()
+
+
 async def add_email_attachments(
     attachments: list[dict[str, str]],
     receiver_email: str,

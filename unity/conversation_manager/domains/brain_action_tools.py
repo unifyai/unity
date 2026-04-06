@@ -34,6 +34,8 @@ from unity.conversation_manager.events import (
     UnifyMessageSent,
     EmailSent,
     PhoneCallSent,
+    WhatsAppCallSent,
+    WhatsAppCallInviteSent,
     ActorHandleStarted,
     ActorHandleResponse,
     FastBrainNotification,
@@ -1353,6 +1355,159 @@ class ConversationManagerBrainActionTools:
             medium=Medium.PHONE_CALL,
         )
 
+    async def make_whatsapp_call(
+        self,
+        *,
+        contact_id: int | str,
+        context: str,
+        whatsapp_number: str | None = None,
+    ) -> dict[str, Any]:
+        """
+        Start an outbound WhatsApp voice call to an existing contact.
+
+        The contact must already exist in the system.
+
+        - If the contact **already has** a WhatsApp number on file (visible in
+          active_conversations), omit ``whatsapp_number`` -- it is not needed.
+        - If the contact **does not have** a WhatsApp number on file but you
+          know it (e.g. the boss provided it), pass it via ``whatsapp_number``.
+          It will be saved to the contact record automatically and the call
+          will be placed in one step.
+        - **Do not** pass a ``whatsapp_number`` that differs from the one
+          already on file -- this will be rejected.  Use ``act`` to update
+          the contact's WhatsApp number first, then retry.
+
+        If WhatsApp call permission has not yet been granted by the contact,
+        a call invite template is sent instead — the contact sees a "Call now"
+        button. When they tap it, the call connects automatically and you will
+        be briefed with the context you provided.
+
+        Args:
+            contact_id: The contact_id of the person to call (from
+                active_conversations or returned by ``find_contacts`` /
+                ``create_contact``).
+            context: **Mission briefing for the voice agent.** This is the
+                voice agent's sole source of context about what to do on the
+                call. Once the call connects, the voice agent speaks first
+                and will not receive any further guidance from you until the
+                other person responds or an external event arrives. Everything
+                the voice agent needs to open and conduct the conversation
+                must be in this string.
+
+                Include:
+                - **Purpose**: Why are we calling? What is the goal?
+                - **Key information**: Specific facts, names, dates, or
+                  details the voice agent needs (e.g. "the meeting is
+                  Thursday at 3pm at the downtown office").
+                - **Questions to ask**: What specific information do we need
+                  from the other person?
+                - **Tone / relationship**: How does the boss know this person?
+                  Any relevant social context (e.g. "this is a close friend"
+                  vs "this is a new business contact").
+                - **Constraints**: Anything to avoid saying, sensitive topics,
+                  or fallback behavior if the person is unavailable or
+                  confused.
+
+                Be thorough — a well-briefed voice agent produces a natural,
+                purposeful conversation. A vague context produces an awkward
+                opening.
+            whatsapp_number: The recipient's WhatsApp number (E.164).
+                Required when the contact does not yet have a WhatsApp
+                number on file; omit when the contact already has one.
+        """
+        from unity.conversation_manager.domains.call_manager import make_room_name
+
+        contact_id = _coerce_contact_id(contact_id)
+        contact = self._cm.contact_index.get_contact(contact_id)
+
+        outbound_error = _check_outbound_allowed(contact)
+        if outbound_error:
+            return await self._surface_comms_error(
+                outbound_error,
+                "app:comms:whatsapp_call_sent",
+                contact_id=contact_id,
+                medium=Medium.WHATSAPP_CALL,
+            )
+
+        detail_error, contact = _resolve_or_attach_detail(
+            contact,
+            contact_id,
+            "whatsapp_number",
+            whatsapp_number,
+            "WhatsApp call",
+            self._cm.contact_index,
+        )
+        if detail_error:
+            return await self._surface_comms_error(
+                detail_error,
+                "app:comms:whatsapp_call_sent",
+                contact_id=contact_id,
+                medium=Medium.WHATSAPP_CALL,
+            )
+
+        from unity.session_details import SESSION_DETAILS
+
+        to_number = contact.get("whatsapp_number")
+        assistant_id = str(SESSION_DETAILS.assistant.agent_id)
+        agent_name = SESSION_DETAILS.assistant.name or ""
+        room_name = make_room_name(assistant_id, "whatsapp_call")
+
+        LOGGER.debug(
+            f"{DEFAULT_ICON} [make_whatsapp_call] context: {context}, to_number: {to_number}",
+        )
+
+        response = await comms_utils.start_whatsapp_call(
+            to_number=to_number,
+            agent_name=agent_name,
+            room_name=room_name,
+        )
+        if not response.get("success"):
+            if not self._cm.assistant_whatsapp_number:
+                error_msg = "You don't have a WhatsApp number configured."
+            else:
+                error_msg = f"Failed to initiate WhatsApp call to {to_number}"
+            return await self._surface_comms_error(
+                error_msg,
+                "app:comms:whatsapp_call_sent",
+                contact_id=contact_id,
+                medium=Medium.WHATSAPP_CALL,
+            )
+
+        fresh_contact = (
+            self._cm.contact_index.get_contact(whatsapp_number=to_number)
+            or contact
+            or {}
+        )
+        method = response.get("method")
+
+        if method == "direct":
+            if context:
+                self._cm.call_manager.initial_notification = context
+            event = WhatsAppCallSent(contact=fresh_contact)
+            await self._event_broker.publish(
+                "app:comms:whatsapp_call_sent",
+                event.to_json(),
+            )
+            return {"status": "ok"}
+
+        # method == "invite" — permission not yet granted
+        if context:
+            self._cm._pending_whatsapp_call_contexts[contact_id] = context
+        event = WhatsAppCallInviteSent(contact=fresh_contact)
+        await self._event_broker.publish(
+            "app:comms:whatsapp_call_invite_sent",
+            event.to_json(),
+        )
+        return {
+            "status": "ok",
+            "pending_callback": True,
+            "note": (
+                "Call permission not yet granted. A call invite was sent instead. "
+                "When the contact taps 'Call now', the call will connect and "
+                "you will be briefed with the context you provided."
+            ),
+        }
+
     async def act(
         self,
         *,
@@ -2131,15 +2286,17 @@ class ConversationManagerBrainActionTools:
             "send_api_response": self.send_api_response,
             "wait": self.wait,
         }
+        call_in_progress = (
+            self._cm.mode.is_voice or self._cm.call_manager._call_proc is not None
+        )
         if self._cm.assistant_number:
             tools["send_sms"] = self.send_sms
-            call_in_progress = (
-                self._cm.mode.is_voice or self._cm.call_manager._call_proc is not None
-            )
             if not call_in_progress:
                 tools["make_call"] = self.make_call
         if self._cm.assistant_whatsapp_number:
             tools["send_whatsapp"] = self.send_whatsapp
+            if not call_in_progress:
+                tools["make_whatsapp_call"] = self.make_whatsapp_call
         if self._cm.assistant_email:
             tools["send_email"] = self.send_email
         if getattr(self._cm.mode, "is_voice", False):

@@ -176,8 +176,13 @@ async def _(event: Ping, cm: "ConversationManager", *args, **kwargs):
     cm._session_logger.debug("ping", log_str)
 
 
-@EventHandler.register(PhoneCallAnswered)
-async def _(event: PhoneCallAnswered, cm: "ConversationManager", *args, **kwargs):
+@EventHandler.register((PhoneCallAnswered, WhatsAppCallAnswered))
+async def _(
+    event: PhoneCallAnswered | WhatsAppCallAnswered,
+    cm: "ConversationManager",
+    *args,
+    **kwargs,
+):
     """
     Forward call answered status to the voice agent subprocess.
 
@@ -196,11 +201,18 @@ CallInitEvents = Union[
     PhoneCallSent,
     UnifyMeetReceived,
     WhatsAppCallReceived,
+    WhatsAppCallSent,
 ]
 
 
 @EventHandler.register(
-    (PhoneCallReceived, PhoneCallSent, UnifyMeetReceived, WhatsAppCallReceived),
+    (
+        PhoneCallReceived,
+        PhoneCallSent,
+        UnifyMeetReceived,
+        WhatsAppCallReceived,
+        WhatsAppCallSent,
+    ),
 )
 async def _(event: CallInitEvents, cm: "ConversationManager", *args, **kwargs):
     """
@@ -213,6 +225,12 @@ async def _(event: CallInitEvents, cm: "ConversationManager", *args, **kwargs):
     boss = cm.contact_index.get_contact(contact_id=1)
     if isinstance(event, UnifyMeetReceived):
         contact = boss
+    elif isinstance(event, (WhatsAppCallReceived, WhatsAppCallSent)):
+        contact = cm.contact_index.get_contact(
+            whatsapp_number=event.contact.get("whatsapp_number"),
+        )
+        if contact is None:
+            contact = event.contact
     else:
         contact = cm.contact_index.get_contact(
             phone_number=event.contact["phone_number"],
@@ -224,6 +242,13 @@ async def _(event: CallInitEvents, cm: "ConversationManager", *args, **kwargs):
         contact.get("contact_id") if contact else event.contact.get("contact_id")
     )
     sender_name = _get_sender_name(contact)
+
+    # Inject stashed context from make_whatsapp_call if a pending permission
+    # grant triggered this inbound WhatsApp call.
+    if isinstance(event, WhatsAppCallReceived) and contact_id is not None:
+        stashed_context = cm._pending_whatsapp_call_contexts.pop(contact_id, None)
+        if stashed_context:
+            cm.call_manager.initial_notification = stashed_context
 
     match event:
         case PhoneCallReceived() as e:
@@ -240,6 +265,15 @@ async def _(event: CallInitEvents, cm: "ConversationManager", *args, **kwargs):
             )
             message_content = "<Receiving WhatsApp Call...>"
             notif_content = f"WhatsApp call received from {sender_name}"
+        case WhatsAppCallSent():
+            await cm.call_manager.start_call(
+                contact,
+                boss,
+                outbound=True,
+                channel="whatsapp_call",
+            )
+            message_content = "<Sending WhatsApp Call...>"
+            notif_content = f"WhatsApp call sent to {sender_name}"
         case PhoneCallSent():
             await cm.call_manager.start_call(contact, boss, outbound=True)
             message_content = "<Sending Call...>"
@@ -260,7 +294,7 @@ async def _(event: CallInitEvents, cm: "ConversationManager", *args, **kwargs):
         if isinstance(event, UnifyMeetReceived)
         else (
             Medium.WHATSAPP_CALL
-            if isinstance(event, WhatsAppCallReceived)
+            if isinstance(event, (WhatsAppCallReceived, WhatsAppCallSent))
             else Medium.PHONE_CALL
         )
     )
@@ -427,6 +461,140 @@ async def _(
         delay=0,
         cancel_running=True,
         triggering_contact_id=contact_id,
+    )
+
+
+@EventHandler.register(WhatsAppCallNotAnswered)
+async def _(
+    event: WhatsAppCallNotAnswered,
+    cm: "ConversationManager",
+    *args,
+    **kwargs,
+):
+    """Handle outbound WhatsApp call not answered — same cleanup as phone."""
+    contact = cm.contact_index.get_contact(
+        whatsapp_number=event.contact.get("whatsapp_number"),
+    )
+    if contact is None:
+        contact = event.contact
+
+    contact_id = contact.get("contact_id") if contact else 1
+    sender_name = _get_sender_name(contact)
+    reason = event.reason or "no-answer"
+
+    await cm.event_broker.publish(
+        "app:call:status",
+        json.dumps({"type": "stop", "reason": f"call_not_answered:{reason}"}),
+    )
+
+    if cm.mode.is_voice:
+        cm.mode = Mode.TEXT
+        cm.call_manager.call_contact = None
+
+    await cm.call_manager.cleanup_call_proc()
+
+    cm.call_manager.conference_name = None
+    cm.call_manager.room_name = None
+    cm.call_manager.call_start_timestamp = None
+    cm.call_manager.unify_meet_start_timestamp = None
+    cm.call_manager.call_exchange_id = UNASSIGNED
+    cm.call_manager.unify_meet_exchange_id = UNASSIGNED
+
+    reason_display = {
+        "no-answer": "did not answer",
+        "busy": "was busy",
+        "canceled": "call was canceled",
+        "failed": "call failed",
+    }.get(reason, f"not answered ({reason})")
+
+    notif_content = f"Outbound WhatsApp call to {sender_name} {reason_display}"
+    cm.notifications_bar.push_notif("Comms", notif_content, event.timestamp)
+
+    cm.contact_index.push_message(
+        contact_id=contact_id,
+        sender_name=sender_name,
+        thread_name=Medium.WHATSAPP_CALL,
+        message_content=f"<WhatsApp Call Not Answered: {reason_display}>",
+        role="assistant",
+        timestamp=event.timestamp,
+    )
+
+    await cm.request_llm_run(
+        delay=0,
+        cancel_running=True,
+        triggering_contact_id=contact_id,
+    )
+
+
+@EventHandler.register(WhatsAppCallPermissionResponse)
+async def _(
+    event: WhatsAppCallPermissionResponse,
+    cm: "ConversationManager",
+    *args,
+    **kwargs,
+):
+    """Handle call permission grant/rejection from a WhatsApp contact."""
+    contact = event.contact
+    contact_id = contact.get("contact_id") if contact else 1
+    sender_name = _get_sender_name(contact)
+
+    has_pending_context = contact_id in cm._pending_whatsapp_call_contexts
+
+    if event.accepted:
+        notif_content = f"{sender_name} granted WhatsApp call permission"
+    else:
+        notif_content = f"{sender_name} rejected WhatsApp call permission"
+        cm._pending_whatsapp_call_contexts.pop(contact_id, None)
+
+    cm.notifications_bar.push_notif("Comms", notif_content, event.timestamp)
+
+    cm.contact_index.push_message(
+        contact_id=contact_id,
+        sender_name=sender_name,
+        thread_name=Medium.WHATSAPP_CALL,
+        message_content=f"<Call Permission: {'Accepted' if event.accepted else 'Rejected'}>",
+        role="user",
+        timestamp=event.timestamp,
+    )
+
+    # When accepted with a pending context, the inbound WhatsApp call is
+    # expected to arrive momentarily — don't wake the brain (it would see
+    # permission granted + make_whatsapp_call still available → duplicate).
+    if event.accepted and has_pending_context:
+        return
+
+    await cm.request_llm_run(
+        delay=0,
+        cancel_running=True,
+        triggering_contact_id=contact_id,
+    )
+
+
+@EventHandler.register(WhatsAppCallInviteSent)
+async def _(
+    event: WhatsAppCallInviteSent,
+    cm: "ConversationManager",
+    *args,
+    **kwargs,
+):
+    """Log the invite template send in the conversation thread."""
+    contact = event.contact
+    contact_id = contact.get("contact_id") if contact else 1
+    sender_name = _get_sender_name(contact)
+
+    cm.notifications_bar.push_notif(
+        "Comms",
+        f"WhatsApp call invite sent to {sender_name}",
+        event.timestamp,
+    )
+
+    cm.contact_index.push_message(
+        contact_id=contact_id,
+        sender_name=sender_name,
+        thread_name=Medium.WHATSAPP_CALL,
+        message_content="<WhatsApp Call Invite Sent>",
+        role="assistant",
+        timestamp=event.timestamp,
     )
 
 

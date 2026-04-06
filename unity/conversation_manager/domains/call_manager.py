@@ -271,14 +271,15 @@ class LivekitCallManager:
         if contact.get("is_system", False):
             self._start_boss_notification_rendering()
 
-        room_name = make_room_name(self.assistant_id, "phone")
+        medium = "whatsapp_call" if channel == "whatsapp_call" else "phone"
+        room_name = make_room_name(self.assistant_id, medium)
 
         if self._worker_proc is not None and self._worker_proc.poll() is None:
-            await self._dispatch_job(room_name, "phone_call", contact, boss, outbound)
+            await self._dispatch_job(room_name, channel, contact, boss, outbound)
         else:
             await self._start_call_subprocess(
                 room_name,
-                "phone_call",
+                channel,
                 contact,
                 boss,
                 outbound,

@@ -279,6 +279,58 @@ class WhatsAppCallEnded(Event):
 
 
 @dataclass
+class WhatsAppCallSent(Event):
+    """Outbound WhatsApp call placed directly (permission was granted)."""
+
+    topic: ClassVar[str | None] = "app:comms:whatsapp_call_sent"
+    prominent: ClassVar[bool] = True
+
+    contact: dict
+
+
+@dataclass
+class WhatsAppCallInviteSent(Event):
+    """Call invite template sent (permission not yet granted)."""
+
+    topic: ClassVar[str | None] = "app:comms:whatsapp_call_invite_sent"
+    prominent: ClassVar[bool] = True
+
+    contact: dict
+
+
+@dataclass
+class WhatsAppCallAnswered(Event):
+    """Outbound WhatsApp call was answered by the contact."""
+
+    topic: ClassVar[str | None] = "app:comms:whatsapp_call_answered"
+    prominent: ClassVar[bool] = True
+
+    contact: dict
+
+
+@dataclass
+class WhatsAppCallNotAnswered(Event):
+    """Outbound WhatsApp call was not answered."""
+
+    topic: ClassVar[str | None] = "app:comms:whatsapp_call_not_answered"
+    prominent: ClassVar[bool] = True
+
+    contact: dict
+    reason: str = "no-answer"
+
+
+@dataclass
+class WhatsAppCallPermissionResponse(Event):
+    """Contact responded to a WhatsApp call permission request."""
+
+    topic: ClassVar[str | None] = "app:comms:whatsapp_call_permission"
+    prominent: ClassVar[bool] = True
+
+    contact: dict
+    accepted: bool
+
+
+@dataclass
 class UnifyMessageReceived(Event):
     """A message was received via the Unify console chat interface.
 
