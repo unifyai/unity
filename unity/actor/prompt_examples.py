@@ -1001,61 +1001,211 @@ async def count_repairs_by_operative(context: str = "Data/MidlandHeart/Repairs")
 '''
 
 
-def get_primitives_data_plot_example() -> str:
-    """Example: generating charts via ``primitives.data.plot(...)``."""
+def get_primitives_dashboards_baked_in_example() -> str:
+    """Example: baked-in data tiles (Plotly, matplotlib) via ``primitives.dashboards``."""
 
     return '''
-# Example: Generate a bar chart from a data context
-async def plot_repairs_by_category(context: str = "Data/MidlandHeart/Repairs") -> str:
-    """Generate a bar chart of repair counts by category."""
-    result = await primitives.data.plot(
-        context=context,
-        plot_type="bar",
+# ============================================================
+# IMPORTANT: primitives.dashboards is the ONLY way to produce
+# visual output (charts, plots, tables, KPI cards, dashboards).
+# The old primitives.data.plot() and primitives.data.table_view()
+# no longer exist. Always generate HTML in Python and use
+# create_tile() for any visualization, regardless of which
+# manager's data you are visualising.
+# ============================================================
+#
+# Data mode decision framework:
+#   BAKED-IN data (embed in HTML) when:
+#     - Dataset is small-to-medium (< 10k rows)
+#     - Data is a one-time snapshot or static report
+#     - Maximum portability desired (self-contained HTML)
+#   LIVE DATA BRIDGE (UnifyData.query()) when:
+#     - Dataset is large or frequently updated
+#     - Tile should always reflect current data
+#     - Declare data_bindings so the live data bridge is activated
+
+# Example: Plotly chart with baked-in data from a data context
+async def chart_repairs_by_category(context: str = "Data/MidlandHeart/Repairs") -> str:
+    """Generate a Plotly bar chart from data and create a shareable tile."""
+    import subprocess
+    subprocess.check_call(["pip", "install", "plotly", "pandas"])
+    import plotly.express as px
+    import pandas as pd
+
+    rows = await primitives.data.filter(context, limit=5000)
+    df = pd.DataFrame(rows)
+    fig = px.bar(
+        df,
         x="SORGroupDescription",
         y="WorksOrderReference",
-        metric="count",
         title="Repairs by Category",
     )
-    if result.succeeded:
-        return result.url
-    return f"Plot failed: {result.error}"
+    html = fig.to_html(include_plotlyjs="cdn", full_html=True)
 
-# Example: Grouped bar chart with aggregation
-async def plot_cost_by_category_and_priority(context: str = "Data/MidlandHeart/Repairs") -> str:
-    """Generate a grouped bar chart of average repair cost by category, colored by priority."""
-    result = await primitives.data.plot(
-        context=context,
-        plot_type="bar",
-        x="SORGroupDescription",
-        y="TotalCost",
-        group_by="Priority",
-        aggregate="mean",
-        title="Avg Repair Cost by Category & Priority",
+    result = await primitives.dashboards.create_tile(
+        html, title="Repairs by Category"
     )
     if result.succeeded:
         return result.url
-    return f"Plot failed: {result.error}"
+    return f"Tile creation failed: {result.error}"
+
+# Example: Matplotlib figure exported as HTML tile
+async def visualize_task_priority_distribution() -> str:
+    """Visualize task priorities using matplotlib and create a tile."""
+    import subprocess
+    subprocess.check_call(["pip", "install", "matplotlib"])
+    import matplotlib.pyplot as plt
+    import io, base64
+
+    rows = await primitives.tasks.ask("List all tasks with their priorities")
+    # Count by priority
+    priorities = {}
+    for task in rows:
+        p = task.get("priority", "unknown")
+        priorities[p] = priorities.get(p, 0) + 1
+
+    fig, ax = plt.subplots(figsize=(8, 5))
+    ax.bar(priorities.keys(), priorities.values(), color=["#ef4444", "#f59e0b", "#22c55e"])
+    ax.set_title("Task Priority Distribution")
+    ax.set_ylabel("Count")
+
+    buf = io.BytesIO()
+    fig.savefig(buf, format="png", bbox_inches="tight")
+    buf.seek(0)
+    img_b64 = base64.b64encode(buf.read()).decode()
+    plt.close(fig)
+
+    html = f"""<!DOCTYPE html>
+<html><body style="margin:0;display:flex;justify-content:center;align-items:center;min-height:100vh;background:#fff;">
+<img src="data:image/png;base64,{img_b64}" style="max-width:100%;height:auto;" />
+</body></html>"""
+
+    result = await primitives.dashboards.create_tile(html, title="Task Priority Distribution")
+    return result.url if result.succeeded else f"Failed: {result.error}"
 '''
 
 
-def get_primitives_data_table_view_example() -> str:
-    """Example: generating an interactive table view via ``primitives.data.table_view(...)``."""
+def get_primitives_dashboards_live_data_example() -> str:
+    """Example: live data bridge tiles via ``primitives.dashboards``.
+
+    Demonstrates the auto-validation pattern: include query params in
+    DataBinding so create_tile dry-runs them through DataManager.filter()
+    before storing the tile.  For earlier feedback during complex plans,
+    you can still pre-verify manually with primitives.data.filter().
+    """
 
     return '''
-# Example: Render an interactive table view from a data context
-async def show_top_repairs(context: str = "Data/MidlandHeart/Repairs") -> str:
-    """Generate a shareable table view of the most recent repairs."""
-    result = await primitives.data.table_view(
-        context=context,
-        columns_visible=["WorksOrderReference", "OperativeName", "RaisedDate", "Priority"],
-        sort_by="RaisedDate",
-        sort_order="desc",
-        row_limit=50,
-        title="Recent Repairs",
+# Example: Custom HTML table with live data bridge
+# Include query params in DataBinding so create_tile auto-validates them
+# against the real backend before storing the tile.  If a context or
+# column is wrong, result.error reports the problem immediately.
+async def live_revenue_table() -> str:
+    """Create a tile that fetches live data at render time."""
+    from unity.dashboard_manager.types.tile import DataBinding
+
+    html = """<!DOCTYPE html>
+<html><head>
+<style>
+  body { font-family: system-ui, sans-serif; padding: 16px; margin: 0; }
+  table { border-collapse: collapse; width: 100%; }
+  th, td { border: 1px solid #e5e7eb; padding: 10px 12px; text-align: left; }
+  th { background: #f9fafb; font-weight: 600; }
+  tr:nth-child(even) { background: #f9fafb; }
+</style>
+</head><body>
+<h2 style="margin-top:0">Monthly Revenue (Live)</h2>
+<table id="tbl">
+  <thead><tr><th>Month</th><th>Revenue</th></tr></thead>
+  <tbody><tr><td colspan="2">Loading...</td></tr></tbody>
+</table>
+<script>
+UnifyData.query({
+  context: "Data/Sales/Monthly",
+  columns: ["month", "revenue"],
+  order_by: "month",
+}).then(rows => {
+  const tbody = document.querySelector("#tbl tbody");
+  tbody.innerHTML = "";
+  rows.forEach(r => {
+    const tr = document.createElement("tr");
+    tr.innerHTML = `<td>${r.month}</td><td>$${Number(r.revenue).toLocaleString()}</td>`;
+    tbody.appendChild(tr);
+  });
+});
+</script>
+</body></html>"""
+
+    # create_tile auto-validates the query params in data_bindings
+    # by dry-running each binding through DataManager.filter(limit=5).
+    result = await primitives.dashboards.create_tile(
+        html,
+        title="Monthly Revenue (Live)",
+        data_bindings=[
+            DataBinding(
+                context="Data/Sales/Monthly",
+                columns=["month", "revenue"],
+                order_by="month",
+            ),
+        ],
+    )
+    return result.url if result.succeeded else f"Failed: {result.error}"
+'''
+
+
+def get_primitives_dashboards_composition_example() -> str:
+    """Example: composing tiles into dashboards via ``primitives.dashboards``."""
+
+    return '''
+# Example: Full dashboard composition
+# Create multiple tiles first, then arrange them in a grid layout.
+# The grid uses a 12-column system. Each TilePosition specifies:
+#   tile_token: token from a create_tile result
+#   x, y: grid position (column, row)
+#   w, h: size in grid units (columns, row-heights)
+async def sales_dashboard() -> str:
+    """Compose KPI cards, chart, and table into a dashboard."""
+    from unity.dashboard_manager.types.dashboard import TilePosition
+
+    # Step 1: Create a KPI card tile
+    kpi_html = """<!DOCTYPE html>
+<html><body style="margin:0;padding:24px;font-family:system-ui;">
+<div style="display:flex;gap:24px;">
+  <div style="flex:1;background:#f0fdf4;border-radius:12px;padding:20px;">
+    <div style="color:#16a34a;font-size:14px;">Total Revenue</div>
+    <div style="font-size:32px;font-weight:700;">$2.4M</div>
+  </div>
+  <div style="flex:1;background:#eff6ff;border-radius:12px;padding:20px;">
+    <div style="color:#2563eb;font-size:14px;">Active Users</div>
+    <div style="font-size:32px;font-weight:700;">12,847</div>
+  </div>
+</div>
+</body></html>"""
+    kpi_tile = await primitives.dashboards.create_tile(kpi_html, title="KPI Summary")
+
+    # Step 2: Create a chart tile (using any Python viz library)
+    import subprocess
+    subprocess.check_call(["pip", "install", "plotly", "pandas"])
+    import plotly.express as px
+    import pandas as pd
+
+    rows = await primitives.data.filter("Data/Sales/Monthly", limit=500)
+    df = pd.DataFrame(rows)
+    fig = px.line(df, x="month", y="revenue", title="Revenue Trend")
+    chart_html = fig.to_html(include_plotlyjs="cdn", full_html=True)
+    chart_tile = await primitives.dashboards.create_tile(chart_html, title="Revenue Trend")
+
+    # Step 3: Compose into a dashboard
+    result = await primitives.dashboards.create_dashboard(
+        "Sales Overview Q1 2025",
+        description="KPIs and revenue trend for the sales team",
+        tiles=[
+            TilePosition(tile_token=kpi_tile.token, x=0, y=0, w=12, h=2),
+            TilePosition(tile_token=chart_tile.token, x=0, y=2, w=12, h=4),
+        ],
     )
     if result.succeeded:
         return result.url
-    return f"Table view failed: {result.error}"
+    return f"Dashboard creation failed: {result.error}"
 '''
 
 
@@ -1553,9 +1703,11 @@ def get_example_function_map() -> dict[str, callable]:
         # Data (using real DataManager primitives)
         "get_primitives_data_filter_example": get_primitives_data_filter_example,
         "get_primitives_data_reduce_example": get_primitives_data_reduce_example,
-        "get_primitives_data_plot_example": get_primitives_data_plot_example,
-        "get_primitives_data_table_view_example": get_primitives_data_table_view_example,
         "get_primitives_data_ingest_example": get_primitives_data_ingest_example,
+        # Dashboards
+        "get_primitives_dashboards_baked_in_example": get_primitives_dashboards_baked_in_example,
+        "get_primitives_dashboards_live_data_example": get_primitives_dashboards_live_data_example,
+        "get_primitives_dashboards_composition_example": get_primitives_dashboards_composition_example,
     }
 
 
