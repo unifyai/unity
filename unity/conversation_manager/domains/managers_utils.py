@@ -81,6 +81,8 @@ _MESSAGE_PRODUCING_EVENTS = {
     "PhoneCallStarted",
     "UnifyMeetStarted",
     "PhoneCallNotAnswered",
+    "WhatsAppCallReceived",
+    "WhatsAppCallStarted",
     "ApiMessageReceived",
     "ApiMessageSent",
 }
@@ -328,6 +330,24 @@ async def hydrate_global_thread(cm: "ConversationManager") -> None:
                     contact_id=contact_id,
                     sender_name=sender_name,
                     thread_name=medium,
+                    message_content="<Call Started>",
+                    role="user",
+                    timestamp=ts,
+                )
+            case "WhatsAppCallReceived":
+                entry = cm.contact_index.build_message(
+                    contact_id=contact_id,
+                    sender_name=sender_name,
+                    thread_name=Medium.WHATSAPP_CALL,
+                    message_content="<Receiving WhatsApp Call...>",
+                    role="user",
+                    timestamp=ts,
+                )
+            case "WhatsAppCallStarted":
+                entry = cm.contact_index.build_message(
+                    contact_id=contact_id,
+                    sender_name=sender_name,
+                    thread_name=Medium.WHATSAPP_CALL,
                     message_content="<Call Started>",
                     role="user",
                     timestamp=ts,

@@ -252,6 +252,33 @@ class WhatsAppReceived(Event):
 
 
 @dataclass
+class WhatsAppCallReceived(Event):
+    """An inbound voice call initiated via WhatsApp Business calling."""
+
+    topic: ClassVar[str | None] = "app:comms:whatsapp_call_received"
+    prominent: ClassVar[bool] = True
+
+    contact: dict
+    conference_name: str = ""
+
+
+@dataclass
+class WhatsAppCallStarted(Event):
+    topic: ClassVar[str | None] = "app:comms:whatsapp_call_started"
+    prominent: ClassVar[bool] = True
+
+    contact: dict
+
+
+@dataclass
+class WhatsAppCallEnded(Event):
+    topic: ClassVar[str | None] = "app:comms:whatsapp_call_ended"
+    prominent: ClassVar[bool] = True
+
+    contact: dict
+
+
+@dataclass
 class UnifyMessageReceived(Event):
     """A message was received via the Unify console chat interface.
 

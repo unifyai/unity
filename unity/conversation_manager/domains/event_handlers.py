@@ -191,10 +191,17 @@ async def _(event: PhoneCallAnswered, cm: "ConversationManager", *args, **kwargs
     )
 
 
-CallInitEvents = Union[PhoneCallReceived, PhoneCallSent, UnifyMeetReceived]
+CallInitEvents = Union[
+    PhoneCallReceived,
+    PhoneCallSent,
+    UnifyMeetReceived,
+    WhatsAppCallReceived,
+]
 
 
-@EventHandler.register((PhoneCallReceived, PhoneCallSent, UnifyMeetReceived))
+@EventHandler.register(
+    (PhoneCallReceived, PhoneCallSent, UnifyMeetReceived, WhatsAppCallReceived),
+)
 async def _(event: CallInitEvents, cm: "ConversationManager", *args, **kwargs):
     """
     Handle incoming/outgoing call initiation - spawn voice agent subprocess.
@@ -224,6 +231,15 @@ async def _(event: CallInitEvents, cm: "ConversationManager", *args, **kwargs):
             await cm.call_manager.start_call(contact, boss)
             message_content = "<Recvieving Call...>"
             notif_content = f"Call received from {sender_name}"
+        case WhatsAppCallReceived() as e:
+            cm.call_manager.conference_name = e.conference_name
+            await cm.call_manager.start_call(
+                contact,
+                boss,
+                channel="whatsapp_call",
+            )
+            message_content = "<Receiving WhatsApp Call...>"
+            notif_content = f"WhatsApp call received from {sender_name}"
         case PhoneCallSent():
             await cm.call_manager.start_call(contact, boss, outbound=True)
             message_content = "<Sending Call...>"
@@ -240,7 +256,13 @@ async def _(event: CallInitEvents, cm: "ConversationManager", *args, **kwargs):
     cm.notifications_bar.push_notif("Comms", notif_content, event.timestamp)
     role = "user" if "received" in event.__class__.__name__.lower() else "assistant"
     medium = (
-        Medium.UNIFY_MEET if isinstance(event, UnifyMeetReceived) else Medium.PHONE_CALL
+        Medium.UNIFY_MEET
+        if isinstance(event, UnifyMeetReceived)
+        else (
+            Medium.WHATSAPP_CALL
+            if isinstance(event, WhatsAppCallReceived)
+            else Medium.PHONE_CALL
+        )
     )
     cm.contact_index.push_message(
         contact_id=contact_id,
@@ -252,14 +274,14 @@ async def _(event: CallInitEvents, cm: "ConversationManager", *args, **kwargs):
     )
 
 
-@EventHandler.register((PhoneCallStarted, UnifyMeetStarted))
+@EventHandler.register((PhoneCallStarted, UnifyMeetStarted, WhatsAppCallStarted))
 async def _(
-    event: PhoneCallStarted | UnifyMeetStarted,
+    event: PhoneCallStarted | UnifyMeetStarted | WhatsAppCallStarted,
     cm: "ConversationManager",
     *args,
     **kwargs,
 ):
-    if isinstance(event, PhoneCallStarted):
+    if isinstance(event, (PhoneCallStarted, WhatsAppCallStarted)):
         cm.mode = Mode.CALL
         phone_number = event.contact["phone_number"]
         contact = cm.contact_index.get_contact(phone_number=phone_number)
@@ -275,17 +297,24 @@ async def _(
     sender_name = _get_sender_name(contact)
 
     cm.call_manager.call_contact = contact
-    if isinstance(event, PhoneCallStarted):
+    if isinstance(event, (PhoneCallStarted, WhatsAppCallStarted)):
         cm.call_manager.call_start_timestamp = event.timestamp
     else:
         cm.call_manager.unify_meet_start_timestamp = event.timestamp
+    label = "WhatsApp Call" if isinstance(event, WhatsAppCallStarted) else "Phone Call"
     cm.notifications_bar.push_notif(
         "Comms",
-        f"Phone Call started with {sender_name}",
+        f"{label} started with {sender_name}",
         timestamp=event.timestamp,
     )
     medium = (
-        Medium.PHONE_CALL if isinstance(event, PhoneCallStarted) else Medium.UNIFY_MEET
+        Medium.UNIFY_MEET
+        if isinstance(event, UnifyMeetStarted)
+        else (
+            Medium.WHATSAPP_CALL
+            if isinstance(event, WhatsAppCallStarted)
+            else Medium.PHONE_CALL
+        )
     )
     cm.contact_index.push_message(
         contact_id=contact_id,
@@ -426,7 +455,15 @@ async def _(event: Event, cm: "ConversationManager", *args, **kwargs):
         event,
         (InboundUnifyMeetUtterance, OutboundUnifyMeetUtterance),
     )
-    medium = Medium.UNIFY_MEET if is_unify_meet else Medium.PHONE_CALL
+    medium = (
+        Medium.UNIFY_MEET
+        if is_unify_meet
+        else (
+            Medium.WHATSAPP_CALL
+            if cm.call_manager._call_channel == "whatsapp_call"
+            else Medium.PHONE_CALL
+        )
+    )
     message_id = cm.contact_index.push_message(
         contact_id=contact_id,
         sender_name=sender_name,
@@ -476,7 +513,15 @@ async def _(
         contact = event.contact
     sender_name = _get_sender_name(contact)
 
-    medium = Medium.UNIFY_MEET if cm.mode == Mode.MEET else Medium.PHONE_CALL
+    medium = (
+        Medium.UNIFY_MEET
+        if cm.mode == Mode.MEET
+        else (
+            Medium.WHATSAPP_CALL
+            if cm.call_manager._call_channel == "whatsapp_call"
+            else Medium.PHONE_CALL
+        )
+    )
     cm.contact_index.push_message(
         contact_id=contact_id,
         sender_name=sender_name,
@@ -489,16 +534,16 @@ async def _(
         await cm.schedule_proactive_speech()
 
 
-@EventHandler.register((PhoneCallEnded, UnifyMeetEnded))
+@EventHandler.register((PhoneCallEnded, UnifyMeetEnded, WhatsAppCallEnded))
 async def _(
-    event: PhoneCallEnded | UnifyMeetEnded,
+    event: PhoneCallEnded | UnifyMeetEnded | WhatsAppCallEnded,
     cm: "ConversationManager",
     *args,
     **kwargs,
 ):
     # Persist session identifiers in exchange metadata and stash the
     # exchange_id so the async RecordingReady handler can find it.
-    if isinstance(event, PhoneCallEnded):
+    if isinstance(event, (PhoneCallEnded, WhatsAppCallEnded)):
         exchange_id = cm.call_manager.call_exchange_id
         if exchange_id != UNASSIGNED and cm.call_manager.conference_name:
             cm.transcript_manager.update_exchange_metadata(

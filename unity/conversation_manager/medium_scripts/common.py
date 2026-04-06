@@ -29,6 +29,9 @@ from unity.conversation_manager.events import (
     SMSSent,
     WhatsAppReceived,
     WhatsAppSent,
+    WhatsAppCallReceived,
+    WhatsAppCallStarted,
+    WhatsAppCallEnded,
     EmailReceived,
     EmailSent,
     UnifyMessageReceived,
@@ -1321,11 +1324,15 @@ def _render_history_event(
         if cid is not None and cid in participant_ids:
             return f"--- Call with {name} ---"
         return None
+    if isinstance(event, (WhatsAppCallReceived, WhatsAppCallStarted)):
+        if cid is not None and cid in participant_ids:
+            return f"--- WhatsApp Call with {name} ---"
+        return None
     if isinstance(event, (UnifyMeetReceived, UnifyMeetStarted)):
         if cid is not None and cid in participant_ids:
             return f"--- Meeting with {name} ---"
         return None
-    if isinstance(event, (PhoneCallEnded, UnifyMeetEnded)):
+    if isinstance(event, (PhoneCallEnded, UnifyMeetEnded, WhatsAppCallEnded)):
         if cid is not None and cid in participant_ids:
             return f"--- Call ended ---"
         return None

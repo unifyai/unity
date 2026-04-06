@@ -743,6 +743,52 @@ class CommsManager:
                             room_name=event.get("livekit_room"),
                         )
                         topic = "app:comms:unify_meet_received"
+                    elif thread == "whatsapp_call":
+                        number = event.get("caller_number", event.get("user_number"))
+                        if number and number.startswith("whatsapp:"):
+                            number = number[len("whatsapp:") :]
+
+                        if _is_blacklisted(Medium.WHATSAPP_MESSAGE, number):
+                            LOGGER.debug(
+                                f"{DEFAULT_ICON} Ignoring blacklisted WhatsApp call from: {number}",
+                            )
+                            self._ack_with_latency(message, publish_timestamp, topic)
+                            return
+
+                        contact = next(
+                            (c for c in contacts if c.get("whatsapp_number") == number),
+                            None,
+                        )
+                        is_new_unknown = False
+                        if contact is None:
+                            contact = _get_or_create_unknown_contact(
+                                Medium.WHATSAPP_CALL,
+                                number,
+                            )
+                            is_new_unknown = contact is not None
+
+                        if contact is None:
+                            LOGGER.error(
+                                f"{DEFAULT_ICON} Failed to resolve contact for WhatsApp call from: {number}",
+                            )
+                            self._ack_with_latency(message, publish_timestamp, topic)
+                            return
+
+                        call_event = WhatsAppCallReceived(
+                            contact=contact,
+                            conference_name=event.get("conference_name", ""),
+                        )
+                        topic = "app:comms:whatsapp_call_received"
+
+                        if is_new_unknown:
+                            self._publish_from_callback(
+                                "app:comms:unknown_contact_created",
+                                UnknownContactCreated(
+                                    contact=contact,
+                                    medium=Medium.WHATSAPP_CALL,
+                                    message_preview="Incoming WhatsApp call",
+                                ).to_json(),
+                            )
                     elif thread == "call":
                         number = event.get("caller_number", event.get("user_number"))
 

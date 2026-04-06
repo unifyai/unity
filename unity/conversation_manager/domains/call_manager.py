@@ -246,7 +246,13 @@ class LivekitCallManager:
 
         return self._socket_server.socket_path
 
-    async def start_call(self, contact: dict, boss: dict, outbound: bool = False):
+    async def start_call(
+        self,
+        contact: dict,
+        boss: dict,
+        outbound: bool = False,
+        channel: str = "phone_call",
+    ):
         if self.has_active_call:
             LOGGER.warning(
                 f"{ICONS['ipc']} [LivekitCallManager] start_call ignored: "
@@ -255,7 +261,7 @@ class LivekitCallManager:
             return
 
         self.is_outbound = outbound
-        self._call_channel = "phone_call"
+        self._call_channel = channel
         self._disconnect_contact = contact
 
         await self._ensure_socket_server()
@@ -389,11 +395,12 @@ class LivekitCallManager:
 
         contact = self._disconnect_contact or {}
         channel = self._call_channel or "phone_call"
-        event = (
-            PhoneCallEnded(contact=contact)
-            if channel == "phone_call"
-            else UnifyMeetEnded(contact=contact)
-        )
+        if channel == "whatsapp_call":
+            event = WhatsAppCallEnded(contact=contact)
+        elif channel == "phone_call":
+            event = PhoneCallEnded(contact=contact)
+        else:
+            event = UnifyMeetEnded(contact=contact)
         LOGGER.debug(
             f"{ICONS['ipc']} [LivekitCallManager] IPC client disconnected without cleanup, "
             f"publishing fallback {event.__class__.__name__}",
