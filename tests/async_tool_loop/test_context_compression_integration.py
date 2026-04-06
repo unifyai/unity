@@ -23,6 +23,8 @@ from tests.async_helpers import (
     make_gated_async_tool,
 )
 
+pytestmark = pytest.mark.llm_call
+
 _SYS = (
     "You are in a test. Follow the steps exactly:\n"
     "1. Call `add` with a=2, b=3.\n"

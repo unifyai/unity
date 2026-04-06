@@ -25,6 +25,8 @@ from tests.async_helpers import (
     real_tool_messages,
 )
 
+pytestmark = pytest.mark.llm_call
+
 # (prefix-based wait helpers moved to tests/async_tool_loop/async_helpers.py)
 
 

@@ -114,6 +114,7 @@ def client(llm_config):
 
 
 @pytest.mark.asyncio
+@pytest.mark.llm_call
 @_handle_project
 async def test_dynamic_helper_args_are_exposed_and_forwarded(client):
     """
@@ -199,6 +200,7 @@ async def test_dynamic_helper_args_are_exposed_and_forwarded(client):
 
 
 @pytest.mark.asyncio
+@pytest.mark.llm_call
 @_handle_project
 async def test_custom_abort_finishes_nested(client):
     """
@@ -249,6 +251,7 @@ async def test_custom_abort_finishes_nested(client):
 
 
 @pytest.mark.asyncio
+@pytest.mark.llm_call
 @_handle_project
 async def test_custom_outer_handle_instantiated(client):
     """
@@ -290,6 +293,7 @@ async def test_custom_outer_handle_instantiated(client):
 
 
 @pytest.mark.asyncio
+@pytest.mark.llm_call
 @_handle_project
 async def test_dynamic_helpers_use_base_docstrings(client):
     """
@@ -395,6 +399,7 @@ async def test_dynamic_helpers_use_base_docstrings(client):
 
 
 @pytest.mark.asyncio
+@pytest.mark.llm_call
 @_handle_project
 async def test_dynamic_helpers_use_overridden_docstrings(client):
     """
@@ -491,6 +496,7 @@ async def test_dynamic_helpers_use_overridden_docstrings(client):
 
 
 @pytest.mark.asyncio
+@pytest.mark.llm_call
 @_handle_project
 async def test_dynamic_helpers_adopt_custom_method_docstring(client):
     """

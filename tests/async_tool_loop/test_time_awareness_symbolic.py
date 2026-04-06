@@ -16,6 +16,8 @@ from unity.common._async_tool.time_context import (
     TimeContext,
 )
 
+pytestmark = pytest.mark.llm_call
+
 # --------------------------------------------------------------------------- #
 #  SIMULATED TIME FIXTURE                                                     #
 # --------------------------------------------------------------------------- #

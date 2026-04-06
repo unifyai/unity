@@ -32,6 +32,8 @@ from tests.async_helpers import (
     real_tool_messages,
 )
 
+pytestmark = pytest.mark.llm_call
+
 # ─────────────────────────────────────────────────────────────────────────────
 #  Unit tests for _extract_nested_handle
 # ─────────────────────────────────────────────────────────────────────────────

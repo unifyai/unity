@@ -17,6 +17,8 @@ from unity.common.llm_client import new_llm_client
 from tests.helpers import _handle_project
 from tests.async_helpers import first_assistant_tool_call
 
+pytestmark = pytest.mark.llm_call
+
 
 def make_llm(system_message=None, **llm_kwargs):
     return new_llm_client(**llm_kwargs, system_message=system_message)

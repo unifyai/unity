@@ -21,6 +21,8 @@ from tests.async_helpers import (
 
 from unity.common.async_tool_loop import start_async_tool_loop
 
+pytestmark = pytest.mark.llm_call
+
 
 # --------------------------------------------------------------------------- #
 #  TOOL IMPLEMENTATIONS                                                       #

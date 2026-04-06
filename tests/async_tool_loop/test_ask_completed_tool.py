@@ -20,6 +20,7 @@ from unity.common.llm_client import new_llm_client
 
 
 @pytest.mark.asyncio
+@pytest.mark.llm_call
 async def test_llm_uses_ask_about_completed_tool_after_inner_completes(llm_config):
     """
     The outer LLM should call ``ask_about_completed_tool`` to learn details
@@ -133,6 +134,7 @@ async def test_llm_uses_ask_about_completed_tool_after_inner_completes(llm_confi
 
 
 @pytest.mark.asyncio
+@pytest.mark.llm_call
 async def test_ask_about_completed_tool_with_multiple_completed_tools(llm_config):
     """
     When multiple inner steerable tools have completed, the dispatcher should
@@ -231,6 +233,7 @@ async def test_ask_about_completed_tool_with_multiple_completed_tools(llm_config
 
 
 @pytest.mark.asyncio
+@pytest.mark.llm_call
 async def test_ask_about_completed_tool_not_exposed_without_completed_steerable_tools(
     llm_config,
 ):
