@@ -409,33 +409,9 @@ class LivekitCallManager:
         room_name = make_room_name(self.assistant_id, "gmeet")
         self.room_name = room_name
 
-        # Socket server in parallel with the browser join
-        # (the slowest step, ~30-60s of LLM-guided UI automation).
-        socket_task = asyncio.create_task(self._ensure_socket_server())
-
-        async with aiohttp.ClientSession() as session:
-            resp = await session.post(
-                f"{base_url}/googlemeet/join",
-                json={"meetUrl": meet_url, "displayName": display_name},
-                headers={"authorization": f"Bearer {auth_key}"},
-                timeout=aiohttp.ClientTimeout(total=120),
-            )
-            body = await resp.json()
-
-        if resp.status != 200:
-            LOGGER.error(
-                f"{ICONS['ipc']} [LivekitCallManager] Google Meet join failed: {body}",
-            )
-            socket_task.cancel()
-            return
-
-        self._gmeet_session_id = body.get("sessionId")
-        LOGGER.info(
-            f"{ICONS['ipc']} [LivekitCallManager] Google Meet joined "
-            f"(session={self._gmeet_session_id})",
-        )
-
-        await socket_task
+        # Dispatch fast brain first so it initializes (models, history, greeting)
+        # while the browser navigates the slow LLM-guided join flow.
+        await self._ensure_socket_server()
         if self._socket_server:
             await self._socket_server.set_forward_channels(list(_BASE_FORWARD_CHANNELS))
 
@@ -444,7 +420,7 @@ class LivekitCallManager:
             self._start_boss_notification_rendering()
 
         gmeet_extra = {
-            "gmeet_session_id": self._gmeet_session_id or "",
+            "gmeet_session_id": "",
             "agent_service_url": _resolve_agent_service_url(),
         }
 
@@ -466,6 +442,28 @@ class LivekitCallManager:
                 False,
                 extra_env=gmeet_extra,
             )
+
+        # Browser join runs after dispatch — fast brain initializes in parallel.
+        async with aiohttp.ClientSession() as session:
+            resp = await session.post(
+                f"{base_url}/googlemeet/join",
+                json={"meetUrl": meet_url, "displayName": display_name},
+                headers={"authorization": f"Bearer {auth_key}"},
+                timeout=aiohttp.ClientTimeout(total=120),
+            )
+            body = await resp.json()
+
+        if resp.status != 200:
+            LOGGER.error(
+                f"{ICONS['ipc']} [LivekitCallManager] Google Meet join failed: {body}",
+            )
+            return
+
+        self._gmeet_session_id = body.get("sessionId")
+        LOGGER.info(
+            f"{ICONS['ipc']} [LivekitCallManager] Google Meet joined "
+            f"(session={self._gmeet_session_id})",
+        )
 
         self._gmeet_monitor_task = asyncio.create_task(
             self._monitor_google_meet(contact),
