@@ -23,8 +23,6 @@ from unity.data_manager.types.table import (
     TableSchema,
     ColumnInfo,
 )
-from unity.data_manager.types.plot import PlotResult
-from unity.data_manager.types.table_view import TableViewResult
 from unity.data_manager.types.ingest import (
     IngestExecutionConfig,
     IngestResult,
@@ -1013,118 +1011,6 @@ class SimulatedDataManager(BaseDataManager):
         if row_ids:
             return len(row_ids)
         return len(rows)
-
-    # ──────────────────────────────────────────────────────────────────────────
-    # Visualization
-    # ──────────────────────────────────────────────────────────────────────────
-
-    @functools.wraps(BaseDataManager.plot, updated=())
-    def plot(
-        self,
-        context: str,
-        *,
-        plot_type: str,
-        x: str,
-        y: Optional[str] = None,
-        group_by: Optional[str] = None,
-        aggregate: Optional[str] = None,
-        metric: Optional[str] = None,
-        filter: Optional[str] = None,
-        title: Optional[str] = None,
-        scale_x: Optional[str] = None,
-        scale_y: Optional[str] = None,
-        bin_count: Optional[int] = None,
-        show_regression: Optional[bool] = None,
-    ) -> PlotResult:
-        resolved = self._resolve_context(context)
-        return PlotResult(
-            url=f"https://simulated-plot.example.com/{resolved}/{plot_type}",
-            token="simulated-token",
-            expires_in_hours=24,
-            title=title or f"Simulated {plot_type} plot",
-            context=resolved,
-        )
-
-    @functools.wraps(BaseDataManager.plot_batch, updated=())
-    def plot_batch(
-        self,
-        contexts: List[str],
-        *,
-        plot_type: str,
-        x: str,
-        y: Optional[str] = None,
-        group_by: Optional[str] = None,
-        aggregate: Optional[str] = None,
-        metric: Optional[str] = None,
-        filter: Optional[str] = None,
-        title: Optional[str] = None,
-        **kwargs: Any,
-    ) -> List[PlotResult]:
-        return [
-            self.plot(
-                ctx,
-                plot_type=plot_type,
-                x=x,
-                y=y,
-                group_by=group_by,
-                aggregate=aggregate,
-                metric=metric,
-                filter=filter,
-                title=title,
-            )
-            for ctx in contexts
-        ]
-
-    @functools.wraps(BaseDataManager.table_view, updated=())
-    def table_view(
-        self,
-        context: str,
-        *,
-        columns_visible: Optional[List[str]] = None,
-        columns_hidden: Optional[List[str]] = None,
-        columns_order: Optional[List[str]] = None,
-        sort_by: Optional[str] = None,
-        sort_order: Optional[str] = None,
-        row_limit: Optional[int] = None,
-        filter: Optional[str] = None,
-        title: Optional[str] = None,
-    ) -> TableViewResult:
-        resolved = self._resolve_context(context)
-        return TableViewResult(
-            url=f"https://simulated-table-view.example.com/{resolved}",
-            token="simulated-token",
-            title=title or "Simulated Table View",
-            context=resolved,
-        )
-
-    @functools.wraps(BaseDataManager.table_view_batch, updated=())
-    def table_view_batch(
-        self,
-        contexts: List[str],
-        *,
-        columns_visible: Optional[List[str]] = None,
-        columns_hidden: Optional[List[str]] = None,
-        columns_order: Optional[List[str]] = None,
-        sort_by: Optional[str] = None,
-        sort_order: Optional[str] = None,
-        row_limit: Optional[int] = None,
-        filter: Optional[str] = None,
-        title: Optional[str] = None,
-    ) -> List[TableViewResult]:
-        return [
-            self.table_view(
-                ctx,
-                columns_visible=columns_visible,
-                columns_hidden=columns_hidden,
-                columns_order=columns_order,
-                sort_by=sort_by,
-                sort_order=sort_order,
-                row_limit=row_limit,
-                filter=filter,
-                title=title,
-            )
-            for ctx in contexts
-        ]
 
     # ──────────────────────────────────────────────────────────────────────────
     # Utility Methods

@@ -17,8 +17,6 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 
 from unity.data_manager.base import BaseDataManager
 from unity.data_manager.types.table import TableDescription
-from unity.data_manager.types.plot import PlotConfig, PlotResult
-from unity.data_manager.types.table_view import TableViewConfig, TableViewResult
 from unity.data_manager.types.ingest import (
     IngestExecutionConfig,
     IngestResult,
@@ -56,14 +54,6 @@ from unity.data_manager.ops.join_ops import (
 )
 from unity.common.embed_utils import ensure_vector_column as _ensure_vector_column
 from unity.data_manager.ops.ingest_ops import run_ingest
-from unity.data_manager.ops.plot_ops import (
-    generate_plot,
-    generate_plots_batch,
-)
-from unity.data_manager.ops.table_view_ops import (
-    generate_table_view,
-    generate_table_views_batch,
-)
 from unity.common.context_registry import ContextRegistry, TableContext
 
 logger = logging.getLogger(__name__)
@@ -658,137 +648,3 @@ class DataManager(BaseDataManager):
             async_embeddings=True,
         )
         return len(row_ids) if row_ids else 0
-
-    # ──────────────────────────────────────────────────────────────────────────
-    # Visualization
-    # ──────────────────────────────────────────────────────────────────────────
-
-    @functools.wraps(BaseDataManager.plot, updated=())
-    def plot(
-        self,
-        context: str,
-        *,
-        plot_type: str,
-        x: str,
-        y: Optional[str] = None,
-        group_by: Optional[str] = None,
-        aggregate: Optional[str] = None,
-        metric: Optional[str] = None,
-        filter: Optional[str] = None,
-        title: Optional[str] = None,
-        scale_x: Optional[str] = None,
-        scale_y: Optional[str] = None,
-        bin_count: Optional[int] = None,
-        show_regression: Optional[bool] = None,
-    ) -> PlotResult:
-        resolved = self._resolve_context(context)
-        config = PlotConfig(
-            plot_type=plot_type,
-            x_axis=x,
-            y_axis=y,
-            group_by=group_by,
-            aggregate=aggregate,
-            metric=metric,
-            scale_x=scale_x,
-            scale_y=scale_y,
-            bin_count=bin_count,
-            show_regression=show_regression,
-            title=title,
-        )
-        return generate_plot(
-            config=config,
-            context=resolved,
-            filter_expr=filter,
-        )
-
-    @functools.wraps(BaseDataManager.plot_batch, updated=())
-    def plot_batch(
-        self,
-        contexts: List[str],
-        *,
-        plot_type: str,
-        x: str,
-        y: Optional[str] = None,
-        group_by: Optional[str] = None,
-        aggregate: Optional[str] = None,
-        metric: Optional[str] = None,
-        filter: Optional[str] = None,
-        title: Optional[str] = None,
-        **kwargs: Any,
-    ) -> List[PlotResult]:
-        resolved_contexts = [self._resolve_context(c) for c in contexts]
-        config = PlotConfig(
-            plot_type=plot_type,
-            x_axis=x,
-            y_axis=y,
-            group_by=group_by,
-            aggregate=aggregate,
-            metric=metric,
-            title=title,
-            **{k: v for k, v in kwargs.items() if v is not None},
-        )
-        return generate_plots_batch(
-            contexts=resolved_contexts,
-            config=config,
-            filter_expr=filter,
-        )
-
-    @functools.wraps(BaseDataManager.table_view, updated=())
-    def table_view(
-        self,
-        context: str,
-        *,
-        columns_visible: Optional[List[str]] = None,
-        columns_hidden: Optional[List[str]] = None,
-        columns_order: Optional[List[str]] = None,
-        sort_by: Optional[str] = None,
-        sort_order: Optional[str] = None,
-        row_limit: Optional[int] = None,
-        filter: Optional[str] = None,
-        title: Optional[str] = None,
-    ) -> TableViewResult:
-        resolved = self._resolve_context(context)
-        config = TableViewConfig(
-            columns_visible=columns_visible,
-            columns_hidden=columns_hidden,
-            columns_order=columns_order,
-            sort_by=sort_by,
-            sort_order=sort_order,
-            row_limit=row_limit,
-        )
-        return generate_table_view(
-            config=config,
-            context=resolved,
-            filter_expr=filter,
-            title=title,
-        )
-
-    @functools.wraps(BaseDataManager.table_view_batch, updated=())
-    def table_view_batch(
-        self,
-        contexts: List[str],
-        *,
-        columns_visible: Optional[List[str]] = None,
-        columns_hidden: Optional[List[str]] = None,
-        columns_order: Optional[List[str]] = None,
-        sort_by: Optional[str] = None,
-        sort_order: Optional[str] = None,
-        row_limit: Optional[int] = None,
-        filter: Optional[str] = None,
-        title: Optional[str] = None,
-    ) -> List[TableViewResult]:
-        resolved_contexts = [self._resolve_context(c) for c in contexts]
-        config = TableViewConfig(
-            columns_visible=columns_visible,
-            columns_hidden=columns_hidden,
-            columns_order=columns_order,
-            sort_by=sort_by,
-            sort_order=sort_order,
-            row_limit=row_limit,
-        )
-        return generate_table_views_batch(
-            contexts=resolved_contexts,
-            config=config,
-            filter_expr=filter,
-            title=title,
-        )

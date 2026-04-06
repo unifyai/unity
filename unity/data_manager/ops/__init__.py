@@ -31,10 +31,6 @@ from unity.data_manager.ops.join_ops import (
     filter_multi_join_impl,
     search_multi_join_impl,
 )
-from unity.data_manager.ops.plot_ops import (
-    generate_plot,
-    generate_plots_batch,
-)
 
 __all__ = [
     # Table operations
@@ -55,7 +51,4 @@ __all__ = [
     "search_join_impl",
     "filter_multi_join_impl",
     "search_multi_join_impl",
-    # Plot operations
-    "generate_plot",
-    "generate_plots_batch",
 ]
