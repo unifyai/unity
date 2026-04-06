@@ -2,7 +2,7 @@
 Integration tests for the real DataManager against the Unify backend.
 
 These tests exercise the full DataManager public API (table CRUD, column ops,
-query/mutation/embedding/visualization/join operations) using the real backend,
+query/mutation/embedding/join operations) using the real backend,
 following the same ``@_handle_project`` pattern as ContactManager's test_basic.py.
 
 Each test gets a fresh, isolated Unify context that is cleaned up after the test.
@@ -13,7 +13,7 @@ from __future__ import annotations
 import pytest
 
 from unity.data_manager.data_manager import DataManager
-from unity.data_manager.types import TableDescription, PlotResult
+from unity.data_manager.types import TableDescription
 from unity.manager_registry import ManagerRegistry
 from tests.helpers import _handle_project
 
@@ -788,109 +788,6 @@ def test_join_tables_materialized():
 
     # Cleanup
     dm.delete_table(result_path, dangerous_ok=True)
-
-
-# ────────────────────────────────────────────────────────────────────────────
-# Visualization
-#
-# Note: Plot tests are marked xfail because the Console Plot API currently
-# returns HTTP 400 "Missing projectConfig.projectName" due to a snake_case vs
-# camelCase key mismatch in plot_ops._build_project_config_dict.
-# The tests below verify correct *DataManager* usage regardless.
-# ────────────────────────────────────────────────────────────────────────────
-
-
-@pytest.mark.xfail(
-    reason="Console Plot API snake_case/camelCase key mismatch",
-    strict=False,
-)
-@_handle_project
-def test_plot_bar_chart():
-    """plot should return a PlotResult with a URL."""
-    dm = _fresh_dm()
-
-    path = dm.create_table(
-        "test_real/plot",
-        fields={"category": "str", "revenue": "float"},
-    )
-    dm.insert_rows(
-        path,
-        [
-            {"category": "East", "revenue": 100.0},
-            {"category": "West", "revenue": 200.0},
-            {"category": "North", "revenue": 150.0},
-        ],
-    )
-
-    result = dm.plot(
-        path,
-        plot_type="bar",
-        x="category",
-        y="revenue",
-        aggregate="sum",
-        title="Revenue by Region",
-    )
-
-    assert isinstance(result, PlotResult)
-    assert result.succeeded
-    assert result.url is not None
-
-
-@pytest.mark.xfail(
-    reason="Console Plot API snake_case/camelCase key mismatch",
-    strict=False,
-)
-@_handle_project
-def test_plot_batch():
-    """plot_batch should produce one PlotResult per context."""
-    dm = _fresh_dm()
-
-    p1 = dm.create_table("test_real/pb1", fields={"seq": "int", "val": "float"})
-    p2 = dm.create_table("test_real/pb2", fields={"seq": "int", "val": "float"})
-
-    dm.insert_rows(p1, [{"seq": 1, "val": 10.0}, {"seq": 2, "val": 20.0}])
-    dm.insert_rows(p2, [{"seq": 1, "val": 30.0}, {"seq": 2, "val": 40.0}])
-
-    results = dm.plot_batch(
-        [p1, p2],
-        plot_type="bar",
-        x="seq",
-        y="val",
-    )
-
-    assert len(results) == 2
-    assert all(isinstance(r, PlotResult) for r in results)
-    assert all(r.succeeded for r in results)
-
-
-@pytest.mark.xfail(
-    reason="Console Plot API snake_case/camelCase key mismatch",
-    strict=False,
-)
-@_handle_project
-def test_plot_histogram():
-    """plot histogram should work with x-only config."""
-    dm = _fresh_dm()
-
-    path = dm.create_table(
-        "test_real/hist",
-        fields={"price": "float"},
-    )
-    dm.insert_rows(
-        path,
-        [{"price": float(i)} for i in range(20)],
-    )
-
-    result = dm.plot(
-        path,
-        plot_type="histogram",
-        x="price",
-        bin_count=5,
-        title="Price Distribution",
-    )
-
-    assert isinstance(result, PlotResult)
-    assert result.succeeded
 
 
 # ────────────────────────────────────────────────────────────────────────────
