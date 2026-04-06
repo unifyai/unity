@@ -964,6 +964,7 @@ class ConversationManager(metaclass=SingletonABCMeta):
                     assistant_id=SESSION_DETAILS.assistant.agent_id,
                     user_id=attributed_user_id or SESSION_DETAILS.user.id,
                     organization_id=SESSION_DETAILS.org_id,
+                    source="call" if self.mode.is_voice else "chat",
                 )
             except (ImportError, Exception):
                 pass

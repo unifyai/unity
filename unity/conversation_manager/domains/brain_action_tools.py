@@ -1645,6 +1645,7 @@ class ConversationManagerBrainActionTools:
                     assistant_id=SESSION_DETAILS.assistant.agent_id,
                     user_id=effective_user_id,
                     organization_id=SESSION_DETAILS.org_id,
+                    source="tool",
                 )
             except (ImportError, Exception):
                 pass
