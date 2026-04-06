@@ -32,6 +32,7 @@ def image_fm(tmp_path: Path) -> FileManager:
 # 1.  JPEG image — basic vision Q&A
 # ────────────────────────────────────────────────────────────────────────────
 @pytest.mark.asyncio
+@pytest.mark.llm_call
 @_handle_project
 async def test_ask_about_jpeg(image_fm: FileManager, tmp_path: Path):
     img_path = tmp_path / "screenshot.jpg"
@@ -58,6 +59,7 @@ async def test_ask_about_jpeg(image_fm: FileManager, tmp_path: Path):
 # 2.  PNG image — same path, different format
 # ────────────────────────────────────────────────────────────────────────────
 @pytest.mark.asyncio
+@pytest.mark.llm_call
 @_handle_project
 async def test_ask_about_png(image_fm: FileManager, tmp_path: Path):
     img_path = tmp_path / "chart.png"
@@ -93,6 +95,7 @@ async def test_ask_about_missing_image_raises(image_fm: FileManager):
 # 4.  Handle exposes done() correctly
 # ────────────────────────────────────────────────────────────────────────────
 @pytest.mark.asyncio
+@pytest.mark.llm_call
 @_handle_project
 async def test_image_handle_done_lifecycle(image_fm: FileManager, tmp_path: Path):
     img_path = tmp_path / "lifecycle.png"
@@ -111,6 +114,7 @@ async def test_image_handle_done_lifecycle(image_fm: FileManager, tmp_path: Path
 # 5.  _return_reasoning_steps wraps the result as a tuple
 # ────────────────────────────────────────────────────────────────────────────
 @pytest.mark.asyncio
+@pytest.mark.llm_call
 @_handle_project
 async def test_image_return_reasoning_steps(image_fm: FileManager, tmp_path: Path):
     img_path = tmp_path / "steps.jpg"

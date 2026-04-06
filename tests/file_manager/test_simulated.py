@@ -35,6 +35,7 @@ def test_docstrings_match_base():
 # 2.  Basic ask_about_file                                                   #
 # ────────────────────────────────────────────────────────────────────────────
 @pytest.mark.asyncio
+@pytest.mark.llm_call
 @_handle_project
 async def test_ask_about_file():
     fm = SimulatedFileManager("Demo file storage for unit-tests.")
@@ -67,6 +68,7 @@ async def test_synchronous_operations():
 # 4.  Interject                                                              #
 # ────────────────────────────────────────────────────────────────────────────
 @pytest.mark.asyncio
+@pytest.mark.llm_call
 @_handle_project
 async def test_interject(monkeypatch):
     calls = {"interject": 0}
@@ -105,6 +107,7 @@ async def test_stop():
 # 6.  Clarification handshake                                                #
 # ────────────────────────────────────────────────────────────────────────────
 @pytest.mark.asyncio
+@pytest.mark.llm_call
 @_handle_project
 async def test_requests_clarification():
     fm = SimulatedFileManager()
@@ -132,6 +135,7 @@ async def test_requests_clarification():
 # 7.  Pause → Resume round-trip                                              #
 # ────────────────────────────────────────────────────────────────────────────
 @pytest.mark.asyncio
+@pytest.mark.llm_call
 @_handle_project
 async def test_pause_and_resume(monkeypatch):
     call_counts = {"pause": 0, "resume": 0}
@@ -175,6 +179,7 @@ async def test_pause_and_resume(monkeypatch):
 # 8.  Nested ask on handle                                                   #
 # ────────────────────────────────────────────────────────────────────────────
 @pytest.mark.asyncio
+@pytest.mark.llm_call
 @_handle_project
 async def test_handle_ask():
     fm = SimulatedFileManager()
@@ -242,6 +247,7 @@ async def test_stop_while_waiting_clarification():
 # 11. Reasoning steps toggle                                                 #
 # ────────────────────────────────────────────────────────────────────────────
 @pytest.mark.asyncio
+@pytest.mark.llm_call
 @_handle_project
 async def test_reasoning_steps_toggle():
     fm = SimulatedFileManager()
