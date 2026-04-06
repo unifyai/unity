@@ -45,6 +45,7 @@ def test_docstrings_match_base():
 # 2.  Basic start-and-ask                                                    #
 # ────────────────────────────────────────────────────────────────────────────
 @pytest.mark.asyncio
+@pytest.mark.llm_call
 @_handle_project
 async def test_start_and_ask():
     ts = SimulatedTaskScheduler("Demo list for unit-tests.")
@@ -57,6 +58,7 @@ async def test_start_and_ask():
 # 3.  Stateful memory – serial asks                                          #
 # ────────────────────────────────────────────────────────────────────────────
 @pytest.mark.asyncio
+@pytest.mark.llm_call
 @_handle_project
 async def test_stateful_memory_serial_asks():
     """
@@ -87,6 +89,7 @@ async def test_stateful_memory_serial_asks():
 # 4.  Update then ask – state propagated                                     #
 # ────────────────────────────────────────────────────────────────────────────
 @pytest.mark.asyncio
+@pytest.mark.llm_call
 @_handle_project
 async def test_stateful_update_then_ask():
     """
@@ -117,6 +120,7 @@ async def test_stateful_update_then_ask():
 # 5.  Interject                                                              #
 # ────────────────────────────────────────────────────────────────────────────
 @pytest.mark.asyncio
+@pytest.mark.llm_call
 @_handle_project
 async def test_interject(monkeypatch):
     counts = {"interject": 0}
@@ -148,6 +152,7 @@ async def test_interject(monkeypatch):
 # 6.  Stop                                                                   #
 # ────────────────────────────────────────────────────────────────────────────
 @pytest.mark.asyncio
+@pytest.mark.llm_call
 @_handle_project
 async def test_stop():
     ts = SimulatedTaskScheduler()
@@ -162,6 +167,7 @@ async def test_stop():
 # 7.  Clarification handshake                                                #
 # ────────────────────────────────────────────────────────────────────────────
 @pytest.mark.asyncio
+@pytest.mark.llm_call
 @_handle_project
 async def test_requests_clarification():
     ts = SimulatedTaskScheduler()
@@ -190,6 +196,7 @@ async def test_requests_clarification():
 # 8.  Pause → Resume round-trip                                              #
 # ────────────────────────────────────────────────────────────────────────────
 @pytest.mark.asyncio
+@pytest.mark.llm_call
 @_handle_project
 async def test_pause_and_resume(monkeypatch):
     """
@@ -254,6 +261,7 @@ async def test_pause_and_resume(monkeypatch):
 # 9.  Nested ask on handle                                                   #
 # ────────────────────────────────────────────────────────────────────────────
 @pytest.mark.asyncio
+@pytest.mark.llm_call
 @_handle_project
 async def test_handle_ask():
     """
@@ -289,6 +297,7 @@ async def test_handle_ask():
 # 10.  Execute – basic completion                                             #
 # ────────────────────────────────────────────────────────────────────────────
 @pytest.mark.asyncio
+@pytest.mark.llm_call
 @_handle_project
 async def test_execute_basic_completion():
     """
@@ -310,6 +319,7 @@ async def test_execute_basic_completion():
 # 11.  Execute – clarification handshake                                      #
 # ────────────────────────────────────────────────────────────────────────────
 @pytest.mark.asyncio
+@pytest.mark.llm_call
 @_handle_project
 async def test_execute_requests_clarification():
     """
@@ -340,6 +350,7 @@ async def test_execute_requests_clarification():
 # 12.  Clear – reset and remain usable                                        #
 # ────────────────────────────────────────────────────────────────────────────
 @pytest.mark.asyncio
+@pytest.mark.llm_call
 @_handle_project
 async def test_clear():
     """
@@ -368,6 +379,7 @@ async def test_clear():
 # 13.  Stop while paused should finish immediately (ask handle)              #
 # ────────────────────────────────────────────────────────────────────────────
 @pytest.mark.asyncio
+@pytest.mark.llm_call
 @_handle_project
 async def test_stop_while_paused_finishes_immediately():
     ts = SimulatedTaskScheduler()
@@ -386,6 +398,7 @@ async def test_stop_while_paused_finishes_immediately():
 # 14.  Stop while waiting for clarification should finish immediately        #
 # ────────────────────────────────────────────────────────────────────────────
 @pytest.mark.asyncio
+@pytest.mark.llm_call
 @_handle_project
 async def test_stop_while_waiting_for_clarification_finishes_immediately():
     ts = SimulatedTaskScheduler()

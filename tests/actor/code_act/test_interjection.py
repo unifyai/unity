@@ -6,6 +6,8 @@ from unity.actor.code_act_actor import CodeActActor
 
 from .conftest import wait_for_turn_completion
 
+pytestmark = pytest.mark.llm_call
+
 
 @pytest.mark.asyncio
 @pytest.mark.timeout(120)

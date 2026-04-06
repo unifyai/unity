@@ -1971,6 +1971,7 @@ class TestFastBrainGuidanceFlow:
         assert session.say_calls[0] == "It's at 3pm."
 
 
+@pytest.mark.llm_call
 @pytest.mark.eval
 @pytest.mark.asyncio
 class TestFastBrainOpeningGreeting:

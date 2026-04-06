@@ -10,6 +10,8 @@ from unity.task_scheduler.task_scheduler import TaskScheduler
 from unity.task_scheduler.simulated import SimulatedTaskScheduler
 from tests.helpers import _handle_project
 
+pytestmark = pytest.mark.llm_call
+
 # ────────────────────────────────────────────────────────────────────────────
 # Response format schemas
 # ────────────────────────────────────────────────────────────────────────────

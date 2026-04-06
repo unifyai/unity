@@ -10,6 +10,8 @@ from unity.web_searcher.web_searcher import WebSearcher
 from unity.web_searcher.simulated import SimulatedWebSearcher
 from tests.helpers import _handle_project
 
+pytestmark = pytest.mark.llm_call
+
 # ────────────────────────────────────────────────────────────────────────────
 # Response format schemas
 # ────────────────────────────────────────────────────────────────────────────

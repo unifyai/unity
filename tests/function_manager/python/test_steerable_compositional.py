@@ -46,6 +46,7 @@ def test_steerable_detection_with_non_handle():
 
 
 @pytest.mark.asyncio
+@pytest.mark.llm_call
 async def test_compositional_function_can_create_steerable_handle():
     """A compositional function should be able to create and return a SteerableToolHandle."""
     globals_dict = create_execution_globals()
@@ -82,6 +83,7 @@ async def my_steerable_workflow(goal: str):
 
 
 @pytest.mark.asyncio
+@pytest.mark.llm_call
 async def test_steerable_handle_stop_method():
     """A steerable handle's stop() method should work correctly."""
     globals_dict = create_execution_globals()
@@ -112,6 +114,7 @@ async def create_handle():
 
 
 @pytest.mark.asyncio
+@pytest.mark.llm_call
 async def test_steerable_handle_result_method():
     """A steerable handle's result() method should return the final result."""
     globals_dict = create_execution_globals()
@@ -178,6 +181,7 @@ def test_steerable_detection_pattern():
 
 
 @pytest.mark.asyncio
+@pytest.mark.llm_call
 async def test_compositional_function_with_type_annotation():
     """Compositional function with SteerableToolHandle return type annotation should work."""
     globals_dict = create_execution_globals()
@@ -219,6 +223,7 @@ async def typed_steerable_workflow(goal: str) -> SteerableToolHandle:
 
 
 @pytest.mark.asyncio
+@pytest.mark.llm_call
 async def test_compositional_function_returns_codeact_actor_handle():
     """
     A compositional function that wraps CodeActActor should be detected as steerable.

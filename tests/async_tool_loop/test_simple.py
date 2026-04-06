@@ -37,6 +37,8 @@ from tests.async_helpers import (
 import pytest
 import unillm
 
+pytestmark = pytest.mark.llm_call
+
 # --------------------------------------------------------------------------- #
 #  MODULE UNDER TEST                                                          #
 # --------------------------------------------------------------------------- #

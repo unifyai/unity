@@ -35,6 +35,8 @@ from tests.async_helpers import (
     _wait_for_condition,
 )
 
+pytestmark = pytest.mark.llm_call
+
 
 # --------------------------------------------------------------------------- #
 #  TOOLS                                                                      #

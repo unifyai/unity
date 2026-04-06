@@ -43,6 +43,7 @@ def test_docstrings_match_base():
 # 2.  Basic start-and-ask                                                    #
 # ────────────────────────────────────────────────────────────────────────────
 @pytest.mark.asyncio
+@pytest.mark.llm_call
 @_handle_project
 async def test_start_and_ask():
     cm = SimulatedContactManager("Demo CRM for unit-tests.")
@@ -55,6 +56,7 @@ async def test_start_and_ask():
 # 3.  Stateful memory – serial asks                                         #
 # ────────────────────────────────────────────────────────────────────────────
 @pytest.mark.asyncio
+@pytest.mark.llm_call
 @_handle_project
 async def test_stateful_serial_asks():
     """
@@ -79,6 +81,7 @@ async def test_stateful_serial_asks():
 # 4.  Update then ask – state carries through (freeform mode)                #
 # ────────────────────────────────────────────────────────────────────────────
 @pytest.mark.asyncio
+@pytest.mark.llm_call
 @_handle_project
 async def test_stateful_update_then_ask():
     """
@@ -113,6 +116,7 @@ async def test_stateful_update_then_ask():
 # 5.  Interject                                                             #
 # ────────────────────────────────────────────────────────────────────────────
 @pytest.mark.asyncio
+@pytest.mark.llm_call
 @_handle_project
 async def test_handle_interject(monkeypatch):
     calls = {"interject": 0}
@@ -137,6 +141,7 @@ async def test_handle_interject(monkeypatch):
 # 6.  Stop                                                                  #
 # ────────────────────────────────────────────────────────────────────────────
 @pytest.mark.asyncio
+@pytest.mark.llm_call
 @_handle_project
 async def test_handle_stop():
     cm = SimulatedContactManager()
@@ -151,6 +156,7 @@ async def test_handle_stop():
 # 7.  Clarification handshake                                               #
 # ────────────────────────────────────────────────────────────────────────────
 @pytest.mark.asyncio
+@pytest.mark.llm_call
 @_handle_project
 async def test_handle_requests_clarification():
     cm = SimulatedContactManager()
@@ -178,6 +184,7 @@ async def test_handle_requests_clarification():
 # 8.  Pause → Resume round-trip                                             #
 # ────────────────────────────────────────────────────────────────────────────
 @pytest.mark.asyncio
+@pytest.mark.llm_call
 @_handle_project
 async def test_handle_pause_and_resume(monkeypatch):
     """
@@ -244,6 +251,7 @@ async def test_handle_pause_and_resume(monkeypatch):
 # 9.  Nested ask on handle                                                   #
 # ────────────────────────────────────────────────────────────────────────────
 @pytest.mark.asyncio
+@pytest.mark.llm_call
 @_handle_project
 async def test_handle_ask():
     """
@@ -279,6 +287,7 @@ async def test_handle_ask():
 # 11.  Stop while paused should finish immediately                           #
 # ────────────────────────────────────────────────────────────────────────────
 @pytest.mark.asyncio
+@pytest.mark.llm_call
 @_handle_project
 async def test_stop_while_paused():
     cm = SimulatedContactManager()
@@ -300,6 +309,7 @@ async def test_stop_while_paused():
 # 12.  Stop while waiting for clarification should finish immediately         #
 # ────────────────────────────────────────────────────────────────────────────
 @pytest.mark.asyncio
+@pytest.mark.llm_call
 @_handle_project
 async def test_stop_while_waiting_clarification():
     cm = SimulatedContactManager()
@@ -641,6 +651,7 @@ def test_update_contact_creates_if_missing():
 # 19.  Freeform mode (deterministic=False)                                    #
 # ────────────────────────────────────────────────────────────────────────────
 @pytest.mark.asyncio
+@pytest.mark.llm_call
 @_handle_project
 async def test_freeform_mode_ask():
     """In freeform mode, ask uses the description, not the store."""

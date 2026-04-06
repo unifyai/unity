@@ -15,7 +15,7 @@ import re
 
 import pytest
 
-pytestmark = pytest.mark.eval
+pytestmark = [pytest.mark.eval, pytest.mark.llm_call]
 
 from unity.task_scheduler.task_scheduler import TaskScheduler
 from unity.task_scheduler.types.status import Status

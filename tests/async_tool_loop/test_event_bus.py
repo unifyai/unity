@@ -26,7 +26,7 @@ from unity.events.event_bus import EVENT_BUS
 _SUFFIX_RE = re.compile(r"\(([0-9a-f]{4})\)$")
 
 # All tests in this file require EventBus publishing to verify event behavior
-pytestmark = pytest.mark.enable_eventbus
+pytestmark = [pytest.mark.enable_eventbus, pytest.mark.llm_call]
 
 
 async def echo(text: str) -> str:  # noqa: D401 – simple echo tool

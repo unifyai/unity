@@ -17,6 +17,8 @@ from tests.async_helpers import (
     last_plain_assistant_message,
 )
 
+pytestmark = pytest.mark.llm_call
+
 # ──────────────────────────────────────────────────────────────────────────
 # Small helpers
 # ──────────────────────────────────────────────────────────────────────────

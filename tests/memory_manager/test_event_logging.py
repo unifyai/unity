@@ -17,7 +17,7 @@ from unity.memory_manager.simulated import SimulatedMemoryManager
 from tests.helpers import _handle_project, capture_events
 
 # All tests in this file require EventBus publishing to verify event behavior
-pytestmark = pytest.mark.enable_eventbus
+pytestmark = [pytest.mark.enable_eventbus, pytest.mark.llm_call]
 
 
 # ---------------------------------------------------------------------------

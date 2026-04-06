@@ -23,6 +23,7 @@ from unity.common.llm_client import new_llm_client
 
 
 @pytest.mark.asyncio
+@pytest.mark.llm_call
 @_handle_project
 async def test_chat_context_propagation(llm_config) -> None:
     client = new_llm_client(**llm_config)
@@ -75,6 +76,7 @@ async def test_chat_context_propagation(llm_config) -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.llm_call
 @_handle_project
 async def test_chat_context_propagation_never(llm_config) -> None:
     """Verify that NEVER mode does NOT pass context to tools, even when they accept it."""
@@ -109,6 +111,7 @@ async def test_chat_context_propagation_never(llm_config) -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.llm_call
 @_handle_project
 async def test_chat_context_propagation_llm_decides_include(llm_config) -> None:
     """Verify that LLM_DECIDES mode passes context when LLM includes it (default)."""
@@ -149,6 +152,7 @@ async def test_chat_context_propagation_llm_decides_include(llm_config) -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.llm_call
 @_handle_project
 async def test_chat_context_propagation_llm_decides_exclude(llm_config) -> None:
     """Verify that LLM_DECIDES mode omits context when LLM explicitly excludes it."""
@@ -187,6 +191,7 @@ async def test_chat_context_propagation_llm_decides_exclude(llm_config) -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.llm_call
 @_handle_project
 async def test_ask_uses_parent_context(llm_config) -> None:
     """Verify that ask() includes parent context in the inspection loop and influences the answer.
@@ -427,6 +432,7 @@ async def test_ask_inspection_prompt_redacts_image_payloads(monkeypatch) -> None
 
 
 @pytest.mark.asyncio
+@pytest.mark.llm_call
 @_handle_project
 async def test_interject_with_continued_parent_context_influences_decision(
     llm_config,
@@ -644,6 +650,7 @@ class TestLoopContextState:
 
 
 @pytest.mark.asyncio
+@pytest.mark.llm_call
 @_handle_project
 async def test_incremental_context_multiple_tool_calls(llm_config) -> None:
     """Verify that multiple calls to the same tool receive incremental context.
@@ -1281,6 +1288,7 @@ async def test_ask_dynamic_tool_respects_include_parent_chat_context_false():
 
 
 @pytest.mark.asyncio
+@pytest.mark.llm_call
 @_handle_project
 async def test_interjection_context_continuation_message_structure(llm_config) -> None:
     """Verify that interjections with _parent_chat_context_continued create proper message structure.
@@ -1365,6 +1373,7 @@ async def test_interjection_context_continuation_message_structure(llm_config) -
 
 
 @pytest.mark.asyncio
+@pytest.mark.llm_call
 @_handle_project
 async def test_interjection_context_only_no_user_message(llm_config) -> None:
     """Verify that context-only interjections (empty message) work correctly.

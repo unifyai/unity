@@ -17,6 +17,8 @@ from unity.task_scheduler.types.priority import Priority
 from unity.task_scheduler.types.schedule import Schedule
 from unity.task_scheduler.types.status import Status
 
+pytestmark = pytest.mark.llm_call
+
 # --------------------------------------------------------------------------- #
 #  1.  Re-ordering in the runnable queue                                     #
 # --------------------------------------------------------------------------- #

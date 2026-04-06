@@ -8,6 +8,7 @@ from unity.common.read_only_ask_guard import ReadOnlyAskGuardHandle
 
 
 @pytest.mark.asyncio
+@pytest.mark.llm_call
 @_handle_project
 async def test_ask_guard_triggers_when_enabled(monkeypatch):
     """

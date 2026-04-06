@@ -56,6 +56,7 @@ def test_build_code_act_prompt_guidelines_placed_before_rules():
 
 
 @pytest.mark.asyncio
+@pytest.mark.llm_call
 @pytest.mark.timeout(30)
 async def test_code_act_actor_accepts_guidelines_parameter():
     """
@@ -82,6 +83,7 @@ async def test_code_act_actor_accepts_guidelines_parameter():
 
 
 @pytest.mark.asyncio
+@pytest.mark.llm_call
 @pytest.mark.timeout(30)
 async def test_code_act_actor_guidelines_none_by_default():
     """
@@ -113,6 +115,7 @@ async def test_code_act_actor_guidelines_none_by_default():
 
 @pytest.mark.eval
 @pytest.mark.asyncio
+@pytest.mark.llm_call
 @pytest.mark.timeout(300)
 async def test_code_act_guidelines_forbid_execute_code():
     """
@@ -154,6 +157,7 @@ async def test_code_act_guidelines_forbid_execute_code():
 
 @pytest.mark.eval
 @pytest.mark.asyncio
+@pytest.mark.llm_call
 @pytest.mark.timeout(300)
 async def test_code_act_guidelines_include_marker_in_response():
     """
@@ -188,6 +192,7 @@ async def test_code_act_guidelines_include_marker_in_response():
 
 @pytest.mark.eval
 @pytest.mark.asyncio
+@pytest.mark.llm_call
 @pytest.mark.timeout(300)
 async def test_code_act_guidelines_response_format_constraint():
     """
@@ -226,6 +231,7 @@ async def test_code_act_guidelines_response_format_constraint():
 
 
 @pytest.mark.asyncio
+@pytest.mark.llm_call
 @pytest.mark.timeout(30)
 async def test_single_function_actor_accepts_guidelines():
     """

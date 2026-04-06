@@ -13,6 +13,8 @@ from unity.task_scheduler.types.repetition import Frequency
 # Define a predictable summary string for mocked LLM calls
 MOCK_SUMMARY = "Mock summary: Task completed important steps."
 
+pytestmark = pytest.mark.llm_call
+
 
 # Helper to create a scheduler with a controllable actor for tests
 def create_test_scheduler(actor):

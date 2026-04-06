@@ -56,6 +56,7 @@ def test_json_omits_empty_fields():
 
 
 @pytest.mark.asyncio
+@pytest.mark.llm_call
 @_handle_project
 async def test_ask_search_tool_omits_empty(static_now, monkeypatch):
     """

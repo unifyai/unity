@@ -33,7 +33,7 @@ from unity.conversation_manager.events import UnifyMessageReceived
 from unity.conversation_manager.types import ScreenshotEntry
 from unity.file_manager.settings import get_local_root
 
-pytestmark = [pytest.mark.integration, pytest.mark.eval]
+pytestmark = [pytest.mark.integration, pytest.mark.eval, pytest.mark.llm_call]
 
 GRUB_IMAGE_PATH = (
     Path(__file__).resolve().parent.parent.parent.parent / "images" / "grub_screen.jpg"

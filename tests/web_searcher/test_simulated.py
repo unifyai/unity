@@ -41,6 +41,7 @@ def test_docstrings_match_base():
 # 1.  Basic start-and-ask                                                    #
 # ────────────────────────────────────────────────────────────────────────────
 @pytest.mark.asyncio
+@pytest.mark.llm_call
 @_handle_project
 async def test_start_and_ask():
     ws = SimulatedWebSearcher("Demo web-search for unit-tests.")
@@ -53,6 +54,7 @@ async def test_start_and_ask():
 # 2.  Stateful memory – serial asks                                         #
 # ────────────────────────────────────────────────────────────────────────────
 @pytest.mark.asyncio
+@pytest.mark.llm_call
 @_handle_project
 async def test_stateful_memory_serial_asks():
     """
@@ -82,6 +84,7 @@ async def test_stateful_memory_serial_asks():
 # 3.  Interject                                                             #
 # ────────────────────────────────────────────────────────────────────────────
 @pytest.mark.asyncio
+@pytest.mark.llm_call
 @_handle_project
 async def test_interject(monkeypatch):
     calls = {"interject": 0}
@@ -111,6 +114,7 @@ async def test_interject(monkeypatch):
 # 4.  Stop                                                                  #
 # ────────────────────────────────────────────────────────────────────────────
 @pytest.mark.asyncio
+@pytest.mark.llm_call
 @_handle_project
 async def test_stop():
     ws = SimulatedWebSearcher()
@@ -125,6 +129,7 @@ async def test_stop():
 # 5.  Clarification handshake                                               #
 # ────────────────────────────────────────────────────────────────────────────
 @pytest.mark.asyncio
+@pytest.mark.llm_call
 @_handle_project
 async def test_requests_clarification():
     ws = SimulatedWebSearcher()
@@ -154,6 +159,7 @@ async def test_requests_clarification():
 # 6.  Pause → Resume round-trip                                             #
 # ────────────────────────────────────────────────────────────────────────────
 @pytest.mark.asyncio
+@pytest.mark.llm_call
 @_handle_project
 async def test_pause_and_resume(monkeypatch):
     call_counts = {"pause": 0, "resume": 0}
@@ -208,6 +214,7 @@ async def test_pause_and_resume(monkeypatch):
 # 7.  Nested ask on handle                                                   #
 # ────────────────────────────────────────────────────────────────────────────
 @pytest.mark.asyncio
+@pytest.mark.llm_call
 @_handle_project
 async def test_nested_ask():
     ws = SimulatedWebSearcher()
@@ -230,6 +237,7 @@ async def test_nested_ask():
 # 8.  Structured output with response_format                                  #
 # ────────────────────────────────────────────────────────────────────────────
 @pytest.mark.asyncio
+@pytest.mark.llm_call
 @_handle_project
 async def test_ask_with_response_format():
     from pydantic import BaseModel, Field
@@ -272,6 +280,7 @@ def test_clear_reinitialises():
 # 9.  Stop while paused should finish immediately                            #
 # ────────────────────────────────────────────────────────────────────────────
 @pytest.mark.asyncio
+@pytest.mark.llm_call
 @_handle_project
 async def test_stop_while_paused_finishes_immediately():
     ws = SimulatedWebSearcher()
@@ -290,6 +299,7 @@ async def test_stop_while_paused_finishes_immediately():
 # 11.  Stop while waiting for clarification should finish immediately         #
 # ────────────────────────────────────────────────────────────────────────────
 @pytest.mark.asyncio
+@pytest.mark.llm_call
 @_handle_project
 async def test_stop_while_waiting_for_clarification_finishes_immediately():
     ws = SimulatedWebSearcher()

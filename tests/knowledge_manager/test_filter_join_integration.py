@@ -24,6 +24,8 @@ from unity.knowledge_manager.knowledge_manager import KnowledgeManager
 from tests.helpers import _handle_project
 from tests.assertion_helpers import assertion_failed
 
+pytestmark = pytest.mark.llm_call
+
 # --------------------------------------------------------------------------- #
 # Helpers                                                                     #
 # --------------------------------------------------------------------------- #

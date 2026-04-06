@@ -234,6 +234,7 @@ def test_update_guidance_resolves_filepath_images():
 
 @pytest.mark.eval
 @pytest.mark.asyncio
+@pytest.mark.llm_call
 @_handle_project
 async def test_llm_adds_guidance_with_filepath_images():
     """An LLM receives the add_guidance tool schema and correctly passes

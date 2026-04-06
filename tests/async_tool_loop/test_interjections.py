@@ -30,6 +30,8 @@ from tests.async_helpers import (
     _is_synthetic_check_status_stub,
 )
 
+pytestmark = pytest.mark.llm_call
+
 
 # --------------------------------------------------------------------------- #
 #  TOOL IMPLEMENTATIONS                                                       #

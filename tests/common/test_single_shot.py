@@ -226,6 +226,7 @@ def test_single_shot_result_with_structured_output():
 
 
 @pytest.mark.asyncio
+@pytest.mark.llm_call
 @_handle_project
 async def test_single_shot_calls_tool():
     """LLM should call the greet tool when asked to greet someone."""
@@ -251,6 +252,7 @@ async def test_single_shot_calls_tool():
 
 
 @pytest.mark.asyncio
+@pytest.mark.llm_call
 @_handle_project
 async def test_single_shot_chooses_correct_tool():
     """LLM should choose add_numbers when asked to add."""
@@ -276,6 +278,7 @@ async def test_single_shot_chooses_correct_tool():
 
 
 @pytest.mark.asyncio
+@pytest.mark.llm_call
 @_handle_project
 async def test_single_shot_async_tool():
     """Async tools should be awaited correctly."""
@@ -300,6 +303,7 @@ async def test_single_shot_async_tool():
 
 
 @pytest.mark.asyncio
+@pytest.mark.llm_call
 @_handle_project
 async def test_single_shot_tool_choice_required():
     """With tool_choice='required', LLM must call a tool."""
@@ -323,6 +327,7 @@ async def test_single_shot_tool_choice_required():
 
 
 @pytest.mark.asyncio
+@pytest.mark.llm_call
 @_handle_project
 async def test_single_shot_no_tools():
     """With empty tools dict, LLM should just respond with text."""
@@ -348,6 +353,7 @@ async def test_single_shot_no_tools():
 
 
 @pytest.mark.asyncio
+@pytest.mark.llm_call
 @_handle_project
 async def test_single_shot_structured_output_no_tools():
     """With response_format and no tools, LLM returns structured output."""
@@ -376,6 +382,7 @@ async def test_single_shot_structured_output_no_tools():
 
 
 @pytest.mark.asyncio
+@pytest.mark.llm_call
 @_handle_project
 async def test_single_shot_structured_output_with_tools():
     """With response_format AND tools, LLM returns structured output AND calls tool."""
@@ -408,6 +415,7 @@ async def test_single_shot_structured_output_with_tools():
 
 
 @pytest.mark.asyncio
+@pytest.mark.llm_call
 @_handle_project
 async def test_single_shot_structured_output_complex():
     """Test structured output with a more complex model."""
@@ -437,6 +445,7 @@ async def test_single_shot_structured_output_complex():
 
 
 @pytest.mark.asyncio
+@pytest.mark.llm_call
 @_handle_project
 async def test_single_shot_multiple_concurrent_tools():
     """LLM can call multiple tools concurrently in a single thinking step.
@@ -485,6 +494,7 @@ async def test_single_shot_multiple_concurrent_tools():
 
 
 @pytest.mark.asyncio
+@pytest.mark.llm_call
 @_handle_project
 async def test_single_shot_multiple_tools_same_type():
     """LLM can call the same tool multiple times concurrently."""

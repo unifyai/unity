@@ -7,6 +7,8 @@ from unity.common.async_tool_loop import start_async_tool_loop
 from unity.common.tool_spec import ToolSpec
 from unity.common.llm_client import new_llm_client
 
+pytestmark = pytest.mark.llm_call
+
 
 # small helper: pre-seed an assistant tool_call so preflight backfill schedules it immediately
 def _preseed_tool_call(

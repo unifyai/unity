@@ -100,6 +100,7 @@ def test_delete_regular_contact_succeeds():
 # ────────────────────────────────────────────────────────────────────────────
 @pytest.mark.slow
 @pytest.mark.asyncio
+@pytest.mark.llm_call
 @_handle_project
 async def test_update_delete_via_nl():
     """Ensure the LLM can route a deletion request through _delete_contact."""

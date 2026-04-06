@@ -140,6 +140,7 @@ def get_result(out: Any) -> Any:
 
 
 @pytest.mark.asyncio
+@pytest.mark.llm_call
 @pytest.mark.timeout(120)
 async def test_execute_code_captures_stdout_from_primitive_result(
     execute_code_tool,
@@ -184,6 +185,7 @@ print(f"ANSWER: {result}")
 
 
 @pytest.mark.asyncio
+@pytest.mark.llm_call
 @pytest.mark.timeout(120)
 async def test_execute_code_result_field_populated_from_primitive(
     execute_code_tool,
@@ -221,6 +223,7 @@ await handle.result()
 
 
 @pytest.mark.asyncio
+@pytest.mark.llm_call
 @pytest.mark.timeout(120)
 async def test_execute_code_captures_stdout_with_multiple_prints(
     execute_code_tool,
@@ -259,6 +262,7 @@ print("AFTER")
 
 
 @pytest.mark.asyncio
+@pytest.mark.llm_call
 @pytest.mark.timeout(180)
 async def test_execute_code_sequential_primitive_calls(
     execute_code_tool,
@@ -300,6 +304,7 @@ print(f"SECOND: {r2}")
 
 
 @pytest.mark.asyncio
+@pytest.mark.llm_call
 @pytest.mark.timeout(180)
 async def test_execute_code_concurrent_primitive_calls(
     execute_code_tool,
@@ -342,6 +347,7 @@ print(f"RESULT2: {r2}")
 
 
 @pytest.mark.asyncio
+@pytest.mark.llm_call
 @pytest.mark.timeout(120)
 async def test_execute_code_tasks_manager_output(
     execute_code_tool,
@@ -371,6 +377,7 @@ print(f"TASKS: {result}")
 
 
 @pytest.mark.asyncio
+@pytest.mark.llm_call
 @pytest.mark.timeout(120)
 async def test_execute_code_transcripts_manager_output(
     execute_code_tool,
@@ -407,6 +414,7 @@ print(f"TRANSCRIPTS: {result}")
 
 
 @pytest.mark.asyncio
+@pytest.mark.llm_call
 @pytest.mark.timeout(120)
 async def test_execute_code_return_value_captured(
     execute_code_tool,
@@ -516,6 +524,7 @@ handle = await primitives.nonexistent_manager.ask("test")
 
 
 @pytest.mark.asyncio
+@pytest.mark.llm_call
 @pytest.mark.timeout(120)
 async def test_execute_code_stdout_isolation_from_inner_loops(
     execute_code_tool,
@@ -573,6 +582,7 @@ print("END")
 
 
 @pytest.mark.asyncio
+@pytest.mark.llm_call
 @pytest.mark.timeout(120)
 async def test_execute_code_stateful_session_with_primitives(
     execute_code_tool,
@@ -623,6 +633,7 @@ print(f"RETRIEVED: {stored_result}")
 
 
 @pytest.mark.asyncio
+@pytest.mark.llm_call
 @pytest.mark.timeout(120)
 async def test_execution_result_includes_stdout_in_llm_content(
     execute_code_tool,
@@ -691,6 +702,7 @@ print(f"ANSWER: {result}")
 
 
 @pytest.mark.asyncio
+@pytest.mark.llm_call
 @pytest.mark.timeout(120)
 async def test_primitive_handle_result_contains_answer(
     actor_with_primitives,
@@ -720,6 +732,7 @@ async def test_primitive_handle_result_contains_answer(
 
 
 @pytest.mark.asyncio
+@pytest.mark.llm_call
 @pytest.mark.timeout(120)
 async def test_exact_ci_failure_scenario(
     execute_code_tool,
