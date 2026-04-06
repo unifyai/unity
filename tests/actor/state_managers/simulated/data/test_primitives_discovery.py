@@ -66,10 +66,6 @@ def test_data_manager_has_expected_methods():
     assert callable(getattr(dm, "ensure_vector_column", None))
     assert callable(getattr(dm, "vectorize_rows", None))
 
-    # Plot operations
-    assert callable(getattr(dm, "plot", None))
-    assert callable(getattr(dm, "plot_batch", None))
-
 
 def test_data_manager_metadata_registered():
     """DataManager metadata should be in ToolSurfaceRegistry."""
@@ -78,7 +74,7 @@ def test_data_manager_metadata_registered():
     registry = get_registry()
     spec = registry.get_manager_spec("data")
     assert spec is not None
-    assert spec.domain == "Data Operations, Visualizations & Ingestion"
+    assert spec.domain == "Data Operations & Ingestion"
     methods = registry.primitive_methods(manager_alias="data")
     assert "filter" in methods
     assert "search" in methods

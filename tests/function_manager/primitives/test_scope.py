@@ -137,6 +137,7 @@ def test_valid_manager_aliases_contains_expected():
     """VALID_MANAGER_ALIASES contains expected managers."""
     expected = {
         "contacts",
+        "dashboards",
         "tasks",
         "transcripts",
         "knowledge",
