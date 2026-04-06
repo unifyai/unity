@@ -24,7 +24,7 @@ from unity.conversation_manager.domains.notification_reply import (
 )
 from unity.settings import SETTINGS
 
-pytestmark = pytest.mark.eval
+pytestmark = [pytest.mark.eval, pytest.mark.llm_call]
 
 MODEL = SETTINGS.conversation.FAST_BRAIN_MODEL
 

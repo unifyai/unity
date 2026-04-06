@@ -28,7 +28,7 @@ from unity.conversation_manager.prompt_builders import build_voice_agent_prompt
 
 # Mark every test in this file as eval — these exercise LLM reasoning,
 # not deterministic infrastructure.
-pytestmark = pytest.mark.eval
+pytestmark = [pytest.mark.eval, pytest.mark.llm_call]
 
 # ─────────────────────────────────────────────────────────────────────
 # Constants

@@ -27,7 +27,7 @@ from tests.conversation_manager.actions.integration.helpers import (
 from unity.conversation_manager.events import UnifyMessageReceived, UnifyMessageSent
 from unity.file_manager.settings import get_local_root
 
-pytestmark = [pytest.mark.integration, pytest.mark.eval]
+pytestmark = [pytest.mark.integration, pytest.mark.eval, pytest.mark.llm_call]
 
 
 @pytest.mark.asyncio

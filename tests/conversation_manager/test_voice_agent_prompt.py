@@ -195,6 +195,7 @@ def meet_prompt(base_prompt_kwargs: dict) -> str:
 # =============================================================================
 
 
+@pytest.mark.llm_call
 @pytest.mark.asyncio
 class TestAssistantName:
     """Tests that the fast brain knows and uses its own name."""
@@ -228,6 +229,7 @@ class TestAssistantName:
 # =============================================================================
 
 
+@pytest.mark.llm_call
 @pytest.mark.asyncio
 class TestContactBio:
     """Tests that the fast brain can use contact bio information."""
@@ -272,6 +274,7 @@ class TestContactBio:
 # =============================================================================
 
 
+@pytest.mark.llm_call
 @pytest.mark.asyncio
 class TestMeetParticipants:
     """Tests that the fast brain knows about all participants in a meet."""
@@ -331,6 +334,7 @@ class TestMeetParticipants:
 # =============================================================================
 
 
+@pytest.mark.llm_call
 @pytest.mark.eval
 @pytest.mark.asyncio
 class TestBrevity:
@@ -413,6 +417,7 @@ class TestBrevity:
 # =============================================================================
 
 
+@pytest.mark.llm_call
 @pytest.mark.asyncio
 class TestPlatformKnowledge:
     """Tests that the fast brain can answer questions about external app
