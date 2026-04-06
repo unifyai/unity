@@ -13,6 +13,7 @@ if TYPE_CHECKING:
 VALID_MANAGER_ALIASES: frozenset[str] = frozenset(
     {
         "contacts",
+        "dashboards",
         "tasks",
         "transcripts",
         "knowledge",
