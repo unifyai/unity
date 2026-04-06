@@ -999,11 +999,10 @@ async def entrypoint(ctx: agents.JobContext):
     if contact.get("contact_id") is not None:
         participant_ids.add(contact["contact_id"])
 
-    def _inject_and_reply(msg: str, reason: str) -> None:
-        """Inject a system message into chat context and trigger a reply."""
+    def _inject_silent_context(msg: str) -> None:
+        """Inject a system message into chat context as silent background."""
         assistant._chat_ctx.add_message(role="system", content=[msg])
         session._chat_ctx.add_message(role="system", content=[msg])
-        trigger_generate_reply(reason=reason, source_id="system_event")
 
     def on_participant_comms(data: dict) -> None:
         raw = data.get("event") if "event" in data else json.dumps(data)
@@ -1017,7 +1016,7 @@ async def entrypoint(ctx: agents.JobContext):
         touch_activity()
         if not session_ready:
             return
-        _inject_and_reply(text, reason="participant_comms")
+        _inject_silent_context(text)
 
     event_broker.register_callback("app:comms:*", on_participant_comms)
 

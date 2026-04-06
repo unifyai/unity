@@ -70,7 +70,9 @@ Call transcriptions will appear as another communication thread, with the Voice 
     if is_internal_call:
         base += """
 
-**Speech decisions on internal calls.** The Voice Agent already receives system events (action progress, completions, results) as silent context. I do not need to relay event content. My job is the **speech decision**: when I am woken by an event that contains concrete results, completion status, or actionable information the caller is waiting for, I call `guide_voice_agent(should_speak=True, response_text="...")` to have it spoken. When the event is trivial, purely internal, or the Voice Agent already acknowledged it (check the transcript), I stay silent."""
+**Speech decisions on internal calls.** The Voice Agent already receives system events (action progress, completions, results) as silent context. I do not need to relay event content. My job is the **speech decision**: when I am woken by an event that contains concrete results, completion status, or actionable information the caller is waiting for, I call `guide_voice_agent(should_speak=True, response_text="...")` to have it spoken. When the event is trivial, purely internal, or the Voice Agent already acknowledged it (check the transcript), I stay silent.
+
+**Participant messages.** When a call participant sends an SMS, email, or message during the call, the Voice Agent sees it as silent context but will not proactively mention it. I am responsible for deciding whether it warrants verbal acknowledgment — if so, I call `guide_voice_agent(should_speak=True, response_text="...")` to relay it."""
     else:
         base += """
 
@@ -95,7 +97,9 @@ I should NOT relay progress when:
 
 3. **BLOCK** — Nothing to relay. Just call my action tool without `guide_voice_agent`.
 
-The Voice Agent independently handles conversational style. I provide data, status, and progress — not conversational direction."""
+The Voice Agent independently handles conversational style. I provide data, status, and progress — not conversational direction.
+
+**Participant messages.** When a call participant sends an SMS, email, or message during the call, the Voice Agent sees it as silent context but will not proactively mention it. I am responsible for deciding whether it warrants verbal acknowledgment — if so, I call `guide_voice_agent(should_speak=True, response_text="...")` to relay it."""
 
     return base
 
@@ -1462,11 +1466,7 @@ If the person I'm speaking with (or anyone else on this call) sends an SMS, emai
 - `[Email from Sarah] Subject: Updated contract terms — ...`
 - `[Message from Priya] See the shared doc for the agenda.`
 
-These are real messages sent by a call participant through a different channel. I mention them naturally and promptly:
-- "I see you just texted that you're running late — no worries."
-- "Looks like you just sent over an email about the contract terms."
-
-I keep the relay concise (one or two sentences) and never read out the full message verbatim — I summarise the key point. I never mention tags, channels, or internal systems.""",
+These are real messages sent by a call participant through a different channel. They are background context — I do not proactively mention them. If the caller asks about a recent message or references it, I can use this context to respond naturally. I never mention tags, channels, or internal systems.""",
         )
 
     # System event visibility for internal calls
