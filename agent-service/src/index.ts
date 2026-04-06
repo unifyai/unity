@@ -831,11 +831,7 @@ const MEET_PREPARE_TASK = (displayName: string) =>
   `1. Dismiss any popups, tooltips, or overlays (e.g. "Got it" button, cookie banners).\n` +
   `2. If there is a "Your name" text input, clear it and type: ${displayName}\n` +
   `3. Turn OFF the camera if it is on (click its toggle button). Leave the microphone ON.\n` +
-  `4. Click the settings gear/cog icon on the pre-join screen to open device settings.\n` +
-  `5. Click the "Audio" tab in the settings dialog.\n` +
-  `6. Check the "Microphone" dropdown — select "meet_mic" if available, otherwise leave as "Default".\n` +
-  `7. Check the "Speakers" dropdown — select "agent_sink" if available, otherwise leave as "Default".\n` +
-  `8. Close the settings dialog (click X or press Escape).\n` +
+  `Do NOT change audio device selections — they are handled separately.\n` +
   `Ignore any warnings about camera/microphone not being found — those are expected.\n` +
   `If the page shows a fatal error like "invalid meeting link" or "this meeting has ended", do nothing — just stop.`;
 
@@ -845,7 +841,7 @@ const MEET_CLICK_JOIN_TASK =
   `Ignore any warnings about camera/microphone not being found — those are expected.\n` +
   `If the page shows a fatal error like "invalid meeting link" or "this meeting has ended", do nothing — just stop.`;
 
-const MEET_PREPARE_MAX_ITERATIONS = 5;
+const MEET_PREPARE_MAX_ITERATIONS = 3;
 const MEET_JOIN_MAX_ITERATIONS = 3;
 
 async function runMagnitudeLoop(
@@ -889,6 +885,55 @@ async function runMagnitudeLoop(
   }
 }
 
+/**
+ * Open Google Meet Settings dialog via Playwright (deterministic), then hand
+ * off to the LLM to navigate the Audio tab and select devices (visual).
+ */
+async function openMeetSettings(page: any): Promise<boolean> {
+  const tag = '[googlemeet/devices]';
+
+  try {
+    const moreBtn = page.locator(
+      'button[aria-label*="More options" i], button[aria-label*="more actions" i], button[aria-label*="More" i][aria-haspopup]'
+    ).first();
+    if (!await moreBtn.isVisible({ timeout: 3000 }).catch(() => false)) {
+      console.log(`${tag} Triple-dots menu button not found`);
+      return false;
+    }
+    console.log(`${tag} Opening More options menu...`);
+    await moreBtn.click();
+    await page.waitForTimeout(500);
+
+    const settingsItem = page.locator(
+      'li:has-text("Settings"), [role="menuitem"]:has-text("Settings"), span:has-text("Settings")'
+    ).first();
+    if (!await settingsItem.isVisible({ timeout: 2000 }).catch(() => false)) {
+      console.log(`${tag} "Settings" menu item not found — closing menu`);
+      await page.keyboard.press('Escape');
+      return false;
+    }
+    console.log(`${tag} Clicking Settings...`);
+    await settingsItem.click();
+    await page.waitForTimeout(800);
+    console.log(`${tag} Settings dialog opened`);
+    return true;
+  } catch (err) {
+    console.log(`${tag} Error opening Settings: ${err}`);
+    await page.keyboard.press('Escape').catch(() => {});
+    return false;
+  }
+}
+
+const MEET_AUDIO_DEVICE_TASK = (micLabel: string, speakerLabel: string) =>
+  `You are in the Google Meet Settings dialog. Complete these steps:\n` +
+  `1. Click the "Audio" tab on the left side of the dialog.\n` +
+  `2. Click the Microphone dropdown and select the option containing "${micLabel}".\n` +
+  `3. Click the Speakers dropdown and select the option containing "${speakerLabel}".\n` +
+  `4. Close the settings dialog by clicking the X button.\n` +
+  `If a device is already selected correctly, skip that step.`;
+
+const MEET_AUDIO_MAX_ITERATIONS = 5;
+
 async function googleMeetJoinFlow(agent: BrowserAgent, displayName: string): Promise<GoogleMeetJoinResult> {
   const page = agent.page;
   await page.waitForLoadState('domcontentloaded', { timeout: 15000 }).catch(() => {});
@@ -896,9 +941,19 @@ async function googleMeetJoinFlow(agent: BrowserAgent, displayName: string): Pro
   const pageUrl = page.url?.() ?? 'unknown';
   console.log(`[googlemeet/join] Page loaded: url=${pageUrl}`);
 
-  // Phase 1: prepare (name, camera off, audio device selection)
-  console.log('[googlemeet/join] Phase 1: prepare & configure audio devices...');
+  // Phase 1: LLM handles variable UI (popups, name, camera)
+  console.log('[googlemeet/join] Phase 1: prepare...');
   await runMagnitudeLoop(agent, MEET_PREPARE_TASK(displayName), MEET_PREPARE_MAX_ITERATIONS, 'googlemeet/prepare');
+
+  // Phase 1b: Audio device selection — Playwright opens Settings, LLM selects devices
+  console.log('[googlemeet/join] Phase 1b: opening Settings for audio device selection...');
+  const settingsOpened = await openMeetSettings(page);
+  if (settingsOpened) {
+    console.log('[googlemeet/join] Phase 1b: LLM selecting audio devices...');
+    await runMagnitudeLoop(agent, MEET_AUDIO_DEVICE_TASK('agent_sink', 'meet_sink'), MEET_AUDIO_MAX_ITERATIONS, 'googlemeet/audio-devices');
+  } else {
+    console.log('[googlemeet/join] Phase 1b: Could not open Settings — using default devices');
+  }
 
   // Phase 2: click join
   console.log('[googlemeet/join] Phase 2: clicking join...');
