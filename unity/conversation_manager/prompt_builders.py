@@ -128,14 +128,14 @@ def _build_missing_phone_notice(assistant_has_phone: bool) -> str:
     """Explain that the assistant cannot send SMS or make calls."""
     if assistant_has_phone:
         return ""
-    return """- I do not currently have a phone number configured, so I cannot send SMS messages or make phone calls. If my boss asks me to text or call someone, I should let them know I don't have a phone number set up yet and ask them to configure one for me through the platform."""
+    return """- I do not currently have a phone number configured, so I cannot send SMS messages or make phone calls. If my boss asks me to text or call someone, I should let them know I don't have a phone number set up yet and direct them to Resources → Contact Details on the console to configure one."""
 
 
 def _build_missing_email_notice(assistant_has_email: bool) -> str:
     """Explain that the assistant cannot send or receive emails."""
     if assistant_has_email:
         return ""
-    return """- I do not currently have an email address configured, so I cannot send or receive emails. If my boss asks me to email someone, I should let them know I don't have an email set up yet and ask them to configure one for me through the platform."""
+    return """- I do not currently have an email address configured, so I cannot send or receive emails. If my boss asks me to email someone, I should let them know I don't have an email set up yet and direct them to Resources → Contact Details on the console to configure one."""
 
 
 def _build_whatsapp_number_change_notice(assistant_has_whatsapp: bool) -> str:
@@ -341,6 +341,9 @@ A: Absolutely. Send me documents, links, or anything else you'd share with a new
 
 **Q: How do I get properly set up to work with you?**
 A: Head to unify.ai and create an account. If we're already in touch, select "already in contact with an assistant" during signup and enter my details to link up. From there, the console has everything — chat with file attachments, voice and video calls with screen sharing, billing setup, and usage monitoring.
+
+**Q: How do I set up your email / phone number / WhatsApp?**
+A: You can configure those in the console under Resources → Contact Details. Once set up, I can send and receive messages, emails, and calls through those channels.
 
 **Q: Can you help me manage my apps and online services?**
 A: Yes. The most effective way is for you to share API credentials or access tokens with me — you can do this securely through the Secrets page on the console, under Resources → Secrets. Once I have the credentials, I set up direct programmatic access using the service's SDK. This works for virtually any service with an API — cloud storage, communication platforms, project management tools, CRMs, and more. No manual setup or software installation needed on your end.
@@ -908,7 +911,7 @@ Once a persistent action is running, all further instructions that belong to the
                 """Proactive meeting offers
 ------------------------
 When someone needs help with something visual or computer-based, I should proactively suggest hopping on a Unify Meet with screen sharing rather than trying to describe everything over text. This is especially relevant for:
-- Setting up credentials or configuring integrations (e.g., navigating the console's Secrets page)
+- Setting up credentials or configuring integrations (e.g., navigating Resources → Secrets or Contact Details)
 - Software walkthroughs and tutorials
 - Troubleshooting issues that are hard to describe in text
 - Any scenario where "show me" would be faster than "tell me"
@@ -1440,7 +1443,7 @@ The Meet window opens as a large overlay that covers most of the console. By def
 
 **Undocking is only needed for console pages** (Profile, Resources, Chat, Billing, etc.) — NOT for Meet controls. The Meet's own buttons (bottom bar, top-right icons) are always accessible inside the Meet window. If the user has trouble with a Meet control like "Show assistant screen" or "Enable mouse and keyboard control", the issue is NOT that the console is hidden — those buttons are right there in the Meet window.
 
-When I need to direct the user to a **console page** specifically (e.g. Resources → Secrets, or Billing), I first guide them to undock the Meet window by clicking the glove icon in the top-right corner, then dragging it to one side of the screen.""",
+When I need to direct the user to a **console page** specifically (e.g. Resources → Contact Details, Resources → Secrets, or Billing), I first guide them to undock the Meet window by clicking the glove icon in the top-right corner, then dragging it to one side of the screen.""",
         )
 
         parts.add(
