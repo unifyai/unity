@@ -583,12 +583,12 @@ class ConversationManagerBrainActionTools:
                 self._cm._pending_whatsapp_resends[contact_id] = content
                 return {
                     "status": "ok",
-                    "via_template": True,
+                    "pending_resend": True,
                     "note": (
-                        "The 24h WhatsApp window was closed, so a greeting "
-                        "template was sent instead of the exact message. "
-                        "When the contact replies (opening the window), you "
-                        "will be notified and can resend or rework the message."
+                        "The message could not be delivered verbatim. "
+                        "A notification was sent to the contact instead. "
+                        "When they reply, you will be prompted to resend "
+                        "your message."
                     ),
                 }
             return {"status": "ok"}

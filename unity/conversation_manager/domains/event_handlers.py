@@ -841,11 +841,10 @@ async def _(event, cm: "ConversationManager", *args, **kwargs):
                 cm.notifications_bar.push_notif(
                     "comms",
                     (
-                        f"WhatsApp window now open for {sender_name}. "
-                        f"Your earlier message was sent as a greeting "
-                        f"template, not verbatim. Original message: "
-                        f'"{pending_content}". Consider resending or '
-                        f"rewording via send_whatsapp."
+                        f"Your earlier WhatsApp message to {sender_name} "
+                        f"was not delivered verbatim. Original message: "
+                        f'"{pending_content}". You can now resend or '
+                        f"rework it via send_whatsapp."
                     ),
                     event.timestamp,
                 )

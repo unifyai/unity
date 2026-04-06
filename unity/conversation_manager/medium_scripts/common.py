@@ -1213,8 +1213,7 @@ def render_participant_comms(event_json: str, participant_ids: set[int]) -> str 
     if isinstance(event, WhatsAppSent):
         if event.via_template:
             return (
-                f"[You WhatsApped {name} via greeting template"
-                f" (24h window closed)] {event.content}"
+                f"[You WhatsApped {name}" f" (not delivered directly)] {event.content}"
             )
         return f"[You WhatsApped {name}] {event.content}"
     if isinstance(event, EmailSent):
@@ -1348,8 +1347,7 @@ def _render_history_event(
         if cid is not None and cid in participant_ids:
             if event.via_template:
                 return (
-                    f"[WhatsApp to {name} via greeting template"
-                    f" (24h window closed)] {event.content}"
+                    f"[WhatsApp to {name}" f" (not delivered directly)] {event.content}"
                 )
             return f"[WhatsApp to {name}] {event.content}"
         return None
