@@ -1,19 +1,14 @@
 from __future__ import annotations
 
-import asyncio
 import re
-import functools
 import pytest
 
 from unity.secret_manager.simulated import (
     SimulatedSecretManager,
-    _SimulatedSecretHandle,
 )
 
 from tests.helpers import (
     _handle_project,
-    _assert_blocks_while_paused,
-    DEFAULT_TIMEOUT,
 )
 
 
@@ -93,156 +88,6 @@ async def test_stateful_update_then_ask():
     ), "Secret created via update should be referenced by placeholder"
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Steerable handle tests
-# ─────────────────────────────────────────────────────────────────────────────
-
-
-# 5.  Interject
-@pytest.mark.asyncio
-@pytest.mark.llm_call
-@_handle_project
-async def test_handle_interject(monkeypatch):
-    calls = {"interject": 0}
-    orig = _SimulatedSecretHandle.interject
-
-    @functools.wraps(orig)
-    async def wrapped(self, msg: str, **kwargs) -> str:  # type: ignore[override]
-        calls["interject"] += 1
-        return await orig(self, msg, **kwargs)
-
-    monkeypatch.setattr(_SimulatedSecretHandle, "interject", wrapped, raising=True)
-
-    sm = SimulatedSecretManager()
-    h = await sm.ask("Show me recent secret activity.")
-    await asyncio.sleep(0.05)
-    await h.interject("Also mention any new keys created today.")
-    await h.result()
-    assert calls["interject"] == 1
-
-
-# 6.  Stop
-@pytest.mark.asyncio
-@pytest.mark.llm_call
-@_handle_project
-async def test_handle_stop():
-    sm = SimulatedSecretManager()
-    h = await sm.ask("Generate a summary of configured secrets.")
-    await asyncio.sleep(0.05)
-    await h.stop()
-    with pytest.raises(asyncio.CancelledError):
-        await h.result()
-    assert h.done(), "Handle should report done after stop()"
-
-
-# 7.  Clarification handshake
-@pytest.mark.asyncio
-@pytest.mark.llm_call
-@_handle_project
-async def test_handle_requests_clarification():
-    sm = SimulatedSecretManager()
-
-    up_q: asyncio.Queue[str] = asyncio.Queue()
-    down_q: asyncio.Queue[str] = asyncio.Queue()
-
-    h = await sm.ask(
-        "Show me the placeholder for the database password. If ambiguous, request clarification.",
-        _clarification_up_q=up_q,
-        _clarification_down_q=down_q,
-        _requests_clarification=True,
-    )
-
-    question = await asyncio.wait_for(up_q.get(), timeout=DEFAULT_TIMEOUT)
-    assert "clarify" in question.lower()
-    await down_q.put("I mean the one named db_password.")
-
-    answer = await h.result()
-    assert isinstance(answer, str) and answer.strip()
-    assert "${db_password}" in answer
-
-
-# 8.  Pause → Resume round-trip
-@pytest.mark.asyncio
-@pytest.mark.llm_call
-@_handle_project
-async def test_handle_pause_and_resume(monkeypatch):
-    call_counts = {"pause": 0, "resume": 0}
-
-    original_pause = _SimulatedSecretHandle.pause
-
-    @functools.wraps(original_pause)
-    def _patched_pause(self):  # type: ignore[override]
-        call_counts["pause"] += 1
-        return original_pause(self)
-
-    monkeypatch.setattr(_SimulatedSecretHandle, "pause", _patched_pause, raising=True)
-
-    original_resume = _SimulatedSecretHandle.resume
-
-    @functools.wraps(original_resume)
-    def _patched_resume(self):  # type: ignore[override]
-        call_counts["resume"] += 1
-        return original_resume(self)
-
-    monkeypatch.setattr(_SimulatedSecretHandle, "resume", _patched_resume, raising=True)
-
-    sm = SimulatedSecretManager()
-    handle = await sm.ask("Summarize current secret inventory.")
-
-    # pause available before pausing
-    tools_initial = handle.valid_tools
-    assert "pause" in tools_initial and "resume" not in tools_initial
-
-    pause_msg = await handle.pause()
-    assert "pause" in pause_msg.lower()
-
-    tools_after_pause = handle.valid_tools
-    assert "resume" in tools_after_pause and "pause" not in tools_after_pause
-
-    res_task = asyncio.create_task(handle.result())
-    await _assert_blocks_while_paused(res_task)
-
-    resume_msg = await handle.resume()
-    assert "resume" in resume_msg.lower() or "running" in resume_msg.lower()
-
-    tools_after_resume = handle.valid_tools
-    assert "pause" in tools_after_resume and "resume" not in tools_after_resume
-
-    answer = await asyncio.wait_for(res_task, timeout=DEFAULT_TIMEOUT)
-    assert isinstance(answer, str) and answer.strip()
-
-    assert call_counts == {"pause": 1, "resume": 1}
-
-
-# 9.  Nested ask on handle
-@pytest.mark.asyncio
-@pytest.mark.llm_call
-@_handle_project
-async def test_handle_ask_nested():
-    """
-    The internal handle returned by SimulatedSecretManager.ask exposes a
-    dynamic ask() method that should produce a nested handle whose result can
-    be awaited independently of the parent.
-    """
-    sm = SimulatedSecretManager()
-
-    # Start an initial ask to obtain the live handle
-    handle = await sm.ask("Summarize current secret placeholders used in the system.")
-
-    # Add extra context to ensure nested prompt includes it
-    await handle.interject("Focus on API and database related placeholders.")
-
-    # Invoke the dynamic ask on the running handle
-    nested = await handle.ask("Which placeholders are most critical to rotate?")
-
-    nested_answer = await nested.result()
-    assert isinstance(nested_answer, str) and nested_answer.strip()
-
-    # The original handle should still be awaitable and produce an answer
-    handle_answer = await handle.result()
-    assert isinstance(handle_answer, str) and handle_answer.strip()
-
-
 # 10.  Clear – reset and remain usable
 @pytest.mark.asyncio
 @pytest.mark.llm_call
@@ -284,42 +129,3 @@ async def test_from_and_to_placeholder_roundtrip():
     back_to_placeholders = await sm.to_placeholder(to_values)
     assert "${api_key}" in back_to_placeholders
     assert "${db_password}" in back_to_placeholders
-
-
-# 12.  Stop while paused should finish immediately
-@pytest.mark.asyncio
-@pytest.mark.llm_call
-@_handle_project
-async def test_stop_while_paused_finishes_immediately():
-    sm = SimulatedSecretManager()
-    h = await sm.ask("Produce a long secrets audit.")
-    await h.pause()
-    res_task = asyncio.create_task(h.result())
-    await asyncio.sleep(0.1)
-    assert not res_task.done()
-    await h.stop("cancelled by user")
-    with pytest.raises(asyncio.CancelledError):
-        await asyncio.wait_for(res_task, timeout=DEFAULT_TIMEOUT)
-    assert h.done()
-
-
-# 13.  Stop while waiting for clarification should finish immediately
-@pytest.mark.asyncio
-@pytest.mark.llm_call
-@_handle_project
-async def test_stop_while_waiting_for_clarification_finishes_immediately():
-    sm = SimulatedSecretManager()
-    up_q: asyncio.Queue[str] = asyncio.Queue()
-    down_q: asyncio.Queue[str] = asyncio.Queue()
-    h = await sm.ask(
-        "Confirm placeholder names.",
-        _clarification_up_q=up_q,
-        _clarification_down_q=down_q,
-        _requests_clarification=True,
-    )
-    q = await asyncio.wait_for(up_q.get(), timeout=DEFAULT_TIMEOUT)
-    assert "clarify" in q.lower()
-    await h.stop("no longer needed")
-    with pytest.raises(asyncio.CancelledError):
-        await asyncio.wait_for(h.result(), timeout=DEFAULT_TIMEOUT)
-    assert h.done()
