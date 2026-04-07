@@ -42,6 +42,8 @@ async def test_generate_image_and_send_as_attachment(initialized_cm_codeact):
     - An LLM judge confirms the image contains a red square.
     """
     cm = initialized_cm_codeact
+    cm.cm.vm_ready = True
+    cm.cm.file_sync_complete = True
     local_root = Path(get_local_root())
 
     # ------------------------------------------------------------------

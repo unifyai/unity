@@ -124,6 +124,8 @@ async def test_task_lookup_by_name_returns_description(initialized_cm_codeact):
 async def test_task_mark_completed_persists_status(initialized_cm_codeact):
     """Mark a task completed via CM→Actor and verify status persisted."""
     cm = initialized_cm_codeact
+    cm.cm.vm_ready = True
+    cm.cm.file_sync_complete = True
     task_name = "Close loop with Bob (integration)"
     task_desc = "Reply to Bob with the final decision."
 

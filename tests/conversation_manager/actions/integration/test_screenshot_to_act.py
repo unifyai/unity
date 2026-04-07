@@ -53,6 +53,8 @@ async def test_screenshot_crop_via_act(initialized_cm_codeact):
     - An LLM judge confirms the output image contains GRUB boot menu content.
     """
     cm = initialized_cm_codeact
+    cm.cm.vm_ready = True
+    cm.cm.file_sync_complete = True
     local_root = Path(get_local_root())
 
     # Ensure Screenshots/User exists (mirrors session bootstrap).

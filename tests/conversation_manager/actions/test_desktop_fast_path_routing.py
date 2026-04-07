@@ -54,6 +54,8 @@ def _ensure_mock_computer_primitives():
 def _enable_computer_fast_path(cm_driver):
     """Activate computer fast-path tools by turning on screen share."""
     cm_driver.cm.assistant_screen_share_active = True
+    cm_driver.cm.vm_ready = True
+    cm_driver.cm.file_sync_complete = True
 
 
 def _setup_computer_fast_path_from_real_act(cm_driver):
@@ -63,6 +65,8 @@ def _setup_computer_fast_path_from_real_act(cm_driver):
     SimulatedActor handle will be sitting in ``in_flight_actions``.
     """
     cm_driver.cm.assistant_screen_share_active = True
+    cm_driver.cm.vm_ready = True
+    cm_driver.cm.file_sync_complete = True
 
 
 def _teardown_computer_fast_path(cm_driver):
@@ -89,6 +93,8 @@ async def test_open_terminal_routes_to_desktop_act(initialized_cm):
     """
     cm = initialized_cm
     _ensure_mock_computer_primitives()
+    cm.cm.vm_ready = True
+    cm.cm.file_sync_complete = True
 
     result = await cm.step_until_wait(
         SMSReceived(
@@ -129,6 +135,8 @@ async def test_switch_native_window_routes_to_desktop_act(initialized_cm):
     """Switching to a native application window should route to desktop_act."""
     cm = initialized_cm
     _ensure_mock_computer_primitives()
+    cm.cm.vm_ready = True
+    cm.cm.file_sync_complete = True
 
     result = await cm.step_until_wait(
         SMSReceived(
@@ -175,6 +183,8 @@ async def test_desktop_action_with_concurrent_act(initialized_cm):
     """
     cm = initialized_cm
     _ensure_mock_computer_primitives()
+    cm.cm.vm_ready = True
+    cm.cm.file_sync_complete = True
     _enable_computer_fast_path(cm)
 
     try:
@@ -210,6 +220,8 @@ async def test_observation_routes_to_act_not_fast_path(initialized_cm):
     Only atomic actions (click, type, scroll) use the desktop_act fast path."""
     cm = initialized_cm
     _ensure_mock_computer_primitives()
+    cm.cm.vm_ready = True
+    cm.cm.file_sync_complete = True
 
     await cm.step_until_wait(
         SMSReceived(
@@ -250,6 +262,8 @@ async def test_complex_task_routes_to_act(initialized_cm):
     """A multi-step task should route through act, not the fast path."""
     cm = initialized_cm
     _ensure_mock_computer_primitives()
+    cm.cm.vm_ready = True
+    cm.cm.file_sync_complete = True
 
     await cm.step_until_wait(
         SMSReceived(
