@@ -448,7 +448,7 @@ class LivekitCallManager:
                 f"{base_url}/googlemeet/join",
                 json={"meetUrl": meet_url, "displayName": display_name},
                 headers={"authorization": f"Bearer {auth_key}"},
-                timeout=aiohttp.ClientTimeout(total=120),
+                timeout=aiohttp.ClientTimeout(total=300),
             )
             body = await resp.json()
 
