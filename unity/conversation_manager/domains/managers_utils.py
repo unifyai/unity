@@ -22,7 +22,7 @@ from unity.conversation_manager.events import *
 from unity.common.prompt_helpers import now as prompt_now
 from unity.events.event_bus import EVENT_BUS
 from unity.manager_registry import ManagerRegistry
-from unity.conversation_manager.types import Medium
+from unity.conversation_manager.types import Medium, Mode
 
 if TYPE_CHECKING:
     from unity.actor.base import BaseActor
@@ -76,12 +76,16 @@ _MESSAGE_PRODUCING_EVENTS = {
     "OutboundUnifyMeetUtterance",
     "InboundWhatsAppCallUtterance",
     "OutboundWhatsAppCallUtterance",
+    "InboundGoogleMeetUtterance",
+    "OutboundGoogleMeetUtterance",
     "FastBrainNotification",
     "PhoneCallReceived",
     "PhoneCallSent",
     "UnifyMeetReceived",
+    "GoogleMeetReceived",
     "PhoneCallStarted",
     "UnifyMeetStarted",
+    "GoogleMeetStarted",
     "PhoneCallNotAnswered",
     "WhatsAppCallReceived",
     "WhatsAppCallStarted",
@@ -300,13 +304,39 @@ async def hydrate_global_thread(cm: "ConversationManager") -> None:
                     role="assistant",
                     timestamp=ts,
                 )
-
-            # --- Fast brain notification ---
-            case "FastBrainNotification":
+            case "InboundGoogleMeetUtterance":
                 entry = cm.contact_index.build_message(
                     contact_id=contact_id,
                     sender_name=sender_name,
-                    thread_name=Medium.PHONE_CALL,
+                    thread_name=Medium.GOOGLE_MEET,
+                    message_content=cm_event.content,
+                    role="user",
+                    timestamp=ts,
+                )
+            case "OutboundGoogleMeetUtterance":
+                entry = cm.contact_index.build_message(
+                    contact_id=contact_id,
+                    sender_name=sender_name,
+                    thread_name=Medium.GOOGLE_MEET,
+                    message_content=cm_event.content,
+                    role="assistant",
+                    timestamp=ts,
+                )
+
+            # --- Fast brain notification ---
+            case "FastBrainNotification":
+                if cm.call_manager.has_active_google_meet:
+                    notif_medium = Medium.GOOGLE_MEET
+                elif cm.mode == Mode.MEET:
+                    notif_medium = Medium.UNIFY_MEET
+                elif cm.call_manager._call_channel == "whatsapp_call":
+                    notif_medium = Medium.WHATSAPP_CALL
+                else:
+                    notif_medium = Medium.PHONE_CALL
+                entry = cm.contact_index.build_message(
+                    contact_id=contact_id,
+                    sender_name=sender_name,
+                    thread_name=notif_medium,
                     message_content=cm_event.content,
                     role="guidance",
                     timestamp=ts,
@@ -340,11 +370,24 @@ async def hydrate_global_thread(cm: "ConversationManager") -> None:
                     role="user",
                     timestamp=ts,
                 )
-            case "PhoneCallStarted" | "UnifyMeetStarted":
+            case "GoogleMeetReceived":
+                entry = cm.contact_index.build_message(
+                    contact_id=contact_id,
+                    sender_name=sender_name,
+                    thread_name=Medium.GOOGLE_MEET,
+                    message_content="<Joining Google Meet...>",
+                    role="assistant",
+                    timestamp=ts,
+                )
+            case "PhoneCallStarted" | "UnifyMeetStarted" | "GoogleMeetStarted":
                 medium = (
-                    Medium.UNIFY_MEET
-                    if payload_cls == "UnifyMeetStarted"
-                    else Medium.PHONE_CALL
+                    Medium.GOOGLE_MEET
+                    if payload_cls == "GoogleMeetStarted"
+                    else (
+                        Medium.UNIFY_MEET
+                        if payload_cls == "UnifyMeetStarted"
+                        else Medium.PHONE_CALL
+                    )
                 )
                 entry = cm.contact_index.build_message(
                     contact_id=contact_id,

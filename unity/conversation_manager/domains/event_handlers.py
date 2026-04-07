@@ -346,9 +346,13 @@ async def _(
     )
 
 
-@EventHandler.register((PhoneCallStarted, UnifyMeetStarted, GoogleMeetStarted, WhatsAppCallStarted))
+@EventHandler.register(
+    (PhoneCallStarted, UnifyMeetStarted, GoogleMeetStarted, WhatsAppCallStarted),
+)
 async def _(
-    event: PhoneCallStarted | UnifyMeetStarted | GoogleMeetStarted | WhatsAppCallStarted,
+    event: (
+        PhoneCallStarted | UnifyMeetStarted | GoogleMeetStarted | WhatsAppCallStarted
+    ),
     cm: "ConversationManager",
     *args,
     **kwargs,
@@ -384,7 +388,7 @@ async def _(
         label = "Unify Meet"
     else:
         raise ValueError(f"Unknown event type: {event.__class__.__name__}")
-    
+
     cm.notifications_bar.push_notif(
         "Comms",
         f"{label} started with {sender_name}",
@@ -790,7 +794,9 @@ async def _(
         await cm.schedule_proactive_speech()
 
 
-@EventHandler.register((PhoneCallEnded, UnifyMeetEnded, GoogleMeetEnded, WhatsAppCallEnded))
+@EventHandler.register(
+    (PhoneCallEnded, UnifyMeetEnded, GoogleMeetEnded, WhatsAppCallEnded),
+)
 async def _(
     event: PhoneCallEnded | UnifyMeetEnded | GoogleMeetEnded | WhatsAppCallEnded,
     cm: "ConversationManager",
@@ -2081,7 +2087,14 @@ async def _(event: DirectMessageEvent, cm: "ConversationManager", *args, **kwarg
     contact_id = contact.get("contact_id") if contact else 1
     sender_name = _get_sender_name(contact)
 
-    medium = Medium.UNIFY_MEET if cm.mode == Mode.MEET else Medium.PHONE_CALL
+    if cm.call_manager.has_active_google_meet:
+        medium = Medium.GOOGLE_MEET
+    elif cm.mode == Mode.MEET:
+        medium = Medium.UNIFY_MEET
+    elif cm.call_manager._call_channel == "whatsapp_call":
+        medium = Medium.WHATSAPP_CALL
+    else:
+        medium = Medium.PHONE_CALL
     cm.contact_index.push_message(
         contact_id=contact_id,
         sender_name=sender_name,

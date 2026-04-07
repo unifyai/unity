@@ -571,9 +571,14 @@ class ConversationManager(metaclass=SingletonABCMeta):
         if not conv_state:
             return conversation_turns, last_message_timestamp
 
-        voice_medium = (
-            Medium.UNIFY_MEET if self.mode == Mode.MEET else Medium.PHONE_CALL
-        )
+        if self.call_manager.has_active_google_meet:
+            voice_medium = Medium.GOOGLE_MEET
+        elif self.mode == Mode.MEET:
+            voice_medium = Medium.UNIFY_MEET
+        elif self.call_manager._call_channel == "whatsapp_call":
+            voice_medium = Medium.WHATSAPP_CALL
+        else:
+            voice_medium = Medium.PHONE_CALL
         voice_thread = self.contact_index.get_messages_for_contact(
             contact_id,
             voice_medium,
@@ -1710,9 +1715,14 @@ class ConversationManager(metaclass=SingletonABCMeta):
             contact = self.get_active_contact()
             if contact:
                 contact_id = contact.get("contact_id")
-                voice_medium = (
-                    Medium.UNIFY_MEET if self.mode == Mode.MEET else Medium.PHONE_CALL
-                )
+                if self.call_manager.has_active_google_meet:
+                    voice_medium = Medium.GOOGLE_MEET
+                elif self.mode == Mode.MEET:
+                    voice_medium = Medium.UNIFY_MEET
+                elif self.call_manager._call_channel == "whatsapp_call":
+                    voice_medium = Medium.WHATSAPP_CALL
+                else:
+                    voice_medium = Medium.PHONE_CALL
                 self.contact_index.push_message(
                     contact_id=contact_id,
                     sender_name="You",
