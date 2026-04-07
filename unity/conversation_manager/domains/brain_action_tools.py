@@ -2287,8 +2287,10 @@ class ConversationManagerBrainActionTools:
                 Use for concrete data answers, completion confirmations, or
                 notifications the caller should hear immediately.
             response_text: Exact text to speak aloud when ``should_speak`` is
-                True. Must be concise (1-2 sentences), natural, first person.
-                Leave empty when ``should_speak`` is False.
+                True. Must be concise (1-2 sentences), natural, first person,
+                and **spoken prose** (no numbered lists, bullets, or outline
+                labels — TTS reads them literally). Leave empty when
+                ``should_speak`` is False.
         """
         return {"status": "guidance_noted"}
 
