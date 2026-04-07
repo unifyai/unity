@@ -1578,6 +1578,167 @@ class BaseDataManager(BaseStateManager):
         """
 
     @abstractmethod
+    def reduce_join(
+        self,
+        *,
+        tables: Union[str, List[str]],
+        join_expr: str,
+        select: Dict[str, str],
+        metric: str,
+        columns: Union[str, List[str]],
+        mode: str = "inner",
+        left_where: Optional[str] = None,
+        right_where: Optional[str] = None,
+        result_where: Optional[str] = None,
+        group_by: Optional[Union[str, List[str]]] = None,
+    ) -> Any:
+        """
+        Join two tables and aggregate the result in one atomic operation.
+
+        Combines a join with a reduce (aggregation). The join is performed first,
+        then the specified metric is computed over the result. The temporary join
+        context is created and cleaned up automatically.
+
+        Use this instead of manually calling ``join_tables`` + ``reduce`` +
+        ``delete_table`` -- it handles the temporary context lifecycle for you.
+
+        Parameters
+        ----------
+        tables : str | list[str]
+            Exactly TWO table names/context paths to join.
+            Example: ``["Orders", "Products"]`` or ``["Data/orders", "Data/products"]``
+
+        join_expr : str
+            Join condition expression using table names as prefixes.
+            Example: ``"Orders.product_id == Products.id"``
+
+            The table names in the expression are automatically rewritten to
+            fully-qualified context paths.
+
+        select : dict[str, str]
+            Mapping of source columns to output column names.
+            Keys use table names as prefixes; values are the output alias.
+
+            Example::
+
+                {
+                    "Orders.id": "order_id",
+                    "Orders.amount": "amount",
+                    "Products.name": "product_name"
+                }
+
+        metric : str
+            Reduction metric: ``"count"``, ``"sum"``, ``"mean"``, ``"var"``,
+            ``"std"``, ``"min"``, ``"max"``, ``"median"``, ``"mode"``,
+            ``"count_distinct"``.
+
+        columns : str | list[str]
+            Column(s) to compute the metric on (uses output aliases from ``select``).
+
+            For ``count``, use any output column (e.g., ``"order_id"``).
+            For ``sum``/``mean``/``min``/``max``, must be numeric output columns.
+
+        mode : str, default ``"inner"``
+            Join mode: ``"inner"``, ``"left"``, ``"right"``, or ``"outer"``.
+
+        left_where : str | None, default ``None``
+            Filter expression applied to LEFT table BEFORE the join.
+            Uses left table's column names without prefix.
+            Example: ``"status == 'active'"``
+
+        right_where : str | None, default ``None``
+            Filter expression applied to RIGHT table BEFORE the join.
+            Uses right table's column names without prefix.
+            Example: ``"category == 'Electronics'"``
+
+        result_where : str | None, default ``None``
+            Filter applied to the joined result BEFORE aggregation.
+            Must use column names from ``select`` values (the output aliases).
+            Example: ``"amount > 100"``
+
+        group_by : str | list[str] | None, default ``None``
+            Column(s) to group by before aggregation (uses output aliases).
+
+        Returns
+        -------
+        Any
+            Depends on ``columns`` and ``group_by``:
+
+            - **Single column, no group_by**: Scalar (int for count, float for sum)
+            - **Multiple columns, no group_by**: Dict mapping column_name to value
+            - **Single column, with group_by**: List of dicts with group columns + metric
+            - **Multiple columns, with group_by**: List of dicts with all metrics
+
+        Usage Examples
+        --------------
+        # Count orders per product (scalar -- no group_by)
+        total = dm.reduce_join(
+            tables=["Data/orders", "Data/products"],
+            join_expr="Data/orders.product_id == Data/products.id",
+            select={
+                "Data/orders.order_id": "order_id",
+                "Data/products.name": "product_name",
+            },
+            metric="count",
+            columns="order_id",
+        )
+
+        # Sum revenue grouped by product name
+        by_product = dm.reduce_join(
+            tables=["Data/orders", "Data/products"],
+            join_expr="Data/orders.product_id == Data/products.id",
+            select={
+                "Data/orders.amount": "amount",
+                "Data/products.name": "product_name",
+            },
+            metric="sum",
+            columns="amount",
+            group_by="product_name",
+        )
+
+        # Count with pre-filters and post-join filter
+        active_high_value = dm.reduce_join(
+            tables=["Data/orders", "Data/customers"],
+            join_expr="Data/orders.customer_id == Data/customers.id",
+            select={
+                "Data/orders.order_id": "order_id",
+                "Data/orders.amount": "amount",
+                "Data/customers.region": "region",
+            },
+            metric="count",
+            columns="order_id",
+            left_where="status == 'completed'",
+            right_where="active == True",
+            result_where="amount > 500",
+            group_by="region",
+        )
+
+        Anti-patterns
+        -------------
+        - WRONG: Using output aliases in ``join_expr``
+          CORRECT: Use source table.column references in ``join_expr``
+
+        - WRONG: Using source references in ``result_where``
+          CORRECT: Use output column names (values from ``select``) in ``result_where``
+
+        - WRONG: ``result_where`` references columns not in ``select``
+          CORRECT: Add all referenced columns to ``select``
+
+        Notes
+        -----
+        - Pre-filters (``left_where``, ``right_where``) are applied before joining,
+          which can significantly improve performance on large tables.
+        - The temporary join context is created, queried, and cleaned up automatically.
+        - Column references in ``join_expr`` and ``select`` keys use table/context prefixes.
+
+        See Also
+        --------
+        reduce : Aggregate a single table (no join).
+        filter_join : Join + filter with automatic temp table cleanup.
+        search_join : Join + semantic search with automatic temp table cleanup.
+        """
+
+    @abstractmethod
     def search_join(
         self,
         *,
@@ -2294,6 +2455,7 @@ class BaseDataManager(BaseStateManager):
         *,
         source_column: str,
         target_column: Optional[str] = None,
+        async_embeddings: bool = False,
     ) -> str:
         """
         Ensure an embedding column exists for a source column.
@@ -2313,6 +2475,21 @@ class BaseDataManager(BaseStateManager):
             Name for the embedding column. If ``None``, defaults to
             ``"_{source_column}_emb"`` following the convention.
 
+        async_embeddings : bool, default ``False``
+            When ``True``, the backend computes embeddings asynchronously.
+            The call returns immediately but vector values are populated in
+            the background, so a subsequent ``search`` may return zero
+            semantic results until processing completes.
+
+            When ``False`` (the default), embedding computation blocks until
+            vectors are fully materialised.  This is the correct choice for
+            interactive / on-demand workflows where the caller needs to
+            query the embeddings immediately after creation.
+
+            Bulk ingestion pipelines (``DataManager.ingest``,
+            ``FileManager`` parsing) set this to ``True`` internally because
+            throughput matters more than immediate availability.
+
         Returns
         -------
         str
@@ -2320,7 +2497,7 @@ class BaseDataManager(BaseStateManager):
 
         Usage Examples
         --------------
-        # Create embedding column with default name
+        # Create embedding column with default name (synchronous)
         emb_col = dm.ensure_vector_column("Data/docs", source_column="content")
         # Returns: "_content_emb"
 
@@ -2328,13 +2505,14 @@ class BaseDataManager(BaseStateManager):
         emb_col = dm.ensure_vector_column(
             "Data/products",
             source_column="description",
-            target_column="_desc_vectors"
+            target_column="_desc_vectors",
         )
 
         Notes
         -----
-        - Idempotent: safe to call multiple times
-        - Does NOT generate embeddings; use vectorize_rows for that
+        - Idempotent: safe to call multiple times.
+        - Does NOT generate embeddings for existing rows; use
+          ``vectorize_rows`` for that.
         """
 
     @abstractmethod
@@ -2346,6 +2524,7 @@ class BaseDataManager(BaseStateManager):
         target_column: Optional[str] = None,
         row_ids: Optional[List[int]] = None,
         batch_size: int = 100,
+        async_embeddings: bool = False,
     ) -> int:
         """
         Generate embeddings for rows.
@@ -2372,6 +2551,11 @@ class BaseDataManager(BaseStateManager):
             Number of rows to embed per batch. Larger batches are faster but
             use more memory.
 
+        async_embeddings : bool, default ``False``
+            When ``True``, the backend computes embeddings asynchronously and
+            the call returns immediately.  See ``ensure_vector_column`` for
+            the full trade-off discussion.
+
         Returns
         -------
         int
@@ -2379,7 +2563,7 @@ class BaseDataManager(BaseStateManager):
 
         Usage Examples
         --------------
-        # Embed all unembedded rows
+        # Embed all unembedded rows (synchronous, ready for search)
         count = dm.vectorize_rows("Data/documents", source_column="content")
         print(f"Embedded {count} rows")
 
@@ -2387,12 +2571,12 @@ class BaseDataManager(BaseStateManager):
         dm.vectorize_rows(
             "Data/products",
             source_column="description",
-            row_ids=[1, 2, 3, 4, 5]
+            row_ids=[1, 2, 3, 4, 5],
         )
 
         Notes
         -----
-        - Requires ensure_vector_column to be called first
-        - Skips rows that already have embeddings
-        - Uses the default embedding model configured for the project
+        - Requires ``ensure_vector_column`` to be called first.
+        - Skips rows that already have embeddings.
+        - Uses the default embedding model configured for the project.
         """

@@ -48,6 +48,7 @@ from unity.data_manager.ops.mutation_ops import (
 from unity.data_manager.ops.join_ops import (
     join_tables_impl,
     filter_join_impl,
+    reduce_join_impl,
     search_join_impl,
     filter_multi_join_impl,
     search_multi_join_impl,
@@ -376,6 +377,20 @@ class DataManager(BaseDataManager):
     # Join Operations
     # ──────────────────────────────────────────────────────────────────────────
 
+    @staticmethod
+    def _rewrite_join_paths(
+        original_tables: List[str],
+        resolved_tables: List[str],
+        join_expr: str,
+        select: Dict[str, str],
+    ) -> tuple:
+        """Rewrite short table paths in *join_expr* / *select* keys to resolved paths."""
+        for original, resolved in zip(original_tables, resolved_tables):
+            if original != resolved:
+                join_expr = join_expr.replace(original, resolved)
+                select = {k.replace(original, resolved): v for k, v in select.items()}
+        return join_expr, select
+
     @functools.wraps(BaseDataManager.join_tables, updated=())
     def join_tables(
         self,
@@ -392,6 +407,12 @@ class DataManager(BaseDataManager):
         resolved_left = self._resolve_context(left_table)
         resolved_right = self._resolve_context(right_table)
         resolved_dest = self._resolve_context(dest_table)
+        join_expr, select = self._rewrite_join_paths(
+            [left_table, right_table],
+            [resolved_left, resolved_right],
+            join_expr,
+            select,
+        )
         return join_tables_impl(
             left_table=resolved_left,
             right_table=resolved_right,
@@ -421,6 +442,12 @@ class DataManager(BaseDataManager):
         if isinstance(tables, str):
             tables = [tables]
         resolved_tables = [self._resolve_context(t) for t in tables]
+        join_expr, select = self._rewrite_join_paths(
+            tables,
+            resolved_tables,
+            join_expr,
+            select,
+        )
 
         return filter_join_impl(
             tables=resolved_tables,
@@ -432,6 +459,45 @@ class DataManager(BaseDataManager):
             result_where=result_where,
             result_limit=result_limit,
             result_offset=result_offset,
+            tmp_context_prefix=self._base_ctx,
+        )
+
+    @functools.wraps(BaseDataManager.reduce_join, updated=())
+    def reduce_join(
+        self,
+        *,
+        tables: Union[str, List[str]],
+        join_expr: str,
+        select: Dict[str, str],
+        metric: str,
+        columns: Union[str, List[str]],
+        mode: str = "inner",
+        left_where: Optional[str] = None,
+        right_where: Optional[str] = None,
+        result_where: Optional[str] = None,
+        group_by: Optional[Union[str, List[str]]] = None,
+    ) -> Any:
+        if isinstance(tables, str):
+            tables = [tables]
+        resolved_tables = [self._resolve_context(t) for t in tables]
+        join_expr, select = self._rewrite_join_paths(
+            tables,
+            resolved_tables,
+            join_expr,
+            select,
+        )
+
+        return reduce_join_impl(
+            tables=resolved_tables,
+            join_expr=join_expr,
+            select=select,
+            metric=metric,
+            columns=columns,
+            mode=mode,
+            left_where=left_where,
+            right_where=right_where,
+            result_where=result_where,
+            group_by=group_by,
             tmp_context_prefix=self._base_ctx,
         )
 
@@ -453,6 +519,12 @@ class DataManager(BaseDataManager):
         if isinstance(tables, str):
             tables = [tables]
         resolved_tables = [self._resolve_context(t) for t in tables]
+        join_expr, select = self._rewrite_join_paths(
+            tables,
+            resolved_tables,
+            join_expr,
+            select,
+        )
 
         return search_join_impl(
             tables=resolved_tables,
@@ -614,6 +686,7 @@ class DataManager(BaseDataManager):
         *,
         source_column: str,
         target_column: Optional[str] = None,
+        async_embeddings: bool = False,
     ) -> str:
         resolved = self._resolve_context(context)
         target = target_column or f"_{source_column}_emb"
@@ -623,7 +696,7 @@ class DataManager(BaseDataManager):
             source_column=source_column,
             derived_expr=None,
             from_ids=None,
-            async_embeddings=True,
+            async_embeddings=async_embeddings,
         )
         return target
 
@@ -636,6 +709,7 @@ class DataManager(BaseDataManager):
         target_column: Optional[str] = None,
         row_ids: Optional[List[int]] = None,
         batch_size: int = 100,
+        async_embeddings: bool = False,
     ) -> int:
         resolved = self._resolve_context(context)
         target = target_column or f"_{source_column}_emb"
@@ -645,6 +719,6 @@ class DataManager(BaseDataManager):
             source_column=source_column,
             derived_expr=None,
             from_ids=row_ids,
-            async_embeddings=True,
+            async_embeddings=async_embeddings,
         )
         return len(row_ids) if row_ids else 0

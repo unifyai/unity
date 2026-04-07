@@ -19,6 +19,7 @@ import unify
 from unity.common.filter_utils import normalize_filter_expr
 from unity.common.search_utils import table_search_top_k
 from unity.common.embed_utils import list_private_fields
+from unity.data_manager.ops.query_ops import reduce_impl
 
 logger = logging.getLogger(__name__)
 
@@ -237,6 +238,102 @@ def filter_join_impl(
             )
         ]
         return rows
+    finally:
+        try:
+            unify.delete_context(dest_context)
+        except Exception:
+            pass
+
+
+def reduce_join_impl(
+    *,
+    tables: Union[str, List[str]],
+    join_expr: str,
+    select: Dict[str, str],
+    metric: str,
+    columns: Union[str, List[str]],
+    mode: str = "inner",
+    left_where: Optional[str] = None,
+    right_where: Optional[str] = None,
+    result_where: Optional[str] = None,
+    group_by: Optional[Union[str, List[str]]] = None,
+    tmp_context_prefix: str,
+) -> Any:
+    """
+    Join two contexts and aggregate the result.
+
+    Mirrors filter_join_impl but calls reduce_impl instead of get_logs.
+
+    Parameters
+    ----------
+    tables : str | list[str]
+        Exactly TWO fully-qualified context paths to join.
+    join_expr : str
+        Join condition expression using context paths as prefixes.
+    select : dict[str, str]
+        Column mapping from source (context.column) to output names.
+    metric : str
+        Reduction metric (count, sum, mean, etc.).
+    columns : str | list[str]
+        Column(s) to compute the metric on (output aliases from select).
+    mode : str, default "inner"
+        Join mode.
+    left_where, right_where : str | None
+        Pre-join filters for left/right tables.
+    result_where : str | None
+        Post-join filter on the result (uses output column names).
+    group_by : str | list[str] | None
+        Column(s) to group by before aggregation (output aliases).
+    tmp_context_prefix : str
+        Prefix for temporary context.
+
+    Returns
+    -------
+    Any
+        Scalar value or grouped dict depending on group_by.
+    """
+    import re as _re
+
+    if isinstance(tables, str):
+        tables = [tables]
+    if len(tables) != 2:
+        raise ValueError("Exactly TWO tables are required.")
+
+    if result_where:
+
+        def _qualified_refs(expr: str) -> set:
+            return set(
+                m.group(0)
+                for m in _re.finditer(r"\b[A-Za-z_]\w*\.[A-Za-z_]\w*\b", expr)
+            )
+
+        missing = _qualified_refs(result_where) - set(select)
+        if missing:
+            raise ValueError(
+                "`result_where` references column(s) that are not present in `select`. "
+                "Either add them to `select` or move the predicate to `left_where` / `right_where`. "
+                f"Missing: {', '.join(sorted(missing))}",
+            )
+
+    dest_context = f"{tmp_context_prefix}/_tmp_join_{uuid.uuid4().hex[:8]}"
+    _create_join(
+        dest_context=dest_context,
+        tables=tables,
+        join_expr=join_expr,
+        select=select,
+        mode=mode,
+        left_where=left_where,
+        right_where=right_where,
+    )
+
+    try:
+        return reduce_impl(
+            dest_context,
+            metric=metric,
+            columns=columns,
+            filter=result_where,
+            group_by=group_by,
+        )
     finally:
         try:
             unify.delete_context(dest_context)
