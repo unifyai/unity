@@ -32,6 +32,7 @@ def test_data_manager_in_primitives():
     assert hasattr(dm, "search")
     assert hasattr(dm, "reduce")
     assert hasattr(dm, "filter_join")
+    assert hasattr(dm, "reduce_join")
     assert hasattr(dm, "search_join")
 
 
@@ -53,6 +54,7 @@ def test_data_manager_has_expected_methods():
 
     # Join operations
     assert callable(getattr(dm, "filter_join", None))
+    assert callable(getattr(dm, "reduce_join", None))
     assert callable(getattr(dm, "search_join", None))
     assert callable(getattr(dm, "filter_multi_join", None))
     assert callable(getattr(dm, "search_multi_join", None))

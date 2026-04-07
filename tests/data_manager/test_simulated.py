@@ -40,6 +40,10 @@ def test_simulated_dm_docstrings_match_base():
         BaseDataManager.reduce.__doc__.strip()
         in SimulatedDataManager.reduce.__doc__.strip()
     )
+    assert (
+        BaseDataManager.reduce_join.__doc__.strip()
+        in SimulatedDataManager.reduce_join.__doc__.strip()
+    )
 
 
 # ────────────────────────────────────────────────────────────────────────────
@@ -556,6 +560,119 @@ def test_filter_join_with_filter(seeded_dm):
 
     # Should only include shipped orders
     assert all(r.get("status") == "shipped" for r in results)
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# reduce_join operations
+# ────────────────────────────────────────────────────────────────────────────
+
+
+def test_reduce_join_count(seeded_dm):
+    """reduce_join should return a scalar count of joined rows."""
+    count = seeded_dm.reduce_join(
+        tables=["test/orders", "test/products"],
+        join_expr="Data/test/orders.product_id == Data/test/products.id",
+        select={
+            "Data/test/orders.order_id": "order_id",
+            "Data/test/products.name": "name",
+        },
+        metric="count",
+        columns="order_id",
+    )
+
+    assert isinstance(count, int)
+    assert count == 5
+
+
+def test_reduce_join_sum(seeded_dm):
+    """reduce_join with sum metric should return a float."""
+    total = seeded_dm.reduce_join(
+        tables=["test/orders", "test/products"],
+        join_expr="Data/test/orders.product_id == Data/test/products.id",
+        select={
+            "Data/test/orders.order_id": "order_id",
+            "Data/test/products.price": "price",
+        },
+        metric="sum",
+        columns="price",
+    )
+
+    assert isinstance(total, float)
+    assert total > 0
+
+
+def test_reduce_join_with_group_by(seeded_dm):
+    """reduce_join with group_by should return a list of dicts."""
+    results = seeded_dm.reduce_join(
+        tables=["test/orders", "test/products"],
+        join_expr="Data/test/orders.product_id == Data/test/products.id",
+        select={
+            "Data/test/orders.order_id": "order_id",
+            "Data/test/products.name": "name",
+        },
+        metric="count",
+        columns="order_id",
+        group_by="name",
+    )
+
+    assert isinstance(results, list)
+    assert len(results) > 0
+    for r in results:
+        assert "name" in r
+        assert "count" in r
+        assert isinstance(r["count"], int)
+
+
+def test_reduce_join_with_result_where(seeded_dm):
+    """reduce_join should apply result_where before aggregation."""
+    unfiltered = seeded_dm.reduce_join(
+        tables=["test/orders", "test/products"],
+        join_expr="Data/test/orders.product_id == Data/test/products.id",
+        select={
+            "Data/test/orders.order_id": "order_id",
+            "Data/test/products.price": "price",
+        },
+        metric="count",
+        columns="order_id",
+    )
+
+    filtered = seeded_dm.reduce_join(
+        tables=["test/orders", "test/products"],
+        join_expr="Data/test/orders.product_id == Data/test/products.id",
+        select={
+            "Data/test/orders.order_id": "order_id",
+            "Data/test/products.price": "price",
+        },
+        metric="count",
+        columns="order_id",
+        result_where="price > 30",
+    )
+
+    assert isinstance(filtered, int)
+    assert filtered <= unfiltered
+
+
+def test_reduce_join_validates_table_count(simulated_dm):
+    """reduce_join should raise ValueError when not given exactly 2 tables."""
+    simulated_dm.create_table("test/t1", fields={"id": "int"})
+
+    with pytest.raises(ValueError, match="Exactly TWO"):
+        simulated_dm.reduce_join(
+            tables=["test/t1"],
+            join_expr="t1.id == t2.id",
+            select={"t1.id": "id"},
+            metric="count",
+            columns="id",
+        )
+
+    with pytest.raises(ValueError, match="Exactly TWO"):
+        simulated_dm.reduce_join(
+            tables=["test/t1", "test/t1", "test/t1"],
+            join_expr="t1.id == t2.id",
+            select={"t1.id": "id"},
+            metric="count",
+            columns="id",
+        )
 
 
 # ────────────────────────────────────────────────────────────────────────────
