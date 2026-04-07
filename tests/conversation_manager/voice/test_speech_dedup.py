@@ -21,7 +21,7 @@ Test categories:
 from __future__ import annotations
 
 import json
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -65,7 +65,14 @@ class TestSpeechDeduplicationCheckerUnit:
 
     async def test_evaluate_returns_structured_output(self):
         """With recent utterances and proposed speech, the evaluator makes
-        an LLM call and returns a valid SpeechDedup result."""
+        an LLM call and returns a valid SpeechDedup result.
+
+        Uses FAST_BRAIN_MODEL for a cheaper round-trip in default CI.
+        Production ``SpeechDeduplicationChecker()`` uses ``UNIFY_MODEL``
+        (Anthropic); see ``test_evaluate_sends_user_role_message`` for the
+        message-shape contract Anthropic requires, and the eval test for a
+        full default-model call.
+        """
         from unity.settings import SETTINGS
 
         checker = SpeechDeduplicationChecker(
@@ -95,6 +102,41 @@ class TestSpeechDeduplicationCheckerUnit:
 
         assert result.already_covered is False
         assert "failed" in result.reasoning.lower()
+
+    async def test_evaluate_sends_user_role_message(self):
+        """LiteLLM/Anthropic reject chat completions with only ``system`` messages.
+
+        ``SpeechDeduplicationChecker()`` defaults to ``UNIFY_MODEL`` (Anthropic in
+        prod). This test does not call the API: it asserts we always include at
+        least one non-system message so provider transforms do not empty the payload.
+        """
+        captured: dict = {}
+
+        mock_client = MagicMock()
+        mock_client.set_response_format = MagicMock()
+
+        async def capture_generate(*, messages=None, **_kwargs):
+            captured["messages"] = messages
+            return '{"already_covered": false, "reasoning": "ok"}'
+
+        mock_client.generate = AsyncMock(side_effect=capture_generate)
+
+        with patch(
+            "unity.conversation_manager.domains.speech_dedup.new_llm_client",
+            return_value=mock_client,
+        ):
+            checker = SpeechDeduplicationChecker(model="claude-3-5-haiku@anthropic")
+            result = await checker.evaluate(
+                proposed_speech="The report is ready.",
+                recent_utterances=["I already told you the report is ready."],
+            )
+
+        assert result.already_covered is False
+        assert captured.get("messages") is not None
+        roles = [m["role"] for m in captured["messages"]]
+        assert "system" in roles
+        assert "user" in roles
+        assert any(m["role"] != "system" for m in captured["messages"])
 
 
 # =============================================================================
@@ -313,6 +355,23 @@ class TestSpeechDedupGateIntegration:
 class TestSpeechDedupEval:
     """End-to-end eval test verifying the LLM correctly identifies when the
     fast brain has already covered the slow brain's proposed speech."""
+
+    async def test_default_model_structured_completion_roundtrip(self):
+        """Production path: no ``model=`` → ``UNIFY_MODEL`` (Anthropic).
+
+        Catches provider-specific request-shape or schema issues that mocks miss.
+        """
+        checker = SpeechDeduplicationChecker()
+        result = await checker.evaluate(
+            proposed_speech="Found three Italian restaurants nearby.",
+            recent_utterances=[
+                "Yeah, I found three Italian places near you — "
+                "the top rated is Chez Laurent.",
+            ],
+        )
+        assert isinstance(result, SpeechDedup)
+        assert isinstance(result.already_covered, bool)
+        assert isinstance(result.reasoning, str)
 
     @_handle_project
     async def test_race_condition_dedup_e2e(
