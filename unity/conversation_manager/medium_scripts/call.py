@@ -1037,7 +1037,8 @@ async def entrypoint(ctx: agents.JobContext):
     session_ready = False
 
     def on_status(data: dict) -> None:
-        """Handle status events (call_answered, stop)."""
+        """Handle status events (call_answered, stop, gmeet_session_id)."""
+        nonlocal gmeet_session_id
         event_type = data.get("type", "")
         _log.call_status(event_type)
         touch_activity()
@@ -1045,6 +1046,8 @@ async def entrypoint(ctx: agents.JobContext):
         if event_type == "call_answered":
             call_answered_flag.set()
             assistant.set_call_received()
+        elif event_type == "gmeet_session_id":
+            gmeet_session_id = data.get("session_id", "")
         elif event_type == "stop":
             ctx.shutdown(reason="stopped")
 

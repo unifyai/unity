@@ -415,8 +415,7 @@ class LivekitCallManager:
         if self._socket_server:
             await self._socket_server.set_forward_channels(list(_BASE_FORWARD_CHANNELS))
 
-        is_boss = contact.get("contact_id") == 1
-        if is_boss:
+        if contact.get("is_system", False):
             self._start_boss_notification_rendering()
 
         gmeet_extra = {
@@ -464,6 +463,14 @@ class LivekitCallManager:
             f"{ICONS['ipc']} [LivekitCallManager] Google Meet joined "
             f"(session={self._gmeet_session_id})",
         )
+
+        if self._socket_server and self._gmeet_session_id:
+            await self._socket_server.queue_for_clients(
+                "app:call:status",
+                json.dumps(
+                    {"type": "gmeet_session_id", "session_id": self._gmeet_session_id},
+                ),
+            )
 
         self._gmeet_monitor_task = asyncio.create_task(
             self._monitor_google_meet(contact),
