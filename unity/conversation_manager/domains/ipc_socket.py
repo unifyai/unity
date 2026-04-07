@@ -341,17 +341,21 @@ class CallEventSocketServer:
                 break
 
     async def _handle_client(self, client_socket: socket.socket) -> None:
-        """Runs in I/O loop. Reads messages from a connected client."""
+        """Runs in I/O loop. Reads messages from a connected client.
+
+        Uses a bare ``sock_recv`` (no ``asyncio.wait_for`` timeout) to avoid
+        the race where ``wait_for`` cancels a ``sock_recv`` that has already
+        consumed bytes from the kernel buffer, silently dropping the message.
+        Shutdown is signalled by closing the socket (see ``_shutdown_io``),
+        which causes ``sock_recv`` to return empty bytes or raise ``OSError``.
+        """
         loop = asyncio.get_running_loop()
         buffer = b""
 
         try:
             while self._running:
                 try:
-                    chunk = await asyncio.wait_for(
-                        loop.sock_recv(client_socket, 4096),
-                        timeout=1.0,
-                    )
+                    chunk = await loop.sock_recv(client_socket, 4096)
                     if not chunk:
                         break
 
@@ -362,8 +366,8 @@ class CallEventSocketServer:
                         if line:
                             self._dispatch_to_main_loop(line.decode("utf-8"))
 
-                except asyncio.TimeoutError:
-                    continue
+                except (OSError, ConnectionError):
+                    break
                 except asyncio.CancelledError:
                     break
 
@@ -719,14 +723,20 @@ class CallEventSocketClient:
         return True
 
     async def _receive_loop(self) -> None:
-        """Background loop to receive events from the server."""
+        """Background loop to receive events from the server.
+
+        Uses a bare ``sock_recv`` (no ``asyncio.wait_for`` timeout) to avoid
+        the race where ``wait_for`` cancels a ``sock_recv`` that has already
+        consumed bytes from the kernel buffer, silently dropping the message.
+        Shutdown is signalled by closing the socket, which causes ``sock_recv``
+        to return empty bytes or raise ``OSError``.
+        """
         loop = asyncio.get_event_loop()
         buffer = b""
         reconnect_attempts = 0
         max_reconnect_attempts = 3
         iteration = 0
         recv_count = 0
-        timeout_count = 0
 
         LOGGER.debug(
             f"{ICONS['ipc']} [CallEventSocketClient] _receive_loop ENTERED "
@@ -760,10 +770,7 @@ class CallEventSocketClient:
                     reconnect_attempts = 0
 
                 try:
-                    chunk = await asyncio.wait_for(
-                        loop.sock_recv(self._socket, 4096),
-                        timeout=1.0,
-                    )
+                    chunk = await loop.sock_recv(self._socket, 4096)
                     if not chunk:
                         LOGGER.debug(
                             f"{ICONS['ipc']} [CallEventSocketClient] Server disconnected",
@@ -785,16 +792,19 @@ class CallEventSocketClient:
                         if line:
                             await self._process_received_message(line.decode("utf-8"))
 
-                except asyncio.TimeoutError:
-                    timeout_count += 1
-                    if timeout_count % 30 == 1:
+                except (OSError, ConnectionError):
+                    if self._running:
                         LOGGER.debug(
-                            f"{ICONS['ipc']} [CallEventSocketClient] heartbeat: "
-                            f"iteration={iteration} timeouts={timeout_count} "
-                            f"recv={recv_count} connected={self._connected} "
-                            f"running={self._running} "
-                            f"socket_fd={self._socket.fileno() if self._socket else 'None'}",
+                            f"{ICONS['ipc']} [CallEventSocketClient] Socket closed/error, "
+                            f"iteration={iteration}",
                         )
+                        self._connected = False
+                        if self._socket:
+                            try:
+                                self._socket.close()
+                            except Exception:
+                                pass
+                            self._socket = None
                     continue
                 except asyncio.CancelledError:
                     break
@@ -821,8 +831,7 @@ class CallEventSocketClient:
             self._running = False
             LOGGER.debug(
                 f"{ICONS['ipc']} [CallEventSocketClient] Receive loop stopped "
-                f"iterations={iteration} recv={recv_count} "
-                f"timeouts={timeout_count}",
+                f"iterations={iteration} recv={recv_count}",
             )
 
     async def _process_received_message(self, message: str) -> None:
