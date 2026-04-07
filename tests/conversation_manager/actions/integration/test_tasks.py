@@ -121,27 +121,46 @@ async def test_task_lookup_by_name_returns_description(initialized_cm_codeact):
 @pytest.mark.asyncio
 @pytest.mark.timeout(300)
 @_handle_project
-async def test_task_mark_completed_persists_status(initialized_cm_codeact):
-    """Mark a task completed via CM→Actor and verify status persisted."""
+async def test_task_update_description_persists(initialized_cm_codeact):
+    """Update a task's description via CM→Actor and verify the change persisted.
+
+    Tests two sequential CM→Actor round-trips where the second mutates
+    state created by the first.
+    """
     cm = initialized_cm_codeact
     cm.cm.vm_ready = True
     cm.cm.file_sync_complete = True
     task_name = "Close loop with Bob (integration)"
-    task_desc = "Reply to Bob with the final decision."
+    original_desc = "Reply to Bob with the final decision."
+    updated_desc = "Reply to Bob with the final decision and attach the Q3 summary."
 
     result1 = await cm.step_until_wait(
         SMSReceived(
             contact=BOSS,
-            content=f"Create a task named '{task_name}' with description '{task_desc}'.",
+            content=f"Create a task named '{task_name}' with description '{original_desc}'.",
         ),
     )
     h1 = get_actor_started_event(result1).handle_id
-    _ = await wait_for_actor_completion(cm, h1, timeout=300)
+    final1 = await wait_for_actor_completion(cm, h1, timeout=300)
+
+    # The test driver only processes events inside step_until_wait, so the
+    # ActorResult from the completed action sits in the broker unprocessed.
+    # Explicitly step the CM with the ActorResult so it moves the action
+    # from in_flight_actions to completed_actions before the next message.
+    from unity.conversation_manager.events import ActorResult
+
+    await cm.step(
+        ActorResult(handle_id=h1, success=True, result=final1),
+        run_llm=False,
+    )
 
     result2 = await cm.step_until_wait(
         SMSReceived(
             contact=BOSS,
-            content=f"Mark the task named '{task_name}' as completed.",
+            content=(
+                f"Update the description of the task named '{task_name}' to: "
+                f"'{updated_desc}'"
+            ),
         ),
     )
     h2 = get_actor_started_event(result2).handle_id
@@ -151,7 +170,7 @@ async def test_task_mark_completed_persists_status(initialized_cm_codeact):
     verify_task_in_db(
         cm,
         task_id,
-        expected_fields={"status": "completed"},
+        expected_fields={"description": updated_desc},
     )
     assert_no_errors(result2)
 
