@@ -210,7 +210,7 @@ class TestJobDispatch:
 
             mock_dispatch.assert_called_once_with(
                 make_room_name("42", "phone"),
-                "phone",
+                "phone_call",
                 sample_contact,
                 boss_contact,
                 False,
@@ -240,7 +240,7 @@ class TestJobDispatch:
 
             mock_dispatch.assert_called_once_with(
                 "unity_42_meet",
-                "unify",
+                "unify_meet",
                 sample_contact,
                 boss_contact,
                 False,
