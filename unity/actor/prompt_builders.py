@@ -390,7 +390,7 @@ _EXTERNAL_APP_INTEGRATION = textwrap.dedent("""
     1. **Check for credentials**: Use `primitives.secrets.ask(...)` to check
        if API credentials, tokens, or keys for the service are already stored.
        If not, inform the caller and explain they can add them via the
-       console's Secrets page (Resources → Secrets).
+       console's Secrets page (⋮ menu → Secrets on the assistant list).
 
     2. **Install the SDK**: Use `install_python_packages` to install the
        service's official Python SDK (e.g., `google-cloud-storage` for Google
