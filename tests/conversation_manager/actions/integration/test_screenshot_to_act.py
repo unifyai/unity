@@ -68,14 +68,25 @@ async def test_screenshot_crop_via_act(initialized_cm_codeact):
     grub_b64 = base64.b64encode(GRUB_IMAGE_PATH.read_bytes()).decode()
 
     cm.cm.user_screen_share_active = True
-    cm.cm._screenshot_buffer.append(
-        ScreenshotEntry(
-            b64=grub_b64,
-            utterance="I'm stuck on this screen, can you help?",
-            timestamp=datetime.now(timezone.utc),
-            source="user",
-        ),
+    entry = ScreenshotEntry(
+        b64=grub_b64,
+        utterance="I'm stuck on this screen, can you help?",
+        timestamp=datetime.now(timezone.utc),
+        source="user",
     )
+    cm.cm._screenshot_buffer.append(entry)
+
+    # Pre-write the screenshot to disk so the actor can read it.
+    # In production, _register_screenshots_background handles this as a
+    # fire-and-forget task after the LLM turn. In tests, step_until_wait
+    # returns before that task completes, so we write eagerly.
+    from unity.conversation_manager.types.screenshot import (
+        generate_screenshot_path,
+        write_screenshot_to_disk,
+    )
+
+    screenshot_path = generate_screenshot_path(entry)
+    write_screenshot_to_disk(entry, screenshot_path)
 
     # ------------------------------------------------------------------
     # Step 2: Send a message that requires act() to process the screenshot
