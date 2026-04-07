@@ -99,7 +99,18 @@ class SpeechDeduplicationChecker:
                 recent_utterances=formatted_utterances,
                 proposed_speech=proposed_speech,
             )
-            messages = [{"role": "system", "content": system_content}]
+            # Anthropic (via litellm) rejects requests with only system messages;
+            # at least one user turn is required.
+            messages = [
+                {"role": "system", "content": system_content},
+                {
+                    "role": "user",
+                    "content": (
+                        "Apply the instructions above and output JSON matching "
+                        "the SpeechDedup schema."
+                    ),
+                },
+            ]
             response = await client.generate(messages=messages)
             return SpeechDedup.model_validate_json(response)
         except Exception as e:

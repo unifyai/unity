@@ -117,7 +117,18 @@ class SpeechUrgencyEvaluator:
                 utterance=utterance,
                 previous_utterance_section=prev_section,
             )
-            messages = [{"role": "system", "content": system_content}]
+            # Anthropic (via litellm) rejects requests with only system messages;
+            # at least one user turn is required.
+            messages = [
+                {"role": "system", "content": system_content},
+                {
+                    "role": "user",
+                    "content": (
+                        "Apply the instructions above and output JSON matching "
+                        "the SpeechUrgency schema."
+                    ),
+                },
+            ]
             response = await client.generate(messages=messages)
             return SpeechUrgency.model_validate_json(response)
         except Exception as e:
