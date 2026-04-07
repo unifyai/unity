@@ -9,6 +9,9 @@ Usage:
     # Expand specific paths to their leaf directories
     python discover_test_paths.py tests/function_manager tests/actor
 
+    # Exclude directories from discovery
+    python discover_test_paths.py --exclude tests/actor --exclude tests/conversation_manager
+
 When explicit paths are provided:
 - Files are kept as-is (no expansion)
 - Directories are expanded to their leaf sub-directories using Option A algorithm
@@ -19,8 +22,8 @@ Option A algorithm:
   direct test files (space-separated), plus recursive jobs for subdirs
 """
 
+import argparse
 import os
-import sys
 from pathlib import Path
 
 EXCLUDE_DIRS = {
@@ -32,6 +35,14 @@ EXCLUDE_DIRS = {
     ".venv",
     "venv",
 }
+
+_exclude_prefixes: list[str] = []
+
+
+def _is_excluded(path: str | Path) -> bool:
+    """Return True if path starts with any --exclude prefix."""
+    s = str(path)
+    return any(s == p or s.startswith(p + "/") for p in _exclude_prefixes)
 
 
 def has_test_files(directory):
@@ -46,9 +57,17 @@ def has_test_files(directory):
 def has_test_subdirs(directory):
     """Check if directory has subdirectories that contain test files (recursively)."""
     for subdir in directory.iterdir():
-        if subdir.is_dir() and subdir.name not in EXCLUDE_DIRS:
+        if (
+            subdir.is_dir()
+            and subdir.name not in EXCLUDE_DIRS
+            and not _is_excluded(subdir)
+        ):
             for root, dirs, files in os.walk(subdir):
-                dirs[:] = [d for d in dirs if d not in EXCLUDE_DIRS]
+                dirs[:] = [
+                    d
+                    for d in dirs
+                    if d not in EXCLUDE_DIRS and not _is_excluded(os.path.join(root, d))
+                ]
                 if any(f.startswith("test_") and f.endswith(".py") for f in files):
                     return True
     return False
@@ -67,7 +86,7 @@ def get_direct_test_files(directory):
 
 def collect_paths(directory, paths):
     """Recursively collect test paths using Option A algorithm."""
-    if not directory.is_dir():
+    if not directory.is_dir() or _is_excluded(directory):
         return
 
     has_files = has_test_files(directory)
@@ -81,12 +100,20 @@ def collect_paths(directory, paths):
         direct_files = get_direct_test_files(directory)
         paths.append(" ".join(str(f) for f in direct_files))
         for subdir in sorted(directory.iterdir()):
-            if subdir.is_dir() and subdir.name not in EXCLUDE_DIRS:
+            if (
+                subdir.is_dir()
+                and subdir.name not in EXCLUDE_DIRS
+                and not _is_excluded(subdir)
+            ):
                 collect_paths(subdir, paths)
     elif has_subdirs:
         # No direct test files, but has subdirs with tests: just recurse
         for subdir in sorted(directory.iterdir()):
-            if subdir.is_dir() and subdir.name not in EXCLUDE_DIRS:
+            if (
+                subdir.is_dir()
+                and subdir.name not in EXCLUDE_DIRS
+                and not _is_excluded(subdir)
+            ):
                 collect_paths(subdir, paths)
 
 
@@ -99,6 +126,9 @@ def expand_path(path_str):
     """
     path = Path(path_str)
     paths = []
+
+    if _is_excluded(path):
+        return []
 
     if not path.exists():
         # Path doesn't exist - return as-is and let pytest handle the error
@@ -122,12 +152,20 @@ def expand_path(path_str):
             direct_files = get_direct_test_files(path)
             paths.append(" ".join(str(f) for f in direct_files))
             for subdir in sorted(path.iterdir()):
-                if subdir.is_dir() and subdir.name not in EXCLUDE_DIRS:
+                if (
+                    subdir.is_dir()
+                    and subdir.name not in EXCLUDE_DIRS
+                    and not _is_excluded(subdir)
+                ):
                     collect_paths(subdir, paths)
         elif has_subdirs:
             # No direct test files, but has subdirs with tests: recurse
             for subdir in sorted(path.iterdir()):
-                if subdir.is_dir() and subdir.name not in EXCLUDE_DIRS:
+                if (
+                    subdir.is_dir()
+                    and subdir.name not in EXCLUDE_DIRS
+                    and not _is_excluded(subdir)
+                ):
                     collect_paths(subdir, paths)
         else:
             # No test files at all - return as-is and let pytest handle it
@@ -141,33 +179,50 @@ def discover_all():
     test_root = Path("tests")
     paths = []
 
-    # Handle test files directly in tests/ root (e.g., test_settings.py)
     for item in sorted(test_root.iterdir()):
+        if _is_excluded(item):
+            continue
         if (
             item.is_file()
             and item.name.startswith("test_")
             and item.name.endswith(".py")
         ):
             paths.append(str(item))
-        elif item.is_dir() and item.name.startswith("test"):
+        elif item.is_dir() and item.name not in EXCLUDE_DIRS:
             collect_paths(item, paths)
 
     return paths
 
 
 def main():
-    if len(sys.argv) > 1:
-        # Explicit paths provided - expand each one
+    parser = argparse.ArgumentParser(
+        description="Discover test paths for CI parallelism",
+    )
+    parser.add_argument(
+        "paths",
+        nargs="*",
+        help="Paths to expand (default: discover all)",
+    )
+    parser.add_argument(
+        "--exclude",
+        action="append",
+        default=[],
+        help="Directory prefix to exclude (repeatable)",
+    )
+    args = parser.parse_args()
+
+    global _exclude_prefixes
+    _exclude_prefixes = [p.rstrip("/") for p in args.exclude]
+
+    if args.paths:
         all_paths = []
-        for arg in sys.argv[1:]:
-            expanded = expand_path(arg)
+        for p in args.paths:
+            expanded = expand_path(p)
             all_paths.extend(expanded)
         paths = all_paths
     else:
-        # No arguments - discover all from tests/
         paths = discover_all()
 
-    # Output unique paths, sorted
     for p in sorted(set(paths)):
         print(p)
 
