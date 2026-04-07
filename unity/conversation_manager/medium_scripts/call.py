@@ -309,7 +309,7 @@ class Assistant(Agent):
                             samplerate=frame.sample_rate,
                             channels=frame.num_channels,
                             dtype="int16",
-                            latency="low",
+                            latency="high",
                         )
                         out_stream.start()
                         writer_thread = threading.Thread(
@@ -485,27 +485,7 @@ async def entrypoint(ctx: agents.JobContext):
     _gmeet_speaker_map: dict[str, dict] = {}  # speaker_id → contact dict
     _gmeet_last_speaker_id: str | None = None
     _gmeet_auth_key = os.environ.get("UNIFY_KEY", "")
-
-    async def _poll_gmeet_active_speaker() -> str | None:
-        """Fetch the current activeSpeaker name from agent-service."""
-        if not gmeet_session_id or not gmeet_agent_service_url:
-            return None
-        import aiohttp as _aiohttp
-
-        try:
-            async with _aiohttp.ClientSession() as s:
-                resp = await s.get(
-                    f"{gmeet_agent_service_url}/googlemeet/state",
-                    params={"sessionId": gmeet_session_id},
-                    headers={"authorization": f"Bearer {_gmeet_auth_key}"},
-                    timeout=_aiohttp.ClientTimeout(total=5),
-                )
-                if resp.status == 200:
-                    body = await resp.json()
-                    return body.get("activeSpeaker")
-        except Exception:
-            pass
-        return None
+    _gmeet_cached_active_speaker: str | None = None
 
     def _resolve_contact_by_name(display_name: str) -> dict | None:
         """Best-effort contact resolution from a Meet display name.
@@ -525,10 +505,11 @@ async def entrypoint(ctx: agents.JobContext):
                 return candidate
         return None
 
-    async def _resolve_speaker(speaker_id: str | None) -> tuple[dict, str | None]:
+    def _resolve_speaker(speaker_id: str | None) -> tuple[dict, str | None]:
         """Resolve a Deepgram speaker_id to (contact_dict, display_name).
 
-        Returns the original caller contact if resolution fails.
+        Reads from the background-polled ``_gmeet_cached_active_speaker``
+        on cache miss — no HTTP call on the utterance publishing path.
         """
         if not speaker_id or channel != "google_meet":
             return contact, None
@@ -538,7 +519,7 @@ async def entrypoint(ctx: agents.JobContext):
             label = f"{resolved.get('first_name', '')} {resolved.get('surname', '')}".strip()
             return resolved, label or None
 
-        active_name = await _poll_gmeet_active_speaker()
+        active_name = _gmeet_cached_active_speaker
         if active_name:
             resolved = _resolve_contact_by_name(active_name)
             if resolved:
@@ -552,6 +533,51 @@ async def entrypoint(ctx: agents.JobContext):
             return contact, active_name
 
         return contact, None
+
+    async def _gmeet_poll_loop() -> None:
+        """Background loop: poll agent-service for active speaker + meeting status.
+
+        Consolidates two responsibilities that previously lived in separate places:
+        1. Speaker diarization (was: on-demand HTTP per utterance in fast brain)
+        2. Meeting-end detection (was: _monitor_google_meet in slow brain)
+        """
+        nonlocal _gmeet_cached_active_speaker
+        import aiohttp as _aiohttp
+
+        while not gmeet_session_id:
+            await asyncio.sleep(0.5)
+
+        try:
+            async with _aiohttp.ClientSession() as http:
+                while True:
+                    await asyncio.sleep(2)
+                    if not gmeet_session_id:
+                        continue
+                    try:
+                        resp = await http.get(
+                            f"{gmeet_agent_service_url}/googlemeet/state",
+                            params={"sessionId": gmeet_session_id},
+                            headers={"authorization": f"Bearer {_gmeet_auth_key}"},
+                            timeout=_aiohttp.ClientTimeout(total=5),
+                        )
+                        if resp.status != 200:
+                            continue
+                        body = await resp.json()
+                    except Exception:
+                        continue
+
+                    _gmeet_cached_active_speaker = body.get("activeSpeaker")
+
+                    status = body.get("status", "")
+                    if status in ("ended", "removed", "error"):
+                        _log.info(f"Google Meet ended (status={status})")
+                        ctx.shutdown(reason=f"gmeet_{status}")
+                        return
+        except asyncio.CancelledError:
+            pass
+
+    if channel == "google_meet":
+        asyncio.create_task(_gmeet_poll_loop())
 
     from unity.settings import SETTINGS
 
@@ -721,6 +747,21 @@ async def entrypoint(ctx: agents.JobContext):
     # exit path: participant disconnect, inactivity, or explicit stop.
     async def _on_job_shutdown():
         await delete_livekit_room(ctx.room.name)
+        # # For Google Meet: directly tell agent-service to close the browser
+        # # session so cleanup doesn't depend on slow brain processing speed.
+        # if channel == "google_meet" and gmeet_session_id:
+        #     import aiohttp as _aiohttp
+
+        #     try:
+        #         async with _aiohttp.ClientSession() as _http:
+        #             await _http.post(
+        #                 f"{gmeet_agent_service_url}/googlemeet/leave",
+        #                 json={"sessionId": gmeet_session_id},
+        #                 headers={"authorization": f"Bearer {_gmeet_auth_key}"},
+        #                 timeout=_aiohttp.ClientTimeout(total=10),
+        #             )
+        #     except Exception:
+        #         pass
         await publish_call_ended(contact, channel)
 
     ctx.add_shutdown_callback(_on_job_shutdown)
@@ -957,7 +998,7 @@ async def entrypoint(ctx: agents.JobContext):
                 text: str,
                 speaker_id: str | None,
             ) -> None:
-                resolved_contact, speaker_label = await _resolve_speaker(speaker_id)
+                resolved_contact, speaker_label = _resolve_speaker(speaker_id)
                 if channel == "google_meet":
                     event = InboundGoogleMeetUtterance(
                         contact=resolved_contact,

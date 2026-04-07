@@ -99,7 +99,6 @@ class LivekitCallManager:
         self._worker_watchdog_task: asyncio.Task | None = None
         # Google Meet state
         self._gmeet_session_id: str | None = None
-        self._gmeet_monitor_task: asyncio.Task | None = None
         self.google_meet_start_timestamp = None
         self.google_meet_exchange_id = UNASSIGNED
 
@@ -490,63 +489,12 @@ class LivekitCallManager:
                 ),
             )
 
-        self._gmeet_monitor_task = asyncio.create_task(
-            self._monitor_google_meet(contact),
-        )
-
-    async def _monitor_google_meet(self, contact: dict) -> None:
-        """Poll agent-service /googlemeet/state and publish GoogleMeetEnded
-        when the meeting terminates or the assistant is removed."""
-        base_url = _resolve_agent_service_url()
-        auth_key = os.environ.get("UNIFY_KEY", "")
-
-        try:
-            async with aiohttp.ClientSession() as session:
-                while self._gmeet_session_id:
-                    await asyncio.sleep(3)
-                    try:
-                        resp = await session.get(
-                            f"{base_url}/googlemeet/state",
-                            params={"sessionId": self._gmeet_session_id},
-                            headers={"authorization": f"Bearer {auth_key}"},
-                            timeout=aiohttp.ClientTimeout(total=10),
-                        )
-                        if resp.status != 200:
-                            continue
-                        body = await resp.json()
-                    except Exception:
-                        continue
-
-                    status = body.get("status", "")
-                    if status in ("ended", "removed", "error"):
-                        LOGGER.info(
-                            f"{ICONS['ipc']} [LivekitCallManager] Google Meet "
-                            f"ended (status={status})",
-                        )
-                        event = GoogleMeetEnded(contact=contact)
-                        if self._event_broker:
-                            await self._event_broker.publish(
-                                event.topic,
-                                event.to_json(),
-                            )
-                        return
-        except asyncio.CancelledError:
-            pass
-
     async def cleanup_google_meet(self) -> None:
         """Leave the Google Meet session and tear down the audio bridge."""
         session_id = self._gmeet_session_id
         self._gmeet_session_id = None
         self.google_meet_start_timestamp = None
         self.google_meet_exchange_id = UNASSIGNED
-
-        if self._gmeet_monitor_task and not self._gmeet_monitor_task.done():
-            self._gmeet_monitor_task.cancel()
-            try:
-                await self._gmeet_monitor_task
-            except asyncio.CancelledError:
-                pass
-        self._gmeet_monitor_task = None
 
         if session_id:
             base_url = _resolve_agent_service_url()
