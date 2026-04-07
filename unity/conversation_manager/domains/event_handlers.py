@@ -316,10 +316,14 @@ async def _(
     **kwargs,
 ):
     """Handle request to join a Google Meet — spawn browser + audio bridge."""
-    if cm.mode.is_voice or cm.call_manager.has_active_google_meet:
+    if (
+        cm.mode.is_voice
+        or cm.call_manager.has_active_call
+        or cm.call_manager.has_active_google_meet
+    ):
         return
 
-    boss = cm.contact_index.get_contact(contact_id=1)
+    boss = cm.contact_index.get_contact(contact_id=1) or {}
     contact = boss
 
     contact_id = contact.get("contact_id") if contact else 1

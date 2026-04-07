@@ -1025,6 +1025,7 @@ async def entrypoint(ctx: agents.JobContext):
         noise_cancellation=(
             noise_cancellation.BVC() if sys.platform == "darwin" else None
         ),
+        close_on_disconnect=(channel != "google_meet"),
     )
 
     # Publish call started (shared helper)
