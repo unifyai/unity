@@ -144,11 +144,6 @@ def test_file_manager_ask_about_file_system_prompt_formatting():
     )
 
     assert_time_footer(prompt, "Current UTC time is ")
-    print(
-        "FileManager ask_about_file system message passed formatting checks;\n"
-        "The following system message resulted in no assertion errors:\n\n\n"
-        + prompt[:2000],
-    )
 
 
 # ─────────────────────────────────────────────────────────────────────────────

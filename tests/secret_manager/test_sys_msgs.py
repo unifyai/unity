@@ -123,10 +123,6 @@ def test_ask_system_prompt_formatting():
     )
     assert_section_spacing(prompt)
     assert_time_footer(prompt, "Current UTC time is ")
-    print(
-        "SecretManager ask system message passed formatting checks;\n"
-        "The following system message resulted in no assertion errors:\n\n\n" + prompt,
-    )
 
 
 @_handle_project
@@ -169,10 +165,6 @@ def test_update_system_prompt_formatting():
     )
     assert_section_spacing(prompt)
     assert_time_footer(prompt, "Current UTC time is ")
-    print(
-        "SecretManager update system message passed formatting checks;\n"
-        "The following system message resulted in no assertion errors:\n\n\n" + prompt,
-    )
 
 
 # ─────────────────────────────────────────────────────────────────────────────

@@ -36,11 +36,8 @@ def test_per_file_contexts_created(file_manager, tmp_path: Path):
     # All returns are now Pydantic models - use attribute access
     assert item.status == "success"
 
-    print(f"item.file_path: {item.file_path}")
-
     # Use describe() to get storage map
     storage = fm.describe(file_path=name)
-    print(f"storage: {storage}")
 
     # Verify per-file context was created
     assert storage.file_id is not None

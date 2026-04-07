@@ -27,7 +27,6 @@ async def test_ask_events():
         and e.payload.get("phase") == "incoming"
         and e.payload.get("question") == user_q
     ]
-    print([e.payload for e in events if e.payload.get("method") == "ask"])
     assert incoming, "No incoming ManagerMethod event recorded for ask()"
     call_id = incoming[0].calling_id
 

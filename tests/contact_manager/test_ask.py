@@ -132,9 +132,6 @@ def _llm_judge_contact_retrieval(
             ],
         },
     )
-    print(
-        f"LLM Judge: OK for question '{question}' - found '{expected_answer_fragment}' in answer.",
-    )
 
 
 # Test questions and their expected semantic content

@@ -402,5 +402,3 @@ async def test_outer_loop_exits_when_inner_blocked_on_unanswered_clarification(
         f"Loop took {elapsed:.1f}s to exit. If close to 60s, this suggests deadlock "
         f"that was only broken by the asyncio.wait_for timeout, not the fix."
     )
-
-    print(f"✅ Outer loop exited in {elapsed:.1f}s with: {result!r}")

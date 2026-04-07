@@ -204,7 +204,6 @@ async def test_xlsx_multi_tab_per_table_context(file_manager, tmp_path: Path):
             # All returns are now Pydantic models - use attribute access
             assert item.status == "success"
         else:
-            print(f"Path {path} does not exist")
             assert False
 
     # Verify multiple per-table contexts exist (one per tab)
