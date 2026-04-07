@@ -99,7 +99,7 @@ async def test_open_terminal_routes_to_desktop_act(initialized_cm):
     result = await cm.step_until_wait(
         SMSReceived(
             contact=BOSS,
-            content="Help me set up the development environment",
+            content="Research best practices for Linux terminal configuration",
         ),
     )
     assert (
