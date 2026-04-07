@@ -872,6 +872,21 @@ async def _(
     cm.call_manager.unify_meet_exchange_id = UNASSIGNED
     cm.call_manager.google_meet_exchange_id = UNASSIGNED
 
+    sender_name = _get_sender_name(contact)
+    if isinstance(event, GoogleMeetEnded):
+        label = "Google Meet"
+    elif isinstance(event, UnifyMeetEnded):
+        label = "Unify Meet"
+    elif isinstance(event, WhatsAppCallEnded):
+        label = "WhatsApp call"
+    else:
+        label = "Phone call"
+    cm.notifications_bar.push_notif(
+        "Comms",
+        f"{label} with {sender_name} has ended.",
+        event.timestamp,
+    )
+
     await cm.request_llm_run(
         delay=0,
         cancel_running=True,

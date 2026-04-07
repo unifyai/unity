@@ -747,21 +747,6 @@ async def entrypoint(ctx: agents.JobContext):
     # exit path: participant disconnect, inactivity, or explicit stop.
     async def _on_job_shutdown():
         await delete_livekit_room(ctx.room.name)
-        # # For Google Meet: directly tell agent-service to close the browser
-        # # session so cleanup doesn't depend on slow brain processing speed.
-        # if channel == "google_meet" and gmeet_session_id:
-        #     import aiohttp as _aiohttp
-
-        #     try:
-        #         async with _aiohttp.ClientSession() as _http:
-        #             await _http.post(
-        #                 f"{gmeet_agent_service_url}/googlemeet/leave",
-        #                 json={"sessionId": gmeet_session_id},
-        #                 headers={"authorization": f"Bearer {_gmeet_auth_key}"},
-        #                 timeout=_aiohttp.ClientTimeout(total=10),
-        #             )
-        #     except Exception:
-        #         pass
         await publish_call_ended(contact, channel)
 
     ctx.add_shutdown_callback(_on_job_shutdown)
