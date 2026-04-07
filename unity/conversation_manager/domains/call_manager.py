@@ -409,6 +409,24 @@ class LivekitCallManager:
         room_name = make_room_name(self.assistant_id, "gmeet")
         self.room_name = room_name
 
+        # Pre-create the LiveKit room with a long empty_timeout.  Google Meet
+        # audio flows through sounddevice/PulseAudio — no "real" LiveKit
+        # participant ever joins, so the server's default empty_timeout (300s)
+        # would auto-delete the room after 5 minutes.
+        from livekit.api import CreateRoomRequest
+
+        lk = LiveKitAPI(
+            url=os.environ.get("LIVEKIT_URL", ""),
+            api_key=os.environ.get("LIVEKIT_API_KEY", ""),
+            api_secret=os.environ.get("LIVEKIT_API_SECRET", ""),
+        )
+        try:
+            await lk.room.create_room(
+                CreateRoomRequest(name=room_name, empty_timeout=86400),
+            )
+        finally:
+            await lk.aclose()
+
         # Dispatch fast brain first so it initializes (models, history, greeting)
         # while the browser navigates the slow LLM-guided join flow.
         await self._ensure_socket_server()
