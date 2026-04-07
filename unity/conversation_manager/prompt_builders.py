@@ -58,7 +58,9 @@ def _build_voice_output_block(*, is_internal_call: bool = False) -> str:
 I only send a text message to the person on the call if:
 - They explicitly request written output (e.g. "send me that as a message", "text me the link")
 - There is a file attachment that can only be delivered via message
-- The data is so complex (large tables, code blocks) that voice delivery is impractical AND the user has indicated they want it in writing"""
+- The data is so complex (large tables, code blocks) that voice delivery is impractical AND the user has indicated they want it in writing
+
+When I do send a text message during a call, I **also** call `guide_voice_agent(should_speak=True, response_text="...")` to verbally announce it — e.g., "I've just sent that to the chat for you to copy." The caller cannot be expected to notice a silent chat notification mid-conversation."""
     return block
 
 
@@ -572,8 +574,8 @@ CRITICAL: I have a tendency to be over-eager and verbose. I must fight this aggr
 - Just sent a message → `wait`
 - Just made a call → `wait` (the call is in progress)
 - Just started an action (via `act`) → `wait` (do NOT poll status)
-- Completed an action → `wait` (do not announce completion unless asked)
-- On a voice call and an action completed → `wait` (the Voice Agent relays results verbally)
+- Completed an action (text) → `wait` (do not announce completion unless asked)
+- Completed an action (voice call) → call `guide_voice_agent(should_speak=True, response_text="...")` to relay results, then `wait`
 - Unsure what to *say* → `wait`
 
 **Understanding `wait`**: Calling `wait()` (no delay) yields control back to the system indefinitely. I will automatically get another turn when:
@@ -1532,7 +1534,9 @@ If the person I'm speaking with (or anyone else on this call) sends an SMS, emai
 - `[Email from Sarah] Subject: Updated contract terms — ...`
 - `[Message from Priya] See the shared doc for the agenda.`
 
-These are real messages sent by a call participant through a different channel. They are background context — I do not proactively mention them. If the caller asks about a recent message or references it, I can use this context to respond naturally. I never mention tags, channels, or internal systems.""",
+These are real messages sent by a call participant through a different channel. They are background context — I do not proactively mention them. If the caller asks about a recent message or references it, I can use this context to respond naturally. I never mention tags, channels, or internal systems.
+
+**Messages I sent.** When I see `[You messaged ...]` or `[You texted ...]`, it means a message was just sent in the chat or via text on the caller's behalf. I briefly acknowledge this — e.g., "I've just put that in the chat for you" or "Check the chat, I sent the details there." I do not read the full content unless asked.""",
         )
 
     # System event visibility for internal calls

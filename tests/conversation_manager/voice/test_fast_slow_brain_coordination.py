@@ -792,6 +792,52 @@ class TestSymbolicForwardingAndSpeechGating:
 
 
 # =============================================================================
+# Test: slow brain prompt instructs verbal acknowledgment of sent texts
+# =============================================================================
+
+
+class TestSlowBrainTextAcknowledgmentPrompt:
+    """Verify the slow brain prompt tells the model to call guide_voice_agent
+    when sending a text message during a voice call, so the caller hears
+    about it rather than discovering it silently in their chat.
+
+    Regression: in production the slow brain sent ~15 chat messages during a
+    voice call (OAuth scopes, URLs, instructions) without ever calling
+    guide_voice_agent. The user had to say "you should have told me it's
+    in the chat" before the assistant acknowledged the messages.
+    """
+
+    def test_voice_output_block_instructs_verbal_acknowledgment(self):
+        """The voice output block should instruct the slow brain to call
+        guide_voice_agent when it sends a text message during a call."""
+        from unity.conversation_manager.prompt_builders import (
+            build_system_prompt,
+        )
+
+        for is_internal in (True, False):
+            prompt = build_system_prompt(
+                bio="Test assistant.",
+                contact_id=1,
+                first_name="Dan",
+                surname="Lenton",
+                is_voice_call=True,
+                is_internal_call=is_internal,
+            ).flatten()
+
+            assert "guide_voice_agent" in prompt, (
+                f"Slow brain voice prompt (internal={is_internal}) must "
+                f"mention guide_voice_agent for text acknowledgment"
+            )
+            assert "send a text message during a call" in prompt.lower() or (
+                "send a text message" in prompt.lower()
+                and "guide_voice_agent" in prompt
+            ), (
+                f"Slow brain voice prompt (internal={is_internal}) must "
+                f"instruct verbal acknowledgment when sending text during calls"
+            )
+
+
+# =============================================================================
 # Test: slow brain should not send text messages during voice calls
 # =============================================================================
 
