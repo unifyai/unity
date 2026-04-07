@@ -1507,7 +1507,7 @@ class ConversationManagerBrainActionTools:
                 "you will be briefed with the context you provided."
             ),
         }
-    
+
     async def join_google_meet(
         self,
         meet_url: str,
@@ -1542,6 +1542,25 @@ class ConversationManagerBrainActionTools:
         event = GoogleMeetReceived(contact=boss, meet_url=meet_url)
         await self._event_broker.publish(event.topic, event.to_json())
         return {"status": "ok", "message": f"Joining Google Meet at {meet_url}"}
+
+    async def leave_google_meet(self) -> dict[str, Any]:
+        """Leave the current Google Meet call.
+
+        Disconnects the assistant from the active Google Meet session,
+        closing the browser and tearing down the audio bridge.
+        """
+        if not self._cm.call_manager.has_active_google_meet:
+            return {
+                "status": "error",
+                "message": "No active Google Meet session to leave.",
+            }
+
+        from unity.conversation_manager.events import GoogleMeetEnded
+
+        contact = self._cm.call_manager._disconnect_contact or {}
+        event = GoogleMeetEnded(contact=contact)
+        await self._event_broker.publish(event.topic, event.to_json())
+        return {"status": "ok", "message": "Leaving Google Meet"}
 
     async def act(
         self,
@@ -2345,6 +2364,8 @@ class ConversationManagerBrainActionTools:
         )
         if not call_or_meet_in_progress:
             tools["join_google_meet"] = self.join_google_meet
+        if self._cm.call_manager.has_active_google_meet:
+            tools["leave_google_meet"] = self.leave_google_meet
         if self._cm.assistant_number:
             tools["send_sms"] = self.send_sms
             if not call_or_meet_in_progress:
