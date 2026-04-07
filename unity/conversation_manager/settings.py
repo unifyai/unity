@@ -31,6 +31,11 @@ class ConversationSettings(BaseSettings):
             evaluator for voice mode. When a user speaks while the slow brain is
             mid-run, a sidecar LLM call classifies the utterance as urgent
             (preempt) or not (let the queue proceed). Default False.
+        SPEECH_DEDUP_ENABLED: Enable post-LLM deduplication gate for slow brain
+            speech during voice calls. After the slow brain decides to speak via
+            guide_voice_agent, a lightweight LLM check compares the proposed
+            speech against recent fast brain utterances and suppresses it when
+            the information has already been communicated. Default True.
     """
 
     FAST_BRAIN_MODEL: str = "gpt-5-mini@openai"
@@ -42,6 +47,7 @@ class ConversationSettings(BaseSettings):
     CONTACT_ID: str = "1"
     BLACKLIST_CHECKS_ENABLED: bool = False
     SPEECH_URGENCY_PREEMPT_ENABLED: bool = True
+    SPEECH_DEDUP_ENABLED: bool = True
     ASSIGNMENT_POLL_INTERVAL: float = 0.5
 
     model_config = SettingsConfigDict(

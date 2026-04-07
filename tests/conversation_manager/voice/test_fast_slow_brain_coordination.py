@@ -1005,3 +1005,99 @@ class TestSlowBrainSpeaksViaGuideVoiceAgent:
             f"will not proactively mention it.\n"
             f"Tool calls: {cm.all_tool_calls}"
         )
+
+
+# =============================================================================
+# Test: speech deduplication gate suppresses redundant slow brain speech
+# =============================================================================
+
+
+@pytest.mark.eval
+@pytest.mark.asyncio
+class TestSpeechDedupGateInSpeechFlow:
+    """Verify the dedup gate integrates with the existing slow brain speech flow.
+
+    When the fast brain has already spoken about a completed action (via its
+    silent notification context), the slow brain's guide_voice_agent(should_speak=True)
+    should be downgraded to should_speak=False at the CM level.
+    """
+
+    @_handle_project
+    async def test_dedup_gate_downgrades_redundant_action_result(
+        self,
+        initialized_cm,
+    ):
+        """When the fast brain has already told the user about a completed
+        action's result, the slow brain's speech decision should be suppressed.
+
+        Flow:
+        1. Action completes → fast brain gets silent notification, speaks it.
+        2. User asks about the result → fast brain answers from context.
+        3. Slow brain wakes, decides to speak the same result.
+        4. Dedup gate detects overlap and downgrades to NOTIFY.
+        """
+        cm = initialized_cm
+
+        await cm.step(UnifyMeetReceived(contact=BOSS))
+        await cm.step(UnifyMeetStarted(contact=BOSS))
+        assert cm.cm.mode == Mode.MEET
+
+        cm.cm.completed_actions[0] = {
+            "query": "Search the web for nearby Italian restaurants",
+            "handle_actions": [
+                {
+                    "action_name": "act_completed",
+                    "query": (
+                        "Found 3 Italian restaurants nearby: "
+                        "Chez Laurent (4.8★), Pasta Palace (4.5★), "
+                        "Trattoria Roma (4.3★)."
+                    ),
+                    "status": "completed",
+                },
+            ],
+        }
+
+        # Simulate the fast brain having already relayed this result
+        cm.cm.contact_index.push_message(
+            contact_id=BOSS["contact_id"],
+            sender_name="You",
+            thread_name=Medium.UNIFY_MEET,
+            message_content=(
+                "Found three Italian restaurants near you. The top one's "
+                "Chez Laurent with a 4.8 star rating."
+            ),
+            role="assistant",
+        )
+
+        published: list[dict] = []
+        original_publish = cm.cm.event_broker.publish
+
+        async def capture_publish(channel: str, message: str) -> int:
+            if channel == "app:call:notification":
+                published.append(json.loads(message))
+            return await original_publish(channel, message)
+
+        cm.cm.event_broker.publish = capture_publish
+
+        try:
+            cm.all_tool_calls.clear()
+
+            await cm.step_until_wait(
+                InboundUnifyMeetUtterance(
+                    contact=BOSS,
+                    content="What did you find for Italian restaurants?",
+                ),
+                max_steps=5,
+            )
+
+            for event_data in published:
+                payload = event_data.get("payload", event_data)
+                if payload.get("source") == "slow_brain":
+                    assert payload.get("should_speak") is False, (
+                        "The dedup gate should suppress speech when the fast "
+                        "brain already communicated the restaurant results.\n"
+                        f"Payload: {payload}\n"
+                        f"Tool calls: {cm.all_tool_calls}"
+                    )
+        finally:
+            cm.cm.event_broker.publish = original_publish
