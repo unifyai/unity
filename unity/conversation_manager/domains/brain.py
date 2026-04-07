@@ -208,6 +208,7 @@ def build_brain_spec(
         assistant_has_phone=bool(cm.assistant_number),
         assistant_has_email=bool(cm.assistant_email),
         assistant_has_whatsapp=bool(cm.assistant_whatsapp_number),
+        user_desktop_control=SETTINGS.conversation.USER_DESKTOP_CONTROL_ENABLED,
     )
 
     response_model = _RESPONSE_MODELS[cm.mode]

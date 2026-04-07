@@ -36,6 +36,11 @@ class ConversationSettings(BaseSettings):
             guide_voice_agent, a lightweight LLM check compares the proposed
             speech against recent fast brain utterances and suppresses it when
             the information has already been communicated. Default True.
+        USER_DESKTOP_CONTROL_ENABLED: Enable prompts that claim the assistant
+            can remotely control the user's computer. When False (default),
+            prompts clarify that the assistant can only control its own VM and
+            the user can optionally view/control the assistant's desktop — not
+            the other way around.
     """
 
     FAST_BRAIN_MODEL: str = "gpt-5-mini@openai"
@@ -48,6 +53,7 @@ class ConversationSettings(BaseSettings):
     BLACKLIST_CHECKS_ENABLED: bool = False
     SPEECH_URGENCY_PREEMPT_ENABLED: bool = True
     SPEECH_DEDUP_ENABLED: bool = True
+    USER_DESKTOP_CONTROL_ENABLED: bool = False
     ASSIGNMENT_POLL_INTERVAL: float = 0.5
 
     model_config = SettingsConfigDict(

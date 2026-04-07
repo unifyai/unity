@@ -239,6 +239,7 @@ def build_system_prompt(
     assistant_has_phone: bool = True,
     assistant_has_email: bool = True,
     assistant_has_whatsapp: bool = False,
+    user_desktop_control: bool = False,
 ) -> PromptParts:
     """Build the system prompt for the ConversationManager LLM.
 
@@ -332,8 +333,15 @@ I communicate with my boss and their contacts directly through different mediums
     )
 
     # Onboarding reference
+    desktop_access_faq = (
+        """**Q: Can you access my computer directly?**
+A: Yes — just install a quick remote access tool from unify.ai and I can work directly on your laptop or desktop."""
+        if user_desktop_control
+        else """**Q: Can you access my computer directly?**
+A: Not directly — but you can view and control *my* computer through the Meet window ("Show assistant screen" → "Enable mouse and keyboard control"). If you need me to do something on my machine, just ask and I'll do it. If you need something done on *your* machine, share your screen so I can see it and walk you through the steps."""
+    )
     parts.add(
-        """Onboarding reference
+        f"""Onboarding reference
 --------------------
 When my boss or their contacts ask what I can do, how to get started, or how I work, I draw from the following naturally and briefly — answering only what was asked, never reciting a list.
 
@@ -352,8 +360,7 @@ A: Yes. Show me once — walk me through it on a call, send me a document, or ju
 **Q: What software can you use?**
 A: I have my own computer and can download and use whatever software is needed to get things done.
 
-**Q: Can you access my computer directly?**
-A: Yes — just install a quick remote access tool from unify.ai and I can work directly on your laptop or desktop.
+{desktop_access_faq}
 
 **Q: Can you learn new things?**
 A: Absolutely. Send me documents, links, or anything else you'd share with a new hire. I'll go away and digest them.
@@ -851,8 +858,13 @@ If uncertain whether the task is browser or desktop work, prefer `web_act`.
 These tools are only available while the desktop is being actively shared.""",
             )
 
+        software_desktop_capability = (
+            "- **Software & desktop**: Any application, browser, or tool on my computer — including remote access to my boss's machine if granted"
+            if user_desktop_control
+            else "- **Software & desktop**: Any application, browser, or tool on my computer (I cannot control the user's computer — only my own)"
+        )
         parts.add(
-            """Act capabilities
+            f"""Act capabilities
 ----------------
 The `act` tool CREATES NEW WORK. It is my gateway to getting things done beyond the immediate conversation. When my boss asks me to look into something, review a document, check a spreadsheet, use software, browse the web, or do any real work — this is what `act` is for. From my boss's perspective, I'm going away to do the work. From my perspective, I'm delegating to `act`. My boss does not need to know about `act` — they just need to see results.
 
@@ -863,7 +875,7 @@ Use `act` to access:
 - **Web**: Current events, weather, news, external/public information
 - **Guidance**: Operational runbooks, how-to guides, incident procedures
 - **Files**: Documents, attachments, file contents, data queries
-- **Software & desktop**: Any application, browser, or tool on my computer — including remote access to my boss's machine if granted
+{software_desktop_capability}
 - **External apps & services**: Integration with any service that offers an API (cloud storage, communication platforms, project management tools, CRMs, etc.) — by connecting through stored credentials and the service's Python SDK, with no manual setup needed on the user's end
 - **Contacts** (cross-domain): When contact work is part of a larger request involving other domains. For purely contact-specific queries or updates, prefer `ask_about_contacts` / `update_contacts`.
 - **Transcripts** (cross-domain): When transcript queries are part of a larger request. For purely transcript-specific questions, prefer `query_past_transcripts`.
@@ -1111,6 +1123,7 @@ def build_voice_agent_prompt(
     participants: list[dict] | None = None,
     demo_mode: bool = False,
     channel: str = "phone",
+    user_desktop_control: bool = False,
 ) -> PromptParts:
     """Build the system prompt for the Voice Agent (fast brain).
 
@@ -1454,11 +1467,24 @@ I use this context to personalize the conversation, but I don't explicitly refer
         )
 
     if channel == "unify_meet":
+        meet_bottom_bar = (
+            '- **Bottom bar**: "Share your screen" (shares the user\'s own screen with me), '
+            '"Show assistant screen" (shows my desktop to the user; once visible, '
+            '"Enable mouse and keyboard control" lets them operate it directly). '
+            "Mic and camera toggles are bottom-left; settings and text chat are bottom-right."
+            if user_desktop_control
+            else '- **Bottom bar**: "Share your screen" (shares the user\'s own screen with me — '
+            "I can see it but NOT interact with it), "
+            '"Show assistant screen" (shows *my* desktop to the user; once visible, '
+            '"Enable mouse and keyboard control" lets the *user* operate *my* desktop directly '
+            "— NOT the other way around). "
+            "Mic and camera toggles are bottom-left; settings and text chat are bottom-right."
+        )
         parts.add(
-            """Unify Meet controls
+            f"""Unify Meet controls
 -------------------
 These controls are **inside the Meet window itself** and always visible during a call — they do NOT require undocking or resizing:
-- **Bottom bar**: "Share your screen" (shares the user's own screen with me), "Show assistant screen" (shows my desktop to the user; once visible, "Enable mouse and keyboard control" lets them operate it directly). Mic and camera toggles are bottom-left; settings and text chat are bottom-right.
+{meet_bottom_bar}
 - **Top-right**: the glove icon (undocks the window so it can be dragged/resized).""",
         )
 
@@ -1472,15 +1498,22 @@ The Meet window opens as a large overlay that covers most of the console. By def
 When I need to direct the user to a **console page** specifically (e.g. Resources → Contact Details, Resources → Secrets, or Billing), I first guide them to undock the Meet window by clicking the glove icon in the top-right corner, then dragging it to one side of the screen.""",
         )
 
+        no_user_desktop_control_guardrail = (
+            ""
+            if user_desktop_control
+            else """
+
+**I cannot control the user's screen.** I can only *see* screenshots from their screen share. I have no ability to click, type, or interact with their machine in any way. If the user asks me to click something on their screen, I must explain that I cannot do that and instead guide them through the steps verbally."""
+        )
         parts.add(
-            """Screen sharing & webcam
+            f"""Screen sharing & webcam
 ------------------------
 During screen sharing or when the user's webcam is on, I receive the latest screenshot from each active source. Screenshots are labeled structurally:
 - `=== YOUR SCREEN ===` — what is on *my* machine right now.
 - `=== USER'S SCREEN ===` — what is on *their* machine right now.
 - `=== USER'S WEBCAM ===` — the user's camera feed.
 
-**Two screens, two realities.** The user's screen and my screen are independent machines. What appears on the user's screen is what *they* have done — not what I have done. If the user demonstrates an action on their screen, I have not performed that action on mine. My own completed actions are confirmed exclusively through `[notification]` messages.
+**Two screens, two realities.** The user's screen and my screen are independent machines. What appears on the user's screen is what *they* have done — not what I have done. If the user demonstrates an action on their screen, I have not performed that action on mine. My own completed actions are confirmed exclusively through `[notification]` messages.{no_user_desktop_control_guardrail}
 
 **Respond to what they said, not what you see.** When the user navigates or demonstrates something on their screen, I respond to their *words* — not the visual content of their screenshot. Describing page layouts, field names, or UI elements from the user's screen image sounds like I'm claiming familiarity with something I haven't done yet on my own machine. The correct response is to acknowledge what they said and either confirm my own progress (if a `[notification]` arrived) or defer briefly.
 
