@@ -351,8 +351,9 @@ async def entrypoint(ctx: agents.JobContext):
     )
 
     user_is_speaking = False
-    _queued_speech: list[tuple[str, str, str]] = []  # (text, notification_id, source)
+    _queued_speech: list[tuple[str, str, str, str, str]] = []
     _say_meta_queue: list[dict] = []
+    _dedup_in_flight = False
     generation_seq = 0
     user_state_seq = 0
     _was_quiescent = True
@@ -889,6 +890,76 @@ async def entrypoint(ctx: agents.JobContext):
                 content=[notification_message],
             )
 
+    def _get_recent_assistant_utterances(n: int = 10) -> list[str]:
+        """Return the last *n* assistant utterances from the fast brain's chat context.
+
+        Walks ``assistant._chat_ctx.items`` in reverse, collecting up to *n*
+        text strings from items with ``role == "assistant"``.  Returns them in
+        chronological order (oldest first).
+        """
+        results: list[str] = []
+        for item in reversed(assistant._chat_ctx.items):
+            if getattr(item, "role", None) != "assistant":
+                continue
+            raw = getattr(item, "content", None)
+            if isinstance(raw, str) and raw:
+                results.append(raw)
+            elif isinstance(raw, list):
+                text = " ".join(c for c in raw if isinstance(c, str)).strip()
+                if text:
+                    results.append(text)
+            if len(results) >= n:
+                break
+        results.reverse()
+        return results
+
+    def _downgrade_to_silent(notification_content: str) -> None:
+        """Inject notification content as silent context (no speech)."""
+        notification_message = f"[notification] {notification_content}"
+        assistant._chat_ctx.add_message(
+            role="system",
+            content=[notification_message],
+        )
+        session._chat_ctx.add_message(
+            role="system",
+            content=[notification_message],
+        )
+
+    async def _dedup_and_speak(
+        text: str,
+        notification_id: str,
+        notification_source: str,
+        notification_content: str,
+        llm_log_path: str,
+    ) -> None:
+        nonlocal _dedup_in_flight
+        _dedup_in_flight = True
+        try:
+            recent = _get_recent_assistant_utterances()
+            if recent and SETTINGS.conversation.SPEECH_DEDUP_ENABLED:
+                from unity.conversation_manager.domains.speech_dedup import (
+                    SpeechDeduplicationChecker,
+                )
+
+                dedup = await SpeechDeduplicationChecker().evaluate(
+                    proposed_speech=text,
+                    recent_utterances=recent,
+                )
+                if dedup.already_covered:
+                    _log.dedup_suppressed(text, dedup.reasoning)
+                    _downgrade_to_silent(notification_content)
+                    return
+            _speak_now(
+                text,
+                notification_id,
+                notification_source,
+                notification_content,
+                llm_log_path,
+            )
+        finally:
+            _dedup_in_flight = False
+            maybe_speak_queued()
+
     def maybe_speak_queued() -> None:
         """Speak the next queued response when user is silent and assistant is idle.
 
@@ -896,8 +967,12 @@ async def entrypoint(ctx: agents.JobContext):
         After the user stops speaking, the agent transitions through thinking →
         speaking → listening. We only speak queued text once the agent has settled
         back to a quiescent state, guaranteeing the fast brain's reply comes first.
+
+        When dedup is enabled, the actual speak is async (LLM call to check for
+        redundancy).  The ``_dedup_in_flight`` guard prevents a second item from
+        being dispatched while the first is still being checked.
         """
-        if not _queued_speech or not _is_pipeline_quiescent():
+        if _dedup_in_flight or not _queued_speech or not _is_pipeline_quiescent():
             return
         (
             text,
@@ -906,12 +981,14 @@ async def entrypoint(ctx: agents.JobContext):
             notification_content,
             llm_log_path,
         ) = _queued_speech.pop(0)
-        _speak_now(
-            text,
-            notification_id,
-            notification_source,
-            notification_content,
-            llm_log_path,
+        asyncio.ensure_future(
+            _dedup_and_speak(
+                text,
+                notification_id,
+                notification_source,
+                notification_content,
+                llm_log_path,
+            ),
         )
 
     def on_notification(data: dict) -> None:

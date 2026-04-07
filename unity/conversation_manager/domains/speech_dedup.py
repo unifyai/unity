@@ -59,13 +59,13 @@ Output JSON matching the SpeechDedup schema.\
 
 
 class SpeechDeduplicationChecker:
-    """Post-LLM gate that suppresses slow brain speech already covered by the fast brain.
+    """Pre-speak gate that suppresses slow brain speech already covered by the fast brain.
 
-    After the slow brain's LLM call returns with guide_voice_agent(should_speak=True),
-    this checker compares the proposed response_text against recent assistant
-    utterances in the voice transcript. If the fast brain already communicated
-    the same information reactively, the speech is downgraded to a silent
-    notification (should_speak=False) to avoid redundancy.
+    Runs in the fast brain subprocess at speak time (inside ``maybe_speak_queued``).
+    Compares the proposed ``response_text`` against recent assistant utterances in
+    the fast brain's chat context. If the fast brain already communicated the same
+    information, the speech is downgraded to a silent notification to avoid
+    redundancy.
     """
 
     def __init__(self, model: str | None = None) -> None:
@@ -91,7 +91,7 @@ class SpeechDeduplicationChecker:
         try:
             client = new_llm_client(
                 self._model,
-                origin="SlowBrain.speech_dedup",
+                origin="FastBrain.speech_dedup",
             )
             client.set_response_format(SpeechDedup)
             formatted_utterances = "\n".join(f'- "{u}"' for u in recent_utterances)

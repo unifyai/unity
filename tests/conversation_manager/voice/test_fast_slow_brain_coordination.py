@@ -1061,26 +1061,26 @@ class TestSlowBrainSpeaksViaGuideVoiceAgent:
 @pytest.mark.eval
 @pytest.mark.asyncio
 class TestSpeechDedupGateInSpeechFlow:
-    """Verify the dedup gate integrates with the existing slow brain speech flow.
+    """Verify the slow brain passes should_speak through unmodified.
 
-    When the fast brain has already spoken about a completed action (via its
-    silent notification context), the slow brain's guide_voice_agent(should_speak=True)
-    should be downgraded to should_speak=False at the CM level.
+    Dedup is now a fast-brain-only concern (runs at speak time inside
+    ``maybe_speak_queued`` → ``_dedup_and_speak``).  The slow brain publishes
+    the LLM's original should_speak value without server-side suppression.
     """
 
     @_handle_project
-    async def test_dedup_gate_downgrades_redundant_action_result(
+    async def test_slow_brain_preserves_should_speak(
         self,
         initialized_cm,
     ):
-        """When the fast brain has already told the user about a completed
-        action's result, the slow brain's speech decision should be suppressed.
+        """Even when an assistant utterance already covers the same result,
+        the slow brain publishes should_speak as the LLM produced it.
 
         Flow:
         1. Action completes → fast brain gets silent notification, speaks it.
         2. User asks about the result → fast brain answers from context.
         3. Slow brain wakes, decides to speak the same result.
-        4. Dedup gate detects overlap and downgrades to NOTIFY.
+        4. Published event preserves should_speak=True (no server-side dedup).
         """
         cm = initialized_cm
 
@@ -1103,7 +1103,6 @@ class TestSpeechDedupGateInSpeechFlow:
             ],
         }
 
-        # Simulate the fast brain having already relayed this result
         cm.cm.contact_index.push_message(
             contact_id=BOSS["contact_id"],
             sender_name="You",
@@ -1138,10 +1137,12 @@ class TestSpeechDedupGateInSpeechFlow:
 
             for event_data in published:
                 payload = event_data.get("payload", event_data)
-                if payload.get("source") == "slow_brain":
-                    assert payload.get("should_speak") is False, (
-                        "The dedup gate should suppress speech when the fast "
-                        "brain already communicated the restaurant results.\n"
+                if payload.get("source") == "slow_brain" and payload.get(
+                    "response_text",
+                ):
+                    assert payload.get("should_speak") is True, (
+                        "The slow brain should pass should_speak=True through "
+                        "unmodified; dedup is now a fast-brain concern.\n"
                         f"Payload: {payload}\n"
                         f"Tool calls: {cm.all_tool_calls}"
                     )

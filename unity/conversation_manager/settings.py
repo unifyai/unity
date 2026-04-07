@@ -31,11 +31,11 @@ class ConversationSettings(BaseSettings):
             evaluator for voice mode. When a user speaks while the slow brain is
             mid-run, a sidecar LLM call classifies the utterance as urgent
             (preempt) or not (let the queue proceed). Default False.
-        SPEECH_DEDUP_ENABLED: Enable post-LLM deduplication gate for slow brain
-            speech during voice calls. After the slow brain decides to speak via
-            guide_voice_agent, a lightweight LLM check compares the proposed
-            speech against recent fast brain utterances and suppresses it when
-            the information has already been communicated. Default True.
+        SPEECH_DEDUP_ENABLED: Enable pre-speak deduplication gate in the fast
+            brain subprocess during voice calls. Before playing queued slow brain
+            speech, a lightweight LLM check compares the proposed speech against
+            recent fast brain utterances and suppresses it when the information
+            has already been communicated. Default True.
         USER_DESKTOP_CONTROL_ENABLED: Enable prompts that claim the assistant
             can remotely control the user's computer. When False (default),
             prompts clarify that the assistant can only control its own VM and

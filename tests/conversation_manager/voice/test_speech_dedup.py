@@ -2,19 +2,19 @@
 tests/conversation_manager/voice/test_speech_dedup.py
 =====================================================
 
-Tests for the slow brain speech deduplication gate.
+Tests for the speech deduplication gate.
 
-When the slow brain decides to speak via guide_voice_agent(should_speak=True),
-the dedup gate checks whether recent fast brain utterances already cover the
-same information.  If so, should_speak is downgraded to False — the content
-still reaches the fast brain as silent context ([notification]) but is not
-spoken, avoiding redundancy.
+Dedup runs in the fast brain subprocess at speak time (inside
+``maybe_speak_queued`` → ``_dedup_and_speak``).  Before playing queued slow
+brain speech, a lightweight LLM check compares the proposed text against recent
+assistant utterances in the fast brain's chat context and suppresses it when the
+information has already been communicated.
 
 Test categories:
 
 1. **Unit tests** — SpeechDeduplicationChecker in isolation.
-2. **Symbolic integration tests** — full CM pipeline with the dedup gate,
-   verifying publish behavior through event_broker spying.
+2. **Symbolic integration tests** — verify the slow brain no longer runs dedup
+   and passes ``should_speak`` through to the fast brain unmodified.
 3. **Eval tests** — end-to-end with real LLM judgment on overlapping content.
 """
 
@@ -30,7 +30,6 @@ from unity.conversation_manager.domains.speech_dedup import (
     SpeechDeduplicationChecker,
 )
 from unity.conversation_manager.events import (
-    FastBrainNotification,
     InboundPhoneUtterance,
     InboundUnifyMeetUtterance,
     PhoneCallStarted,
@@ -140,56 +139,50 @@ class TestSpeechDeduplicationCheckerUnit:
 
 
 # =============================================================================
-# Symbolic integration tests — CM pipeline with dedup gate
+# Symbolic integration tests — slow brain passes should_speak through
 # =============================================================================
 
 
 @pytest.mark.asyncio
-class TestSpeechDedupGateIntegration:
-    """Verify the dedup gate integrates correctly with the guide_voice_agent
-    flow in ConversationManager._run_llm.
+class TestSlowBrainPassesSpeakThrough:
+    """Verify the slow brain no longer runs dedup and passes should_speak
+    through to the fast brain unmodified.
 
-    These tests mock the dedup checker to test the wiring rather than the
-    LLM judgment (that's covered by the unit and eval tests).
-
-    Note: the CMStepDriver intercepts event_broker.publish during step
-    execution, so we cannot capture raw published JSON from tests.  Instead
-    we verify behavior through the mock dedup checker's call status and the
-    deterministic code path that follows.
+    After the refactor, dedup is a fast-brain-only concern.  The slow brain
+    publishes FastBrainNotification with the LLM's original should_speak value.
     """
 
     @pytest.fixture
     def boss_contact(self):
         return TEST_CONTACTS[1]
 
-    async def test_dedup_gate_invoked_when_recent_utterances_exist(
+    async def test_slow_brain_does_not_have_dedup_checker(
+        self,
+        initialized_cm,
+    ):
+        """ConversationManager no longer carries a _speech_dedup_checker."""
+        cm = initialized_cm.cm
+        assert not hasattr(cm, "_speech_dedup_checker")
+
+    async def test_should_speak_passed_through_with_recent_utterances(
         self,
         initialized_cm,
         boss_contact,
     ):
-        """When the slow brain produces should_speak=True and there are
-        recent assistant utterances in the voice thread, the dedup checker
-        must be invoked.  Mocking it to return already_covered=True verifies
-        the suppression path (should_speak is downgraded to False)."""
+        """Even when recent assistant utterances exist in the voice thread,
+        the slow brain publishes should_speak as the LLM produced it (no
+        server-side suppression)."""
         cm = initialized_cm.cm
 
         await initialized_cm.step(PhoneCallStarted(contact=boss_contact))
         assert cm.mode == Mode.CALL
 
-        # Simulate a fast brain response already in the transcript
         cm.contact_index.push_message(
             contact_id=boss_contact["contact_id"],
             sender_name="You",
             thread_name=Medium.PHONE_CALL,
             message_content="That's done — found three Italian restaurants near you.",
             role="assistant",
-        )
-
-        cm._speech_dedup_checker.evaluate = AsyncMock(
-            return_value=SpeechDedup(
-                already_covered=True,
-                reasoning="fast brain already communicated the restaurant results",
-            ),
         )
 
         cm.completed_actions[0] = {
@@ -202,147 +195,40 @@ class TestSpeechDedupGateIntegration:
                 },
             ],
         }
-        initialized_cm.all_tool_calls.clear()
 
-        await initialized_cm.step_until_wait(
-            InboundPhoneUtterance(
-                contact=boss_contact,
-                content="Any restaurants nearby?",
-            ),
-            max_steps=5,
-        )
+        published: list[dict] = []
+        original_publish = cm.event_broker.publish
 
-        if "guide_voice_agent" in initialized_cm.all_tool_calls:
-            cm._speech_dedup_checker.evaluate.assert_called()
-            # Verify at least one call received both proposed speech and
-            # recent utterances.
-            for call_obj in cm._speech_dedup_checker.evaluate.call_args_list:
-                recent = call_obj.kwargs.get(
-                    "recent_utterances",
-                    call_obj.args[1] if len(call_obj.args) > 1 else None,
-                )
-                if recent:
-                    break
-            else:
-                raise AssertionError(
-                    "Dedup checker was called but never received recent utterances",
-                )
+        async def capture_publish(channel: str, message: str) -> int:
+            if channel == "app:call:notification":
+                published.append(json.loads(message))
+            return await original_publish(channel, message)
 
-    async def test_dedup_gate_allows_when_no_recent_utterances(
-        self,
-        initialized_cm,
-        boss_contact,
-    ):
-        """When there are no recent assistant utterances in the voice thread,
-        the dedup checker should NOT be invoked — the gate short-circuits
-        because there is nothing to compare against."""
-        cm = initialized_cm.cm
-
-        await initialized_cm.step(PhoneCallStarted(contact=boss_contact))
-        assert cm.mode == Mode.CALL
-
-        cm._speech_dedup_checker.evaluate = AsyncMock(
-            return_value=SpeechDedup(already_covered=False, reasoning=""),
-        )
-
-        cm.completed_actions[0] = {
-            "query": "Check the weather in Berlin",
-            "handle_actions": [
-                {
-                    "action_name": "act_completed",
-                    "query": "Berlin: 15°C, partly cloudy.",
-                    "status": "completed",
-                },
-            ],
-        }
-        initialized_cm.all_tool_calls.clear()
-
-        await initialized_cm.step_until_wait(
-            InboundPhoneUtterance(
-                contact=boss_contact,
-                content="What's the weather like in Berlin?",
-            ),
-            max_steps=5,
-        )
-
-        # With no recent assistant utterances, _get_recent_voice_utterances
-        # returns [] and the gate skips the LLM call entirely.
-        cm._speech_dedup_checker.evaluate.assert_not_called()
-
-    async def test_dedup_gate_skipped_for_notify_mode(
-        self,
-        initialized_cm,
-        boss_contact,
-    ):
-        """When guide_voice_agent is called without should_speak=True
-        (NOTIFY mode), the dedup checker should NOT be invoked."""
-        cm = initialized_cm.cm
-
-        await initialized_cm.step(PhoneCallStarted(contact=boss_contact))
-
-        cm._speech_dedup_checker.evaluate = AsyncMock(
-            return_value=SpeechDedup(already_covered=False, reasoning=""),
-        )
-
-        guidance = FastBrainNotification(
-            contact=boss_contact,
-            content="The meeting is at 3pm Thursday.",
-        )
-        await initialized_cm.step(guidance)
-
-        cm._speech_dedup_checker.evaluate.assert_not_called()
-
-    async def test_dedup_gate_skipped_when_disabled(
-        self,
-        initialized_cm,
-        boss_contact,
-    ):
-        """When SPEECH_DEDUP_ENABLED is False, the gate does not run even
-        when should_speak=True and there are recent utterances."""
-        from unity.settings import SETTINGS
-
-        cm = initialized_cm.cm
-        orig = SETTINGS.conversation.SPEECH_DEDUP_ENABLED
-        SETTINGS.conversation.SPEECH_DEDUP_ENABLED = False
+        cm.event_broker.publish = capture_publish
 
         try:
-            await initialized_cm.step(PhoneCallStarted(contact=boss_contact))
-
-            cm.contact_index.push_message(
-                contact_id=boss_contact["contact_id"],
-                sender_name="You",
-                thread_name=Medium.PHONE_CALL,
-                message_content="That's done.",
-                role="assistant",
-            )
-
-            cm._speech_dedup_checker.evaluate = AsyncMock(
-                return_value=SpeechDedup(already_covered=True, reasoning="dup"),
-            )
-
-            cm.completed_actions[0] = {
-                "query": "Finish the report",
-                "handle_actions": [
-                    {
-                        "action_name": "act_completed",
-                        "query": "Report finished.",
-                        "status": "completed",
-                    },
-                ],
-            }
             initialized_cm.all_tool_calls.clear()
 
             await initialized_cm.step_until_wait(
                 InboundPhoneUtterance(
                     contact=boss_contact,
-                    content="Is the report done?",
+                    content="Any restaurants nearby?",
                 ),
                 max_steps=5,
             )
 
-            cm._speech_dedup_checker.evaluate.assert_not_called()
+            for event_data in published:
+                payload = event_data.get("payload", event_data)
+                if payload.get("source") == "slow_brain" and payload.get(
+                    "response_text",
+                ):
+                    assert payload.get("should_speak") is True, (
+                        "The slow brain should pass should_speak=True through "
+                        "unmodified; dedup is now a fast-brain concern.\n"
+                        f"Payload: {payload}"
+                    )
         finally:
-            SETTINGS.conversation.SPEECH_DEDUP_ENABLED = orig
+            cm.event_broker.publish = original_publish
 
 
 # =============================================================================
@@ -374,20 +260,23 @@ class TestSpeechDedupEval:
         assert isinstance(result.reasoning, str)
 
     @_handle_project
-    async def test_race_condition_dedup_e2e(
+    async def test_slow_brain_passes_speak_through_e2e(
         self,
         initialized_cm,
     ):
-        """Simulate the race condition: fast brain answers a user question
-        from notification context, then the slow brain tries to speak the
-        same result. The dedup gate should suppress the redundant speech.
+        """Verify the slow brain passes should_speak=True through to the
+        fast brain without running dedup.
+
+        Dedup now runs in the fast brain subprocess at speak time.  The slow
+        brain publishes the LLM's original decision unmodified.
 
         Scenario:
         1. Start a Meet, complete an action with concrete results.
         2. Push an outbound assistant utterance covering the result
            (simulating the fast brain's reactive response).
         3. Step the CM with a user utterance asking about the result.
-        4. Assert the slow brain's guide_voice_agent speech is suppressed.
+        4. Assert the slow brain's published event preserves should_speak
+           as the LLM produced it (no server-side suppression).
         """
         cm = initialized_cm
 
@@ -395,7 +284,6 @@ class TestSpeechDedupEval:
         await cm.step(UnifyMeetStarted(contact=BOSS))
         assert cm.cm.mode == Mode.MEET
 
-        # Simulate a completed action with concrete results
         cm.cm.completed_actions[0] = {
             "query": "Count unread emails in Gmail inbox",
             "handle_actions": [
@@ -407,7 +295,6 @@ class TestSpeechDedupEval:
             ],
         }
 
-        # Simulate the fast brain having already answered this question
         cm.cm.contact_index.push_message(
             contact_id=BOSS["contact_id"],
             sender_name="You",
@@ -419,7 +306,6 @@ class TestSpeechDedupEval:
             role="assistant",
         )
 
-        # Capture published notifications to verify dedup behavior
         published: list[dict] = []
         original_publish = cm.cm.event_broker.publish
 
@@ -441,15 +327,14 @@ class TestSpeechDedupEval:
                 max_steps=5,
             )
 
-            # If the slow brain called guide_voice_agent, the dedup gate
-            # should have suppressed it because the fast brain already told
-            # the user about the 47 unread emails.
             for event_data in published:
                 payload = event_data.get("payload", event_data)
-                if payload.get("source") == "slow_brain":
-                    assert payload.get("should_speak") is False, (
-                        "The dedup gate should suppress speech when the fast "
-                        "brain already communicated the same result.\n"
+                if payload.get("source") == "slow_brain" and payload.get(
+                    "response_text",
+                ):
+                    assert payload.get("should_speak") is True, (
+                        "The slow brain should pass should_speak=True through "
+                        "unmodified; dedup is now a fast-brain concern.\n"
                         f"Payload: {payload}\n"
                         f"Tool calls: {cm.all_tool_calls}"
                     )

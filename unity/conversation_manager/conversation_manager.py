@@ -211,13 +211,6 @@ class ConversationManager(metaclass=SingletonABCMeta):
         # the exchange without a database filter query.
         self._recording_exchange_ids: dict[str, int] = {}
 
-        # speech deduplication
-        from unity.conversation_manager.domains.speech_dedup import (
-            SpeechDeduplicationChecker,
-        )
-
-        self._speech_dedup_checker = SpeechDeduplicationChecker()
-
         # proactive speech
         self.proactive_speech = ProactiveSpeech()
         self._proactive_speech_task: asyncio.Task | None = None
@@ -721,37 +714,6 @@ class ConversationManager(metaclass=SingletonABCMeta):
         },
     )
 
-    def _get_recent_voice_utterances(self, n: int = 10) -> list[str]:
-        """Return the last *n* assistant utterances from the active voice thread.
-
-        Scans the global thread in reverse for outbound voice messages,
-        collecting up to *n* content strings.  Returns them in chronological
-        order (oldest first).
-        """
-        if self.mode == Mode.MEET:
-            voice_mediums = {Medium.UNIFY_MEET}
-        elif self.call_manager._call_channel == "whatsapp_call":
-            voice_mediums = {Medium.WHATSAPP_CALL}
-        else:
-            voice_mediums = {Medium.PHONE_CALL}
-
-        results: list[str] = []
-        for entry in reversed(self.contact_index.global_thread):
-            if entry.medium not in voice_mediums:
-                continue
-            msg = entry.message
-            if not isinstance(msg, CommsMessage):
-                continue
-            if getattr(msg, "role", None) != "assistant":
-                continue
-            content = getattr(msg, "content", "")
-            if content:
-                results.append(content)
-            if len(results) >= n:
-                break
-        results.reverse()
-        return results
-
     async def interject_or_run(
         self,
         content: str,
@@ -1191,6 +1153,7 @@ class ConversationManager(metaclass=SingletonABCMeta):
         # The slow brain decides BLOCK (omit the tool), NOTIFY (default),
         # or SPEAK (should_speak=True + response_text) by calling
         # guide_voice_agent in parallel with its action tool.
+        # Dedup is handled in the fast brain subprocess at speak time.
         if self.mode.is_voice:
             notification_content = ""
             should_speak = False
@@ -1202,24 +1165,6 @@ class ConversationManager(metaclass=SingletonABCMeta):
                     should_speak = args.get("should_speak", False)
                     response_text = args.get("response_text", "")
                     break
-
-            if (
-                should_speak
-                and response_text
-                and SETTINGS.conversation.SPEECH_DEDUP_ENABLED
-            ):
-                recent = self._get_recent_voice_utterances()
-                if recent:
-                    dedup = await self._speech_dedup_checker.evaluate(
-                        proposed_speech=response_text,
-                        recent_utterances=recent,
-                    )
-                    if dedup.already_covered:
-                        self._session_logger.info(
-                            "speech_dedup",
-                            f"Suppressed duplicated speech: {dedup.reasoning}",
-                        )
-                        should_speak = False
 
             if notification_content:
                 pending = getattr(client, "_pending_thinking_log", None)

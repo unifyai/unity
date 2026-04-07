@@ -160,6 +160,11 @@ class FastBrainLogger:
             f"Speaking notification: {text}{extra}",
         )
 
+    def dedup_suppressed(self, text: str, reasoning: str) -> None:
+        LOGGER.info(
+            f"{DEFAULT_ICON} [{self._label}] Suppressed duplicated speech: {reasoning}",
+        )
+
     # ── proactive speech helpers ─────────────────────────────────────────
 
     def proactive_waiting_for_quiescence(self) -> None:
