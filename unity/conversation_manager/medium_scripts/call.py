@@ -279,6 +279,9 @@ class Assistant(Agent):
                 sentence_tokenizer=tokenize.basic.SentenceTokenizer(),
             )
 
+        import queue
+        import threading
+
         async with wrapped_tts.stream() as tts_stream:
 
             async def _forward_input():
@@ -289,6 +292,16 @@ class Assistant(Agent):
             fwd = asyncio.create_task(_forward_input())
             try:
                 out_stream = None
+                write_q: queue.Queue[np.ndarray | None] = queue.Queue()
+                writer_thread: threading.Thread | None = None
+
+                def _writer_loop():
+                    while True:
+                        data = write_q.get()
+                        if data is None:
+                            break
+                        out_stream.write(data)
+
                 async for ev in tts_stream:
                     frame = ev.frame
                     if out_stream is None:
@@ -299,10 +312,19 @@ class Assistant(Agent):
                             latency="low",
                         )
                         out_stream.start()
+                        writer_thread = threading.Thread(
+                            target=_writer_loop,
+                            daemon=True,
+                        )
+                        writer_thread.start()
                     audio_arr = np.frombuffer(frame.data, dtype=np.int16)
                     if frame.num_channels > 1:
                         audio_arr = audio_arr.reshape(-1, frame.num_channels)
-                    await asyncio.to_thread(out_stream.write, audio_arr)
+                    write_q.put(audio_arr)
+
+                write_q.put(None)
+                if writer_thread is not None:
+                    writer_thread.join(timeout=5)
                 if out_stream is not None:
                     out_stream.stop()
                     out_stream.close()
