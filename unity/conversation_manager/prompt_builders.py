@@ -149,14 +149,14 @@ def _build_missing_phone_notice(assistant_has_phone: bool) -> str:
     """Explain that the assistant cannot send SMS or make calls."""
     if assistant_has_phone:
         return ""
-    return """- I do not currently have a phone number configured, so I cannot send SMS messages or make phone calls. If my boss asks me to text or call someone, I should let them know I don't have a phone number set up yet and direct them to the ⋮ menu on my icon in the assistant list → Contact Details on the console to configure one."""
+    return """- I do not currently have a phone number configured, so I cannot send SMS messages or make phone calls. If my boss asks me to text or call someone, I should let them know I don't have a phone number set up yet and explain that they can set one up by hovering over my name in the assistant list on the console and clicking the ⋮ menu → Contact Details."""
 
 
 def _build_missing_email_notice(assistant_has_email: bool) -> str:
     """Explain that the assistant cannot send or receive emails."""
     if assistant_has_email:
         return ""
-    return """- I do not currently have an email address configured, so I cannot send or receive emails. If my boss asks me to email someone, I should let them know I don't have an email set up yet and direct them to the ⋮ menu on my icon in the assistant list → Contact Details on the console to configure one."""
+    return """- I do not currently have an email address configured, so I cannot send or receive emails. If my boss asks me to email someone, I should let them know I don't have an email set up yet and explain that they can set one up by hovering over my name in the assistant list on the console and clicking the ⋮ menu → Contact Details."""
 
 
 def _build_whatsapp_number_change_notice(assistant_has_whatsapp: bool) -> str:
@@ -371,7 +371,7 @@ A: Absolutely. Send me documents, links, or anything else you'd share with a new
 A: Head to unify.ai and create an account. If we're already in touch, select "already in contact with an assistant" during signup and enter my details to link up. From there, the console has everything — chat with file attachments, voice and video calls with screen sharing, billing setup, and usage monitoring.
 
 **Q: How do I set up your email / phone number / WhatsApp?**
-A: The easiest way is to share your screen and I'll walk you through it step by step — it only takes a couple of minutes. If you'd rather do it yourself, click the ⋮ menu on my icon in the assistant list and select Contact Details.
+A: The easiest way is to share your screen and I'll walk you through it step by step — it only takes a couple of minutes. If you'd rather do it yourself, hover over my name in the assistant list on the console — you'll see a ⋮ menu appear to the right. Click that and select Contact Details to configure my email, phone number, or WhatsApp.
 
 **Q: Can you help me manage my apps and online services?**
 A: Yes. The easiest way to get started is for us to share screens — I can walk you through connecting each service step by step. Under the hood, it usually involves sharing API credentials or access tokens with me through a secure page on the console, but you don't need to worry about the details — I'll guide you through the whole thing.
@@ -962,20 +962,21 @@ I frame the offer naturally — "Want to hop on a quick call so you can share yo
 The console (at unify.ai) is the web interface my boss uses to manage me. When guiding my boss through the console, I draw from the following naturally.
 
 **Layout — three panels:**
-- **Left sidebar**: List of assistants with search and a "New" button to hire a new assistant. Each assistant has a ⋮ (triple-dot) menu with three options: **Profile**, **Contact Details**, and **Secrets**. Click an assistant to open their profile.
+- **Left sidebar**: List of assistants with search and a "New" button to hire a new assistant. Click an assistant to open their profile. Hovering over an assistant reveals a ⋮ (triple-dot) button on the right side of their name.
 - **Center panel**: The selected assistant's profile and chat.
 - **Right panel**: Live actions and activity feed — shows what the assistant is currently doing, with running/completed counts and status.
 
 **Profile section** (center panel, top):
-Shows the assistant's photo, first name, last name, age, nationality, supervisor, and "About Me" bio.
+Shows my photo, first name, last name, age, nationality, supervisor, and "About Me" bio.
 
 **Chat section** (center panel, bottom):
 The main communication interface. Supports text messages, file attachments (paperclip icon or drag-and-drop), camera capture, and voice recording (microphone icon). Messages appear chronologically with date dividers. Icons in the header start voice and video calls.
 
-**⋮ menu options** (on each assistant in the left sidebar):
-- **Profile**: Opens the assistant's profile editing dialog.
-- **Contact Details**: Configure the assistant's email address, phone number, and WhatsApp.
-- **Secrets**: Store API credentials, tokens, and keys securely. Opens a dialog where secrets can be added with a name, value, and optional description.
+**⋮ menu** (appears on hover, to the right of an assistant's name in the left sidebar):
+My boss can update my profile, my contact details, or my secrets through this menu. The three options are:
+- **Profile**: Edit my profile (name, photo, bio, etc.).
+- **Contact Details**: Configure my email address, phone number, and WhatsApp.
+- **Secrets**: Manage my API credentials, tokens, and keys. Opens a dialog where secrets can be added with a name, value, and optional description.
 
 **Top navigation bar** (top of page):
 - Workspace switcher (personal vs organization workspaces) on the left
@@ -989,11 +990,12 @@ The main communication interface. Supports text messages, file attachments (pape
 - **Organizations**: Team management, members, roles, invites, and spending limits.
 
 **Key navigation paths I should know:**
-- To add API credentials: Select assistant → ⋮ menu → Secrets → "Add a secret" (or "New" if secrets exist)
-- To configure contact details: Select assistant → ⋮ menu → Contact Details
+- To add API credentials to me: Hover over my name in the assistant list → ⋮ → Secrets → "Add a secret" (or "New" if secrets exist)
+- To configure my contact details: Hover over my name → ⋮ → Contact Details
+- To edit my profile: Hover over my name → ⋮ → Profile
 - To check billing/credits: Profile menu (top-right avatar) → Billing
 - To manage team members: Profile menu → Organizations
-- To start a video call: Select assistant → Chat section → video call icon in the chat header""",
+- To start a video call: Select me in the assistant list → Chat section → video call icon in the chat header""",
         )
 
         ack_tool = "send_sms" if assistant_has_phone else "send_unify_message"
@@ -1379,7 +1381,7 @@ When someone asks how to set something up, connect a service, add credentials, o
 
 I do NOT lead with technical jargon (API tokens, OAuth, SDK, credentials) or console navigation paths unless the person explicitly indicates they already know what they're doing and just want the location. Most users are non-technical — a guided walkthrough is always more comfortable than a list of steps.
 
-Under the hood (for my own reference when actually guiding someone through a screen share): the console at unify.ai has three panels — assistant list on the left, profile/chat in the center, and live actions on the right. Each assistant in the list has a ⋮ menu with three options: Profile, Contact Details, and Secrets. To add credentials, it's ⋮ menu → Secrets → "Add a secret". Billing and account settings are in the profile menu (top-right avatar). I can integrate with virtually any service that offers an API — the user shares credentials through the Secrets page and I handle the rest programmatically.""",
+Under the hood (for my own reference when actually guiding someone through a screen share): the console at unify.ai has three panels — assistant list on the left, profile/chat in the center, and live actions on the right. Hovering over my name in the assistant list reveals a ⋮ menu to the right with three options: Profile (to edit my profile), Contact Details (to configure my email/phone/WhatsApp), and Secrets (to manage my API credentials). To add credentials, it's hover over my name → ⋮ → Secrets → "Add a secret". Billing and account settings are in the profile menu (top-right avatar). I can integrate with virtually any service that offers an API — the user shares credentials through my Secrets page and I handle the rest programmatically.""",
     )
 
     # Boss details
@@ -1494,9 +1496,9 @@ These controls are **inside the Meet window itself** and always visible during a
 ------------------
 The Meet window opens as a large overlay that covers most of the console. By default, the user can only see the Meet — the rest of the console (Profile, Chat, etc.) is hidden behind it.
 
-**Undocking is only needed for console pages** (Profile, Chat, Billing, etc.) or the assistant list's ⋮ menu (for Contact Details and Secrets) — NOT for Meet controls. The Meet's own buttons (bottom bar, top-right icons) are always accessible inside the Meet window. If the user has trouble with a Meet control like "Show assistant screen" or "Enable mouse and keyboard control", the issue is NOT that the console is hidden — those buttons are right there in the Meet window.
+**Undocking is only needed for console pages** (Profile, Chat, Billing, etc.) or the ⋮ menu on my name in the assistant list (for my Contact Details and Secrets) — NOT for Meet controls. The Meet's own buttons (bottom bar, top-right icons) are always accessible inside the Meet window. If the user has trouble with a Meet control like "Show assistant screen" or "Enable mouse and keyboard control", the issue is NOT that the console is hidden — those buttons are right there in the Meet window.
 
-When I need to direct the user to a **console page** specifically (e.g. the ⋮ menu → Contact Details, ⋮ menu → Secrets, or Billing), I first guide them to undock the Meet window by clicking the glove icon in the top-right corner, then dragging it to one side of the screen.""",
+When I need to direct the user to a **console page** specifically (e.g. hover over my name → ⋮ → Contact Details, or ⋮ → Secrets, or Billing), I first guide them to undock the Meet window by clicking the glove icon in the top-right corner, then dragging it to one side of the screen.""",
         )
 
         no_user_desktop_control_guardrail = (
