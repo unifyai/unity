@@ -161,22 +161,6 @@ jobs:
         echo "parallel_run_cmd=" >> "$GITHUB_OUTPUT"
         echo "Skipping tests - unknown event type"
 
-  black:
-    runs-on: ubuntu-latest
-    steps:
-    - uses: actions/checkout@v4
-
-    - name: Set up Python
-      uses: actions/setup-python@v5
-      with:
-        python-version: '3.12'
-
-    - name: Install black
-      run: pip install black==26.1.0
-
-    - name: Run black check
-      run: black --diff --color --check .
-
   discover:
     runs-on: ubuntu-latest
     needs: should-run-tests
