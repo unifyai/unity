@@ -99,6 +99,7 @@ class LivekitCallManager:
         self._worker_watchdog_task: asyncio.Task | None = None
         # Google Meet state
         self._gmeet_session_id: str | None = None
+        self._gmeet_joining: bool = False
         self.google_meet_start_timestamp = None
         self.google_meet_exchange_id = UNASSIGNED
 
@@ -373,7 +374,7 @@ class LivekitCallManager:
 
     @property
     def has_active_google_meet(self) -> bool:
-        return self._gmeet_session_id is not None
+        return self._gmeet_session_id is not None or self._gmeet_joining
 
     async def start_google_meet(
         self,
@@ -381,7 +382,7 @@ class LivekitCallManager:
         contact: dict,
         boss: dict,
         display_name: str = "",
-    ) -> None:
+    ) -> bool:
         """Join a Google Meet via agent-service browser and start the audio bridge.
 
         1. POST /googlemeet/join on agent-service to launch browser + automation.
@@ -395,8 +396,9 @@ class LivekitCallManager:
                 f"{ICONS['ipc']} [LivekitCallManager] start_google_meet ignored: "
                 "session already active",
             )
-            return
+            return False
 
+        self._gmeet_joining = True
         self._call_channel = "google_meet"
         self._disconnect_contact = contact
 
@@ -437,6 +439,7 @@ class LivekitCallManager:
 
         gmeet_extra = {
             "gmeet_session_id": "",
+            "gmeet_meet_url": meet_url,
             "agent_service_url": _resolve_agent_service_url(),
         }
 
@@ -473,9 +476,12 @@ class LivekitCallManager:
             LOGGER.error(
                 f"{ICONS['ipc']} [LivekitCallManager] Google Meet join failed: {body}",
             )
-            return
+            self._gmeet_joining = False
+            await self.cleanup_google_meet()
+            return False
 
         self._gmeet_session_id = body.get("sessionId")
+        self._gmeet_joining = False
         LOGGER.info(
             f"{ICONS['ipc']} [LivekitCallManager] Google Meet joined "
             f"(session={self._gmeet_session_id})",
@@ -489,10 +495,13 @@ class LivekitCallManager:
                 ),
             )
 
+        return True
+
     async def cleanup_google_meet(self) -> None:
         """Leave the Google Meet session and tear down the audio bridge."""
         session_id = self._gmeet_session_id
         self._gmeet_session_id = None
+        self._gmeet_joining = False
         self.google_meet_start_timestamp = None
         self.google_meet_exchange_id = UNASSIGNED
 

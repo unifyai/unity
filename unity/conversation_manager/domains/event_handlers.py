@@ -329,25 +329,37 @@ async def _(
     contact_id = contact.get("contact_id") if contact else 1
     sender_name = _get_sender_name(contact)
 
-    await cm.call_manager.start_google_meet(
+    joined = await cm.call_manager.start_google_meet(
         meet_url=event.meet_url,
         contact=contact,
         boss=boss,
     )
 
-    cm.notifications_bar.push_notif(
-        "Comms",
-        f"Joining Google Meet...",
-        event.timestamp,
-    )
-    cm.contact_index.push_message(
-        contact_id=contact_id,
-        sender_name=sender_name,
-        thread_name=Medium.GOOGLE_MEET,
-        message_content="<Joining Google Meet...>",
-        role="assistant",
-        timestamp=event.timestamp,
-    )
+    if joined:
+        cm.notifications_bar.push_notif(
+            "Comms",
+            f"Joining Google Meet...",
+            event.timestamp,
+        )
+        cm.contact_index.push_message(
+            contact_id=contact_id,
+            sender_name=sender_name,
+            thread_name=Medium.GOOGLE_MEET,
+            message_content="<Joining Google Meet...>",
+            role="assistant",
+            timestamp=event.timestamp,
+        )
+    else:
+        cm.notifications_bar.push_notif(
+            "Comms",
+            "Failed to join Google Meet. You may retry by calling join_google_meet again.",
+            event.timestamp,
+        )
+        await cm.request_llm_run(
+            delay=0,
+            cancel_running=True,
+            triggering_contact_id=contact_id,
+        )
 
 
 @EventHandler.register(

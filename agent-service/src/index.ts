@@ -2005,6 +2005,17 @@ app.post('/googlemeet/leave', auth, async (req: Request, res: Response) => {
   }
 });
 
+app.get('/googlemeet/sessions', auth, async (_req: Request, res: Response) => {
+  const sessions = Array.from(googleMeetSessions.entries()).map(([sessionId, session]) => ({
+    sessionId,
+    meetUrl: session.meetUrl,
+    status: session.status,
+    displayName: session.displayName,
+    createdAt: session.createdAt,
+  }));
+  res.json({ sessions });
+});
+
 app.get('/googlemeet/state', auth, async (req: Request, res: Response) => {
   const sessionId = req.query.sessionId as string;
   if (!sessionId) {

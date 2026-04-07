@@ -430,13 +430,16 @@ async def entrypoint(ctx: agents.JobContext):
 
     # Google Meet diarization config
     gmeet_session_id: str = ""
+    gmeet_meet_url: str = ""
     gmeet_agent_service_url: str = ""
     if channel == "google_meet":
         if meta:
             gmeet_session_id = meta.get("gmeet_session_id", "")
+            gmeet_meet_url = meta.get("gmeet_meet_url", "")
             gmeet_agent_service_url = meta.get("agent_service_url", "")
         else:
             gmeet_session_id = os.environ.get("GMEET_SESSION_ID", "")
+            gmeet_meet_url = os.environ.get("GMEET_MEET_URL", "")
             gmeet_agent_service_url = os.environ.get("AGENT_SERVICE_URL", "")
 
     _log.config(
@@ -537,22 +540,48 @@ async def entrypoint(ctx: agents.JobContext):
     async def _gmeet_poll_loop() -> None:
         """Background loop: poll agent-service for active speaker + meeting status.
 
-        Consolidates two responsibilities that previously lived in separate places:
-        1. Speaker diarization (was: on-demand HTTP per utterance in fast brain)
-        2. Meeting-end detection (was: _monitor_google_meet in slow brain)
+        Two phases:
+        1. Discovery — if gmeet_session_id wasn't provided at dispatch time,
+           poll GET /googlemeet/sessions and match by meetUrl.
+        2. State polling — poll GET /googlemeet/state for active speaker and
+           meeting-end detection.
         """
-        nonlocal _gmeet_cached_active_speaker
+        nonlocal _gmeet_cached_active_speaker, gmeet_session_id
         import aiohttp as _aiohttp
-
-        while not gmeet_session_id:
-            await asyncio.sleep(0.5)
 
         try:
             async with _aiohttp.ClientSession() as http:
+                # Phase 1: discover session ID if not provided
+                while not gmeet_session_id:
+                    _log.info(
+                        "Discovering Google Meet session ID via /googlemeet/sessions...",
+                    )
+                    try:
+                        resp = await http.get(
+                            f"{gmeet_agent_service_url}/googlemeet/sessions",
+                            headers={"authorization": f"Bearer {_gmeet_auth_key}"},
+                            timeout=_aiohttp.ClientTimeout(total=5),
+                        )
+                        if resp.status == 200:
+                            body = await resp.json()
+                            for s in body.get("sessions", []):
+                                if (
+                                    gmeet_meet_url
+                                    and s.get("meetUrl") == gmeet_meet_url
+                                ):
+                                    gmeet_session_id = s["sessionId"]
+                                    _log.info(
+                                        f"Discovered Google Meet session ID: {gmeet_session_id}",
+                                    )
+                                    break
+                    except Exception:
+                        pass
+                    if not gmeet_session_id:
+                        await asyncio.sleep(1)
+
+                # Phase 2: poll state for active speaker + meeting end
                 while True:
                     await asyncio.sleep(2)
-                    if not gmeet_session_id:
-                        continue
                     try:
                         resp = await http.get(
                             f"{gmeet_agent_service_url}/googlemeet/state",
