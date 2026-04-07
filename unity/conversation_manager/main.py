@@ -244,6 +244,16 @@ async def run_conversation_manager(
     if should_apply_mocks:
         _apply_test_mocks(cm)
 
+    # Pre-warm the LiveKit worker subprocess so that model loading, Python
+    # imports, and process pool initialization complete while the container is
+    # idle — before any assistant assignment arrives.  The worker registers
+    # with LiveKit using the pod-level job_name (available at boot), so
+    # dispatches can target it immediately once an assignment comes in.
+    try:
+        cm.call_manager.start_persistent_worker()
+    except Exception as e:
+        LOGGER.error("LiveKit worker pre-warm failed (non-fatal): %s", e)
+
     # Start background tasks
     asyncio.create_task(cm.wait_for_events()).add_done_callback(log_task_exc)
     asyncio.create_task(cm.check_inactivity()).add_done_callback(log_task_exc)

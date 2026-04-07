@@ -45,6 +45,7 @@ class CallConfig:
     voice_provider: str
     voice_id: str
     assistant_name: str = ""
+    job_name: str = ""
 
 
 _BASE_FORWARD_CHANNELS = [
@@ -59,6 +60,7 @@ class LivekitCallManager:
         config: CallConfig,
         event_broker: "InMemoryEventBroker | None" = None,
     ):
+        self.job_name: str = ""
         self.set_config(config=config)
         self.call_exchange_id = UNASSIGNED
         self.unify_meet_exchange_id = UNASSIGNED
@@ -90,6 +92,8 @@ class LivekitCallManager:
         self.voice_provider = config.voice_provider
         self.voice_id = config.voice_id
         self.assistant_name = config.assistant_name
+        if config.job_name:
+            self.job_name = config.job_name
 
     def set_event_broker(self, event_broker: "InMemoryEventBroker") -> None:
         """Set the event broker for socket server to publish to."""
@@ -97,7 +101,7 @@ class LivekitCallManager:
 
     @property
     def worker_agent_name(self) -> str:
-        return f"unity_{self.assistant_id}"
+        return f"unity_{self.job_name}"
 
     @property
     def has_active_call(self) -> bool:
