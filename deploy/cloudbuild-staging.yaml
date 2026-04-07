@@ -104,7 +104,7 @@ steps:
   - 'unity-deploy-staging'
   - '--project=${PROJECT_ID}'
   - '--branch=staging'
-  - '--substitutions=_BASE_IMAGE=${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPOSITORY}/unity-base-staging:${SHORT_SHA}'
+  - '--substitutions=_BASE_IMAGE=${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPOSITORY}/unity-base-staging:${SHORT_SHA},_UNITY_SHA=${SHORT_SHA}'
   waitFor: ['push-sha-tag', 'push-latest-tag']
 
 # Options
