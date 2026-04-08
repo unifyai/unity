@@ -172,17 +172,18 @@ jobs:
         cd "$ORCHESTRA_REPO_PATH"
         poetry install --no-interaction
 
-    - name: Collect test nodes for this shard
-      id: collect-nodes
+    - name: Collect test files for this shard
+      id: collect-files
       env:
         LIGHTWEIGHT_SHARD: ${{ matrix.shard }}
         SKIP_UNITY_TEST_INIT: "1"
       run: |
-        SHARD_NODES_FILE="$(mktemp)"
-        echo "shard_nodes_file=$SHARD_NODES_FILE" >> "$GITHUB_OUTPUT"
-        export SHARD_NODES_FILE
+        SHARD_FILES_FILE="$(mktemp)"
+        echo "shard_files_file=$SHARD_FILES_FILE" >> "$GITHUB_OUTPUT"
+        export SHARD_FILES_FILE
 
         uv run python - <<'PY'
+        import math
         import os
         import subprocess
         import sys
@@ -193,7 +194,7 @@ jobs:
             "-m",
             "pytest",
             "--collect-only",
-            "-q",
+            "-qq",
             "-m",
             "not llm_call",
             "tests/",
@@ -209,32 +210,75 @@ jobs:
             print(result.stderr, file=sys.stderr)
             raise SystemExit(result.returncode)
 
-        nodes = [line.strip() for line in result.stdout.splitlines() if "::" in line]
         shard = int(os.environ["LIGHTWEIGHT_SHARD"])
         shard_count = int(os.environ["LIGHTWEIGHT_SHARD_COUNT"])
-        shard_nodes = [node for index, node in enumerate(nodes) if index % shard_count == shard - 1]
-        Path(os.environ["SHARD_NODES_FILE"]).write_text("".join(f"{node}\n" for node in shard_nodes))
+        file_counts = []
+        for raw_line in result.stdout.splitlines():
+            line = raw_line.strip()
+            if not line or line.startswith("="):
+                continue
+            file_path, separator, count_text = line.rpartition(":")
+            if separator != ":" or not file_path.startswith("tests/"):
+                continue
+            test_count = int(count_text.strip())
+            file_counts.append((file_path, test_count))
 
-        print(f"Collected {len(nodes)} lightweight nodes")
-        print(f"Shard {shard}/{shard_count}: {len(shard_nodes)} nodes")
+        if not file_counts:
+            raise SystemExit("Pytest did not report any lightweight test files")
 
-        if not shard_nodes:
-            raise SystemExit(f"Shard {shard}/{shard_count} has no collected tests")
+        total_tests = sum(test_count for _, test_count in file_counts)
+        target_tests_per_shard = math.ceil(total_tests / shard_count)
+        shards = [[] for _ in range(shard_count)]
+        shard_test_counts = [0] * shard_count
+        current_shard = 0
+
+        for index, (file_path, test_count) in enumerate(file_counts):
+            shards[current_shard].append(file_path)
+            shard_test_counts[current_shard] += test_count
+
+            remaining_files = len(file_counts) - index - 1
+            remaining_shards = shard_count - current_shard - 1
+            if (
+                current_shard < shard_count - 1
+                and shard_test_counts[current_shard] >= target_tests_per_shard
+                and remaining_files >= remaining_shards
+            ):
+                current_shard += 1
+
+        shard_files = shards[shard - 1]
+        shard_test_count = shard_test_counts[shard - 1]
+        Path(os.environ["SHARD_FILES_FILE"]).write_text("".join(f"{file_path}\n" for file_path in shard_files))
+
+        print(f"Collected {len(file_counts)} lightweight test files")
+        print(f"Collected {total_tests} lightweight tests")
+        print(
+            f"Target per shard: {target_tests_per_shard} tests "
+            f"across {shard_count} shards"
+        )
+        print(
+            f"Shard {shard}/{shard_count}: "
+            f"{len(shard_files)} files, {shard_test_count} tests"
+        )
+        for file_path in shard_files:
+            print(f"  - {file_path}")
+
+        if not shard_files:
+            raise SystemExit(f"Shard {shard}/{shard_count} has no collected test files")
         PY
 
     - name: Run tests
       id: run-tests
       run: |
         set +e
-        mapfile -t SHARD_NODES < '${{ steps.collect-nodes.outputs.shard_nodes_file }}'
+        mapfile -t SHARD_FILES < '${{ steps.collect-files.outputs.shard_files_file }}'
 
         Xvfb :99 -screen 0 1920x1080x24 &
         XVFB_PID=$!
         export DISPLAY=:99
         trap "kill $XVFB_PID 2>/dev/null" EXIT
 
-        echo "Running shard ${{ matrix.shard }}/8 with ${#SHARD_NODES[@]} explicit test nodes"
-        tests/parallel_run.sh --timeout 7200 "${SHARD_NODES[@]}"
+        echo "Running shard ${{ matrix.shard }}/8 with ${#SHARD_FILES[@]} test files"
+        tests/parallel_run.sh --timeout 7200 "${SHARD_FILES[@]}"
         TEST_EXIT_CODE=$?
         echo "exit_code=$TEST_EXIT_CODE" >> "$GITHUB_OUTPUT"
         exit $TEST_EXIT_CODE
