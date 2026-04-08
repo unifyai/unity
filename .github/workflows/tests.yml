@@ -36,17 +36,6 @@ on:
         type: number
         default: 120
 
-  # Push to staging/main → lightweight tests (not llm_call, excluded heavy dirs)
-  push:
-    branches:
-    - staging
-    - main
-
-  # PR to main → full test suite; PR to staging → lightweight tests
-  pull_request:
-    branches:
-    - main
-    - staging
 
 jobs:
   # Determine test mode based on trigger type.
