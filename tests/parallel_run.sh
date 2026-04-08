@@ -1174,6 +1174,41 @@ if (( ${#roots[@]} )); then
   done < <(eval "$(build_find_cmd)")
 fi
 
+# Filter out files under --ignore paths (pytest --ignore only affects directory
+# traversal, not explicitly listed targets, so we must filter before collection)
+if (( ${#PYTEST_IGNORE_PATHS[@]} > 0 && (${#found_files[@]} + ${#direct_files[@]}) > 0 )); then
+  _filter_ignored() {
+    local -a input=("$@")
+    local -a output=()
+    for f in "${input[@]}"; do
+      local _skip=0
+      for pfx in "${PYTEST_IGNORE_PATHS[@]}"; do
+        if [[ "$f" == "$pfx"/* || "$f" == "./$pfx"/* || "$f" == "$pfx" ]]; then
+          _skip=1
+          break
+        fi
+      done
+      (( _skip )) || output+=( "$f" )
+    done
+    printf '%s\0' "${output[@]}"
+  }
+  if (( ${#found_files[@]} )); then
+    tmp_filtered=()
+    while IFS= read -r -d '' f; do
+      tmp_filtered+=( "$f" )
+    done < <(_filter_ignored "${found_files[@]}")
+    found_files=( "${tmp_filtered[@]}" )
+  fi
+  if (( ${#direct_files[@]} )); then
+    tmp_filtered=()
+    while IFS= read -r -d '' f; do
+      tmp_filtered+=( "$f" )
+    done < <(_filter_ignored "${direct_files[@]}")
+    direct_files=( "${tmp_filtered[@]}" )
+  fi
+  unset -f _filter_ignored
+fi
+
 # Apply filename pattern filter (matches on basename) if provided
 if [[ -n "$NAME_PATTERN" ]]; then
   if (( ${#direct_files[@]} )); then

@@ -47,6 +47,7 @@ parse_test_args() {
   TAGS=()
   PYTEST_EXTRA_ARGS=()
   PYTEST_COLLECTION_ARGS=()
+  PYTEST_IGNORE_PATHS=()
   POSITIONAL_ARGS=()
 
   while (( "$#" )); do
@@ -141,8 +142,10 @@ parse_test_args() {
       --)
         shift
         PYTEST_EXTRA_ARGS=("$@")
-        # Extract collection-relevant args (-k, -m) for use during test discovery
-        # These filters affect which tests are collected, not just how they run
+        # Extract collection-relevant args for use during test discovery.
+        # These affect which tests are collected, not just how they run:
+        #   -k/-m: filter by keyword/marker expression
+        #   --ignore/--ignore-glob: exclude paths from collection
         local _coll_i=0
         while (( _coll_i < ${#PYTEST_EXTRA_ARGS[@]} )); do
           local _coll_arg="${PYTEST_EXTRA_ARGS[_coll_i]}"
@@ -156,8 +159,29 @@ parse_test_args() {
                 ((_coll_i++))
               fi
               ;;
+            --ignore)
+              # Next arg is the path (e.g., --ignore tests/actor)
+              if (( _coll_i + 1 < ${#PYTEST_EXTRA_ARGS[@]} )); then
+                PYTEST_COLLECTION_ARGS+=( "$_coll_arg" "${PYTEST_EXTRA_ARGS[_coll_i+1]}" )
+                PYTEST_IGNORE_PATHS+=( "${PYTEST_EXTRA_ARGS[_coll_i+1]%/}" )
+                ((_coll_i+=2))
+              else
+                ((_coll_i++))
+              fi
+              ;;
             -k=*|-m=*)
               # Value is attached (e.g., -k="pattern")
+              PYTEST_COLLECTION_ARGS+=( "$_coll_arg" )
+              ((_coll_i++))
+              ;;
+            --ignore=*)
+              # Value is attached (e.g., --ignore=tests/actor)
+              PYTEST_COLLECTION_ARGS+=( "$_coll_arg" )
+              local _ival="${_coll_arg#--ignore=}"
+              PYTEST_IGNORE_PATHS+=( "${_ival%/}" )
+              ((_coll_i++))
+              ;;
+            --ignore-glob=*)
               PYTEST_COLLECTION_ARGS+=( "$_coll_arg" )
               ((_coll_i++))
               ;;
