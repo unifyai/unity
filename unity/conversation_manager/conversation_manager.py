@@ -1136,7 +1136,7 @@ class ConversationManager(metaclass=SingletonABCMeta):
                 tools,
                 tool_choice="required" if tools else "auto",
                 response_format=response_model,
-                exclusive_tools={"make_call"},
+                exclusive_tools={"make_call", "make_whatsapp_call", "join_google_meet"},
             )
         finally:
             if hasattr(client, "_pending_thinking_log"):
