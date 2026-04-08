@@ -97,6 +97,8 @@ class LivekitCallManager:
         self._disconnect_contact: dict | None = None
         self._boss_notification_task: asyncio.Task | None = None
         self._worker_watchdog_task: asyncio.Task | None = None
+        # WhatsApp call joining state
+        self._whatsapp_call_joining: bool = False
         # Google Meet state
         self._gmeet_session_id: str | None = None
         self._gmeet_joining: bool = False
@@ -286,6 +288,7 @@ class LivekitCallManager:
             )
             return
 
+        self._whatsapp_call_joining = False
         self.is_outbound = outbound
         self._call_channel = channel
         self._disconnect_contact = contact
@@ -613,11 +616,36 @@ class LivekitCallManager:
                 event.to_json(),
             )
 
+    async def cleanup_persistent_worker(self) -> None:
+        """Stop the persistent worker process and its watchdog."""
+        if self._worker_watchdog_task and not self._worker_watchdog_task.done():
+            self._worker_watchdog_task.cancel()
+            try:
+                await self._worker_watchdog_task
+            except asyncio.CancelledError:
+                pass
+        self._worker_watchdog_task = None
+
+        proc = self._worker_proc
+        self._worker_proc = None
+        if proc is None:
+            return
+        if proc.poll() is not None:
+            return
+        LOGGER.debug(
+            f"{ICONS['ipc']} [LivekitCallManager] Terminating persistent worker {proc.pid}...",
+        )
+        await asyncio.to_thread(terminate_process, proc, 5)
+        LOGGER.debug(
+            f"{ICONS['ipc']} [LivekitCallManager] Persistent worker terminated",
+        )
+
     async def cleanup_call_proc(self) -> None:
         """Stop any running voice agent job/subprocess and socket server."""
         proc = self._call_proc
         self._call_proc = None
         self._active_job = False
+        self._whatsapp_call_joining = False
 
         self.is_outbound = False
         self.initial_notification = ""

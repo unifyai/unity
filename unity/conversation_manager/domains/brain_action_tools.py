@@ -1495,6 +1495,17 @@ class ConversationManagerBrainActionTools:
         from unity.conversation_manager.domains.call_manager import make_room_name
 
         contact_id = _coerce_contact_id(contact_id)
+
+        if (
+            self._cm.call_manager.has_active_call
+            or self._cm.call_manager.has_active_google_meet
+            or self._cm.call_manager._whatsapp_call_joining
+        ):
+            return {
+                "status": "error",
+                "message": "A call or meeting is already active.",
+            }
+
         contact = self._cm.contact_index.get_contact(contact_id)
 
         outbound_error = _check_outbound_allowed(contact)
@@ -1533,12 +1544,15 @@ class ConversationManagerBrainActionTools:
             f"{DEFAULT_ICON} [make_whatsapp_call] context: {context}, to_number: {to_number}",
         )
 
+        self._cm.call_manager._whatsapp_call_joining = True
+
         response = await comms_utils.start_whatsapp_call(
             to_number=to_number,
             agent_name=agent_name,
             room_name=room_name,
         )
         if not response.get("success"):
+            self._cm.call_manager._whatsapp_call_joining = False
             if not self._cm.assistant_whatsapp_number:
                 error_msg = "You don't have a WhatsApp number configured."
             else:
@@ -1567,7 +1581,8 @@ class ConversationManagerBrainActionTools:
             )
             return {"status": "ok"}
 
-        # method == "invite" — permission not yet granted
+        # method == "invite" — no actual call yet, release the joining flag
+        self._cm.call_manager._whatsapp_call_joining = False
         if context:
             self._cm._pending_whatsapp_call_contexts[contact_id] = context
         event = WhatsAppCallInviteSent(contact=fresh_contact)
@@ -2444,6 +2459,7 @@ class ConversationManagerBrainActionTools:
             self._cm.mode.is_voice
             or self._cm.call_manager.has_active_call
             or self._cm.call_manager.has_active_google_meet
+            or self._cm.call_manager._whatsapp_call_joining
         )
         if not call_or_meet_in_progress:
             tools["join_google_meet"] = self.join_google_meet

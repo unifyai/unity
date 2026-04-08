@@ -1495,6 +1495,7 @@ class ConversationManager(metaclass=SingletonABCMeta):
             await self.call_manager.cleanup_google_meet()
         else:
             await self.call_manager.cleanup_call_proc()
+        await self.call_manager.cleanup_persistent_worker()
 
         await self._stop_file_sync()
 

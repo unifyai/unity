@@ -651,6 +651,7 @@ async def _(
         agent_name = SESSION_DETAILS.assistant.name or ""
         room_name = make_room_name(assistant_id, "whatsapp_call")
 
+        cm.call_manager._whatsapp_call_joining = True
         response = await comms_utils.start_whatsapp_call(
             to_number=whatsapp_number,
             agent_name=agent_name,
@@ -664,6 +665,7 @@ async def _(
             )
             return
 
+        cm.call_manager._whatsapp_call_joining = False
         cm.call_manager.initial_notification = None
         cm.contact_index.push_message(
             contact_id=contact_id,
