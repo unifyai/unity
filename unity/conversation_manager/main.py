@@ -366,6 +366,7 @@ async def main(project_name: str = "Assistants"):
             os.path.dirname(os.path.abspath(__file__)),
             "..",
             "..",
+            "deploy",
             "scripts",
             "upload_pod_logs.py",
         ),
