@@ -2,17 +2,20 @@
 tests/conversation_manager/voice/test_fast_brain_no_url_speech.py
 =================================================================
 
-Regression test: the fast brain must never attempt to speak URLs, OAuth scopes,
-API keys, or other machine-readable strings over TTS.
+Tests for URL handling on voice calls: the fast brain must distinguish between
+simple URLs (which should be spoken phonetically) and complex URLs (which must
+only be shared via chat).
 
-TTS engines (ElevenLabs, etc.) produce garbled, unintelligible audio when fed
-URLs like ``https://www.googleapis.com/auth/admin.directory.user``. A real
-person would send such content via text; the fast brain must do the same —
-tell the caller the information will be sent in the chat.
+- **Simple URLs** like ``console.cloud.google.com`` should be spoken
+  phonetically ("console dot cloud dot google dot com") and also pasted
+  in the chat with ``https://`` for clickability.
+- **Complex URLs** like OAuth scope lists or deep paths with query params
+  must NOT be spoken — they produce garbled TTS audio.
+- API keys, OAuth scopes, tokens, and other machine-readable strings must
+  never be spoken.
 
-Origin: production incident 2026-04-07 where Rachel dictated OAuth scope URLs
-during a Google Workspace domain-wide delegation walkthrough, resulting in
-incomprehensible rapid speech.
+Origin: production incident 2026-04-07 (OAuth scope dictation) and
+2026-04-08 (simple URL refused when it should have been spoken phonetically).
 """
 
 from __future__ import annotations
@@ -48,9 +51,19 @@ SEND_VIA_TEXT_PATTERNS = [
     r"(send|share|drop|pop).{0,15}(over|those|them|it|that)",
 ]
 
+PHONETIC_URL_PATTERN = re.compile(
+    r"\b\w+\s+dot\s+\w+",
+    re.IGNORECASE,
+)
+
 
 def response_contains_url(response: str) -> list[str]:
     return URL_PATTERN.findall(response)
+
+
+def response_contains_phonetic_url(response: str) -> bool:
+    """Check if the response contains a phonetically spelled-out URL."""
+    return bool(PHONETIC_URL_PATTERN.search(response))
 
 
 def response_promises_text(response: str) -> bool:
@@ -131,7 +144,57 @@ async def get_fast_brain_response(
 
 @pytest.mark.asyncio
 class TestNoURLSpeech:
-    """The fast brain must not attempt to speak URLs or OAuth scopes."""
+    """Complex URLs / machine-readable strings must not be spoken.
+
+    Simple, short URLs should be spoken phonetically instead.
+    """
+
+    async def test_simple_url_spoken_phonetically(
+        self,
+        voice_agent_prompt,
+        fast_brain_model,
+    ):
+        """A simple domain URL should be spoken phonetically on the call,
+        e.g. 'console dot cloud dot google dot com'."""
+        conversation = [
+            {
+                "role": "user",
+                "content": (
+                    "Where do I go to set up the Google Cloud project? "
+                    "What's the URL?"
+                ),
+            },
+            {
+                "role": "system",
+                "content": (
+                    "[notification] The Google Cloud Console is at "
+                    "console.cloud.google.com"
+                ),
+            },
+        ]
+
+        response = await get_fast_brain_response(
+            voice_agent_prompt,
+            conversation,
+            model=fast_brain_model,
+        )
+
+        assert response_contains_phonetic_url(response), (
+            f"Fast brain ({fast_brain_model}) did not speak the simple URL "
+            f"phonetically!\n"
+            f"Response: {response}\n\n"
+            f"Simple URLs like 'console.cloud.google.com' should be spoken "
+            f"phonetically as 'console dot cloud dot google dot com'."
+        )
+
+        raw_urls = response_contains_url(response)
+        assert not raw_urls, (
+            f"Fast brain ({fast_brain_model}) included a raw URL in speech!\n"
+            f"Response: {response}\n"
+            f"URLs found: {raw_urls}\n\n"
+            f"Even simple URLs should be spoken phonetically (with 'dot'), "
+            f"not as raw https:// strings."
+        )
 
     async def test_oauth_scopes_walkthrough(
         self,
