@@ -139,6 +139,226 @@ class TestSpeechDeduplicationCheckerUnit:
 
 
 # =============================================================================
+# Unit tests — contradiction detection and notification awareness
+# =============================================================================
+
+
+@pytest.mark.asyncio
+class TestSpeechGateContradictionDetection:
+    """Tests for the expanded speech gate that detects contradiction and
+    staleness in addition to redundancy."""
+
+    async def test_should_suppress_combines_both_fields(self):
+        """SpeechDedup.should_suppress is True when either already_covered
+        or contradicts_current_state is True."""
+        assert SpeechDedup(already_covered=True).should_suppress is True
+        assert (
+            SpeechDedup(
+                already_covered=False,
+                contradicts_current_state=True,
+            ).should_suppress
+            is True
+        )
+        assert (
+            SpeechDedup(
+                already_covered=True,
+                contradicts_current_state=True,
+            ).should_suppress
+            is True
+        )
+        assert (
+            SpeechDedup(
+                already_covered=False,
+                contradicts_current_state=False,
+            ).should_suppress
+            is False
+        )
+
+    async def test_empty_context_skips_check(self):
+        """No LLM call when both utterances and notifications are empty."""
+        checker = SpeechDeduplicationChecker()
+
+        result = await checker.evaluate(
+            proposed_speech="Want me to set it up?",
+            recent_utterances=[],
+            recent_notifications=[],
+        )
+
+        assert result.should_suppress is False
+
+    async def test_notifications_only_triggers_check(self):
+        """When there are notifications but no utterances, the checker still
+        runs (notifications alone can reveal contradiction)."""
+        captured: dict = {}
+        mock_client = MagicMock()
+        mock_client.set_response_format = MagicMock()
+
+        async def capture_generate(*, messages=None, **_kwargs):
+            captured["messages"] = messages
+            return json.dumps(
+                {
+                    "already_covered": False,
+                    "contradicts_current_state": False,
+                    "reasoning": "no overlap",
+                },
+            )
+
+        mock_client.generate = AsyncMock(side_effect=capture_generate)
+
+        with patch(
+            "unity.conversation_manager.domains.speech_dedup.new_llm_client",
+            return_value=mock_client,
+        ):
+            checker = SpeechDeduplicationChecker()
+            await checker.evaluate(
+                proposed_speech="Let me walk you through that.",
+                recent_utterances=[],
+                recent_notifications=["Setup completed successfully."],
+            )
+
+        assert captured.get("messages") is not None
+        system_msg = captured["messages"][0]["content"]
+        assert "Setup completed successfully" in system_msg
+
+    async def test_evaluate_includes_notifications_in_prompt(self):
+        """The expanded prompt includes recent notifications alongside
+        recent utterances so the LLM can detect contradictions."""
+        captured: dict = {}
+        mock_client = MagicMock()
+        mock_client.set_response_format = MagicMock()
+
+        async def capture_generate(*, messages=None, **_kwargs):
+            captured["messages"] = messages
+            return json.dumps(
+                {
+                    "already_covered": False,
+                    "contradicts_current_state": False,
+                    "reasoning": "novel info",
+                },
+            )
+
+        mock_client.generate = AsyncMock(side_effect=capture_generate)
+
+        with patch(
+            "unity.conversation_manager.domains.speech_dedup.new_llm_client",
+            return_value=mock_client,
+        ):
+            checker = SpeechDeduplicationChecker()
+            await checker.evaluate(
+                proposed_speech="Want me to help set up Gmail?",
+                recent_utterances=["Everything is done."],
+                recent_notifications=[
+                    "Gmail check completed: 201 unread emails.",
+                ],
+            )
+
+        system_msg = captured["messages"][0]["content"]
+        assert "Gmail check completed" in system_msg
+        assert "Everything is done" in system_msg
+
+    async def test_error_fails_open_with_both_fields(self):
+        """On LLM error, both fields are False (fails open)."""
+        checker = SpeechDeduplicationChecker(model="invalid-model@nowhere")
+
+        result = await checker.evaluate(
+            proposed_speech="Let me set up delegation.",
+            recent_utterances=["All done."],
+            recent_notifications=["Setup complete."],
+        )
+
+        assert result.should_suppress is False
+        assert result.contradicts_current_state is False
+
+    async def test_backward_compat_without_notifications(self):
+        """Calling evaluate without recent_notifications still works
+        (parameter is optional with default None)."""
+        captured: dict = {}
+        mock_client = MagicMock()
+        mock_client.set_response_format = MagicMock()
+
+        async def capture_generate(*, messages=None, **_kwargs):
+            captured["messages"] = messages
+            return json.dumps(
+                {
+                    "already_covered": True,
+                    "reasoning": "same info",
+                },
+            )
+
+        mock_client.generate = AsyncMock(side_effect=capture_generate)
+
+        with patch(
+            "unity.conversation_manager.domains.speech_dedup.new_llm_client",
+            return_value=mock_client,
+        ):
+            checker = SpeechDeduplicationChecker()
+            result = await checker.evaluate(
+                proposed_speech="Found restaurants.",
+                recent_utterances=["I found three Italian places."],
+            )
+
+        assert result.should_suppress is True
+        system_msg = captured["messages"][0]["content"]
+        assert "(none)" in system_msg  # notifications section shows "(none)"
+
+
+@pytest.mark.eval
+@pytest.mark.asyncio
+class TestSpeechGateContradictionEval:
+    """Eval tests verifying the LLM correctly identifies contradiction
+    between proposed speech and current notification state."""
+
+    async def test_detects_offering_setup_when_already_complete(self):
+        """The gate should suppress speech that offers setup steps when
+        a notification confirms the setup is already complete."""
+        from unity.settings import SETTINGS
+
+        checker = SpeechDeduplicationChecker(
+            model=SETTINGS.conversation.FAST_BRAIN_MODEL,
+        )
+
+        result = await checker.evaluate(
+            proposed_speech=(
+                "Want me to walk you through enabling domain-wide delegation "
+                "on that service account?"
+            ),
+            recent_utterances=[
+                "Everything is set up and working. You have about 201 unread emails.",
+            ],
+            recent_notifications=[
+                "Gmail check completed successfully. Dan has about 201 unread emails.",
+                "Everything is fully set up. The Gmail API is already enabled.",
+            ],
+        )
+
+        assert result.should_suppress is True, (
+            f"Expected suppression for setup offer when notifications confirm "
+            f"completion. Reasoning: {result.reasoning}"
+        )
+
+    async def test_allows_genuinely_new_information(self):
+        """The gate should allow speech that contains genuinely new
+        information not present in utterances or notifications."""
+        from unity.settings import SETTINGS
+
+        checker = SpeechDeduplicationChecker(
+            model=SETTINGS.conversation.FAST_BRAIN_MODEL,
+        )
+
+        result = await checker.evaluate(
+            proposed_speech="Your 3pm meeting with Sarah was moved to 4pm.",
+            recent_utterances=["Let me check on that."],
+            recent_notifications=[
+                "Calendar event updated: meeting with Sarah rescheduled to 4pm.",
+            ],
+        )
+
+        assert result.should_suppress is False, (
+            f"Expected novel info to pass through. " f"Reasoning: {result.reasoning}"
+        )
+
+
+# =============================================================================
 # Symbolic integration tests — slow brain passes should_speak through
 # =============================================================================
 

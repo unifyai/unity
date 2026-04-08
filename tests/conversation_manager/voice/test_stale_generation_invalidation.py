@@ -120,10 +120,7 @@ class TestNotificationTriggersTurnClassification:
         response_text: str,
         notification_source: str,
     ) -> bool:
-        return (
-            not (should_speak and response_text)
-            and notification_source != "meet_interaction"
-        )
+        return notification_source != "meet_interaction"
 
     def test_silent_slow_brain_notification_triggers(self):
         assert self._triggers_turn(
@@ -132,8 +129,10 @@ class TestNotificationTriggersTurnClassification:
             notification_source="slow_brain",
         )
 
-    def test_speak_mode_notification_does_not_trigger(self):
-        assert not self._triggers_turn(
+    def test_speak_mode_notification_triggers(self):
+        """should_speak notifications now also invalidate the fast brain's
+        in-flight generation so it regenerates with the new context."""
+        assert self._triggers_turn(
             should_speak=True,
             response_text="I've sent those scopes in the chat.",
             notification_source="slow_brain",
