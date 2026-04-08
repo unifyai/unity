@@ -170,13 +170,15 @@ jobs:
 
     - name: Build magnitude packages and install agent-service (agent-service tests)
       run: |
-        cd magnitude/packages/magnitude-core
+        cd magnitude
         npm install
+        echo "✓ magnitude root deps installed (turbo, etc.)"
+
+        cd packages/magnitude-core
         npm run build
         echo "✓ magnitude-core built"
 
         cd ../magnitude-extract
-        npm install
         npm run build
         echo "✓ magnitude-extract built"
 
