@@ -176,6 +176,7 @@ jobs:
       id: collect-nodes
       env:
         LIGHTWEIGHT_SHARD: ${{ matrix.shard }}
+        SKIP_UNITY_TEST_INIT: "1"
       run: |
         SHARD_NODES_FILE="$(mktemp)"
         echo "shard_nodes_file=$SHARD_NODES_FILE" >> "$GITHUB_OUTPUT"
