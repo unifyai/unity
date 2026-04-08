@@ -145,31 +145,40 @@ class Assistant(Agent):
         model_settings: ModelSettings,
     ) -> AsyncIterable[llm.ChatChunk]:
         """Wait for call connection then delegate to parent LLM."""
-        _log.info("Waiting for call to be received…")
-        while not self.call_received:
-            await asyncio.sleep(0.1)
-        _log.call_status("call_received")
+        nonlocal _user_turn_generating
+        _user_turn_generating = True
+        try:
+            _log.info("Waiting for call to be received…")
+            while not self.call_received:
+                await asyncio.sleep(0.1)
+            _log.call_status("call_received")
 
-        await self._capture_screenshots_for_llm(chat_ctx)
+            await self._capture_screenshots_for_llm(chat_ctx)
 
-        asyncio.create_task(
-            event_broker.publish("app:comms:fast_brain_generating", "{}"),
-        )
+            asyncio.create_task(
+                event_broker.publish("app:comms:fast_brain_generating", "{}"),
+            )
 
-        from unity.settings import SETTINGS
+            from unity.settings import SETTINGS
 
-        window = SETTINGS.conversation.FAST_BRAIN_CONTEXT_WINDOW
-        trimmed_items = trim_fast_brain_context(chat_ctx.items, window)
-        if len(trimmed_items) < len(chat_ctx.items):
-            trimmed_ctx = llm.ChatContext()
-            for item in trimmed_items:
-                trimmed_ctx.items.append(item)
-        else:
-            trimmed_ctx = chat_ctx
+            window = SETTINGS.conversation.FAST_BRAIN_CONTEXT_WINDOW
+            trimmed_items = trim_fast_brain_context(chat_ctx.items, window)
+            if len(trimmed_items) < len(chat_ctx.items):
+                trimmed_ctx = llm.ChatContext()
+                for item in trimmed_items:
+                    trimmed_ctx.items.append(item)
+            else:
+                trimmed_ctx = chat_ctx
 
-        _log.info("LLM thinking… (llm_node_start)")
-        async for chunk in super().llm_node(trimmed_ctx, tools, model_settings):
-            yield chunk
+            _log.info("LLM thinking… (llm_node_start)")
+            async for chunk in super().llm_node(
+                trimmed_ctx,
+                tools,
+                model_settings,
+            ):
+                yield chunk
+        finally:
+            _user_turn_generating = False
 
 
 def _load_config_from_metadata(ctx: agents.JobContext) -> dict | None:
@@ -354,6 +363,7 @@ async def entrypoint(ctx: agents.JobContext):
     _queued_speech: list[tuple[str, str, str, str, str]] = []
     _say_meta_queue: list[dict] = []
     _dedup_in_flight = False
+    _user_turn_generating = False
     generation_seq = 0
     user_state_seq = 0
     _was_quiescent = True
@@ -436,6 +446,21 @@ async def entrypoint(ctx: agents.JobContext):
             allow_interruptions,
             user_input,
         )
+
+    def _invalidate_current_generation(reason: str, source_id: str) -> None:
+        """Cancel in-flight FastBrain generation and re-trigger with updated context.
+
+        Called when a significant IPC event (slow brain notification, outbound
+        message confirmation) arrives while the FastBrain LLM is mid-generation.
+        The 50 ms coalescence in ``trigger_generate_reply`` naturally collapses
+        bursts (e.g. notification + message_sent arriving ~100 ms apart) into a
+        single regeneration.
+        """
+        if not _user_turn_generating:
+            return
+        _log.info(f"Invalidating in-flight generation: {reason}")
+        session.interrupt()
+        trigger_generate_reply(reason=reason, source_id=source_id)
 
     if channel == "phone_call":
         user_utterance_event = InboundPhoneUtterance
@@ -1067,6 +1092,11 @@ async def entrypoint(ctx: agents.JobContext):
                     notification_source=notification_source,
                     llm_log_path=llm_log_path,
                 )
+                if triggers_turn:
+                    _invalidate_current_generation(
+                        "notification_during_generation",
+                        notification_id,
+                    )
 
     event_broker.register_callback("app:call:status", on_status)
     event_broker.register_callback("app:call:notification", on_notification)
@@ -1095,6 +1125,11 @@ async def entrypoint(ctx: agents.JobContext):
         if not session_ready:
             return
         _inject_silent_context(text)
+        if text.startswith("[You "):
+            _invalidate_current_generation(
+                "outbound_action_during_generation",
+                "participant_comms",
+            )
 
     event_broker.register_callback("app:comms:*", on_participant_comms)
 
