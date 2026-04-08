@@ -42,15 +42,16 @@ on:
     - staging
     - main
 
-  # PR to main → full test suite
+  # PR to main → full test suite; PR to staging → lightweight tests
   pull_request:
     branches:
     - main
+    - staging
 
 jobs:
   # Determine test mode based on trigger type.
   # Branch filtering is handled by the on: triggers above, so all events here
-  # are guaranteed to be: push to staging/main, PR to main, or workflow_dispatch.
+  # are guaranteed to be: push to staging/main, PR to main/staging, or workflow_dispatch.
   should-run-tests:
     runs-on: ubuntu-latest
     outputs:
@@ -60,6 +61,7 @@ jobs:
       id: check
       env:
         EVENT_NAME: ${{ github.event_name }}
+        PR_BASE_REF: ${{ github.event.pull_request.base.ref }}
       run: |
         if [[ "$EVENT_NAME" == "workflow_dispatch" ]]; then
           echo "test_mode=manual" >> "$GITHUB_OUTPUT"
@@ -68,8 +70,13 @@ jobs:
           echo "test_mode=lightweight" >> "$GITHUB_OUTPUT"
           echo "Mode: lightweight (push to ${GITHUB_REF#refs/heads/})"
         elif [[ "$EVENT_NAME" == "pull_request" ]]; then
-          echo "test_mode=full" >> "$GITHUB_OUTPUT"
-          echo "Mode: full (PR to main)"
+          if [[ "$PR_BASE_REF" == "main" ]]; then
+            echo "test_mode=full" >> "$GITHUB_OUTPUT"
+            echo "Mode: full (PR to main)"
+          else
+            echo "test_mode=lightweight" >> "$GITHUB_OUTPUT"
+            echo "Mode: lightweight (PR to $PR_BASE_REF)"
+          fi
         fi
 
   discover:
