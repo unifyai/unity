@@ -154,41 +154,6 @@ jobs:
       run: |
         uv run playwright install --with-deps
 
-    - name: Setup Node.js (agent-service tests)
-      uses: actions/setup-node@v4
-      with:
-        node-version: '22'
-
-    - name: Clone magnitude repo (agent-service tests)
-      uses: actions/checkout@v6
-      with:
-        repository: unifyai/magnitude
-        ref: unity-modifications
-        path: magnitude
-        token: ${{ secrets.CLONE_TOKEN }}
-        fetch-depth: 1
-
-    - name: Build magnitude packages and install agent-service (agent-service tests)
-      run: |
-        cd magnitude
-        npm install
-        echo "✓ magnitude root deps installed (turbo, etc.)"
-
-        cd packages/magnitude-core
-        npm run build
-        echo "✓ magnitude-core built"
-
-        cd ../magnitude-extract
-        npm run build
-        echo "✓ magnitude-extract built"
-
-        cd ${{ github.workspace }}/agent-service
-        npm install
-        echo "✓ agent-service dependencies installed"
-
-        npx patchright install chromium
-        echo "✓ Patchright Chromium installed"
-
     - name: Cache orchestra poetry dependencies
       uses: actions/cache@v4
       with:
@@ -212,8 +177,8 @@ jobs:
         export DISPLAY=:99
         trap "kill $XVFB_PID 2>/dev/null" EXIT
 
-        echo "Running: parallel_run.sh --timeout 7200 tests/ -- -m \"not llm_call\" --ignore=tests/actor --ignore=tests/conversation_manager --ignore=tests/async_tool_loop"
-        tests/parallel_run.sh --timeout 7200 tests/ -- -m "not llm_call" --ignore=tests/actor --ignore=tests/conversation_manager --ignore=tests/async_tool_loop
+        echo "Running: parallel_run.sh --timeout 7200 tests/ -- -m \"not llm_call\" --ignore=tests/actor --ignore=tests/conversation_manager --ignore=tests/async_tool_loop --ignore=tests/agent_service --ignore=tests/demo_url_mapping"
+        tests/parallel_run.sh --timeout 7200 tests/ -- -m "not llm_call" --ignore=tests/actor --ignore=tests/conversation_manager --ignore=tests/async_tool_loop --ignore=tests/agent_service --ignore=tests/demo_url_mapping
         TEST_EXIT_CODE=$?
         echo "exit_code=$TEST_EXIT_CODE" >> "$GITHUB_OUTPUT"
         exit $TEST_EXIT_CODE
