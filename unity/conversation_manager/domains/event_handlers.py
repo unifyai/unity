@@ -651,7 +651,6 @@ async def _(
             room_name=room_name,
         )
         if response.get("success"):
-            cm.call_manager._call_pending = True
             call_event = WhatsAppCallSent(contact=contact)
             await cm._event_broker.publish(
                 "app:comms:whatsapp_call_sent",

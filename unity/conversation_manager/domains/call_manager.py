@@ -84,7 +84,6 @@ class LivekitCallManager:
         self._call_proc: subprocess.Popen | None = None
         self._worker_proc: subprocess.Popen | None = None
         self._active_job: bool = False
-        self._call_pending: bool = False
         self.conference_name = ""
         self.room_name = ""
         self._event_broker = event_broker
@@ -287,7 +286,6 @@ class LivekitCallManager:
             )
             return
 
-        self._call_pending = False
         self.is_outbound = outbound
         self._call_channel = channel
         self._disconnect_contact = contact
@@ -620,7 +618,6 @@ class LivekitCallManager:
         proc = self._call_proc
         self._call_proc = None
         self._active_job = False
-        self._call_pending = False
 
         self.is_outbound = False
         self.initial_notification = ""
