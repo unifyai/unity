@@ -878,6 +878,29 @@ async def log_message(
 
     exchange_id = await asyncio.to_thread(_publish_transcript)
 
+    # Cache the exchange_id on the call manager immediately so that
+    # subsequent queued utterances in the same call reuse it.  The
+    # LogMessageResponse handler also sets this, but it runs
+    # asynchronously on the event loop — by which time the worker may
+    # have already started the next log_message call and created a
+    # duplicate exchange.
+    if exchange_id is not None and exchange_id != UNASSIGNED:
+        if (
+            medium in (Medium.PHONE_CALL, Medium.WHATSAPP_CALL)
+            and cm.call_manager.call_exchange_id == UNASSIGNED
+        ):
+            cm.call_manager.call_exchange_id = exchange_id
+        elif (
+            medium == Medium.UNIFY_MEET
+            and cm.call_manager.unify_meet_exchange_id == UNASSIGNED
+        ):
+            cm.call_manager.unify_meet_exchange_id = exchange_id
+        elif (
+            medium == Medium.GOOGLE_MEET
+            and cm.call_manager.google_meet_exchange_id == UNASSIGNED
+        ):
+            cm.call_manager.google_meet_exchange_id = exchange_id
+
     # publish reply as event envelope
     await event_broker.publish(
         "app:logging:message_logged",

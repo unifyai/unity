@@ -3,21 +3,30 @@ tests/conversation_manager/test_managers_utils.py
 ======================================================
 
 Tests for the managers_utils module, including the initialization queue
-that holds operations until the ConversationManager is fully initialized.
+that holds operations until the ConversationManager is fully initialized,
+and the exchange_id caching fix for call/meet utterances.
 """
 
 from __future__ import annotations
 
 import asyncio
 import time as _time
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from unity.contact_manager.simulated import SimulatedContactManager
+from unity.contact_manager.types.contact import UNASSIGNED
 from unity.conversation_manager.domains import managers_utils
 from unity.conversation_manager.domains.event_handlers import EventHandler
-from unity.conversation_manager.events import SyncContacts
+from unity.conversation_manager.events import (
+    SyncContacts,
+    InboundUnifyMeetUtterance,
+    OutboundUnifyMeetUtterance,
+    InboundPhoneUtterance,
+    OutboundPhoneUtterance,
+)
+from unity.transcript_manager.simulated import SimulatedTranscriptManager
 
 
 async def _wait_for_condition(
@@ -91,3 +100,115 @@ async def test_queue_operation_waits_for_initialization():
             await listener_task
         except asyncio.CancelledError:
             pass
+
+
+# ---------------------------------------------------------------------------
+# Exchange-ID caching: log_message must set exchange_id on the call manager
+# synchronously so that the next queued utterance reuses it.
+# ---------------------------------------------------------------------------
+
+
+def _make_cm_for_log_message() -> MagicMock:
+    """Build a minimal mock CM that satisfies log_message requirements."""
+    cm = MagicMock()
+    cm.contact_manager = SimulatedContactManager()
+    cm.transcript_manager = SimulatedTranscriptManager()
+
+    # Real call_manager attributes (not MagicMock auto-attrs)
+    cm.call_manager.call_exchange_id = UNASSIGNED
+    cm.call_manager.unify_meet_exchange_id = UNASSIGNED
+    cm.call_manager.google_meet_exchange_id = UNASSIGNED
+    cm.call_manager.call_start_timestamp = None
+    cm.call_manager.unify_meet_start_timestamp = None
+    cm.call_manager.google_meet_start_timestamp = None
+
+    cm.contact_index = MagicMock()
+    cm.contact_index.get_contact = MagicMock(
+        return_value={"contact_id": 1, "first_name": "Test", "surname": "User"},
+    )
+    cm._local_to_global_message_ids = {}
+    return cm
+
+
+@pytest.mark.asyncio
+async def test_log_message_caches_unify_meet_exchange_id_synchronously():
+    """
+    Regression test for the exchange_id race condition.
+
+    When two unify_meet utterances are queued back-to-back, the first
+    log_message call must set cm.call_manager.unify_meet_exchange_id
+    synchronously so that the second call reuses it — rather than waiting
+    for the asynchronous LogMessageResponse handler, which may not have
+    run yet.
+    """
+    cm = _make_cm_for_log_message()
+    contact = {"contact_id": 1}
+
+    assert cm.call_manager.unify_meet_exchange_id == UNASSIGNED
+
+    utterance1 = OutboundUnifyMeetUtterance(contact=contact, content="Hello")
+    utterance2 = InboundUnifyMeetUtterance(contact=contact, content="Hi there")
+
+    with patch.object(managers_utils, "event_broker", new=MagicMock(publish=AsyncMock())):
+        await managers_utils.log_message(cm, utterance1)
+
+        # After the first utterance, the exchange_id must be cached
+        first_exchange_id = cm.call_manager.unify_meet_exchange_id
+        assert first_exchange_id != UNASSIGNED, (
+            "unify_meet_exchange_id should be set synchronously after first log_message"
+        )
+
+        await managers_utils.log_message(cm, utterance2)
+
+        # The second utterance must reuse the same exchange_id
+        assert cm.call_manager.unify_meet_exchange_id == first_exchange_id, (
+            "Second utterance should reuse the cached unify_meet_exchange_id"
+        )
+
+
+@pytest.mark.asyncio
+async def test_log_message_caches_call_exchange_id_synchronously():
+    """Same as above but for phone calls (call_exchange_id)."""
+    cm = _make_cm_for_log_message()
+    contact = {"contact_id": 1}
+
+    assert cm.call_manager.call_exchange_id == UNASSIGNED
+
+    utterance1 = OutboundPhoneUtterance(contact=contact, content="Hello")
+    utterance2 = InboundPhoneUtterance(contact=contact, content="Hi there")
+
+    with patch.object(managers_utils, "event_broker", new=MagicMock(publish=AsyncMock())):
+        await managers_utils.log_message(cm, utterance1)
+
+        first_exchange_id = cm.call_manager.call_exchange_id
+        assert first_exchange_id != UNASSIGNED, (
+            "call_exchange_id should be set synchronously after first log_message"
+        )
+
+        await managers_utils.log_message(cm, utterance2)
+
+        assert cm.call_manager.call_exchange_id == first_exchange_id, (
+            "Second utterance should reuse the cached call_exchange_id"
+        )
+
+
+@pytest.mark.asyncio
+async def test_log_message_does_not_overwrite_existing_exchange_id():
+    """
+    If the exchange_id is already set (e.g. from a prior utterance),
+    log_message must not overwrite it.
+    """
+    cm = _make_cm_for_log_message()
+    contact = {"contact_id": 1}
+
+    # Pre-set an exchange_id as if a previous utterance already cached it
+    cm.call_manager.unify_meet_exchange_id = 42
+
+    utterance = OutboundUnifyMeetUtterance(contact=contact, content="Hello")
+
+    with patch.object(managers_utils, "event_broker", new=MagicMock(publish=AsyncMock())):
+        await managers_utils.log_message(cm, utterance)
+
+        assert cm.call_manager.unify_meet_exchange_id == 42, (
+            "log_message must not overwrite an already-set exchange_id"
+        )
