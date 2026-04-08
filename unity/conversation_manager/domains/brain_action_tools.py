@@ -2445,6 +2445,7 @@ class ConversationManagerBrainActionTools:
         call_or_meet_in_progress = (
             self._cm.mode.is_voice
             or self._cm.call_manager.has_active_call
+            or self._cm.call_manager._call_pending
             or self._cm.call_manager.has_active_google_meet
         )
         if not call_or_meet_in_progress:

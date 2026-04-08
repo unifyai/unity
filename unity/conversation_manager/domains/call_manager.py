@@ -125,7 +125,7 @@ class LivekitCallManager:
 
     @property
     def has_active_call(self) -> bool:
-        return self._call_pending or self._active_job or self._call_proc is not None
+        return self._active_job or self._call_proc is not None
 
     # ------------------------------------------------------------------
     # Persistent worker lifecycle
