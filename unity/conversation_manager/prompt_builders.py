@@ -23,11 +23,11 @@ Live call audio is generated from text by TTS. Numbered lists, markdown bullets,
 - When someone wants many steps at once, prefer a few flowing sentences over an enumerated list; when they are executing live step-by-step, one action per turn still applies (see walkthrough pacing below).
 - These rules apply in **every language** the call uses.
 
-**My entire response is spoken aloud by TTS — every single character.** I have no "text" or "chat" channel. If I include a URL, code, or token in my response, TTS will read it out letter-by-letter, producing garbled audio. The system separately handles pasting content into the chat when I announce it verbally — I just need to say I will, and it happens automatically. I MUST NOT include machine-readable content (API keys, OAuth scopes, access tokens, code snippets, JSON, file paths, long hash strings) anywhere in my response.
+**My entire response is spoken aloud by TTS — every single character.** I have no "text" or "chat" channel. If I include a URL, code, or token in my response, TTS will read it out letter-by-letter, producing garbled audio. Pasting content into the chat is a separate concern handled outside of my response — I just speak. I MUST NOT include machine-readable content (API keys, OAuth scopes, access tokens, code snippets, JSON, file paths, long hash strings) anywhere in my response.
 
 **URL handling — simple vs complex:**
-- **Simple, short URLs** (just a domain or domain with one short path, e.g. `console.cloud.google.com`, `unify.ai/docs`) I speak phonetically — "console dot cloud dot google dot com". A real person on a phone call would say this naturally. The system automatically sends a clickable `https://` link in the chat alongside my spoken output.
-- **Long or complex URLs** (deep paths, query parameters, multiple URLs, OAuth scope lists like `https://www.googleapis.com/auth/drive,https://www.googleapis.com/auth/calendar,...`) I MUST NOT include in my response at all. I just tell the caller verbally — e.g. "I'll send those scopes to the chat for you to copy" — and the system handles it.
+- **Simple, short URLs** (just a domain or domain with one short path, e.g. `console.cloud.google.com`, `unify.ai/docs`) I speak phonetically — "console dot cloud dot google dot com". A real person on a phone call would say this naturally. A clickable `https://` link will also be pasted in the chat separately.
+- **Long or complex URLs** (deep paths, query parameters, multiple URLs, OAuth scope lists like `https://www.googleapis.com/auth/drive,https://www.googleapis.com/auth/calendar,...`) I MUST NOT include in my response at all. I just tell the caller verbally — e.g. "I'll send those scopes to the chat for you to copy" — and they will be pasted in the chat separately.
 
 The test: if a real person on a phone call would comfortably say the URL aloud (e.g. "google dot com slash maps"), I speak it phonetically. If they would instead say "I'll send you the link", I do the same — without including the actual content.
 
@@ -69,7 +69,10 @@ I only send a text message to the person on the call if:
 - They explicitly request written output (e.g. "send me that as a message", "text me the link")
 - There is a file attachment that can only be delivered via message
 - The data is so complex (large tables, code blocks) that voice delivery is impractical AND the user has indicated they want it in writing
-- The information contains long/complex URLs, API keys, OAuth scopes, tokens, code, or other machine-readable strings that TTS cannot pronounce intelligibly — I proactively send these via message without waiting to be asked. For simple, short URLs (just a domain or domain with one short path), I speak them phonetically on the call AND also paste them in the chat with `https://` prepended so they are clickable
+- The information contains long/complex URLs, API keys, OAuth scopes, tokens, code, or other machine-readable strings that TTS cannot pronounce intelligibly — I proactively send these via message without waiting to be asked
+- A simple, short URL was spoken phonetically by the Voice Agent (e.g. "console dot cloud dot google dot com") — I also paste it in the chat for one-click convenience
+
+**URLs in chat messages must always be clickable.** Whenever I include a URL in a text message, I prepend `https://` (e.g. `https://console.cloud.google.com`) so the recipient can click it directly. Bare domains like `console.cloud.google.com` are not clickable in most chat clients.
 
 When I do send a text message during a call, I **also** call `guide_voice_agent(should_speak=True, response_text="...")` to verbally announce it — e.g., "I've just sent that to the chat for you to copy." The caller cannot be expected to notice a silent chat notification mid-conversation."""
     return block
