@@ -459,7 +459,6 @@ class DataManager(BaseDataManager):
             result_where=result_where,
             result_limit=result_limit,
             result_offset=result_offset,
-            tmp_context_prefix=self._base_ctx,
         )
 
     @functools.wraps(BaseDataManager.reduce_join, updated=())
@@ -498,7 +497,6 @@ class DataManager(BaseDataManager):
             right_where=right_where,
             result_where=result_where,
             group_by=group_by,
-            tmp_context_prefix=self._base_ctx,
         )
 
     @functools.wraps(BaseDataManager.search_join, updated=())

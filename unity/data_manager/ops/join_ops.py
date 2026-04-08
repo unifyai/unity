@@ -19,7 +19,6 @@ import unify
 from unity.common.filter_utils import normalize_filter_expr
 from unity.common.search_utils import table_search_top_k
 from unity.common.embed_utils import list_private_fields
-from unity.data_manager.ops.query_ops import reduce_impl
 
 logger = logging.getLogger(__name__)
 
@@ -142,12 +141,13 @@ def filter_join_impl(
     result_where: Optional[str] = None,
     result_limit: int = 100,
     result_offset: int = 0,
-    tmp_context_prefix: str,
 ) -> List[Dict[str, Any]]:
     """
-    Join two contexts and filter the result.
+    Join two contexts and filter the result in a single round-trip.
 
-    Follows the exact same pattern as KnowledgeManager.filter_join.
+    Uses the fused ``POST /logs/join_query`` endpoint (row mode) to
+    perform the join and filtering in one SQL query, avoiding temporary
+    context materialisation.
 
     Parameters
     ----------
@@ -169,8 +169,6 @@ def filter_join_impl(
         Maximum rows to return (must be <= 1000).
     result_offset : int, default 0
         Pagination offset.
-    tmp_context_prefix : str
-        Prefix for temporary context (e.g., "Data" or base context path).
 
     Returns
     -------
@@ -215,34 +213,26 @@ def filter_join_impl(
         tables[1],
     )
 
-    dest_context = f"{tmp_context_prefix}/_tmp_join_{uuid.uuid4().hex[:8]}"
-    _create_join(
-        dest_context=dest_context,
-        tables=tables,
+    result = unify.join_query(
+        pair_of_args=(
+            {
+                "context": tables[0],
+                **({"filter_expr": left_where} if left_where else {}),
+            },
+            {
+                "context": tables[1],
+                **({"filter_expr": right_where} if right_where else {}),
+            },
+        ),
         join_expr=join_expr,
-        select=select,
         mode=mode,
-        left_where=left_where,
-        right_where=right_where,
+        columns=select,
+        filter_expr=result_where,
+        limit=result_limit,
+        offset=result_offset,
     )
 
-    try:
-        rows: List[Dict[str, Any]] = [
-            lg.entries
-            for lg in unify.get_logs(
-                context=dest_context,
-                filter=result_where,
-                offset=result_offset,
-                limit=result_limit,
-                exclude_fields=list_private_fields(dest_context),
-            )
-        ]
-        return rows
-    finally:
-        try:
-            unify.delete_context(dest_context)
-        except Exception:
-            pass
+    return result["logs"]
 
 
 def reduce_join_impl(
@@ -257,12 +247,13 @@ def reduce_join_impl(
     right_where: Optional[str] = None,
     result_where: Optional[str] = None,
     group_by: Optional[Union[str, List[str]]] = None,
-    tmp_context_prefix: str,
 ) -> Any:
     """
-    Join two contexts and aggregate the result.
+    Join two contexts and aggregate the result in a single round-trip.
 
-    Mirrors filter_join_impl but calls reduce_impl instead of get_logs.
+    Uses the fused ``POST /logs/join_query`` endpoint (reduce mode) to
+    perform the join and aggregation in one SQL query, avoiding temporary
+    context materialisation.
 
     Parameters
     ----------
@@ -284,8 +275,6 @@ def reduce_join_impl(
         Post-join filter on the result (uses output column names).
     group_by : str | list[str] | None
         Column(s) to group by before aggregation (output aliases).
-    tmp_context_prefix : str
-        Prefix for temporary context.
 
     Returns
     -------
@@ -315,30 +304,25 @@ def reduce_join_impl(
                 f"Missing: {', '.join(sorted(missing))}",
             )
 
-    dest_context = f"{tmp_context_prefix}/_tmp_join_{uuid.uuid4().hex[:8]}"
-    _create_join(
-        dest_context=dest_context,
-        tables=tables,
+    return unify.join_query(
+        pair_of_args=(
+            {
+                "context": tables[0],
+                **({"filter_expr": left_where} if left_where else {}),
+            },
+            {
+                "context": tables[1],
+                **({"filter_expr": right_where} if right_where else {}),
+            },
+        ),
         join_expr=join_expr,
-        select=select,
         mode=mode,
-        left_where=left_where,
-        right_where=right_where,
+        columns=select,
+        metric=metric,
+        key=columns,
+        filter_expr=result_where,
+        group_by=group_by,
     )
-
-    try:
-        return reduce_impl(
-            dest_context,
-            metric=metric,
-            columns=columns,
-            filter=result_where,
-            group_by=group_by,
-        )
-    finally:
-        try:
-            unify.delete_context(dest_context)
-        except Exception:
-            pass
 
 
 def search_join_impl(
