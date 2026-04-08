@@ -84,6 +84,7 @@ class LivekitCallManager:
         self._call_proc: subprocess.Popen | None = None
         self._worker_proc: subprocess.Popen | None = None
         self._active_job: bool = False
+        self._call_pending: bool = False
         self.conference_name = ""
         self.room_name = ""
         self._event_broker = event_broker
@@ -124,7 +125,7 @@ class LivekitCallManager:
 
     @property
     def has_active_call(self) -> bool:
-        return self._active_job or self._call_proc is not None
+        return self._call_pending or self._active_job or self._call_proc is not None
 
     # ------------------------------------------------------------------
     # Persistent worker lifecycle
@@ -286,6 +287,7 @@ class LivekitCallManager:
             )
             return
 
+        self._call_pending = False
         self.is_outbound = outbound
         self._call_channel = channel
         self._disconnect_contact = contact
@@ -404,7 +406,7 @@ class LivekitCallManager:
 
         display_name = display_name or self.assistant_name or "Unity Assistant"
 
-        base_url = _resolve_agent_service_url()
+        base_url = "http://localhost:3000"
         auth_key = os.environ.get("UNIFY_KEY", "")
 
         room_name = make_room_name(self.assistant_id, "gmeet")
@@ -440,7 +442,7 @@ class LivekitCallManager:
         gmeet_extra = {
             "gmeet_session_id": "",
             "gmeet_meet_url": meet_url,
-            "agent_service_url": _resolve_agent_service_url(),
+            "agent_service_url": "http://localhost:3000",
         }
 
         if self._worker_proc is not None and self._worker_proc.poll() is None:
@@ -507,7 +509,7 @@ class LivekitCallManager:
         self.google_meet_exchange_id = UNASSIGNED
 
         if session_id:
-            base_url = _resolve_agent_service_url()
+            base_url = "http://localhost:3000"
             auth_key = os.environ.get("UNIFY_KEY", "")
             try:
                 async with aiohttp.ClientSession() as session:
@@ -614,6 +616,7 @@ class LivekitCallManager:
         proc = self._call_proc
         self._call_proc = None
         self._active_job = False
+        self._call_pending = False
 
         self.is_outbound = False
         self.initial_notification = ""

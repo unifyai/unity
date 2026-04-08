@@ -1417,6 +1417,7 @@ class ConversationManagerBrainActionTools:
                 or contact
                 or {}
             )
+            self._cm.call_manager._call_pending = True
             event = PhoneCallSent(contact=fresh_contact)
             await self._event_broker.publish("app:comms:make_call", event.to_json())
             return {"status": "ok"}
@@ -1560,6 +1561,7 @@ class ConversationManagerBrainActionTools:
         if method == "direct":
             if context:
                 self._cm.call_manager.initial_notification = context
+            self._cm.call_manager._call_pending = True
             event = WhatsAppCallSent(contact=fresh_contact)
             await self._event_broker.publish(
                 "app:comms:whatsapp_call_sent",
@@ -2442,7 +2444,7 @@ class ConversationManagerBrainActionTools:
         }
         call_or_meet_in_progress = (
             self._cm.mode.is_voice
-            or self._cm.call_manager._call_proc is not None
+            or self._cm.call_manager.has_active_call
             or self._cm.call_manager.has_active_google_meet
         )
         if not call_or_meet_in_progress:
