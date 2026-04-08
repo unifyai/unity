@@ -52,12 +52,14 @@ def _update_env_file(env_path: Path, key: str, value: str) -> None:
 def _restart_agent_service_with_key(api_key: str) -> None:
     """Kill and restart the agent-service so it picks up the user's API key.
 
-    1. Updates the agent-service .env file
+    1. Updates the agent-service .env file (UNIFY_KEY + infrastructure URLs)
     2. Kills the process currently on port 3000
     3. Spawns a new agent-service (inherits os.environ which already has the
        correct UNIFY_KEY from export_to_env())
     4. Writes the new PID to /tmp/agent-service.pid for entrypoint.sh cleanup
     """
+    from unity.settings import SETTINGS
+
     try:
         agent_dir = _find_agent_service_dir()
         if agent_dir is None:
@@ -67,9 +69,13 @@ def _restart_agent_service_with_key(api_key: str) -> None:
             return
 
         # 1. Update .env
-        _update_env_file(agent_dir / ".env", "UNIFY_KEY", api_key)
+        env_file = agent_dir / ".env"
+        _update_env_file(env_file, "UNIFY_KEY", api_key)
+        _update_env_file(env_file, "ORCHESTRA_URL", SETTINGS.ORCHESTRA_URL)
+        _update_env_file(env_file, "UNITY_COMMS_URL", SETTINGS.conversation.COMMS_URL)
         LOGGER.info(
-            "[agent-service-restart] Updated agent-service .env with user API key",
+            "[agent-service-restart] Updated agent-service .env with user API key"
+            " and infrastructure URLs",
         )
 
         # 2. Kill existing process on port 3000 (pkill is available on all Linux
