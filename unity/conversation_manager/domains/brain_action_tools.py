@@ -504,6 +504,7 @@ class ConversationManagerBrainActionTools:
         contact_id: int | str,
         content: str,
         whatsapp_number: str | None = None,
+        attachment_filepath: str | None = None,
     ) -> dict[str, Any]:
         """
         Send a WhatsApp message to an existing contact.
@@ -520,6 +521,12 @@ class ConversationManagerBrainActionTools:
           already on file -- this will be rejected.  Use ``act`` to update
           the contact's WhatsApp number first, then retry.
 
+        **Attachments**: WhatsApp allows **one** attachment per message.  To
+        send multiple files, call this tool once per file.  Supported types
+        inside the 24h window: images, audio, video, PDF, DOC, XLSX.
+        Outside the 24h window (template fallback), only PDF/image/video
+        are supported by WhatsApp — other types will be dropped.
+
         Args:
             contact_id: The contact_id of the recipient (from
                 active_conversations or returned by ``find_contacts`` /
@@ -528,17 +535,22 @@ class ConversationManagerBrainActionTools:
             whatsapp_number: The recipient's WhatsApp number.  Required when
                 the contact does not yet have a WhatsApp number on file;
                 omit when the contact already has one.
+            attachment_filepath: Optional workspace-relative filepath of a
+                file to attach (e.g. ``Attachments/report.pdf``).  The file
+                is uploaded and sent as media alongside the text message.
         """
         contact_id = _coerce_contact_id(contact_id)
         contact = self._cm.contact_index.get_contact(contact_id)
+
+        _wa_topic = "app:comms:whatsapp_sent"
+        _wa_err = dict(contact_id=contact_id, medium=Medium.WHATSAPP_MESSAGE)
 
         outbound_error = _check_outbound_allowed(contact)
         if outbound_error:
             return await self._surface_comms_error(
                 outbound_error,
-                "app:comms:whatsapp_sent",
-                contact_id=contact_id,
-                medium=Medium.WHATSAPP_MESSAGE,
+                _wa_topic,
+                **_wa_err,
             )
 
         detail_error, contact = _resolve_or_attach_detail(
@@ -552,12 +564,75 @@ class ConversationManagerBrainActionTools:
         if detail_error:
             return await self._surface_comms_error(
                 detail_error,
-                "app:comms:whatsapp_sent",
-                contact_id=contact_id,
-                medium=Medium.WHATSAPP_MESSAGE,
+                _wa_topic,
+                **_wa_err,
             )
 
         from unity.session_details import SESSION_DETAILS
+
+        attachment = None
+        media_url = None
+        if attachment_filepath:
+            import os
+            from unity.file_manager.filesystem_adapters.local_adapter import (
+                LocalFileSystemAdapter,
+            )
+
+            adapter = LocalFileSystemAdapter()
+            try:
+                abs_path = adapter._abspath(attachment_filepath)
+                with open(abs_path, "rb") as f:
+                    file_contents = f.read()
+            except FileNotFoundError:
+                return await self._surface_comms_error(
+                    f"File not found: {attachment_filepath}",
+                    _wa_topic,
+                    **_wa_err,
+                )
+            except Exception as e:
+                return await self._surface_comms_error(
+                    f"Failed to read file: {e}",
+                    _wa_topic,
+                    **_wa_err,
+                )
+
+            attachment_filename = os.path.basename(attachment_filepath)
+            upload_result = await comms_utils.upload_unify_attachment(
+                file_content=file_contents,
+                filename=attachment_filename,
+            )
+            if "error" in upload_result:
+                return await self._surface_comms_error(
+                    f"Failed to upload attachment: {upload_result['error']}",
+                    _wa_topic,
+                    **_wa_err,
+                )
+
+            attachment = upload_result
+            att_id = attachment.get("id", "")
+            att_target = f"Attachments/{att_id}_{attachment_filename}"
+            try:
+                import shutil
+
+                att_dir = adapter._abspath("Attachments")
+                os.makedirs(att_dir, exist_ok=True)
+                shutil.copy2(
+                    abs_path,
+                    os.path.join(att_dir, f"{att_id}_{attachment_filename}"),
+                )
+            except Exception:
+                pass
+            attachment["filepath"] = att_target
+
+            media_url = attachment.get("url") or attachment.get("gs_url")
+            if media_url and media_url.startswith("gs://"):
+                import aiohttp as _aiohttp
+                from unity.conversation_manager.domains.comms_utils import (
+                    _get_signed_url_from_gs_url,
+                )
+
+                async with _aiohttp.ClientSession() as _sess:
+                    media_url = await _get_signed_url_from_gs_url(_sess, media_url)
 
         to_number = contact.get("whatsapp_number")
         response = await comms_utils.send_whatsapp_message(
@@ -565,6 +640,7 @@ class ConversationManagerBrainActionTools:
             content=content,
             user_name=contact.get("first_name", ""),
             agent_name=SESSION_DETAILS.assistant.first_name,
+            media_url=media_url,
         )
 
         if response.get("success"):
@@ -572,13 +648,15 @@ class ConversationManagerBrainActionTools:
             fresh_contact = (
                 self._cm.contact_index.get_contact(whatsapp_number=to_number) or contact
             )
+            attachments_for_event = [attachment] if attachment else []
             event = WhatsAppSent(
                 contact=fresh_contact,
                 content=content,
                 via_template=via_template,
+                attachments=attachments_for_event or None,
             )
             await self._event_broker.publish(
-                "app:comms:whatsapp_sent",
+                _wa_topic,
                 event.to_json(),
             )
             if via_template:
@@ -601,9 +679,8 @@ class ConversationManagerBrainActionTools:
             error_msg = f"Failed to send WhatsApp message to {to_number}"
         return await self._surface_comms_error(
             error_msg,
-            "app:comms:whatsapp_sent",
-            contact_id=contact_id,
-            medium=Medium.WHATSAPP_MESSAGE,
+            _wa_topic,
+            **_wa_err,
         )
 
     async def send_unify_message(

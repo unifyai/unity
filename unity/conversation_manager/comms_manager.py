@@ -645,13 +645,27 @@ class CommsManager:
                         self._ack_with_latency(message, publish_timestamp, topic)
                         return
 
+                    attachments = event.get("attachments") or []
+
                     self._publish_from_callback(
                         f"app:comms:{thread}_message",
                         events_map[thread](
                             content=content,
                             contact=contact,
+                            **({"attachments": attachments} if attachments else {}),
                         ).to_json(),
                     )
+
+                    if attachments:
+                        try:
+                            asyncio.run_coroutine_threadsafe(
+                                add_unify_message_attachments(attachments),
+                                self.loop,
+                            )
+                        except Exception as e:
+                            LOGGER.error(
+                                f"{DEFAULT_ICON} Failed scheduling WhatsApp attachment download: {e}",
+                            )
 
                     if is_new_unknown:
                         self._publish_from_callback(

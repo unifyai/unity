@@ -311,6 +311,7 @@ class WhatsAppReceived(Event):
 
     contact: dict
     content: str
+    attachments: list[dict] | None = None
 
 
 @dataclass
@@ -516,6 +517,7 @@ class WhatsAppSent(Event):
     contact: dict
     content: str
     via_template: bool = False
+    attachments: list[dict] | None = None
 
 
 @dataclass

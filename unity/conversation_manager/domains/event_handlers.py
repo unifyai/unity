@@ -1159,6 +1159,7 @@ async def _(event, cm: "ConversationManager", *args, **kwargs):
         case WhatsAppSent():
             medium = Medium.WHATSAPP_MESSAGE
             message_content = event.content
+            attachments = event.attachments
             notif_content = f"WhatsApp sent to {sender_name}"
             role = "assistant"
             event_trace = getattr(cm, "_current_event_trace", None) or {}
@@ -1169,6 +1170,7 @@ async def _(event, cm: "ConversationManager", *args, **kwargs):
         case WhatsAppReceived():
             medium = Medium.WHATSAPP_MESSAGE
             message_content = event.content
+            attachments = event.attachments
             notif_content = f"WhatsApp received from {sender_name}"
             role = "user"
             event_trace = getattr(cm, "_current_event_trace", None) or {}

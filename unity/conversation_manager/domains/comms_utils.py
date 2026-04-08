@@ -65,6 +65,7 @@ async def send_whatsapp_message(
     content: str,
     user_name: str = "",
     agent_name: str = "",
+    media_url: str | None = None,
 ) -> dict:
     """
     Send a WhatsApp message via the Communication service.
@@ -78,6 +79,9 @@ async def send_whatsapp_message(
         content: The message content to send
         user_name: Recipient's first name (used in template fallback)
         agent_name: Assistant's first name (used in template fallback)
+        media_url: Publicly accessible URL of a media attachment (one per
+            message — WhatsApp constraint).  Supported types: images, audio,
+            video, PDF, DOC/XLSX when inside the 24h window.
 
     Returns:
         dict with 'success' key indicating delivery status.
@@ -86,17 +90,21 @@ async def send_whatsapp_message(
     if agent_id is None:
         return {"success": False}
 
+    payload = {
+        "to": to_number,
+        "body": content,
+        "assistant_id": agent_id,
+        "user_name": user_name,
+        "agent_name": agent_name,
+    }
+    if media_url:
+        payload["media_url"] = media_url
+
     async with aiohttp.ClientSession() as session:
         async with session.post(
             f"{SETTINGS.conversation.COMMS_URL}/whatsapp/send",
             headers=headers,
-            json={
-                "to": to_number,
-                "body": content,
-                "assistant_id": agent_id,
-                "user_name": user_name,
-                "agent_name": agent_name,
-            },
+            json=payload,
         ) as response:
             try:
                 response.raise_for_status()
