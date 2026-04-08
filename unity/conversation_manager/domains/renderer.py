@@ -20,6 +20,7 @@ from unity.conversation_manager.domains.contact_index import (
     Message,
     EmailMessage,
     UnifyMessage,
+    WhatsAppMessage,
     GuidanceMessage,
     ConversationState,
     ContactIndex,
@@ -1055,7 +1056,14 @@ class Renderer:
 
     def render_message(
         self,
-        message: Message | EmailMessage | UnifyMessage | ApiMessage | GuidanceMessage,
+        message: (
+            Message
+            | EmailMessage
+            | UnifyMessage
+            | WhatsAppMessage
+            | ApiMessage
+            | GuidanceMessage
+        ),
         last_snapshot: datetime = None,
         contact_index: ContactIndex | None = None,
         contact_name: str | None = None,
@@ -1149,7 +1157,7 @@ class Renderer:
                 f"{message.body}"
             )
 
-        if isinstance(message, UnifyMessage):
+        if isinstance(message, (UnifyMessage, WhatsAppMessage)):
             attachments_line = ""
             if message.attachments:
 

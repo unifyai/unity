@@ -81,6 +81,20 @@ class UnifyMessage(CommsMessage):
 
 
 @dataclass
+class WhatsAppMessage(CommsMessage):
+    """A WhatsApp message, optionally with attachments.
+
+    Each attachment is a dict with keys: id, filename, gs_url, content_type, size_bytes.
+    """
+
+    name: str
+    content: str
+    timestamp: datetime
+    role: str  # "user" or "assistant"
+    attachments: list[dict] = field(default_factory=list)
+
+
+@dataclass
 class ApiMessage(CommsMessage):
     """A programmatic API message, optionally with attachments and developer-supplied tags.
 
@@ -423,6 +437,14 @@ class ContactIndex:
                 timestamp=timestamp,
                 role=role,
                 attachments=attachments or [],
+            )
+        elif thread_name == Medium.WHATSAPP_MESSAGE:
+            message = WhatsAppMessage(
+                name=name,
+                content=message_content or "",
+                timestamp=timestamp,
+                role=role,
+                attachments=attachments,
             )
         elif thread_name == Medium.API_MESSAGE:
             message = ApiMessage(
