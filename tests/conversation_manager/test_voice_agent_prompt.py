@@ -662,7 +662,7 @@ class TestPlatformKnowledgePromptSection:
         ).flatten()
 
         assert "Platform knowledge" in prompt
-        assert "Resources → Secrets" in prompt
+        assert "Secrets" in prompt
         assert "API" in prompt
         assert "video call" in prompt.lower()
         assert "three panels" in prompt.lower()

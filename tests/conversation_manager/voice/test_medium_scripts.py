@@ -908,10 +908,14 @@ class TestFastBrainGuidanceFlow:
                 self.say_calls.append(text)
                 return _ImmediateAwaitable()
 
+            def interrupt(self):
+                pass
+
         class _FakeAssistant:
             def __init__(self, *args, **kwargs):
                 self._chat_ctx = llm.ChatContext()
                 self.call_received = True
+                self.user_turn_generating = False
 
             def set_call_received(self):
                 self.call_received = True
@@ -1116,10 +1120,14 @@ class TestFastBrainGuidanceFlow:
                 self.say_calls.append(text)
                 return _ImmediateAwaitable()
 
+            def interrupt(self):
+                pass
+
         class _FakeAssistant:
             def __init__(self, *args, **kwargs):
                 self._chat_ctx = llm.ChatContext()
                 self.call_received = True
+                self.user_turn_generating = False
 
             def set_call_received(self):
                 self.call_received = True
@@ -1233,17 +1241,14 @@ class TestFastBrainGuidanceFlow:
             "acknowledge the sent message."
         )
 
-    async def test_should_speak_guidance_not_injected_into_chat_ctx(
+    async def test_should_speak_guidance_injected_into_chat_ctx_immediately(
         self,
         monkeypatch,
     ):
-        """Guidance with should_speak=True must NOT inject a [notification] into
-        chat_ctx. The queued session.say(add_to_chat_ctx=True) handles context
-        synchronization when the speech plays.
-
-        If the notification is injected eagerly, the fast brain can see it and
-        paraphrase it in its next generate_reply — causing the user to hear the
-        same answer twice (once from the fast brain, once from session.say).
+        """Guidance with should_speak=True is injected into chat_ctx immediately
+        so the fast brain sees the latest slow brain state and can regenerate
+        an informed response.  The queued fallback speech is a safety net that
+        the dedup gate suppresses when the fast brain already covers the info.
         """
         from livekit.agents import llm
         from unity.conversation_manager.medium_scripts import call as call_script
@@ -1339,10 +1344,14 @@ class TestFastBrainGuidanceFlow:
                 self.say_calls.append(text)
                 return _ImmediateAwaitable()
 
+            def interrupt(self):
+                pass
+
         class _FakeAssistant:
             def __init__(self, *args, **kwargs):
                 self._chat_ctx = llm.ChatContext()
                 self.call_received = True
+                self.user_turn_generating = False
 
             def set_call_received(self):
                 self.call_received = True
@@ -1437,20 +1446,16 @@ class TestFastBrainGuidanceFlow:
             },
         )
 
-        # The notification must NOT be in chat_ctx yet — it should be deferred
-        # until maybe_speak_queued() fires (when the agent is idle).
-        # If injected eagerly, the fast brain sees it during generate_reply
-        # and paraphrases it before session.say() plays — double delivery.
+        # The notification IS in chat_ctx immediately so the fast brain sees it.
         session_texts = [
             item.text_content or ""
             for item in session._chat_ctx.items
             if getattr(item, "type", None) == "message"
         ]
         has_notification = any("No contact named Bob" in txt for txt in session_texts)
-        assert not has_notification, (
-            f"should_speak=True guidance injected a [notification] into chat_ctx "
-            f"while speech is still queued (user speaking). The notification must "
-            f"be deferred until maybe_speak_queued() fires.\n"
+        assert has_notification, (
+            f"should_speak=True guidance must inject [notification] into chat_ctx "
+            f"immediately so the fast brain regenerates with current state.\n"
             f"Chat context messages: {session_texts}"
         )
 
@@ -1474,7 +1479,8 @@ class TestFastBrainGuidanceFlow:
             # _dedup_and_speak is async; yield to let the task complete.
             await asyncio.sleep(0)
 
-            # NOW the notification should be in chat_ctx (injected at speech time)
+            # Notification was already in chat_ctx from apply_notification.
+            # Verify it's still there after the speech fires.
             session_texts_after = [
                 item.text_content or ""
                 for item in session._chat_ctx.items
@@ -1483,11 +1489,9 @@ class TestFastBrainGuidanceFlow:
             has_notification_after = any(
                 "No contact named Bob" in txt for txt in session_texts_after
             )
-            assert has_notification_after, (
-                "After session.say() fires, the notification should be in chat_ctx "
-                "so the fast brain's history shows the correct pattern: "
-                "notification → assistant response."
-            )
+            assert (
+                has_notification_after
+            ), "Notification should remain in chat_ctx after speech fires."
 
             # The speech SHOULD have fired
             assert (
@@ -1652,10 +1656,14 @@ class TestFastBrainGuidanceFlow:
                 self.say_calls.append(text)
                 return _ImmediateAwaitable()
 
+            def interrupt(self):
+                pass
+
         class _FakeAssistant:
             def __init__(self, *args, **kwargs):
                 self._chat_ctx = llm.ChatContext()
                 self.call_received = True
+                self.user_turn_generating = False
 
             def set_call_received(self):
                 self.call_received = True
@@ -1877,10 +1885,14 @@ class TestFastBrainGuidanceFlow:
                 self.say_calls.append(text)
                 return _ImmediateAwaitable()
 
+            def interrupt(self):
+                pass
+
         class _FakeAssistant:
             def __init__(self, *args, **kwargs):
                 self._chat_ctx = llm.ChatContext()
                 self.call_received = True
+                self.user_turn_generating = False
 
             def set_call_received(self):
                 self.call_received = True
@@ -2115,10 +2127,14 @@ class TestFastBrainSpeechDedup:
                 self.say_calls.append(text)
                 return _ImmediateAwaitable()
 
+            def interrupt(self):
+                pass
+
         class _FakeAssistant:
             def __init__(self, *args, **kwargs):
                 self._chat_ctx = llm.ChatContext()
                 self.call_received = True
+                self.user_turn_generating = False
 
             def set_call_received(self):
                 self.call_received = True
@@ -2389,10 +2405,10 @@ class TestFastBrainSpeechDedup:
         finally:
             SETTINGS.conversation.SPEECH_DEDUP_ENABLED = orig_dedup
 
-    async def test_multiple_queued_speeches_drain_sequentially(self, fast_brain_env):
-        """Multiple queued speeches are drained one by one through dedup,
-        with the finally block in _dedup_and_speak calling maybe_speak_queued
-        to process the next item."""
+    async def test_latest_guidance_supersedes_older_queued_speech(self, fast_brain_env):
+        """When multiple notifications arrive while the pipeline is busy, only
+        the latest survives — the slow brain always has full context, so newer
+        guidance supersedes older guidance (single-slot queue)."""
         env = fast_brain_env
         from unity.settings import SETTINGS
         import unity.conversation_manager.domains.speech_dedup as _dedup_mod
@@ -2430,12 +2446,11 @@ class TestFastBrainSpeechDedup:
             )
             await self._settle_and_drain(env)
 
-            assert len(env["session"].say_calls) == 2, (
-                f"Both queued speeches should drain. "
+            assert len(env["session"].say_calls) == 1, (
+                f"Only the latest guidance should survive (single-slot queue). "
                 f"Got: {env['session'].say_calls}"
             )
-            assert env["session"].say_calls[0] == "Here is the first result."
-            assert env["session"].say_calls[1] == "Here is the second result."
+            assert env["session"].say_calls[0] == "Here is the second result."
         finally:
             SETTINGS.conversation.SPEECH_DEDUP_ENABLED = orig_dedup
 

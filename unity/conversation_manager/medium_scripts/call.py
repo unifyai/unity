@@ -121,6 +121,7 @@ class Assistant(Agent):
             self.assistant_utterance_event = OutboundUnifyMeetUtterance
         self.call_received = not outbound
         self._user_speech_logged = False
+        self.user_turn_generating = False
 
         super().__init__(instructions=instructions)
 
@@ -145,8 +146,7 @@ class Assistant(Agent):
         model_settings: ModelSettings,
     ) -> AsyncIterable[llm.ChatChunk]:
         """Wait for call connection then delegate to parent LLM."""
-        nonlocal _user_turn_generating
-        _user_turn_generating = True
+        self.user_turn_generating = True
         try:
             _log.info("Waiting for call to be received…")
             while not self.call_received:
@@ -178,7 +178,7 @@ class Assistant(Agent):
             ):
                 yield chunk
         finally:
-            _user_turn_generating = False
+            self.user_turn_generating = False
 
 
 def _load_config_from_metadata(ctx: agents.JobContext) -> dict | None:
@@ -363,7 +363,6 @@ async def entrypoint(ctx: agents.JobContext):
     _queued_speech: list[tuple[str, str, str, str, str]] = []
     _say_meta_queue: list[dict] = []
     _dedup_in_flight = False
-    _user_turn_generating = False
     generation_seq = 0
     user_state_seq = 0
     _was_quiescent = True
@@ -456,7 +455,7 @@ async def entrypoint(ctx: agents.JobContext):
         bursts (e.g. notification + message_sent arriving ~100 ms apart) into a
         single regeneration.
         """
-        if not _user_turn_generating:
+        if not assistant.user_turn_generating:
             return
         _log.info(f"Invalidating in-flight generation: {reason}")
         session.interrupt()
@@ -965,8 +964,8 @@ async def entrypoint(ctx: agents.JobContext):
         _dedup_in_flight = True
         try:
             recent = _get_recent_assistant_utterances()
-            notifications = _get_recent_notifications()
-            if (recent or notifications) and SETTINGS.conversation.SPEECH_DEDUP_ENABLED:
+            notifications = _get_recent_notifications() if recent else []
+            if recent and SETTINGS.conversation.SPEECH_DEDUP_ENABLED:
                 from unity.conversation_manager.domains.speech_dedup import (
                     SpeechDeduplicationChecker,
                 )
@@ -1062,7 +1061,10 @@ async def entrypoint(ctx: agents.JobContext):
         notification_source = payload.get("source", "")
         llm_log_path = payload.get("llm_log_path", "")
         notification_id = content_trace_id("guid", content)
-        triggers_turn = notification_source != "meet_interaction"
+        triggers_turn = notification_source not in (
+            "meet_interaction",
+            "proactive_speech",
+        )
         _log.notification(
             notification_source,
             content,
@@ -1128,10 +1130,16 @@ async def entrypoint(ctx: agents.JobContext):
             return
         _inject_silent_context(text)
         if text.startswith("[You "):
-            _invalidate_current_generation(
-                "outbound_action_during_generation",
-                "participant_comms",
-            )
+            if assistant.user_turn_generating:
+                _invalidate_current_generation(
+                    "outbound_action_during_generation",
+                    "participant_comms",
+                )
+            else:
+                trigger_generate_reply(
+                    reason="outbound_message_acknowledgment",
+                    source_id="participant_comms",
+                )
 
     event_broker.register_callback("app:comms:*", on_participant_comms)
 

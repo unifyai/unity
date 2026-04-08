@@ -18,6 +18,7 @@ entrypoint, verifying that proactive speech:
   - does not block regular (non-proactive) notifications from queueing normally
 """
 
+import asyncio
 import json
 from types import SimpleNamespace
 
@@ -149,10 +150,14 @@ async def _boot_entrypoint(monkeypatch):
             self.say_calls.append(text)
             return _ImmediateAwaitable()
 
+        def interrupt(self):
+            pass
+
     class _FakeAssistant:
         def __init__(self, *args, **kwargs):
             self._chat_ctx = llm.ChatContext()
             self.call_received = True
+            self.user_turn_generating = False
 
         def set_call_received(self):
             self.call_received = True
@@ -340,6 +345,7 @@ class TestProactiveSpeechDiscard:
 
         # When agent settles, only the actor notification plays.
         set_agent("listening")
+        await asyncio.sleep(0)
         assert len(session.say_calls) == 1
         assert session.say_calls[0] == "It's at 3pm."
 
@@ -388,6 +394,7 @@ class TestProactiveSpeechDiscard:
 
         # Agent settles — queued actor notification plays.
         set_agent("listening")
+        await asyncio.sleep(0)
         assert len(session.say_calls) == 1
         assert session.say_calls[0] == "It's at 3pm."
 
@@ -406,5 +413,6 @@ class TestProactiveSpeechDiscard:
 
         set_user("listening")
         set_agent("listening")
+        await asyncio.sleep(0)
         assert len(session.say_calls) == 1
         assert session.say_calls[0] == "It's 555-1234."

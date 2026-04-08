@@ -120,7 +120,7 @@ class TestNotificationTriggersTurnClassification:
         response_text: str,
         notification_source: str,
     ) -> bool:
-        return notification_source != "meet_interaction"
+        return notification_source not in ("meet_interaction", "proactive_speech")
 
     def test_silent_slow_brain_notification_triggers(self):
         assert self._triggers_turn(
@@ -152,8 +152,10 @@ class TestNotificationTriggersTurnClassification:
             notification_source="slow_brain",
         )
 
-    def test_proactive_speech_triggers(self):
-        assert self._triggers_turn(
+    def test_proactive_speech_does_not_trigger(self):
+        """Proactive speech is fire-and-forget filler — it should never
+        invalidate in-flight fast brain generation."""
+        assert not self._triggers_turn(
             should_speak=False,
             response_text="",
             notification_source="proactive_speech",
@@ -183,7 +185,7 @@ class TestInvalidationWiringExists:
         assert "_invalidate_current_generation" in call_source
 
     def test_user_turn_generating_flag_defined(self, call_source):
-        assert "_user_turn_generating" in call_source
+        assert "user_turn_generating" in call_source
 
     def test_notification_handler_calls_invalidation(self, call_source):
         assert "notification_during_generation" in call_source
