@@ -406,8 +406,10 @@ class LivekitCallManager:
 
         display_name = display_name or self.assistant_name or "Unity Assistant"
 
+        from unity.session_details import SESSION_DETAILS
+
         base_url = "http://localhost:3000"
-        auth_key = os.environ.get("UNIFY_KEY", "")
+        auth_key = SESSION_DETAILS.unify_key
 
         room_name = make_room_name(self.assistant_id, "gmeet")
         self.room_name = room_name
@@ -509,8 +511,10 @@ class LivekitCallManager:
         self.google_meet_exchange_id = UNASSIGNED
 
         if session_id:
+            from unity.session_details import SESSION_DETAILS
+
             base_url = "http://localhost:3000"
-            auth_key = os.environ.get("UNIFY_KEY", "")
+            auth_key = SESSION_DETAILS.unify_key
             try:
                 async with aiohttp.ClientSession() as session:
                     await session.post(

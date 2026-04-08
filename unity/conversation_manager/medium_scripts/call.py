@@ -481,7 +481,9 @@ async def entrypoint(ctx: agents.JobContext):
     # Speaker identity comes from DOM scraping (activeSpeaker) via the
     # _gmeet_poll_loop, not from Deepgram diarization. This avoids the
     # extra latency that enable_diarization=True adds to STT results.
-    _gmeet_auth_key = os.environ.get("UNIFY_KEY", "")
+    from unity.session_details import SESSION_DETAILS
+
+    _gmeet_auth_key = SESSION_DETAILS.unify_key
     _gmeet_cached_active_speaker: str | None = None
 
     def _resolve_contact_by_name(display_name: str) -> dict | None:
