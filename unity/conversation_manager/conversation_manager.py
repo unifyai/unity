@@ -1491,7 +1491,10 @@ class ConversationManager(metaclass=SingletonABCMeta):
     async def cleanup(self):
         """Clean up any running call processes and file sync."""
         await self.store_chat_history()
-        await self.call_manager.cleanup_call_proc()
+        if self.call_manager.has_active_google_meet:
+            await self.call_manager.cleanup_google_meet()
+        else:
+            await self.call_manager.cleanup_call_proc()
 
         await self._stop_file_sync()
 

@@ -423,7 +423,7 @@ class LivekitCallManager:
         )
         try:
             await lk.room.create_room(
-                CreateRoomRequest(name=room_name, empty_timeout=86400),
+                CreateRoomRequest(name=room_name, empty_timeout=10800),
             )
         finally:
             await lk.aclose()
@@ -500,6 +500,7 @@ class LivekitCallManager:
     async def cleanup_google_meet(self) -> None:
         """Leave the Google Meet session and tear down the audio bridge."""
         session_id = self._gmeet_session_id
+        room_name = self.room_name
         self._gmeet_session_id = None
         self._gmeet_joining = False
         self.google_meet_start_timestamp = None
@@ -521,6 +522,13 @@ class LivekitCallManager:
                     f"{ICONS['ipc']} [LivekitCallManager] "
                     f"Error leaving Google Meet: {exc}",
                 )
+
+        if room_name:
+            from unity.conversation_manager.medium_scripts.common import (
+                delete_livekit_room,
+            )
+
+            await delete_livekit_room(room_name)
 
         await self.cleanup_call_proc()
 
