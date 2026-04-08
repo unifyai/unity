@@ -1,4 +1,4 @@
-# Lightweight test suite: runs all tests with -m "not llm_call" as a single job.
+# Lightweight test suite: runs all tests with -m "not llm_call" across 8 fixed per-test shards.
 # For the full test suite (with LLM calls, matrix parallelism, cache consolidation),
 # use tests.yml via workflow_dispatch.
 name: Tests (lightweight)
@@ -21,11 +21,16 @@ on:
 
 jobs:
   pytest:
-    name: pytest (lightweight)
+    name: pytest (lightweight shard ${{ matrix.shard }}/8)
     runs-on: ubuntu-latest-8-cores
     environment: unity-testing
     timeout-minutes: 130
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4, 5, 6, 7, 8]
     env:
+      LIGHTWEIGHT_SHARD_COUNT: "8"
       UNIFY_TESTS_RAND_PROJ: "false"
       UNIFY_TESTS_DELETE_PROJ_ON_START: "false"
       UNIFY_TESTS_DELETE_PROJ_ON_EXIT: "false"
@@ -167,18 +172,68 @@ jobs:
         cd "$ORCHESTRA_REPO_PATH"
         poetry install --no-interaction
 
+    - name: Collect test nodes for this shard
+      id: collect-nodes
+      env:
+        LIGHTWEIGHT_SHARD: ${{ matrix.shard }}
+      run: |
+        SHARD_NODES_FILE="$(mktemp)"
+        echo "shard_nodes_file=$SHARD_NODES_FILE" >> "$GITHUB_OUTPUT"
+        export SHARD_NODES_FILE
+
+        uv run python - <<'PY'
+        import os
+        import subprocess
+        import sys
+        from pathlib import Path
+
+        cmd = [
+            sys.executable,
+            "-m",
+            "pytest",
+            "--collect-only",
+            "-q",
+            "-m",
+            "not llm_call",
+            "tests/",
+            "--ignore=tests/actor",
+            "--ignore=tests/conversation_manager",
+            "--ignore=tests/async_tool_loop",
+            "--ignore=tests/agent_service",
+            "--ignore=tests/demo_url_mapping",
+        ]
+        result = subprocess.run(cmd, text=True, capture_output=True)
+        if result.returncode != 0:
+            print(result.stdout)
+            print(result.stderr, file=sys.stderr)
+            raise SystemExit(result.returncode)
+
+        nodes = [line.strip() for line in result.stdout.splitlines() if "::" in line]
+        shard = int(os.environ["LIGHTWEIGHT_SHARD"])
+        shard_count = int(os.environ["LIGHTWEIGHT_SHARD_COUNT"])
+        shard_nodes = [node for index, node in enumerate(nodes) if index % shard_count == shard - 1]
+        Path(os.environ["SHARD_NODES_FILE"]).write_text("".join(f"{node}\n" for node in shard_nodes))
+
+        print(f"Collected {len(nodes)} lightweight nodes")
+        print(f"Shard {shard}/{shard_count}: {len(shard_nodes)} nodes")
+
+        if not shard_nodes:
+            raise SystemExit(f"Shard {shard}/{shard_count} has no collected tests")
+        PY
+
     - name: Run tests
       id: run-tests
       run: |
         set +e
+        mapfile -t SHARD_NODES < '${{ steps.collect-nodes.outputs.shard_nodes_file }}'
 
         Xvfb :99 -screen 0 1920x1080x24 &
         XVFB_PID=$!
         export DISPLAY=:99
         trap "kill $XVFB_PID 2>/dev/null" EXIT
 
-        echo "Running: parallel_run.sh --timeout 7200 tests/ -- -m \"not llm_call\" --ignore=tests/actor --ignore=tests/conversation_manager --ignore=tests/async_tool_loop --ignore=tests/agent_service --ignore=tests/demo_url_mapping"
-        tests/parallel_run.sh --timeout 7200 tests/ -- -m "not llm_call" --ignore=tests/actor --ignore=tests/conversation_manager --ignore=tests/async_tool_loop --ignore=tests/agent_service --ignore=tests/demo_url_mapping
+        echo "Running shard ${{ matrix.shard }}/8 with ${#SHARD_NODES[@]} explicit test nodes"
+        tests/parallel_run.sh --timeout 7200 "${SHARD_NODES[@]}"
         TEST_EXIT_CODE=$?
         echo "exit_code=$TEST_EXIT_CODE" >> "$GITHUB_OUTPUT"
         exit $TEST_EXIT_CODE
@@ -243,7 +298,7 @@ jobs:
         echo ""
         echo "Download logs: $ARTIFACTS_URL"
 
-        echo "## ❌ Test Failures (lightweight)" >> $GITHUB_STEP_SUMMARY
+        echo "## ❌ Test Failures (lightweight shard ${{ matrix.shard }}/8)" >> $GITHUB_STEP_SUMMARY
         echo "" >> $GITHUB_STEP_SUMMARY
         echo "**✅ $PASS_COUNT** passed, **❌ $FAIL_COUNT** failed — [view logs]($ARTIFACTS_URL)" >> $GITHUB_STEP_SUMMARY
         echo "" >> $GITHUB_STEP_SUMMARY
@@ -275,7 +330,7 @@ jobs:
         fi
 
         if [ "$log_count" -eq 0 ]; then
-          echo "## ⚠️ No Tests Ran (lightweight)" >> $GITHUB_STEP_SUMMARY
+          echo "## ⚠️ No Tests Ran (lightweight shard ${{ matrix.shard }}/8)" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "**0 tests executed** — this likely indicates a problem with test discovery." >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
@@ -291,7 +346,7 @@ jobs:
         echo ""
         echo "View logs: $ARTIFACTS_URL"
 
-        echo "## ✅ All Tests Passed (lightweight)" >> $GITHUB_STEP_SUMMARY
+        echo "## ✅ All Tests Passed (lightweight shard ${{ matrix.shard }}/8)" >> $GITHUB_STEP_SUMMARY
         echo "" >> $GITHUB_STEP_SUMMARY
         echo "**✅ $log_count** passed — [view logs]($ARTIFACTS_URL)" >> $GITHUB_STEP_SUMMARY
 
@@ -359,7 +414,7 @@ jobs:
       if: always()
       uses: actions/upload-artifact@v7
       with:
-        name: logs-lightweight
+        name: logs-lightweight-shard-${{ matrix.shard }}
         path: logs/
         if-no-files-found: ignore
         retention-days: 90
