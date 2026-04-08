@@ -87,8 +87,14 @@ _MESSAGE_PRODUCING_EVENTS = {
     "UnifyMeetStarted",
     "GoogleMeetStarted",
     "PhoneCallNotAnswered",
+    "WhatsAppReceived",
+    "WhatsAppSent",
     "WhatsAppCallReceived",
+    "WhatsAppCallSent",
     "WhatsAppCallStarted",
+    "WhatsAppCallNotAnswered",
+    "WhatsAppCallInviteSent",
+    "WhatsAppCallPermissionResponse",
     "ApiMessageReceived",
     "ApiMessageSent",
 }
@@ -169,6 +175,28 @@ async def hydrate_global_thread(cm: "ConversationManager") -> None:
                     message_content=cm_event.content,
                     role="assistant",
                     timestamp=ts,
+                )
+
+            # --- WhatsApp Messages ---
+            case "WhatsAppReceived":
+                entry = cm.contact_index.build_message(
+                    contact_id=contact_id,
+                    sender_name=sender_name,
+                    thread_name=Medium.WHATSAPP_MESSAGE,
+                    message_content=cm_event.content,
+                    role="user",
+                    timestamp=ts,
+                    attachments=getattr(cm_event, "attachments", None),
+                )
+            case "WhatsAppSent":
+                entry = cm.contact_index.build_message(
+                    contact_id=contact_id,
+                    sender_name=sender_name,
+                    thread_name=Medium.WHATSAPP_MESSAGE,
+                    message_content=cm_event.content,
+                    role="assistant",
+                    timestamp=ts,
+                    attachments=getattr(cm_event, "attachments", None),
                 )
 
             # --- Unify Messages ---
@@ -412,6 +440,50 @@ async def hydrate_global_thread(cm: "ConversationManager") -> None:
                     sender_name=sender_name,
                     thread_name=Medium.WHATSAPP_CALL,
                     message_content="<Call Started>",
+                    role="user",
+                    timestamp=ts,
+                )
+            case "WhatsAppCallSent":
+                entry = cm.contact_index.build_message(
+                    contact_id=contact_id,
+                    sender_name=sender_name,
+                    thread_name=Medium.WHATSAPP_CALL,
+                    message_content="<Sending WhatsApp Call...>",
+                    role="assistant",
+                    timestamp=ts,
+                )
+            case "WhatsAppCallNotAnswered":
+                reason = getattr(cm_event, "reason", "no-answer") or "no-answer"
+                reason_display = {
+                    "no-answer": "did not answer",
+                    "busy": "was busy",
+                    "canceled": "call was canceled",
+                    "failed": "call failed",
+                }.get(reason, f"not answered ({reason})")
+                entry = cm.contact_index.build_message(
+                    contact_id=contact_id,
+                    sender_name=sender_name,
+                    thread_name=Medium.WHATSAPP_CALL,
+                    message_content=f"<WhatsApp Call Not Answered: {reason_display}>",
+                    role="assistant",
+                    timestamp=ts,
+                )
+            case "WhatsAppCallInviteSent":
+                entry = cm.contact_index.build_message(
+                    contact_id=contact_id,
+                    sender_name=sender_name,
+                    thread_name=Medium.WHATSAPP_CALL,
+                    message_content="<WhatsApp Call Invite Sent>",
+                    role="assistant",
+                    timestamp=ts,
+                )
+            case "WhatsAppCallPermissionResponse":
+                accepted = getattr(cm_event, "accepted", False)
+                entry = cm.contact_index.build_message(
+                    contact_id=contact_id,
+                    sender_name=sender_name,
+                    thread_name=Medium.WHATSAPP_CALL,
+                    message_content=f"<Call Permission: {'Accepted' if accepted else 'Rejected'}>",
                     role="user",
                     timestamp=ts,
                 )

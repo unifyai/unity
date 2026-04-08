@@ -373,7 +373,11 @@ async def _(
     *args,
     **kwargs,
 ):
-    if isinstance(event, (PhoneCallStarted, WhatsAppCallStarted)):
+    if isinstance(event, WhatsAppCallStarted):
+        cm.mode = Mode.CALL
+        whatsapp_number = event.contact.get("whatsapp_number")
+        contact = cm.contact_index.get_contact(whatsapp_number=whatsapp_number)
+    elif isinstance(event, PhoneCallStarted):
         cm.mode = Mode.CALL
         phone_number = event.contact["phone_number"]
         contact = cm.contact_index.get_contact(phone_number=phone_number)
@@ -652,7 +656,17 @@ async def _(
                 "app:comms:whatsapp_call_sent",
                 call_event.to_json(),
             )
-        return
+            return
+
+        cm.call_manager.initial_notification = None
+        cm.contact_index.push_message(
+            contact_id=contact_id,
+            sender_name=sender_name,
+            thread_name=Medium.WHATSAPP_CALL,
+            message_content="<WhatsApp Call Failed After Permission Granted>",
+            role="assistant",
+            timestamp=event.timestamp,
+        )
 
     await cm.request_llm_run(
         delay=0,
@@ -852,6 +866,10 @@ async def _(
     if isinstance(event, (UnifyMeetEnded, GoogleMeetEnded)):
         contact_id = event.contact.get("contact_id")
         contact = cm.contact_index.get_contact(contact_id=contact_id)
+    elif isinstance(event, WhatsAppCallEnded):
+        contact = cm.contact_index.get_contact(
+            whatsapp_number=event.contact.get("whatsapp_number"),
+        )
     else:
         contact = cm.contact_index.get_contact(
             phone_number=event.contact["phone_number"],
