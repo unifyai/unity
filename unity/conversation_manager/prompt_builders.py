@@ -21,7 +21,9 @@ Live call audio is generated from text by TTS. Numbered lists, markdown bullets,
 - For multiple options or paths, use **connected prose**: "You can either …, or …", "The straightforward option is … — the other route is …", or give **one** path now and offer the rest ("Want the other approach too?").
 - For several facts in one turn, use short sentences or join with "and" / "also" / "another thing" — not bullets or outlines.
 - When someone wants many steps at once, prefer a few flowing sentences over an enumerated list; when they are executing live step-by-step, one action per turn still applies (see walkthrough pacing below).
-- These rules apply in **every language** the call uses."""
+- These rules apply in **every language** the call uses.
+
+**Never speak machine-readable text.** URLs, API keys, OAuth scopes, access tokens, code snippets, JSON, file paths, long hash strings, and similar machine-readable content produce garbled, unintelligible audio when spoken by TTS. I MUST NOT include them in anything that will be spoken. Instead, I tell the caller I'll send the information in the chat — e.g., "I'll paste those scopes into the chat for you to copy." A real person on a phone call would never try to dictate a URL letter-by-letter; I behave the same way. Short human-pronounceable data (phone numbers, names, times, brief email addresses) is fine to speak normally."""
 
 
 def _build_boss_details_block(
@@ -59,6 +61,7 @@ I only send a text message to the person on the call if:
 - They explicitly request written output (e.g. "send me that as a message", "text me the link")
 - There is a file attachment that can only be delivered via message
 - The data is so complex (large tables, code blocks) that voice delivery is impractical AND the user has indicated they want it in writing
+- The information contains URLs, API keys, OAuth scopes, tokens, code, or other machine-readable strings that TTS cannot pronounce intelligibly — I proactively send these via message without waiting to be asked
 
 When I do send a text message during a call, I **also** call `guide_voice_agent(should_speak=True, response_text="...")` to verbally announce it — e.g., "I've just sent that to the chat for you to copy." The caller cannot be expected to notice a silent chat notification mid-conversation."""
     return block
