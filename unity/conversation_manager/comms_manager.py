@@ -39,7 +39,8 @@ from unity.settings import SETTINGS
 from unity.conversation_manager.assistant_session_k8s import (
     mark_job_container_ready,
     read_assistant_session,
-    read_session_bootstrap_secret,
+    read_job_assignment_record,
+    read_session_bootstrap_secret_record,
     wait_for_assistant_session_name,
 )
 from unity.conversation_manager.domains.comms_utils import (
@@ -1089,27 +1090,105 @@ class CommsManager:
                     f"{DEFAULT_ICON} Assignment session discovered for {job_name}: "
                     f"{session_name}",
                 )
+                job_assignment = await asyncio.to_thread(
+                    read_job_assignment_record,
+                    job_name,
+                )
+                if job_assignment.session_name != session_name:
+                    LOGGER.info(
+                        f"{DEFAULT_ICON} Ignoring assignment on {job_name}: "
+                        f"job now points at {job_assignment.session_name or 'no-session'} "
+                        f"instead of {session_name}",
+                    )
+                    await asyncio.sleep(5)
+                    continue
+                if not job_assignment.binding_id:
+                    LOGGER.info(
+                        f"{DEFAULT_ICON} Waiting for binding identity on {job_name} "
+                        f"before bootstrapping {session_name}",
+                    )
+                    await asyncio.sleep(5)
+                    continue
                 session = await asyncio.to_thread(read_assistant_session, session_name)
-                secret_name = str(session.get("spec", {}).get("startupSecretRef", ""))
+                session_spec = session.get("spec") or {}
+                session_status = session.get("status") or {}
+                session_binding_id = str(
+                    ((session_status.get("binding") or {}).get("id") or ""),
+                )
+                activation_id = str(session_spec.get("activationId", "") or "")
+                secret_name = str(session_spec.get("startupSecretRef", "") or "")
                 if not secret_name:
                     raise RuntimeError(
                         f"AssistantSession {session_name} missing startupSecretRef",
                     )
+                if not activation_id:
+                    LOGGER.info(
+                        f"{DEFAULT_ICON} Waiting for activation ownership on "
+                        f"{session_name} before bootstrapping {job_name}",
+                    )
+                    await asyncio.sleep(5)
+                    continue
+                if not session_binding_id:
+                    LOGGER.info(
+                        f"{DEFAULT_ICON} Waiting for current binding on "
+                        f"{session_name} before bootstrapping {job_name}",
+                    )
+                    await asyncio.sleep(5)
+                    continue
+                if job_assignment.binding_id != session_binding_id:
+                    LOGGER.info(
+                        f"{DEFAULT_ICON} Ignoring stale assignment on {job_name}: "
+                        f"job binding {job_assignment.binding_id} != "
+                        f"session binding {session_binding_id}",
+                    )
+                    await asyncio.sleep(5)
+                    continue
                 LOGGER.info(
                     f"{DEFAULT_ICON} Assignment session loaded for {job_name}: "
-                    f"phase={((session.get('status') or {}).get('phase') or '')}, "
+                    f"phase={(session_status.get('phase') or '')}, "
                     f"secret={secret_name}, "
-                    f"binding_id={((session.get('status') or {}).get('binding') or {}).get('id', '')}",
+                    f"binding_id={session_binding_id}",
                 )
 
-                event = await asyncio.to_thread(
-                    read_session_bootstrap_secret,
+                secret_record = await asyncio.to_thread(
+                    read_session_bootstrap_secret_record,
                     secret_name,
                 )
+                event = secret_record.payload
                 if not event:
                     raise RuntimeError(
                         f"AssistantSession bootstrap secret {secret_name} is empty",
                     )
+                if secret_record.owner_session_name != session_name:
+                    LOGGER.info(
+                        f"{DEFAULT_ICON} Ignoring stale bootstrap Secret "
+                        f"{secret_record.name} on {job_name}: owner session "
+                        f"{secret_record.owner_session_name or 'missing'} != {session_name}",
+                    )
+                    await asyncio.sleep(5)
+                    continue
+                if secret_record.owner_activation_id != activation_id:
+                    LOGGER.info(
+                        f"{DEFAULT_ICON} Ignoring stale bootstrap Secret "
+                        f"{secret_record.name} on {job_name}: owner activation "
+                        f"{secret_record.owner_activation_id or 'missing'} != {activation_id}",
+                    )
+                    await asyncio.sleep(5)
+                    continue
+                expected_assistant_id = str(session_spec.get("assistantId", "") or "")
+                event_assistant_id = str(event.get("assistant_id", "") or "")
+                if (
+                    expected_assistant_id
+                    and event_assistant_id
+                    and event_assistant_id != expected_assistant_id
+                ):
+                    LOGGER.info(
+                        f"{DEFAULT_ICON} Ignoring bootstrap Secret {secret_record.name} "
+                        f"on {job_name}: payload assistant {event_assistant_id} != "
+                        f"session assistant {expected_assistant_id}",
+                    )
+                    await asyncio.sleep(5)
+                    continue
                 LOGGER.info(
                     f"{DEFAULT_ICON} Bootstrap secret read for {job_name}: "
                     f"assistant_id={event.get('assistant_id')} medium={event.get('medium')}",
@@ -1129,12 +1208,7 @@ class CommsManager:
 
                 details = {
                     "api_key": event["api_key"],
-                    "binding_id": (
-                        ((session.get("status") or {}).get("binding") or {}).get(
-                            "id",
-                            "",
-                        )
-                    ),
+                    "binding_id": session_binding_id,
                     "medium": event.get("medium", "startup"),
                     "assistant_id": event["assistant_id"],
                     "user_id": event["user_id"],

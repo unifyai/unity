@@ -31,7 +31,9 @@ from unity.common.hierarchical_logger import ICONS
 from unity.settings import SETTINGS
 from unity.session_details import SESSION_DETAILS
 from unity.conversation_manager import assistant_jobs
-from unity.conversation_manager.assistant_session_k8s import collect_shutdown_diagnostics
+from unity.conversation_manager.assistant_session_k8s import (
+    collect_shutdown_diagnostics,
+)
 from unity.conversation_manager.comms_manager import CommsManager
 from unity.conversation_manager.metrics import container_spinup
 from unity.conversation_manager.event_broker import get_event_broker

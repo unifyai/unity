@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+from dataclasses import dataclass
 import json
 import os
 from pathlib import Path
@@ -18,11 +19,32 @@ logger = logging.getLogger(__name__)
 
 SESSION_REF_LABEL = "assistantsession.unify.ai/name"
 SESSION_REF_ANNOTATION = "assistantsession.unify.ai/name"
+BINDING_ID_LABEL = "assistantsession.unify.ai/binding-id"
+BINDING_ID_ANNOTATION = "assistantsession.unify.ai/binding-id"
+ACTIVATION_ID_ANNOTATION = "assistantsession.unify.ai/activation-id"
 CONTAINER_READY_ANNOTATION = "assistantsession.unify.ai/container-ready"
 
 _batch_api: k8s_client.BatchV1Api | None = None
 _core_api: k8s_client.CoreV1Api | None = None
 _custom_api: k8s_client.CustomObjectsApi | None = None
+
+
+@dataclass(frozen=True)
+class JobAssignmentRecord:
+    """Binding-scoped session identity stamped onto a Unity Job."""
+
+    session_name: str
+    binding_id: str
+
+
+@dataclass(frozen=True)
+class BootstrapSecretRecord:
+    """Bootstrap payload plus the owner annotations recorded on the Secret."""
+
+    name: str
+    payload: dict[str, Any]
+    owner_session_name: str
+    owner_activation_id: str
 
 
 def _load_clients() -> None:
@@ -50,6 +72,12 @@ def _session_name_from_job(job) -> str | None:
     labels = job.metadata.labels or {}
     annotations = job.metadata.annotations or {}
     return labels.get(SESSION_REF_LABEL) or annotations.get(SESSION_REF_ANNOTATION)
+
+
+def _binding_id_from_job(job) -> str | None:
+    labels = job.metadata.labels or {}
+    annotations = job.metadata.annotations or {}
+    return labels.get(BINDING_ID_LABEL) or annotations.get(BINDING_ID_ANNOTATION)
 
 
 def wait_for_assistant_session_name(job_name: str) -> str:
@@ -102,6 +130,18 @@ def wait_for_assistant_session_name(job_name: str) -> str:
             continue
 
 
+def read_job_assignment_record(job_name: str) -> JobAssignmentRecord:
+    """Read the controller-owned session and binding identity from a Job."""
+
+    _load_clients()
+    assert _batch_api is not None
+    job = _batch_api.read_namespaced_job(name=job_name, namespace=_namespace())
+    return JobAssignmentRecord(
+        session_name=str(_session_name_from_job(job) or ""),
+        binding_id=str(_binding_id_from_job(job) or ""),
+    )
+
+
 def read_assistant_session(session_name: str) -> dict[str, Any]:
     _load_clients()
     assert _custom_api is not None
@@ -114,15 +154,29 @@ def read_assistant_session(session_name: str) -> dict[str, Any]:
     )
 
 
-def read_session_bootstrap_secret(secret_name: str) -> dict[str, Any]:
+def read_session_bootstrap_secret_record(secret_name: str) -> BootstrapSecretRecord:
+    """Read a bootstrap Secret together with its owner annotations."""
+
     _load_clients()
     assert _core_api is not None
     secret = _core_api.read_namespaced_secret(name=secret_name, namespace=_namespace())
     data = secret.data or {}
     raw = data.get("startup.json", "")
-    if not raw:
-        return {}
-    return json.loads(base64.b64decode(raw).decode("utf-8"))
+    metadata = getattr(secret, "metadata", None)
+    annotations = getattr(metadata, "annotations", None) or {}
+    payload = json.loads(base64.b64decode(raw).decode("utf-8")) if raw else {}
+    return BootstrapSecretRecord(
+        name=str(getattr(metadata, "name", "") or secret_name),
+        payload=payload,
+        owner_session_name=str(annotations.get(SESSION_REF_ANNOTATION, "") or ""),
+        owner_activation_id=str(annotations.get(ACTIVATION_ID_ANNOTATION, "") or ""),
+    )
+
+
+def read_session_bootstrap_secret(secret_name: str) -> dict[str, Any]:
+    """Read only the bootstrap payload stored in the Secret."""
+
+    return read_session_bootstrap_secret_record(secret_name).payload
 
 
 def mark_job_container_ready(job_name: str, max_retries: int = 3) -> None:
@@ -221,10 +275,16 @@ def collect_shutdown_diagnostics(job_name: str) -> dict[str, Any]:
                 session = read_assistant_session(session_name)
                 diagnostics["assistant_session"] = {
                     "name": ((session.get("metadata") or {}).get("name") or ""),
-                    "activation_id": ((session.get("spec") or {}).get("activationId") or ""),
-                    "desired_state": ((session.get("spec") or {}).get("desiredState") or ""),
+                    "activation_id": (
+                        (session.get("spec") or {}).get("activationId") or ""
+                    ),
+                    "desired_state": (
+                        (session.get("spec") or {}).get("desiredState") or ""
+                    ),
                     "phase": ((session.get("status") or {}).get("phase") or ""),
-                    "last_error": ((session.get("status") or {}).get("lastError") or ""),
+                    "last_error": (
+                        (session.get("status") or {}).get("lastError") or ""
+                    ),
                     "binding": ((session.get("status") or {}).get("binding") or {}),
                 }
             except Exception as exc:
