@@ -1590,10 +1590,12 @@ class ConversationManagerBrainActionTools:
         meet_url: str,
         context: str = "",
     ) -> dict[str, Any]:
-        """Join a Google Meet call via browser automation.
+        """Join a Google Meet call.
 
-        The assistant joins the specified Google Meet as a browser participant,
-        establishing an audio bridge so it can listen and speak in the meeting.
+        This is the **only** way to join a Google Meet — it configures audio
+        devices, establishes the voice pipeline, and dispatches the voice
+        agent so the assistant can hear and speak in the meeting.  Never
+        attempt to join a Meet URL via ``act``.
 
         Args:
             meet_url: The full Google Meet URL (e.g. https://meet.google.com/abc-defg-hij).
@@ -1662,6 +1664,10 @@ class ConversationManagerBrainActionTools:
         - **Action**: Update records, modify spreadsheets, control the desktop/web interface,
           schedule tasks, create reminders
         - **Combined**: Find information and act on it (e.g., "find David's email")
+
+        **Excluded:** Do not use ``act`` to join Google Meet calls — use the
+        dedicated ``join_google_meet`` tool instead, which handles audio device
+        configuration and voice pipeline setup.
 
         **When uncertain, call ``act``**: If you need information you don't have (like
         a contact's email address), call ``act`` to search for it. If ``act`` can't find

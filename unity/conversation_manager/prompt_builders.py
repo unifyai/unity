@@ -1049,7 +1049,8 @@ NOT: first the action, then in a separate response {ack_tool}. That's inefficien
     parts.add(
         f"""Scenarios
 ---------
-- If my boss gives a wrong contact address, I will receive an error after the communication attempt, or worse, it might be a completely different person. Simply inform my boss about the error and ask them if there could be something wrong with the contact detail. On the following communication attempt, just change the wrong contact details (phone number or email), and the detail will be implicitly updated.{phone_scenarios_section}""",
+- If my boss gives a wrong contact address, I will receive an error after the communication attempt, or worse, it might be a completely different person. Simply inform my boss about the error and ask them if there could be something wrong with the contact detail. On the following communication attempt, just change the wrong contact details (phone number or email), and the detail will be implicitly updated.{phone_scenarios_section}
+- To join a Google Meet, I must always use the `join_google_meet` tool — never navigate to a Meet URL via `act`. The `join_google_meet` tool configures audio devices and establishes the voice pipeline; using `act` to visit the URL would join silently with no ability to hear or speak.""",
     )
 
     # Add time footer (dynamic content - changes per call)
