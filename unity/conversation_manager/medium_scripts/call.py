@@ -800,15 +800,8 @@ async def entrypoint(ctx: agents.JobContext):
                 "llm_log_path": llm_log_path,
             },
         )
-        notification_message = f"[notification] {notification_content}"
-        assistant._chat_ctx.add_message(
-            role="system",
-            content=[notification_message],
-        )
-        session._chat_ctx.add_message(
-            role="system",
-            content=[notification_message],
-        )
+        # Context injection is handled by apply_notification unconditionally
+        # for non-proactive notifications. No injection here to avoid doubles.
         _log.notification_say(text, notification_source=notification_source)
         session.say(text, allow_interruptions=True, add_to_chat_ctx=True)
 
@@ -879,6 +872,20 @@ async def entrypoint(ctx: agents.JobContext):
         notification_source: str = "",
         llm_log_path: str = "",
     ) -> None:
+        # Inject into chat context unconditionally so the fast brain always
+        # sees the latest slow brain understanding.  Proactive speech is
+        # fire-and-forget filler — it never updates context.
+        if notification_source != "proactive_speech":
+            notification_message = f"[notification] {content}"
+            assistant._chat_ctx.add_message(
+                role="system",
+                content=[notification_message],
+            )
+            session._chat_ctx.add_message(
+                role="system",
+                content=[notification_message],
+            )
+
         if should_speak and response_text:
             if notification_source == "proactive_speech":
                 # Proactive speech exists purely to fill silence — never queue it.
@@ -894,6 +901,8 @@ async def entrypoint(ctx: agents.JobContext):
                     llm_log_path,
                 )
             else:
+                # Latest slow brain guidance supersedes older queued speech.
+                _queued_speech.clear()
                 _queued_speech.append(
                     (
                         response_text,
@@ -904,16 +913,6 @@ async def entrypoint(ctx: agents.JobContext):
                     ),
                 )
                 maybe_speak_queued()
-        else:
-            notification_message = f"[notification] {content}"
-            assistant._chat_ctx.add_message(
-                role="system",
-                content=[notification_message],
-            )
-            session._chat_ctx.add_message(
-                role="system",
-                content=[notification_message],
-            )
 
     def _get_recent_assistant_utterances(n: int = 10) -> list[str]:
         """Return the last *n* assistant utterances from the fast brain's chat context.
@@ -938,17 +937,22 @@ async def entrypoint(ctx: agents.JobContext):
         results.reverse()
         return results
 
-    def _downgrade_to_silent(notification_content: str) -> None:
-        """Inject notification content as silent context (no speech)."""
-        notification_message = f"[notification] {notification_content}"
-        assistant._chat_ctx.add_message(
-            role="system",
-            content=[notification_message],
-        )
-        session._chat_ctx.add_message(
-            role="system",
-            content=[notification_message],
-        )
+    def _get_recent_notifications(n: int = 5) -> list[str]:
+        """Return the last *n* ``[notification]`` system messages from the chat context."""
+        results: list[str] = []
+        prefix = "[notification] "
+        for item in reversed(assistant._chat_ctx.items):
+            if getattr(item, "role", None) != "system":
+                continue
+            raw = getattr(item, "content", None)
+            if isinstance(raw, list):
+                raw = " ".join(c for c in raw if isinstance(c, str)).strip()
+            if isinstance(raw, str) and raw.startswith(prefix):
+                results.append(raw[len(prefix) :])
+            if len(results) >= n:
+                break
+        results.reverse()
+        return results
 
     async def _dedup_and_speak(
         text: str,
@@ -961,7 +965,8 @@ async def entrypoint(ctx: agents.JobContext):
         _dedup_in_flight = True
         try:
             recent = _get_recent_assistant_utterances()
-            if recent and SETTINGS.conversation.SPEECH_DEDUP_ENABLED:
+            notifications = _get_recent_notifications()
+            if (recent or notifications) and SETTINGS.conversation.SPEECH_DEDUP_ENABLED:
                 from unity.conversation_manager.domains.speech_dedup import (
                     SpeechDeduplicationChecker,
                 )
@@ -969,10 +974,10 @@ async def entrypoint(ctx: agents.JobContext):
                 dedup = await SpeechDeduplicationChecker().evaluate(
                     proposed_speech=text,
                     recent_utterances=recent,
+                    recent_notifications=notifications,
                 )
-                if dedup.already_covered:
+                if dedup.should_suppress:
                     _log.dedup_suppressed(text, dedup.reasoning)
-                    _downgrade_to_silent(notification_content)
                     return
             _speak_now(
                 text,
@@ -1057,10 +1062,7 @@ async def entrypoint(ctx: agents.JobContext):
         notification_source = payload.get("source", "")
         llm_log_path = payload.get("llm_log_path", "")
         notification_id = content_trace_id("guid", content)
-        triggers_turn = (
-            not (should_speak and response_text)
-            and notification_source != "meet_interaction"
-        )
+        triggers_turn = notification_source != "meet_interaction"
         _log.notification(
             notification_source,
             content,

@@ -1350,7 +1350,10 @@ The caller can always ask for more. I never dump a full record onto a phone call
 - If asked for updates while work is in progress, I respond with ONE brief progress sentence tied to the active work item from the latest in-progress status (for example: "Still setting up Bob's contact and task."). I avoid generic filler when the active item is known.
 - For status questions like "Are you done?" or "Any updates?", if no explicit completion status appears in this call, I respond as in-progress and I do not say "done", "created", "sent", "completed", "finished", "all set", or equivalent completion claims.
 - I never infer completion from elapsed time, user pressure, or my own prior acknowledgment.
-- I only confirm completion after an explicit completion status appears in this call."""
+- I only confirm completion after an explicit completion status appears in this call.
+
+**Notification authority:**
+When a `[notification]` confirms that a task, step, or setup is complete, that is authoritative — it reflects verified system state. I MUST NOT offer to walk through, repeat, or redo steps that a notification has confirmed are done. If I was mid-thought about offering next steps and a `[notification]` says the work is already finished, I abandon my planned response and relay the completion result instead. The most recent `[notification]` always takes precedence over my own assumptions about what still needs doing."""
 
     style_suffix = (
         " Be impressive and personable — this is a first impression."
