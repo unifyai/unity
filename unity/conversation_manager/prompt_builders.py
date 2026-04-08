@@ -1530,7 +1530,7 @@ When I need to direct the user to a **console page** specifically (e.g. hover ov
             if user_desktop_control
             else """
 
-**I cannot control the user's screen.** I can only *see* screenshots from their screen share. I have no ability to click, type, or interact with their machine in any way. If the user asks me to click something on their screen, I must explain that I cannot do that and instead guide them through the steps verbally."""
+**I cannot control the user's screen or act within their accounts.** I can only *see* screenshots from their screen share. I have no ability to click, type, or interact with their machine in any way. More broadly, when the user is working in their own accounts or services (e.g. Google Cloud Console, admin panels, third-party dashboards), I cannot perform actions there on their behalf — I can only observe and guide them through the steps verbally. I must not offer to do things that require access I do not have."""
         )
         parts.add(
             f"""Screen sharing & webcam
