@@ -1573,7 +1573,8 @@ class BaseDataManager(BaseStateManager):
         -----
         - Pre-filters (``left_where``, ``right_where``) are applied before joining,
           which can significantly improve performance on large tables.
-        - The temporary join context is created, queried, and cleaned up automatically.
+        - The join and query are performed in a single server-side round-trip;
+          no temporary context is created.
         - Column references in ``join_expr`` and ``select`` keys use table/context prefixes.
         """
 
@@ -1595,12 +1596,11 @@ class BaseDataManager(BaseStateManager):
         """
         Join two tables and aggregate the result in one atomic operation.
 
-        Combines a join with a reduce (aggregation). The join is performed first,
-        then the specified metric is computed over the result. The temporary join
-        context is created and cleaned up automatically.
+        Combines a join with a reduce (aggregation) in a single server-side
+        round-trip. No temporary context is created.
 
         Use this instead of manually calling ``join_tables`` + ``reduce`` +
-        ``delete_table`` -- it handles the temporary context lifecycle for you.
+        ``delete_table``.
 
         Parameters
         ----------
@@ -1728,13 +1728,14 @@ class BaseDataManager(BaseStateManager):
         -----
         - Pre-filters (``left_where``, ``right_where``) are applied before joining,
           which can significantly improve performance on large tables.
-        - The temporary join context is created, queried, and cleaned up automatically.
+        - The join and aggregation are performed in a single server-side round-trip;
+          no temporary context is created.
         - Column references in ``join_expr`` and ``select`` keys use table/context prefixes.
 
         See Also
         --------
         reduce : Aggregate a single table (no join).
-        filter_join : Join + filter with automatic temp table cleanup.
+        filter_join : Join + filter in a single round-trip.
         search_join : Join + semantic search with automatic temp table cleanup.
         """
 
