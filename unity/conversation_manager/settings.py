@@ -41,20 +41,10 @@ class ConversationSettings(BaseSettings):
             prompts clarify that the assistant can only control its own VM and
             the user can optionally view/control the assistant's desktop — not
             the other way around.
-        NOTIFICATION_REPLY_CONTEXT_WINDOW: Maximum number of conversation items
-            the notification reply evaluator keeps. Smaller than the fast brain
-            window because the evaluator only needs recent context to detect
-            redundant speech.
-        ASSISTANT_SESSION_GROUP: API group for AssistantSession resources.
-        ASSISTANT_SESSION_VERSION: API version for AssistantSession resources.
-        ASSISTANT_SESSION_PLURAL: Resource plural for AssistantSession resources.
-        ASSISTANT_SESSION_PROTOCOL_VERSION: Bootstrap protocol version expected
-            from AssistantSession-backed startup state.
     """
 
     FAST_BRAIN_MODEL: str = "gpt-5-mini@openai"
     FAST_BRAIN_CONTEXT_WINDOW: int = 50
-    NOTIFICATION_REPLY_CONTEXT_WINDOW: int = 8
     IMPL: str = "real"
     COMMS_URL: str = Field(default="", validation_alias="UNITY_COMMS_URL")
     ADAPTERS_URL: str = Field(default="", validation_alias="UNITY_ADAPTERS_URL")
