@@ -147,6 +147,7 @@ def _restart_agent_service_with_key(api_key: str) -> None:
         proc = subprocess.Popen(
             cmd,
             cwd=str(agent_dir),
+            env={**os.environ, "UNIFY_KEY": api_key},
             stdout=log_fh,
             stderr=log_fh,
         )
