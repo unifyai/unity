@@ -172,17 +172,8 @@ DEVICE_PID=$!
 
 sleep 3
 
-# Start agent-service on port 3000 (for web automation via Magnitude)
-echo "⬥ Starting agent-service..."
-# Use pre-compiled JavaScript if available, otherwise fallback to ts-node
-if [ -f "/app/agent-service/dist/index.js" ]; then
-    cd /app/agent-service && node --no-deprecation dist/index.js &
-else
-    cd /app/agent-service && NODE_OPTIONS="--no-deprecation" npx ts-node src/index.ts &
-fi
-AGENT_PID=$!
-cd /app
-echo "⬥ Agent-service started with PID: $AGENT_PID"
+# agent-service is started by the Python process after StartupEvent
+# (see event_handlers.py _restart_agent_service_with_key)
 
 # Start the main application
 echo "⬥ Starting convo manager..."

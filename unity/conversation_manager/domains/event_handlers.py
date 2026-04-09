@@ -124,10 +124,13 @@ def _restart_agent_service_with_key(api_key: str) -> None:
             "[agent-service-restart] Updated agent-service .env",
         )
 
-        # 2. Kill whatever is listening on port 3000
+        # 2. Kill whatever is listening on port 3000 and wait for it to release
         killed = _kill_port(3000)
         if killed:
-            time.sleep(0.5)
+            for _ in range(50):
+                time.sleep(0.1)
+                if _find_pid_on_port(3000) is None:
+                    break
         LOGGER.info(
             (
                 "[agent-service-restart] Killed process on port 3000"
