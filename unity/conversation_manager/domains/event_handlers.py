@@ -1,4 +1,6 @@
 import asyncio
+import os
+import signal
 import subprocess
 import time
 import traceback
@@ -20,6 +22,7 @@ if TYPE_CHECKING:
 
 
 _AGENT_SERVICE_PID_FILE = Path("/tmp/agent-service.pid")
+_AGENT_SERVICE_LOG = Path("/var/log/unity/agent-service.log")
 
 
 def _find_agent_service_dir() -> Path | None:
@@ -49,13 +52,57 @@ def _update_env_file(env_path: Path, key: str, value: str) -> None:
     env_path.write_text("\n".join(lines) + "\n")
 
 
+def _find_pid_on_port(port: int) -> int | None:
+    """Find the PID of the process listening on the given TCP port via /proc."""
+    hex_port = f"{port:04X}"
+    inode = None
+    for tcp_path in ("/proc/net/tcp", "/proc/net/tcp6"):
+        try:
+            for line in Path(tcp_path).read_text().splitlines()[1:]:
+                fields = line.split()
+                if len(fields) < 10:
+                    continue
+                # 0A = LISTEN state
+                if fields[3] == "0A" and fields[1].endswith(f":{hex_port}"):
+                    inode = fields[9]
+                    break
+        except FileNotFoundError:
+            continue
+        if inode:
+            break
+    if not inode:
+        return None
+
+    for pid_dir in Path("/proc").iterdir():
+        if not pid_dir.name.isdigit():
+            continue
+        try:
+            for fd in (pid_dir / "fd").iterdir():
+                if os.readlink(str(fd)) == f"socket:[{inode}]":
+                    return int(pid_dir.name)
+        except (OSError, PermissionError):
+            continue
+    return None
+
+
+def _kill_port(port: int) -> bool:
+    """Kill the process listening on the given TCP port. Returns True if killed."""
+    pid = _find_pid_on_port(port)
+    if pid is None:
+        return False
+    try:
+        os.kill(pid, signal.SIGTERM)
+        return True
+    except ProcessLookupError:
+        return False
+
+
 def _restart_agent_service_with_key(api_key: str) -> None:
     """Kill and restart the agent-service so it picks up the user's API key.
 
     1. Updates the agent-service .env file (UNIFY_KEY + infrastructure URLs)
-    2. Kills the process currently on port 3000
-    3. Spawns a new agent-service (inherits os.environ which already has the
-       correct UNIFY_KEY from export_to_env())
+    2. Kills the process listening on port 3000
+    3. Spawns a new agent-service with logs to /var/log/unity/agent-service.log
     4. Writes the new PID to /tmp/agent-service.pid for entrypoint.sh cleanup
     """
     from unity.settings import SETTINGS
@@ -74,29 +121,34 @@ def _restart_agent_service_with_key(api_key: str) -> None:
         _update_env_file(env_file, "ORCHESTRA_URL", SETTINGS.ORCHESTRA_URL)
         _update_env_file(env_file, "UNITY_COMMS_URL", SETTINGS.conversation.COMMS_URL)
         LOGGER.info(
-            "[agent-service-restart] Updated agent-service .env with user API key"
-            " and infrastructure URLs",
+            "[agent-service-restart] Updated agent-service .env",
         )
 
         # 2. Kill whatever is listening on port 3000
-        subprocess.run(["fuser", "-k", "3000/tcp"], capture_output=True)
-        time.sleep(1)
+        killed = _kill_port(3000)
+        if killed:
+            time.sleep(0.5)
         LOGGER.info(
-            "[agent-service-restart] Killed process on port 3000",
+            (
+                "[agent-service-restart] Killed process on port 3000"
+                if killed
+                else "[agent-service-restart] No process found on port 3000"
+            ),
         )
 
-        # 3. Restart (same logic as entrypoint.sh)
+        # 3. Restart
         compiled = agent_dir / "dist" / "index.js"
         if compiled.exists():
-            cmd = ["node", str(compiled)]
+            cmd = ["node", "--no-deprecation", str(compiled)]
         else:
             cmd = ["npx", "ts-node", str(agent_dir / "src" / "index.ts")]
 
+        log_fh = open(_AGENT_SERVICE_LOG, "a")
         proc = subprocess.Popen(
             cmd,
             cwd=str(agent_dir),
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
+            stdout=log_fh,
+            stderr=log_fh,
         )
 
         # 4. Write PID file for entrypoint.sh cleanup
