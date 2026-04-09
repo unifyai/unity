@@ -1,12 +1,15 @@
 """Tests for DashboardManager Pydantic types and tile_ops helpers."""
 
 import json
+from unittest.mock import patch
 
 import pytest
 from pydantic import TypeAdapter
 
 from unity.dashboard_manager.ops.tile_ops import (
+    _match_context,
     ensure_binding_aliases,
+    resolve_binding_contexts,
     serialize_bindings,
     validate_on_data,
 )
@@ -418,3 +421,293 @@ class TestDashboardTypes:
     def test_dashboard_result_failed(self):
         result = DashboardResult(error="Failed")
         assert result.succeeded is False
+
+
+# ---------------------------------------------------------------------------
+# Context resolution tests
+# ---------------------------------------------------------------------------
+
+BASE = "uid-abc/42"
+
+KNOWN_CONTEXTS = {
+    f"{BASE}/Data",
+    f"{BASE}/Data/MidlandHeart/Repairs/Facts/WorkOrders",
+    f"{BASE}/Data/MidlandHeart/Repairs/Dims/Contractors",
+    f"{BASE}/Data/Sales/Monthly",
+    f"{BASE}/Contacts",
+    f"{BASE}/Tasks",
+    f"{BASE}/Knowledge/FAQ",
+}
+
+
+class TestMatchContext:
+    """Unit tests for the _match_context resolution cascade."""
+
+    def test_exact_match_fully_qualified(self):
+        result = _match_context(
+            f"{BASE}/Data/Sales/Monthly",
+            BASE,
+            KNOWN_CONTEXTS,
+        )
+        assert result == f"{BASE}/Data/Sales/Monthly"
+
+    def test_base_prefixed_root_relative_data(self):
+        result = _match_context("Data/Sales/Monthly", BASE, KNOWN_CONTEXTS)
+        assert result == f"{BASE}/Data/Sales/Monthly"
+
+    def test_base_prefixed_contacts(self):
+        result = _match_context("Contacts", BASE, KNOWN_CONTEXTS)
+        assert result == f"{BASE}/Contacts"
+
+    def test_base_prefixed_tasks(self):
+        result = _match_context("Tasks", BASE, KNOWN_CONTEXTS)
+        assert result == f"{BASE}/Tasks"
+
+    def test_base_prefixed_knowledge(self):
+        result = _match_context("Knowledge/FAQ", BASE, KNOWN_CONTEXTS)
+        assert result == f"{BASE}/Knowledge/FAQ"
+
+    def test_suffix_match_relative(self):
+        result = _match_context(
+            "MidlandHeart/Repairs/Facts/WorkOrders",
+            BASE,
+            KNOWN_CONTEXTS,
+        )
+        assert result == f"{BASE}/Data/MidlandHeart/Repairs/Facts/WorkOrders"
+
+    def test_suffix_match_deeper_relative(self):
+        result = _match_context(
+            "Repairs/Dims/Contractors",
+            BASE,
+            KNOWN_CONTEXTS,
+        )
+        assert result == f"{BASE}/Data/MidlandHeart/Repairs/Dims/Contractors"
+
+    def test_no_match_raises(self):
+        with pytest.raises(ValueError, match="No context found"):
+            _match_context("Nonexistent/Table", BASE, KNOWN_CONTEXTS)
+
+    def test_ambiguous_match_raises(self):
+        ambiguous_known = {
+            f"{BASE}/Data/ProjectA/Orders",
+            f"{BASE}/Data/ProjectB/Orders",
+        }
+        with pytest.raises(ValueError, match="Ambiguous context"):
+            _match_context("Orders", BASE, ambiguous_known)
+
+    def test_empty_path_raises(self):
+        with pytest.raises(ValueError, match="Empty context path"):
+            _match_context("", BASE, KNOWN_CONTEXTS)
+
+    def test_whitespace_stripped(self):
+        result = _match_context("  Contacts  ", BASE, KNOWN_CONTEXTS)
+        assert result == f"{BASE}/Contacts"
+
+    def test_leading_slash_stripped(self):
+        result = _match_context("/Data/Sales/Monthly", BASE, KNOWN_CONTEXTS)
+        assert result == f"{BASE}/Data/Sales/Monthly"
+
+
+class TestResolveBindingContexts:
+    """Tests for resolve_binding_contexts with mocked unify API."""
+
+    def _patch(self):
+        """Return a context manager that patches ContextRegistry and unify."""
+        patches = {}
+        patches["registry"] = patch(
+            "unity.dashboard_manager.ops.tile_ops.ContextRegistry",
+        )
+        patches["unify"] = patch(
+            "unity.dashboard_manager.ops.tile_ops.unify",
+        )
+        return patches
+
+    def test_filter_binding_resolved(self):
+        with (
+            patch(
+                "unity.dashboard_manager.ops.tile_ops.ContextRegistry",
+            ) as mock_reg,
+            patch(
+                "unity.dashboard_manager.ops.tile_ops.unify",
+            ) as mock_unify,
+        ):
+            mock_reg._base_context = BASE
+            mock_unify.get_contexts.return_value = {k: "" for k in KNOWN_CONTEXTS}
+
+            bindings = [FilterBinding(context="Data/Sales/Monthly", alias="sales")]
+            result = resolve_binding_contexts(bindings)
+
+            assert len(result) == 1
+            assert result[0].context == f"{BASE}/Data/Sales/Monthly"
+            assert result[0].alias == "sales"
+
+    def test_reduce_binding_resolved(self):
+        with (
+            patch(
+                "unity.dashboard_manager.ops.tile_ops.ContextRegistry",
+            ) as mock_reg,
+            patch(
+                "unity.dashboard_manager.ops.tile_ops.unify",
+            ) as mock_unify,
+        ):
+            mock_reg._base_context = BASE
+            mock_unify.get_contexts.return_value = {k: "" for k in KNOWN_CONTEXTS}
+
+            bindings = [
+                ReduceBinding(context="Contacts", metric="count", columns="name"),
+            ]
+            result = resolve_binding_contexts(bindings)
+
+            assert result[0].context == f"{BASE}/Contacts"
+
+    def test_join_binding_tables_and_expr_resolved(self):
+        with (
+            patch(
+                "unity.dashboard_manager.ops.tile_ops.ContextRegistry",
+            ) as mock_reg,
+            patch(
+                "unity.dashboard_manager.ops.tile_ops.unify",
+            ) as mock_unify,
+        ):
+            mock_reg._base_context = BASE
+            mock_unify.get_contexts.return_value = {k: "" for k in KNOWN_CONTEXTS}
+
+            bindings = [
+                JoinBinding(
+                    tables=[
+                        "Data/MidlandHeart/Repairs/Facts/WorkOrders",
+                        "Data/MidlandHeart/Repairs/Dims/Contractors",
+                    ],
+                    join_expr=(
+                        "Data/MidlandHeart/Repairs/Facts/WorkOrders.contractor_id"
+                        " == "
+                        "Data/MidlandHeart/Repairs/Dims/Contractors.id"
+                    ),
+                    select={
+                        "Data/MidlandHeart/Repairs/Facts/WorkOrders.amount": "amount",
+                        "Data/MidlandHeart/Repairs/Dims/Contractors.name": "name",
+                    },
+                ),
+            ]
+            result = resolve_binding_contexts(bindings)
+            b = result[0]
+
+            wo = f"{BASE}/Data/MidlandHeart/Repairs/Facts/WorkOrders"
+            co = f"{BASE}/Data/MidlandHeart/Repairs/Dims/Contractors"
+            assert b.tables == [wo, co]
+            assert wo in b.join_expr
+            assert co in b.join_expr
+            assert any(wo in k for k in b.select)
+            assert any(co in k for k in b.select)
+
+    def test_join_reduce_binding_resolved(self):
+        with (
+            patch(
+                "unity.dashboard_manager.ops.tile_ops.ContextRegistry",
+            ) as mock_reg,
+            patch(
+                "unity.dashboard_manager.ops.tile_ops.unify",
+            ) as mock_unify,
+        ):
+            mock_reg._base_context = BASE
+            mock_unify.get_contexts.return_value = {k: "" for k in KNOWN_CONTEXTS}
+
+            bindings = [
+                JoinReduceBinding(
+                    tables=["Data/Sales/Monthly", "Contacts"],
+                    join_expr="Data/Sales/Monthly.rep_id == Contacts.id",
+                    select={
+                        "Data/Sales/Monthly.revenue": "revenue",
+                        "Contacts.name": "rep",
+                    },
+                    metric="sum",
+                    columns="revenue",
+                    group_by=["rep"],
+                ),
+            ]
+            result = resolve_binding_contexts(bindings)
+            b = result[0]
+
+            sm = f"{BASE}/Data/Sales/Monthly"
+            ct = f"{BASE}/Contacts"
+            assert b.tables == [sm, ct]
+            assert sm in b.join_expr
+            assert ct in b.join_expr
+            assert any(sm in k for k in b.select)
+            assert any(ct in k for k in b.select)
+
+    def test_no_base_context_returns_unchanged(self):
+        with (
+            patch(
+                "unity.dashboard_manager.ops.tile_ops.ContextRegistry",
+            ) as mock_reg,
+            patch(
+                "unity.dashboard_manager.ops.tile_ops.unify",
+            ) as mock_unify,
+        ):
+            mock_reg._base_context = None
+            mock_unify.get_active_context.return_value = {"read": ""}
+
+            bindings = [FilterBinding(context="Data/X", alias="x")]
+            result = resolve_binding_contexts(bindings)
+
+            assert result[0].context == "Data/X"
+
+    def test_no_known_contexts_returns_unchanged(self):
+        with (
+            patch(
+                "unity.dashboard_manager.ops.tile_ops.ContextRegistry",
+            ) as mock_reg,
+            patch(
+                "unity.dashboard_manager.ops.tile_ops.unify",
+            ) as mock_unify,
+        ):
+            mock_reg._base_context = BASE
+            mock_unify.get_contexts.return_value = {}
+
+            bindings = [FilterBinding(context="Data/X", alias="x")]
+            result = resolve_binding_contexts(bindings)
+
+            assert result[0].context == "Data/X"
+
+    def test_already_qualified_passes_through(self):
+        with (
+            patch(
+                "unity.dashboard_manager.ops.tile_ops.ContextRegistry",
+            ) as mock_reg,
+            patch(
+                "unity.dashboard_manager.ops.tile_ops.unify",
+            ) as mock_unify,
+        ):
+            mock_reg._base_context = BASE
+            mock_unify.get_contexts.return_value = {k: "" for k in KNOWN_CONTEXTS}
+
+            fq = f"{BASE}/Data/Sales/Monthly"
+            bindings = [FilterBinding(context=fq, alias="sales")]
+            result = resolve_binding_contexts(bindings)
+
+            assert result[0].context == fq
+
+    def test_suffix_match_relative_path(self):
+        with (
+            patch(
+                "unity.dashboard_manager.ops.tile_ops.ContextRegistry",
+            ) as mock_reg,
+            patch(
+                "unity.dashboard_manager.ops.tile_ops.unify",
+            ) as mock_unify,
+        ):
+            mock_reg._base_context = BASE
+            mock_unify.get_contexts.return_value = {k: "" for k in KNOWN_CONTEXTS}
+
+            bindings = [
+                FilterBinding(
+                    context="MidlandHeart/Repairs/Facts/WorkOrders",
+                    alias="wo",
+                ),
+            ]
+            result = resolve_binding_contexts(bindings)
+
+            assert result[0].context == (
+                f"{BASE}/Data/MidlandHeart/Repairs/Facts/WorkOrders"
+            )
