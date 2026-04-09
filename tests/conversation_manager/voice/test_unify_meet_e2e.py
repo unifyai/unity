@@ -424,7 +424,10 @@ class TestUnifyMeetUtteranceHandling:
             )
             await initialized_cm.step(utterance)
 
-            mock_interject.assert_called_once_with("What's the status of the project?")
+            mock_interject.assert_called_once_with(
+                "What's the status of the project?",
+                triggering_contact_id=boss_contact["contact_id"],
+            )
 
     async def test_inbound_utterance_resets_proactive_speech(
         self,

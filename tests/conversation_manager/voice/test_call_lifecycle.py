@@ -792,7 +792,10 @@ class TestVoiceUtteranceHandlers:
             )
             await initialized_cm.step(utterance_event)
 
-            mock_interject.assert_called_once_with("What's the weather like?")
+            mock_interject.assert_called_once_with(
+                "What's the weather like?",
+                triggering_contact_id=alice_contact["contact_id"],
+            )
 
 
 # =============================================================================

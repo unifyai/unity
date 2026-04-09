@@ -40,6 +40,9 @@ def _make_mock_cm(*, mode=Mode.TEXT, has_call_proc=False, assistant_number="+155
     cm.assistant_email = "assistant@test.com"
     cm.call_manager = MagicMock()
     cm.call_manager._call_proc = MagicMock() if has_call_proc else None
+    cm.call_manager.has_active_call = has_call_proc
+    cm.call_manager.has_active_google_meet = False
+    cm.call_manager._whatsapp_call_joining = False
     cm.computer_fast_path_eligible = False
     return cm
 
