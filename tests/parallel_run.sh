@@ -188,8 +188,8 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd -P)"
 
 # Parse arguments using shared helper
 # Returns: 0=success, 1=help requested, 2=error
-parse_test_args "$@"
-_parse_result=$?
+_parse_result=0
+parse_test_args "$@" || _parse_result=$?
 if (( _parse_result == 1 )); then
   # Help requested
   HELP_SCRIPT_NAME="parallel_run.sh"
@@ -575,8 +575,51 @@ build_env_exports() {
   echo "$exports"
 }
 
-# Reset positional parameters safely under nounset (only expand if set)
-set -- ${POSITIONAL_ARGS[@]+"${POSITIONAL_ARGS[@]}"}
+# Resolve an auxiliary input file path relative to the caller, tests/, or repo root.
+resolve_input_file_path() {
+  local path="$1"
+  if [[ -f "$path" ]]; then
+    printf "%s" "$path"
+  elif [[ -f "$SCRIPT_DIR/$path" ]]; then
+    printf "%s" "$SCRIPT_DIR/$path"
+  elif [[ -f "$REPO_ROOT/$path" ]]; then
+    printf "%s" "$REPO_ROOT/$path"
+  else
+    return 1
+  fi
+}
+
+expanded_targets=()
+if (( ${#POSITIONAL_ARGS[@]} > 0 )); then
+  expanded_targets=( "${POSITIONAL_ARGS[@]}" )
+fi
+
+had_explicit_target_source=0
+if (( ${#POSITIONAL_ARGS[@]} > 0 || ${#FROM_FILE_PATHS[@]} > 0 )); then
+  had_explicit_target_source=1
+fi
+
+if (( ${#FROM_FILE_PATHS[@]} > 0 )); then
+  for list_path in "${FROM_FILE_PATHS[@]}"; do
+    resolved_list_path=$(resolve_input_file_path "$list_path") || {
+      echo "Error: --from-file not found: $list_path" >&2
+      exit 2
+    }
+    while IFS= read -r raw_line || [[ -n "$raw_line" ]]; do
+      line="${raw_line%$'\r'}"
+      line="${line#"${line%%[![:space:]]*}"}"
+      line="${line%"${line##*[![:space:]]}"}"
+      [[ -z "$line" || "$line" == \#* ]] && continue
+      expanded_targets+=( "$line" )
+    done < "$resolved_list_path"
+  done
+fi
+
+if (( ${#expanded_targets[@]} > 0 )); then
+  set -- "${expanded_targets[@]}"
+else
+  set --
+fi
 
 # Always operate from the repo root for discovery, regardless of where the script was invoked
 cd "$REPO_ROOT"
@@ -979,6 +1022,10 @@ declare -a direct_files=()
 declare -a direct_nodes=()
 
 if (( $# == 0 )); then
+  if (( had_explicit_target_source )); then
+    echo "No valid directories, files, or tests provided." >&2
+    exit 1
+  fi
   roots=( "." )
 else
   for arg in "$@"; do
@@ -1140,6 +1187,11 @@ validate_and_add_direct_nodes() {
     return 0
   fi
 
+  if (( SKIP_COLLECTION )); then
+    printf '%s\0' "${direct_nodes[@]}" >> "$tmp"
+    return 0
+  fi
+
   # Extract unique base files from direct_nodes
   local -a base_files=()
   local seen_files=""
@@ -1154,15 +1206,19 @@ validate_and_add_direct_nodes() {
   # Collect all valid nodes from those files (no marker filter — just checking existence)
   local collected
   collected=$(collect_nodes_batch "" "${base_files[@]}")
+  local collected_file
+  collected_file=$(mktemp)
+  printf '%s\n' "$collected" > "$collected_file"
 
   # Validate each direct_node against collected output
   for node in "${direct_nodes[@]}"; do
-    if echo "$collected" | grep -qxF "$node"; then
+    if grep -qxF -- "$node" "$collected_file"; then
       printf '%s\0' "$node" >> "$tmp"
     else
       echo "Error: Test node not found (skipping): $node" >&2
     fi
   done
+  rm -f "$collected_file"
 }
 
 # Gather recursive .py files from roots (NUL-delimited, sorted)
@@ -1345,6 +1401,7 @@ fi
 
 # Print header before drip-feeding session creation
 echo "Creating ${#files[@]} tmux sessions..."
+WALL_START=$(date +%s)
 
 for target in "${files[@]}"; do
   # Report any completions before creating new sessions
@@ -1561,8 +1618,17 @@ if (( total_tests > 0 )); then
   else
     duration_str="${total_duration}s"
   fi
+  wall_duration=$(( $(date +%s) - WALL_START ))
+  if (( wall_duration >= 60 )); then
+    wall_mins=$((wall_duration / 60))
+    wall_secs=$((wall_duration % 60))
+    wall_str="${wall_mins}m ${wall_secs}s"
+  else
+    wall_str="${wall_duration}s"
+  fi
   total_cache_rate=$(format_cache_rate "$total_hits" "$total_misses")
   total_calls=$((total_hits + total_misses))
+  print_duration_line "  Wall time:       $wall_str"
   print_duration_line "  Serial duration: $duration_str"
   print_duration_line "  LLM cache: $total_cache_rate ($total_hits hits, $total_misses misses, $total_calls total)"
   print_duration_line "  LLM cost: \$$total_cost"

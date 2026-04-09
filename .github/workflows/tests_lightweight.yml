@@ -226,15 +226,16 @@ jobs:
       id: run-tests
       run: |
         set +e
-        mapfile -t SHARD_NODES < '${{ steps.collect-nodes.outputs.shard_nodes_file }}'
+        SHARD_NODES_FILE='${{ steps.collect-nodes.outputs.shard_nodes_file }}'
+        SHARD_NODE_COUNT=$(wc -l < "$SHARD_NODES_FILE" | tr -d ' ')
 
         Xvfb :99 -screen 0 1920x1080x24 &
         XVFB_PID=$!
         export DISPLAY=:99
         trap "kill $XVFB_PID 2>/dev/null" EXIT
 
-        echo "Running shard ${{ matrix.shard }}/8 with ${#SHARD_NODES[@]} explicit test nodes"
-        tests/parallel_run.sh --timeout 7200 "${SHARD_NODES[@]}"
+        echo "Running shard ${{ matrix.shard }}/8 with $SHARD_NODE_COUNT explicit test nodes from $SHARD_NODES_FILE"
+        tests/parallel_run.sh --timeout 7200 --skip-collection --from-file "$SHARD_NODES_FILE"
         TEST_EXIT_CODE=$?
         echo "exit_code=$TEST_EXIT_CODE" >> "$GITHUB_OUTPUT"
         exit $TEST_EXIT_CODE

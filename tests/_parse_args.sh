@@ -11,9 +11,10 @@
 #
 # After calling parse_test_args, these variables are populated:
 #   SERIAL, TIMEOUT, NAME_PATTERN, EVAL_ONLY, SYMBOLIC_ONLY,
-#   REPEAT_COUNT, OVERWRITE_SCENARIOS, MAX_JOBS, ENV_OVERRIDES[],
-#   TAGS[], PYTEST_EXTRA_ARGS[], PYTEST_COLLECTION_ARGS[],
-#   POSITIONAL_ARGS[]
+#   REPEAT_COUNT, OVERWRITE_SCENARIOS, SKIP_COLLECTION,
+#   MAX_JOBS, ENV_OVERRIDES[],
+#   TAGS[], FROM_FILE_PATHS[], PYTEST_EXTRA_ARGS[],
+#   PYTEST_COLLECTION_ARGS[], POSITIONAL_ARGS[]
 #
 # Additional functions:
 #   resolve_test_paths REPO_ROOT   - Validates paths in POSITIONAL_ARGS, sets RESOLVED_TEST_PATHS[]
@@ -42,9 +43,11 @@ parse_test_args() {
   SYMBOLIC_ONLY=0
   REPEAT_COUNT=1
   OVERWRITE_SCENARIOS=0
+  SKIP_COLLECTION=0
   MAX_JOBS=$_PARSE_ARGS_NUM_CORES
   ENV_OVERRIDES=()
   TAGS=()
+  FROM_FILE_PATHS=()
   PYTEST_EXTRA_ARGS=()
   PYTEST_COLLECTION_ARGS=()
   PYTEST_IGNORE_PATHS=()
@@ -104,6 +107,10 @@ parse_test_args() {
         OVERWRITE_SCENARIOS=1
         shift
         ;;
+      --skip-collection)
+        SKIP_COLLECTION=1
+        shift
+        ;;
       --tags)
         if [[ -n "${2-}" ]]; then
           # Split on comma and add each tag to TAGS array
@@ -114,6 +121,15 @@ parse_test_args() {
           shift 2
         else
           echo "Error: --tags requires a value (e.g., --tags experiment-1 or --tags \"foo,bar\")." >&2
+          return 2
+        fi
+        ;;
+      --from-file)
+        if [[ -n "${2-}" ]]; then
+          FROM_FILE_PATHS+=( "$2" )
+          shift 2
+        else
+          echo "Error: --from-file requires a file path." >&2
           return 2
         fi
         ;;
@@ -260,10 +276,15 @@ reconstruct_parallel_run_args() {
   (( SYMBOLIC_ONLY )) && args="$args --symbolic-only"
   (( REPEAT_COUNT > 1 )) && args="$args --repeat $REPEAT_COUNT"
   (( OVERWRITE_SCENARIOS )) && args="$args --overwrite-scenarios"
+  (( SKIP_COLLECTION )) && args="$args --skip-collection"
   # Note: MAX_JOBS is not passed to CI (CI has its own resource limits)
 
   for tag in "${TAGS[@]}"; do
     args="$args --tags $(printf '%q' "$tag")"
+  done
+
+  for path in "${FROM_FILE_PATHS[@]}"; do
+    args="$args --from-file $(printf '%q' "$path")"
   done
 
   # Include --env flags if requested
@@ -304,7 +325,9 @@ Options:
   --eval-only          Run only @pytest.mark.eval tests
   --symbolic-only      Run only non-eval tests
   --repeat N           Run each test N times
+  --skip-collection    Trust explicit node ids instead of validating via collection
   --tags TAG           Tag runs for filtering (repeatable)
+  --from-file PATH     Read test targets from a newline-delimited file
   --overwrite-scenarios  Delete and recreate test scenarios
   -h, --help           Show this help
   --                   Pass remaining args directly to pytest
@@ -316,6 +339,8 @@ Examples:
   $script_name -s tests/                # Serial mode (per-file)
   $script_name -j 8 tests/              # Limit to 8 concurrent
   $script_name --eval-only tests/       # Only eval tests
+  $script_name --skip-collection tests/foo.py::test_bar
+  $script_name --from-file targets.txt  # Read targets from file
   $script_name -e UNILLM_CACHE=false tests/
   $script_name tests/ -- -v --tb=short  # Pass args to pytest
   $script_name tests/ -- -k 'gpt-5'     # Filter by test name pattern
