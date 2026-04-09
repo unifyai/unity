@@ -22,6 +22,7 @@ from unity.dashboard_manager.types.dashboard import (
     DashboardResult,
     TilePosition,
 )
+from unity.dashboard_manager.ops.tile_ops import _contexts_for_binding
 from unity.dashboard_manager.types.tile import (
     DataBinding,
     TileRecord,
@@ -75,9 +76,12 @@ class SimulatedDashboardManager(BaseDashboardManager):
         self._tile_counter += 1
         token = f"sim_tile_{self._tile_counter:04d}"
         has_bindings = bool(data_bindings)
-        binding_contexts = (
-            ",".join(b.context for b in data_bindings) if data_bindings else None
-        )
+        binding_contexts = None
+        if data_bindings:
+            all_ctxs: list[str] = []
+            for b in data_bindings:
+                all_ctxs.extend(_contexts_for_binding(b))
+            binding_contexts = ",".join(dict.fromkeys(all_ctxs))
         now = datetime.now(timezone.utc).isoformat()
 
         self._tiles[token] = {
