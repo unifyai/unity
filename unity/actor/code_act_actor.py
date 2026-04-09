@@ -1078,6 +1078,14 @@ class _StorageCheckHandle(SteerableToolHandle):
     # ── Internal helpers ──────────────────────────────────────────────
 
     @property
+    def _pause_event(self):
+        """Delegate to the active inner handle so get_handle_paused_state works."""
+        handle = self._active_handle
+        if handle is not None:
+            return getattr(handle, "_pause_event", None)
+        return None
+
+    @property
     def _active_handle(self) -> Optional["SteerableToolHandle"]:
         """The currently active inner handle for steering delegation."""
         if self._phase == "task":
