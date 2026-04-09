@@ -298,6 +298,26 @@ _EXECUTION_RULES = textwrap.dedent("""
          typical ranges, known industry trends), label it explicitly
          as such — never format it as a table of specific records with
          fabricated source citations.
+
+    10. **Proactive Clarification**:
+       - When `request_clarification` is available and the task involves
+         consequential decisions about user data, prefer asking over
+         guessing.  The threshold for "consequential" is: would the user
+         need to manually review and undo your work if you got it wrong?
+       - **Good timing** for clarification:
+         (a) After initial exploration but before execution — confirm
+             your understanding of the user's patterns, preferences, or
+             classification scheme.
+         (b) After processing a small representative batch — verify
+             your judgment is calibrated before scaling to the full set.
+         (c) When you encounter an ambiguous case that could set
+             precedent for many similar items.
+       - **Bad timing** for clarification: trivial choices the user
+         clearly does not care about, or questions you can answer
+         confidently from the available evidence.
+       - A single well-timed question early in a large task is far
+         cheaper than hundreds of corrections afterward.  Err on the
+         side of asking.
 """).strip()
 
 _INCREMENTAL_EXECUTION = textwrap.dedent("""
@@ -314,6 +334,29 @@ _INCREMENTAL_EXECUTION = textwrap.dedent("""
     APIs, coordinate-based actions, web scraping — should be broken into
     small steps with verification between each.  The more unpredictable
     the outcome, the more incremental you should be.
+
+    **Judgment-heavy operations** — bulk classification, labeling,
+    reorganization, triaging, or prioritization of user data — require
+    the same incremental caution as uncertain interactions, even when the
+    *code itself* is straightforward.  A loop that applies labels to 300
+    emails is deterministic code, but the *decision* of which label to
+    apply is subjective and error-prone.  Treat judgment uncertainty like
+    execution uncertainty:
+
+    - **Study before acting**: Before modifying user data at scale,
+      deeply examine the existing state — not just metadata (e.g. label
+      names), but the actual data (e.g. sample what is already in each
+      label, how frequently each category is used, what patterns the
+      user has established).  The user's historical behavior is the
+      ground truth for how they want things organized.
+    - **Small batch first**: Process a small representative batch (5–10
+      items), review the results, and — if `request_clarification` is
+      available — confirm the approach before proceeding to the full
+      set.  Calibrate your judgment before scaling it.
+    - **Conservative default**: When uncertain about an individual item,
+      prefer leaving it untouched over guessing wrong.  It is better
+      for the user to handle a few remaining items themselves than to
+      undo hundreds of incorrect decisions.
 
     Guidelines for uncertain / interactive work:
 

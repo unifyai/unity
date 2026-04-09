@@ -156,13 +156,13 @@ purely from memory.
   - `await primitives.<manager>.update(...)`, `.execute(...)`, `.refactor(...)` \
 are **impure** (they mutate state or start work).
 
-- **Don't ask before updating**: when the task involves storing, saving, or \
-modifying records, go straight to the mutation method (`.update(...)`, \
-`.execute(...)`, `.refactor(...)`) — do NOT first call `.ask(...)` on the same \
-manager to check existing state. Mutation methods already inspect existing \
-records before writing, so a preemptive `.ask(...)` is duplicative. Bundle the \
-full intent (including any "check if exists" logic) into the mutation call's \
-natural-language `text` argument.
+- **Mutation methods are self-contained**: when storing or modifying records \
+via `.update(...)` / `.execute(...)` / `.refactor(...)`, go straight to the \
+mutation method — do NOT first call `.ask(...)` on the **same manager** to \
+check existing state. These methods already inspect existing records \
+internally, so a preemptive `.ask(...)` on the same manager is duplicative. \
+Bundle the full intent (including any "check if exists" logic) into the \
+mutation call's natural-language `text` argument.
 
 - **Prefer return values as evidence**: treat return values from state managers \
 as the primary ground truth.
