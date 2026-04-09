@@ -47,17 +47,20 @@ class BaseDashboardManager(BaseStateManager):
     ``plot()`` / ``table_view()`` primitives on DataManager.  The actor
     should **always** use DashboardManager for visualizations.
 
-    Tiles support two data modes:
+    The actor has **full creative freedom** over the HTML content of a
+    tile.  Any HTML/CSS/JS that renders in a standard browser will work --
+    custom layouts, CDN-hosted libraries (Chart.js, D3, Plotly, Leaflet,
+    etc.), inline SVG, canvas graphics, CSS animations, and more.  The
+    only constraint is that the content must be renderable inside an
+    iframe in a modern browser.
 
-    1. **Baked-in data** -- HTML embeds all data directly (e.g., Plotly's
-       ``fig.to_html(include_plotlyjs='cdn')``).  Best for small-to-medium
-       datasets or one-time snapshots.
-
-    2. **Live data bridge** -- HTML calls ``UnifyData`` methods
-       (``filter``, ``reduce``, ``join``, ``joinReduce``) that fetch or
-       aggregate fresh data at render time via postMessage.  Best for large
-       or frequently updated datasets.  Declare ``data_bindings`` to
-       specify which Unify contexts and operations the tile uses.
+    For production and large-dataset scenarios, **always prefer live data
+    tiles** with ``data_bindings`` and ``on_data``.  This keeps tile HTML
+    lightweight and ensures data is fetched fresh at render time rather
+    than embedded.  Declare ``data_bindings`` as the single source of
+    truth for what data the tile needs, and provide an ``on_data`` JS
+    code block that receives the fetched results and populates the DOM.
+    Console auto-generates the bridge calls from the serialized bindings.
 
     Dashboards compose multiple tiles into a responsive 12-column grid layout.
     Each tile is placed using ``TilePosition(tile_token, x, y, w, h)`` where
@@ -102,7 +105,7 @@ class BaseDashboardManager(BaseStateManager):
        it contains, when fields are populated vs ``None``)
     5. **Raises section** -- Exceptions that may be raised
     6. **Usage Examples** -- MULTIPLE concrete code examples showing common
-       patterns (baked-in data, live data bridge, Plotly, custom HTML, etc.)
+       patterns (live data with ``on_data``, Plotly, custom HTML, etc.)
     7. **Anti-patterns section** -- What NOT to do and why
     8. **Notes section** -- Invariants, edge cases, additional context
     9. **See Also section** -- Cross-references to related methods
@@ -129,6 +132,7 @@ class BaseDashboardManager(BaseStateManager):
         title: str,
         description: Optional[str] = None,
         data_bindings: Optional[List[DataBinding]] = None,
+        on_data: Optional[str] = None,
     ) -> TileResult:
         """
         Create a new visualization tile from an HTML string.
@@ -140,66 +144,43 @@ class BaseDashboardManager(BaseStateManager):
         The tile is stored in the ``Dashboards/Tiles`` Unify context and
         assigned a 12-character URL-safe token for shareable access.
 
-        This method replaces the old ``primitives.data.plot()`` and
-        ``primitives.data.table_view()`` primitives.  The actor should
-        **always** use ``create_tile()`` for any visualization output.
+        The actor has **full creative freedom** over the tile's HTML --
+        any HTML/CSS/JS that renders in a standard browser will work.
+        Custom layouts, CDN-hosted libraries (Chart.js, D3, Plotly,
+        Leaflet, etc.), inline SVG, canvas graphics, CSS animations,
+        responsive designs -- all are supported.  The only constraint is
+        that the content must be renderable inside an iframe.
 
-        Tiles support two data modes controlled by whether ``data_bindings``
-        is provided:
-
-        - **Baked-in data** (no ``data_bindings``): The HTML embeds all
-          data directly.  Best for small-to-medium datasets, one-time
-          snapshots, or static charts where the data won't change.
-        - **Live data bridge** (with ``data_bindings``): The HTML calls
-          ``UnifyData`` methods that fetch/aggregate fresh data at render
-          time via postMessage.  Best for large datasets, frequently
-          updated data, or dashboards that should always reflect the
-          latest state.
+        **Prefer live data tiles** for production use cases, especially
+        when datasets are large, frequently updated, or require joins
+        and aggregation.  Declare ``data_bindings`` as the single source
+        of truth for what data the tile needs, and provide ``on_data``
+        -- a JS code block that receives the fetched data and populates
+        the DOM.  Console auto-generates the bridge calls from the
+        serialized bindings and passes results to ``on_data``.  The
+        actor never writes bridge API calls.
 
         Parameters
         ----------
         html : str
-            Self-contained HTML content for the tile.  Must be a complete
-            HTML document or fragment that renders correctly in an iframe.
-            The content is stored as-is in the ``html_content`` field of the
-            tile record.
+            HTML content for the tile.  Must be a complete HTML document
+            or fragment that renders correctly in an iframe.  The actor
+            has **full creative freedom** -- any valid HTML/CSS/JS works.
 
-            **Baked-in data examples**:
+            For **live tiles** (recommended), this is a layout-only
+            document with DOM hook elements (``id="chart"``,
+            ``id="kpi"``, etc.) and optional CSS/CDN scripts.  Data
+            fetching is handled automatically by Console based on the
+            serialized ``data_bindings``.
 
-            - Plotly: ``fig.to_html(include_plotlyjs='cdn', full_html=True)``
-            - Matplotlib: Export to SVG/PNG and embed in an ``<img>`` tag,
-              or use ``mpld3`` for interactive HTML.
-            - Bokeh: ``bokeh.embed.file_html(plot, CDN, "title")``
-            - Custom: Any valid HTML with inline CSS/JS.
+            For **baked-in tiles** (small snapshots only), this is a
+            self-contained document with all data embedded (e.g.,
+            Plotly's ``fig.to_html(include_plotlyjs='cdn')``).
 
-            **Live data bridge examples**::
-
-                <!-- Simple filter query -->
-                UnifyData.filter({
-                  context: "Data/Sales/Monthly",
-                  filter: "year == 2025",
-                  columns: ["month", "revenue"],
-                }).then(rows => renderChart(rows));
-
-                <!-- Aggregation -->
-                UnifyData.reduce({
-                  context: "Data/Sales/Monthly",
-                  metric: "sum",
-                  columns: "revenue",
-                  group_by: ["region"],
-                }).then(result => renderKPI(result));
-
-                <!-- Cross-table join -->
-                UnifyData.join({
-                  tables: ["Data/Orders", "Data/Customers"],
-                  join_expr: "Data/Orders.customer_id == Data/Customers.id",
-                  select: {"Data/Orders.amount": "amount",
-                           "Data/Customers.name": "customer"},
-                }).then(rows => renderTable(rows));
-
-            When using CDN-hosted libraries, include them via ``<script>``
-            tags pointing to CDN URLs -- the iframe has no access to locally
-            installed Python packages.
+            When using CDN-hosted libraries (Chart.js, D3, Plotly,
+            Leaflet, etc.), include them via ``<script>`` tags pointing
+            to CDN URLs -- the iframe has no access to locally installed
+            Python packages.
 
         title : str
             Human-readable title displayed in the tile header and used for
@@ -217,12 +198,10 @@ class BaseDashboardManager(BaseStateManager):
 
         data_bindings : list[DataBinding] | None, default ``None``
             Declared data sources for live-data tiles.  ``DataBinding`` is a
-            discriminated union (on the ``operation`` field) of four types,
-            each mapping to a ``UnifyData`` JS method and a ``DataManager``
-            primitive:
+            discriminated union (on the ``operation`` field) of four types:
 
             **FilterBinding** (``operation="filter"``, default):
-              Single-context row fetch.  JS: ``UnifyData.filter()``.
+              Single-context row fetch.
               Validated via ``DataManager.filter(limit=5)``.
 
               Fields: ``context`` (required), ``alias``, ``filter``,
@@ -230,7 +209,7 @@ class BaseDashboardManager(BaseStateManager):
               ``limit``, ``offset``, ``group_by``.
 
             **ReduceBinding** (``operation="reduce"``):
-              Single-context aggregation.  JS: ``UnifyData.reduce()``.
+              Single-context aggregation.
               Validated via ``DataManager.reduce()``.
 
               Fields: ``context`` (required), ``metric`` (required),
@@ -238,7 +217,7 @@ class BaseDashboardManager(BaseStateManager):
               ``result_where``.
 
             **JoinBinding** (``operation="join"``):
-              Cross-context join returning rows.  JS: ``UnifyData.join()``.
+              Cross-context join returning rows.
               Validated via ``DataManager.filter_join(result_limit=5)``.
 
               Fields: ``tables`` (required, exactly 2 context paths),
@@ -247,7 +226,7 @@ class BaseDashboardManager(BaseStateManager):
               ``result_where``, ``result_limit``, ``result_offset``.
 
             **JoinReduceBinding** (``operation="join_reduce"``):
-              Cross-context join + aggregation.  JS: ``UnifyData.joinReduce()``.
+              Cross-context join + aggregation.
               Validated via ``DataManager.reduce_join()``.
 
               Fields: ``tables`` (required), ``join_expr`` (required),
@@ -268,62 +247,110 @@ class BaseDashboardManager(BaseStateManager):
             - ``has_data_bindings`` is set to ``True`` on the tile record.
             - ``data_binding_contexts`` stores the comma-separated context
               paths (including both tables for join bindings).
-            - The data bridge is activated so ``UnifyData`` calls in the
-              HTML resolve at render time.
+            - ``data_bindings_json`` stores the JSON-serialized bindings
+              so Console can auto-execute them.
 
             When ``None`` (the default), the tile operates in baked-in data
             mode and no bridge script is injected.
 
-            Example -- filter binding::
+        on_data : str | None, default ``None``
+            JavaScript code block that runs after all ``data_bindings``
+            have been fetched, with the results available as a ``data``
+            variable in scope.
 
-                data_bindings=[
-                    FilterBinding(
-                        context="Data/Sales/Monthly",
-                        columns=["month", "revenue"],
-                        order_by="month",
-                    ),
-                ]
+            **Execution model**: Console wraps this code as
+            ``(function(data) { <on_data> })(results)`` where ``results``
+            is an object keyed by each binding's ``alias``.  The actor
+            writes plain JS with ``data`` in scope -- no function
+            definition boilerplate, no return value expected.  The code
+            runs once after all binding queries have resolved.
 
-            Example -- reduce binding (live KPI card)::
+            **The ``alias`` contract**: Each binding's ``alias`` field
+            becomes a key in the ``data`` object.  The ``alias`` must be
+            a valid JS identifier (letters, digits, underscores, ``$``
+            sign; no hyphens, no spaces, no leading digits).  When
+            ``on_data`` is provided, every binding must have an ``alias``
+            -- if omitted, one is auto-generated from the context path.
 
-                data_bindings=[
-                    ReduceBinding(
-                        context="Data/Sales/Monthly",
-                        metric="sum",
-                        columns="revenue",
-                        group_by=["region"],
-                    ),
-                ]
+            **Shape of ``data[alias]``** per binding type:
 
-            Example -- join binding (cross-table chart)::
+            - ``FilterBinding``  -> ``Array<Object>`` (list of row dicts)
+            - ``ReduceBinding``  -> scalar or ``Object``
+              (scalar for ungrouped; ``{group_key: value}`` for grouped)
+            - ``JoinBinding``    -> ``Array<Object>`` (joined row dicts)
+            - ``JoinReduceBinding`` -> scalar or ``Object``
+              (same as ``ReduceBinding``)
 
-                data_bindings=[
-                    JoinBinding(
-                        tables=["Data/Orders", "Data/Customers"],
-                        join_expr="Data/Orders.cust_id == Data/Customers.id",
-                        select={
-                            "Data/Orders.amount": "amount",
-                            "Data/Customers.name": "customer",
-                        },
-                        result_limit=500,
-                    ),
-                ]
+            **When to use**: Any live-data tile.  The actor writes layout
+            HTML with DOM hooks, declares data needs as Python
+            ``data_bindings``, and writes pure DOM-manipulation in
+            ``on_data``.  Console handles the data fetching.
 
-            Example -- join-reduce binding (cross-table KPI)::
+            **When NOT to use**: Baked-in tiles (no ``data_bindings``).
+            If data is embedded directly in the HTML, ``on_data`` is not
+            needed and must be ``None``.
 
-                data_bindings=[
-                    JoinReduceBinding(
-                        tables=["Data/Orders", "Data/Products"],
-                        join_expr="Data/Orders.product_id == Data/Products.id",
-                        select={
-                            "Data/Orders.amount": "amount",
-                            "Data/Products.category": "category",
-                        },
-                        metric="sum",
-                        columns="amount",
-                        group_by=["category"],
-                    ),
-                ]
+            **Patterns** (good examples)::
+
+                # Access data via alias
+                const rows = data.sales;
+
+                # Populate a table
+                const tbody = document.querySelector("#tbl tbody");
+                tbody.innerHTML = "";
+                rows.forEach(r => {
+                  const tr = document.createElement("tr");
+                  tr.innerHTML = `<td>${r.month}</td><td>${r.revenue}</td>`;
+                  tbody.appendChild(tr);
+                });
+
+                # Chart.js / Plotly from fetched data
+                Plotly.newPlot("chart", [{
+                  x: data.sales.map(r => r.month),
+                  y: data.sales.map(r => r.revenue),
+                  type: "bar",
+                }]);
+
+                # Multiple bindings
+                const sales = data.sales;
+                const kpi = data.revenue_total;
+
+            **Anti-patterns**:
+
+            - WRONG: Writing data-fetching calls inside ``on_data``.
+              ``on_data`` receives already-fetched data; any bridge
+              calls here would be redundant and racy.
+
+            - WRONG: Providing ``on_data`` without ``data_bindings``.
+              There is no data to feed the callback.
+              Raises ``ValueError``.
+
+            - WRONG: Using aliases in ``on_data`` that don't match any
+              binding's ``alias``.  The key will be missing from ``data``.
+
+            - WRONG: Assuming ``data[alias]`` shape without checking the
+              binding type.  ``FilterBinding`` / ``JoinBinding`` return
+              arrays; ``ReduceBinding`` / ``JoinReduceBinding`` return a
+              scalar or grouped dict.
+
+            - WRONG: Embedding data-fetching JS calls directly in the
+              ``html``.  Let Console handle bridge calls from the
+              serialized ``data_bindings``.
+
+            - WRONG: Using non-identifier alias names like ``"my-data"``
+              or ``"123sales"``.  These won't work as JS property access
+              (``data.my-data`` is a syntax error).
+              Raises ``ValueError``.
+
+            **Runtime validations**:
+
+            - ``on_data`` provided without ``data_bindings`` ->
+              ``ValueError("on_data requires data_bindings")``
+            - ``on_data`` is whitespace-only ->
+              ``ValueError("on_data must be non-empty JS code or None")``
+            - Binding alias is not a valid JS identifier ->
+              ``ValueError``
+            - Duplicate aliases across bindings -> ``ValueError``
 
         Returns
         -------
@@ -347,36 +374,27 @@ class BaseDashboardManager(BaseStateManager):
         ------
         ValueError
             If ``html`` is empty or ``title`` is empty.
+        ValueError
+            If ``on_data`` is provided without ``data_bindings``.
+        ValueError
+            If any binding alias is not a valid JS identifier or aliases
+            are duplicated.
 
         Usage Examples
         --------------
-        # Baked-in data: Plotly bar chart
-        import plotly.express as px
-        fig = px.bar(df, x="category", y="revenue", title="Revenue")
-        html = fig.to_html(include_plotlyjs="cdn", full_html=True)
-        result = primitives.dashboards.create_tile(
-            html, title="Revenue by Category"
-        )
-        print(result.url)
-
-        # Live filter: Chart that fetches fresh rows on render
+        # Live data table (recommended): layout HTML + data_bindings + on_data
         html = '''
-        <script src="https://cdn.plot.ly/plotly-latest.min.js"></script>
-        <div id="chart"></div>
-        <script>
-          UnifyData.filter({
-            context: "Data/Sales/Monthly",
-            filter: "year == 2025",
-            columns: ["month", "revenue"],
-            order_by: "month",
-          }).then(rows => {
-            Plotly.newPlot("chart", [{
-              x: rows.map(r => r.month),
-              y: rows.map(r => r.revenue),
-              type: "bar",
-            }]);
-          });
-        </script>
+        <style>
+          body { font-family: system-ui; padding: 16px; margin: 0; }
+          table { border-collapse: collapse; width: 100%; }
+          th, td { border: 1px solid #e5e7eb; padding: 10px; text-align: left; }
+          th { background: #f9fafb; font-weight: 600; }
+        </style>
+        <h2>Monthly Revenue (Live)</h2>
+        <table id="tbl">
+          <thead><tr><th>Month</th><th>Revenue</th></tr></thead>
+          <tbody><tr><td colspan="2">Loading...</td></tr></tbody>
+        </table>
         '''
         result = primitives.dashboards.create_tile(
             html,
@@ -384,26 +402,29 @@ class BaseDashboardManager(BaseStateManager):
             data_bindings=[
                 FilterBinding(
                     context="Data/Sales/Monthly",
-                    filter="year == 2025",
+                    alias="sales",
                     columns=["month", "revenue"],
                     order_by="month",
                 ),
             ],
+            on_data='''
+            const tbody = document.querySelector("#tbl tbody");
+            tbody.innerHTML = "";
+            data.sales.forEach(r => {
+              const tr = document.createElement("tr");
+              tr.innerHTML = `<td>${r.month}</td>`
+                + `<td>$${Number(r.revenue).toLocaleString()}</td>`;
+              tbody.appendChild(tr);
+            });
+            ''',
         )
 
-        # Live reduce: KPI card showing aggregated total
+        # Live KPI with on_data: server-side aggregation
         html = '''
-        <div id="kpi" style="font-family:sans-serif;padding:20px;"></div>
-        <script>
-          UnifyData.reduce({
-            context: "Data/Sales/Monthly",
-            metric: "sum",
-            columns: "revenue",
-          }).then(val => {
-            document.getElementById("kpi").innerHTML =
-              `<h2>Total Revenue</h2><p style="font-size:48px;">$${val.toLocaleString()}</p>`;
-          });
-        </script>
+        <div style="text-align:center;padding:24px;font-family:system-ui;">
+          <div style="color:#888;font-size:14px;">Total Revenue</div>
+          <div id="val" style="font-size:48px;font-weight:700;">Loading...</div>
+        </div>
         '''
         result = primitives.dashboards.create_tile(
             html,
@@ -411,28 +432,24 @@ class BaseDashboardManager(BaseStateManager):
             data_bindings=[
                 ReduceBinding(
                     context="Data/Sales/Monthly",
+                    alias="total",
                     metric="sum",
                     columns="revenue",
                 ),
             ],
+            on_data='''
+            document.getElementById("val").textContent =
+              "$" + Number(data.total).toLocaleString();
+            ''',
         )
 
-        # Live join: Table from two joined contexts
+        # Live join with on_data: cross-table detail table
         html = '''
-        <div id="tbl"></div>
-        <script>
-          UnifyData.join({
-            tables: ["Data/Orders", "Data/Customers"],
-            join_expr: "Data/Orders.cust_id == Data/Customers.id",
-            select: {"Data/Orders.amount": "amount",
-                     "Data/Customers.name": "customer"},
-            result_limit: 100,
-          }).then(rows => {
-            let h = "<table><tr><th>Customer</th><th>Amount</th></tr>";
-            rows.forEach(r => { h += `<tr><td>${r.customer}</td><td>${r.amount}</td></tr>`; });
-            document.getElementById("tbl").innerHTML = h + "</table>";
-          });
-        </script>
+        <h2>Order Details</h2>
+        <table id="tbl">
+          <thead><tr><th>Customer</th><th>Amount</th></tr></thead>
+          <tbody><tr><td colspan="2">Loading...</td></tr></tbody>
+        </table>
         '''
         result = primitives.dashboards.create_tile(
             html,
@@ -445,86 +462,35 @@ class BaseDashboardManager(BaseStateManager):
                         "Data/Orders.amount": "amount",
                         "Data/Customers.name": "customer",
                     },
-                    result_limit=100,
+                    alias="orders",
+                    result_limit=200,
                 ),
             ],
+            on_data='''
+            const tbody = document.querySelector("#tbl tbody");
+            tbody.innerHTML = "";
+            data.orders.forEach(r => {
+              const tr = document.createElement("tr");
+              tr.innerHTML = `<td>${r.customer}</td>`
+                + `<td>$${Number(r.amount).toLocaleString()}</td>`;
+              tbody.appendChild(tr);
+            });
+            ''',
         )
 
-        # Live join-reduce: KPI aggregated across joined tables
-        html = '''
-        <div id="kpi"></div>
-        <script>
-          UnifyData.joinReduce({
-            tables: ["Data/Orders", "Data/Products"],
-            join_expr: "Data/Orders.product_id == Data/Products.id",
-            select: {"Data/Orders.amount": "amount",
-                     "Data/Products.category": "category"},
-            metric: "sum",
-            columns: "amount",
-            group_by: ["category"],
-          }).then(result => {
-            let h = "<ul>";
-            for (const [cat, val] of Object.entries(result))
-              h += `<li>${cat}: $${val.toLocaleString()}</li>`;
-            document.getElementById("kpi").innerHTML = h + "</ul>";
-          });
-        </script>
-        '''
+        # Baked-in data (small static snapshots only): Plotly chart
+        import plotly.express as px
+        fig = px.bar(df, x="category", y="revenue", title="Revenue")
+        html = fig.to_html(include_plotlyjs="cdn", full_html=True)
         result = primitives.dashboards.create_tile(
-            html,
-            title="Revenue by Category (Live Join-Reduce)",
-            data_bindings=[
-                JoinReduceBinding(
-                    tables=["Data/Orders", "Data/Products"],
-                    join_expr="Data/Orders.product_id == Data/Products.id",
-                    select={
-                        "Data/Orders.amount": "amount",
-                        "Data/Products.category": "category",
-                    },
-                    metric="sum",
-                    columns="amount",
-                    group_by=["category"],
-                ),
-            ],
+            html, title="Revenue by Category"
         )
 
-        UnifyData JS API Reference
-        --------------------------
-        The live data bridge exposes four methods on ``window.UnifyData``,
-        each mapping to a ``DataManager`` primitive.  Parameter names
-        mirror the Python ``primitives.data.*`` API exactly.
-
-        **UnifyData.filter(opts)** -> ``Promise<Array<Object>>``
-          Fetch rows from a single context.
-
-          Required: ``context`` (string).
-          Optional: ``filter``, ``columns``, ``exclude_columns``,
-          ``order_by``, ``descending``, ``limit``, ``offset``,
-          ``group_by``, ``sorting``, ``column_context``, ``randomize``.
-
-        **UnifyData.reduce(opts)** -> ``Promise<Any>``
-          Compute an aggregate metric over a single context.
-
-          Required: ``context`` (string), ``metric`` (string),
-          ``columns`` (string | string[]).
-          Optional: ``filter``, ``group_by``, ``result_where``.
-
-        **UnifyData.join(opts)** -> ``Promise<Array<Object>>``
-          Join two contexts and return rows.
-
-          Required: ``tables`` (string[2]), ``join_expr`` (string),
-          ``select`` (object).
-          Optional: ``mode``, ``left_where``, ``right_where``,
-          ``result_where``, ``result_limit``, ``result_offset``.
-
-        **UnifyData.joinReduce(opts)** -> ``Promise<Any>``
-          Join two contexts and aggregate the result.
-
-          Required: ``tables`` (string[2]), ``join_expr`` (string),
-          ``select`` (object), ``metric`` (string),
-          ``columns`` (string | string[]).
-          Optional: ``mode``, ``left_where``, ``right_where``,
-          ``group_by``, ``result_where``.
+        # Custom HTML/CSS/JS (the actor has full creative freedom)
+        html = '''<div style="...">Any valid HTML, CSS, JS works</div>'''
+        result = primitives.dashboards.create_tile(
+            html, title="Custom Tile"
+        )
 
         Verification-First Pattern (automatic for live data)
         ----------------------------------------------------
@@ -542,64 +508,34 @@ class BaseDashboardManager(BaseStateManager):
 
         Data mode decision framework
         ----------------------------
-        BAKED-IN data (embed in HTML) when:
-          - Dataset is small-to-medium (< 10k rows)
-          - Data is a one-time snapshot or static report
-          - Maximum portability desired (self-contained HTML)
+        **LIVE with ``data_bindings`` + ``on_data``** (preferred):
+          - Data is large, frequently updated, or involves joins/aggregation
+          - Tile should always reflect current data (production use)
+          - Keeps tile HTML lightweight; data fetched fresh at render time
+          - Any query type: filter, reduce, join, join-reduce
 
-        LIVE ``FilterBinding`` when:
-          - Data is frequently updated, tile should reflect latest state
-          - Dataset is large; fetch only what the tile needs
-          - Simple row-level queries (filter, sort, paginate)
-
-        LIVE ``ReduceBinding`` when:
-          - Tile shows a KPI, total, average, or other aggregate
-          - Server-side aggregation avoids transferring all rows
-
-        LIVE ``JoinBinding`` when:
-          - Tile needs data spanning two related contexts (star schema)
-          - Example: orders joined with customers for a detail table
-
-        LIVE ``JoinReduceBinding`` when:
-          - Tile shows aggregated KPIs across joined contexts
-          - Example: total revenue by product category from orders+products
+        Baked-in data (embed in HTML) only when:
+          - Dataset is very small (< few hundred rows) and static
+          - One-time snapshot or report that won't change
 
         Anti-patterns
         -------------
-        - WRONG: Using ``primitives.data.plot()`` or ``primitives.data.table_view()``.
-          CORRECT: Generate HTML in Python and use ``create_tile()`` instead.
-          The old plot/table_view primitives have been removed.
+        - WRONG: Baking data into the HTML for production/live datasets.
+          CORRECT: Use ``data_bindings`` + ``on_data`` so the tile
+          fetches fresh data at render time.
+
+        - WRONG: Embedding data-fetching JS calls directly in the HTML.
+          CORRECT: Declare ``data_bindings`` and use ``on_data``.
+          Console auto-generates bridge calls from the serialized
+          bindings.
 
         - WRONG: Forgetting ``include_plotlyjs='cdn'`` when using Plotly.
           CORRECT: Always include ``include_plotlyjs='cdn'`` -- the iframe
           has no access to locally installed Python packages.
 
-        - WRONG: Using ``UnifyData`` methods without declaring ``data_bindings``.
-          CORRECT: Always pass ``data_bindings`` listing every operation the
-          tile's JS code performs.  Without it, the bridge script is not
-          injected and ``UnifyData`` will be undefined.
-
-        - WRONG: Baking in data because the query needs joins or aggregation.
-          CORRECT: Use ``JoinBinding`` / ``ReduceBinding`` /
-          ``JoinReduceBinding`` so the tile fetches live cross-table or
-          aggregated data at render time.
-
-        - WRONG: Storing megabytes of data in baked-in HTML for live datasets.
-          CORRECT: Use the live data bridge for large or frequently updated
-          data.  Baked-in is best for snapshots under ~1 MB of HTML.
-
         - WRONG: Creating tiles without checking ``result.succeeded``.
           CORRECT: Always check ``result.succeeded`` before using the URL
           or token.
-
-        - WRONG: Using positional arguments ``UnifyData.filter(context, filter)``.
-          CORRECT: Always pass a single options object
-          ``UnifyData.filter({context: "...", filter: "..."})``.
-
-        - WRONG: Using internal backend param names in JS
-          (``filter_expr``, ``from_fields``, ``exclude_fields``).
-          CORRECT: Use the documented names (``filter``, ``columns``,
-          ``exclude_columns``).  The mapping is handled automatically.
 
         Notes
         -----
@@ -609,13 +545,16 @@ class BaseDashboardManager(BaseStateManager):
           auto-incrementing ``tile_id``.
         - The ``html_content`` is stored verbatim -- no sanitization or
           transformation is applied.
+        - When ``on_data`` is provided, the ``on_data_script`` and
+          ``data_bindings_json`` fields are populated on the tile record.
+          Console reads these to auto-execute bindings at render time.
         - For Bokeh, use ``bokeh.embed.file_html(plot, CDN, "title")`` to
           get a self-contained HTML string.
 
         See Also
         --------
         get_tile : Retrieve a tile by token (includes full HTML).
-        update_tile : Modify a tile's HTML or metadata.
+        update_tile : Modify a tile's HTML, metadata, or data logic.
         list_tiles : Discover existing tiles (without HTML content).
         create_dashboard : Compose tiles into a grid layout.
         """
@@ -716,15 +655,18 @@ class BaseDashboardManager(BaseStateManager):
         html: Optional[str] = None,
         title: Optional[str] = None,
         description: Optional[str] = None,
+        data_bindings: Optional[List[DataBinding]] = None,
+        on_data: Optional[str] = None,
     ) -> TileResult:
         """
-        Update an existing tile's content or metadata.
+        Update an existing tile's content, metadata, or data logic.
 
         Use this to refresh a tile's HTML (e.g., after regenerating a chart
-        with new data), correct a title, or add a description -- without
+        with new data), correct a title, add a description, update live
+        data bindings, or replace the ``on_data`` render script -- without
         changing the tile's token or URL.  Only the fields you provide are
-        updated; omitted fields retain their current values.  This makes
-        ``update_tile`` ideal for incremental edits.
+        updated; omitted fields (``None``) retain their current values.
+        This makes ``update_tile`` ideal for incremental edits.
 
         The tile's token and URL remain stable across updates, so any
         dashboards referencing this tile will automatically show the new
@@ -755,6 +697,35 @@ class BaseDashboardManager(BaseStateManager):
             New description for the tile.  When ``None``, the existing
             description is preserved.
 
+        data_bindings : list[DataBinding] | None, default ``None``
+            New data bindings to replace the tile's current bindings.
+            When provided, the bindings are validated, serialized, and
+            stored in ``data_bindings_json``.  The ``has_data_bindings``
+            and ``data_binding_contexts`` metadata fields are also updated.
+
+            When ``None``, the existing bindings (if any) are preserved.
+
+            Passing ``on_data`` without ``data_bindings`` on an update
+            where the tile already has stored bindings is valid -- the
+            existing bindings remain, only the render logic changes.
+
+            Passing ``data_bindings`` without ``on_data`` on an update
+            where the tile already has a stored ``on_data_script`` is
+            valid -- the existing script remains, only the data sources
+            change.
+
+        on_data : str | None, default ``None``
+            New JS code block to replace the tile's ``on_data_script``.
+            See ``create_tile()`` for full documentation of the ``on_data``
+            parameter, including execution model, alias contract, data
+            shapes, patterns, and anti-patterns.
+
+            When ``None``, the existing ``on_data_script`` is preserved.
+
+            To **clear** a tile's ``on_data_script``, pass ``on_data=""``.
+            An empty string signals "remove the script"; ``None`` signals
+            "don't change it".
+
         Returns
         -------
         TileResult
@@ -770,6 +741,10 @@ class BaseDashboardManager(BaseStateManager):
         ------
         ValueError
             If the token does not reference an existing tile.
+        ValueError
+            If ``on_data`` is provided (non-empty) but neither
+            ``data_bindings`` is provided nor the tile already has stored
+            bindings.
 
         Usage Examples
         --------------
@@ -780,24 +755,36 @@ class BaseDashboardManager(BaseStateManager):
             existing_token, html=new_html
         )
 
-        # Update only the title
-        result = primitives.dashboards.update_tile(
-            tile_token, title="Revenue by Category (Updated Q4)"
-        )
-
-        # Update title and description without touching HTML
+        # Update only the on_data script (bindings and HTML unchanged)
         result = primitives.dashboards.update_tile(
             tile_token,
-            title="Arrears Summary",
-            description="Weekly arrears breakdown by region. Updated 2025-11-01.",
+            on_data='''
+            const tbody = document.querySelector("#tbl tbody");
+            tbody.innerHTML = "";
+            data.sales.forEach(r => {
+              const tr = document.createElement("tr");
+              tr.innerHTML = `<td>${r.month}</td><td>${r.revenue}</td>`;
+              tbody.appendChild(tr);
+            });
+            ''',
         )
 
-        # Full update: new HTML, title, and description
+        # Update data bindings (add a new column to the query)
         result = primitives.dashboards.update_tile(
             tile_token,
-            html=regenerated_html,
-            title="Sales Dashboard v2",
-            description="Redesigned with stacked bar chart",
+            data_bindings=[
+                FilterBinding(
+                    context="Data/Sales/Monthly",
+                    alias="sales",
+                    columns=["month", "revenue", "cost"],
+                    order_by="month",
+                ),
+            ],
+        )
+
+        # Clear on_data (e.g., converting to a baked-in snapshot)
+        result = primitives.dashboards.update_tile(
+            tile_token, on_data=""
         )
 
         Anti-patterns
@@ -817,8 +804,12 @@ class BaseDashboardManager(BaseStateManager):
         -----
         - The ``updated_at`` timestamp on the tile record is set to the
           current time on every successful update.
-        - Updating ``html`` does NOT change ``data_bindings``.  To change
-          data bindings, delete and recreate the tile.
+        - When ``data_bindings`` is provided, ``data_bindings_json``,
+          ``has_data_bindings``, and ``data_binding_contexts`` are all
+          updated atomically.
+        - When ``on_data`` is provided (non-empty), ``on_data_script`` is
+          updated.  When ``on_data=""`` (empty string), ``on_data_script``
+          is cleared.
         - Dashboards referencing this tile will reflect the update on their
           next render -- no dashboard update needed.
 
