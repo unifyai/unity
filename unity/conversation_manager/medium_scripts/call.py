@@ -476,16 +476,26 @@ async def entrypoint(ctx: agents.JobContext):
         VAD = silero.VAD.load(min_speech_duration=0.15, min_silence_duration=1.0)
 
     stt_instance = STT
+    if channel == "google_meet":
+        stt_instance = deepgram.STT(
+            model="nova-3",
+            language="en-GB",
+            enable_diarization=True,
+        )
 
     # --- Google Meet speaker + participant tracker ---
-    # Speaker identity comes from DOM scraping (activeSpeaker) via the
-    # _gmeet_poll_loop, not from Deepgram diarization. This avoids the
-    # extra latency that enable_diarization=True adds to STT results.
+    # Speaker identity uses two complementary signals:
+    # 1. Deepgram diarization (enable_diarization=True) for precise per-utterance
+    #    anonymous speaker IDs (S0, S1, ...).
+    # 2. DOM scraping (activeSpeaker) via _gmeet_poll_loop for display names.
+    # The correlation mapping table (_gmeet_speaker_map) links the two.
     _gmeet_auth_key = SESSION_DETAILS.unify_key
     _gmeet_cached_active_speaker: str | None = None
     _gmeet_cached_participants: list[dict] = []
     _gmeet_prev_participant_names: set[str] = set()
     _gmeet_display_name: str = ""
+    _gmeet_last_speaker_id: str | None = None
+    _gmeet_speaker_map: dict[str, dict[str, int]] = {}
     if channel == "google_meet":
         if meta:
             _gmeet_display_name = meta.get("gmeet_display_name", "")
@@ -510,24 +520,43 @@ async def entrypoint(ctx: agents.JobContext):
                 return candidate
         return None
 
-    def _resolve_speaker() -> tuple[dict, str | None]:
-        """Resolve the current Google Meet speaker to (contact_dict, display_name).
+    def _resolve_speaker() -> tuple[dict, str | None, str | None]:
+        """Resolve the current Google Meet speaker to (contact_dict, display_name, speaker_id).
 
-        Reads from the background-polled ``_gmeet_cached_active_speaker``
-        (DOM-scraped activeSpeaker name) — purely synchronous, no HTTP calls.
+        Uses two signals in priority order:
+        1. Diarization speaker_id → correlation mapping (precise, audio-level).
+        2. DOM-scraped activeSpeaker name (fallback, 2s polling granularity).
+        Returns (contact_dict, display_name_or_None, diarization_speaker_id_or_None).
         """
         if channel != "google_meet":
-            return contact, None
+            return contact, None, None
 
+        sid = _gmeet_last_speaker_id
+
+        # Primary: diarization speaker_id → mapped display name
+        if sid and sid in _gmeet_speaker_map:
+            votes = _gmeet_speaker_map[sid]
+            if votes:
+                top_name = max(votes, key=votes.get)
+                top_count = votes[top_name]
+                total = sum(votes.values())
+                if top_count >= 2 and top_count / total > 0.6:
+                    resolved = _resolve_contact_by_name(top_name)
+                    if resolved:
+                        label = f"{resolved.get('first_name', '')} {resolved.get('surname', '')}".strip()
+                        return resolved, label or None, sid
+                    return contact, top_name, sid
+
+        # Fallback: DOM active speaker
         active_name = _gmeet_cached_active_speaker
         if active_name:
             resolved = _resolve_contact_by_name(active_name)
             if resolved:
                 label = f"{resolved.get('first_name', '')} {resolved.get('surname', '')}".strip()
-                return resolved, label or None
-            return contact, active_name
+                return resolved, label or None, sid
+            return contact, active_name, sid
 
-        return contact, None
+        return contact, None, sid
 
     def _get_gmeet_participant_names() -> list[str]:
         """Return display names of all human participants (excluding the assistant)."""
@@ -875,6 +904,20 @@ async def entrypoint(ctx: agents.JobContext):
             maybe_speak_queued()
         _check_quiescence_transition()
 
+    # -- Diarization ↔ DOM speaker correlation --
+    if channel == "google_meet":
+
+        @session.on("user_input_transcribed")
+        def _on_user_input_transcribed(ev):
+            nonlocal _gmeet_last_speaker_id
+            if not ev.is_final or not ev.speaker_id:
+                return
+            _gmeet_last_speaker_id = ev.speaker_id
+            dom_speaker = _gmeet_cached_active_speaker
+            if dom_speaker and dom_speaker != _gmeet_display_name:
+                bucket = _gmeet_speaker_map.setdefault(ev.speaker_id, {})
+                bucket[dom_speaker] = bucket.get(dom_speaker, 0) + 1
+
     # -- Screenshot state --
     screenshot_history = ScreenshotHistory()
     assistant_screen_share_active = False
@@ -1041,13 +1084,16 @@ async def entrypoint(ctx: agents.JobContext):
                 )
 
             async def _publish_user_utterance(text: str) -> None:
-                resolved_contact, speaker_label = _resolve_speaker()
+                nonlocal _gmeet_last_speaker_id
+                resolved_contact, speaker_label, dia_sid = _resolve_speaker()
+                _gmeet_last_speaker_id = None
                 if channel == "google_meet":
                     event = InboundGoogleMeetUtterance(
                         contact=resolved_contact,
                         content=text,
                         speaker_label=speaker_label,
                         participant_names=_get_gmeet_participant_names() or None,
+                        diarization_speaker_id=dia_sid,
                     )
                 else:
                     event = user_utterance_event(resolved_contact, content=text)

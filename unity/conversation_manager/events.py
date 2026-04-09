@@ -274,6 +274,7 @@ class InboundGoogleMeetUtterance(Event):
     content: str
     speaker_label: str | None = None
     participant_names: list[str] | None = None
+    diarization_speaker_id: str | None = None
 
 
 @dataclass

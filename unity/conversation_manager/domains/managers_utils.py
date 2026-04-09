@@ -870,6 +870,10 @@ async def log_message(
                 if participant_names:
                     metadata = metadata or {}
                     metadata["gmeet_participants"] = gmeet_participants_meta
+                dia_sid = getattr(event, "diarization_speaker_id", None)
+                if dia_sid:
+                    metadata = metadata or {}
+                    metadata["diarization_speaker_id"] = dia_sid
 
             if call_utterance_timestamp:
                 metadata = metadata or {}
