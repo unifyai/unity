@@ -11,6 +11,10 @@ import re
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, List, Optional, Sequence, Union
 
+import unify
+
+from unity.common.context_registry import ContextRegistry
+from unity.common.join_utils import rewrite_join_paths
 from unity.dashboard_manager.types.tile import (
     FilterBinding,
     JoinBinding,
@@ -27,6 +31,97 @@ logger = logging.getLogger(__name__)
 AnyBinding = Union[FilterBinding, ReduceBinding, JoinBinding, JoinReduceBinding]
 
 _JS_IDENTIFIER_RE = re.compile(r"^[a-zA-Z_$][a-zA-Z0-9_$]*$")
+
+
+# ---------------------------------------------------------------------------
+# Context resolution for data bindings
+# ---------------------------------------------------------------------------
+
+
+def _match_context(path: str, base: str, known: set[str]) -> str:
+    """Match an actor-provided context path to its fully qualified form.
+
+    Resolution cascade:
+
+    1. **Exact match** -- path is already fully qualified.
+    2. **Base-prefixed** -- ``{base}/{path}`` exists (handles root-relative
+       forms like ``Data/Sales`` or ``Contacts``).
+    3. **Suffix match** -- exactly one known context ends with ``/{path}``
+       (handles manager-relative forms like ``MidlandHeart/Repairs/...``).
+    4. **No match** -- raises ``ValueError``.
+
+    Raises ``ValueError`` on ambiguous suffix matches (more than one
+    candidate) so the actor must provide a more specific path.
+    """
+    path = path.strip().lstrip("/")
+    if not path:
+        raise ValueError("Empty context path")
+
+    if path in known:
+        return path
+
+    candidate = f"{base}/{path}"
+    if candidate in known:
+        return candidate
+
+    suffix = f"/{path}"
+    matches = [c for c in known if c.endswith(suffix)]
+    if len(matches) == 1:
+        return matches[0]
+    if len(matches) > 1:
+        raise ValueError(
+            f"Ambiguous context '{path}' matches multiple contexts: {matches}",
+        )
+    raise ValueError(f"No context found matching '{path}'")
+
+
+def resolve_binding_contexts(
+    bindings: List[AnyBinding],
+) -> List[AnyBinding]:
+    """Resolve all context paths in *bindings* to fully qualified form.
+
+    Fetches all contexts scoped to the current user/assistant prefix via
+    ``unify.get_contexts(prefix=base)`` and resolves each binding's context
+    path(s) through :func:`_match_context`.  For join bindings, table
+    references embedded in ``join_expr`` and ``select`` keys are rewritten
+    to match the resolved table names.
+
+    Falls through gracefully (returning *bindings* unchanged) when no base
+    context is available (offline / test scenarios).
+    """
+    base = ContextRegistry._base_context
+    if not base:
+        active = unify.get_active_context()
+        base = (active or {}).get("read", "")
+    if not base:
+        return bindings
+
+    known = set(unify.get_contexts(prefix=base).keys())
+    if not known:
+        return bindings
+
+    result: List[AnyBinding] = []
+    for b in bindings:
+        if isinstance(b, (FilterBinding, ReduceBinding)):
+            resolved = _match_context(b.context, base, known)
+            b = b.model_copy(update={"context": resolved})
+        elif isinstance(b, (JoinBinding, JoinReduceBinding)):
+            resolved_tables = [_match_context(t, base, known) for t in b.tables]
+            new_expr, new_sel = rewrite_join_paths(
+                list(b.tables),
+                resolved_tables,
+                b.join_expr,
+                dict(b.select),
+            )
+            b = b.model_copy(
+                update={
+                    "tables": resolved_tables,
+                    "join_expr": new_expr,
+                    "select": new_sel,
+                },
+            )
+        result.append(b)
+    return result
 
 
 def _contexts_for_binding(binding: AnyBinding) -> List[str]:
