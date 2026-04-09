@@ -961,7 +961,9 @@ def mirror_knowledge_manager_tools(kind: str) -> Dict[str, Any]:
             KM._search,
             KM._reduce,
             KM._filter_join,
+            KM._search_join,
             KM._filter_multi_join,
+            KM._search_multi_join,
             include_class_name=False,
         )
     if kind == "refactor":
