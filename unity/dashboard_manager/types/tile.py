@@ -1,44 +1,32 @@
 """Tile-related type definitions for DashboardManager.
 
-Defines Pydantic models for tile records (stored in Unify contexts)
-and tile results (returned to the actor).
+Defines Pydantic models for tile records (stored in Unify contexts),
+tile results (returned to the actor), and data binding types that
+declare what live queries a tile makes at render time.
 """
 
 from __future__ import annotations
 
-from typing import List, Optional
+from typing import Annotated, Dict, List, Literal, Optional, Union
 
 from pydantic import BaseModel, ConfigDict, Field
 
+# ---------------------------------------------------------------------------
+# Data binding types (discriminated union via ``operation``)
+# ---------------------------------------------------------------------------
 
-class DataBinding(BaseModel):
-    """A declared data source for a tile that uses live data via the bridge.
 
-    When ``create_tile`` is called with data bindings, query param fields
-    are automatically validated by dry-running them through
-    ``DataManager.filter(limit=5)``.  If the context does not exist, a
-    column is misspelled, or the filter expression is invalid, the tile
-    is **not** stored and ``TileResult.error`` reports the problem.
+class FilterBinding(BaseModel):
+    """Single-context filter query -- ``UnifyData.filter()`` -> ``DM.filter()``.
 
-    Attributes
-    ----------
-    context : str
-        Unify context path the tile will query at render time.
-    alias : str | None
-        Optional short name the tile's JS code uses to reference this binding.
-    filter : str | None
-        Row filter expression, validated against the context at creation
-        time.  Same syntax as ``primitives.data.filter(filter=...)``.
-    columns : list[str] | None
-        Column names to return.  Validated against the context at creation.
-    exclude_columns : list[str] | None
-        Column names to omit.  Validated against the context at creation.
-    order_by : str | None
-        Column to sort by.  Validated against the context at creation.
-    descending : bool
-        Sort direction when ``order_by`` is set.  Default ``False``.
+    Declares a live data source that fetches rows from a single Unify context
+    with optional filtering, column selection, sorting, and pagination.
+
+    Validated at tile creation time by dry-running through
+    ``DataManager.filter(limit=5)``.
     """
 
+    operation: Literal["filter"] = "filter"
     context: str
     alias: Optional[str] = None
     filter: Optional[str] = None
@@ -46,6 +34,87 @@ class DataBinding(BaseModel):
     exclude_columns: Optional[List[str]] = None
     order_by: Optional[str] = None
     descending: bool = False
+    limit: Optional[int] = None
+    offset: Optional[int] = None
+    group_by: Optional[List[str]] = None
+
+
+class ReduceBinding(BaseModel):
+    """Single-context aggregation -- ``UnifyData.reduce()`` -> ``DM.reduce()``.
+
+    Declares a live data source that computes an aggregate metric (count, sum,
+    avg, min, max, etc.) over a single Unify context, optionally grouped.
+
+    Validated at tile creation time by dry-running through
+    ``DataManager.reduce()``.
+    """
+
+    operation: Literal["reduce"] = "reduce"
+    context: str
+    alias: Optional[str] = None
+    metric: str
+    columns: Union[str, List[str]]
+    filter: Optional[str] = None
+    group_by: Optional[Union[str, List[str]]] = None
+    result_where: Optional[str] = None
+
+
+class JoinBinding(BaseModel):
+    """Cross-context join -- ``UnifyData.join()`` -> ``DM.filter_join()``.
+
+    Declares a live data source that joins two Unify contexts and returns
+    the resulting rows with optional post-join filtering and pagination.
+
+    Validated at tile creation time by dry-running through
+    ``DataManager.filter_join(result_limit=5)``.
+    """
+
+    operation: Literal["join"] = "join"
+    tables: List[str]
+    alias: Optional[str] = None
+    join_expr: str
+    select: Dict[str, str]
+    mode: str = "inner"
+    left_where: Optional[str] = None
+    right_where: Optional[str] = None
+    result_where: Optional[str] = None
+    result_limit: int = 100
+    result_offset: int = 0
+
+
+class JoinReduceBinding(BaseModel):
+    """Cross-context join + aggregation -- ``UnifyData.joinReduce()`` -> ``DM.reduce_join()``.
+
+    Declares a live data source that joins two Unify contexts and computes
+    an aggregate metric over the joined result, optionally grouped.
+
+    Validated at tile creation time by dry-running through
+    ``DataManager.reduce_join()``.
+    """
+
+    operation: Literal["join_reduce"] = "join_reduce"
+    tables: List[str]
+    alias: Optional[str] = None
+    join_expr: str
+    select: Dict[str, str]
+    mode: str = "inner"
+    left_where: Optional[str] = None
+    right_where: Optional[str] = None
+    metric: str
+    columns: Union[str, List[str]]
+    group_by: Optional[Union[str, List[str]]] = None
+    result_where: Optional[str] = None
+
+
+DataBinding = Annotated[
+    Union[FilterBinding, ReduceBinding, JoinBinding, JoinReduceBinding],
+    Field(discriminator="operation"),
+]
+
+
+# ---------------------------------------------------------------------------
+# Tile storage and result types
+# ---------------------------------------------------------------------------
 
 
 class TileRecordRow(BaseModel):
@@ -66,7 +135,7 @@ class TileRecordRow(BaseModel):
     )
     has_data_bindings: bool = Field(
         default=False,
-        description="Whether the tile uses UnifyData.query() for live data",
+        description="Whether the tile uses UnifyData for live data",
     )
     data_binding_contexts: Optional[str] = Field(
         default=None,

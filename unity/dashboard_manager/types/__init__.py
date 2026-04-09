@@ -2,6 +2,10 @@
 
 from unity.dashboard_manager.types.tile import (
     DataBinding,
+    FilterBinding,
+    JoinBinding,
+    JoinReduceBinding,
+    ReduceBinding,
     TileRecord,
     TileRecordRow,
     TileResult,
@@ -15,6 +19,10 @@ from unity.dashboard_manager.types.dashboard import (
 
 __all__ = [
     "DataBinding",
+    "FilterBinding",
+    "JoinBinding",
+    "JoinReduceBinding",
+    "ReduceBinding",
     "TileRecord",
     "TileRecordRow",
     "TileResult",
