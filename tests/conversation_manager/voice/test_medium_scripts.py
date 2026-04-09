@@ -890,6 +890,10 @@ class TestFastBrainGuidanceFlow:
                 self.current_speech = None
                 fake_session_holder["session"] = self
 
+            @property
+            def history(self):
+                return self._chat_ctx
+
             def on(self, event_name):
                 def _decorator(fn):
                     self._events[event_name] = fn
@@ -937,6 +941,7 @@ class TestFastBrainGuidanceFlow:
                 boss_json=json.dumps(boss),
             ),
             assistant=SimpleNamespace(about="Assistant bio", name="Ava"),
+            unify_key="",
         )
 
         monkeypatch.setattr(call_script, "event_broker", fake_broker)
@@ -1102,6 +1107,10 @@ class TestFastBrainGuidanceFlow:
                 self.current_speech = None
                 fake_session_holder["session"] = self
 
+            @property
+            def history(self):
+                return self._chat_ctx
+
             def on(self, event_name):
                 def _decorator(fn):
                     self._events[event_name] = fn
@@ -1149,6 +1158,7 @@ class TestFastBrainGuidanceFlow:
                 boss_json=json.dumps(boss),
             ),
             assistant=SimpleNamespace(about="Assistant bio", name="David"),
+            unify_key="",
         )
 
         monkeypatch.setattr(call_script, "event_broker", fake_broker)
@@ -1326,6 +1336,10 @@ class TestFastBrainGuidanceFlow:
                 self.current_speech = None
                 fake_session_holder["session"] = self
 
+            @property
+            def history(self):
+                return self._chat_ctx
+
             def on(self, event_name):
                 def _decorator(fn):
                     self._events[event_name] = fn
@@ -1373,6 +1387,7 @@ class TestFastBrainGuidanceFlow:
                 boss_json=json.dumps(boss),
             ),
             assistant=SimpleNamespace(about="Assistant bio", name="Ava"),
+            unify_key="",
         )
 
         monkeypatch.setattr(call_script, "event_broker", fake_broker)
@@ -1638,6 +1653,10 @@ class TestFastBrainGuidanceFlow:
                 self.current_speech = None
                 fake_session_holder["session"] = self
 
+            @property
+            def history(self):
+                return self._chat_ctx
+
             def on(self, event_name):
                 def _decorator(fn):
                     self._events[event_name] = fn
@@ -1685,6 +1704,7 @@ class TestFastBrainGuidanceFlow:
                 boss_json=json.dumps(boss),
             ),
             assistant=SimpleNamespace(about="Assistant bio", name="Ava"),
+            unify_key="",
         )
 
         monkeypatch.setattr(call_script, "event_broker", fake_broker)
@@ -1867,6 +1887,10 @@ class TestFastBrainGuidanceFlow:
                 self.current_speech = None
                 fake_session_holder["session"] = self
 
+            @property
+            def history(self):
+                return self._chat_ctx
+
             def on(self, event_name):
                 def _decorator(fn):
                     self._events[event_name] = fn
@@ -1914,6 +1938,7 @@ class TestFastBrainGuidanceFlow:
                 boss_json=json.dumps(boss),
             ),
             assistant=SimpleNamespace(about="Assistant bio", name="Ava"),
+            unify_key="",
         )
 
         monkeypatch.setattr(call_script, "event_broker", fake_broker)
@@ -2109,6 +2134,10 @@ class TestFastBrainSpeechDedup:
                 self.current_speech = None
                 fake_session_holder["session"] = self
 
+            @property
+            def history(self):
+                return self._chat_ctx
+
             def on(self, event_name):
                 def _decorator(fn):
                     self._events[event_name] = fn
@@ -2156,6 +2185,7 @@ class TestFastBrainSpeechDedup:
                 boss_json=json.dumps(boss),
             ),
             assistant=SimpleNamespace(about="Assistant bio", name="Ava"),
+            unify_key="",
         )
 
         monkeypatch.setattr(call_script, "event_broker", fake_broker)

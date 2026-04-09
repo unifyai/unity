@@ -31,7 +31,8 @@ if sys.platform == "darwin":
 
 from livekit.plugins.turn_detector.english import EnglishModel
 from livekit.agents import ChatContext, ChatMessage
-from livekit.agents import ModelSettings, llm, FunctionTool
+from livekit.agents import ModelSettings, llm
+from livekit.agents.llm import Tool
 
 from typing import AsyncIterable
 
@@ -153,7 +154,7 @@ class Assistant(Agent):
     async def llm_node(
         self,
         chat_ctx: llm.ChatContext,
-        tools: list[FunctionTool],
+        tools: list[Tool],
         model_settings: ModelSettings,
     ) -> AsyncIterable[llm.ChatChunk]:
         """Wait for call connection then delegate to parent LLM."""
@@ -720,8 +721,12 @@ async def entrypoint(ctx: agents.JobContext):
             )
         ),
         vad=VAD,
-        turn_detection=EnglishModel(),
-        min_endpointing_delay=0.75,
+        turn_handling={
+            "turn_detection": EnglishModel(),
+            "endpointing": {"min_delay": 0.75},
+            "interruption": {"enabled": True},
+        },
+        preemptive_generation=False,
     )
 
     user_is_speaking = False
@@ -933,7 +938,7 @@ async def entrypoint(ctx: agents.JobContext):
         nonlocal _visual_ctx_msg_id
         screenshot_history.clear(source=source)
         if not screenshot_history.build_visual_context_content():
-            for ctx in (assistant._chat_ctx, session._chat_ctx):
+            for ctx in (assistant._chat_ctx, session.history):
                 if _visual_ctx_msg_id is not None:
                     idx = ctx.index_by_id(_visual_ctx_msg_id)
                     if idx is not None:
@@ -947,13 +952,13 @@ async def entrypoint(ctx: agents.JobContext):
         if not content:
             return
         # Remove the previous visual context message if present.
-        for ctx in (assistant._chat_ctx, session._chat_ctx):
+        for ctx in (assistant._chat_ctx, session.history):
             if _visual_ctx_msg_id is not None:
                 idx = ctx.index_by_id(_visual_ctx_msg_id)
                 if idx is not None:
                     ctx.items.pop(idx)
         msg = assistant._chat_ctx.add_message(role="user", content=content)
-        session._chat_ctx.add_message(
+        session.history.add_message(
             role="user",
             content=content,
             id=msg.id,
@@ -1135,7 +1140,7 @@ async def entrypoint(ctx: agents.JobContext):
 
         The LiveKit pipeline passes a **copy** of the chat context to
         ``llm_node``.  ``_refresh_screenshots`` updates the live
-        ``session._chat_ctx`` (for subsequent turns and IPC), but that copy
+        ``session.history`` (for subsequent turns and IPC), but that copy
         is stale.  After refreshing, we rebuild the visual context content
         and inject it directly into the ``chat_ctx`` parameter so the
         current LLM call sees the screenshot.
@@ -1297,7 +1302,7 @@ async def entrypoint(ctx: agents.JobContext):
                 role="system",
                 content=[notification_message],
             )
-            session._chat_ctx.add_message(
+            session.history.add_message(
                 role="system",
                 content=[notification_message],
             )
@@ -1531,7 +1536,7 @@ async def entrypoint(ctx: agents.JobContext):
     def _inject_silent_context(msg: str) -> None:
         """Inject a system message into chat context as silent background."""
         assistant._chat_ctx.add_message(role="system", content=[msg])
-        session._chat_ctx.add_message(role="system", content=[msg])
+        session.history.add_message(role="system", content=[msg])
 
     def on_participant_comms(data: dict) -> None:
         raw = data.get("event") if "event" in data else json.dumps(data)
@@ -1583,7 +1588,7 @@ async def entrypoint(ctx: agents.JobContext):
             + "\n--- Current call ---"
         )
         assistant._chat_ctx.add_message(role="system", content=[history_block])
-        session._chat_ctx.add_message(role="system", content=[history_block])
+        session.history.add_message(role="system", content=[history_block])
         _log.info(f"Hydrated {len(history_lines)} historical events into context")
 
     # Mark session ready and process any buffered notifications BEFORE first utterance.
@@ -1633,7 +1638,7 @@ async def entrypoint(ctx: agents.JobContext):
     )
     greeting_messages = [
         {"role": "system", "content": system_prompt},
-        *_extract_chat_messages(session._chat_ctx),
+        *_extract_chat_messages(session.history),
     ]
     greeting_text = await greeting_client.generate(messages=greeting_messages)
 
@@ -1670,7 +1675,7 @@ async def entrypoint(ctx: agents.JobContext):
             "when everything is ready."
         )
         assistant._chat_ctx.add_message(role="system", content=[_init_note])
-        session._chat_ctx.add_message(role="system", content=[_init_note])
+        session.history.add_message(role="system", content=[_init_note])
         _log.info("Injected initializing-state system message (CM not yet initialized)")
 
 
