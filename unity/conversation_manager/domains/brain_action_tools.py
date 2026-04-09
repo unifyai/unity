@@ -36,6 +36,8 @@ from unity.conversation_manager.events import (
     PhoneCallSent,
     WhatsAppCallSent,
     WhatsAppCallInviteSent,
+    DiscordMessageSent,
+    DiscordChannelMessageSent,
     ActorHandleStarted,
     ActorHandleResponse,
     FastBrainNotification,
@@ -682,6 +684,113 @@ class ConversationManagerBrainActionTools:
             _wa_topic,
             **_wa_err,
         )
+
+    async def send_discord_message(
+        self,
+        *,
+        contact_id: int | str,
+        content: str,
+        discord_id: str | None = None,
+        channel_id: str | None = None,
+        guild_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Send a Discord message to an existing contact.
+
+        Supports two modes determined by the context:
+
+        - **DM** (direct message): The default when the inbound message was a
+          DM. Omit ``channel_id``; the system resolves the contact's Discord
+          user ID and opens a DM channel automatically.
+        - **Channel reply**: Pass ``channel_id`` (and optionally ``guild_id``)
+          to reply in the same guild channel where the @mention arrived.
+
+        If the contact **already has** a Discord ID on file, omit
+        ``discord_id``. If you know the Discord ID but it is not yet on file,
+        pass it via ``discord_id`` to save it and send in one step.
+
+        Args:
+            contact_id: The contact_id of the recipient.
+            content: The text content to send.
+            discord_id: The recipient's Discord user snowflake ID. Only needed
+                when the contact does not yet have one on file.
+            channel_id: Discord channel ID for channel replies. Omit for DMs.
+            guild_id: Discord guild ID (for channel context only).
+        """
+        contact_id = _coerce_contact_id(contact_id)
+        contact = self._cm.contact_index.get_contact(contact_id)
+
+        is_channel = bool(channel_id)
+        medium = (
+            Medium.DISCORD_CHANNEL_MESSAGE if is_channel else Medium.DISCORD_MESSAGE
+        )
+        _topic = (
+            "app:comms:discord_channel_message_sent"
+            if is_channel
+            else "app:comms:discord_message_sent"
+        )
+        _err = dict(contact_id=contact_id, medium=medium)
+
+        outbound_error = _check_outbound_allowed(contact)
+        if outbound_error:
+            return await self._surface_comms_error(outbound_error, _topic, **_err)
+
+        if not is_channel:
+            detail_error, contact = _resolve_or_attach_detail(
+                contact,
+                contact_id,
+                "discord_id",
+                discord_id,
+                "Discord",
+                self._cm.contact_index,
+            )
+            if detail_error:
+                return await self._surface_comms_error(detail_error, _topic, **_err)
+
+        from unity.session_details import SESSION_DETAILS
+
+        bot_id = getattr(SESSION_DETAILS.assistant, "discord_bot_id", "")
+
+        if is_channel:
+            response = await comms_utils.send_discord_message(
+                channel_id=channel_id,
+                body=content,
+                bot_id=bot_id,
+            )
+        else:
+            to_discord_id = contact.get("discord_id")
+            response = await comms_utils.send_discord_message(
+                to=to_discord_id,
+                body=content,
+                bot_id=bot_id,
+            )
+
+        if response.get("success"):
+            fresh_contact = (
+                self._cm.contact_index.get_contact(
+                    discord_id=contact.get("discord_id"),
+                )
+                or contact
+            )
+            if is_channel:
+                event = DiscordChannelMessageSent(
+                    contact=fresh_contact,
+                    content=content,
+                    channel_id=channel_id or "",
+                    guild_id=guild_id or "",
+                )
+            else:
+                event = DiscordMessageSent(
+                    contact=fresh_contact,
+                    content=content,
+                )
+            await self._event_broker.publish(_topic, event.to_json())
+            return {"status": "ok"}
+
+        if not bot_id:
+            error_msg = "Discord is not enabled for this assistant."
+        else:
+            error_msg = "Failed to send Discord message"
+        return await self._surface_comms_error(error_msg, _topic, **_err)
 
     async def send_unify_message(
         self,

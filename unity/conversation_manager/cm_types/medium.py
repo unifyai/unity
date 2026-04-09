@@ -38,6 +38,8 @@ class Medium(StrEnum):
     PHONE_CALL = "phone_call"
     GOOGLE_MEET = "google_meet"
     API_MESSAGE = "api_message"
+    DISCORD_MESSAGE = "discord_message"
+    DISCORD_CHANNEL_MESSAGE = "discord_channel_message"
 
     @property
     def info(self) -> MediumInfo:
@@ -100,6 +102,16 @@ MEDIUM_REGISTRY: dict[Medium, MediumInfo] = {
     Medium.API_MESSAGE: MediumInfo(
         value=Medium.API_MESSAGE,
         description="A programmatic message sent via the REST API.",
+        mode=Mode.TEXT,
+    ),
+    Medium.DISCORD_MESSAGE: MediumInfo(
+        value=Medium.DISCORD_MESSAGE,
+        description="A direct message sent via a Discord bot.",
+        mode=Mode.TEXT,
+    ),
+    Medium.DISCORD_CHANNEL_MESSAGE: MediumInfo(
+        value=Medium.DISCORD_CHANNEL_MESSAGE,
+        description="A message in a Discord guild channel, triggered by @mentioning the bot.",
         mode=Mode.TEXT,
     ),
 }

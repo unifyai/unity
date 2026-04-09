@@ -501,6 +501,64 @@ async def upload_unify_attachment(
                 return {"success": False, "error": str(e)}
 
 
+async def send_discord_message(
+    to: str | None = None,
+    channel_id: str | None = None,
+    body: str = "",
+    bot_id: str | None = None,
+    media_url: str | None = None,
+) -> dict:
+    """Send a Discord message via the Communication service.
+
+    Supports two modes:
+    - DM: pass ``to`` (Discord user snowflake). The route is resolved
+      server-side and a DM channel is opened automatically.
+    - Channel reply: pass ``channel_id`` and ``bot_id``. The message is
+      posted directly to the channel.
+
+    Args:
+        to: Recipient's Discord user ID (for DMs).
+        channel_id: Discord channel ID (for channel replies).
+        body: The text content to send.
+        bot_id: Pool bot ID (required for channel messages, optional for DMs).
+        media_url: Optional URL of a media attachment to embed.
+
+    Returns:
+        dict with 'success' key and optionally 'message_id', 'channel_id'.
+    """
+    agent_id = SESSION_DETAILS.assistant.agent_id
+    if agent_id is None:
+        return {"success": False}
+
+    payload: dict = {
+        "body": body,
+        "assistant_id": agent_id,
+    }
+    if to:
+        payload["to"] = to
+    if channel_id:
+        payload["channel_id"] = channel_id
+    if bot_id:
+        payload["bot_id"] = bot_id
+    if media_url:
+        payload["media_url"] = media_url
+
+    async with aiohttp.ClientSession() as session:
+        async with session.post(
+            f"{SETTINGS.conversation.COMMS_URL}/discord/send",
+            headers=headers,
+            json=payload,
+        ) as response:
+            try:
+                response.raise_for_status()
+            except Exception as e:
+                LOGGER.error(f"{ICONS['comms_outbound']} Discord send failed: {e}")
+                return {"success": False}
+            result = await response.json()
+            result["success"] = True
+            return result
+
+
 async def send_email_via_address(
     to: list[str],
     subject: str,
