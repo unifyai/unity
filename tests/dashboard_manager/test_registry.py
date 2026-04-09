@@ -112,7 +112,7 @@ class TestPrimitivesDiscovery:
         examples = get_registry().prompt_examples(scope)
         assert "primitives.dashboards.create_tile" in examples
         assert "primitives.dashboards.create_dashboard" in examples
-        assert "UnifyData.filter" in examples
+        assert "on_data" in examples
 
     def test_no_dashboard_vs_data_routing_guidance(self):
         """Dashboards and data are orthogonal -- no routing guidance needed."""
@@ -143,8 +143,9 @@ class TestPromptExampleFunctions:
 
         result = get_primitives_dashboards_live_data_example()
         assert isinstance(result, str)
-        assert "UnifyData.filter" in result
+        assert "on_data" in result
         assert "data_bindings" in result
+        assert "data.sales" in result
 
     def test_live_data_example_includes_query_params(self):
         from unity.actor.prompt_examples import (
@@ -155,6 +156,15 @@ class TestPromptExampleFunctions:
         assert 'columns=["month", "revenue"]' in result
         assert 'order_by="month"' in result
 
+    def test_live_data_example_no_unifydata_calls(self):
+        from unity.actor.prompt_examples import (
+            get_primitives_dashboards_live_data_example,
+        )
+
+        result = get_primitives_dashboards_live_data_example()
+        assert "UnifyData.filter(" not in result
+        assert "UnifyData.reduce(" not in result
+
     def test_rich_live_data_example_returns_string(self):
         from unity.actor.prompt_examples import (
             get_primitives_dashboards_rich_live_data_example,
@@ -162,10 +172,20 @@ class TestPromptExampleFunctions:
 
         result = get_primitives_dashboards_rich_live_data_example()
         assert isinstance(result, str)
-        assert "UnifyData.join" in result
-        assert "UnifyData.joinReduce" in result
+        assert "on_data" in result
         assert "JoinBinding" in result
         assert "JoinReduceBinding" in result
+        assert "data.orders" in result
+        assert "data.by_category" in result
+
+    def test_rich_live_data_example_no_unifydata_calls(self):
+        from unity.actor.prompt_examples import (
+            get_primitives_dashboards_rich_live_data_example,
+        )
+
+        result = get_primitives_dashboards_rich_live_data_example()
+        assert "UnifyData.join(" not in result
+        assert "UnifyData.joinReduce(" not in result
 
     def test_composition_example_returns_string(self):
         from unity.actor.prompt_examples import (

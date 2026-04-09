@@ -15,6 +15,8 @@ Each test gets a fresh, isolated Unify context that is cleaned up after the test
 
 from __future__ import annotations
 
+import json
+
 from unity.dashboard_manager.dashboard_manager import DashboardManager
 from unity.dashboard_manager.types.dashboard import TilePosition
 from unity.dashboard_manager.types.tile import FilterBinding
@@ -195,6 +197,62 @@ def test_list_tiles_with_limit():
 
     tiles = dm.list_tiles(limit=3)
     assert len(tiles) <= 3
+
+
+@_handle_project
+def test_create_tile_with_on_data():
+    """create_tile with on_data should store on_data_script and data_bindings_json."""
+    dm = _fresh_dm()
+
+    result = dm.create_tile(
+        "<div id='tbl'>Loading...</div>",
+        title="On-Data Tile",
+        data_bindings=[
+            FilterBinding(
+                context="Data/monthly_stats",
+                alias="stats",
+            ),
+        ],
+        on_data="document.getElementById('tbl').textContent = data.stats.length;",
+    )
+
+    assert result.succeeded, f"create_tile failed: {result.error}"
+    assert result.token
+
+    tile = dm.get_tile(result.token)
+    assert tile is not None
+    assert tile.on_data_script is not None
+    assert "data.stats" in tile.on_data_script
+    assert tile.data_bindings_json is not None
+    parsed = json.loads(tile.data_bindings_json)
+    assert len(parsed) == 1
+    assert parsed[0]["alias"] == "stats"
+
+
+@_handle_project
+def test_update_tile_with_on_data():
+    """update_tile should update on_data_script field."""
+    dm = _fresh_dm()
+
+    created = dm.create_tile(
+        "<div id='v'>Loading...</div>",
+        title="Update On-Data",
+        data_bindings=[
+            FilterBinding(context="Data/monthly_stats", alias="stats"),
+        ],
+        on_data="console.log(data.stats);",
+    )
+    assert created.succeeded
+
+    updated = dm.update_tile(
+        created.token,
+        on_data="document.getElementById('v').textContent = JSON.stringify(data.stats);",
+    )
+    assert updated.succeeded
+
+    tile = dm.get_tile(created.token)
+    assert tile is not None
+    assert "JSON.stringify" in tile.on_data_script
 
 
 # ────────────────────────────────────────────────────────────────────────────

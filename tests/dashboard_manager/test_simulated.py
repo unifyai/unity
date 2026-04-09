@@ -1,5 +1,7 @@
 """Tests for SimulatedDashboardManager -- full CRUD coverage."""
 
+import json
+
 from unity.dashboard_manager.types.tile import (
     FilterBinding,
     JoinBinding,
@@ -179,6 +181,136 @@ class TestSimulatedTileCRUD:
             simulated_dm.create_tile(f"<p>{i}</p>", title=f"Tile {i}")
         tiles = simulated_dm.list_tiles(limit=3)
         assert len(tiles) == 3
+
+
+class TestSimulatedTileOnData:
+    def test_create_tile_with_on_data(self, simulated_dm):
+        result = simulated_dm.create_tile(
+            "<div id='tbl'>Loading...</div>",
+            title="On-Data Tile",
+            data_bindings=[
+                FilterBinding(context="Data/Sales", alias="sales"),
+            ],
+            on_data="document.getElementById('tbl').textContent = data.sales.length;",
+        )
+        assert result.succeeded
+        tile = simulated_dm.get_tile(result.token)
+        assert tile.on_data_script is not None
+        assert "data.sales" in tile.on_data_script
+        assert tile.data_bindings_json is not None
+        parsed = json.loads(tile.data_bindings_json)
+        assert len(parsed) == 1
+        assert parsed[0]["alias"] == "sales"
+
+    def test_create_tile_with_on_data_auto_alias(self, simulated_dm):
+        result = simulated_dm.create_tile(
+            "<div></div>",
+            title="Auto-Alias",
+            data_bindings=[FilterBinding(context="Data/Sales/Monthly")],
+            on_data="console.log(data.monthly);",
+        )
+        assert result.succeeded
+        tile = simulated_dm.get_tile(result.token)
+        parsed = json.loads(tile.data_bindings_json)
+        assert parsed[0]["alias"] == "monthly"
+
+    def test_create_tile_with_mixed_bindings_on_data(self, simulated_dm):
+        result = simulated_dm.create_tile(
+            "<div></div>",
+            title="Mixed",
+            data_bindings=[
+                FilterBinding(context="Data/Sales", alias="sales"),
+                ReduceBinding(
+                    context="Data/Sales",
+                    alias="total",
+                    metric="sum",
+                    columns="revenue",
+                ),
+            ],
+            on_data="console.log(data.sales, data.total);",
+        )
+        assert result.succeeded
+        tile = simulated_dm.get_tile(result.token)
+        parsed = json.loads(tile.data_bindings_json)
+        assert len(parsed) == 2
+        aliases = {b["alias"] for b in parsed}
+        assert aliases == {"sales", "total"}
+
+    def test_create_tile_without_on_data_no_bindings_json(self, simulated_dm):
+        result = simulated_dm.create_tile(
+            "<div></div>",
+            title="Baked",
+        )
+        assert result.succeeded
+        tile = simulated_dm.get_tile(result.token)
+        assert tile.on_data_script is None
+        assert tile.data_bindings_json is None
+
+    def test_create_tile_bindings_without_on_data_still_works(self, simulated_dm):
+        result = simulated_dm.create_tile(
+            "<div></div>",
+            title="Legacy Live",
+            data_bindings=[FilterBinding(context="Data/X")],
+        )
+        assert result.succeeded
+        tile = simulated_dm.get_tile(result.token)
+        assert tile.has_data_bindings is True
+        assert tile.on_data_script is None
+        assert tile.data_bindings_json is not None
+
+    def test_update_tile_with_on_data(self, simulated_dm):
+        result = simulated_dm.create_tile(
+            "<div></div>",
+            title="Update Test",
+            data_bindings=[FilterBinding(context="Data/X", alias="x")],
+            on_data="console.log(data.x);",
+        )
+        assert result.succeeded
+
+        updated = simulated_dm.update_tile(
+            result.token,
+            on_data="document.body.textContent = JSON.stringify(data.x);",
+        )
+        assert updated.succeeded
+        tile = simulated_dm.get_tile(result.token)
+        assert "JSON.stringify" in tile.on_data_script
+
+    def test_update_tile_with_new_bindings(self, simulated_dm):
+        result = simulated_dm.create_tile(
+            "<div></div>",
+            title="Binding Update",
+            data_bindings=[FilterBinding(context="Data/A", alias="a")],
+            on_data="console.log(data.a);",
+        )
+        assert result.succeeded
+
+        updated = simulated_dm.update_tile(
+            result.token,
+            data_bindings=[
+                FilterBinding(context="Data/B", alias="b"),
+                FilterBinding(context="Data/C", alias="c"),
+            ],
+            on_data="console.log(data.b, data.c);",
+        )
+        assert updated.succeeded
+        tile = simulated_dm.get_tile(result.token)
+        parsed = json.loads(tile.data_bindings_json)
+        assert len(parsed) == 2
+        assert tile.data_binding_contexts == "Data/B,Data/C"
+
+    def test_update_tile_clear_on_data(self, simulated_dm):
+        result = simulated_dm.create_tile(
+            "<div></div>",
+            title="Clear Test",
+            data_bindings=[FilterBinding(context="Data/X", alias="x")],
+            on_data="console.log(data.x);",
+        )
+        assert result.succeeded
+
+        updated = simulated_dm.update_tile(result.token, on_data="")
+        assert updated.succeeded
+        tile = simulated_dm.get_tile(result.token)
+        assert tile.on_data_script is None
 
 
 class TestSimulatedDashboardCRUD:

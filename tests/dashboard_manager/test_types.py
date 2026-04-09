@@ -1,10 +1,15 @@
-"""Tests for DashboardManager Pydantic types."""
+"""Tests for DashboardManager Pydantic types and tile_ops helpers."""
 
 import json
 
 import pytest
 from pydantic import TypeAdapter
 
+from unity.dashboard_manager.ops.tile_ops import (
+    ensure_binding_aliases,
+    serialize_bindings,
+    validate_on_data,
+)
 from unity.dashboard_manager.types.tile import (
     DataBinding,
     FilterBinding,
@@ -234,6 +239,148 @@ class TestDataBindingDiscriminator:
     def test_missing_operation_raises(self):
         with pytest.raises(Exception):
             self.adapter.validate_python({"context": "Data/X"})
+
+
+class TestTileRecordRowNewFields:
+    def test_on_data_script_default_none(self):
+        row = TileRecordRow(
+            token="abc123abc123",
+            title="Test",
+            html_content="<h1>Hello</h1>",
+        )
+        assert row.on_data_script is None
+        assert row.data_bindings_json is None
+
+    def test_on_data_script_set(self):
+        row = TileRecordRow(
+            token="abc123abc123",
+            title="Test",
+            html_content="<div></div>",
+            on_data_script="const rows = data.sales;",
+            data_bindings_json='[{"operation":"filter","context":"Data/X","alias":"sales"}]',
+        )
+        assert row.on_data_script == "const rows = data.sales;"
+        assert "filter" in row.data_bindings_json
+
+    def test_round_trip_model_dump(self):
+        row = TileRecordRow(
+            token="abc123abc123",
+            title="Test",
+            html_content="<div></div>",
+            on_data_script="console.log(data);",
+            data_bindings_json='[{"operation":"filter","context":"X","alias":"x"}]',
+        )
+        d = row.model_dump()
+        restored = TileRecordRow(**d)
+        assert restored.on_data_script == row.on_data_script
+        assert restored.data_bindings_json == row.data_bindings_json
+
+
+class TestSerializeBindings:
+    def test_serialize_filter(self):
+        bindings = [FilterBinding(context="Data/X", alias="x")]
+        result = serialize_bindings(bindings)
+        parsed = json.loads(result)
+        assert len(parsed) == 1
+        assert parsed[0]["operation"] == "filter"
+        assert parsed[0]["alias"] == "x"
+
+    def test_serialize_mixed(self):
+        bindings = [
+            FilterBinding(context="Data/A", alias="a"),
+            ReduceBinding(
+                context="Data/B",
+                alias="b",
+                metric="sum",
+                columns="val",
+            ),
+        ]
+        result = serialize_bindings(bindings)
+        parsed = json.loads(result)
+        assert len(parsed) == 2
+        assert parsed[0]["operation"] == "filter"
+        assert parsed[1]["operation"] == "reduce"
+
+    def test_round_trip(self):
+        original = FilterBinding(
+            context="Data/Sales",
+            alias="sales",
+            columns=["month", "revenue"],
+            order_by="month",
+        )
+        serialized = serialize_bindings([original])
+        parsed = json.loads(serialized)
+        restored = FilterBinding(**parsed[0])
+        assert restored.context == original.context
+        assert restored.alias == original.alias
+        assert restored.columns == original.columns
+
+
+class TestEnsureBindingAliases:
+    def test_auto_generates_from_context(self):
+        bindings = [FilterBinding(context="Data/Sales/Monthly")]
+        result = ensure_binding_aliases(bindings)
+        assert result[0].alias == "monthly"
+
+    def test_preserves_existing_alias(self):
+        bindings = [FilterBinding(context="Data/X", alias="my_data")]
+        result = ensure_binding_aliases(bindings)
+        assert result[0].alias == "my_data"
+
+    def test_auto_generates_for_join(self):
+        bindings = [
+            JoinBinding(
+                tables=["Data/A", "Data/B"],
+                join_expr="Data/A.id == Data/B.fk",
+                select={"Data/A.x": "x"},
+            ),
+        ]
+        result = ensure_binding_aliases(bindings)
+        assert result[0].alias == "binding_0"
+
+    def test_raises_on_duplicate_aliases(self):
+        bindings = [
+            FilterBinding(context="Data/X", alias="dup"),
+            FilterBinding(context="Data/Y", alias="dup"),
+        ]
+        with pytest.raises(ValueError, match="duplicate alias 'dup'"):
+            ensure_binding_aliases(bindings)
+
+    def test_raises_on_invalid_identifier(self):
+        bindings = [FilterBinding(context="Data/X", alias="my-data")]
+        with pytest.raises(ValueError, match="not a valid JS identifier"):
+            ensure_binding_aliases(bindings)
+
+    def test_raises_on_leading_digit(self):
+        bindings = [FilterBinding(context="Data/X", alias="123sales")]
+        with pytest.raises(ValueError, match="not a valid JS identifier"):
+            ensure_binding_aliases(bindings)
+
+    def test_sanitises_non_identifier_context(self):
+        bindings = [FilterBinding(context="Data/My Sales-2025")]
+        result = ensure_binding_aliases(bindings)
+        assert (
+            result[0].alias.isidentifier()
+            or result[0].alias.replace("$", "").isidentifier()
+        )
+
+
+class TestValidateOnData:
+    def test_none_on_data_passes(self):
+        validate_on_data(None, None)
+
+    def test_on_data_without_bindings_raises(self):
+        with pytest.raises(ValueError, match="on_data requires data_bindings"):
+            validate_on_data("console.log(data);", None)
+
+    def test_whitespace_only_raises(self):
+        bindings = [FilterBinding(context="Data/X")]
+        with pytest.raises(ValueError, match="non-empty JS code"):
+            validate_on_data("   ", bindings)
+
+    def test_valid_on_data_passes(self):
+        bindings = [FilterBinding(context="Data/X")]
+        validate_on_data("console.log(data);", bindings)
 
 
 class TestDashboardTypes:
