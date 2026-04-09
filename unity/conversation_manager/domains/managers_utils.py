@@ -662,6 +662,28 @@ async def actor_watch_clarifications(
         )
 
 
+def _resolve_gmeet_name_to_contact(
+    cm: "ConversationManager",
+    display_name: str,
+) -> dict | None:
+    """Best-effort resolution of a Google Meet display name to a contact.
+
+    Iterates the contact_index's fallback cache and checks for exact
+    full-name or first-name matches.  Returns the contact dict on match,
+    None otherwise.
+    """
+    if not display_name:
+        return None
+    dn_lower = display_name.strip().lower()
+    for c in cm.contact_index._fallback_contacts.values():
+        full = f"{c.get('first_name', '')} {c.get('surname', '')}".strip()
+        if full.lower() == dn_lower:
+            return c
+        if c.get("first_name", "").lower() == dn_lower:
+            return c
+    return None
+
+
 async def log_message(
     cm: "ConversationManager",
     event: Event,
@@ -733,6 +755,32 @@ async def log_message(
         sender_id, receiver_ids = 0, [contact_id]
     else:
         sender_id, receiver_ids = contact_id, [0]
+
+    # For Google Meet utterances, resolve participant names to contact IDs
+    # so receiver_ids reflects all known meeting participants.
+    gmeet_participants_meta: list[dict] = []
+    if isinstance(event, (InboundGoogleMeetUtterance, OutboundGoogleMeetUtterance)):
+        participant_names = getattr(event, "participant_names", None) or []
+        if participant_names:
+            resolved_ids: set[int] = set()
+            for name in participant_names:
+                resolved = _resolve_gmeet_name_to_contact(cm, name)
+                cid = resolved.get("contact_id") if resolved else None
+                if cid is not None:
+                    resolved_ids.add(cid)
+                gmeet_participants_meta.append(
+                    {"name": name, "contact_id": cid},
+                )
+            if role == "Assistant":
+                if contact_id is not None:
+                    resolved_ids.add(contact_id)
+                if resolved_ids:
+                    receiver_ids = sorted(resolved_ids)
+            else:
+                resolved_ids.add(0)
+                resolved_ids.discard(sender_id)
+                if resolved_ids:
+                    receiver_ids = sorted(resolved_ids)
 
     # For emails, resolve to/cc/bcc addresses to contact IDs so that
     # receiver_ids reflects all known recipients.
@@ -814,6 +862,14 @@ async def log_message(
                     "cc": event.cc,
                     "bcc": event.bcc,
                 }
+            elif isinstance(
+                event,
+                (InboundGoogleMeetUtterance, OutboundGoogleMeetUtterance),
+            ):
+                participant_names = getattr(event, "participant_names", None) or []
+                if participant_names:
+                    metadata = metadata or {}
+                    metadata["gmeet_participants"] = gmeet_participants_meta
 
             if call_utterance_timestamp:
                 metadata = metadata or {}

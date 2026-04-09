@@ -524,6 +524,33 @@ async def _(
     # - SMSReceived/EmailReceived while on call
 
 
+@EventHandler.register((GoogleMeetParticipantJoined, GoogleMeetParticipantLeft))
+async def _(
+    event: GoogleMeetParticipantJoined | GoogleMeetParticipantLeft,
+    cm: "ConversationManager",
+    *args,
+    **kwargs,
+):
+    """Surface Google Meet roster changes as notifications so the LLM is aware."""
+    name = event.participant_name
+    if isinstance(event, GoogleMeetParticipantJoined):
+        label = f"{name} joined the Google Meet"
+    else:
+        label = f"{name} left the Google Meet"
+
+    cm.notifications_bar.push_notif("Comms", label, event.timestamp)
+
+    contact_id = (event.contact.get("contact_id") if event.contact else None) or 1
+    cm.contact_index.push_message(
+        contact_id=contact_id,
+        sender_name=name,
+        thread_name=Medium.GOOGLE_MEET,
+        message_content=f"<{label}>",
+        role="system",
+        timestamp=event.timestamp,
+    )
+
+
 @EventHandler.register(PhoneCallNotAnswered)
 async def _(
     event: PhoneCallNotAnswered,

@@ -445,6 +445,7 @@ class LivekitCallManager:
         gmeet_extra = {
             "gmeet_session_id": "",
             "gmeet_meet_url": meet_url,
+            "gmeet_display_name": display_name,
             "agent_service_url": "http://localhost:3000",
         }
 

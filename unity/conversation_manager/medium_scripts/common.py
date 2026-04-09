@@ -23,12 +23,16 @@ from unity.conversation_manager.events import (
     UnifyMeetStarted,
     GoogleMeetStarted,
     GoogleMeetEnded,
+    GoogleMeetParticipantJoined,
+    GoogleMeetParticipantLeft,
     InboundPhoneUtterance,
     InboundUnifyMeetUtterance,
     InboundWhatsAppCallUtterance,
+    InboundGoogleMeetUtterance,
     OutboundPhoneUtterance,
     OutboundUnifyMeetUtterance,
     OutboundWhatsAppCallUtterance,
+    OutboundGoogleMeetUtterance,
     SMSReceived,
     SMSSent,
     WhatsAppReceived,
@@ -1340,12 +1344,16 @@ def _render_history_event(
         if cid is not None and cid in participant_ids:
             return f"{name}: {event.content}"
         return None
+    if isinstance(event, InboundGoogleMeetUtterance):
+        label = event.speaker_label or name
+        return f"{label}: {event.content}"
     if isinstance(
         event,
         (
             OutboundPhoneUtterance,
             OutboundUnifyMeetUtterance,
             OutboundWhatsAppCallUtterance,
+            OutboundGoogleMeetUtterance,
         ),
     ):
         return f"{assistant_name}: {event.content}"
@@ -1363,6 +1371,14 @@ def _render_history_event(
         if cid is not None and cid in participant_ids:
             return f"--- Meeting with {name} ---"
         return None
+    if isinstance(event, (GoogleMeetStarted,)):
+        return f"--- Google Meet started ---"
+    if isinstance(event, (GoogleMeetEnded,)):
+        return f"--- Google Meet ended ---"
+    if isinstance(event, GoogleMeetParticipantJoined):
+        return f"--- {event.participant_name} joined the meeting ---"
+    if isinstance(event, GoogleMeetParticipantLeft):
+        return f"--- {event.participant_name} left the meeting ---"
     if isinstance(event, (PhoneCallEnded, UnifyMeetEnded, WhatsAppCallEnded)):
         if cid is not None and cid in participant_ids:
             return f"--- Call ended ---"

@@ -273,6 +273,7 @@ class InboundGoogleMeetUtterance(Event):
     contact: dict
     content: str
     speaker_label: str | None = None
+    participant_names: list[str] | None = None
 
 
 @dataclass
@@ -283,6 +284,27 @@ class OutboundGoogleMeetUtterance(Event):
 
     contact: dict
     content: str
+    participant_names: list[str] | None = None
+
+
+@dataclass
+class GoogleMeetParticipantJoined(Event):
+    """A participant joined the Google Meet session."""
+
+    topic: ClassVar[str | None] = "app:comms:googlemeet_participant"
+
+    contact: dict
+    participant_name: str
+
+
+@dataclass
+class GoogleMeetParticipantLeft(Event):
+    """A participant left the Google Meet session."""
+
+    topic: ClassVar[str | None] = "app:comms:googlemeet_participant"
+
+    contact: dict
+    participant_name: str
 
 
 @dataclass
