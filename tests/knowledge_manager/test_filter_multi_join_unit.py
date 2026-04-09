@@ -2,45 +2,22 @@
 Unit-style test for `_filter_multi_join`
 =======================================
 
-We avoid the full LLM retrieval loop – instead we *directly* invoke the new
-helper and spy on:
-
-  • internal calls to `_filter_join` (there must be one per join step);
-  • automatic clean-up of every temporary context.
+Verifies that KnowledgeManager delegates multi-join work to
+DataManager.filter_multi_join and returns the correct rows.
 """
 
 from __future__ import annotations
 
-import re
 import functools
-
 
 from unity.knowledge_manager.knowledge_manager import KnowledgeManager
 from tests.helpers import _handle_project
-
-# --------------------------------------------------------------------------- #
-# helpers                                                                     #
-# --------------------------------------------------------------------------- #
-
-
-def _tmp_ctx_survivors(km: KnowledgeManager) -> list[str]:
-    """Return *any* context names that look like a leftover temp join."""
-    return [
-        t
-        for t in km._tables_overview(include_column_info=False).keys()
-        if re.match(r"_tmp_mjoin_[0-9a-f]{6}", t)
-    ]
-
-
-# --------------------------------------------------------------------------- #
-# actual test                                                                 #
-# --------------------------------------------------------------------------- #
 
 
 @_handle_project
 def test_filter_multi_join(monkeypatch):
     """
-    Scenario: *Authors → Books → Reviews*  (expect three reviews).
+    Scenario: *Authors → Books → Reviews*  (expect three Rowling reviews).
     """
 
     km = KnowledgeManager()
@@ -84,19 +61,17 @@ def test_filter_multi_join(monkeypatch):
         ],
     )
 
-    # ---------- spies ------------------------------------------------------
-    join_calls = []
+    # ---------- spy on DataManager.filter_multi_join -----------------------
+    dm_calls: list[dict] = []
+    dm = km._data_manager
+    original_fm = dm.filter_multi_join
 
-    from unity.knowledge_manager import search as search_mod
+    @functools.wraps(original_fm)
+    def _dm_spy(**kwargs):
+        dm_calls.append(kwargs)
+        return original_fm(**kwargs)
 
-    original_join = search_mod._create_join
-
-    @functools.wraps(original_join)
-    def _join_spy(self, *a, **k):
-        join_calls.append(k.copy())
-        return original_join(self, *a, **k)
-
-    monkeypatch.setattr(search_mod, "_create_join", _join_spy, raising=True)
+    monkeypatch.setattr(dm, "filter_multi_join", _dm_spy)
 
     # ---------- exercise ---------------------------------------------------
     pipeline = [
@@ -117,12 +92,20 @@ def test_filter_multi_join(monkeypatch):
     res = km._filter_multi_join(joins=pipeline)
 
     # ---------- assertions -------------------------------------------------
-    # ➊ correct row-count
-    assert len(res) == 3, "Should return exactly three Rowling reviews."
+    assert (
+        len(res) == 3
+    ), f"Should return exactly three Rowling reviews, got {len(res)}."
 
-    # ➋ internal two-table join used twice
-    assert len(join_calls) == 2, "_filter_join should be called once per step."
+    assert (
+        len(dm_calls) == 1
+    ), "KM should delegate to DataManager.filter_multi_join exactly once."
 
-    # ➌ temp contexts cleaned up
-    survivors = _tmp_ctx_survivors(km)
-    assert not survivors, f"Temporary join contexts not deleted: {survivors}"
+    passed_joins = dm_calls[0]["joins"]
+    assert len(passed_joins) == 2, "Both join steps should be forwarded to DM."
+
+    for step in passed_joins:
+        for t in step["tables"]:
+            if t != "$prev":
+                assert "Knowledge/" in t or t.startswith(
+                    "$",
+                ), f"Table names should be resolved to Knowledge/… paths, got {t!r}"
