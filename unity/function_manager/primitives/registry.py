@@ -111,16 +111,18 @@ _MANAGER_SPECS: tuple[ManagerSpec, ...] = (
             "'Generate an interactive table of orders'"
         ),
         special_note=(
-            "Generate HTML in Python (Plotly, Bokeh, matplotlib, custom HTML) "
-            "then pass to create_tile(). Compose tiles into dashboards with "
-            "create_dashboard(). Supports baked-in data and a rich live data "
-            "bridge with four binding types: FilterBinding (row queries), "
-            "ReduceBinding (aggregation), JoinBinding (cross-table rows), "
-            "and JoinReduceBinding (cross-table aggregation). Each binding "
-            "is auto-validated via the corresponding DataManager method "
-            "before the tile is stored. Use live bindings instead of baking "
-            "in data when queries involve joins, aggregation, or large/live "
-            "datasets. If any binding fails, result.error explains the problem."
+            "The actor has full creative freedom over tile HTML -- any "
+            "HTML/CSS/JS that renders in a browser works. PREFER live tiles: "
+            "declare data_bindings (FilterBinding, ReduceBinding, JoinBinding, "
+            "JoinReduceBinding) as the single source of truth and provide an "
+            "on_data JS callback that receives fetched data keyed by alias. "
+            "Console auto-generates bridge calls from the serialized bindings "
+            "-- the actor never writes bridge API calls. Each binding is "
+            "auto-validated via the corresponding DataManager method before "
+            "the tile is stored. Compose tiles into dashboards with "
+            "create_dashboard(). Live data tiles are essential for production: "
+            "large datasets, joins, aggregation, and frequently updated data. "
+            "Only bake data into HTML for very small static snapshots."
         ),
     ),
     ManagerSpec(
