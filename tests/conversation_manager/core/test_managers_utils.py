@@ -149,21 +149,25 @@ async def test_log_message_caches_unify_meet_exchange_id_synchronously():
     utterance1 = OutboundUnifyMeetUtterance(contact=contact, content="Hello")
     utterance2 = InboundUnifyMeetUtterance(contact=contact, content="Hi there")
 
-    with patch.object(managers_utils, "event_broker", new=MagicMock(publish=AsyncMock())):
+    with patch.object(
+        managers_utils,
+        "event_broker",
+        new=MagicMock(publish=AsyncMock()),
+    ):
         await managers_utils.log_message(cm, utterance1)
 
         # After the first utterance, the exchange_id must be cached
         first_exchange_id = cm.call_manager.unify_meet_exchange_id
-        assert first_exchange_id != UNASSIGNED, (
-            "unify_meet_exchange_id should be set synchronously after first log_message"
-        )
+        assert (
+            first_exchange_id != UNASSIGNED
+        ), "unify_meet_exchange_id should be set synchronously after first log_message"
 
         await managers_utils.log_message(cm, utterance2)
 
         # The second utterance must reuse the same exchange_id
-        assert cm.call_manager.unify_meet_exchange_id == first_exchange_id, (
-            "Second utterance should reuse the cached unify_meet_exchange_id"
-        )
+        assert (
+            cm.call_manager.unify_meet_exchange_id == first_exchange_id
+        ), "Second utterance should reuse the cached unify_meet_exchange_id"
 
 
 @pytest.mark.asyncio
@@ -177,19 +181,23 @@ async def test_log_message_caches_call_exchange_id_synchronously():
     utterance1 = OutboundPhoneUtterance(contact=contact, content="Hello")
     utterance2 = InboundPhoneUtterance(contact=contact, content="Hi there")
 
-    with patch.object(managers_utils, "event_broker", new=MagicMock(publish=AsyncMock())):
+    with patch.object(
+        managers_utils,
+        "event_broker",
+        new=MagicMock(publish=AsyncMock()),
+    ):
         await managers_utils.log_message(cm, utterance1)
 
         first_exchange_id = cm.call_manager.call_exchange_id
-        assert first_exchange_id != UNASSIGNED, (
-            "call_exchange_id should be set synchronously after first log_message"
-        )
+        assert (
+            first_exchange_id != UNASSIGNED
+        ), "call_exchange_id should be set synchronously after first log_message"
 
         await managers_utils.log_message(cm, utterance2)
 
-        assert cm.call_manager.call_exchange_id == first_exchange_id, (
-            "Second utterance should reuse the cached call_exchange_id"
-        )
+        assert (
+            cm.call_manager.call_exchange_id == first_exchange_id
+        ), "Second utterance should reuse the cached call_exchange_id"
 
 
 @pytest.mark.asyncio
@@ -206,9 +214,13 @@ async def test_log_message_does_not_overwrite_existing_exchange_id():
 
     utterance = OutboundUnifyMeetUtterance(contact=contact, content="Hello")
 
-    with patch.object(managers_utils, "event_broker", new=MagicMock(publish=AsyncMock())):
+    with patch.object(
+        managers_utils,
+        "event_broker",
+        new=MagicMock(publish=AsyncMock()),
+    ):
         await managers_utils.log_message(cm, utterance)
 
-        assert cm.call_manager.unify_meet_exchange_id == 42, (
-            "log_message must not overwrite an already-set exchange_id"
-        )
+        assert (
+            cm.call_manager.unify_meet_exchange_id == 42
+        ), "log_message must not overwrite an already-set exchange_id"
