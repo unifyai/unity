@@ -1058,8 +1058,9 @@ async function googleMeetPollState(sessionId: string): Promise<void> {
       const isSpeaking = parentClasses.includes('speaking') ||
         (await el.locator('[class*="speaking" i]').first().isVisible({ timeout: 100 }).catch(() => false));
 
-      participants.push({ name: name.trim(), isSpeaking });
-      if (isSpeaking) activeSpeaker = name.trim();
+      const cleanName = name.split('\n')[0].trim();
+      participants.push({ name: cleanName, isSpeaking });
+      if (isSpeaking) activeSpeaker = cleanName;
     }
 
     session.participants = participants;
