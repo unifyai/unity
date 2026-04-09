@@ -14,7 +14,11 @@ from abc import abstractmethod
 from typing import List, Optional
 
 from unity.common.state_managers import BaseStateManager
-from unity.dashboard_manager.types.tile import DataBinding, TileRecord, TileResult
+from unity.dashboard_manager.types.tile import (
+    DataBinding,
+    TileRecord,
+    TileResult,
+)
 from unity.dashboard_manager.types.dashboard import (
     DashboardRecord,
     DashboardResult,
@@ -49,10 +53,11 @@ class BaseDashboardManager(BaseStateManager):
        ``fig.to_html(include_plotlyjs='cdn')``).  Best for small-to-medium
        datasets or one-time snapshots.
 
-    2. **Live data bridge** -- HTML includes ``UnifyData.query()`` calls that
-       fetch fresh data at render time via postMessage.  Best for large or
-       frequently updated datasets.  Declare ``data_bindings`` to specify
-       which Unify contexts the tile needs access to at render time.
+    2. **Live data bridge** -- HTML calls ``UnifyData`` methods
+       (``filter``, ``reduce``, ``join``, ``joinReduce``) that fetch or
+       aggregate fresh data at render time via postMessage.  Best for large
+       or frequently updated datasets.  Declare ``data_bindings`` to
+       specify which Unify contexts and operations the tile uses.
 
     Dashboards compose multiple tiles into a responsive 12-column grid layout.
     Each tile is placed using ``TilePosition(tile_token, x, y, w, h)`` where
@@ -145,10 +150,11 @@ class BaseDashboardManager(BaseStateManager):
         - **Baked-in data** (no ``data_bindings``): The HTML embeds all
           data directly.  Best for small-to-medium datasets, one-time
           snapshots, or static charts where the data won't change.
-        - **Live data bridge** (with ``data_bindings``): The HTML uses
-          ``UnifyData.query()`` calls that fetch fresh data at render time
-          via postMessage.  Best for large datasets, frequently updated
-          data, or dashboards that should always reflect the latest state.
+        - **Live data bridge** (with ``data_bindings``): The HTML calls
+          ``UnifyData`` methods that fetch/aggregate fresh data at render
+          time via postMessage.  Best for large datasets, frequently
+          updated data, or dashboards that should always reflect the
+          latest state.
 
         Parameters
         ----------
@@ -166,16 +172,30 @@ class BaseDashboardManager(BaseStateManager):
             - Bokeh: ``bokeh.embed.file_html(plot, CDN, "title")``
             - Custom: Any valid HTML with inline CSS/JS.
 
-            **Live data bridge example**::
+            **Live data bridge examples**::
 
-                <div id="chart"></div>
-                <script>
-                  UnifyData.query({
-                    context: "Data/Sales/Monthly",
-                    filter: "year == 2025",
-                    columns: ["month", "revenue"],
-                  }).then(rows => renderChart(rows));
-                </script>
+                <!-- Simple filter query -->
+                UnifyData.filter({
+                  context: "Data/Sales/Monthly",
+                  filter: "year == 2025",
+                  columns: ["month", "revenue"],
+                }).then(rows => renderChart(rows));
+
+                <!-- Aggregation -->
+                UnifyData.reduce({
+                  context: "Data/Sales/Monthly",
+                  metric: "sum",
+                  columns: "revenue",
+                  group_by: ["region"],
+                }).then(result => renderKPI(result));
+
+                <!-- Cross-table join -->
+                UnifyData.join({
+                  tables: ["Data/Orders", "Data/Customers"],
+                  join_expr: "Data/Orders.customer_id == Data/Customers.id",
+                  select: {"Data/Orders.amount": "amount",
+                           "Data/Customers.name": "customer"},
+                }).then(rows => renderTable(rows));
 
             When using CDN-hosted libraries, include them via ``<script>``
             tags pointing to CDN URLs -- the iframe has no access to locally
@@ -195,59 +215,113 @@ class BaseDashboardManager(BaseStateManager):
             tiles via ``list_tiles()``.  When ``None``, only the title is
             stored.
 
-            Example: ``"Bar chart showing monthly revenue broken down by
-            product category for FY2025.  Data sourced from Data/Sales."``
-
         data_bindings : list[DataBinding] | None, default ``None``
-            Declared data sources for live-data tiles.  Each ``DataBinding``
-            specifies:
+            Declared data sources for live-data tiles.  ``DataBinding`` is a
+            discriminated union (on the ``operation`` field) of four types,
+            each mapping to a ``UnifyData`` JS method and a ``DataManager``
+            primitive:
 
-            - ``context`` (str, required): The Unify context path the tile
-              will query at render time (e.g., ``"Data/Sales/Monthly"``).
-            - ``alias`` (str | None, optional): Short name the tile's JS
-              code uses to reference this binding.
-            - ``filter`` (str | None, optional): Row filter expression.
-              Same syntax as ``primitives.data.filter(filter=...)``.
-            - ``columns`` (list[str] | None, optional): Column names to
-              return.  Validated against the context.
-            - ``exclude_columns`` (list[str] | None, optional): Column
-              names to omit.  Validated against the context.
-            - ``order_by`` (str | None, optional): Column to sort by.
-              Validated against the context.
-            - ``descending`` (bool, default ``False``): Sort direction
-              when ``order_by`` is set.
+            **FilterBinding** (``operation="filter"``, default):
+              Single-context row fetch.  JS: ``UnifyData.filter()``.
+              Validated via ``DataManager.filter(limit=5)``.
+
+              Fields: ``context`` (required), ``alias``, ``filter``,
+              ``columns``, ``exclude_columns``, ``order_by``, ``descending``,
+              ``limit``, ``offset``, ``group_by``.
+
+            **ReduceBinding** (``operation="reduce"``):
+              Single-context aggregation.  JS: ``UnifyData.reduce()``.
+              Validated via ``DataManager.reduce()``.
+
+              Fields: ``context`` (required), ``metric`` (required),
+              ``columns`` (required), ``alias``, ``filter``, ``group_by``,
+              ``result_where``.
+
+            **JoinBinding** (``operation="join"``):
+              Cross-context join returning rows.  JS: ``UnifyData.join()``.
+              Validated via ``DataManager.filter_join(result_limit=5)``.
+
+              Fields: ``tables`` (required, exactly 2 context paths),
+              ``join_expr`` (required), ``select`` (required),
+              ``alias``, ``mode``, ``left_where``, ``right_where``,
+              ``result_where``, ``result_limit``, ``result_offset``.
+
+            **JoinReduceBinding** (``operation="join_reduce"``):
+              Cross-context join + aggregation.  JS: ``UnifyData.joinReduce()``.
+              Validated via ``DataManager.reduce_join()``.
+
+              Fields: ``tables`` (required), ``join_expr`` (required),
+              ``select`` (required), ``metric`` (required),
+              ``columns`` (required), ``alias``, ``mode``, ``left_where``,
+              ``right_where``, ``group_by``, ``result_where``.
 
             **Auto-validation**: When ``data_bindings`` is provided,
-            ``create_tile`` automatically dry-runs each binding's query
-            params through ``DataManager.filter(limit=5)`` before storing
-            the tile.  If any binding references a nonexistent context,
-            misspelled column, or invalid filter expression, the tile is
-            **not** stored and ``TileResult.error`` reports the problem.
-            Include the query params in the binding to benefit from this.
+            ``create_tile`` automatically dry-runs each binding through
+            the corresponding ``DataManager`` method before storing the
+            tile.  If any binding references a nonexistent context,
+            misspelled column, invalid expression, or incompatible metric,
+            the tile is **not** stored and ``TileResult.error`` reports the
+            problem.
 
             When provided:
 
             - ``has_data_bindings`` is set to ``True`` on the tile record.
             - ``data_binding_contexts`` stores the comma-separated context
-              paths.
-            - The data bridge is activated so ``UnifyData.query()`` calls
-              in the HTML resolve at render time.
+              paths (including both tables for join bindings).
+            - The data bridge is activated so ``UnifyData`` calls in the
+              HTML resolve at render time.
 
             When ``None`` (the default), the tile operates in baked-in data
             mode and no bridge script is injected.
 
-            Example::
+            Example -- filter binding::
 
                 data_bindings=[
-                    DataBinding(
+                    FilterBinding(
                         context="Data/Sales/Monthly",
                         columns=["month", "revenue"],
                         order_by="month",
                     ),
-                    DataBinding(
-                        context="Data/Products",
-                        alias="products",
-                        filter="active == True",
+                ]
+
+            Example -- reduce binding (live KPI card)::
+
+                data_bindings=[
+                    ReduceBinding(
+                        context="Data/Sales/Monthly",
+                        metric="sum",
+                        columns="revenue",
+                        group_by=["region"],
+                    ),
+                ]
+
+            Example -- join binding (cross-table chart)::
+
+                data_bindings=[
+                    JoinBinding(
+                        tables=["Data/Orders", "Data/Customers"],
+                        join_expr="Data/Orders.cust_id == Data/Customers.id",
+                        select={
+                            "Data/Orders.amount": "amount",
+                            "Data/Customers.name": "customer",
+                        },
+                        result_limit=500,
+                    ),
+                ]
+
+            Example -- join-reduce binding (cross-table KPI)::
+
+                data_bindings=[
+                    JoinReduceBinding(
+                        tables=["Data/Orders", "Data/Products"],
+                        join_expr="Data/Orders.product_id == Data/Products.id",
+                        select={
+                            "Data/Orders.amount": "amount",
+                            "Data/Products.category": "category",
+                        },
+                        metric="sum",
+                        columns="amount",
+                        group_by=["category"],
                     ),
                 ]
 
@@ -283,50 +357,24 @@ class BaseDashboardManager(BaseStateManager):
         result = primitives.dashboards.create_tile(
             html, title="Revenue by Category"
         )
-        print(result.url)  # shareable URL for the tile
+        print(result.url)
 
-        # Baked-in data: Matplotlib exported as SVG
-        import matplotlib.pyplot as plt
-        import io
-        fig, ax = plt.subplots()
-        ax.plot(dates, values)
-        buf = io.StringIO()
-        fig.savefig(buf, format="svg")
-        html = f"<html><body>{buf.getvalue()}</body></html>"
-        result = primitives.dashboards.create_tile(
-            html, title="Trend Line"
-        )
-
-        # Baked-in data: Custom HTML KPI card
-        html = '''
-        <div style="font-family: sans-serif; padding: 20px;">
-          <h2>Total Revenue</h2>
-          <p style="font-size: 48px; color: #2ecc71;">$1,234,567</p>
-          <p style="color: #888;">+12% vs last quarter</p>
-        </div>
-        '''
-        result = primitives.dashboards.create_tile(
-            html,
-            title="Revenue KPI",
-            description="Total revenue for current quarter with QoQ comparison",
-        )
-
-        # Live data bridge: Chart that fetches fresh data on render.
-        # Note: create_tile auto-validates the query params in data_bindings
-        # against the real backend before storing the tile.
+        # Live filter: Chart that fetches fresh rows on render
         html = '''
         <script src="https://cdn.plot.ly/plotly-latest.min.js"></script>
         <div id="chart"></div>
         <script>
-          UnifyData.query({
+          UnifyData.filter({
             context: "Data/Sales/Monthly",
             filter: "year == 2025",
             columns: ["month", "revenue"],
             order_by: "month",
           }).then(rows => {
-            const months = rows.map(r => r.month);
-            const revenue = rows.map(r => r.revenue);
-            Plotly.newPlot("chart", [{x: months, y: revenue, type: "bar"}]);
+            Plotly.newPlot("chart", [{
+              x: rows.map(r => r.month),
+              y: rows.map(r => r.revenue),
+              type: "bar",
+            }]);
           });
         </script>
         '''
@@ -334,7 +382,7 @@ class BaseDashboardManager(BaseStateManager):
             html,
             title="Monthly Revenue (Live)",
             data_bindings=[
-                DataBinding(
+                FilterBinding(
                     context="Data/Sales/Monthly",
                     filter="year == 2025",
                     columns=["month", "revenue"],
@@ -343,135 +391,178 @@ class BaseDashboardManager(BaseStateManager):
             ],
         )
 
-        # Live data bridge with multiple bindings and aliases.
-        # Include query params in each binding for auto-validation.
+        # Live reduce: KPI card showing aggregated total
+        html = '''
+        <div id="kpi" style="font-family:sans-serif;padding:20px;"></div>
+        <script>
+          UnifyData.reduce({
+            context: "Data/Sales/Monthly",
+            metric: "sum",
+            columns: "revenue",
+          }).then(val => {
+            document.getElementById("kpi").innerHTML =
+              `<h2>Total Revenue</h2><p style="font-size:48px;">$${val.toLocaleString()}</p>`;
+          });
+        </script>
+        '''
         result = primitives.dashboards.create_tile(
-            html_with_multi_query,
-            title="Sales vs Targets",
+            html,
+            title="Revenue KPI (Live)",
             data_bindings=[
-                DataBinding(
+                ReduceBinding(
                     context="Data/Sales/Monthly",
-                    alias="sales",
-                    columns=["month", "revenue"],
-                ),
-                DataBinding(
-                    context="Data/Targets/Monthly",
-                    alias="targets",
-                    columns=["month", "target"],
+                    metric="sum",
+                    columns="revenue",
                 ),
             ],
         )
 
-        UnifyData.query() API Reference
-        --------------------------------
-        When using the live data bridge, the tile's JavaScript calls
-        ``UnifyData.query(opts)`` where ``opts`` is a single object with
-        the following properties.  Parameter names match
-        ``primitives.data.filter()`` exactly so the actor can verify
-        queries in Python before embedding them in HTML.
+        # Live join: Table from two joined contexts
+        html = '''
+        <div id="tbl"></div>
+        <script>
+          UnifyData.join({
+            tables: ["Data/Orders", "Data/Customers"],
+            join_expr: "Data/Orders.cust_id == Data/Customers.id",
+            select: {"Data/Orders.amount": "amount",
+                     "Data/Customers.name": "customer"},
+            result_limit: 100,
+          }).then(rows => {
+            let h = "<table><tr><th>Customer</th><th>Amount</th></tr>";
+            rows.forEach(r => { h += `<tr><td>${r.customer}</td><td>${r.amount}</td></tr>`; });
+            document.getElementById("tbl").innerHTML = h + "</table>";
+          });
+        </script>
+        '''
+        result = primitives.dashboards.create_tile(
+            html,
+            title="Order Details (Live Join)",
+            data_bindings=[
+                JoinBinding(
+                    tables=["Data/Orders", "Data/Customers"],
+                    join_expr="Data/Orders.cust_id == Data/Customers.id",
+                    select={
+                        "Data/Orders.amount": "amount",
+                        "Data/Customers.name": "customer",
+                    },
+                    result_limit=100,
+                ),
+            ],
+        )
 
-        **Returns**: ``Promise<Array<Object>>`` -- array of row dicts with
-        flattened entry fields (e.g., ``[{month: "Jan", revenue: 1000}]``).
+        # Live join-reduce: KPI aggregated across joined tables
+        html = '''
+        <div id="kpi"></div>
+        <script>
+          UnifyData.joinReduce({
+            tables: ["Data/Orders", "Data/Products"],
+            join_expr: "Data/Orders.product_id == Data/Products.id",
+            select: {"Data/Orders.amount": "amount",
+                     "Data/Products.category": "category"},
+            metric: "sum",
+            columns: "amount",
+            group_by: ["category"],
+          }).then(result => {
+            let h = "<ul>";
+            for (const [cat, val] of Object.entries(result))
+              h += `<li>${cat}: $${val.toLocaleString()}</li>`;
+            document.getElementById("kpi").innerHTML = h + "</ul>";
+          });
+        </script>
+        '''
+        result = primitives.dashboards.create_tile(
+            html,
+            title="Revenue by Category (Live Join-Reduce)",
+            data_bindings=[
+                JoinReduceBinding(
+                    tables=["Data/Orders", "Data/Products"],
+                    join_expr="Data/Orders.product_id == Data/Products.id",
+                    select={
+                        "Data/Orders.amount": "amount",
+                        "Data/Products.category": "category",
+                    },
+                    metric="sum",
+                    columns="amount",
+                    group_by=["category"],
+                ),
+            ],
+        )
 
-        **Required**:
+        UnifyData JS API Reference
+        --------------------------
+        The live data bridge exposes four methods on ``window.UnifyData``,
+        each mapping to a ``DataManager`` primitive.  Parameter names
+        mirror the Python ``primitives.data.*`` API exactly.
 
-        - ``context`` (string): Unify context path.
-          Example: ``"Data/Sales/Monthly"``
+        **UnifyData.filter(opts)** -> ``Promise<Array<Object>>``
+          Fetch rows from a single context.
 
-        **Optional (core -- mirrors primitives.data.filter)**:
+          Required: ``context`` (string).
+          Optional: ``filter``, ``columns``, ``exclude_columns``,
+          ``order_by``, ``descending``, ``limit``, ``offset``,
+          ``group_by``, ``sorting``, ``column_context``, ``randomize``.
 
-        - ``filter`` (string): Row filter expression.
-          Example: ``"year == 2025 and region == 'US'"``
-        - ``columns`` (string[]): Column names to return.
-          Example: ``["month", "revenue"]``
-        - ``exclude_columns`` (string[]): Column names to omit.
-          Example: ``["internal_id", "raw_data"]``
-        - ``order_by`` (string): Column to sort by.
-          Example: ``"revenue"``
-        - ``descending`` (boolean): Sort direction for ``order_by``.
-          Default: ``false`` (ascending).
-        - ``limit`` (number): Max rows to return (1--1000).
-          Example: ``100``
-        - ``offset`` (number): Row offset for pagination.
-          Example: ``0``
+        **UnifyData.reduce(opts)** -> ``Promise<Any>``
+          Compute an aggregate metric over a single context.
 
-        **Optional (advanced)**:
+          Required: ``context`` (string), ``metric`` (string),
+          ``columns`` (string | string[]).
+          Optional: ``filter``, ``group_by``, ``result_where``.
 
-        - ``sorting`` (object): Multi-column sort as
-          ``{column: "ascending"|"descending"}``.  Overrides
-          ``order_by``/``descending`` when both are present.
-          Example: ``{month: "ascending", revenue: "descending"}``
-        - ``group_by`` (string[]): Group-by fields.
-          Example: ``["region"]``
-        - ``column_context`` (string): Sub-context for column resolution.
-          Example: ``"sub/path"``
-        - ``randomize`` (boolean): Return rows in random order.
+        **UnifyData.join(opts)** -> ``Promise<Array<Object>>``
+          Join two contexts and return rows.
 
-        **Example**::
+          Required: ``tables`` (string[2]), ``join_expr`` (string),
+          ``select`` (object).
+          Optional: ``mode``, ``left_where``, ``right_where``,
+          ``result_where``, ``result_limit``, ``result_offset``.
 
-            UnifyData.query({
-              context: "Data/Sales/Monthly",
-              filter: "year == 2025",
-              columns: ["month", "revenue"],
-              order_by: "month",
-              limit: 500,
-            }).then(rows => {
-              rows.forEach(r => console.log(r.month, r.revenue));
-            });
+        **UnifyData.joinReduce(opts)** -> ``Promise<Any>``
+          Join two contexts and aggregate the result.
+
+          Required: ``tables`` (string[2]), ``join_expr`` (string),
+          ``select`` (object), ``metric`` (string),
+          ``columns`` (string | string[]).
+          Optional: ``mode``, ``left_where``, ``right_where``,
+          ``group_by``, ``result_where``.
 
         Verification-First Pattern (automatic for live data)
         ----------------------------------------------------
-        ``create_tile`` **automatically** validates query params declared
-        in ``data_bindings`` by dry-running each binding through
-        ``DataManager.filter(limit=5)`` before the tile is stored.  If
-        any binding fails (nonexistent context, bad column, invalid
-        filter expression), the tile is **not** stored and
+        ``create_tile`` **automatically** validates each binding through
+        the corresponding ``DataManager`` method before the tile is
+        stored:
+
+        - ``FilterBinding``     -> ``DataManager.filter(limit=5)``
+        - ``ReduceBinding``     -> ``DataManager.reduce(...)``
+        - ``JoinBinding``       -> ``DataManager.filter_join(result_limit=5)``
+        - ``JoinReduceBinding`` -> ``DataManager.reduce_join(...)``
+
+        If any binding fails, the tile is **not** stored and
         ``TileResult.error`` explains the problem.
 
-        To benefit from auto-validation, include the same query params
-        in ``DataBinding`` that the tile's JS code passes to
-        ``UnifyData.query()``:
+        Data mode decision framework
+        ----------------------------
+        BAKED-IN data (embed in HTML) when:
+          - Dataset is small-to-medium (< 10k rows)
+          - Data is a one-time snapshot or static report
+          - Maximum portability desired (self-contained HTML)
 
-        **Pattern**::
+        LIVE ``FilterBinding`` when:
+          - Data is frequently updated, tile should reflect latest state
+          - Dataset is large; fetch only what the tile needs
+          - Simple row-level queries (filter, sort, paginate)
 
-            html = '''...
-            UnifyData.query({
-              context: "Data/Sales/Monthly",
-              filter: "year == 2025",
-              columns: ["month", "revenue"],
-              order_by: "month",
-            }).then(rows => { ... });
-            ...'''
+        LIVE ``ReduceBinding`` when:
+          - Tile shows a KPI, total, average, or other aggregate
+          - Server-side aggregation avoids transferring all rows
 
-            result = primitives.dashboards.create_tile(
-                html,
-                title="Monthly Revenue",
-                data_bindings=[
-                    DataBinding(
-                        context="Data/Sales/Monthly",
-                        filter="year == 2025",
-                        columns=["month", "revenue"],
-                        order_by="month",
-                    ),
-                ],
-            )
-            # If the context or columns are wrong, result.error explains why.
+        LIVE ``JoinBinding`` when:
+          - Tile needs data spanning two related contexts (star schema)
+          - Example: orders joined with customers for a detail table
 
-        For earlier feedback during complex plan generation, you can
-        still pre-verify manually::
-
-            test_rows = primitives.data.filter(
-                "Data/Sales/Monthly",
-                filter="year == 2025",
-                columns=["month", "revenue"],
-                order_by="month",
-                limit=5,
-            )
-
-        The ``UnifyData.query()`` parameter names are intentionally
-        identical to ``primitives.data.filter()`` parameter names so
-        the verification is a direct 1:1 copy of the JS params into
-        the Python binding.
+        LIVE ``JoinReduceBinding`` when:
+          - Tile shows aggregated KPIs across joined contexts
+          - Example: total revenue by product category from orders+products
 
         Anti-patterns
         -------------
@@ -483,10 +574,15 @@ class BaseDashboardManager(BaseStateManager):
           CORRECT: Always include ``include_plotlyjs='cdn'`` -- the iframe
           has no access to locally installed Python packages.
 
-        - WRONG: Using ``UnifyData.query()`` without declaring ``data_bindings``.
-          CORRECT: Always pass ``data_bindings`` listing every context the
-          tile's JS code queries.  Without it, the bridge script is not
+        - WRONG: Using ``UnifyData`` methods without declaring ``data_bindings``.
+          CORRECT: Always pass ``data_bindings`` listing every operation the
+          tile's JS code performs.  Without it, the bridge script is not
           injected and ``UnifyData`` will be undefined.
+
+        - WRONG: Baking in data because the query needs joins or aggregation.
+          CORRECT: Use ``JoinBinding`` / ``ReduceBinding`` /
+          ``JoinReduceBinding`` so the tile fetches live cross-table or
+          aggregated data at render time.
 
         - WRONG: Storing megabytes of data in baked-in HTML for live datasets.
           CORRECT: Use the live data bridge for large or frequently updated
@@ -496,15 +592,9 @@ class BaseDashboardManager(BaseStateManager):
           CORRECT: Always check ``result.succeeded`` before using the URL
           or token.
 
-        - WRONG: Passing ``data_bindings`` with only ``context`` when
-          the tile's JS uses ``filter``, ``columns``, ``order_by``, etc.
-          CORRECT: Include the query params in each ``DataBinding`` so
-          ``create_tile`` can auto-validate them.  Without them, bad
-          params are only caught at render time (no feedback to the actor).
-
-        - WRONG: Using positional arguments ``UnifyData.query(context, filter)``.
+        - WRONG: Using positional arguments ``UnifyData.filter(context, filter)``.
           CORRECT: Always pass a single options object
-          ``UnifyData.query({context: "...", filter: "..."})``.
+          ``UnifyData.filter({context: "...", filter: "..."})``.
 
         - WRONG: Using internal backend param names in JS
           (``filter_expr``, ``from_fields``, ``exclude_fields``).
