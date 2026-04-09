@@ -22,7 +22,12 @@ from unity.dashboard_manager.types.dashboard import (
     DashboardResult,
     TilePosition,
 )
-from unity.dashboard_manager.ops.tile_ops import _contexts_for_binding
+from unity.dashboard_manager.ops.tile_ops import (
+    _contexts_for_binding,
+    ensure_binding_aliases,
+    serialize_bindings,
+    validate_on_data,
+)
 from unity.dashboard_manager.types.tile import (
     DataBinding,
     TileRecord,
@@ -72,16 +77,25 @@ class SimulatedDashboardManager(BaseDashboardManager):
         title: str,
         description: Optional[str] = None,
         data_bindings: Optional[List[DataBinding]] = None,
+        on_data: Optional[str] = None,
     ) -> TileResult:
+        validate_on_data(on_data, data_bindings)
+
         self._tile_counter += 1
         token = f"sim_tile_{self._tile_counter:04d}"
         has_bindings = bool(data_bindings)
         binding_contexts = None
+        bindings_json = None
+
         if data_bindings:
+            if on_data is not None:
+                data_bindings = ensure_binding_aliases(data_bindings)
             all_ctxs: list[str] = []
             for b in data_bindings:
                 all_ctxs.extend(_contexts_for_binding(b))
             binding_contexts = ",".join(dict.fromkeys(all_ctxs))
+            bindings_json = serialize_bindings(data_bindings)
+
         now = datetime.now(timezone.utc).isoformat()
 
         self._tiles[token] = {
@@ -92,6 +106,8 @@ class SimulatedDashboardManager(BaseDashboardManager):
             "html_content": html,
             "has_data_bindings": has_bindings,
             "data_binding_contexts": binding_contexts,
+            "on_data_script": on_data,
+            "data_bindings_json": bindings_json,
             "created_at": now,
             "updated_at": now,
         }
@@ -117,23 +133,57 @@ class SimulatedDashboardManager(BaseDashboardManager):
         html: Optional[str] = None,
         title: Optional[str] = None,
         description: Optional[str] = None,
+        data_bindings: Optional[List[DataBinding]] = None,
+        on_data: Optional[str] = None,
     ) -> TileResult:
         if token not in self._tiles:
             return TileResult(error=f"Tile '{token}' not found")
 
-        data = self._tiles[token]
+        tile_data = self._tiles[token]
         if html is not None:
-            data["html_content"] = html
+            tile_data["html_content"] = html
         if title is not None:
-            data["title"] = title
+            tile_data["title"] = title
         if description is not None:
-            data["description"] = description
-        data["updated_at"] = datetime.now(timezone.utc).isoformat()
+            tile_data["description"] = description
+
+        if data_bindings is not None:
+            if data_bindings:
+                if on_data is not None and on_data != "":
+                    data_bindings = ensure_binding_aliases(data_bindings)
+                all_ctxs: list[str] = []
+                for b in data_bindings:
+                    all_ctxs.extend(_contexts_for_binding(b))
+                tile_data["has_data_bindings"] = True
+                tile_data["data_binding_contexts"] = ",".join(
+                    dict.fromkeys(all_ctxs),
+                )
+                tile_data["data_bindings_json"] = serialize_bindings(
+                    data_bindings,
+                )
+            else:
+                tile_data["has_data_bindings"] = False
+                tile_data["data_binding_contexts"] = None
+                tile_data["data_bindings_json"] = None
+
+        if on_data is not None:
+            if on_data == "":
+                tile_data["on_data_script"] = None
+            else:
+                has_bindings = bool(data_bindings) or tile_data.get(
+                    "has_data_bindings",
+                    False,
+                )
+                if not has_bindings:
+                    validate_on_data(on_data, data_bindings)
+                tile_data["on_data_script"] = on_data
+
+        tile_data["updated_at"] = datetime.now(timezone.utc).isoformat()
 
         return TileResult(
             url=f"https://simulated-console.example.com/tile/view/{token}",
             token=token,
-            title=data["title"],
+            title=tile_data["title"],
         )
 
     @functools.wraps(BaseDashboardManager.delete_tile, updated=())

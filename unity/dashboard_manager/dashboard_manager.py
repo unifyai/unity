@@ -24,7 +24,10 @@ from unity.dashboard_manager.ops.dashboard_ops import (
 )
 from unity.dashboard_manager.ops.tile_ops import (
     build_tile_record_row,
+    ensure_binding_aliases,
+    serialize_bindings,
     validate_data_bindings,
+    validate_on_data,
     verify_data_bindings,
 )
 from unity.dashboard_manager.ops.token_ops import (
@@ -144,10 +147,16 @@ class DashboardManager(BaseDashboardManager):
         title: str,
         description: Optional[str] = None,
         data_bindings: Optional[List[DataBinding]] = None,
+        on_data: Optional[str] = None,
     ) -> TileResult:
         try:
             token = generate_token()
             bindings = validate_data_bindings(data_bindings)
+
+            validate_on_data(on_data, bindings)
+
+            if bindings and on_data is not None:
+                bindings = ensure_binding_aliases(bindings)
 
             if bindings:
                 verify_data_bindings(bindings, self._get_dm())
@@ -158,6 +167,7 @@ class DashboardManager(BaseDashboardManager):
                 title=title,
                 description=description,
                 data_bindings=bindings,
+                on_data=on_data,
             )
 
             dm = self._get_dm()
@@ -194,6 +204,8 @@ class DashboardManager(BaseDashboardManager):
         html: Optional[str] = None,
         title: Optional[str] = None,
         description: Optional[str] = None,
+        data_bindings: Optional[List[DataBinding]] = None,
+        on_data: Optional[str] = None,
     ) -> TileResult:
         try:
             updates: Dict[str, Any] = {
@@ -205,6 +217,41 @@ class DashboardManager(BaseDashboardManager):
                 updates["title"] = title
             if description is not None:
                 updates["description"] = description
+
+            if data_bindings is not None:
+                bindings = validate_data_bindings(data_bindings)
+                if bindings:
+                    if on_data is not None and on_data != "":
+                        bindings = ensure_binding_aliases(bindings)
+                    verify_data_bindings(bindings, self._get_dm())
+                    updates["has_data_bindings"] = True
+                    from unity.dashboard_manager.ops.tile_ops import (
+                        _contexts_for_binding,
+                    )
+
+                    all_ctxs: list[str] = []
+                    for b in bindings:
+                        all_ctxs.extend(_contexts_for_binding(b))
+                    updates["data_binding_contexts"] = ",".join(
+                        dict.fromkeys(all_ctxs),
+                    )
+                    updates["data_bindings_json"] = serialize_bindings(bindings)
+                else:
+                    updates["has_data_bindings"] = False
+                    updates["data_binding_contexts"] = None
+                    updates["data_bindings_json"] = None
+
+            if on_data is not None:
+                if on_data == "":
+                    updates["on_data_script"] = None
+                else:
+                    has_bindings = bool(data_bindings)
+                    if not has_bindings:
+                        existing = self.get_tile(token)
+                        has_bindings = existing.has_data_bindings if existing else False
+                    if not has_bindings:
+                        validate_on_data(on_data, data_bindings)
+                    updates["on_data_script"] = on_data
 
             dm = self._get_dm()
             dm.update_rows(
