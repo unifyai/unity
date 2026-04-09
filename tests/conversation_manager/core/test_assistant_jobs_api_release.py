@@ -94,3 +94,37 @@ class TestReleasePoolVm:
             headers={"Authorization": "Bearer key"},
             timeout=60,
         )
+
+
+class TestStopAssistantSession:
+    """`stop_assistant_session()` should call the Comms session stop contract."""
+
+    @patch("unity.conversation_manager.assistant_jobs_api.requests")
+    def test_stop_assistant_session_posts_to_session_stop_endpoint(self, mock_requests):
+        stop_assistant_session = importlib.import_module(
+            "unity.conversation_manager.assistant_jobs_api",
+        ).stop_assistant_session
+
+        mock_resp = MagicMock()
+        mock_resp.ok = True
+        mock_resp.json.return_value = {
+            "success": True,
+            "assistant_id": "assistant-123",
+            "stopped": True,
+            "desired_state": "Stopped",
+        }
+        mock_requests.post.return_value = mock_resp
+
+        result = stop_assistant_session(
+            comms_url="http://comms:8080",
+            admin_key="key",
+            assistant_id="assistant-123",
+            max_attempts=1,
+        )
+
+        assert result is True
+        mock_requests.post.assert_called_once_with(
+            "http://comms:8080/infra/session/assistant-123/stop",
+            headers={"Authorization": "Bearer key"},
+            timeout=10,
+        )
