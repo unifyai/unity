@@ -27,6 +27,7 @@ from unity.conversation_manager.assistant_jobs_api import (
     get_assistant_logs,
     patch_job_label,
     release_pool_vm,
+    stop_assistant_session,
 )
 from unity.conversation_manager.metrics import (
     session_duration as _m_session_dur,
@@ -197,16 +198,29 @@ def update_liveview_url(assistant_id: str, user_id: str, liveview_url: str) -> N
         )
 
 
-def mark_job_done(job_name: str, inactivity_timeout: float = 0.0):
+def mark_job_done(
+    job_name: str,
+    inactivity_timeout: float = 0.0,
+    shutdown_reason: str | None = None,
+):
     """Mark a job as done, release VM, and record session duration.
+
+    When ``shutdown_reason`` is ``"idle_timeout"``, Unity also asks Comms to
+    stop the current AssistantSession before the Job becomes terminal. This
+    preserves the user's intent to go offline while leaving crash paths on the
+    existing restart behavior.
 
     The job-watcher operator performs crash-safe VM release independently.
     """
-    mark_job_label(job_name, "done")
-
-    assistant_id = str(SESSION_DETAILS.assistant.agent_id)
+    assistant_id_value = SESSION_DETAILS.assistant.agent_id
+    assistant_id = str(assistant_id_value) if assistant_id_value is not None else ""
     comms_url = SETTINGS.conversation.COMMS_URL.rstrip("/")
     admin_key = SETTINGS.ORCHESTRA_ADMIN_KEY.get_secret_value()
+
+    if shutdown_reason == "idle_timeout" and comms_url and admin_key and assistant_id:
+        stop_assistant_session(comms_url, admin_key, assistant_id)
+
+    mark_job_label(job_name, "done")
 
     # U9: session duration (log_job_startup -> mark_job_done), excluding idle tail
     if _session_start_perf is not None:

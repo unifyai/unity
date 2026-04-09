@@ -147,6 +147,7 @@ class ConversationManager(metaclass=SingletonABCMeta):
         self.inactivity_timeout = 420  # 7 minutes in seconds
         self.inactivity_check_interval = 30  # seconds
         self.last_activity_time = self.loop.time()
+        self.shutdown_reason: str | None = None
         self.stop = stop
 
         self.event_broker = event_broker
@@ -1385,6 +1386,7 @@ class ConversationManager(metaclass=SingletonABCMeta):
                         f"(timeout={self.inactivity_timeout}s)"
                     )
                 else:
+                    self.shutdown_reason = "idle_timeout"
                     log_str = f"Inactivity timeout reached ({self.inactivity_timeout}s), requesting shutdown"
                 LOGGER.info(f"{DEFAULT_ICON} {log_str}")
                 self._session_logger.info("session_end", log_str)
@@ -1506,7 +1508,14 @@ class ConversationManager(metaclass=SingletonABCMeta):
                 "session_end",
                 f"Marking job {self.job_name} done",
             )
-            assistant_jobs.mark_job_done(self.job_name, self.inactivity_timeout)
+            mark_done_kwargs = {}
+            if self.shutdown_reason:
+                mark_done_kwargs["shutdown_reason"] = self.shutdown_reason
+            assistant_jobs.mark_job_done(
+                self.job_name,
+                self.inactivity_timeout,
+                **mark_done_kwargs,
+            )
         self.stop.set()
 
     async def _stop_file_sync(self) -> None:

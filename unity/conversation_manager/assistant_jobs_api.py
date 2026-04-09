@@ -22,6 +22,7 @@ import unify
 log = logging.getLogger(__name__)
 
 VM_RELEASE_ATTEMPTS = 3
+SESSION_STOP_ATTEMPTS = 3
 
 PROJECT_NAME = "AssistantJobs"
 CONTEXT = "startup_events"
@@ -198,3 +199,60 @@ def release_pool_vm(
             log.exception("Error releasing pool VM for %s", assistant_id)
             traceback.print_exc()
             return
+
+
+def stop_assistant_session(
+    comms_url: str,
+    admin_key: str,
+    assistant_id: str,
+    max_attempts: int = SESSION_STOP_ATTEMPTS,
+) -> bool:
+    """Ask Comms to transition the assistant session intent offline.
+
+    Unity uses this before a normal inactivity shutdown so the controller can
+    distinguish an intentional "go offline" transition from a crash that
+    should be restarted.
+    """
+    headers = {"Authorization": f"Bearer {admin_key}"}
+
+    for attempt in range(1, max_attempts + 1):
+        try:
+            resp = requests.post(
+                f"{comms_url}/infra/session/{assistant_id}/stop",
+                headers=headers,
+                timeout=10,
+            )
+            if resp.ok:
+                try:
+                    body = resp.json()
+                except ValueError:
+                    body = {}
+                log.info(
+                    "Assistant session stop accepted for %s: %s",
+                    assistant_id,
+                    body,
+                )
+                return True
+
+            if resp.status_code >= 500 and attempt < max_attempts:
+                log.warning(
+                    "Assistant session stop got %d for %s, retrying (%d/%d)",
+                    resp.status_code,
+                    assistant_id,
+                    attempt,
+                    max_attempts,
+                )
+                time.sleep(attempt)
+                continue
+
+            log.error(
+                "Failed to stop assistant session for %s: %d %s",
+                assistant_id,
+                resp.status_code,
+                resp.text,
+            )
+            return False
+        except Exception:
+            log.exception("Error stopping assistant session for %s", assistant_id)
+            traceback.print_exc()
+            return False
