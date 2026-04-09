@@ -17,7 +17,7 @@ from __future__ import annotations
 
 from unity.dashboard_manager.dashboard_manager import DashboardManager
 from unity.dashboard_manager.types.dashboard import TilePosition
-from unity.dashboard_manager.types.tile import DataBinding
+from unity.dashboard_manager.types.tile import FilterBinding
 from unity.manager_registry import ManagerRegistry
 from tests.helpers import _handle_project
 
@@ -64,8 +64,8 @@ def test_create_tile_with_data_bindings():
         "<div id='chart'>Loading...</div>",
         title="Live Chart",
         data_bindings=[
-            DataBinding(context="Data/monthly_stats"),
-            DataBinding(context="Data/revenue", alias="rev"),
+            FilterBinding(context="Data/monthly_stats"),
+            FilterBinding(context="Data/revenue", alias="rev"),
         ],
     )
 
@@ -82,7 +82,7 @@ def test_create_tile_rejects_invalid_binding_context():
         "<div>chart</div>",
         title="Bad Context Tile",
         data_bindings=[
-            DataBinding(
+            FilterBinding(
                 context="Data/NonexistentContext/DoesNotExist",
                 columns=["foo"],
             ),

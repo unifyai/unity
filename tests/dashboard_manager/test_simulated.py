@@ -1,6 +1,11 @@
 """Tests for SimulatedDashboardManager -- full CRUD coverage."""
 
-from unity.dashboard_manager.types.tile import DataBinding
+from unity.dashboard_manager.types.tile import (
+    FilterBinding,
+    JoinBinding,
+    JoinReduceBinding,
+    ReduceBinding,
+)
 from unity.dashboard_manager.types.dashboard import TilePosition
 
 
@@ -11,29 +16,29 @@ class TestSimulatedTileCRUD:
         assert result.token is not None
         assert "tile/view/" in result.url
 
-    def test_create_tile_with_bindings(self, simulated_dm):
+    def test_create_tile_with_filter_binding(self, simulated_dm):
         result = simulated_dm.create_tile(
             "<div></div>",
             title="Live Tile",
-            data_bindings=[DataBinding(context="Data/Sales")],
+            data_bindings=[FilterBinding(context="Data/Sales")],
         )
         assert result.succeeded
         tile = simulated_dm.get_tile(result.token)
         assert tile.has_data_bindings is True
         assert "Data/Sales" in tile.data_binding_contexts
 
-    def test_create_tile_with_enriched_bindings(self, simulated_dm):
+    def test_create_tile_with_enriched_filter_bindings(self, simulated_dm):
         result = simulated_dm.create_tile(
             "<div>chart</div>",
             title="Enriched Tile",
             data_bindings=[
-                DataBinding(
+                FilterBinding(
                     context="Data/Sales/Monthly",
                     columns=["month", "revenue"],
                     order_by="month",
                     filter="year == 2025",
                 ),
-                DataBinding(
+                FilterBinding(
                     context="Data/Products",
                     alias="products",
                     exclude_columns=["internal_id"],
@@ -46,6 +51,87 @@ class TestSimulatedTileCRUD:
         assert tile.has_data_bindings is True
         assert "Data/Sales/Monthly" in tile.data_binding_contexts
         assert "Data/Products" in tile.data_binding_contexts
+
+    def test_create_tile_with_reduce_binding(self, simulated_dm):
+        result = simulated_dm.create_tile(
+            "<div>kpi</div>",
+            title="KPI Tile",
+            data_bindings=[
+                ReduceBinding(
+                    context="Data/Sales",
+                    metric="sum",
+                    columns="revenue",
+                ),
+            ],
+        )
+        assert result.succeeded
+        tile = simulated_dm.get_tile(result.token)
+        assert tile.has_data_bindings is True
+        assert "Data/Sales" in tile.data_binding_contexts
+
+    def test_create_tile_with_join_binding(self, simulated_dm):
+        result = simulated_dm.create_tile(
+            "<div>joined</div>",
+            title="Join Tile",
+            data_bindings=[
+                JoinBinding(
+                    tables=["Data/Orders", "Data/Customers"],
+                    join_expr="Data/Orders.cust_id == Data/Customers.id",
+                    select={
+                        "Data/Orders.amount": "amount",
+                        "Data/Customers.name": "name",
+                    },
+                ),
+            ],
+        )
+        assert result.succeeded
+        tile = simulated_dm.get_tile(result.token)
+        assert tile.has_data_bindings is True
+        assert "Data/Orders" in tile.data_binding_contexts
+        assert "Data/Customers" in tile.data_binding_contexts
+
+    def test_create_tile_with_join_reduce_binding(self, simulated_dm):
+        result = simulated_dm.create_tile(
+            "<div>aggregated</div>",
+            title="Join-Reduce Tile",
+            data_bindings=[
+                JoinReduceBinding(
+                    tables=["Data/Orders", "Data/Products"],
+                    join_expr="Data/Orders.pid == Data/Products.id",
+                    select={"Data/Orders.amount": "amount", "Data/Products.cat": "cat"},
+                    metric="sum",
+                    columns="amount",
+                    group_by=["cat"],
+                ),
+            ],
+        )
+        assert result.succeeded
+        tile = simulated_dm.get_tile(result.token)
+        assert tile.has_data_bindings is True
+        assert "Data/Orders" in tile.data_binding_contexts
+        assert "Data/Products" in tile.data_binding_contexts
+
+    def test_create_tile_with_mixed_bindings(self, simulated_dm):
+        result = simulated_dm.create_tile(
+            "<div>mixed</div>",
+            title="Mixed Bindings Tile",
+            data_bindings=[
+                FilterBinding(context="Data/Sales", columns=["month"]),
+                ReduceBinding(context="Data/Sales", metric="count", columns="id"),
+                JoinBinding(
+                    tables=["Data/A", "Data/B"],
+                    join_expr="Data/A.id == Data/B.fk",
+                    select={"Data/A.x": "x"},
+                ),
+            ],
+        )
+        assert result.succeeded
+        tile = simulated_dm.get_tile(result.token)
+        assert tile.has_data_bindings is True
+        ctxs = tile.data_binding_contexts
+        assert "Data/Sales" in ctxs
+        assert "Data/A" in ctxs
+        assert "Data/B" in ctxs
 
     def test_get_tile(self, simulated_dm):
         result = simulated_dm.create_tile("<p>Hello</p>", title="Get Test")
