@@ -1649,6 +1649,27 @@ class ConversationManagerBrainActionTools:
                 "message": "No active Google Meet session to leave.",
             }
 
+        # Stop the browser agent immediately so the assistant disappears
+        # from the Meet before the event handler's full cleanup pipeline.
+        session_id = self._cm.call_manager._gmeet_session_id
+        if session_id:
+            import aiohttp
+
+            from unity.session_details import SESSION_DETAILS
+
+            try:
+                async with aiohttp.ClientSession() as session:
+                    await session.post(
+                        "http://localhost:3000/googlemeet/leave",
+                        json={"sessionId": session_id},
+                        headers={
+                            "authorization": f"Bearer {SESSION_DETAILS.unify_key}",
+                        },
+                        timeout=aiohttp.ClientTimeout(total=30),
+                    )
+            except Exception:
+                pass
+
         from unity.conversation_manager.events import GoogleMeetEnded
 
         contact = self._cm.call_manager._disconnect_contact or {}
