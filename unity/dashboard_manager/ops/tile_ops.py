@@ -5,6 +5,9 @@ Helper functions for building tile records and validating data bindings.
 
 from __future__ import annotations
 
+import json
+import logging
+import re
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, List, Optional, Sequence, Union
 
@@ -19,8 +22,11 @@ from unity.dashboard_manager.types.tile import (
 if TYPE_CHECKING:
     from unity.data_manager.base import BaseDataManager
 
+logger = logging.getLogger(__name__)
 
 AnyBinding = Union[FilterBinding, ReduceBinding, JoinBinding, JoinReduceBinding]
+
+_JS_IDENTIFIER_RE = re.compile(r"^[a-zA-Z_$][a-zA-Z0-9_$]*$")
 
 
 def _contexts_for_binding(binding: AnyBinding) -> List[str]:
@@ -30,21 +36,102 @@ def _contexts_for_binding(binding: AnyBinding) -> List[str]:
     return list(binding.tables)
 
 
+def _alias_from_context(context: str) -> str:
+    """Derive a JS-safe alias from a context path (last segment, sanitised)."""
+    segment = context.rsplit("/", 1)[-1]
+    alias = re.sub(r"[^a-zA-Z0-9_$]", "_", segment).lower()
+    if alias and alias[0].isdigit():
+        alias = f"_{alias}"
+    return alias or "binding"
+
+
+def serialize_bindings(bindings: Sequence[AnyBinding]) -> str:
+    """Serialize a list of data bindings to a JSON string."""
+    return json.dumps(
+        [b.model_dump(mode="json") for b in bindings],
+        separators=(",", ":"),
+    )
+
+
+def ensure_binding_aliases(
+    bindings: Sequence[AnyBinding],
+) -> List[AnyBinding]:
+    """Return a copy of *bindings* where every binding has an alias.
+
+    Auto-generates aliases from the context path (last segment) for
+    single-context bindings, or ``binding_{i}`` for joins.  Raises
+    ``ValueError`` on duplicate aliases.
+    """
+    result: List[AnyBinding] = []
+    seen: dict[str, int] = {}
+    for i, b in enumerate(bindings):
+        alias = b.alias
+        if not alias:
+            if isinstance(b, (FilterBinding, ReduceBinding)):
+                alias = _alias_from_context(b.context)
+            else:
+                alias = f"binding_{i}"
+            b = b.model_copy(update={"alias": alias})
+        if not _JS_IDENTIFIER_RE.match(alias):
+            raise ValueError(
+                f"alias '{alias}' is not a valid JS identifier "
+                "(must match [a-zA-Z_$][a-zA-Z0-9_$]*)",
+            )
+        if alias in seen:
+            raise ValueError(
+                f"duplicate alias '{alias}' on bindings {seen[alias]} and {i}",
+            )
+        seen[alias] = i
+        result.append(b)
+    return result
+
+
+def validate_on_data(
+    on_data: Optional[str],
+    data_bindings: Optional[Sequence[AnyBinding]],
+) -> None:
+    """Enforce runtime constraints on the ``on_data`` / ``data_bindings`` pair.
+
+    Raises ``ValueError`` when the combination is invalid.
+    """
+    if on_data is None:
+        return
+
+    if not on_data.strip():
+        raise ValueError("on_data must be non-empty JS code or None")
+
+    if not data_bindings:
+        raise ValueError(
+            "on_data requires data_bindings -- there is no data to feed "
+            "the callback without declared bindings",
+        )
+
+    if "UnifyData." in on_data:
+        logger.warning(
+            "on_data contains 'UnifyData.' -- this is likely a mistake. "
+            "on_data receives already-fetched data; bridge calls inside "
+            "on_data would be redundant.",
+        )
+
+
 def build_tile_record_row(
     token: str,
     html: str,
     title: str,
     description: Optional[str] = None,
     data_bindings: Optional[Sequence[AnyBinding]] = None,
+    on_data: Optional[str] = None,
 ) -> TileRecordRow:
     """Build a TileRecordRow ready for insertion into the Unify context."""
     has_bindings = bool(data_bindings)
     binding_contexts: Optional[str] = None
+    bindings_json: Optional[str] = None
     if data_bindings:
         all_ctxs: List[str] = []
         for b in data_bindings:
             all_ctxs.extend(_contexts_for_binding(b))
         binding_contexts = ",".join(dict.fromkeys(all_ctxs))
+        bindings_json = serialize_bindings(data_bindings)
     now = datetime.now(timezone.utc).isoformat()
 
     return TileRecordRow(
@@ -54,6 +141,8 @@ def build_tile_record_row(
         html_content=html,
         has_data_bindings=has_bindings,
         data_binding_contexts=binding_contexts,
+        on_data_script=on_data,
+        data_bindings_json=bindings_json,
         created_at=now,
         updated_at=now,
     )

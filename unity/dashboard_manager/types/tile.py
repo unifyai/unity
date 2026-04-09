@@ -17,13 +17,10 @@ from pydantic import BaseModel, ConfigDict, Field
 
 
 class FilterBinding(BaseModel):
-    """Single-context filter query -- ``UnifyData.filter()`` -> ``DM.filter()``.
+    """Single-context row fetch, validated via ``DataManager.filter(limit=5)``.
 
     Declares a live data source that fetches rows from a single Unify context
     with optional filtering, column selection, sorting, and pagination.
-
-    Validated at tile creation time by dry-running through
-    ``DataManager.filter(limit=5)``.
     """
 
     operation: Literal["filter"] = "filter"
@@ -40,13 +37,10 @@ class FilterBinding(BaseModel):
 
 
 class ReduceBinding(BaseModel):
-    """Single-context aggregation -- ``UnifyData.reduce()`` -> ``DM.reduce()``.
+    """Single-context aggregation, validated via ``DataManager.reduce()``.
 
     Declares a live data source that computes an aggregate metric (count, sum,
     avg, min, max, etc.) over a single Unify context, optionally grouped.
-
-    Validated at tile creation time by dry-running through
-    ``DataManager.reduce()``.
     """
 
     operation: Literal["reduce"] = "reduce"
@@ -60,13 +54,10 @@ class ReduceBinding(BaseModel):
 
 
 class JoinBinding(BaseModel):
-    """Cross-context join -- ``UnifyData.join()`` -> ``DM.filter_join()``.
+    """Cross-context join, validated via ``DataManager.filter_join(result_limit=5)``.
 
     Declares a live data source that joins two Unify contexts and returns
     the resulting rows with optional post-join filtering and pagination.
-
-    Validated at tile creation time by dry-running through
-    ``DataManager.filter_join(result_limit=5)``.
     """
 
     operation: Literal["join"] = "join"
@@ -83,13 +74,10 @@ class JoinBinding(BaseModel):
 
 
 class JoinReduceBinding(BaseModel):
-    """Cross-context join + aggregation -- ``UnifyData.joinReduce()`` -> ``DM.reduce_join()``.
+    """Cross-context join + aggregation, validated via ``DataManager.reduce_join()``.
 
     Declares a live data source that joins two Unify contexts and computes
     an aggregate metric over the joined result, optionally grouped.
-
-    Validated at tile creation time by dry-running through
-    ``DataManager.reduce_join()``.
     """
 
     operation: Literal["join_reduce"] = "join_reduce"
@@ -135,11 +123,27 @@ class TileRecordRow(BaseModel):
     )
     has_data_bindings: bool = Field(
         default=False,
-        description="Whether the tile uses UnifyData for live data",
+        description="Whether the tile uses the live data bridge",
     )
     data_binding_contexts: Optional[str] = Field(
         default=None,
         description="Comma-separated Unify context paths for data bindings",
+    )
+    on_data_script: Optional[str] = Field(
+        default=None,
+        description=(
+            "JS code block executed with a `data` variable in scope. "
+            "Console wraps this as (function(data){ ... })(results) after "
+            "auto-executing the serialized data bindings."
+        ),
+    )
+    data_bindings_json: Optional[str] = Field(
+        default=None,
+        description=(
+            "JSON-serialized list of binding dicts (each with an `operation` "
+            "discriminator). Console reads this to auto-generate bridge "
+            "calls at render time."
+        ),
     )
     created_at: Optional[str] = Field(
         default=None,
