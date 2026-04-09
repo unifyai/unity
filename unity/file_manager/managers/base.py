@@ -879,7 +879,7 @@ class BaseFileManager(BaseStateManager):
         result_where: Optional[str] = None,
         result_limit: int = 100,
         result_offset: int = 0,
-    ) -> Dict[str, List[Dict[str, Any]]]:
+    ) -> List[Dict[str, Any]]:
         """
         Join two sources and return rows from the joined result with optional filtering.
 
@@ -914,8 +914,8 @@ class BaseFileManager(BaseStateManager):
 
         Returns
         -------
-        dict[str, list[dict[str, Any]]]
-            Rows from the materialized join context.
+        list[dict[str, Any]]
+            Rows from the joined result.
 
         Usage Examples
         --------------
@@ -1076,7 +1076,7 @@ class BaseFileManager(BaseStateManager):
         result_where: Optional[str] = None,
         result_limit: int = 100,
         result_offset: int = 0,
-    ) -> Dict[str, List[Dict[str, Any]]]:
+    ) -> List[Dict[str, Any]]:
         """
         Chain multiple joins, then return rows from the final joined result.
 
@@ -1100,8 +1100,8 @@ class BaseFileManager(BaseStateManager):
 
         Returns
         -------
-        dict[str, list[dict[str, Any]]]
-            Rows from the final materialized context.
+        list[dict[str, Any]]
+            Rows from the final joined result.
 
         Usage Examples
         --------------

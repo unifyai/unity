@@ -1164,7 +1164,7 @@ class FileManager(BaseFileManager):
         result_where: Optional[str] = None,
         result_limit: int = 100,
         result_offset: int = 0,
-    ) -> Dict[str, List[Dict[str, Any]]]:
+    ) -> List[Dict[str, Any]]:
         # Resolve table references to full context paths
         resolved_tables = self._resolve_table_refs(tables)
 
@@ -1221,7 +1221,7 @@ class FileManager(BaseFileManager):
         result_where: Optional[str] = None,
         result_limit: int = 100,
         result_offset: int = 0,
-    ) -> Dict[str, List[Dict[str, Any]]]:
+    ) -> List[Dict[str, Any]]:
         # Resolve table references in all join steps
         resolved_joins = self._resolve_joins_table_refs(joins)
 
