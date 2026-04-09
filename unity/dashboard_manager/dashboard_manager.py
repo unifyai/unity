@@ -25,6 +25,7 @@ from unity.dashboard_manager.ops.dashboard_ops import (
 from unity.dashboard_manager.ops.tile_ops import (
     build_tile_record_row,
     ensure_binding_aliases,
+    resolve_binding_contexts,
     serialize_bindings,
     validate_data_bindings,
     validate_on_data,
@@ -159,6 +160,7 @@ class DashboardManager(BaseDashboardManager):
                 bindings = ensure_binding_aliases(bindings)
 
             if bindings:
+                bindings = resolve_binding_contexts(bindings)
                 verify_data_bindings(bindings, self._get_dm())
 
             row = build_tile_record_row(
@@ -223,6 +225,7 @@ class DashboardManager(BaseDashboardManager):
                 if bindings:
                     if on_data is not None and on_data != "":
                         bindings = ensure_binding_aliases(bindings)
+                    bindings = resolve_binding_contexts(bindings)
                     verify_data_bindings(bindings, self._get_dm())
                     updates["has_data_bindings"] = True
                     from unity.dashboard_manager.ops.tile_ops import (

@@ -25,6 +25,7 @@ from unity.dashboard_manager.types.dashboard import (
 from unity.dashboard_manager.ops.tile_ops import (
     _contexts_for_binding,
     ensure_binding_aliases,
+    resolve_binding_contexts,
     serialize_bindings,
     validate_on_data,
 )
@@ -90,6 +91,10 @@ class SimulatedDashboardManager(BaseDashboardManager):
         if data_bindings:
             if on_data is not None:
                 data_bindings = ensure_binding_aliases(data_bindings)
+            try:
+                data_bindings = resolve_binding_contexts(data_bindings)
+            except Exception:
+                pass
             all_ctxs: list[str] = []
             for b in data_bindings:
                 all_ctxs.extend(_contexts_for_binding(b))
@@ -151,6 +156,10 @@ class SimulatedDashboardManager(BaseDashboardManager):
             if data_bindings:
                 if on_data is not None and on_data != "":
                     data_bindings = ensure_binding_aliases(data_bindings)
+                try:
+                    data_bindings = resolve_binding_contexts(data_bindings)
+                except Exception:
+                    pass
                 all_ctxs: list[str] = []
                 for b in data_bindings:
                     all_ctxs.extend(_contexts_for_binding(b))
