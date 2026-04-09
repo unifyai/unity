@@ -1943,9 +1943,12 @@ class KnowledgeManager(BaseKnowledgeManager):
         result_where: Optional[str] = None,
         result_limit: int = 100,
         result_offset: int = 0,
-    ) -> Dict[str, List[Dict[str, Any]]]:
+    ) -> List[Dict[str, Any]]:
         """
         Join two tables and return rows from the joined result with optional filtering.
+
+        Delegates to DataManager.filter_join via a single server-side
+        round-trip; no temporary context is created.
 
         Parameters
         ----------
@@ -2010,9 +2013,12 @@ class KnowledgeManager(BaseKnowledgeManager):
         result_where: Optional[str] = None,
         result_limit: int = 100,
         result_offset: int = 0,
-    ) -> Dict[str, List[Dict[str, Any]]]:
+    ) -> List[Dict[str, Any]]:
         """
         Chain together multiple joins, then return rows from the final joined result.
+
+        Delegates to DataManager.filter_multi_join; temporary contexts
+        are managed internally and cleaned up automatically.
 
         Parameters
         ----------
