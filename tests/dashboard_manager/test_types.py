@@ -487,6 +487,40 @@ class TestMatchContext:
         with pytest.raises(ValueError, match="No context found"):
             _match_context("Nonexistent/Table", BASE, KNOWN_CONTEXTS)
 
+    @pytest.mark.parametrize(
+        "path, expected_suffix",
+        [
+            (
+                "Data/MidlandHeart/Repairs/Facts/Appointments",
+                "Data/MidlandHeart/Repairs/Facts/Appointments",
+            ),
+            (
+                "MidlandHeart/Repairs/Facts/Appointments",
+                "Data/MidlandHeart/Repairs/Facts/Appointments",
+            ),
+        ],
+        ids=["root-relative-with-aggregation", "manager-relative-with-aggregation"],
+    )
+    def test_suffix_prefers_base_scoped_over_aggregation(self, path, expected_suffix):
+        """When All/ and {user}/All/ aggregation contexts coexist with the
+        base-scoped context, the base-scoped one wins."""
+        contexts_with_aggregation = {
+            f"{BASE}/Data/MidlandHeart/Repairs/Facts/Appointments",
+            f"All/Data/MidlandHeart/Repairs/Facts/Appointments",
+            "uid-abc/All/Data/MidlandHeart/Repairs/Facts/Appointments",
+        }
+        result = _match_context(path, BASE, contexts_with_aggregation)
+        assert result == f"{BASE}/{expected_suffix}"
+
+    def test_suffix_still_ambiguous_within_base_scope(self):
+        """Two contexts under base/ with the same suffix should still raise."""
+        ambiguous_base_scoped = {
+            f"{BASE}/Data/ProjectA/Orders",
+            f"{BASE}/Data/ProjectB/Orders",
+        }
+        with pytest.raises(ValueError, match="Ambiguous context"):
+            _match_context("Orders", BASE, ambiguous_base_scoped)
+
     def test_ambiguous_match_raises(self):
         ambiguous_known = {
             f"{BASE}/Data/ProjectA/Orders",

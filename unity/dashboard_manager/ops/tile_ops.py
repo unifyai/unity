@@ -46,12 +46,17 @@ def _match_context(path: str, base: str, known: set[str]) -> str:
     1. **Exact match** -- path is already fully qualified.
     2. **Base-prefixed** -- ``{base}/{path}`` exists (handles root-relative
        forms like ``Data/Sales`` or ``Contacts``).
-    3. **Suffix match** -- exactly one known context ends with ``/{path}``
-       (handles manager-relative forms like ``MidlandHeart/Repairs/...``).
+    3. **Suffix match** -- all known contexts ending with ``/{path}`` are
+       collected.  Base-scoped candidates (starting with ``{base}/``) are
+       preferred over aggregation contexts (``All/...``, ``{user}/All/...``)
+       so that a short relative path like ``MidlandHeart/Repairs/...``
+       resolves to the assistant's own context, not a cross-assistant or
+       global aggregation view.  If after scoping exactly one candidate
+       remains, it is returned; otherwise the full set is checked.
     4. **No match** -- raises ``ValueError``.
 
     Raises ``ValueError`` on ambiguous suffix matches (more than one
-    candidate) so the actor must provide a more specific path.
+    candidate after scoping) so the actor must provide a more specific path.
     """
     path = path.strip().lstrip("/")
     if not path:
@@ -69,6 +74,10 @@ def _match_context(path: str, base: str, known: set[str]) -> str:
     if len(matches) == 1:
         return matches[0]
     if len(matches) > 1:
+        base_prefix = f"{base}/"
+        scoped = [c for c in matches if c.startswith(base_prefix)]
+        if len(scoped) == 1:
+            return scoped[0]
         raise ValueError(
             f"Ambiguous context '{path}' matches multiple contexts: {matches}",
         )
