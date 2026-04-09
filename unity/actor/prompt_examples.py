@@ -1019,7 +1019,7 @@ def get_primitives_dashboards_baked_in_example() -> str:
 #     - Dataset is small-to-medium (< 10k rows)
 #     - Data is a one-time snapshot or static report
 #     - Maximum portability desired (self-contained HTML)
-#   LIVE DATA BRIDGE (UnifyData.query()) when:
+#   LIVE DATA BRIDGE (UnifyData.filter/reduce/join/joinReduce) when:
 #     - Dataset is large or frequently updated
 #     - Tile should always reflect current data
 #     - Declare data_bindings so the live data bridge is activated
@@ -1088,20 +1088,17 @@ async def visualize_task_priority_distribution() -> str:
 def get_primitives_dashboards_live_data_example() -> str:
     """Example: live data bridge tiles via ``primitives.dashboards``.
 
-    Demonstrates the auto-validation pattern: include query params in
-    DataBinding so create_tile dry-runs them through DataManager.filter()
-    before storing the tile.  For earlier feedback during complex plans,
-    you can still pre-verify manually with primitives.data.filter().
+    Demonstrates FilterBinding for simple row queries and ReduceBinding
+    for live aggregation KPIs.  Each binding type is auto-validated
+    through the corresponding DataManager method before the tile is stored.
     """
 
     return '''
-# Example: Custom HTML table with live data bridge
-# Include query params in DataBinding so create_tile auto-validates them
-# against the real backend before storing the tile.  If a context or
-# column is wrong, result.error reports the problem immediately.
+# Example: Custom HTML table with live data bridge (FilterBinding)
+# create_tile auto-validates filter bindings via DataManager.filter(limit=5).
 async def live_revenue_table() -> str:
-    """Create a tile that fetches live data at render time."""
-    from unity.dashboard_manager.types.tile import DataBinding
+    """Create a tile that fetches live rows at render time."""
+    from unity.dashboard_manager.types.tile import FilterBinding
 
     html = """<!DOCTYPE html>
 <html><head>
@@ -1119,7 +1116,7 @@ async def live_revenue_table() -> str:
   <tbody><tr><td colspan="2">Loading...</td></tr></tbody>
 </table>
 <script>
-UnifyData.query({
+UnifyData.filter({
   context: "Data/Sales/Monthly",
   columns: ["month", "revenue"],
   order_by: "month",
@@ -1135,16 +1132,155 @@ UnifyData.query({
 </script>
 </body></html>"""
 
-    # create_tile auto-validates the query params in data_bindings
-    # by dry-running each binding through DataManager.filter(limit=5).
     result = await primitives.dashboards.create_tile(
         html,
         title="Monthly Revenue (Live)",
         data_bindings=[
-            DataBinding(
+            FilterBinding(
                 context="Data/Sales/Monthly",
                 columns=["month", "revenue"],
                 order_by="month",
+            ),
+        ],
+    )
+    return result.url if result.succeeded else f"Failed: {result.error}"
+
+# Example: Live KPI card using ReduceBinding for server-side aggregation
+# create_tile auto-validates reduce bindings via DataManager.reduce().
+async def live_kpi_card() -> str:
+    """Create a KPI tile that computes totals at render time."""
+    from unity.dashboard_manager.types.tile import ReduceBinding
+
+    html = """<!DOCTYPE html>
+<html><body style="margin:0;padding:24px;font-family:system-ui;">
+<div id="kpi" style="text-align:center;">
+  <div style="color:#888;font-size:14px;">Total Revenue</div>
+  <div id="val" style="font-size:48px;font-weight:700;">Loading...</div>
+</div>
+<script>
+UnifyData.reduce({
+  context: "Data/Sales/Monthly",
+  metric: "sum",
+  columns: "revenue",
+}).then(val => {
+  document.getElementById("val").textContent = "$" + Number(val).toLocaleString();
+});
+</script>
+</body></html>"""
+
+    result = await primitives.dashboards.create_tile(
+        html,
+        title="Revenue KPI (Live)",
+        data_bindings=[
+            ReduceBinding(
+                context="Data/Sales/Monthly",
+                metric="sum",
+                columns="revenue",
+            ),
+        ],
+    )
+    return result.url if result.succeeded else f"Failed: {result.error}"
+'''
+
+
+def get_primitives_dashboards_rich_live_data_example() -> str:
+    """Example: join and join-reduce live data tiles via ``primitives.dashboards``.
+
+    Demonstrates JoinBinding for cross-table row queries and
+    JoinReduceBinding for cross-table aggregation KPIs.
+    """
+
+    return '''
+# Example: Live join table using JoinBinding
+# create_tile auto-validates join bindings via DataManager.filter_join(result_limit=5).
+async def live_order_details() -> str:
+    """Create a tile that joins orders with customers at render time."""
+    from unity.dashboard_manager.types.tile import JoinBinding
+
+    html = """<!DOCTYPE html>
+<html><head>
+<style>
+  body { font-family: system-ui, sans-serif; padding: 16px; margin: 0; }
+  table { border-collapse: collapse; width: 100%; }
+  th, td { border: 1px solid #e5e7eb; padding: 10px 12px; text-align: left; }
+  th { background: #f9fafb; font-weight: 600; }
+</style>
+</head><body>
+<h2 style="margin-top:0">Order Details (Live Join)</h2>
+<table id="tbl">
+  <thead><tr><th>Customer</th><th>Amount</th></tr></thead>
+  <tbody><tr><td colspan="2">Loading...</td></tr></tbody>
+</table>
+<script>
+UnifyData.join({
+  tables: ["Data/Orders", "Data/Customers"],
+  join_expr: "Data/Orders.customer_id == Data/Customers.id",
+  select: {"Data/Orders.amount": "amount", "Data/Customers.name": "customer"},
+  result_limit: 200,
+}).then(rows => {
+  const tbody = document.querySelector("#tbl tbody");
+  tbody.innerHTML = "";
+  rows.forEach(r => {
+    const tr = document.createElement("tr");
+    tr.innerHTML = `<td>${r.customer}</td><td>$${Number(r.amount).toLocaleString()}</td>`;
+    tbody.appendChild(tr);
+  });
+});
+</script>
+</body></html>"""
+
+    result = await primitives.dashboards.create_tile(
+        html,
+        title="Order Details (Live Join)",
+        data_bindings=[
+            JoinBinding(
+                tables=["Data/Orders", "Data/Customers"],
+                join_expr="Data/Orders.customer_id == Data/Customers.id",
+                select={"Data/Orders.amount": "amount", "Data/Customers.name": "customer"},
+                result_limit=200,
+            ),
+        ],
+    )
+    return result.url if result.succeeded else f"Failed: {result.error}"
+
+# Example: Live KPI via JoinReduceBinding -- aggregation across joined tables
+# create_tile auto-validates join-reduce bindings via DataManager.reduce_join().
+async def live_revenue_by_category() -> str:
+    """KPI card: total revenue per product category from orders+products."""
+    from unity.dashboard_manager.types.tile import JoinReduceBinding
+
+    html = """<!DOCTYPE html>
+<html><body style="margin:0;padding:24px;font-family:system-ui;">
+<h2 style="margin-top:0">Revenue by Category</h2>
+<div id="kpi">Loading...</div>
+<script>
+UnifyData.joinReduce({
+  tables: ["Data/Orders", "Data/Products"],
+  join_expr: "Data/Orders.product_id == Data/Products.id",
+  select: {"Data/Orders.amount": "amount", "Data/Products.category": "category"},
+  metric: "sum",
+  columns: "amount",
+  group_by: ["category"],
+}).then(result => {
+  let h = "<ul style='list-style:none;padding:0;'>";
+  for (const [cat, val] of Object.entries(result))
+    h += `<li style="margin:8px 0;font-size:18px;"><strong>${cat}:</strong> $${Number(val).toLocaleString()}</li>`;
+  document.getElementById("kpi").innerHTML = h + "</ul>";
+});
+</script>
+</body></html>"""
+
+    result = await primitives.dashboards.create_tile(
+        html,
+        title="Revenue by Category (Live Join-Reduce)",
+        data_bindings=[
+            JoinReduceBinding(
+                tables=["Data/Orders", "Data/Products"],
+                join_expr="Data/Orders.product_id == Data/Products.id",
+                select={"Data/Orders.amount": "amount", "Data/Products.category": "category"},
+                metric="sum",
+                columns="amount",
+                group_by=["category"],
             ),
         ],
     )
@@ -1707,6 +1843,7 @@ def get_example_function_map() -> dict[str, callable]:
         # Dashboards
         "get_primitives_dashboards_baked_in_example": get_primitives_dashboards_baked_in_example,
         "get_primitives_dashboards_live_data_example": get_primitives_dashboards_live_data_example,
+        "get_primitives_dashboards_rich_live_data_example": get_primitives_dashboards_rich_live_data_example,
         "get_primitives_dashboards_composition_example": get_primitives_dashboards_composition_example,
     }
 

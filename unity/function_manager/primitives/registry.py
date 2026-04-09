@@ -113,11 +113,14 @@ _MANAGER_SPECS: tuple[ManagerSpec, ...] = (
         special_note=(
             "Generate HTML in Python (Plotly, Bokeh, matplotlib, custom HTML) "
             "then pass to create_tile(). Compose tiles into dashboards with "
-            "create_dashboard(). Supports baked-in data and live data bridge. "
-            "For live-data tiles, include query params (filter, columns, "
-            "order_by, etc.) in each DataBinding so create_tile auto-validates "
-            "them via DataManager.filter(limit=5) before storing the tile. "
-            "If any binding fails, result.error explains the problem."
+            "create_dashboard(). Supports baked-in data and a rich live data "
+            "bridge with four binding types: FilterBinding (row queries), "
+            "ReduceBinding (aggregation), JoinBinding (cross-table rows), "
+            "and JoinReduceBinding (cross-table aggregation). Each binding "
+            "is auto-validated via the corresponding DataManager method "
+            "before the tile is stored. Use live bindings instead of baking "
+            "in data when queries involve joins, aggregation, or large/live "
+            "datasets. If any binding fails, result.error explains the problem."
         ),
     ),
     ManagerSpec(
@@ -399,6 +402,7 @@ _EXAMPLE_GENERATORS: Dict[str, List[str]] = {
     "dashboards": [
         "get_primitives_dashboards_baked_in_example",
         "get_primitives_dashboards_live_data_example",
+        "get_primitives_dashboards_rich_live_data_example",
         "get_primitives_dashboards_composition_example",
     ],
 }
