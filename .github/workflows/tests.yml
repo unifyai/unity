@@ -36,44 +36,137 @@ on:
         type: number
         default: 120
 
+  # Push events - tests only run if commit message contains [run-tests]
+  push:
+    branches:
+    - '**'    # All branches
+
+  # Pull request events - tests only run if PR title contains [run-tests]
+  pull_request:
+    branches:
+    - '**'    # All branches
 
 jobs:
-  # Determine test mode based on trigger type.
-  # Branch filtering is handled by the on: triggers above, so all events here
-  # are guaranteed to be: push to staging/main, PR to main/staging, or workflow_dispatch.
+  # Determine if tests should run based on trigger and commit/PR message
   should-run-tests:
     runs-on: ubuntu-latest
     outputs:
-      test_mode: ${{ steps.check.outputs.test_mode }}
+      run_tests: ${{ steps.check.outputs.run_tests }}
+      parallel_run_cmd: ${{ steps.check.outputs.parallel_run_cmd }}
     steps:
-    - name: Determine test mode
+    - name: Check if tests should run
       id: check
       env:
+        # Pass these via env to avoid shell interpretation of special chars
+        # (backticks, quotes, $() in commit messages would otherwise be executed)
         EVENT_NAME: ${{ github.event_name }}
+        COMMIT_MSG: ${{ github.event.head_commit.message }}
+        PR_TITLE: ${{ github.event.pull_request.title }}
         PR_BASE_REF: ${{ github.event.pull_request.base.ref }}
+        PR_HEAD_REF: ${{ github.event.pull_request.head.ref }}
       run: |
-        if [[ "$EVENT_NAME" == "workflow_dispatch" ]]; then
-          echo "test_mode=manual" >> "$GITHUB_OUTPUT"
-          echo "Mode: manual (workflow_dispatch)"
-        elif [[ "$EVENT_NAME" == "push" ]]; then
-          echo "test_mode=lightweight" >> "$GITHUB_OUTPUT"
-          echo "Mode: lightweight (push to ${GITHUB_REF#refs/heads/})"
-        elif [[ "$EVENT_NAME" == "pull_request" ]]; then
-          if [[ "$PR_BASE_REF" == "main" ]]; then
-            echo "test_mode=full" >> "$GITHUB_OUTPUT"
-            echo "Mode: full (PR to main)"
-          else
-            echo "test_mode=lightweight" >> "$GITHUB_OUTPUT"
-            echo "Mode: lightweight (PR to $PR_BASE_REF)"
+        # Helper function to extract [parallel_run.sh ...] content
+        # Matches ALL occurrences and combines their arguments
+        extract_parallel_cmd() {
+          local msg="$1"
+          local result=""
+          local remaining="$msg"
+
+          # Loop through all matches of [parallel_run.sh ...]
+          while [[ "$remaining" =~ \[parallel_run\.sh[[:space:]]+([^\]]+)\] ]]; do
+            local match="${BASH_REMATCH[1]}"
+            # Skip literal "..." which is just documentation/example text
+            if [[ "$match" != "..." ]]; then
+              if [[ -n "$result" ]]; then
+                result="$result $match"
+              else
+                result="$match"
+              fi
+            fi
+            # Remove the matched portion and continue searching
+            remaining="${remaining#*"${BASH_REMATCH[0]}"}"
+          done
+
+          if [[ -n "$result" ]]; then
+            echo "$result"
           fi
+        }
+
+        # workflow_dispatch always runs tests
+        if [[ "$EVENT_NAME" == "workflow_dispatch" ]]; then
+          echo "run_tests=true" >> "$GITHUB_OUTPUT"
+          echo "parallel_run_cmd=" >> "$GITHUB_OUTPUT"
+          echo "Tests triggered by workflow_dispatch"
+          exit 0
         fi
+
+        # For push events, check commit message
+        if [[ "$EVENT_NAME" == "push" ]]; then
+          # Check for [parallel_run.sh ...] first
+          PARALLEL_CMD=$(extract_parallel_cmd "$COMMIT_MSG")
+          if [[ -n "$PARALLEL_CMD" ]]; then
+            echo "run_tests=true" >> "$GITHUB_OUTPUT"
+            echo "parallel_run_cmd=$PARALLEL_CMD" >> "$GITHUB_OUTPUT"
+            echo "Tests triggered by commit message: [parallel_run.sh $PARALLEL_CMD]"
+            exit 0
+          fi
+
+          # Fall back to [run-tests]
+          if [[ "$COMMIT_MSG" == *"[run-tests]"* ]]; then
+            echo "run_tests=true" >> "$GITHUB_OUTPUT"
+            echo "parallel_run_cmd=" >> "$GITHUB_OUTPUT"
+            echo "Tests triggered by commit message containing [run-tests]"
+          else
+            echo "run_tests=false" >> "$GITHUB_OUTPUT"
+            echo "parallel_run_cmd=" >> "$GITHUB_OUTPUT"
+            echo "Skipping tests - commit message does not contain [run-tests] or [parallel_run.sh ...]"
+          fi
+          exit 0
+        fi
+
+        # For pull_request events, check PR title
+        if [[ "$EVENT_NAME" == "pull_request" ]]; then
+          # Auto-run full suite for staging → main PRs (no tags required)
+          if [[ "$PR_BASE_REF" == "main" && "$PR_HEAD_REF" == "staging" ]]; then
+            echo "run_tests=true" >> "$GITHUB_OUTPUT"
+            echo "parallel_run_cmd=" >> "$GITHUB_OUTPUT"
+            echo "Tests auto-triggered: staging → main PR"
+            exit 0
+          fi
+
+          # Check for [parallel_run.sh ...] first
+          PARALLEL_CMD=$(extract_parallel_cmd "$PR_TITLE")
+          if [[ -n "$PARALLEL_CMD" ]]; then
+            echo "run_tests=true" >> "$GITHUB_OUTPUT"
+            echo "parallel_run_cmd=$PARALLEL_CMD" >> "$GITHUB_OUTPUT"
+            echo "Tests triggered by PR title: [parallel_run.sh $PARALLEL_CMD]"
+            exit 0
+          fi
+
+          # Fall back to [run-tests]
+          if [[ "$PR_TITLE" == *"[run-tests]"* ]]; then
+            echo "run_tests=true" >> "$GITHUB_OUTPUT"
+            echo "parallel_run_cmd=" >> "$GITHUB_OUTPUT"
+            echo "Tests triggered by PR title containing [run-tests]"
+          else
+            echo "run_tests=false" >> "$GITHUB_OUTPUT"
+            echo "parallel_run_cmd=" >> "$GITHUB_OUTPUT"
+            echo "Skipping tests - PR title does not contain [run-tests] or [parallel_run.sh ...]"
+          fi
+          exit 0
+        fi
+
+        # Default: don't run tests
+        echo "run_tests=false" >> "$GITHUB_OUTPUT"
+        echo "parallel_run_cmd=" >> "$GITHUB_OUTPUT"
+        echo "Skipping tests - unknown event type"
 
   discover:
     runs-on: ubuntu-latest
     needs: should-run-tests
+    if: needs.should-run-tests.outputs.run_tests == 'true'
     outputs:
       test_dirs: ${{ steps.set-matrix.outputs.test_dirs }}
-      test_mode: ${{ needs.should-run-tests.outputs.test_mode }}
       parallel_run_args: ${{ steps.set-matrix.outputs.parallel_run_args }}
       job_timeout: ${{ steps.set-matrix.outputs.job_timeout }}
       # Project deletion flags (handled at workflow level to avoid race conditions)
@@ -88,15 +181,25 @@ jobs:
     - id: set-matrix
       shell: bash
       run: |
-        # Discover test paths and create matrix entries for parallel runners.
+        # Parse test paths and flags, then create matrix entries for each path.
+        # Each unique path gets its own parallel GitHub runner.
         #
-        # Sources:
-        # 1. workflow_dispatch inputs → test_path + parallel_run_args
-        # 2. Default → discover all leaf test folders (with mode-based exclusions)
+        # Sources (priority order):
+        # 1. [parallel_run.sh ...] from commit/PR → parse paths and flags
+        # 2. workflow_dispatch inputs → test_path + parallel_run_args
+        # 3. Default (no paths) → discover all leaf test folders
         #
-        # Paths are expanded to leaf directories for maximum parallelism.
+        # ALL paths (explicit or discovered) are expanded to leaf directories:
+        # - Files are kept as-is
+        # - Directories are expanded to their leaf sub-folders
+        #
+        # Leaf discovery (Option A algorithm):
+        # - Leaf directories (test files, no test subdirs) → one job per directory
+        # - Mixed directories (test files AND test subdirs) → one bundled job for
+        #   all direct test files (space-separated), plus recursive jobs for subdirs
+        # This maximizes parallelism regardless of how paths are specified.
 
-        TEST_MODE="${{ needs.should-run-tests.outputs.test_mode }}"
+        PARALLEL_CMD="${{ needs.should-run-tests.outputs.parallel_run_cmd }}"
         INPUT_PATH="${{ inputs.test_path }}"
         INPUT_ARGS="${{ inputs.parallel_run_args }}"
 
@@ -105,15 +208,31 @@ jobs:
         declare -a PATHS=()
         declare -a FLAGS=()
 
-        # Build --exclude args for lightweight mode
-        EXCLUDE_ARGS=""
-        if [[ "$TEST_MODE" == "lightweight" ]]; then
-          EXCLUDE_ARGS="--exclude tests/actor --exclude tests/conversation_manager --exclude tests/async_tool_loop"
-          echo "Lightweight mode: excluding tests/actor, tests/conversation_manager, tests/async_tool_loop" >&2
-        fi
-
-        if [[ "$TEST_MODE" == "manual" && -n "$INPUT_PATH" && "$INPUT_PATH" != "." ]]; then
+        if [[ -n "$PARALLEL_CMD" ]]; then
+          # Parse [parallel_run.sh ...] from commit/PR message
+          # Separate flags (--env, --eval-only, etc.) from paths
+          echo "Parsing [parallel_run.sh $PARALLEL_CMD]" >&2
+          LAST_FLAG=""
+          for token in $PARALLEL_CMD; do
+            if [[ "$token" == --* ]]; then
+              # It's a flag - collect it and its value if needed
+              FLAGS+=("$token")
+              LAST_FLAG="$token"
+            elif [[ "$LAST_FLAG" == "--env" || "$LAST_FLAG" == "--tags" || "$LAST_FLAG" == "-j" || "$LAST_FLAG" == "--jobs" || "$LAST_FLAG" == "-t" || "$LAST_FLAG" == "--timeout" ]]; then
+              # Previous token was a flag that takes a value
+              FLAGS+=("$token")
+              LAST_FLAG=""
+            else
+              # It's a path - collect for expansion
+              RAW_PATHS+=("$token")
+              LAST_FLAG=""
+            fi
+          done
+        elif [[ -n "$INPUT_PATH" && "$INPUT_PATH" != "." ]]; then
+          # workflow_dispatch with specific path(s)
+          # Split space-separated paths into array
           read -ra RAW_PATHS <<< "$INPUT_PATH"
+          # Flags come from parallel_run_args input
           if [[ -n "$INPUT_ARGS" ]]; then
             read -ra FLAGS <<< "$INPUT_ARGS"
           fi
@@ -121,21 +240,28 @@ jobs:
         fi
 
         # Expand paths to leaf directories using discover_test_paths.py
+        # - If RAW_PATHS is empty, discover all test paths from tests/
+        # - If RAW_PATHS has entries, expand each directory to its leaf sub-folders
+        # This ensures maximum parallelism regardless of how paths are specified.
         if (( ${#RAW_PATHS[@]} == 0 )); then
+          # No explicit paths - discover all
           while IFS= read -r path; do
             PATHS+=("$path")
-          done < <(python3 .github/scripts/discover_test_paths.py $EXCLUDE_ARGS)
-          if [[ "$TEST_MODE" == "manual" && -n "$INPUT_ARGS" ]]; then
+          done < <(python3 .github/scripts/discover_test_paths.py)
+          # Flags come from parallel_run_args input (if any)
+          if [[ -n "$INPUT_ARGS" ]]; then
             read -ra FLAGS <<< "$INPUT_ARGS"
           fi
           echo "Discovered ${#PATHS[@]} test paths (leaf dirs + individual files)" >&2
         else
+          # Expand explicit paths to their leaf directories
           while IFS= read -r path; do
             PATHS+=("$path")
-          done < <(python3 .github/scripts/discover_test_paths.py $EXCLUDE_ARGS "${RAW_PATHS[@]}")
+          done < <(python3 .github/scripts/discover_test_paths.py "${RAW_PATHS[@]}")
           echo "Expanded ${#RAW_PATHS[@]} path(s) to ${#PATHS[@]} leaf test paths" >&2
         fi
 
+        # Build JSON array of paths for matrix
         if (( ${#PATHS[@]} == 0 )); then
           echo "Error: No test paths found" >&2
           exit 1
@@ -155,9 +281,12 @@ jobs:
         # to .env in the pytest job. We only parse it here for project mgmt flags.
         # =====================================================================
 
-        DELETE_ON_START="false"
-        DELETE_ON_EXIT="false"
-        RANDOM_PROJECTS="false"
+        # CI defaults for project management (can be overridden)
+        # With local orchestra (default), these are ignored - each job has fresh DB
+        # Only relevant when ORCHESTRA_URL is set to a non-local URL (staging/production)
+        DELETE_ON_START="false"  # Default: no deletion (local orchestra has fresh DB)
+        DELETE_ON_EXIT="false"   # Default: keep project after tests
+        RANDOM_PROJECTS="false"  # Default: shared project mode
 
         # Orchestra branch precedence (highest to lowest):
         # 1. --env LOCAL_ORCHESTRA_BRANCH=xxx (handled below in FLAGS parsing)
@@ -179,9 +308,11 @@ jobs:
         fi
 
         # Parse env_file_content for project management flags only
+        # (actual env vars are written to .env in pytest job, not passed as --env args)
         ENV_FILE_CONTENT_RAW="${{ inputs.env_file_content }}"
         if [[ -n "$ENV_FILE_CONTENT_RAW" ]]; then
           echo "Parsing env_file_content for project management flags..." >&2
+          # Try to decode as base64; if it fails or produces garbage, assume raw content
           if DECODED=$(echo "$ENV_FILE_CONTENT_RAW" | base64 -d 2>/dev/null) && [[ "$DECODED" == *$'\n'* || "$DECODED" == *"="* ]]; then
             ENV_FILE_CONTENT="$DECODED"
           else
@@ -189,13 +320,20 @@ jobs:
           fi
           if [[ -n "$ENV_FILE_CONTENT" ]]; then
             while IFS= read -r line || [[ -n "$line" ]]; do
+              # Skip empty lines and comments
               [[ -z "$line" || "$line" =~ ^[[:space:]]*# ]] && continue
+
+              # Extract KEY=VALUE (handles quotes)
               if [[ "$line" =~ ^[[:space:]]*([A-Za-z_][A-Za-z0-9_]*)[[:space:]]*=[[:space:]]*(.*)[[:space:]]*$ ]]; then
                 key="${BASH_REMATCH[1]}"
                 value="${BASH_REMATCH[2]}"
+
+                # Strip surrounding quotes if present
                 if [[ "$value" =~ ^\"(.*)\"$ ]] || [[ "$value" =~ ^\'(.*)\'$ ]]; then
                   value="${BASH_REMATCH[1]}"
                 fi
+
+                # Only check for project management flags (other vars handled via .env file)
                 case "$key=$value" in
                   UNIFY_TESTS_DELETE_PROJ_ON_START=true|UNIFY_TESTS_DELETE_PROJ_ON_START=True|UNIFY_TESTS_DELETE_PROJ_ON_START=1)
                     DELETE_ON_START="true"
@@ -232,6 +370,7 @@ jobs:
         fi
 
         # Process FLAGS (from parallel_run_args) - highest priority
+        # These are explicit --env args passed via commit message or workflow dispatch
         declare -a CLEANED_FLAGS=()
         skip_next=false
 
@@ -244,6 +383,7 @@ jobs:
           flag="${FLAGS[$i]}"
           next_val="${FLAGS[$((i+1))]:-}"
 
+          # Check for --env with project management flags (strip them, handle at workflow level)
           if [[ "$flag" == "--env" ]]; then
             case "$next_val" in
               UNIFY_TESTS_DELETE_PROJ_ON_START=true|UNIFY_TESTS_DELETE_PROJ_ON_START=True|UNIFY_TESTS_DELETE_PROJ_ON_START=1)
@@ -272,7 +412,7 @@ jobs:
                 ;;
               UNIFY_TESTS_RAND_PROJ=true|UNIFY_TESTS_RAND_PROJ=True|UNIFY_TESTS_RAND_PROJ=1)
                 RANDOM_PROJECTS="true"
-                CLEANED_FLAGS+=("$flag" "$next_val")
+                CLEANED_FLAGS+=("$flag" "$next_val")  # Keep for runners
                 skip_next=true
                 echo "  args: RANDOM_PROJECTS=true (override)" >&2
                 continue
@@ -306,6 +446,8 @@ jobs:
         echo "random_projects=$RANDOM_PROJECTS" >> "$GITHUB_OUTPUT"
         echo "orchestra_branch=$ORCHESTRA_BRANCH" >> "$GITHUB_OUTPUT"
 
+        # Build parallel_run_args from explicit flags only (not env_file content)
+        # env_file content is handled separately by writing to .env on the runner
         if (( ${#CLEANED_FLAGS[@]} > 0 )); then
           flags_str="${CLEANED_FLAGS[*]}"
           echo "parallel_run_args=$flags_str" >> "$GITHUB_OUTPUT"
@@ -330,6 +472,7 @@ jobs:
     needs: [should-run-tests, discover]
     # Only run if DELETE_ON_START is requested AND we're in shared project mode
     if: |
+      needs.should-run-tests.outputs.run_tests == 'true' &&
       needs.discover.outputs.delete_on_start == 'true' &&
       needs.discover.outputs.random_projects != 'true'
     env:
@@ -373,6 +516,7 @@ jobs:
     needs: [should-run-tests, discover, setup]
     if: |
       always() &&
+      needs.should-run-tests.outputs.run_tests == 'true' &&
       (needs.setup.result == 'success' || needs.setup.result == 'skipped')
     strategy:
       fail-fast: false
@@ -694,30 +838,28 @@ jobs:
       run: |
         set +e
 
-        TEST_MODE="${{ needs.discover.outputs.test_mode }}"
+        # parallel_run_args comes from discover job (parsed from commit message or inputs)
         EXTRA_ARGS="${{ needs.discover.outputs.parallel_run_args }}"
         TEST_PATH="${{ steps.normalize-path.outputs.test_args }}"
         TIMEOUT="${{ steps.normalize-path.outputs.timeout_seconds }}"
 
-        # Determine pytest marker args based on test mode
-        MARKER_ARGS=""
-        if [[ "$TEST_MODE" == "lightweight" ]]; then
-          MARKER_ARGS='-- -m "not llm_call"'
-        fi
-
+        # Start Xvfb manually instead of using xvfb-run.
+        # xvfb-run doesn't propagate signals to child processes, making
+        # workflow cancellation ineffective. This approach ensures SIGTERM
+        # reaches parallel_run.sh directly.
         Xvfb :99 -screen 0 1920x1080x24 &
         XVFB_PID=$!
         export DISPLAY=:99
+
+        # Ensure Xvfb is cleaned up on exit
         trap "kill $XVFB_PID 2>/dev/null" EXIT
 
+        # parallel_run.sh handles starting local orchestra automatically
+        # Note: TEST_PATH must come before EXTRA_ARGS because EXTRA_ARGS may contain
+        # "-- pytest-args" and everything after -- is treated as pytest arguments
         # TEST_PATH is unquoted to allow word splitting for bundled multi-file entries
-        if [[ -n "$MARKER_ARGS" ]]; then
-          echo "Running: parallel_run.sh --timeout $TIMEOUT $TEST_PATH $MARKER_ARGS"
-          tests/parallel_run.sh --timeout "$TIMEOUT" $TEST_PATH $MARKER_ARGS
-        else
-          echo "Running: parallel_run.sh --timeout $TIMEOUT $TEST_PATH $EXTRA_ARGS"
-          tests/parallel_run.sh --timeout "$TIMEOUT" $TEST_PATH $EXTRA_ARGS
-        fi
+        echo "Running: parallel_run.sh --timeout $TIMEOUT $TEST_PATH $EXTRA_ARGS"
+        tests/parallel_run.sh --timeout "$TIMEOUT" $TEST_PATH $EXTRA_ARGS
         TEST_EXIT_CODE=$?
         echo "exit_code=$TEST_EXIT_CODE" >> "$GITHUB_OUTPUT"
         exit $TEST_EXIT_CODE
@@ -972,6 +1114,7 @@ jobs:
     # Cancelled runs likely left partial test data that should be cleaned up
     if: |
       always() &&
+      needs.should-run-tests.outputs.run_tests == 'true' &&
       needs.discover.outputs.random_projects != 'true' &&
       (needs.discover.outputs.delete_on_exit == 'true' || needs.pytest.result == 'cancelled')
     env:
@@ -1008,7 +1151,7 @@ jobs:
     name: Consolidate and store cache
     runs-on: ubuntu-latest
     needs: [should-run-tests, pytest, cleanup]
-    if: always()
+    if: always() && needs.should-run-tests.outputs.run_tests == 'true'
     steps:
     - uses: actions/checkout@v4
 
