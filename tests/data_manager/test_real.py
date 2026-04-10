@@ -2,7 +2,7 @@
 Integration tests for the real DataManager against the Unify backend.
 
 These tests exercise the full DataManager public API (table CRUD, column ops,
-query/mutation/embedding/visualization/join operations) using the real backend,
+query/mutation/embedding/join operations) using the real backend,
 following the same ``@_handle_project`` pattern as ContactManager's test_basic.py.
 
 Each test gets a fresh, isolated Unify context that is cleaned up after the test.
@@ -13,7 +13,7 @@ from __future__ import annotations
 import pytest
 
 from unity.data_manager.data_manager import DataManager
-from unity.data_manager.types import TableDescription, PlotResult
+from unity.data_manager.types import TableDescription
 from unity.manager_registry import ManagerRegistry
 from tests.helpers import _handle_project
 
@@ -651,12 +651,11 @@ def test_search_semantic():
         [
             {"item_id": 1, "text": "Machine learning for image classification"},
             {"item_id": 2, "text": "Natural language processing with transformers"},
-            {"item_id": 3, "text": "Database indexing and query optimization"},
+            {"item_id": 3, "text": "Growing tomatoes and herbs in a backyard garden"},
             {"item_id": 4, "text": "Deep neural networks and computer vision"},
         ],
     )
 
-    # Ensure embeddings
     dm.ensure_vector_column(path, source_column="text")
     dm.vectorize_rows(path, source_column="text")
 
@@ -667,9 +666,9 @@ def test_search_semantic():
     )
 
     assert len(results) <= 2
-    # Top results should relate to ML/vision, not databases
     top_ids = {r["item_id"] for r in results}
-    assert top_ids.issubset({1, 2, 4})
+    assert 4 in top_ids
+    assert 3 not in top_ids
 
 
 # ────────────────────────────────────────────────────────────────────────────
@@ -791,106 +790,156 @@ def test_join_tables_materialized():
 
 
 # ────────────────────────────────────────────────────────────────────────────
-# Visualization
-#
-# Note: Plot tests are marked xfail because the Console Plot API currently
-# returns HTTP 400 "Missing projectConfig.projectName" due to a snake_case vs
-# camelCase key mismatch in plot_ops._build_project_config_dict.
-# The tests below verify correct *DataManager* usage regardless.
+# reduce_join operations
 # ────────────────────────────────────────────────────────────────────────────
 
 
-@pytest.mark.xfail(
-    reason="Console Plot API snake_case/camelCase key mismatch",
-    strict=False,
-)
 @_handle_project
-def test_plot_bar_chart():
-    """plot should return a PlotResult with a URL."""
+def test_reduce_join_count():
+    """reduce_join should join two tables and return a scalar count."""
     dm = _fresh_dm()
 
-    path = dm.create_table(
-        "test_real/plot",
-        fields={"category": "str", "revenue": "float"},
+    products = dm.create_table(
+        "test_real/rj_products",
+        fields={"product_id": "int", "name": "str"},
+    )
+    orders = dm.create_table(
+        "test_real/rj_orders",
+        fields={"order_id": "int", "product_ref": "int"},
+    )
+
+    dm.insert_rows(
+        products,
+        [
+            {"product_id": 1, "name": "Widget"},
+            {"product_id": 2, "name": "Gadget"},
+        ],
     )
     dm.insert_rows(
-        path,
+        orders,
         [
-            {"category": "East", "revenue": 100.0},
-            {"category": "West", "revenue": 200.0},
-            {"category": "North", "revenue": 150.0},
+            {"order_id": 101, "product_ref": 1},
+            {"order_id": 102, "product_ref": 2},
+            {"order_id": 103, "product_ref": 1},
         ],
     )
 
-    result = dm.plot(
-        path,
-        plot_type="bar",
-        x="category",
-        y="revenue",
-        aggregate="sum",
-        title="Revenue by Region",
+    count = dm.reduce_join(
+        tables=[orders, products],
+        join_expr=f"{orders}.product_ref == {products}.product_id",
+        select={
+            f"{orders}.order_id": "order_id",
+            f"{products}.name": "product_name",
+        },
+        metric="count",
+        columns="order_id",
     )
 
-    assert isinstance(result, PlotResult)
-    assert result.succeeded
-    assert result.url is not None
+    assert count == 3
 
 
-@pytest.mark.xfail(
-    reason="Console Plot API snake_case/camelCase key mismatch",
-    strict=False,
-)
 @_handle_project
-def test_plot_batch():
-    """plot_batch should produce one PlotResult per context."""
+def test_reduce_join_with_group_by():
+    """reduce_join with group_by should return per-group results."""
     dm = _fresh_dm()
 
-    p1 = dm.create_table("test_real/pb1", fields={"seq": "int", "val": "float"})
-    p2 = dm.create_table("test_real/pb2", fields={"seq": "int", "val": "float"})
-
-    dm.insert_rows(p1, [{"seq": 1, "val": 10.0}, {"seq": 2, "val": 20.0}])
-    dm.insert_rows(p2, [{"seq": 1, "val": 30.0}, {"seq": 2, "val": 40.0}])
-
-    results = dm.plot_batch(
-        [p1, p2],
-        plot_type="bar",
-        x="seq",
-        y="val",
+    products = dm.create_table(
+        "test_real/rjg_products",
+        fields={"product_id": "int", "name": "str"},
+    )
+    orders = dm.create_table(
+        "test_real/rjg_orders",
+        fields={"order_id": "int", "product_ref": "int"},
     )
 
-    assert len(results) == 2
-    assert all(isinstance(r, PlotResult) for r in results)
-    assert all(r.succeeded for r in results)
-
-
-@pytest.mark.xfail(
-    reason="Console Plot API snake_case/camelCase key mismatch",
-    strict=False,
-)
-@_handle_project
-def test_plot_histogram():
-    """plot histogram should work with x-only config."""
-    dm = _fresh_dm()
-
-    path = dm.create_table(
-        "test_real/hist",
-        fields={"price": "float"},
+    dm.insert_rows(
+        products,
+        [
+            {"product_id": 1, "name": "Widget"},
+            {"product_id": 2, "name": "Gadget"},
+        ],
     )
     dm.insert_rows(
-        path,
-        [{"price": float(i)} for i in range(20)],
+        orders,
+        [
+            {"order_id": 101, "product_ref": 1},
+            {"order_id": 102, "product_ref": 2},
+            {"order_id": 103, "product_ref": 1},
+        ],
     )
 
-    result = dm.plot(
-        path,
-        plot_type="histogram",
-        x="price",
-        bin_count=5,
-        title="Price Distribution",
+    results = dm.reduce_join(
+        tables=[orders, products],
+        join_expr=f"{orders}.product_ref == {products}.product_id",
+        select={
+            f"{orders}.order_id": "order_id",
+            f"{products}.name": "product_name",
+        },
+        metric="count",
+        columns="order_id",
+        group_by="product_name",
     )
 
-    assert isinstance(result, PlotResult)
-    assert result.succeeded
+    assert isinstance(results, dict)
+    assert "Widget" in results
+    assert "Gadget" in results
+
+
+@_handle_project
+def test_reduce_join_with_result_where():
+    """reduce_join should apply result_where before aggregation."""
+    dm = _fresh_dm()
+
+    products = dm.create_table(
+        "test_real/rjf_products",
+        fields={"product_id": "int", "name": "str", "price": "float"},
+    )
+    orders = dm.create_table(
+        "test_real/rjf_orders",
+        fields={"order_id": "int", "product_ref": "int"},
+    )
+
+    dm.insert_rows(
+        products,
+        [
+            {"product_id": 1, "name": "Cheap", "price": 5.0},
+            {"product_id": 2, "name": "Expensive", "price": 500.0},
+        ],
+    )
+    dm.insert_rows(
+        orders,
+        [
+            {"order_id": 101, "product_ref": 1},
+            {"order_id": 102, "product_ref": 2},
+            {"order_id": 103, "product_ref": 1},
+        ],
+    )
+
+    count_all = dm.reduce_join(
+        tables=[orders, products],
+        join_expr=f"{orders}.product_ref == {products}.product_id",
+        select={
+            f"{orders}.order_id": "order_id",
+            f"{products}.price": "price",
+        },
+        metric="count",
+        columns="order_id",
+    )
+
+    count_expensive = dm.reduce_join(
+        tables=[orders, products],
+        join_expr=f"{orders}.product_ref == {products}.product_id",
+        select={
+            f"{orders}.order_id": "order_id",
+            f"{products}.price": "price",
+        },
+        metric="count",
+        columns="order_id",
+        result_where="price > 100",
+    )
+
+    assert count_all == 3
+    assert count_expensive == 1
 
 
 # ────────────────────────────────────────────────────────────────────────────

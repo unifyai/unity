@@ -48,6 +48,7 @@ if TYPE_CHECKING:
     from .actor.base import BaseActor
     from .contact_manager.base import BaseContactManager
     from .conversation_manager.base import BaseConversationManagerHandle
+    from .dashboard_manager.base import BaseDashboardManager
     from .data_manager.base import BaseDataManager
     from .file_manager.managers.base import BaseFileManager
     from .function_manager.base import BaseFunctionManager
@@ -410,6 +411,24 @@ class ManagerRegistry:
         )
 
     @classmethod
+    def get_dashboard_manager(
+        cls,
+        *,
+        _force_new: bool = False,
+        **kwargs: Any,
+    ) -> "BaseDashboardManager":
+        """Get the DashboardManager singleton (respects IMPL settings).
+
+        DashboardManager provides tile and dashboard CRUD operations.
+        It owns the Dashboards/* namespace.
+        """
+        return cls.get(
+            "dashboards",
+            _force_new=_force_new,
+            **kwargs,
+        )
+
+    @classmethod
     def get_data_manager(
         cls,
         *,
@@ -675,6 +694,7 @@ def _populate_registry() -> None:
     ManagerRegistry.register_settings("guidance", lambda: SETTINGS.guidance)
     ManagerRegistry.register_settings("secrets", lambda: SETTINGS.secret)
     ManagerRegistry.register_settings("web_search", lambda: SETTINGS.web)
+    ManagerRegistry.register_settings("dashboards", lambda: SETTINGS.dashboard)
     ManagerRegistry.register_settings("data", lambda: SETTINGS.data)
     ManagerRegistry.register_settings("files", lambda: SETTINGS.file)
     ManagerRegistry.register_settings("functions", lambda: SETTINGS.function)
@@ -771,6 +791,15 @@ def _populate_registry() -> None:
 
     ManagerRegistry.register_class("web_search", "real", WebSearcher)
     ManagerRegistry.register_class("web_search", "simulated", SimulatedWebSearcher)
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # DashboardManager implementations
+    # ─────────────────────────────────────────────────────────────────────────
+    from .dashboard_manager.dashboard_manager import DashboardManager
+    from .dashboard_manager.simulated import SimulatedDashboardManager
+
+    ManagerRegistry.register_class("dashboards", "real", DashboardManager)
+    ManagerRegistry.register_class("dashboards", "simulated", SimulatedDashboardManager)
 
     # ─────────────────────────────────────────────────────────────────────────
     # DataManager implementations

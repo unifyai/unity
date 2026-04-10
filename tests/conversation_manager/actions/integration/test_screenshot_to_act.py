@@ -33,7 +33,7 @@ from unity.conversation_manager.events import UnifyMessageReceived
 from unity.conversation_manager.types import ScreenshotEntry
 from unity.file_manager.settings import get_local_root
 
-pytestmark = [pytest.mark.integration, pytest.mark.eval]
+pytestmark = [pytest.mark.integration, pytest.mark.eval, pytest.mark.llm_call]
 
 GRUB_IMAGE_PATH = (
     Path(__file__).resolve().parent.parent.parent.parent / "images" / "grub_screen.jpg"
@@ -53,6 +53,8 @@ async def test_screenshot_crop_via_act(initialized_cm_codeact):
     - An LLM judge confirms the output image contains GRUB boot menu content.
     """
     cm = initialized_cm_codeact
+    cm.cm.vm_ready = True
+    cm.cm.file_sync_complete = True
     local_root = Path(get_local_root())
 
     # Ensure Screenshots/User exists (mirrors session bootstrap).
@@ -66,14 +68,25 @@ async def test_screenshot_crop_via_act(initialized_cm_codeact):
     grub_b64 = base64.b64encode(GRUB_IMAGE_PATH.read_bytes()).decode()
 
     cm.cm.user_screen_share_active = True
-    cm.cm._screenshot_buffer.append(
-        ScreenshotEntry(
-            b64=grub_b64,
-            utterance="I'm stuck on this screen, can you help?",
-            timestamp=datetime.now(timezone.utc),
-            source="user",
-        ),
+    entry = ScreenshotEntry(
+        b64=grub_b64,
+        utterance="I'm stuck on this screen, can you help?",
+        timestamp=datetime.now(timezone.utc),
+        source="user",
     )
+    cm.cm._screenshot_buffer.append(entry)
+
+    # Pre-write the screenshot to disk so the actor can read it.
+    # In production, _register_screenshots_background handles this as a
+    # fire-and-forget task after the LLM turn. In tests, step_until_wait
+    # returns before that task completes, so we write eagerly.
+    from unity.conversation_manager.types.screenshot import (
+        generate_screenshot_path,
+        write_screenshot_to_disk,
+    )
+
+    screenshot_path = generate_screenshot_path(entry)
+    write_screenshot_to_disk(entry, screenshot_path)
 
     # ------------------------------------------------------------------
     # Step 2: Send a message that requires act() to process the screenshot

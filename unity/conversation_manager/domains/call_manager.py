@@ -7,6 +7,7 @@ import subprocess
 from pathlib import Path
 from typing import TYPE_CHECKING, Callable
 
+import aiohttp
 from livekit.api import CreateAgentDispatchRequest, LiveKitAPI
 
 from unity.contact_manager.types.contact import UNASSIGNED
@@ -27,6 +28,19 @@ if TYPE_CHECKING:
     from unity.conversation_manager.in_memory_event_broker import InMemoryEventBroker
 
 
+def _resolve_agent_service_url() -> str:
+    """Resolve agent-service base URL (same logic as common.py)."""
+    from unity.session_details import SESSION_DETAILS
+
+    desktop_url = SESSION_DETAILS.assistant.desktop_url
+    if desktop_url:
+        from urllib.parse import urlparse
+
+        parsed = urlparse(desktop_url)
+        return f"{parsed.scheme}://{parsed.netloc}/api"
+    return "http://localhost:3000"
+
+
 def make_room_name(assistant_id: str, medium: str) -> str:
     """Canonical LiveKit room name for a given assistant and medium.
 
@@ -45,6 +59,7 @@ class CallConfig:
     voice_provider: str
     voice_id: str
     assistant_name: str = ""
+    job_name: str = ""
 
 
 _BASE_FORWARD_CHANNELS = [
@@ -59,6 +74,7 @@ class LivekitCallManager:
         config: CallConfig,
         event_broker: "InMemoryEventBroker | None" = None,
     ):
+        self.job_name: str = ""
         self.set_config(config=config)
         self.call_exchange_id = UNASSIGNED
         self.unify_meet_exchange_id = UNASSIGNED
@@ -81,6 +97,14 @@ class LivekitCallManager:
         self._disconnect_contact: dict | None = None
         self._boss_notification_task: asyncio.Task | None = None
         self._worker_watchdog_task: asyncio.Task | None = None
+        # WhatsApp call joining state
+        self._whatsapp_call_joining: bool = False
+        # Google Meet state
+        self._gmeet_session_id: str | None = None
+        self._gmeet_joining: bool = False
+        self._gmeet_presenting: bool = False
+        self.google_meet_start_timestamp = None
+        self.google_meet_exchange_id = UNASSIGNED
 
     def set_config(self, config: CallConfig):
         self.assistant_id = config.assistant_id
@@ -90,6 +114,8 @@ class LivekitCallManager:
         self.voice_provider = config.voice_provider
         self.voice_id = config.voice_id
         self.assistant_name = config.assistant_name
+        if config.job_name:
+            self.job_name = config.job_name
 
     def set_event_broker(self, event_broker: "InMemoryEventBroker") -> None:
         """Set the event broker for socket server to publish to."""
@@ -97,7 +123,7 @@ class LivekitCallManager:
 
     @property
     def worker_agent_name(self) -> str:
-        return f"unity_{self.assistant_id}"
+        return f"unity_{self.job_name}"
 
     @property
     def has_active_call(self) -> bool:
@@ -162,25 +188,28 @@ class LivekitCallManager:
         contact: dict,
         boss: dict,
         outbound: bool,
+        *,
+        extra_metadata: dict | None = None,
     ) -> None:
         """Dispatch a LiveKit job to the persistent worker."""
         socket_path = await self._ensure_socket_server()
 
-        metadata = json.dumps(
-            {
-                "voice_provider": self.voice_provider,
-                "voice_id": self.voice_id,
-                "outbound": outbound,
-                "channel": channel,
-                "contact": contact,
-                "boss": boss,
-                "assistant_bio": self.assistant_bio,
-                "assistant_id": self.assistant_id,
-                "user_id": self.user_id,
-                "assistant_name": self.assistant_name,
-                "ipc_socket_path": socket_path or "",
-            },
-        )
+        meta_dict = {
+            "voice_provider": self.voice_provider,
+            "voice_id": self.voice_id,
+            "outbound": outbound,
+            "channel": channel,
+            "contact": contact,
+            "boss": boss,
+            "assistant_bio": self.assistant_bio,
+            "assistant_id": self.assistant_id,
+            "user_id": self.user_id,
+            "assistant_name": self.assistant_name,
+            "ipc_socket_path": socket_path or "",
+        }
+        if extra_metadata:
+            meta_dict.update(extra_metadata)
+        metadata = json.dumps(meta_dict)
 
         lk = LiveKitAPI(
             url=os.environ.get("LIVEKIT_URL", ""),
@@ -246,7 +275,13 @@ class LivekitCallManager:
 
         return self._socket_server.socket_path
 
-    async def start_call(self, contact: dict, boss: dict, outbound: bool = False):
+    async def start_call(
+        self,
+        contact: dict,
+        boss: dict,
+        outbound: bool = False,
+        channel: str = "phone_call",
+    ):
         if self.has_active_call:
             LOGGER.warning(
                 f"{ICONS['ipc']} [LivekitCallManager] start_call ignored: "
@@ -254,26 +289,27 @@ class LivekitCallManager:
             )
             return
 
+        self._whatsapp_call_joining = False
         self.is_outbound = outbound
-        self._call_channel = "phone_call"
+        self._call_channel = channel
         self._disconnect_contact = contact
 
         await self._ensure_socket_server()
         if self._socket_server:
             await self._socket_server.set_forward_channels(list(_BASE_FORWARD_CHANNELS))
 
-        is_boss = contact.get("contact_id") == 1
-        if is_boss:
+        if contact.get("is_system", False):
             self._start_boss_notification_rendering()
 
-        room_name = make_room_name(self.assistant_id, "phone")
+        medium = "whatsapp_call" if channel == "whatsapp_call" else "phone"
+        room_name = make_room_name(self.assistant_id, medium)
 
         if self._worker_proc is not None and self._worker_proc.poll() is None:
-            await self._dispatch_job(room_name, "phone_call", contact, boss, outbound)
+            await self._dispatch_job(room_name, channel, contact, boss, outbound)
         else:
             await self._start_call_subprocess(
                 room_name,
-                "phone_call",
+                channel,
                 contact,
                 boss,
                 outbound,
@@ -319,8 +355,7 @@ class LivekitCallManager:
         if self._socket_server:
             await self._socket_server.set_forward_channels(list(_BASE_FORWARD_CHANNELS))
 
-        is_boss = contact.get("contact_id") == 1
-        if is_boss:
+        if contact.get("is_system", False):
             self._start_boss_notification_rendering()
 
         room_name = room_name or make_room_name(self.assistant_id, "meet")
@@ -337,6 +372,258 @@ class LivekitCallManager:
                 False,
             )
 
+    # ------------------------------------------------------------------
+    # Google Meet lifecycle
+    # ------------------------------------------------------------------
+
+    @property
+    def has_active_google_meet(self) -> bool:
+        return self._gmeet_session_id is not None or self._gmeet_joining
+
+    @property
+    def has_gmeet_presenting(self) -> bool:
+        return self._gmeet_presenting
+
+    async def start_google_meet(
+        self,
+        meet_url: str,
+        contact: dict,
+        boss: dict,
+        display_name: str = "",
+    ) -> bool:
+        """Join a Google Meet via agent-service browser and start the audio bridge.
+
+        1. POST /googlemeet/join on agent-service to launch browser + automation.
+        2. Start audio bridge (PulseAudio <-> LiveKit).
+        3. Dispatch a fast brain job into the same LiveKit room.
+        4. Kick off a background monitor that polls /googlemeet/state and
+           publishes GoogleMeetEnded when the meeting terminates.
+        """
+        if self.has_active_call or self.has_active_google_meet:
+            LOGGER.warning(
+                f"{ICONS['ipc']} [LivekitCallManager] start_google_meet ignored: "
+                "session already active",
+            )
+            return False
+
+        self._gmeet_joining = True
+        self._call_channel = "google_meet"
+        self._disconnect_contact = contact
+
+        display_name = display_name or self.assistant_name or "Unity Assistant"
+
+        from unity.session_details import SESSION_DETAILS
+
+        base_url = "http://localhost:3000"
+        auth_key = SESSION_DETAILS.unify_key
+
+        room_name = make_room_name(self.assistant_id, "gmeet")
+        self.room_name = room_name
+
+        # Pre-create the LiveKit room with a long empty_timeout.  Google Meet
+        # audio flows through sounddevice/PulseAudio — no "real" LiveKit
+        # participant ever joins, so the server's default empty_timeout (300s)
+        # would auto-delete the room after 5 minutes.
+        from livekit.api import CreateRoomRequest
+
+        lk = LiveKitAPI(
+            url=os.environ.get("LIVEKIT_URL", ""),
+            api_key=os.environ.get("LIVEKIT_API_KEY", ""),
+            api_secret=os.environ.get("LIVEKIT_API_SECRET", ""),
+        )
+        try:
+            await lk.room.create_room(
+                CreateRoomRequest(name=room_name, empty_timeout=10800),
+            )
+        finally:
+            await lk.aclose()
+
+        # Dispatch fast brain first so it initializes (models, history, greeting)
+        # while the browser navigates the slow LLM-guided join flow.
+        await self._ensure_socket_server()
+        if self._socket_server:
+            await self._socket_server.set_forward_channels(list(_BASE_FORWARD_CHANNELS))
+
+        if contact.get("is_system", False):
+            self._start_boss_notification_rendering()
+
+        gmeet_extra = {
+            "gmeet_session_id": "",
+            "gmeet_meet_url": meet_url,
+            "gmeet_display_name": display_name,
+            "agent_service_url": "http://localhost:3000",
+        }
+
+        if self._worker_proc is not None and self._worker_proc.poll() is None:
+            await self._dispatch_job(
+                room_name,
+                "google_meet",
+                contact,
+                boss,
+                False,
+                extra_metadata=gmeet_extra,
+            )
+        else:
+            await self._start_call_subprocess(
+                room_name,
+                "google_meet",
+                contact,
+                boss,
+                False,
+                extra_env=gmeet_extra,
+            )
+
+        # Browser join runs after dispatch — fast brain initializes in parallel.
+        async with aiohttp.ClientSession() as session:
+            resp = await session.post(
+                f"{base_url}/googlemeet/join",
+                json={"meetUrl": meet_url, "displayName": display_name},
+                headers={"authorization": f"Bearer {auth_key}"},
+                timeout=aiohttp.ClientTimeout(total=300),
+            )
+            body = await resp.json()
+
+        if resp.status != 200:
+            LOGGER.error(
+                f"{ICONS['ipc']} [LivekitCallManager] Google Meet join failed: {body}",
+            )
+            self._gmeet_joining = False
+            await self.cleanup_google_meet()
+            return False
+
+        self._gmeet_session_id = body.get("sessionId")
+        self._gmeet_joining = False
+        LOGGER.info(
+            f"{ICONS['ipc']} [LivekitCallManager] Google Meet joined "
+            f"(session={self._gmeet_session_id})",
+        )
+
+        if self._socket_server and self._gmeet_session_id:
+            await self._socket_server.queue_for_clients(
+                "app:call:status",
+                json.dumps(
+                    {"type": "gmeet_session_id", "session_id": self._gmeet_session_id},
+                ),
+            )
+
+        return True
+
+    async def cleanup_google_meet(self) -> None:
+        """Leave the Google Meet session and tear down the audio bridge."""
+        session_id = self._gmeet_session_id
+        room_name = self.room_name
+        self._gmeet_session_id = None
+        self._gmeet_joining = False
+        self._gmeet_presenting = False
+        self.google_meet_start_timestamp = None
+        self.google_meet_exchange_id = UNASSIGNED
+
+        if session_id:
+            from unity.session_details import SESSION_DETAILS
+
+            base_url = "http://localhost:3000"
+            auth_key = SESSION_DETAILS.unify_key
+            try:
+                async with aiohttp.ClientSession() as session:
+                    await session.post(
+                        f"{base_url}/googlemeet/leave",
+                        json={"sessionId": session_id},
+                        headers={"authorization": f"Bearer {auth_key}"},
+                        timeout=aiohttp.ClientTimeout(total=30),
+                    )
+            except Exception as exc:
+                LOGGER.warning(
+                    f"{ICONS['ipc']} [LivekitCallManager] "
+                    f"Error leaving Google Meet: {exc}",
+                )
+
+        if room_name:
+            from unity.conversation_manager.medium_scripts.common import (
+                delete_livekit_room,
+            )
+
+            await delete_livekit_room(room_name)
+
+        await self.cleanup_call_proc()
+
+    async def start_gmeet_screenshare(self) -> bool:
+        """Start presenting the assistant desktop in the active Google Meet."""
+        session_id = self._gmeet_session_id
+        if not session_id:
+            return False
+
+        from unity.session_details import SESSION_DETAILS
+
+        desktop_url = SESSION_DETAILS.assistant.desktop_url
+        if not desktop_url:
+            return False
+
+        from urllib.parse import urlparse
+
+        parsed = urlparse(desktop_url)
+        liveview_url = (
+            f"{parsed.scheme}://{parsed.netloc}/desktop/custom.html"
+            f"?password={SESSION_DETAILS.unify_key}"
+        )
+
+        base_url = "http://localhost:3000"
+        auth_key = SESSION_DETAILS.unify_key
+        try:
+            async with aiohttp.ClientSession() as session:
+                resp = await session.post(
+                    f"{base_url}/googlemeet/present",
+                    json={"sessionId": session_id, "desktopUrl": liveview_url},
+                    headers={"authorization": f"Bearer {auth_key}"},
+                    timeout=aiohttp.ClientTimeout(total=120),
+                )
+                if resp.status == 200:
+                    self._gmeet_presenting = True
+                    return True
+                body = await resp.json()
+                LOGGER.warning(
+                    f"{ICONS['ipc']} [LivekitCallManager] "
+                    f"Google Meet present failed: {body}",
+                )
+        except Exception as exc:
+            LOGGER.warning(
+                f"{ICONS['ipc']} [LivekitCallManager] "
+                f"Error starting Google Meet screenshare: {exc}",
+            )
+        return False
+
+    async def stop_gmeet_screenshare(self) -> bool:
+        """Stop presenting the assistant desktop in Google Meet."""
+        session_id = self._gmeet_session_id
+        if not session_id:
+            return False
+
+        from unity.session_details import SESSION_DETAILS
+
+        base_url = "http://localhost:3000"
+        auth_key = SESSION_DETAILS.unify_key
+        try:
+            async with aiohttp.ClientSession() as session:
+                resp = await session.post(
+                    f"{base_url}/googlemeet/stop-present",
+                    json={"sessionId": session_id},
+                    headers={"authorization": f"Bearer {auth_key}"},
+                    timeout=aiohttp.ClientTimeout(total=60),
+                )
+                if resp.status == 200:
+                    self._gmeet_presenting = False
+                    return True
+                body = await resp.json()
+                LOGGER.warning(
+                    f"{ICONS['ipc']} [LivekitCallManager] "
+                    f"Google Meet stop-present failed: {body}",
+                )
+        except Exception as exc:
+            LOGGER.warning(
+                f"{ICONS['ipc']} [LivekitCallManager] "
+                f"Error stopping Google Meet screenshare: {exc}",
+            )
+        return False
+
     async def _start_call_subprocess(
         self,
         room_name: str,
@@ -344,9 +631,14 @@ class LivekitCallManager:
         contact: dict,
         boss: dict,
         outbound: bool,
+        *,
+        extra_env: dict | None = None,
     ) -> None:
         """Legacy path: spawn a fresh subprocess per call."""
         socket_path = await self._ensure_socket_server()
+        if extra_env:
+            for k, v in extra_env.items():
+                os.environ[k.upper()] = str(v)
         if socket_path:
             os.environ[CM_EVENT_SOCKET_ENV] = socket_path
             LOGGER.debug(
@@ -391,11 +683,14 @@ class LivekitCallManager:
 
         contact = self._disconnect_contact or {}
         channel = self._call_channel or "phone_call"
-        event = (
-            PhoneCallEnded(contact=contact)
-            if channel == "phone_call"
-            else UnifyMeetEnded(contact=contact)
-        )
+        if channel == "whatsapp_call":
+            event = WhatsAppCallEnded(contact=contact)
+        elif channel == "google_meet":
+            event = GoogleMeetEnded(contact=contact)
+        elif channel == "phone_call":
+            event = PhoneCallEnded(contact=contact)
+        else:
+            event = UnifyMeetEnded(contact=contact)
         LOGGER.debug(
             f"{ICONS['ipc']} [LivekitCallManager] IPC client disconnected without cleanup, "
             f"publishing fallback {event.__class__.__name__}",
@@ -406,11 +701,36 @@ class LivekitCallManager:
                 event.to_json(),
             )
 
+    async def cleanup_persistent_worker(self) -> None:
+        """Stop the persistent worker process and its watchdog."""
+        if self._worker_watchdog_task and not self._worker_watchdog_task.done():
+            self._worker_watchdog_task.cancel()
+            try:
+                await self._worker_watchdog_task
+            except asyncio.CancelledError:
+                pass
+        self._worker_watchdog_task = None
+
+        proc = self._worker_proc
+        self._worker_proc = None
+        if proc is None:
+            return
+        if proc.poll() is not None:
+            return
+        LOGGER.debug(
+            f"{ICONS['ipc']} [LivekitCallManager] Terminating persistent worker {proc.pid}...",
+        )
+        await asyncio.to_thread(terminate_process, proc, 5)
+        LOGGER.debug(
+            f"{ICONS['ipc']} [LivekitCallManager] Persistent worker terminated",
+        )
+
     async def cleanup_call_proc(self) -> None:
         """Stop any running voice agent job/subprocess and socket server."""
         proc = self._call_proc
         self._call_proc = None
         self._active_job = False
+        self._whatsapp_call_joining = False
 
         self.is_outbound = False
         self.initial_notification = ""
@@ -450,11 +770,11 @@ class LivekitCallManager:
         )
 
     # ------------------------------------------------------------------
-    # Boss-call notification rendering
+    # Symbolic event forwarding for system contact calls
     # ------------------------------------------------------------------
 
     def _start_boss_notification_rendering(self) -> None:
-        """Start an async task that renders actor events into notifications."""
+        """Start an async task that forwards actor events to the fast brain."""
         if self._boss_notification_task and not self._boss_notification_task.done():
             return
         self._boss_notification_task = asyncio.create_task(
@@ -464,10 +784,12 @@ class LivekitCallManager:
     async def _render_boss_notifications(self) -> None:
         """Subscribe to actor events and publish rendered notifications.
 
-        Runs for boss calls only. Converts raw actor lifecycle events
-        (ActorHandleStarted, ActorSessionResponse, etc.) into
-        FastBrainNotification messages on ``app:call:notification`` so the
-        fast brain receives them through the unified notification channel.
+        Runs for system contact calls only. Converts raw actor lifecycle
+        events into FastBrainNotification messages on
+        ``app:call:notification`` so the fast brain receives them as
+        immediate silent context — guaranteed delivery, zero LLM latency.
+        The slow brain separately decides whether to speak via
+        ``guide_voice_agent``.
         """
         from unity.conversation_manager.medium_scripts.common import (
             render_event_for_fast_brain,

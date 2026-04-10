@@ -141,12 +141,13 @@ def filter_join_impl(
     result_where: Optional[str] = None,
     result_limit: int = 100,
     result_offset: int = 0,
-    tmp_context_prefix: str,
 ) -> List[Dict[str, Any]]:
     """
-    Join two contexts and filter the result.
+    Join two contexts and filter the result in a single round-trip.
 
-    Follows the exact same pattern as KnowledgeManager.filter_join.
+    Uses the fused ``POST /logs/join_query`` endpoint (row mode) to
+    perform the join and filtering in one SQL query, avoiding temporary
+    context materialisation.
 
     Parameters
     ----------
@@ -168,8 +169,6 @@ def filter_join_impl(
         Maximum rows to return (must be <= 1000).
     result_offset : int, default 0
         Pagination offset.
-    tmp_context_prefix : str
-        Prefix for temporary context (e.g., "Data" or base context path).
 
     Returns
     -------
@@ -214,34 +213,116 @@ def filter_join_impl(
         tables[1],
     )
 
-    dest_context = f"{tmp_context_prefix}/_tmp_join_{uuid.uuid4().hex[:8]}"
-    _create_join(
-        dest_context=dest_context,
-        tables=tables,
+    result = unify.join_query(
+        pair_of_args=(
+            {
+                "context": tables[0],
+                **({"filter_expr": left_where} if left_where else {}),
+            },
+            {
+                "context": tables[1],
+                **({"filter_expr": right_where} if right_where else {}),
+            },
+        ),
         join_expr=join_expr,
-        select=select,
         mode=mode,
-        left_where=left_where,
-        right_where=right_where,
+        columns=select,
+        filter_expr=result_where,
+        limit=result_limit,
+        offset=result_offset,
     )
 
-    try:
-        rows: List[Dict[str, Any]] = [
-            lg.entries
-            for lg in unify.get_logs(
-                context=dest_context,
-                filter=result_where,
-                offset=result_offset,
-                limit=result_limit,
-                exclude_fields=list_private_fields(dest_context),
+    return result["logs"]
+
+
+def reduce_join_impl(
+    *,
+    tables: Union[str, List[str]],
+    join_expr: str,
+    select: Dict[str, str],
+    metric: str,
+    columns: Union[str, List[str]],
+    mode: str = "inner",
+    left_where: Optional[str] = None,
+    right_where: Optional[str] = None,
+    result_where: Optional[str] = None,
+    group_by: Optional[Union[str, List[str]]] = None,
+) -> Any:
+    """
+    Join two contexts and aggregate the result in a single round-trip.
+
+    Uses the fused ``POST /logs/join_query`` endpoint (reduce mode) to
+    perform the join and aggregation in one SQL query, avoiding temporary
+    context materialisation.
+
+    Parameters
+    ----------
+    tables : str | list[str]
+        Exactly TWO fully-qualified context paths to join.
+    join_expr : str
+        Join condition expression using context paths as prefixes.
+    select : dict[str, str]
+        Column mapping from source (context.column) to output names.
+    metric : str
+        Reduction metric (count, sum, mean, etc.).
+    columns : str | list[str]
+        Column(s) to compute the metric on (output aliases from select).
+    mode : str, default "inner"
+        Join mode.
+    left_where, right_where : str | None
+        Pre-join filters for left/right tables.
+    result_where : str | None
+        Post-join filter on the result (uses output column names).
+    group_by : str | list[str] | None
+        Column(s) to group by before aggregation (output aliases).
+
+    Returns
+    -------
+    Any
+        Scalar value or grouped dict depending on group_by.
+    """
+    import re as _re
+
+    if isinstance(tables, str):
+        tables = [tables]
+    if len(tables) != 2:
+        raise ValueError("Exactly TWO tables are required.")
+
+    if result_where:
+
+        def _qualified_refs(expr: str) -> set:
+            return set(
+                m.group(0)
+                for m in _re.finditer(r"\b[A-Za-z_]\w*\.[A-Za-z_]\w*\b", expr)
             )
-        ]
-        return rows
-    finally:
-        try:
-            unify.delete_context(dest_context)
-        except Exception:
-            pass
+
+        missing = _qualified_refs(result_where) - set(select)
+        if missing:
+            raise ValueError(
+                "`result_where` references column(s) that are not present in `select`. "
+                "Either add them to `select` or move the predicate to `left_where` / `right_where`. "
+                f"Missing: {', '.join(sorted(missing))}",
+            )
+
+    return unify.join_query(
+        pair_of_args=(
+            {
+                "context": tables[0],
+                **({"filter_expr": left_where} if left_where else {}),
+            },
+            {
+                "context": tables[1],
+                **({"filter_expr": right_where} if right_where else {}),
+            },
+        ),
+        join_expr=join_expr,
+        mode=mode,
+        columns=select,
+        metric=metric,
+        key=columns,
+        filter_expr=result_where,
+        group_by=group_by,
+    )
 
 
 def search_join_impl(

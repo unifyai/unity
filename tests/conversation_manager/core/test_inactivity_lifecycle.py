@@ -155,6 +155,7 @@ class TestInactivityDetectionBasics:
                 pass
 
         assert stop_event.is_set(), "Stop event should be set after inactivity timeout"
+        assert cm.shutdown_reason == "idle_timeout"
 
     @pytest.mark.asyncio
     async def test_activity_resets_inactivity_timer(self, event_broker):
@@ -461,7 +462,55 @@ class TestCleanupSequence:
         ) as mock_mark_done:
             await cm.cleanup()
 
-            mock_mark_done.assert_called_once_with("test-job-live")
+            mock_mark_done.assert_called_once_with(
+                "test-job-live",
+                cm.inactivity_timeout,
+            )
+
+    @pytest.mark.asyncio
+    async def test_cleanup_propagates_idle_timeout_reason_to_mark_job_done(
+        self,
+        event_broker,
+    ):
+        """
+        Verify cleanup preserves the idle-timeout intent when shutting down.
+
+        A graceful inactivity shutdown should tell AssistantJobs to stop the
+        session so Comms can transition offline instead of restarting.
+        """
+        from unity.conversation_manager.conversation_manager import ConversationManager
+
+        stop_event = asyncio.Event()
+        cm = ConversationManager(
+            event_broker=event_broker,
+            job_name="test-job-live",
+            user_id="user_1",
+            assistant_id="real_assistant_123",
+            user_first_name="Test",
+            user_surname="User",
+            assistant_first_name="Test",
+            assistant_surname="Assistant",
+            assistant_age="25",
+            assistant_nationality="American",
+            assistant_about="Test bio",
+            assistant_number="+15555550000",
+            assistant_email="assistant@test.com",
+            user_number="+15555551111",
+            user_email="user@test.com",
+            stop=stop_event,
+        )
+        cm.shutdown_reason = "idle_timeout"
+
+        with patch(
+            "unity.conversation_manager.conversation_manager.assistant_jobs.mark_job_done",
+        ) as mock_mark_done:
+            await cm.cleanup()
+
+            mock_mark_done.assert_called_once_with(
+                "test-job-live",
+                cm.inactivity_timeout,
+                shutdown_reason="idle_timeout",
+            )
 
     @pytest.mark.asyncio
     async def test_cleanup_skips_mark_job_done_for_idle_container(self, event_broker):

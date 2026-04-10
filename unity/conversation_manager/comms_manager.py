@@ -36,8 +36,13 @@ from google.cloud import pubsub_v1
 from unity.logger import LOGGER
 from unity.common.hierarchical_logger import DEFAULT_ICON, ICONS
 from unity.settings import SETTINGS
-from unity.conversation_manager.assistant_jobs import mark_job_label
-from unity.conversation_manager.assistant_jobs_api import read_own_job
+from unity.conversation_manager.assistant_session_k8s import (
+    mark_job_container_ready,
+    read_assistant_session,
+    read_job_assignment_record,
+    read_session_bootstrap_secret_record,
+    wait_for_assistant_session_name,
+)
 from unity.conversation_manager.domains.comms_utils import (
     add_email_attachments,
     add_unify_message_attachments,
@@ -75,12 +80,14 @@ def _get_local_contact() -> dict:
         "surname": SESSION_DETAILS.user.surname,
         "phone_number": SESSION_DETAILS.user.number,
         "email_address": SESSION_DETAILS.user.email,
+        "whatsapp_number": SESSION_DETAILS.user.whatsapp_number,
     }
 
 
 # Map subscription IDs to their corresponding event types
 events_map: dict[str, Event] = {
     "msg": SMSReceived,
+    "whatsapp": WhatsAppReceived,
     "email": EmailReceived,
     "unify_message": UnifyMessageReceived,
     "api_message": ApiMessageReceived,
@@ -163,7 +170,9 @@ def _get_or_create_unknown_contact(
             cm = ManagerRegistry.get_contact_manager()
 
             # Determine which field to search/set based on medium
-            if medium in ("sms_message", "phone_call"):
+            if medium == "whatsapp_message":
+                field_name = "whatsapp_number"
+            elif medium in ("sms_message", "phone_call"):
                 field_name = "phone_number"
             elif medium == "email":
                 field_name = "email_address"
@@ -265,6 +274,7 @@ class CommsManager:
                 # publish
                 details = {
                     "api_key": event["api_key"],
+                    "binding_id": event.get("binding_id", ""),
                     "medium": event.get("medium", "assistant_update"),
                     "assistant_id": event["assistant_id"],
                     "user_id": event["user_id"],
@@ -276,10 +286,15 @@ class CommsManager:
                     "assistant_about": event["assistant_about"],
                     "assistant_number": event["assistant_number"],
                     "assistant_email": event["assistant_email"],
+                    "assistant_whatsapp_number": event.get(
+                        "assistant_whatsapp_number",
+                        "",
+                    ),
                     "user_first_name": event["user_first_name"],
                     "user_surname": event["user_surname"],
                     "user_number": event["user_number"],
                     "user_email": event["user_email"],
+                    "user_whatsapp_number": event.get("user_whatsapp_number", ""),
                     "voice_provider": event["voice_provider"],
                     "voice_id": event["voice_id"],
                     "desktop_mode": event.get("desktop_mode", "ubuntu"),
@@ -353,6 +368,7 @@ class CommsManager:
                         or "User released remote control of assistant desktop.",
                     ),
                     "assistant_desktop_ready": lambda r: AssistantDesktopReady(
+                        binding_id=event.get("binding_id") or "",
                         desktop_url=event.get("desktop_url")
                         or SESSION_DETAILS.assistant.desktop_url
                         or "",
@@ -555,6 +571,119 @@ class CommsManager:
                             f"{DEFAULT_ICON} Failed scheduling api_message attachment download: {e}",
                         )
 
+                elif thread == "whatsapp":
+                    # Call permission responses arrive on the whatsapp thread
+                    # with a special type field — intercept before normal flow.
+                    if event.get("type") == "call_permission_response":
+                        contact_number = event.get("contact_number", "")
+                        accepted = event.get("payload") == "ACCEPTED"
+                        contact = next(
+                            (
+                                c
+                                for c in contacts
+                                if c.get("whatsapp_number") == contact_number
+                            ),
+                            None,
+                        )
+                        if contact is None:
+                            contact = next(
+                                (
+                                    c
+                                    for c in contacts
+                                    if c.get("phone_number") == contact_number
+                                ),
+                                None,
+                            )
+                        if contact is None:
+                            LOGGER.error(
+                                f"{DEFAULT_ICON} Failed to resolve contact for WhatsApp call permission from: {contact_number}",
+                            )
+                            self._ack_with_latency(message, publish_timestamp, topic)
+                            return
+
+                        perm_event = WhatsAppCallPermissionResponse(
+                            contact=contact,
+                            accepted=accepted,
+                        )
+                        self._publish_from_callback(
+                            "app:comms:whatsapp_call_permission",
+                            perm_event.to_json(),
+                        )
+                        self._ack_with_latency(message, publish_timestamp, topic)
+                        return
+
+                    # Strip whatsapp: prefix from sender number
+                    raw_from = event["from_number"].strip()
+                    contact_detail = (
+                        raw_from.replace("whatsapp:", "")
+                        if raw_from.startswith("whatsapp:")
+                        else raw_from
+                    )
+                    medium_for_blacklist = Medium.WHATSAPP_MESSAGE
+
+                    if _is_blacklisted(medium_for_blacklist, contact_detail):
+                        LOGGER.debug(
+                            f"{DEFAULT_ICON} Ignoring blacklisted WhatsApp from: {contact_detail}",
+                        )
+                        self._ack_with_latency(message, publish_timestamp, topic)
+                        return
+
+                    contact = next(
+                        (
+                            c
+                            for c in contacts
+                            if c.get("whatsapp_number") == contact_detail
+                            or c["phone_number"] == contact_detail
+                        ),
+                        None,
+                    )
+                    is_new_unknown = False
+                    if contact is None:
+                        contact = _get_or_create_unknown_contact(
+                            medium_for_blacklist,
+                            contact_detail,
+                        )
+                        is_new_unknown = contact is not None
+
+                    if contact is None:
+                        LOGGER.error(
+                            f"{DEFAULT_ICON} Failed to resolve contact for WhatsApp from: {contact_detail}",
+                        )
+                        self._ack_with_latency(message, publish_timestamp, topic)
+                        return
+
+                    attachments = event.get("attachments") or []
+
+                    self._publish_from_callback(
+                        f"app:comms:{thread}_message",
+                        events_map[thread](
+                            content=content,
+                            contact=contact,
+                            **({"attachments": attachments} if attachments else {}),
+                        ).to_json(),
+                    )
+
+                    if attachments:
+                        try:
+                            asyncio.run_coroutine_threadsafe(
+                                add_unify_message_attachments(attachments),
+                                self.loop,
+                            )
+                        except Exception as e:
+                            LOGGER.error(
+                                f"{DEFAULT_ICON} Failed scheduling WhatsApp attachment download: {e}",
+                            )
+
+                    if is_new_unknown:
+                        self._publish_from_callback(
+                            "app:comms:unknown_contact_created",
+                            UnknownContactCreated(
+                                contact=contact,
+                                medium=medium_for_blacklist,
+                                message_preview=content[:100] if content else "",
+                            ).to_json(),
+                        )
+
                 else:
                     # SMS message (thread == "msg")
                     contact_detail = event["from_number"].strip()
@@ -675,6 +804,52 @@ class CommsManager:
                             room_name=event.get("livekit_room"),
                         )
                         topic = "app:comms:unify_meet_received"
+                    elif thread == "whatsapp_call":
+                        number = event.get("caller_number", event.get("user_number"))
+                        if number and number.startswith("whatsapp:"):
+                            number = number[len("whatsapp:") :]
+
+                        if _is_blacklisted(Medium.WHATSAPP_MESSAGE, number):
+                            LOGGER.debug(
+                                f"{DEFAULT_ICON} Ignoring blacklisted WhatsApp call from: {number}",
+                            )
+                            self._ack_with_latency(message, publish_timestamp, topic)
+                            return
+
+                        contact = next(
+                            (c for c in contacts if c.get("whatsapp_number") == number),
+                            None,
+                        )
+                        is_new_unknown = False
+                        if contact is None:
+                            contact = _get_or_create_unknown_contact(
+                                Medium.WHATSAPP_CALL,
+                                number,
+                            )
+                            is_new_unknown = contact is not None
+
+                        if contact is None:
+                            LOGGER.error(
+                                f"{DEFAULT_ICON} Failed to resolve contact for WhatsApp call from: {number}",
+                            )
+                            self._ack_with_latency(message, publish_timestamp, topic)
+                            return
+
+                        call_event = WhatsAppCallReceived(
+                            contact=contact,
+                            conference_name=event.get("conference_name", ""),
+                        )
+                        topic = "app:comms:whatsapp_call_received"
+
+                        if is_new_unknown:
+                            self._publish_from_callback(
+                                "app:comms:unknown_contact_created",
+                                UnknownContactCreated(
+                                    contact=contact,
+                                    medium=Medium.WHATSAPP_CALL,
+                                    message_preview="Incoming WhatsApp call",
+                                ).to_json(),
+                            )
                     elif thread == "call":
                         number = event.get("caller_number", event.get("user_number"))
 
@@ -723,8 +898,53 @@ class CommsManager:
                                     message_preview="Incoming phone call",
                                 ).to_json(),
                             )
+                    elif thread == "whatsapp_call_answered":
+                        number = event.get("user_number")
+                        if number and number.startswith("whatsapp:"):
+                            number = number[len("whatsapp:") :]
+                        contact = next(
+                            (c for c in contacts if c.get("whatsapp_number") == number),
+                            None,
+                        )
+                        if contact is None:
+                            contact = next(
+                                (
+                                    c
+                                    for c in contacts
+                                    if c.get("phone_number") == number
+                                ),
+                                None,
+                            )
+                        if contact is None:
+                            contact = next(c for c in contacts if c["contact_id"] == 1)
+                        call_event = WhatsAppCallAnswered(contact=contact)
+                        topic = "app:comms:whatsapp_call_answered"
+                    elif thread == "whatsapp_call_not_answered":
+                        number = event.get("user_number")
+                        if number and number.startswith("whatsapp:"):
+                            number = number[len("whatsapp:") :]
+                        call_status = event.get("call_status", "no-answer")
+                        contact = next(
+                            (c for c in contacts if c.get("whatsapp_number") == number),
+                            None,
+                        )
+                        if contact is None:
+                            contact = next(
+                                (
+                                    c
+                                    for c in contacts
+                                    if c.get("phone_number") == number
+                                ),
+                                None,
+                            )
+                        if contact is None:
+                            contact = next(c for c in contacts if c["contact_id"] == 1)
+                        call_event = WhatsAppCallNotAnswered(
+                            contact=contact,
+                            reason=call_status,
+                        )
+                        topic = "app:comms:whatsapp_call_not_answered"
                     elif thread == "call_not_answered":
-                        # Outbound call was not answered (no-answer, busy, canceled, failed)
                         number = event.get("user_number")
                         call_status = event.get("call_status", "no-answer")
                         contact = next(
@@ -732,25 +952,28 @@ class CommsManager:
                             None,
                         )
                         if contact is None:
-                            # Fallback to boss contact
                             contact = next(c for c in contacts if c["contact_id"] == 1)
                         call_event = PhoneCallNotAnswered(
                             contact=contact,
                             reason=call_status,
                         )
                         topic = "app:comms:call_not_answered"
-                    else:
-                        # call_answered - typically from known contacts initiating outbound
+                    elif thread == "call_answered":
                         number = event.get("user_number")
                         contact = next(
                             (c for c in contacts if c["phone_number"] == number),
                             None,
                         )
                         if contact is None:
-                            # Fallback to boss contact for answered calls
                             contact = next(c for c in contacts if c["contact_id"] == 1)
                         call_event = PhoneCallAnswered(contact=contact)
                         topic = "app:comms:call_answered"
+                    else:
+                        LOGGER.warning(
+                            f"{DEFAULT_ICON} Unhandled call/meet thread: {thread}",
+                        )
+                        self._ack_with_latency(message, publish_timestamp, topic)
+                        return
 
                     # Publish the event (blocking wait for call events)
                     future = asyncio.run_coroutine_threadsafe(
@@ -821,6 +1044,10 @@ class CommsManager:
 
             # Store the future for cleanup
             self.subscribers[subscription_id] = streaming_pull_future
+            LOGGER.info(
+                f"{ICONS['subscription']} Subscription active: {subscription_path} "
+                f"(max_messages={max_messages})",
+            )
 
         except Exception as e:
             LOGGER.error(
@@ -828,128 +1055,218 @@ class CommsManager:
             )
 
     async def _poll_for_assignment(self):
-        """Poll own Job's labels until the comms app assigns this container.
+        """Wait for cluster-owned AssistantSession assignment.
 
-        The /infra/job/start endpoint atomically claims an idle container
-        by patching its K8s labels to ``unity-status=running`` and writing
-        the startup configuration as an annotation.  This loop detects
-        that transition and triggers the startup sequence.
+        The session controller writes a session reference onto the real Job.
+        Unity watches for that reference, reads the AssistantSession plus its
+        bootstrap Secret, and emits the same StartupEvent path the existing
+        ConversationManager already handles.
         """
-        comms_url = (SETTINGS.conversation.COMMS_URL or "").rstrip("/")
-        admin_key = SETTINGS.ORCHESTRA_ADMIN_KEY.get_secret_value()
         job_name = SETTINGS.conversation.JOB_NAME
 
-        if not comms_url or not admin_key or not job_name:
+        if not job_name:
             LOGGER.error(
                 f"{DEFAULT_ICON} Cannot poll for assignment: "
-                f"COMMS_URL, ORCHESTRA_ADMIN_KEY, or JOB_NAME not configured",
+                f"JOB_NAME not configured",
             )
             return
 
         LOGGER.debug(
-            f"{DEFAULT_ICON} Polling for assignment on {job_name} "
-            f"(interval={SETTINGS.conversation.ASSIGNMENT_POLL_INTERVAL}s)",
+            f"{DEFAULT_ICON} Waiting for AssistantSession assignment on {job_name}",
         )
 
+        attempt = 0
         while True:
-            await asyncio.sleep(SETTINGS.conversation.ASSIGNMENT_POLL_INTERVAL)
-            job_data = await asyncio.to_thread(
-                read_own_job,
-                comms_url,
-                admin_key,
-                job_name,
-            )
-            if not job_data:
-                continue
-
-            labels = job_data.get("labels", {})
-            if labels.get("unity-status") != "running":
-                continue
-
-            config_json = job_data.get("annotations", {}).get("unity-startup-config")
-            if not config_json:
-                LOGGER.warning(
-                    f"{DEFAULT_ICON} Job {job_name} is running but has no "
-                    f"unity-startup-config annotation",
+            attempt += 1
+            try:
+                LOGGER.info(
+                    f"{DEFAULT_ICON} Assignment poll attempt {attempt} for {job_name}",
                 )
-                continue
+                session_name = await asyncio.to_thread(
+                    wait_for_assistant_session_name,
+                    job_name,
+                )
+                LOGGER.info(
+                    f"{DEFAULT_ICON} Assignment session discovered for {job_name}: "
+                    f"{session_name}",
+                )
+                job_assignment = await asyncio.to_thread(
+                    read_job_assignment_record,
+                    job_name,
+                )
+                if job_assignment.session_name != session_name:
+                    LOGGER.info(
+                        f"{DEFAULT_ICON} Ignoring assignment on {job_name}: "
+                        f"job now points at {job_assignment.session_name or 'no-session'} "
+                        f"instead of {session_name}",
+                    )
+                    await asyncio.sleep(5)
+                    continue
+                if not job_assignment.binding_id:
+                    LOGGER.info(
+                        f"{DEFAULT_ICON} Waiting for binding identity on {job_name} "
+                        f"before bootstrapping {session_name}",
+                    )
+                    await asyncio.sleep(5)
+                    continue
+                session = await asyncio.to_thread(read_assistant_session, session_name)
+                session_spec = session.get("spec") or {}
+                session_status = session.get("status") or {}
+                session_binding_id = str(
+                    ((session_status.get("binding") or {}).get("id") or ""),
+                )
+                activation_id = str(session_spec.get("activationId", "") or "")
+                secret_name = str(session_spec.get("startupSecretRef", "") or "")
+                if not secret_name:
+                    raise RuntimeError(
+                        f"AssistantSession {session_name} missing startupSecretRef",
+                    )
+                if not activation_id:
+                    LOGGER.info(
+                        f"{DEFAULT_ICON} Waiting for activation ownership on "
+                        f"{session_name} before bootstrapping {job_name}",
+                    )
+                    await asyncio.sleep(5)
+                    continue
+                if not session_binding_id:
+                    LOGGER.info(
+                        f"{DEFAULT_ICON} Waiting for current binding on "
+                        f"{session_name} before bootstrapping {job_name}",
+                    )
+                    await asyncio.sleep(5)
+                    continue
+                if job_assignment.binding_id != session_binding_id:
+                    LOGGER.info(
+                        f"{DEFAULT_ICON} Ignoring stale assignment on {job_name}: "
+                        f"job binding {job_assignment.binding_id} != "
+                        f"session binding {session_binding_id}",
+                    )
+                    await asyncio.sleep(5)
+                    continue
+                LOGGER.info(
+                    f"{DEFAULT_ICON} Assignment session loaded for {job_name}: "
+                    f"phase={(session_status.get('phase') or '')}, "
+                    f"secret={secret_name}, "
+                    f"binding_id={session_binding_id}",
+                )
 
-            event = json.loads(config_json)
-            LOGGER.debug(
-                f"{DEFAULT_ICON} Assignment detected for assistant "
-                f"{event.get('assistant_id')} on {job_name}",
-            )
+                secret_record = await asyncio.to_thread(
+                    read_session_bootstrap_secret_record,
+                    secret_name,
+                )
+                event = secret_record.payload
+                if not event:
+                    raise RuntimeError(
+                        f"AssistantSession bootstrap secret {secret_name} is empty",
+                    )
+                if secret_record.owner_session_name != session_name:
+                    LOGGER.info(
+                        f"{DEFAULT_ICON} Ignoring stale bootstrap Secret "
+                        f"{secret_record.name} on {job_name}: owner session "
+                        f"{secret_record.owner_session_name or 'missing'} != {session_name}",
+                    )
+                    await asyncio.sleep(5)
+                    continue
+                if secret_record.owner_activation_id != activation_id:
+                    LOGGER.info(
+                        f"{DEFAULT_ICON} Ignoring stale bootstrap Secret "
+                        f"{secret_record.name} on {job_name}: owner activation "
+                        f"{secret_record.owner_activation_id or 'missing'} != {activation_id}",
+                    )
+                    await asyncio.sleep(5)
+                    continue
+                expected_assistant_id = str(session_spec.get("assistantId", "") or "")
+                event_assistant_id = str(event.get("assistant_id", "") or "")
+                if (
+                    expected_assistant_id
+                    and event_assistant_id
+                    and event_assistant_id != expected_assistant_id
+                ):
+                    LOGGER.info(
+                        f"{DEFAULT_ICON} Ignoring bootstrap Secret {secret_record.name} "
+                        f"on {job_name}: payload assistant {event_assistant_id} != "
+                        f"session assistant {expected_assistant_id}",
+                    )
+                    await asyncio.sleep(5)
+                    continue
+                LOGGER.info(
+                    f"{DEFAULT_ICON} Bootstrap secret read for {job_name}: "
+                    f"assistant_id={event.get('assistant_id')} medium={event.get('medium')}",
+                )
 
-            SESSION_DETAILS.assistant.agent_id = int(event["assistant_id"])
-            self.subscribe_to_topic(_get_subscription_id(), max_messages=10)
+                LOGGER.debug(
+                    f"{DEFAULT_ICON} Assignment detected for assistant "
+                    f"{event.get('assistant_id')} via {session_name} on {job_name}",
+                )
 
-            threading.Thread(
-                target=mark_job_label,
-                args=(job_name, "running"),
-                kwargs={"ack_ts": str(int(time.time()))},
-                daemon=True,
-            ).start()
+                SESSION_DETAILS.assistant.agent_id = int(event["assistant_id"])
+                self.subscribe_to_topic(_get_subscription_id(), max_messages=10)
+                LOGGER.info(
+                    f"{DEFAULT_ICON} Assistant inbound subscription established for "
+                    f"{job_name}: {_get_subscription_id()}",
+                )
 
-            details = {
-                "api_key": event["api_key"],
-                "medium": event.get("medium", "startup"),
-                "assistant_id": event["assistant_id"],
-                "user_id": event["user_id"],
-                "assistant_first_name": event["assistant_first_name"],
-                "assistant_surname": event["assistant_surname"],
-                "assistant_age": event["assistant_age"],
-                "assistant_nationality": event["assistant_nationality"],
-                "assistant_timezone": event.get("assistant_timezone", ""),
-                "assistant_about": event["assistant_about"],
-                "assistant_number": event["assistant_number"],
-                "assistant_email": event["assistant_email"],
-                "user_first_name": event["user_first_name"],
-                "user_surname": event["user_surname"],
-                "user_number": event["user_number"],
-                "user_email": event["user_email"],
-                "voice_provider": event["voice_provider"],
-                "voice_id": event["voice_id"],
-                "desktop_mode": event.get("desktop_mode", "ubuntu"),
-                "user_desktop_mode": event.get("user_desktop_mode"),
-                "user_desktop_filesys_sync": event.get(
-                    "user_desktop_filesys_sync",
-                    False,
-                ),
-                "user_desktop_url": event.get("user_desktop_url"),
-                "org_id": event.get("org_id"),
-                "org_name": event.get("org_name", ""),
-                "team_ids": event.get("team_ids") or [],
-                "demo_id": event.get("demo_id"),
-            }
+                details = {
+                    "api_key": event["api_key"],
+                    "binding_id": session_binding_id,
+                    "medium": event.get("medium", "startup"),
+                    "assistant_id": event["assistant_id"],
+                    "user_id": event["user_id"],
+                    "assistant_first_name": event["assistant_first_name"],
+                    "assistant_surname": event["assistant_surname"],
+                    "assistant_age": event["assistant_age"],
+                    "assistant_nationality": event["assistant_nationality"],
+                    "assistant_timezone": event.get("assistant_timezone", ""),
+                    "assistant_about": event["assistant_about"],
+                    "assistant_number": event["assistant_number"],
+                    "assistant_email": event["assistant_email"],
+                    "assistant_whatsapp_number": event.get(
+                        "assistant_whatsapp_number",
+                        "",
+                    ),
+                    "user_first_name": event["user_first_name"],
+                    "user_surname": event["user_surname"],
+                    "user_number": event["user_number"],
+                    "user_email": event["user_email"],
+                    "user_whatsapp_number": event.get("user_whatsapp_number", ""),
+                    "voice_provider": event["voice_provider"],
+                    "voice_id": event["voice_id"],
+                    "desktop_mode": event.get("desktop_mode", "ubuntu"),
+                    "user_desktop_mode": event.get("user_desktop_mode"),
+                    "user_desktop_filesys_sync": event.get(
+                        "user_desktop_filesys_sync",
+                        False,
+                    ),
+                    "user_desktop_url": event.get("user_desktop_url"),
+                    "org_id": event.get("org_id"),
+                    "org_name": event.get("org_name", ""),
+                    "team_ids": event.get("team_ids") or [],
+                    "demo_id": event.get("demo_id"),
+                }
 
-            await self.event_broker.publish(
-                "app:comms:startup",
-                StartupEvent(**details).to_json(),
-            )
-            return
+                await self.event_broker.publish(
+                    "app:comms:startup",
+                    StartupEvent(**details).to_json(),
+                )
+                LOGGER.info(
+                    f"{DEFAULT_ICON} StartupEvent published for assistant "
+                    f"{event.get('assistant_id')} on {job_name}",
+                )
+                await asyncio.to_thread(mark_job_container_ready, job_name)
+                LOGGER.info(
+                    f"{DEFAULT_ICON} Container-ready signalled for {job_name}",
+                )
+                return
+            except Exception as e:
+                LOGGER.exception(
+                    f"{DEFAULT_ICON} AssistantSession discovery failed for {job_name} "
+                    f"on attempt {attempt}: {e}",
+                )
+                await asyncio.sleep(5)
 
     async def start(self):
         """Start all subscriptions and maintain connection to event manager."""
         if SESSION_DETAILS.assistant.agent_id is None:
-            job_name = SETTINGS.conversation.JOB_NAME
-            comms_url = (SETTINGS.conversation.COMMS_URL or "").rstrip("/")
-            admin_key = SETTINGS.ORCHESTRA_ADMIN_KEY.get_secret_value()
-
-            already_claimed = False
-            if comms_url and admin_key and job_name:
-                job_data = read_own_job(comms_url, admin_key, job_name)
-                if job_data:
-                    labels = job_data.get("labels", {})
-                    if labels.get("unity-status") in ("running", "starting"):
-                        already_claimed = True
-
-            if not already_claimed:
-                threading.Thread(
-                    target=mark_job_label,
-                    args=(job_name, "idle"),
-                    daemon=True,
-                ).start()
-
             asyncio.create_task(self._poll_for_assignment())
             asyncio.create_task(self.send_pings())
         else:

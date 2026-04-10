@@ -30,9 +30,12 @@ from unity.conversation_manager.event_broker import get_event_broker
 from unity.conversation_manager.events import (
     ApiMessageSent,
     SMSSent,
+    WhatsAppSent,
     UnifyMessageSent,
     EmailSent,
     PhoneCallSent,
+    WhatsAppCallSent,
+    WhatsAppCallInviteSent,
     ActorHandleStarted,
     ActorHandleResponse,
     FastBrainNotification,
@@ -493,6 +496,191 @@ class ConversationManagerBrainActionTools:
             "app:comms:sms_sent",
             contact_id=contact_id,
             medium=Medium.SMS_MESSAGE,
+        )
+
+    async def send_whatsapp(
+        self,
+        *,
+        contact_id: int | str,
+        content: str,
+        whatsapp_number: str | None = None,
+        attachment_filepath: str | None = None,
+    ) -> dict[str, Any]:
+        """
+        Send a WhatsApp message to an existing contact.
+
+        The contact must already exist in the system.
+
+        - If the contact **already has** a WhatsApp number on file (visible in
+          active_conversations), omit ``whatsapp_number`` -- it is not needed.
+        - If the contact **does not have** a WhatsApp number on file but you
+          know it (e.g. the boss provided it), pass it via ``whatsapp_number``.
+          It will be saved to the contact record automatically and the
+          WhatsApp message will be sent in one step.
+        - **Do not** pass a ``whatsapp_number`` that differs from the one
+          already on file -- this will be rejected.  Use ``act`` to update
+          the contact's WhatsApp number first, then retry.
+
+        **Attachments**: WhatsApp allows **one** attachment per message.  To
+        send multiple files, call this tool once per file.  Supported types
+        inside the 24h window: images, audio, video, PDF, DOC, XLSX.
+        Outside the 24h window (template fallback), only PDF/image/video
+        are supported by WhatsApp — other types will be dropped.
+
+        Args:
+            contact_id: The contact_id of the recipient (from
+                active_conversations or returned by ``find_contacts`` /
+                ``create_contact``).
+            content: The text content of the WhatsApp message to send.
+            whatsapp_number: The recipient's WhatsApp number.  Required when
+                the contact does not yet have a WhatsApp number on file;
+                omit when the contact already has one.
+            attachment_filepath: Optional workspace-relative filepath of a
+                file to attach (e.g. ``Attachments/report.pdf``).  The file
+                is uploaded and sent as media alongside the text message.
+        """
+        contact_id = _coerce_contact_id(contact_id)
+        contact = self._cm.contact_index.get_contact(contact_id)
+
+        _wa_topic = "app:comms:whatsapp_sent"
+        _wa_err = dict(contact_id=contact_id, medium=Medium.WHATSAPP_MESSAGE)
+
+        outbound_error = _check_outbound_allowed(contact)
+        if outbound_error:
+            return await self._surface_comms_error(
+                outbound_error,
+                _wa_topic,
+                **_wa_err,
+            )
+
+        detail_error, contact = _resolve_or_attach_detail(
+            contact,
+            contact_id,
+            "whatsapp_number",
+            whatsapp_number,
+            "WhatsApp",
+            self._cm.contact_index,
+        )
+        if detail_error:
+            return await self._surface_comms_error(
+                detail_error,
+                _wa_topic,
+                **_wa_err,
+            )
+
+        from unity.session_details import SESSION_DETAILS
+
+        attachment = None
+        media_url = None
+        if attachment_filepath:
+            import os
+            from unity.file_manager.filesystem_adapters.local_adapter import (
+                LocalFileSystemAdapter,
+            )
+
+            adapter = LocalFileSystemAdapter()
+            try:
+                abs_path = adapter._abspath(attachment_filepath)
+                with open(abs_path, "rb") as f:
+                    file_contents = f.read()
+            except FileNotFoundError:
+                return await self._surface_comms_error(
+                    f"File not found: {attachment_filepath}",
+                    _wa_topic,
+                    **_wa_err,
+                )
+            except Exception as e:
+                return await self._surface_comms_error(
+                    f"Failed to read file: {e}",
+                    _wa_topic,
+                    **_wa_err,
+                )
+
+            attachment_filename = os.path.basename(attachment_filepath)
+            upload_result = await comms_utils.upload_unify_attachment(
+                file_content=file_contents,
+                filename=attachment_filename,
+            )
+            if "error" in upload_result:
+                return await self._surface_comms_error(
+                    f"Failed to upload attachment: {upload_result['error']}",
+                    _wa_topic,
+                    **_wa_err,
+                )
+
+            attachment = upload_result
+            att_id = attachment.get("id", "")
+            att_target = f"Attachments/{att_id}_{attachment_filename}"
+            try:
+                import shutil
+
+                att_dir = adapter._abspath("Attachments")
+                os.makedirs(att_dir, exist_ok=True)
+                shutil.copy2(
+                    abs_path,
+                    os.path.join(att_dir, f"{att_id}_{attachment_filename}"),
+                )
+            except Exception:
+                pass
+            attachment["filepath"] = att_target
+
+            media_url = attachment.get("url") or attachment.get("gs_url")
+            if media_url and media_url.startswith("gs://"):
+                import aiohttp as _aiohttp
+                from unity.conversation_manager.domains.comms_utils import (
+                    _get_signed_url_from_gs_url,
+                )
+
+                async with _aiohttp.ClientSession() as _sess:
+                    media_url = await _get_signed_url_from_gs_url(_sess, media_url)
+
+        to_number = contact.get("whatsapp_number")
+        response = await comms_utils.send_whatsapp_message(
+            to_number=to_number,
+            content=content,
+            user_name=contact.get("first_name", ""),
+            agent_name=SESSION_DETAILS.assistant.first_name,
+            media_url=media_url,
+        )
+
+        if response.get("success"):
+            via_template = response.get("method") == "template"
+            fresh_contact = (
+                self._cm.contact_index.get_contact(whatsapp_number=to_number) or contact
+            )
+            attachments_for_event = [attachment] if attachment else []
+            event = WhatsAppSent(
+                contact=fresh_contact,
+                content=content,
+                via_template=via_template,
+                attachments=attachments_for_event or None,
+            )
+            await self._event_broker.publish(
+                _wa_topic,
+                event.to_json(),
+            )
+            if via_template:
+                self._cm._pending_whatsapp_resends[contact_id] = content
+                return {
+                    "status": "ok",
+                    "pending_resend": True,
+                    "note": (
+                        "The message could not be delivered verbatim. "
+                        "A notification was sent to the contact instead. "
+                        "When they reply, you will be prompted to resend "
+                        "your message."
+                    ),
+                }
+            return {"status": "ok"}
+
+        if not self._cm.assistant_whatsapp_number:
+            error_msg = "WhatsApp is not enabled for this assistant."
+        else:
+            error_msg = f"Failed to send WhatsApp message to {to_number}"
+        return await self._surface_comms_error(
+            error_msg,
+            _wa_topic,
+            **_wa_err,
         )
 
     async def send_unify_message(
@@ -1244,6 +1432,286 @@ class ConversationManagerBrainActionTools:
             medium=Medium.PHONE_CALL,
         )
 
+    async def make_whatsapp_call(
+        self,
+        *,
+        contact_id: int | str,
+        context: str,
+        whatsapp_number: str | None = None,
+    ) -> dict[str, Any]:
+        """
+        Start an outbound WhatsApp voice call to an existing contact.
+
+        The contact must already exist in the system.
+
+        - If the contact **already has** a WhatsApp number on file (visible in
+          active_conversations), omit ``whatsapp_number`` -- it is not needed.
+        - If the contact **does not have** a WhatsApp number on file but you
+          know it (e.g. the boss provided it), pass it via ``whatsapp_number``.
+          It will be saved to the contact record automatically and the call
+          will be placed in one step.
+        - **Do not** pass a ``whatsapp_number`` that differs from the one
+          already on file -- this will be rejected.  Use ``act`` to update
+          the contact's WhatsApp number first, then retry.
+
+        If WhatsApp call permission has not yet been granted by the contact,
+        a call invite template is sent instead — the contact sees a "Call now"
+        button. When they tap it, the call connects automatically and you will
+        be briefed with the context you provided.
+
+        Args:
+            contact_id: The contact_id of the person to call (from
+                active_conversations or returned by ``find_contacts`` /
+                ``create_contact``).
+            context: **Mission briefing for the voice agent.** This is the
+                voice agent's sole source of context about what to do on the
+                call. Once the call connects, the voice agent speaks first
+                and will not receive any further guidance from you until the
+                other person responds or an external event arrives. Everything
+                the voice agent needs to open and conduct the conversation
+                must be in this string.
+
+                Include:
+                - **Purpose**: Why are we calling? What is the goal?
+                - **Key information**: Specific facts, names, dates, or
+                  details the voice agent needs (e.g. "the meeting is
+                  Thursday at 3pm at the downtown office").
+                - **Questions to ask**: What specific information do we need
+                  from the other person?
+                - **Tone / relationship**: How does the boss know this person?
+                  Any relevant social context (e.g. "this is a close friend"
+                  vs "this is a new business contact").
+                - **Constraints**: Anything to avoid saying, sensitive topics,
+                  or fallback behavior if the person is unavailable or
+                  confused.
+
+                Be thorough — a well-briefed voice agent produces a natural,
+                purposeful conversation. A vague context produces an awkward
+                opening.
+            whatsapp_number: The recipient's WhatsApp number (E.164).
+                Required when the contact does not yet have a WhatsApp
+                number on file; omit when the contact already has one.
+        """
+        from unity.conversation_manager.domains.call_manager import make_room_name
+
+        contact_id = _coerce_contact_id(contact_id)
+
+        if (
+            self._cm.call_manager.has_active_call
+            or self._cm.call_manager.has_active_google_meet
+            or self._cm.call_manager._whatsapp_call_joining
+        ):
+            return {
+                "status": "error",
+                "message": "A call or meeting is already active.",
+            }
+
+        contact = self._cm.contact_index.get_contact(contact_id)
+
+        outbound_error = _check_outbound_allowed(contact)
+        if outbound_error:
+            return await self._surface_comms_error(
+                outbound_error,
+                "app:comms:whatsapp_call_sent",
+                contact_id=contact_id,
+                medium=Medium.WHATSAPP_CALL,
+            )
+
+        detail_error, contact = _resolve_or_attach_detail(
+            contact,
+            contact_id,
+            "whatsapp_number",
+            whatsapp_number,
+            "WhatsApp call",
+            self._cm.contact_index,
+        )
+        if detail_error:
+            return await self._surface_comms_error(
+                detail_error,
+                "app:comms:whatsapp_call_sent",
+                contact_id=contact_id,
+                medium=Medium.WHATSAPP_CALL,
+            )
+
+        from unity.session_details import SESSION_DETAILS
+
+        to_number = contact.get("whatsapp_number")
+        assistant_id = str(SESSION_DETAILS.assistant.agent_id)
+        agent_name = SESSION_DETAILS.assistant.name or ""
+        room_name = make_room_name(assistant_id, "whatsapp_call")
+
+        LOGGER.debug(
+            f"{DEFAULT_ICON} [make_whatsapp_call] context: {context}, to_number: {to_number}",
+        )
+
+        self._cm.call_manager._whatsapp_call_joining = True
+
+        response = await comms_utils.start_whatsapp_call(
+            to_number=to_number,
+            agent_name=agent_name,
+            room_name=room_name,
+        )
+        if not response.get("success"):
+            self._cm.call_manager._whatsapp_call_joining = False
+            if not self._cm.assistant_whatsapp_number:
+                error_msg = "You don't have a WhatsApp number configured."
+            else:
+                error_msg = f"Failed to initiate WhatsApp call to {to_number}"
+            return await self._surface_comms_error(
+                error_msg,
+                "app:comms:whatsapp_call_sent",
+                contact_id=contact_id,
+                medium=Medium.WHATSAPP_CALL,
+            )
+
+        fresh_contact = (
+            self._cm.contact_index.get_contact(whatsapp_number=to_number)
+            or contact
+            or {}
+        )
+        method = response.get("method")
+
+        if method == "direct":
+            if context:
+                self._cm.call_manager.initial_notification = context
+            event = WhatsAppCallSent(contact=fresh_contact)
+            await self._event_broker.publish(
+                "app:comms:whatsapp_call_sent",
+                event.to_json(),
+            )
+            return {"status": "ok"}
+
+        # method == "invite" — no actual call yet, release the joining flag
+        self._cm.call_manager._whatsapp_call_joining = False
+        if context:
+            self._cm._pending_whatsapp_call_contexts[contact_id] = context
+        event = WhatsAppCallInviteSent(contact=fresh_contact)
+        await self._event_broker.publish(
+            "app:comms:whatsapp_call_invite_sent",
+            event.to_json(),
+        )
+        return {
+            "status": "ok",
+            "pending_callback": True,
+            "note": (
+                "Call permission not yet granted. A call invite was sent instead. "
+                "When the contact taps 'Call now', the call will connect and "
+                "you will be briefed with the context you provided."
+            ),
+        }
+
+    async def join_google_meet(
+        self,
+        meet_url: str,
+        context: str = "",
+    ) -> dict[str, Any]:
+        """Join a Google Meet call.
+
+        This is the **only** way to join a Google Meet — it configures audio
+        devices, establishes the voice pipeline, and dispatches the voice
+        agent so the assistant can hear and speak in the meeting.  Never
+        attempt to join a Meet URL via ``act``.
+
+        Args:
+            meet_url: The full Google Meet URL (e.g. https://meet.google.com/abc-defg-hij).
+            context: Briefing for the voice agent about the meeting purpose,
+                expected participants, topics to cover, and how to behave.
+                Same guidance principles as make_call's context parameter.
+        """
+        if (
+            self._cm.call_manager.has_active_call
+            or self._cm.call_manager.has_active_google_meet
+        ):
+            return {
+                "status": "error",
+                "message": "A call or meeting is already active.",
+            }
+
+        if context:
+            self._cm.call_manager.initial_notification = context
+
+        from unity.conversation_manager.events import GoogleMeetReceived
+
+        boss = self._cm.contact_index.get_contact(contact_id=1) or {}
+        event = GoogleMeetReceived(contact=boss, meet_url=meet_url)
+        await self._event_broker.publish(event.topic, event.to_json())
+        return {"status": "ok", "message": f"Joining Google Meet at {meet_url}"}
+
+    async def leave_google_meet(self) -> dict[str, Any]:
+        """Leave the current Google Meet call.
+
+        Disconnects the assistant from the active Google Meet session,
+        closing the browser and tearing down the audio bridge.
+        """
+        if not self._cm.call_manager.has_active_google_meet:
+            return {
+                "status": "error",
+                "message": "No active Google Meet session to leave.",
+            }
+
+        # Stop the browser agent immediately so the assistant disappears
+        # from the Meet before the event handler's full cleanup pipeline.
+        session_id = self._cm.call_manager._gmeet_session_id
+        if session_id:
+            import aiohttp
+
+            from unity.session_details import SESSION_DETAILS
+
+            try:
+                async with aiohttp.ClientSession() as session:
+                    await session.post(
+                        "http://localhost:3000/googlemeet/leave",
+                        json={"sessionId": session_id},
+                        headers={
+                            "authorization": f"Bearer {SESSION_DETAILS.unify_key}",
+                        },
+                        timeout=aiohttp.ClientTimeout(total=30),
+                    )
+            except Exception:
+                pass
+
+        from unity.conversation_manager.events import GoogleMeetEnded
+
+        contact = self._cm.call_manager._disconnect_contact or {}
+        event = GoogleMeetEnded(contact=contact)
+        await self._event_broker.publish(event.topic, event.to_json())
+        return {"status": "ok", "message": "Leaving Google Meet"}
+
+    async def start_google_meet_screenshare(self) -> dict[str, Any]:
+        """Share the assistant's desktop screen in the active Google Meet call.
+
+        Opens a live view of the assistant's desktop and presents it to all
+        meeting participants. Use this when participants need to see what the
+        assistant is doing on its computer.
+        """
+        result = await self._cm.call_manager.start_gmeet_screenshare()
+        if result:
+            return {
+                "status": "ok",
+                "message": "Now presenting desktop in Google Meet.",
+            }
+        return {
+            "status": "error",
+            "message": "Failed to start screen sharing.",
+        }
+
+    async def stop_google_meet_screenshare(self) -> dict[str, Any]:
+        """Stop sharing the assistant's desktop screen in Google Meet.
+
+        Ends the current screen presentation. Meeting participants will no
+        longer see the assistant's desktop.
+        """
+        result = await self._cm.call_manager.stop_gmeet_screenshare()
+        if result:
+            return {
+                "status": "ok",
+                "message": "Stopped presenting in Google Meet.",
+            }
+        return {
+            "status": "error",
+            "message": "Failed to stop screen sharing.",
+        }
+
     async def act(
         self,
         *,
@@ -1267,6 +1735,12 @@ class ConversationManagerBrainActionTools:
         - **Action**: Update records, modify spreadsheets, control the desktop/web interface,
           schedule tasks, create reminders
         - **Combined**: Find information and act on it (e.g., "find David's email")
+
+        **Excluded:** Do not use ``act`` for Google Meet operations — use the
+        dedicated tools instead: ``join_google_meet`` to join,
+        ``leave_google_meet`` to leave, ``start_google_meet_screenshare`` to
+        present the assistant's desktop, and ``stop_google_meet_screenshare``
+        to stop presenting.
 
         **When uncertain, call ``act``**: If you need information you don't have (like
         a contact's email address), call ``act`` to search for it. If ``act`` can't find
@@ -1365,6 +1839,7 @@ class ConversationManagerBrainActionTools:
             attributed_user_id = (
                 contact.get("user_id") if contact and contact.get("is_system") else None
             )
+            effective_user_id = attributed_user_id or SESSION_DETAILS.user.id
             COST_ATTRIBUTION.set(
                 (
                     [attributed_user_id]
@@ -1372,6 +1847,18 @@ class ConversationManagerBrainActionTools:
                     else [SESSION_DETAILS.user.id]
                 ),
             )
+
+            try:
+                import unillm
+
+                unillm.set_billing_context(
+                    assistant_id=SESSION_DETAILS.assistant.agent_id,
+                    user_id=effective_user_id,
+                    organization_id=SESSION_DETAILS.org_id,
+                    source="tool",
+                )
+            except (ImportError, Exception):
+                pass
 
         # Pass the fresh rendered state snapshot as context for the Actor,
         # unless the LLM opted out.
@@ -1967,49 +2454,53 @@ class ConversationManagerBrainActionTools:
         response_text: str = "",
     ) -> dict[str, Any]:
         """
-        Relay information to the Voice Agent during a live call.
+        Relay information or trigger speech on the Voice Agent during a live call.
 
         Call this tool **in parallel** with your action tool (``wait``, ``act``,
-        ``send_sms``, etc.) to send guidance to the Voice Agent. If you have
-        nothing to relay, simply omit this tool call entirely.
+        ``send_sms``, etc.). If you have nothing to relay or say, simply omit
+        this tool call entirely (BLOCK).
+
+        **On internal calls** (calls with colleagues / system contacts), the
+        Voice Agent already receives system events (action progress, completions,
+        results) as silent context automatically. You do not need to relay event
+        content — it is already visible. Use this tool only for the **speech
+        decision**: call with ``should_speak=True`` and ``response_text`` when
+        the caller should hear something, or omit the tool to stay silent.
+
+        **On external calls** (calls with non-system contacts), the Voice Agent
+        has no visibility into system events. Use this tool to relay information
+        via ``content`` (silent context injection) and optionally speak via
+        ``should_speak=True`` + ``response_text``.
 
         **Modes:**
 
-        1. **NOTIFY** (default) — Provide context for the Voice Agent to decide
-           how to phrase. The Voice Agent receives this as background context and
-           gets an LLM turn to decide whether and how to speak. Use for progress
-           updates, supplementary context, or information the Voice Agent can
-           articulate better with its conversational context.
-
-        2. **SPEAK** — Provide exact text to speak aloud immediately via TTS,
+        1. **SPEAK** — Provide exact text to speak aloud immediately via TTS,
            bypassing the Voice Agent's LLM. Set ``should_speak=True`` and provide
-           ``response_text``. Use when you can write a concise, natural sentence
-           the user should hear now (concrete data, completion confirmations).
+           ``response_text``. Use when the caller should hear concrete data,
+           completion confirmations, or results now.
+
+        2. **NOTIFY** (default) — Provide context for the Voice Agent as a
+           silent background reference for its next turn. Use for supplementary
+           context or information the Voice Agent may need but that does not
+           warrant immediate speech.
 
         3. **BLOCK** — Do not call this tool at all.
 
-        Write ``content`` in the language currently spoken on the call so the
-        Voice Agent can relay it without translating.
-
-        Do NOT use this tool to steer conversation style, suggest specific
-        dialogue, or micromanage the Voice Agent's approach. Provide data,
-        status, and progress — not conversational direction.
+        Write ``content`` and ``response_text`` in the language currently spoken
+        on the call.
 
         Args:
-            content: The guidance content to relay. Examples:
-                ``"I found 9 backend engineer openings at OpenAI"``,
-                ``"The meeting is confirmed for 3pm Thursday in the downtown office."``
-            should_speak: When True, ``response_text`` is spoken aloud via TTS,
-                bypassing the fast brain's LLM. Use for concrete data answers,
-                completion confirmations, or notifications the user should hear
-                immediately. When False (default), the guidance is injected as
-                silent context and the fast brain decides whether and how to speak.
+            content: Context to inject into the Voice Agent's conversation.
+                On internal calls this can be brief or empty (events are already
+                visible). On external calls this is the primary relay mechanism.
+            should_speak: When True, ``response_text`` is spoken aloud via TTS.
+                Use for concrete data answers, completion confirmations, or
+                notifications the caller should hear immediately.
             response_text: Exact text to speak aloud when ``should_speak`` is
-                True. Must be concise (1-2 sentences), natural, and in the Voice
-                Agent's persona (first person, conversational). Examples:
-                ``"Your flight's at 6am out of Terminal 2, gate B14."``,
-                ``"Done — I've sent the email to Sarah."``.
-                Leave empty when ``should_speak`` is False.
+                True. Must be concise (1-2 sentences), natural, first person,
+                and **spoken prose** (no numbered lists, bullets, or outline
+                labels — TTS reads them literally). Leave empty when
+                ``should_speak`` is False.
         """
         return {"status": "guidance_noted"}
 
@@ -2022,13 +2513,35 @@ class ConversationManagerBrainActionTools:
             "send_api_response": self.send_api_response,
             "wait": self.wait,
         }
+        call_or_meet_in_progress = (
+            self._cm.mode.is_voice
+            or self._cm.call_manager.has_active_call
+            or self._cm.call_manager.has_active_google_meet
+            or self._cm.call_manager._whatsapp_call_joining
+        )
+        if not call_or_meet_in_progress:
+            tools["join_google_meet"] = self.join_google_meet
+        if self._cm.call_manager.has_active_google_meet:
+            tools["leave_google_meet"] = self.leave_google_meet
+            from unity.session_details import SESSION_DETAILS
+
+            if SESSION_DETAILS.assistant.desktop_url:
+                if not self._cm.call_manager.has_gmeet_presenting:
+                    tools["start_google_meet_screenshare"] = (
+                        self.start_google_meet_screenshare
+                    )
+                else:
+                    tools["stop_google_meet_screenshare"] = (
+                        self.stop_google_meet_screenshare
+                    )
         if self._cm.assistant_number:
             tools["send_sms"] = self.send_sms
-            call_in_progress = (
-                self._cm.mode.is_voice or self._cm.call_manager._call_proc is not None
-            )
-            if not call_in_progress:
+            if not call_or_meet_in_progress:
                 tools["make_call"] = self.make_call
+        if self._cm.assistant_whatsapp_number:
+            tools["send_whatsapp"] = self.send_whatsapp
+            if not call_or_meet_in_progress:
+                tools["make_whatsapp_call"] = self.make_whatsapp_call
         if self._cm.assistant_email:
             tools["send_email"] = self.send_email
         if getattr(self._cm.mode, "is_voice", False):

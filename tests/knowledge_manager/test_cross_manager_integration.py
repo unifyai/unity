@@ -15,6 +15,8 @@ from unity.knowledge_manager.knowledge_manager import KnowledgeManager
 # keeps each test isolated in its own Unify project / trace context
 from tests.helpers import _handle_project
 
+pytestmark = pytest.mark.llm_call
+
 
 # ────────────────────────────────────────────────────────────────────────────
 # 1.  KM.retrieve → CM.ask → KM internal knowledge                           #

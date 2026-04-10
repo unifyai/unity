@@ -31,15 +31,20 @@ class ConversationSettings(BaseSettings):
             evaluator for voice mode. When a user speaks while the slow brain is
             mid-run, a sidecar LLM call classifies the utterance as urgent
             (preempt) or not (let the queue proceed). Default False.
-        NOTIFICATION_REPLY_CONTEXT_WINDOW: Maximum number of conversation items
-            the notification reply evaluator keeps. Smaller than the fast brain
-            window because the evaluator only needs recent context to detect
-            redundant speech.
+        SPEECH_DEDUP_ENABLED: Enable pre-speak deduplication gate in the fast
+            brain subprocess during voice calls. Before playing queued slow brain
+            speech, a lightweight LLM check compares the proposed speech against
+            recent fast brain utterances and suppresses it when the information
+            has already been communicated. Default True.
+        USER_DESKTOP_CONTROL_ENABLED: Enable prompts that claim the assistant
+            can remotely control the user's computer. When False (default),
+            prompts clarify that the assistant can only control its own VM and
+            the user can optionally view/control the assistant's desktop — not
+            the other way around.
     """
 
     FAST_BRAIN_MODEL: str = "gpt-5-mini@openai"
     FAST_BRAIN_CONTEXT_WINDOW: int = 50
-    NOTIFICATION_REPLY_CONTEXT_WINDOW: int = 8
     IMPL: str = "real"
     COMMS_URL: str = Field(default="", validation_alias="UNITY_COMMS_URL")
     ADAPTERS_URL: str = Field(default="", validation_alias="UNITY_ADAPTERS_URL")
@@ -47,6 +52,12 @@ class ConversationSettings(BaseSettings):
     CONTACT_ID: str = "1"
     BLACKLIST_CHECKS_ENABLED: bool = False
     SPEECH_URGENCY_PREEMPT_ENABLED: bool = True
+    SPEECH_DEDUP_ENABLED: bool = True
+    USER_DESKTOP_CONTROL_ENABLED: bool = False
+    ASSISTANT_SESSION_GROUP: str = "infra.unify.ai"
+    ASSISTANT_SESSION_VERSION: str = "v1alpha1"
+    ASSISTANT_SESSION_PLURAL: str = "assistantsessions"
+    ASSISTANT_SESSION_PROTOCOL_VERSION: str = "v1"
     ASSIGNMENT_POLL_INTERVAL: float = 0.5
 
     model_config = SettingsConfigDict(

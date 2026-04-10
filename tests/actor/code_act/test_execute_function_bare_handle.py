@@ -25,6 +25,8 @@ from unity.function_manager.function_manager import FunctionManager
 from unity.function_manager.primitives import Primitives, PrimitiveScope
 from unity.manager_registry import ManagerRegistry
 
+pytestmark = pytest.mark.llm_call
+
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------

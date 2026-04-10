@@ -13,8 +13,6 @@ from unity.data_manager.simulated import SimulatedDataManager
 from unity.data_manager.base import BaseDataManager
 from unity.data_manager.types import (
     TableDescription,
-    PlotResult,
-    TableViewResult,
     IngestResult,
 )
 
@@ -41,6 +39,10 @@ def test_simulated_dm_docstrings_match_base():
     assert (
         BaseDataManager.reduce.__doc__.strip()
         in SimulatedDataManager.reduce.__doc__.strip()
+    )
+    assert (
+        BaseDataManager.reduce_join.__doc__.strip()
+        in SimulatedDataManager.reduce_join.__doc__.strip()
     )
 
 
@@ -561,6 +563,119 @@ def test_filter_join_with_filter(seeded_dm):
 
 
 # ────────────────────────────────────────────────────────────────────────────
+# reduce_join operations
+# ────────────────────────────────────────────────────────────────────────────
+
+
+def test_reduce_join_count(seeded_dm):
+    """reduce_join should return a scalar count of joined rows."""
+    count = seeded_dm.reduce_join(
+        tables=["test/orders", "test/products"],
+        join_expr="Data/test/orders.product_id == Data/test/products.id",
+        select={
+            "Data/test/orders.order_id": "order_id",
+            "Data/test/products.name": "name",
+        },
+        metric="count",
+        columns="order_id",
+    )
+
+    assert isinstance(count, int)
+    assert count == 5
+
+
+def test_reduce_join_sum(seeded_dm):
+    """reduce_join with sum metric should return a float."""
+    total = seeded_dm.reduce_join(
+        tables=["test/orders", "test/products"],
+        join_expr="Data/test/orders.product_id == Data/test/products.id",
+        select={
+            "Data/test/orders.order_id": "order_id",
+            "Data/test/products.price": "price",
+        },
+        metric="sum",
+        columns="price",
+    )
+
+    assert isinstance(total, float)
+    assert total > 0
+
+
+def test_reduce_join_with_group_by(seeded_dm):
+    """reduce_join with group_by should return a list of dicts."""
+    results = seeded_dm.reduce_join(
+        tables=["test/orders", "test/products"],
+        join_expr="Data/test/orders.product_id == Data/test/products.id",
+        select={
+            "Data/test/orders.order_id": "order_id",
+            "Data/test/products.name": "name",
+        },
+        metric="count",
+        columns="order_id",
+        group_by="name",
+    )
+
+    assert isinstance(results, list)
+    assert len(results) > 0
+    for r in results:
+        assert "name" in r
+        assert "count" in r
+        assert isinstance(r["count"], int)
+
+
+def test_reduce_join_with_result_where(seeded_dm):
+    """reduce_join should apply result_where before aggregation."""
+    unfiltered = seeded_dm.reduce_join(
+        tables=["test/orders", "test/products"],
+        join_expr="Data/test/orders.product_id == Data/test/products.id",
+        select={
+            "Data/test/orders.order_id": "order_id",
+            "Data/test/products.price": "price",
+        },
+        metric="count",
+        columns="order_id",
+    )
+
+    filtered = seeded_dm.reduce_join(
+        tables=["test/orders", "test/products"],
+        join_expr="Data/test/orders.product_id == Data/test/products.id",
+        select={
+            "Data/test/orders.order_id": "order_id",
+            "Data/test/products.price": "price",
+        },
+        metric="count",
+        columns="order_id",
+        result_where="price > 30",
+    )
+
+    assert isinstance(filtered, int)
+    assert filtered <= unfiltered
+
+
+def test_reduce_join_validates_table_count(simulated_dm):
+    """reduce_join should raise ValueError when not given exactly 2 tables."""
+    simulated_dm.create_table("test/t1", fields={"id": "int"})
+
+    with pytest.raises(ValueError, match="Exactly TWO"):
+        simulated_dm.reduce_join(
+            tables=["test/t1"],
+            join_expr="t1.id == t2.id",
+            select={"t1.id": "id"},
+            metric="count",
+            columns="id",
+        )
+
+    with pytest.raises(ValueError, match="Exactly TWO"):
+        simulated_dm.reduce_join(
+            tables=["test/t1", "test/t1", "test/t1"],
+            join_expr="t1.id == t2.id",
+            select={"t1.id": "id"},
+            metric="count",
+            columns="id",
+        )
+
+
+# ────────────────────────────────────────────────────────────────────────────
 # Embedding operations
 # ────────────────────────────────────────────────────────────────────────────
 
@@ -594,227 +709,6 @@ def test_vectorize_rows(simulated_dm):
 
     # SimulatedDataManager returns 0 for all rows (no specific IDs)
     assert isinstance(count, int)
-
-
-# ────────────────────────────────────────────────────────────────────────────
-# Visualization
-# ────────────────────────────────────────────────────────────────────────────
-
-
-def test_plot_bar_with_aggregate(seeded_dm):
-    """Bar chart with aggregation returns a valid PlotResult."""
-    result = seeded_dm.plot(
-        "test/products",
-        plot_type="bar",
-        x="category",
-        y="price",
-        aggregate="sum",
-        title="Price by Category",
-    )
-
-    assert isinstance(result, PlotResult)
-    assert result.succeeded
-    assert result.url is not None
-    assert result.title == "Price by Category"
-
-
-def test_plot_bar_with_metric(seeded_dm):
-    """Bar chart with metric parameter is accepted and returns a valid PlotResult."""
-    result = seeded_dm.plot(
-        "test/products",
-        plot_type="bar",
-        x="category",
-        y="price",
-        metric="count",
-        title="Product Count by Category",
-    )
-
-    assert isinstance(result, PlotResult)
-    assert result.succeeded
-    assert result.url is not None
-    assert result.title == "Product Count by Category"
-
-
-def test_plot_batch_with_metric(seeded_dm):
-    """plot_batch forwards metric without error."""
-    contexts = ["test/products", "test/orders"]
-    results = seeded_dm.plot_batch(
-        contexts,
-        plot_type="bar",
-        x="id",
-        y="id",
-        metric="sum",
-    )
-
-    assert len(results) == len(contexts)
-    assert all(r.succeeded for r in results)
-
-
-def test_plot_line_with_group_by(seeded_dm):
-    """Line chart with group_by propagates all params and succeeds."""
-    result = seeded_dm.plot(
-        "test/orders",
-        plot_type="line",
-        x="order_date",
-        y="total",
-        group_by="status",
-        title="Orders Over Time",
-    )
-
-    assert result.succeeded
-    assert "line" in result.url
-    assert result.title == "Orders Over Time"
-
-
-def test_plot_scatter_with_regression_and_scales(seeded_dm):
-    """Scatter plot with regression line and log scales."""
-    result = seeded_dm.plot(
-        "test/products",
-        plot_type="scatter",
-        x="price",
-        y="id",
-        show_regression=True,
-        scale_x="log",
-        scale_y="linear",
-    )
-
-    assert result.succeeded
-    assert "scatter" in result.url
-
-
-def test_plot_histogram_with_bins(seeded_dm):
-    """Histogram with custom bin_count."""
-    result = seeded_dm.plot(
-        "test/products",
-        plot_type="histogram",
-        x="price",
-        bin_count=20,
-    )
-
-    assert result.succeeded
-    assert "histogram" in result.url
-
-
-def test_plot_with_filter(seeded_dm):
-    """Plot with a filter expression propagates without error."""
-    result = seeded_dm.plot(
-        "test/orders",
-        plot_type="bar",
-        x="status",
-        y="total",
-        filter="status == 'shipped'",
-        aggregate="sum",
-    )
-
-    assert result.succeeded
-
-
-def test_plot_title_defaults_when_omitted(seeded_dm):
-    """Omitting title produces a sensible default containing the plot type."""
-    result = seeded_dm.plot(
-        "test/products",
-        plot_type="bar",
-        x="category",
-    )
-
-    assert result.succeeded
-    assert "bar" in result.title.lower()
-
-
-def test_plot_batch_per_context_results(seeded_dm):
-    """plot_batch returns one result per context with the correct URL stem."""
-    contexts = ["test/products", "test/orders"]
-    results = seeded_dm.plot_batch(
-        contexts,
-        plot_type="bar",
-        x="id",
-        y="id",
-    )
-
-    assert len(results) == len(contexts)
-    assert all(isinstance(r, PlotResult) for r in results)
-    for ctx, r in zip(contexts, results):
-        assert r.succeeded
-        assert ctx.replace("/", "/") in r.url
-
-
-def test_plot_resolves_relative_context(simulated_dm):
-    """Relative context paths are resolved to the Data/ namespace in the URL."""
-    simulated_dm.create_table("myproject/metrics", fields={"x": "int"})
-    result = simulated_dm.plot(
-        "myproject/metrics",
-        plot_type="bar",
-        x="x",
-    )
-
-    assert result.succeeded
-    assert "Data/myproject/metrics" in result.url
-
-
-# ────────────────────────────────────────────────────────────────────────────
-# Table Views
-# ────────────────────────────────────────────────────────────────────────────
-
-
-def test_table_view_with_column_config(seeded_dm):
-    """table_view with column visibility, ordering, and sorting."""
-    result = seeded_dm.table_view(
-        "test/products",
-        columns_visible=["id", "name", "price"],
-        columns_order=["price", "name", "id"],
-        columns_hidden=["category"],
-        sort_by="price",
-        sort_order="desc",
-        title="Products Table",
-    )
-
-    assert isinstance(result, TableViewResult)
-    assert result.succeeded
-    assert result.url is not None
-    assert result.title == "Products Table"
-
-
-def test_table_view_with_filter_and_row_limit(seeded_dm):
-    """table_view with filter and row_limit propagates without error."""
-    result = seeded_dm.table_view(
-        "test/orders",
-        filter="status == 'shipped'",
-        row_limit=50,
-        title="Shipped Orders",
-    )
-
-    assert result.succeeded
-    assert result.title == "Shipped Orders"
-
-
-def test_table_view_title_defaults_when_omitted(seeded_dm):
-    """Omitting title produces a sensible default."""
-    result = seeded_dm.table_view("test/products")
-    assert result.succeeded
-    assert result.title is not None
-
-
-def test_table_view_batch_per_context(seeded_dm):
-    """table_view_batch returns one result per context."""
-    contexts = ["test/products", "test/orders"]
-    results = seeded_dm.table_view_batch(
-        contexts,
-        sort_by="id",
-        sort_order="asc",
-    )
-
-    assert len(results) == len(contexts)
-    assert all(isinstance(r, TableViewResult) for r in results)
-    assert all(r.succeeded for r in results)
-
-
-def test_table_view_resolves_relative_context(simulated_dm):
-    """Relative context paths are resolved to the Data/ namespace."""
-    simulated_dm.create_table("myproject/data", fields={"a": "int"})
-    result = simulated_dm.table_view("myproject/data")
-
-    assert result.succeeded
-    assert "Data/myproject/data" in result.url
 
 
 # ────────────────────────────────────────────────────────────────────────────

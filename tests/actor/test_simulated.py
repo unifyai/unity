@@ -12,6 +12,8 @@ from tests.helpers import (
 )
 from unity.function_manager.function_manager import FunctionManager
 
+pytestmark = pytest.mark.llm_call
+
 
 # ────────────────────────────────────────────────────────────────────────────
 # 1.  Basic start-and-act                                                     #

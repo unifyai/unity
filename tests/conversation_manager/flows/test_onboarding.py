@@ -29,7 +29,7 @@ from unity.conversation_manager.events import (
     SMSSent,
 )
 
-pytestmark = pytest.mark.eval
+pytestmark = [pytest.mark.eval, pytest.mark.llm_call]
 
 
 # =============================================================================

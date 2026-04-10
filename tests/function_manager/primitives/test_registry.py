@@ -211,6 +211,13 @@ def test_prompt_context_routing_guidance_only_when_both_present():
     context_files = registry.prompt_context(scope_files)
     assert "primitives.data.*` vs `primitives.files.*" not in context_files
 
+    # dashboards+data are orthogonal -- no routing guidance between them
+    scope_dash_data = PrimitiveScope(
+        scoped_managers=frozenset({"dashboards", "data"}),
+    )
+    context_dash_data = registry.prompt_context(scope_dash_data)
+    assert "primitives.dashboards.*` vs `primitives.data.*" not in context_dash_data
+
 
 # ────────────────────────────────────────────────────────────────────────────
 # Primitive row filter tests (for FunctionManager queries)

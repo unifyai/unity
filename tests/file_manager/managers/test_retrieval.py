@@ -162,7 +162,6 @@ def test_search_ranking_precision_k1(file_manager, tmp_path: Path):
     results = fm.search_files(references={"summary": query}, limit=1)
 
     assert len(results) == 1
-    print(f"results: {[(f.get('file_id'), f.get('file_path')) for f in results]}")
     assert any(r.get("file_path", "").endswith("ml_research.txt") for r in results)
 
     # Result should be present

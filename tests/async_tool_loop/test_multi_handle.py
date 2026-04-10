@@ -336,6 +336,7 @@ async def test_multi_handle_add_request_after_close():
 
 
 @pytest.mark.asyncio
+@pytest.mark.llm_call
 @_handle_project
 async def test_multi_handle_single_request_baseline(llm_config):
     """Test that multi-handle mode works with a single request (baseline)."""
@@ -358,6 +359,7 @@ async def test_multi_handle_single_request_baseline(llm_config):
 
 
 @pytest.mark.asyncio
+@pytest.mark.llm_call
 @_handle_project
 async def test_multi_handle_two_requests_sequential(llm_config):
     """Test handling two requests that complete sequentially."""
@@ -392,6 +394,7 @@ async def test_multi_handle_two_requests_sequential(llm_config):
 
 
 @pytest.mark.asyncio
+@pytest.mark.llm_call
 @_handle_project
 async def test_multi_handle_stop_one_request(llm_config):
     """Test stopping one request while another continues."""
@@ -431,6 +434,7 @@ async def test_multi_handle_stop_one_request(llm_config):
 
 
 @pytest.mark.asyncio
+@pytest.mark.llm_call
 @_handle_project
 async def test_multi_handle_interjection_routing(llm_config):
     """Test that interjections are routed to correct requests."""

@@ -7,6 +7,7 @@ from unity.web_searcher.web_searcher import WebSearcher
 
 
 @pytest.mark.asyncio
+@pytest.mark.llm_call
 @_handle_project
 async def test_ask_invokes_search_tool():
     """
@@ -26,6 +27,7 @@ async def test_ask_invokes_search_tool():
 
 
 @pytest.mark.asyncio
+@pytest.mark.llm_call
 @_handle_project
 async def test_ask_with_reasoning_steps_wrapper():
     """
@@ -44,6 +46,7 @@ async def test_ask_with_reasoning_steps_wrapper():
 
 
 @pytest.mark.asyncio
+@pytest.mark.llm_call
 @_handle_project
 async def test_ask_with_parent_context():
     """
@@ -69,6 +72,7 @@ async def test_ask_with_parent_context():
 
 
 @pytest.mark.asyncio
+@pytest.mark.llm_call
 @_handle_project
 async def test_ask_with_response_format():
     """Verify structured output by providing a Pydantic response_format."""

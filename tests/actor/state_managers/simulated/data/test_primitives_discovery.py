@@ -32,6 +32,7 @@ def test_data_manager_in_primitives():
     assert hasattr(dm, "search")
     assert hasattr(dm, "reduce")
     assert hasattr(dm, "filter_join")
+    assert hasattr(dm, "reduce_join")
     assert hasattr(dm, "search_join")
 
 
@@ -53,6 +54,7 @@ def test_data_manager_has_expected_methods():
 
     # Join operations
     assert callable(getattr(dm, "filter_join", None))
+    assert callable(getattr(dm, "reduce_join", None))
     assert callable(getattr(dm, "search_join", None))
     assert callable(getattr(dm, "filter_multi_join", None))
     assert callable(getattr(dm, "search_multi_join", None))
@@ -66,10 +68,6 @@ def test_data_manager_has_expected_methods():
     assert callable(getattr(dm, "ensure_vector_column", None))
     assert callable(getattr(dm, "vectorize_rows", None))
 
-    # Plot operations
-    assert callable(getattr(dm, "plot", None))
-    assert callable(getattr(dm, "plot_batch", None))
-
 
 def test_data_manager_metadata_registered():
     """DataManager metadata should be in ToolSurfaceRegistry."""
@@ -78,7 +76,7 @@ def test_data_manager_metadata_registered():
     registry = get_registry()
     spec = registry.get_manager_spec("data")
     assert spec is not None
-    assert spec.domain == "Data Operations, Visualizations & Ingestion"
+    assert spec.domain == "Data Operations & Ingestion"
     methods = registry.primitive_methods(manager_alias="data")
     assert "filter" in methods
     assert "search" in methods

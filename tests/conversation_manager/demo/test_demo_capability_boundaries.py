@@ -30,7 +30,7 @@ from unity.conversation_manager.events import (
     ActorHandleStarted,
 )
 
-pytestmark = pytest.mark.eval
+pytestmark = [pytest.mark.eval, pytest.mark.llm_call]
 
 
 # ─────────────────────────────────────────────────────────────────────────────

@@ -14,6 +14,7 @@ from unity.common.read_only_ask_guard import ReadOnlyAskGuardHandle
 
 
 @pytest.mark.asyncio
+@pytest.mark.llm_call
 @_handle_project
 async def test_guard_blocks_mutation(monkeypatch):
     """
@@ -86,6 +87,7 @@ async def test_guard_blocks_mutation(monkeypatch):
 
 
 @pytest.mark.asyncio
+@pytest.mark.llm_call
 @_handle_project
 async def test_guard_allows_readonly(monkeypatch):
     """

@@ -27,7 +27,7 @@ from tests.conversation_manager.actions.integration.helpers import (
 from unity.conversation_manager.events import UnifyMessageReceived, UnifyMessageSent
 from unity.file_manager.settings import get_local_root
 
-pytestmark = [pytest.mark.integration, pytest.mark.eval]
+pytestmark = [pytest.mark.integration, pytest.mark.eval, pytest.mark.llm_call]
 
 
 @pytest.mark.asyncio
@@ -42,6 +42,8 @@ async def test_generate_image_and_send_as_attachment(initialized_cm_codeact):
     - An LLM judge confirms the image contains a red square.
     """
     cm = initialized_cm_codeact
+    cm.cm.vm_ready = True
+    cm.cm.file_sync_complete = True
     local_root = Path(get_local_root())
 
     # ------------------------------------------------------------------

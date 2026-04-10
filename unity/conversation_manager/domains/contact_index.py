@@ -81,6 +81,20 @@ class UnifyMessage(CommsMessage):
 
 
 @dataclass
+class WhatsAppMessage(CommsMessage):
+    """A WhatsApp message, optionally with attachments.
+
+    Each attachment is a dict with keys: id, filename, gs_url, content_type, size_bytes.
+    """
+
+    name: str
+    content: str
+    timestamp: datetime
+    role: str  # "user" or "assistant"
+    attachments: list[dict] = field(default_factory=list)
+
+
+@dataclass
 class ApiMessage(CommsMessage):
     """A programmatic API message, optionally with attachments and developer-supplied tags.
 
@@ -236,6 +250,7 @@ class ContactIndex:
         contact_id: int | None = None,
         phone_number: str | None = None,
         email: str | None = None,
+        whatsapp_number: str | None = None,
     ) -> dict | None:
         """
         Get contact information from fallback cache or ContactManager.
@@ -247,6 +262,7 @@ class ContactIndex:
             contact_id: Contact ID (preferred).
             phone_number: Phone number to search by.
             email: Email address to search by.
+            whatsapp_number: WhatsApp number to search by.
 
         Returns:
             Contact dict or None if not found.
@@ -263,6 +279,10 @@ class ContactIndex:
             elif email is not None:
                 for c in self._fallback_contacts.values():
                     if c.get("email_address") == email:
+                        return c
+            elif whatsapp_number is not None:
+                for c in self._fallback_contacts.values():
+                    if c.get("whatsapp_number") == whatsapp_number:
                         return c
         else:
             try:
@@ -281,6 +301,15 @@ class ContactIndex:
                 elif email is not None:
                     result = self._contact_manager.filter_contacts(
                         filter=f"email_address == '{email}'",
+                        limit=1,
+                    )
+                    contacts = result.get("contacts", [])
+                    if contacts:
+                        c = contacts[0]
+                        return c.model_dump() if hasattr(c, "model_dump") else c
+                elif whatsapp_number is not None:
+                    result = self._contact_manager.filter_contacts(
+                        filter=f"whatsapp_number == '{whatsapp_number}'",
                         limit=1,
                     )
                     contacts = result.get("contacts", [])
@@ -408,6 +437,14 @@ class ContactIndex:
                 timestamp=timestamp,
                 role=role,
                 attachments=attachments or [],
+            )
+        elif thread_name == Medium.WHATSAPP_MESSAGE:
+            message = WhatsAppMessage(
+                name=name,
+                content=message_content or "",
+                timestamp=timestamp,
+                role=role,
+                attachments=attachments,
             )
         elif thread_name == Medium.API_MESSAGE:
             message = ApiMessage(

@@ -1412,6 +1412,7 @@ class TestE2ESpendingLimits:
         assert response.allowed is True
 
     @pytest.mark.asyncio
+    @pytest.mark.llm_call
     async def test_llm_call_succeeds_under_limit(self, e2e_config):
         """Test that an LLM call succeeds when under spending limit."""
         import unity
@@ -1431,6 +1432,7 @@ class TestE2ESpendingLimits:
         assert len(response) > 0
 
     @pytest.mark.asyncio
+    @pytest.mark.llm_call
     async def test_cumulative_spend_increases_after_llm_call(self, e2e_config):
         """Test that cumulative spend increases after an LLM call."""
         import unity
@@ -1484,6 +1486,7 @@ class TestE2ESpendingLimits:
         ), f"Spend should not decrease: {spend_before} -> {spend_after}"
 
     @pytest.mark.asyncio
+    @pytest.mark.llm_call
     async def test_limit_exceeded_blocks_llm_call(self, e2e_config):
         """Test that LLM calls are blocked when limit is exceeded."""
         import unity
@@ -1529,6 +1532,7 @@ class TestE2ESpendingLimits:
                 )
 
     @pytest.mark.asyncio
+    @pytest.mark.llm_call
     async def test_fail_open_on_hook_exception(self, e2e_config):
         """Test that LLM calls succeed when limit check hook raises exception."""
         import unity
@@ -1566,6 +1570,7 @@ class TestE2ESpendingLimits:
             set_limit_check_hook(original_hook)
 
     @pytest.mark.asyncio
+    @pytest.mark.llm_call
     async def test_parallel_limit_check_no_overhead(self, e2e_config):
         """Test that limit check runs in parallel with LLM call (zero overhead)."""
         import time
@@ -1615,6 +1620,7 @@ class TestE2ESpendingLimits:
             set_limit_check_hook(original_hook)
 
     @pytest.mark.asyncio
+    @pytest.mark.llm_call
     async def test_inflight_cancellation_on_limit_exceeded(self, e2e_config):
         """Test that LLM call is cancelled when limit check returns denied."""
         import time
@@ -1665,6 +1671,7 @@ class TestE2ESpendingLimits:
             set_limit_check_hook(original_hook)
 
     @pytest.mark.asyncio
+    @pytest.mark.llm_call
     async def test_concurrent_llm_calls(self, e2e_config):
         """Test that concurrent LLM calls correctly update spend atomically."""
         import unity
@@ -1734,6 +1741,7 @@ class TestE2ESpendingLimits:
         ), f"Spend should increase after concurrent calls: {spend_before} -> {spend_after}"
 
     @pytest.mark.asyncio
+    @pytest.mark.llm_call
     async def test_all_spending_monthly_context(self, e2e_config):
         """Test that spend logs are mirrored to All/Spending/Monthly context."""
         import unity
@@ -1782,6 +1790,7 @@ class TestE2ESpendingLimits:
             ), "Should find spending logs in All/Spending/Monthly context"
 
     @pytest.mark.asyncio
+    @pytest.mark.llm_call
     async def test_user_limit_check(self, e2e_config):
         """Test that user-level spending limits are enforced."""
         import unity
@@ -1854,6 +1863,7 @@ class TestE2ESpendingLimits:
         assert "cumulative_spend" in data or "error" not in data
 
     @pytest.mark.asyncio
+    @pytest.mark.llm_call
     async def test_assistant_limit_check(self, e2e_config):
         """Test that assistant-specific spending limits are enforced."""
         import unity
@@ -1954,6 +1964,7 @@ class TestE2ESpendingLimits:
         ), f"Org spend endpoint failed: {response.status_code} {response.text}"
 
     @pytest.mark.asyncio
+    @pytest.mark.llm_call
     async def test_org_limit_check(self, e2e_config):
         """Test organization-level spending limits are enforced."""
         import unity

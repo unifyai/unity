@@ -743,9 +743,20 @@ def make_request_clarification_tool(
     async def _request(question: str) -> str:
         """Ask the caller a clarifying question and block until they answer.
 
-        Use this when you cannot proceed without additional information from
-        the process that invoked you. The question is forwarded to the caller;
-        execution pauses until a response is received.
+        Use this when you need additional information from the process that
+        invoked you — either because you **cannot proceed** or because
+        proceeding without confirmation risks **low-quality results**.
+
+        Clarification is not only for blockers.  It is equally appropriate
+        when you *could* continue but your confidence in the outcome is
+        low — for example, when making subjective decisions about user
+        data at scale (classifying, labeling, reorganizing, prioritizing),
+        when interpreting ambiguous patterns, or when a wrong guess would
+        be costly to review and undo.  One well-timed question early in a
+        large task is far cheaper than hundreds of corrections afterward.
+
+        The question is forwarded to the caller; execution pauses until a
+        response is received.
 
         Parameters
         ----------

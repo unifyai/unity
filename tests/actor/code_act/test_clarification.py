@@ -4,6 +4,8 @@ import pytest
 
 from unity.actor.code_act_actor import CodeActActor
 
+pytestmark = pytest.mark.llm_call
+
 
 @pytest.mark.asyncio
 @pytest.mark.timeout(90)

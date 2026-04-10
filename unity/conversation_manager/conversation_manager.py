@@ -106,6 +106,7 @@ class ConversationManager(metaclass=SingletonABCMeta):
         voice_provider: str = "cartesia",
         voice_id: str = None,
         assistant_timezone: str = "",
+        assistant_whatsapp_number: str = "",
         past_events: list | None = None,
         conv_context_length: int = 50,
         project_name: str = "Assistants",
@@ -127,6 +128,7 @@ class ConversationManager(metaclass=SingletonABCMeta):
         # contact data
         self.assistant_number = assistant_number
         self.assistant_email = assistant_email
+        self.assistant_whatsapp_number = assistant_whatsapp_number
         self.user_first_name = user_first_name
         self.user_surname = user_surname
         self.user_number = user_number
@@ -145,6 +147,7 @@ class ConversationManager(metaclass=SingletonABCMeta):
         self.inactivity_timeout = 420  # 7 minutes in seconds
         self.inactivity_check_interval = 30  # seconds
         self.last_activity_time = self.loop.time()
+        self.shutdown_reason: str | None = None
         self.stop = stop
 
         self.event_broker = event_broker
@@ -226,11 +229,20 @@ class ConversationManager(metaclass=SingletonABCMeta):
         self._pending_llm_request_meta: list[dict[str, str]] = []
         self._current_event_trace: dict[str, str] | None = None
         self._event_trace_seq: int = 0
-        self._has_non_forwarded_event: bool = False
         self._llm_request_seq: int = 0
         self._llm_run_seq: int = 0
         self._llm_gen: int = 0
         self._outbound_suppress_gen: int = -1
+
+        # WhatsApp messages that were sent via greeting template (outside 24h
+        # window). When the contact replies, the brain is notified so it can
+        # resend or rework the original message.  Maps contact_id → content.
+        self._pending_whatsapp_resends: dict[int, str] = {}
+
+        # Outbound WhatsApp call contexts stashed while awaiting call permission.
+        # When the contact grants permission (taps "Call now"), the context is
+        # injected as call_manager.initial_notification.  Maps contact_id → context.
+        self._pending_whatsapp_call_contexts: dict[int, str] = {}
 
         # Hierarchical session logger for consistent nested logging
         self._session_logger = SessionLogger("ConversationManager")
@@ -560,9 +572,14 @@ class ConversationManager(metaclass=SingletonABCMeta):
         if not conv_state:
             return conversation_turns, last_message_timestamp
 
-        voice_medium = (
-            Medium.UNIFY_MEET if self.mode == Mode.MEET else Medium.PHONE_CALL
-        )
+        if self.call_manager.has_active_google_meet:
+            voice_medium = Medium.GOOGLE_MEET
+        elif self.mode == Mode.MEET:
+            voice_medium = Medium.UNIFY_MEET
+        elif self.call_manager._call_channel == "whatsapp_call":
+            voice_medium = Medium.WHATSAPP_CALL
+        else:
+            voice_medium = Medium.PHONE_CALL
         voice_thread = self.contact_index.get_messages_for_contact(
             contact_id,
             voice_medium,
@@ -699,6 +716,7 @@ class ConversationManager(metaclass=SingletonABCMeta):
         {
             "InboundPhoneUtterance",
             "InboundUnifyMeetUtterance",
+            "InboundWhatsAppCallUtterance",
         },
     )
 
@@ -944,6 +962,18 @@ class ConversationManager(metaclass=SingletonABCMeta):
             else:
                 COST_ATTRIBUTION.set([SESSION_DETAILS.user.id])
 
+            try:
+                import unillm
+
+                unillm.set_billing_context(
+                    assistant_id=SESSION_DETAILS.assistant.agent_id,
+                    user_id=attributed_user_id or SESSION_DETAILS.user.id,
+                    organization_id=SESSION_DETAILS.org_id,
+                    source="call" if self.mode.is_voice else "chat",
+                )
+            except (ImportError, Exception):
+                pass
+
         self._llm_gen += 1
         run_id = trace_meta.get("run_id", "llmrun-unknown")
         request_id = trace_meta.get("request_id", "")
@@ -1013,6 +1043,7 @@ class ConversationManager(metaclass=SingletonABCMeta):
             user_screen_share_active=self.user_screen_share_active,
             user_webcam_active=self.user_webcam_active,
             user_remote_control_active=self.user_remote_control_active,
+            google_meet_active=self.call_manager.has_active_google_meet,
             active_web_sessions=web_sessions,
             managers_initialized=self.initialized,
             vm_ready=self.vm_ready,
@@ -1059,14 +1090,6 @@ class ConversationManager(metaclass=SingletonABCMeta):
             **action_tools.build_action_steering_tools(),
             **action_tools.build_completed_action_tools(),
         }
-
-        if "guide_voice_agent" in tools:
-            is_boss_on_call = (self.get_active_contact() or {}).get(
-                "contact_id",
-            ) == 1
-            if is_boss_on_call or not self._has_non_forwarded_event:
-                tools.pop("guide_voice_agent")
-        self._has_non_forwarded_event = False
 
         if self.computer_fast_path_eligible:
             tools["desktop_act"] = action_tools.desktop_act
@@ -1115,7 +1138,7 @@ class ConversationManager(metaclass=SingletonABCMeta):
                 tools,
                 tool_choice="required" if tools else "auto",
                 response_format=response_model,
-                exclusive_tools={"make_call"},
+                exclusive_tools={"make_call", "make_whatsapp_call", "join_google_meet"},
             )
         finally:
             if hasattr(client, "_pending_thinking_log"):
@@ -1137,6 +1160,7 @@ class ConversationManager(metaclass=SingletonABCMeta):
         # The slow brain decides BLOCK (omit the tool), NOTIFY (default),
         # or SPEAK (should_speak=True + response_text) by calling
         # guide_voice_agent in parallel with its action tool.
+        # Dedup is handled in the fast brain subprocess at speak time.
         if self.mode.is_voice:
             notification_content = ""
             should_speak = False
@@ -1363,6 +1387,7 @@ class ConversationManager(metaclass=SingletonABCMeta):
                         f"(timeout={self.inactivity_timeout}s)"
                     )
                 else:
+                    self.shutdown_reason = "idle_timeout"
                     log_str = f"Inactivity timeout reached ({self.inactivity_timeout}s), requesting shutdown"
                 LOGGER.info(f"{DEFAULT_ICON} {log_str}")
                 self._session_logger.info("session_end", log_str)
@@ -1382,12 +1407,15 @@ class ConversationManager(metaclass=SingletonABCMeta):
         self.assistant_about = payload["assistant_about"]
         self.assistant_number = payload["assistant_number"]
         self.assistant_email = payload["assistant_email"]
+        self.assistant_whatsapp_number = payload.get("assistant_whatsapp_number", "")
         self.user_first_name = payload["user_first_name"]
         self.user_surname = payload["user_surname"]
         self.user_number = payload["user_number"]
         self.user_email = payload["user_email"]
+        self.user_whatsapp_number = payload.get("user_whatsapp_number", "")
         self.voice_provider = payload["voice_provider"]
         self.voice_id = payload["voice_id"]
+        self.binding_id = payload.get("binding_id", "")
         self.desktop_mode = payload.get("desktop_mode", "ubuntu")
         self.user_desktop_mode = payload.get("user_desktop_mode")
         self.user_desktop_filesys_sync = payload.get("user_desktop_filesys_sync", False)
@@ -1409,16 +1437,19 @@ class ConversationManager(metaclass=SingletonABCMeta):
             assistant_about=self.assistant_about,
             assistant_number=self.assistant_number,
             assistant_email=self.assistant_email,
+            assistant_whatsapp_number=self.assistant_whatsapp_number,
             user_id=self.user_id,
             user_first_name=self.user_first_name,
             user_surname=self.user_surname,
             user_number=self.user_number,
             user_email=self.user_email,
+            user_whatsapp_number=self.user_whatsapp_number,
             org_id=self.org_id,
             org_name=self.org_name,
             team_ids=self.team_ids,
             voice_provider=self.voice_provider,
             voice_id=self.voice_id,
+            binding_id=self.binding_id,
             desktop_mode=self.desktop_mode,
             user_desktop_mode=self.user_desktop_mode,
             user_desktop_filesys_sync=self.user_desktop_filesys_sync,
@@ -1451,6 +1482,7 @@ class ConversationManager(metaclass=SingletonABCMeta):
             voice_provider=self.voice_provider,
             voice_id=self.voice_id,
             assistant_name=f"{self.assistant_first_name} {self.assistant_surname}".strip(),
+            job_name=self.job_name,
         )
 
     async def store_chat_history(self):
@@ -1464,7 +1496,11 @@ class ConversationManager(metaclass=SingletonABCMeta):
     async def cleanup(self):
         """Clean up any running call processes and file sync."""
         await self.store_chat_history()
-        await self.call_manager.cleanup_call_proc()
+        if self.call_manager.has_active_google_meet:
+            await self.call_manager.cleanup_google_meet()
+        else:
+            await self.call_manager.cleanup_call_proc()
+        await self.call_manager.cleanup_persistent_worker()
 
         await self._stop_file_sync()
 
@@ -1473,7 +1509,14 @@ class ConversationManager(metaclass=SingletonABCMeta):
                 "session_end",
                 f"Marking job {self.job_name} done",
             )
-            assistant_jobs.mark_job_done(self.job_name, self.inactivity_timeout)
+            mark_done_kwargs = {}
+            if self.shutdown_reason:
+                mark_done_kwargs["shutdown_reason"] = self.shutdown_reason
+            assistant_jobs.mark_job_done(
+                self.job_name,
+                self.inactivity_timeout,
+                **mark_done_kwargs,
+            )
         self.stop.set()
 
     async def _stop_file_sync(self) -> None:
@@ -1645,6 +1688,7 @@ class ConversationManager(metaclass=SingletonABCMeta):
                 user_screen_share_active=self.user_screen_share_active,
                 user_webcam_active=self.user_webcam_active,
                 user_remote_control_active=self.user_remote_control_active,
+                google_meet_active=self.call_manager.has_active_google_meet,
                 vm_ready=self.vm_ready,
                 file_sync_complete=self.file_sync_complete,
                 has_desktop=_has_desktop,
@@ -1688,9 +1732,14 @@ class ConversationManager(metaclass=SingletonABCMeta):
             contact = self.get_active_contact()
             if contact:
                 contact_id = contact.get("contact_id")
-                voice_medium = (
-                    Medium.UNIFY_MEET if self.mode == Mode.MEET else Medium.PHONE_CALL
-                )
+                if self.call_manager.has_active_google_meet:
+                    voice_medium = Medium.GOOGLE_MEET
+                elif self.mode == Mode.MEET:
+                    voice_medium = Medium.UNIFY_MEET
+                elif self.call_manager._call_channel == "whatsapp_call":
+                    voice_medium = Medium.WHATSAPP_CALL
+                else:
+                    voice_medium = Medium.PHONE_CALL
                 self.contact_index.push_message(
                     contact_id=contact_id,
                     sender_name="You",

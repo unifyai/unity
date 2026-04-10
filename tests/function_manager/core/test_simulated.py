@@ -60,6 +60,7 @@ def test_add_functions_accepts_single_and_multiple():
 
 
 @_handle_project
+@pytest.mark.llm_call
 def test_list_functions_with_and_without_implementations():
     fm = SimulatedFunctionManager()
 
@@ -111,6 +112,7 @@ def test_delete_function_acknowledges():
 
 
 @_handle_project
+@pytest.mark.llm_call
 def test_search_functions_returns_list_of_dicts():
     fm = SimulatedFunctionManager()
     hits = fm.filter_functions(filter="'price' in docstring")
@@ -127,6 +129,7 @@ def test_search_functions_returns_list_of_dicts():
 
 
 @_handle_project
+@pytest.mark.llm_call
 def test_search_functions_bounds_and_shape():
     fm = SimulatedFunctionManager()
     n = 2
@@ -177,6 +180,7 @@ async def test_execute_function_returns_simulated_response():
 
 
 @_handle_project
+@pytest.mark.llm_call
 def test_clear_sync():
     """
     SimulatedFunctionManager.clear should reset the manager (hard-coded completion)
@@ -202,6 +206,7 @@ pytestmark_eval = pytest.mark.eval
 
 @pytestmark_eval
 @_handle_project
+@pytest.mark.llm_call
 def test_filter_scope_respected_in_list_functions():
     """
     A SimulatedFunctionManager with filter_scope="language == 'python'" should

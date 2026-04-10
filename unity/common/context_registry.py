@@ -88,6 +88,7 @@ class ContextRegistry:
         # which defeats the purpose of having a context handler
 
         from unity.contact_manager.contact_manager import ContactManager
+        from unity.dashboard_manager.dashboard_manager import DashboardManager
         from unity.knowledge_manager.knowledge_manager import KnowledgeManager
         from unity.transcript_manager.transcript_manager import TranscriptManager
         from unity.task_scheduler.task_scheduler import TaskScheduler
@@ -102,6 +103,7 @@ class ContextRegistry:
 
         return [
             ContactManager,
+            DashboardManager,
             KnowledgeManager,
             TranscriptManager,
             TaskScheduler,

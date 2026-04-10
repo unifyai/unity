@@ -17,6 +17,7 @@ pytestmark = pytest.mark.enable_eventbus
 
 
 @pytest.mark.asyncio
+@pytest.mark.llm_call
 async def test_nested_logging_hierarchy_labels(llm_config):
     """
     Verify that nested async tool loops emit ToolLoop events with hierarchical
@@ -113,6 +114,7 @@ async def test_nested_logging_hierarchy_labels(llm_config):
 
 
 @pytest.mark.asyncio
+@pytest.mark.llm_call
 async def test_single_loop_logging_hierarchy_label(llm_config):
     """
     Verify that a single (non-nested) async tool loop emits ToolLoop events
@@ -174,6 +176,7 @@ async def test_single_loop_logging_hierarchy_label(llm_config):
 
 
 @pytest.mark.asyncio
+@pytest.mark.llm_call
 async def test_litellm_logs_are_suppressed(llm_config, caplog):
     """
     Verify that LiteLLM logs are suppressed by our logging configuration.
@@ -216,6 +219,7 @@ async def test_litellm_logs_are_suppressed(llm_config, caplog):
 
 
 @pytest.mark.asyncio
+@pytest.mark.llm_call
 async def test_inline_log_file_paths(llm_config, capfd, tmp_path):
     """
     Verify that when UNILLM_LOG_DIR is set, the async tool loop emits a
@@ -314,6 +318,7 @@ async def test_inline_log_file_paths(llm_config, capfd, tmp_path):
 
 
 @pytest.mark.asyncio
+@pytest.mark.llm_call
 async def test_thinking_log_fallback_without_log_dir(llm_config, capfd):
     """
     When UNILLM_LOG_DIR is NOT set, the async tool loop should still emit
@@ -432,6 +437,7 @@ class TestPendingThinkingLog:
         assert "LLM thinking… →" in out
         assert "ProactiveSpeech" in out
 
+    @pytest.mark.llm_call
     def test_new_llm_client_attaches_pending_log(self):
         """new_llm_client with origin should attach _pending_thinking_log."""
         client = new_llm_client(origin="TestOrigin")

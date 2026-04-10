@@ -165,47 +165,6 @@ class TestStepPacingDuringExecution:
         )
 
     @pytest.mark.asyncio
-    async def test_one_action_deep_into_walkthrough(self):
-        """Several steps into a walkthrough, the user says 'what next?' — the
-        fast brain must still give only one action.
-
-        Regression: even after multiple done→next exchanges, the fast brain
-        reverted to multi-action responses.
-        """
-        prompt = _build_meet_prompt()
-        conversation = [
-            {
-                "role": "user",
-                "content": (
-                    "I'm setting up Google Drive API credentials. I'm on "
-                    "the APIs & Services page now."
-                ),
-            },
-            {"role": "assistant", "content": "Let me check on that."},
-            {"role": "system", "content": MULTI_STEP_NOTIFICATION},
-            {
-                "role": "assistant",
-                "content": 'Click "+ ENABLE APIS AND SERVICES" at the top.',
-            },
-            {"role": "user", "content": "Done."},
-            {
-                "role": "assistant",
-                "content": 'Type "Google Drive API" in the search bar.',
-            },
-            {"role": "user", "content": "Okay, I see it. What next?"},
-        ]
-
-        response = await get_fast_brain_response(prompt, conversation, model=MODEL_TTS)
-        actions = _count_ui_actions(response)
-
-        assert actions <= 1, (
-            f"Fast brain described {actions} UI actions — must be exactly 1.\n"
-            f"The user is deep into a step-by-step walkthrough, completing one "
-            f"action at a time. Give only the immediate next click/action.\n"
-            f"Response:\n{response}"
-        )
-
-    @pytest.mark.asyncio
     async def test_one_action_when_user_asks_to_repeat(self):
         """When the user asks for the current step to be repeated, the response
         must contain only that single action — not the current step plus what

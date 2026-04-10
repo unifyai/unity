@@ -995,14 +995,14 @@ class SimulatedFileManager(BaseFileManager):
         result_where: Optional[str] = None,
         result_limit: int = 100,
         result_offset: int = 0,
-    ) -> Dict[str, List[Dict[str, Any]]]:
+    ) -> List[Dict[str, Any]]:
         """
         Simulated filter_join: returns placeholder empty results.
 
         In simulated mode, no real join is performed. Returns an empty list
         to satisfy the API contract.
         """
-        return {"rows": []}
+        return []
 
     @functools.wraps(BaseFileManager.search_join, updated=())
     def search_join(
@@ -1034,14 +1034,14 @@ class SimulatedFileManager(BaseFileManager):
         result_where: Optional[str] = None,
         result_limit: int = 100,
         result_offset: int = 0,
-    ) -> Dict[str, List[Dict[str, Any]]]:
+    ) -> List[Dict[str, Any]]:
         """
         Simulated filter_multi_join: returns placeholder empty results.
 
         In simulated mode, no real multi-join is performed. Returns an empty
         list to satisfy the API contract.
         """
-        return {"rows": []}
+        return []
 
     @functools.wraps(BaseFileManager.search_multi_join, updated=())
     def search_multi_join(

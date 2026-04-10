@@ -13,6 +13,8 @@ import pytest
 
 from unity.settings import SETTINGS
 
+pytestmark = pytest.mark.llm_call
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------

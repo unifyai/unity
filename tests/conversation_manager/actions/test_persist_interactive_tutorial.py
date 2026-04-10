@@ -89,6 +89,8 @@ async def test_crm_walkthrough_persist_on_first_instruction(initialized_cm):
     """
     cm = initialized_cm
     cm.cm.user_screen_share_active = True
+    cm.cm.vm_ready = True
+    cm.cm.file_sync_complete = True
 
     # Phase 1: Context-setting — should NOT trigger act
     result1 = await cm.step_until_wait(
@@ -141,6 +143,8 @@ async def test_invoice_workflow_persist_on_first_instruction(initialized_cm):
     """
     cm = initialized_cm
     cm.cm.user_screen_share_active = True
+    cm.cm.vm_ready = True
+    cm.cm.file_sync_complete = True
 
     # Phase 1: Narration — no act
     result1 = await cm.step_until_wait(
@@ -193,6 +197,8 @@ async def test_refund_demo_persist_on_first_instruction(initialized_cm):
     """
     cm = initialized_cm
     cm.cm.user_screen_share_active = True
+    cm.cm.vm_ready = True
+    cm.cm.file_sync_complete = True
 
     # Phase 1: Scene-setting — no act
     result1 = await cm.step_until_wait(

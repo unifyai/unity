@@ -154,6 +154,19 @@ if [ "$MINIMAL" = false ]; then
         libmanette-0.2-0
 
     # =========================================================================
+    # VIRTUAL DESKTOP (same stack as deploy/desktop/Dockerfile — needed for
+    # non-headless browser sessions, e.g. Google Meet join via local browser)
+    # =========================================================================
+    apt-get install -y --no-install-recommends \
+        tigervnc-standalone-server tigervnc-common \
+        xfce4 xfce4-goodies xfce4-terminal \
+        xdotool wmctrl xterm dbus dbus-x11 \
+        x11-xserver-utils \
+        xdg-desktop-portal xdg-desktop-portal-gtk \
+        pipewire pipewire-pulse wireplumber \
+        pulseaudio-utils alsa-utils
+
+    # =========================================================================
     # RCLONE (for file sync between assistant and managed VM)
     # =========================================================================
     curl https://rclone.org/install.sh | bash

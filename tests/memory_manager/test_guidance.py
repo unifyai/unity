@@ -24,6 +24,8 @@ from unity.memory_manager import prompt_builders as pb
 # shared fixture from the existing test-suite
 from tests.helpers import _handle_project
 
+pytestmark = pytest.mark.llm_call
+
 # --------------------------------------------------------------------------- #
 # helpers                                                                     #
 # --------------------------------------------------------------------------- #

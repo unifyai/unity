@@ -21,12 +21,25 @@ from unity.conversation_manager.events import (
     UnifyMeetReceived,
     UnifyMeetEnded,
     UnifyMeetStarted,
+    GoogleMeetStarted,
+    GoogleMeetEnded,
+    GoogleMeetParticipantJoined,
+    GoogleMeetParticipantLeft,
     InboundPhoneUtterance,
     InboundUnifyMeetUtterance,
+    InboundWhatsAppCallUtterance,
+    InboundGoogleMeetUtterance,
     OutboundPhoneUtterance,
     OutboundUnifyMeetUtterance,
+    OutboundWhatsAppCallUtterance,
+    OutboundGoogleMeetUtterance,
     SMSReceived,
     SMSSent,
+    WhatsAppReceived,
+    WhatsAppSent,
+    WhatsAppCallReceived,
+    WhatsAppCallStarted,
+    WhatsAppCallEnded,
     EmailReceived,
     EmailSent,
     UnifyMessageReceived,
@@ -151,6 +164,11 @@ class FastBrainLogger:
         self._emit_debug(
             "notification_say",
             f"Speaking notification: {text}{extra}",
+        )
+
+    def dedup_suppressed(self, text: str, reasoning: str) -> None:
+        LOGGER.info(
+            f"{DEFAULT_ICON} [{self._label}] Suppressed duplicated speech: {reasoning}",
         )
 
     # ── proactive speech helpers ─────────────────────────────────────────
@@ -405,20 +423,26 @@ DEFAULT_INACTIVITY_TIMEOUT = 300  # 5 minutes
 
 
 async def publish_call_started(contact: dict, channel: str) -> None:
-    event = (
-        PhoneCallStarted(contact=contact)
-        if channel == "phone_call"
-        else UnifyMeetStarted(contact=contact)
-    )
+    if channel == "phone_call":
+        event = PhoneCallStarted(contact=contact)
+    elif channel == "whatsapp_call":
+        event = WhatsAppCallStarted(contact=contact)
+    elif channel == "google_meet":
+        event = GoogleMeetStarted(contact=contact)
+    else:
+        event = UnifyMeetStarted(contact=contact)
     await event_broker.publish(event.topic, event.to_json())
 
 
 async def publish_call_ended(contact: dict, channel: str) -> None:
-    event = (
-        PhoneCallEnded(contact=contact)
-        if channel == "phone_call"
-        else UnifyMeetEnded(contact=contact)
-    )
+    if channel == "phone_call":
+        event = PhoneCallEnded(contact=contact)
+    elif channel == "whatsapp_call":
+        event = WhatsAppCallEnded(contact=contact)
+    elif channel == "google_meet":
+        event = GoogleMeetEnded(contact=contact)
+    else:
+        event = UnifyMeetEnded(contact=contact)
     await event_broker.publish(event.topic, event.to_json())
 
 
@@ -869,10 +893,11 @@ class ScreenshotHistory:
             "assistant": "=== YOUR SCREEN (this is what YOUR machine currently shows) ===",
             "user": "=== USER'S SCREEN (this is THEIR machine, not yours) ===",
             "webcam": "=== USER'S WEBCAM ===",
+            "google_meet": "=== GOOGLE MEET (live view of the meeting) ===",
         }
 
         parts: list = []
-        for source in ("assistant", "user", "webcam"):
+        for source in ("assistant", "user", "webcam", "google_meet"):
             entry = latest_by_source.get(source)
             if entry is None:
                 continue
@@ -1194,6 +1219,8 @@ def render_participant_comms(event_json: str, participant_ids: set[int]) -> str 
     # Inbound
     if isinstance(event, SMSReceived):
         return f"[SMS from {name}] {event.content}"
+    if isinstance(event, WhatsAppReceived):
+        return f"[WhatsApp from {name}] {event.content}"
     if isinstance(event, EmailReceived):
         subj = event.subject or "(no subject)"
         body_preview = (event.body or "")[:200].strip()
@@ -1206,6 +1233,12 @@ def render_participant_comms(event_json: str, participant_ids: set[int]) -> str 
     # Outbound
     if isinstance(event, SMSSent):
         return f"[You texted {name}] {event.content}"
+    if isinstance(event, WhatsAppSent):
+        if event.via_template:
+            return (
+                f"[You WhatsApped {name}" f" (not delivered directly)] {event.content}"
+            )
+        return f"[You WhatsApped {name}] {event.content}"
     if isinstance(event, EmailSent):
         subj = event.subject or "(no subject)"
         return f"[You emailed {name}] {subj}"
@@ -1242,9 +1275,11 @@ def _render_actor_result(event) -> str:
 def render_event_for_fast_brain(event_json: str) -> str | None:
     """Render an actor lifecycle event as a human-readable string.
 
-    Called from the CM side (``LivekitCallManager._render_boss_notifications``)
-    to convert raw actor events into notification content before publishing
-    them to the fast brain via ``app:call:notification``.
+    Called from ``LivekitCallManager._render_boss_notifications`` to convert
+    raw actor events into notification content before publishing them to the
+    fast brain via ``app:call:notification``.  These arrive as silent context
+    (guaranteed delivery, zero LLM latency).  The slow brain separately
+    decides whether to speak via ``guide_voice_agent``.
 
     Returns None for event types that should not be surfaced.
     """
@@ -1261,11 +1296,13 @@ def render_event_for_fast_brain(event_json: str) -> str | None:
             return None
         return _render_actor_result(event)
     if isinstance(event, ActorHandleStarted):
-        return None
+        return f"Action started: {event.query[:200]}"
     if isinstance(event, ActorHandleResponse):
         answer = event.response if event.response else "(no answer)"
         return f"Ask answered ({event.query[:100]}): {answer}"
     if isinstance(event, ActorSessionResponse):
+        if event.content:
+            return f"Action update: {event.content[:200]}"
         return None
     if isinstance(event, NotificationInjectedEvent):
         return event.content
@@ -1297,11 +1334,29 @@ def _render_history_event(
     name = _contact_name(getattr(event, "contact", {}) or {})
 
     # -- Utterances (transcript lines) --
-    if isinstance(event, (InboundPhoneUtterance, InboundUnifyMeetUtterance)):
+    if isinstance(
+        event,
+        (
+            InboundPhoneUtterance,
+            InboundUnifyMeetUtterance,
+            InboundWhatsAppCallUtterance,
+        ),
+    ):
         if cid is not None and cid in participant_ids:
             return f"{name}: {event.content}"
         return None
-    if isinstance(event, (OutboundPhoneUtterance, OutboundUnifyMeetUtterance)):
+    if isinstance(event, InboundGoogleMeetUtterance):
+        label = event.speaker_label or name
+        return f"{label}: {event.content}"
+    if isinstance(
+        event,
+        (
+            OutboundPhoneUtterance,
+            OutboundUnifyMeetUtterance,
+            OutboundWhatsAppCallUtterance,
+            OutboundGoogleMeetUtterance,
+        ),
+    ):
         return f"{assistant_name}: {event.content}"
 
     # -- Call lifecycle markers --
@@ -1309,11 +1364,23 @@ def _render_history_event(
         if cid is not None and cid in participant_ids:
             return f"--- Call with {name} ---"
         return None
+    if isinstance(event, (WhatsAppCallReceived, WhatsAppCallStarted)):
+        if cid is not None and cid in participant_ids:
+            return f"--- WhatsApp Call with {name} ---"
+        return None
     if isinstance(event, (UnifyMeetReceived, UnifyMeetStarted)):
         if cid is not None and cid in participant_ids:
             return f"--- Meeting with {name} ---"
         return None
-    if isinstance(event, (PhoneCallEnded, UnifyMeetEnded)):
+    if isinstance(event, (GoogleMeetStarted,)):
+        return f"--- Google Meet started ---"
+    if isinstance(event, (GoogleMeetEnded,)):
+        return f"--- Google Meet ended ---"
+    if isinstance(event, GoogleMeetParticipantJoined):
+        return f"--- {event.participant_name} joined the meeting ---"
+    if isinstance(event, GoogleMeetParticipantLeft):
+        return f"--- {event.participant_name} left the meeting ---"
+    if isinstance(event, (PhoneCallEnded, UnifyMeetEnded, WhatsAppCallEnded)):
         if cid is not None and cid in participant_ids:
             return f"--- Call ended ---"
         return None
@@ -1326,6 +1393,18 @@ def _render_history_event(
     if isinstance(event, SMSSent):
         if cid is not None and cid in participant_ids:
             return f"[SMS to {name}] {event.content}"
+        return None
+    if isinstance(event, WhatsAppReceived):
+        if cid is not None and cid in participant_ids:
+            return f"[WhatsApp from {name}] {event.content}"
+        return None
+    if isinstance(event, WhatsAppSent):
+        if cid is not None and cid in participant_ids:
+            if event.via_template:
+                return (
+                    f"[WhatsApp to {name}" f" (not delivered directly)] {event.content}"
+                )
+            return f"[WhatsApp to {name}] {event.content}"
         return None
     if isinstance(event, EmailReceived):
         if cid is not None and cid in participant_ids:
@@ -1354,8 +1433,10 @@ def _render_history_event(
         if isinstance(event, ActorResult):
             return _render_actor_result(event)
         if isinstance(event, ActorHandleStarted):
-            return None
+            return f"Action started: {event.query[:200]}"
         if isinstance(event, ActorSessionResponse):
+            if event.content:
+                return f"Action update: {event.content[:200]}"
             return None
 
     return None

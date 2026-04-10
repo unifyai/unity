@@ -336,17 +336,22 @@ class TestRenderHistoryEvent:
         result = _render_history_event(ev, {1}, True, ASSISTANT_NAME)
         assert result == "Action failed: Timeout"
 
-    def test_actor_handle_started_filtered(self):
+    def test_actor_handle_started_rendered(self):
         ev = ActorHandleStarted(
             action_name="web_search",
             handle_id=1,
             query="weather today",
         )
         result = _render_history_event(ev, {1}, True, ASSISTANT_NAME)
-        assert result is None
+        assert result == "Action started: weather today"
 
-    def test_actor_session_response_filtered(self):
+    def test_actor_session_response_with_content_rendered(self):
         ev = ActorSessionResponse(handle_id=1, content="Here are the results")
+        result = _render_history_event(ev, {1}, True, ASSISTANT_NAME)
+        assert result == "Action update: Here are the results"
+
+    def test_actor_session_response_empty_filtered(self):
+        ev = ActorSessionResponse(handle_id=1, content="")
         result = _render_history_event(ev, {1}, True, ASSISTANT_NAME)
         assert result is None
 
@@ -472,11 +477,8 @@ class TestHydrateFastBrainHistory:
 
     @pytest.mark.asyncio
     async def test_boss_call_includes_actor_events(self):
-        """Boss calls include Actor notification events in history.
-
-        ActorHandleStarted is filtered (no value for fast brain since it
-        already responded to the user turn). Only ActorNotification
-        (explicit progress via notify()) is rendered.
+        """Boss calls include Actor events in history — both
+        ActorHandleStarted and ActorNotification are rendered.
         """
         events = [
             ActorHandleStarted(
@@ -495,8 +497,9 @@ class TestHydrateFastBrainHistory:
         with patch(MOCK_GET_LOGS, return_value=_make_log_rows(events)):
             result = await hydrate_fast_brain_history({1}, True, ASSISTANT_NAME)
 
-        assert len(result) == 1
-        assert "Action in progress: Found 3 results" in result[0]
+        assert len(result) == 2
+        assert "Action started: latest news" in result[0]
+        assert "Action in progress: Found 3 results" in result[1]
 
     @pytest.mark.asyncio
     async def test_non_boss_call_excludes_actor_events(self):

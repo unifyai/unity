@@ -1171,6 +1171,76 @@ class TestBuildActionSteeringTools:
             "pause_" in n for n in tool_names
         ), "Should NOT have pause tool when paused"
 
+    @pytest.mark.asyncio
+    async def test_storage_check_handle_paused_shows_resume(
+        self,
+        brain_action_tools,
+        mock_cm,
+    ):
+        """_StorageCheckHandle forwards inner handle's pause state.
+
+        Regression: _StorageCheckHandle didn't expose _pause_event, so
+        get_handle_paused_state returned None (unknown). This caused
+        build_action_steering_tools to always offer pause_* and never
+        offer resume_* — even when the inner loop was paused. The CM's
+        LLM would then call pause_* repeatedly while trying to resume,
+        producing serial "Pause" events visible on the frontend.
+        """
+        from unity.actor.code_act_actor import _StorageCheckHandle
+
+        inner_handle = MagicMock()
+        inner_handle._pause_event = asyncio.Event()
+        inner_handle._pause_event.set()  # Start running
+
+        # Block result() so the lifecycle stays in phase 1 ("task")
+        _block = asyncio.Event()
+
+        async def _blocking_result():
+            await _block.wait()
+            return "done"
+
+        inner_handle.result = _blocking_result
+        inner_handle.done = MagicMock(return_value=False)
+
+        async def _block_forever():
+            await asyncio.Event().wait()
+            return {}
+
+        inner_handle.next_notification = _block_forever
+        inner_handle.next_clarification = _block_forever
+
+        mock_actor = MagicMock()
+        wrapped = _StorageCheckHandle(inner=inner_handle, actor=mock_actor)
+
+        try:
+            # Pause the inner handle
+            inner_handle._pause_event.clear()
+
+            mock_cm.in_flight_actions = {
+                0: {
+                    "query": "Access Dan's Gmail",
+                    "handle": wrapped,
+                    "handle_actions": [],
+                },
+            }
+
+            tools = brain_action_tools.build_action_steering_tools()
+            tool_names = list(tools.keys())
+
+            assert any(
+                "resume_" in n for n in tool_names
+            ), f"Should have resume tool when paused, got: {tool_names}"
+            assert not any(
+                "pause_" in n for n in tool_names
+            ), f"Should NOT have pause tool when paused, got: {tool_names}"
+        finally:
+            _block.set()
+            wrapped._lifecycle_task.cancel()
+            try:
+                await wrapped._lifecycle_task
+            except (asyncio.CancelledError, Exception):
+                pass
+
     def test_running_handle_only_shows_pause(self, brain_action_tools, mock_cm):
         """When handle is running, only pause_* is generated (not resume_*)."""
         # Create a running handle (pause_event is set)

@@ -60,6 +60,60 @@ async def send_sms_message_via_number(to_number: str, content: str) -> str:
             return await response.json()
 
 
+async def send_whatsapp_message(
+    to_number: str,
+    content: str,
+    user_name: str = "",
+    agent_name: str = "",
+    media_url: str | None = None,
+) -> dict:
+    """
+    Send a WhatsApp message via the Communication service.
+
+    Communication automatically handles the WhatsApp 24h session window:
+    if the window is open, ``content`` is sent as free-form text; if closed,
+    it falls back to an approved greeting template with ``content`` appended.
+
+    Args:
+        to_number: The recipient's WhatsApp number (E.164)
+        content: The message content to send
+        user_name: Recipient's first name (used in template fallback)
+        agent_name: Assistant's first name (used in template fallback)
+        media_url: Publicly accessible URL of a media attachment (one per
+            message — WhatsApp constraint).  Supported types: images, audio,
+            video, PDF, DOC/XLSX when inside the 24h window.
+
+    Returns:
+        dict with 'success' key indicating delivery status.
+    """
+    agent_id = SESSION_DETAILS.assistant.agent_id
+    if agent_id is None:
+        return {"success": False}
+
+    payload = {
+        "to": to_number,
+        "body": content,
+        "assistant_id": agent_id,
+        "user_name": user_name,
+        "agent_name": agent_name,
+    }
+    if media_url:
+        payload["media_url"] = media_url
+
+    async with aiohttp.ClientSession() as session:
+        async with session.post(
+            f"{SETTINGS.conversation.COMMS_URL}/whatsapp/send",
+            headers=headers,
+            json=payload,
+        ) as response:
+            try:
+                response.raise_for_status()
+            except Exception as e:
+                LOGGER.error(f"{ICONS['comms_outbound']} WhatsApp send failed: {e}")
+                return {"success": False}
+            return await response.json()
+
+
 async def send_unify_message(
     content: str,
     contact_id: int = 1,
@@ -151,7 +205,7 @@ def publish_system_error(error_message: str, error_type: str = "unknown") -> Non
         )
         future.result(timeout=5)
         LOGGER.debug(
-            f"{ICONS['comms_outbound']} Published system error [{error_type}]: {error_message}"
+            f"{ICONS['comms_outbound']} Published system error [{error_type}]: {error_message}",
         )
     except Exception as e:
         LOGGER.error(f"{ICONS['comms_outbound']} Failed to publish system error: {e}")
@@ -196,6 +250,7 @@ async def complete_api_message(
 
 
 async def publish_assistant_desktop_ready(
+    binding_id: str,
     desktop_url: str,
     liveview_url: str,
     vm_type: str,
@@ -213,6 +268,7 @@ async def publish_assistant_desktop_ready(
     message_data = {
         "thread": "assistant_desktop_ready",
         "event": {
+            "binding_id": binding_id,
             "desktop_url": desktop_url,
             "liveview_url": liveview_url,
             "vm_type": vm_type,
@@ -393,6 +449,51 @@ async def start_call(to_number: str) -> str:
                 return {
                     "success": False,
                     "error": f"Failed to initiate call to {to_number}",
+                }
+            return await response.json()
+
+
+async def start_whatsapp_call(
+    to_number: str,
+    agent_name: str,
+    room_name: str,
+) -> dict:
+    """
+    Initiate a WhatsApp voice call via the Communication service.
+
+    Communication checks call permission with Orchestra and decides the method:
+    - Permission granted → places outbound call directly (returns method: "direct")
+    - Permission not granted → sends invite template (returns method: "invite")
+
+    Args:
+        to_number: The recipient's WhatsApp number (E.164)
+        agent_name: Assistant's first name (used in invite template)
+        room_name: Pre-built LiveKit room name
+
+    Returns:
+        dict with 'success', 'method' ("direct"|"invite"), and other fields.
+    """
+    agent_id = SESSION_DETAILS.assistant.agent_id
+    if agent_id is None:
+        return {"success": False}
+
+    async with aiohttp.ClientSession() as session:
+        async with session.post(
+            f"{SETTINGS.conversation.COMMS_URL}/whatsapp/send-call",
+            headers=headers,
+            json={
+                "to": to_number,
+                "assistant_id": agent_id,
+                "agent_name": agent_name,
+                "room_name": room_name,
+            },
+        ) as response:
+            try:
+                response.raise_for_status()
+            except Exception:
+                return {
+                    "success": False,
+                    "error": f"Failed to initiate WhatsApp call to {to_number}",
                 }
             return await response.json()
 

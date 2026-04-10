@@ -197,6 +197,16 @@ class InboundUnifyMeetUtterance(Event):
 
 
 @dataclass
+class InboundWhatsAppCallUtterance(Event):
+    """Utterance received from the other party during a WhatsApp voice call."""
+
+    topic: ClassVar[str | None] = "app:comms:whatsapp_call_utterance"
+
+    contact: dict
+    content: str
+
+
+@dataclass
 class VoiceInterrupt(Event):
     """User interrupted the assistant during a voice call."""
 
@@ -224,6 +234,81 @@ class UnifyMeetEnded(Event):
 
 
 @dataclass
+class GoogleMeetReceived(Event):
+    """A request to join a Google Meet call via browser."""
+
+    topic: ClassVar[str | None] = "app:comms:googlemeet_received"
+    prominent: ClassVar[bool] = True
+
+    contact: dict
+    meet_url: str
+
+
+@dataclass
+class GoogleMeetStarted(Event):
+    """The Google Meet browser session is active and audio bridge is running."""
+
+    topic: ClassVar[str | None] = "app:comms:googlemeet_started"
+    prominent: ClassVar[bool] = True
+
+    contact: dict
+
+
+@dataclass
+class GoogleMeetEnded(Event):
+    """The Google Meet browser session has ended."""
+
+    topic: ClassVar[str | None] = "app:comms:googlemeet_ended"
+    prominent: ClassVar[bool] = True
+
+    contact: dict
+
+
+@dataclass
+class InboundGoogleMeetUtterance(Event):
+    """Utterance received from a participant during a Google Meet call."""
+
+    topic: ClassVar[str | None] = "app:comms:googlemeet_utterance"
+
+    contact: dict
+    content: str
+    speaker_label: str | None = None
+    participant_names: list[str] | None = None
+    diarization_speaker_id: str | None = None
+
+
+@dataclass
+class OutboundGoogleMeetUtterance(Event):
+    """Utterance sent by the assistant during a Google Meet call."""
+
+    topic: ClassVar[str | None] = "app:comms:googlemeet_utterance"
+
+    contact: dict
+    content: str
+    participant_names: list[str] | None = None
+
+
+@dataclass
+class GoogleMeetParticipantJoined(Event):
+    """A participant joined the Google Meet session."""
+
+    topic: ClassVar[str | None] = "app:comms:googlemeet_participant"
+
+    contact: dict
+    participant_name: str
+
+
+@dataclass
+class GoogleMeetParticipantLeft(Event):
+    """A participant left the Google Meet session."""
+
+    topic: ClassVar[str | None] = "app:comms:googlemeet_participant"
+
+    contact: dict
+    participant_name: str
+
+
+@dataclass
 class RecordingReady(Event):
     """A call/meet recording has been processed and is available in GCS."""
 
@@ -240,6 +325,95 @@ class SMSReceived(Event):
 
     contact: dict
     content: str
+
+
+@dataclass
+class WhatsAppReceived(Event):
+    topic: ClassVar[str | None] = "app:comms:whatsapp_message"
+    content_logged: ClassVar[bool] = True
+
+    contact: dict
+    content: str
+    attachments: list[dict] | None = None
+
+
+@dataclass
+class WhatsAppCallReceived(Event):
+    """An inbound voice call initiated via WhatsApp Business calling."""
+
+    topic: ClassVar[str | None] = "app:comms:whatsapp_call_received"
+    prominent: ClassVar[bool] = True
+
+    contact: dict
+    conference_name: str = ""
+
+
+@dataclass
+class WhatsAppCallStarted(Event):
+    topic: ClassVar[str | None] = "app:comms:whatsapp_call_started"
+    prominent: ClassVar[bool] = True
+
+    contact: dict
+
+
+@dataclass
+class WhatsAppCallEnded(Event):
+    topic: ClassVar[str | None] = "app:comms:whatsapp_call_ended"
+    prominent: ClassVar[bool] = True
+
+    contact: dict
+
+
+@dataclass
+class WhatsAppCallSent(Event):
+    """Outbound WhatsApp call placed directly (permission was granted)."""
+
+    topic: ClassVar[str | None] = "app:comms:whatsapp_call_sent"
+    prominent: ClassVar[bool] = True
+
+    contact: dict
+
+
+@dataclass
+class WhatsAppCallInviteSent(Event):
+    """Call invite template sent (permission not yet granted)."""
+
+    topic: ClassVar[str | None] = "app:comms:whatsapp_call_invite_sent"
+    prominent: ClassVar[bool] = True
+
+    contact: dict
+
+
+@dataclass
+class WhatsAppCallAnswered(Event):
+    """Outbound WhatsApp call was answered by the contact."""
+
+    topic: ClassVar[str | None] = "app:comms:whatsapp_call_answered"
+    prominent: ClassVar[bool] = True
+
+    contact: dict
+
+
+@dataclass
+class WhatsAppCallNotAnswered(Event):
+    """Outbound WhatsApp call was not answered."""
+
+    topic: ClassVar[str | None] = "app:comms:whatsapp_call_not_answered"
+    prominent: ClassVar[bool] = True
+
+    contact: dict
+    reason: str = "no-answer"
+
+
+@dataclass
+class WhatsAppCallPermissionResponse(Event):
+    """Contact responded to a WhatsApp call permission request."""
+
+    topic: ClassVar[str | None] = "app:comms:whatsapp_call_permission"
+    prominent: ClassVar[bool] = True
+
+    contact: dict
+    accepted: bool
 
 
 @dataclass
@@ -283,6 +457,16 @@ class OutboundUnifyMeetUtterance(Event):
     """Utterance sent by the assistant during a web-based voice/video meeting."""
 
     topic: ClassVar[str | None] = "app:comms:unify_utterance"
+
+    contact: dict
+    content: str
+
+
+@dataclass
+class OutboundWhatsAppCallUtterance(Event):
+    """Utterance sent by the assistant during a WhatsApp voice call."""
+
+    topic: ClassVar[str | None] = "app:comms:whatsapp_call_utterance"
 
     contact: dict
     content: str
@@ -346,6 +530,17 @@ class SMSSent(Event):
 
     contact: dict
     content: str
+
+
+@dataclass
+class WhatsAppSent(Event):
+    topic: ClassVar[str | None] = "app:comms:whatsapp_sent"
+    content_logged: ClassVar[bool] = True
+
+    contact: dict
+    content: str
+    via_template: bool = False
+    attachments: list[dict] | None = None
 
 
 @dataclass
@@ -471,12 +666,15 @@ class _SessionConfigBase(Event):
     user_number: str
     user_email: str
     voice_id: str
+    binding_id: str = ""
     voice_provider: str = "cartesia"
+    assistant_whatsapp_number: str = ""
     assistant_timezone: str = (
         ""  # IANA timezone identifier; default empty for backward compat
     )
     desktop_mode: str = "ubuntu"
     desktop_url: str | None = None
+    user_whatsapp_number: str = ""
     user_desktop_mode: str | None = None
     user_desktop_filesys_sync: bool = False
     user_desktop_url: str | None = None
@@ -752,6 +950,7 @@ class AssistantDesktopReady(Event):
 
     topic: ClassVar[str | None] = "app:comms:assistant_desktop_ready"
 
+    binding_id: str = ""
     desktop_url: str = ""
     vm_type: str = ""
 

@@ -20,6 +20,42 @@ from .search_utils import table_search_top_k
 from .embed_utils import list_private_fields
 
 
+def rewrite_join_paths(
+    original_tables: List[str],
+    resolved_tables: List[str],
+    join_expr: str,
+    select: Dict[str, str],
+) -> tuple[str, Dict[str, str]]:
+    """Rewrite table paths in *join_expr* and *select* keys from originals to resolved.
+
+    Generalised N-table version of :func:`rewrite_join_expr` /
+    :func:`rewrite_select`.  Works by simple string replacement for each
+    (original → resolved) pair, which is correct because table paths are
+    unique prefix strings in these expressions.
+
+    Parameters
+    ----------
+    original_tables : list[str]
+        Table paths as originally provided (e.g. by the actor).
+    resolved_tables : list[str]
+        Corresponding fully-qualified context paths.
+    join_expr : str
+        Join condition expression with original table references.
+    select : dict[str, str]
+        Column mapping whose **keys** reference original table paths.
+
+    Returns
+    -------
+    tuple[str, dict[str, str]]
+        ``(rewritten_join_expr, rewritten_select)``.
+    """
+    for original, resolved in zip(original_tables, resolved_tables):
+        if original != resolved:
+            join_expr = join_expr.replace(original, resolved)
+            select = {k.replace(original, resolved): v for k, v in select.items()}
+    return join_expr, select
+
+
 def create_join(
     *,
     left_context: str,

@@ -440,6 +440,7 @@ async def test_ask_question_resets_future_after_await():
 
 
 @pytest.mark.asyncio
+@pytest.mark.llm_call
 @_handle_project
 async def test_ask_path1_infers_from_voice_transcript(initialized_cm):
     """
@@ -487,6 +488,7 @@ async def test_ask_path1_infers_from_voice_transcript(initialized_cm):
 
 
 @pytest.mark.asyncio
+@pytest.mark.llm_call
 @_handle_project
 async def test_ask_path1_infers_from_sms_context(initialized_cm):
     """
@@ -527,6 +529,7 @@ async def test_ask_path1_infers_from_sms_context(initialized_cm):
 
 
 @pytest.mark.asyncio
+@pytest.mark.llm_call
 @_handle_project
 async def test_ask_path1_sends_acknowledgment(initialized_cm):
     """
@@ -596,6 +599,7 @@ async def test_ask_path1_sends_acknowledgment(initialized_cm):
 
 
 @pytest.mark.asyncio
+@pytest.mark.llm_call
 @_handle_project
 async def test_ask_path2_asks_when_ambiguous(initialized_cm):
     """
@@ -668,6 +672,7 @@ async def test_ask_path2_asks_when_ambiguous(initialized_cm):
 
 
 @pytest.mark.asyncio
+@pytest.mark.llm_call
 @_handle_project
 async def test_ask_path2_routes_user_input_via_active_ask_handle(initialized_cm):
     """
@@ -712,6 +717,7 @@ async def test_ask_path2_routes_user_input_via_active_ask_handle(initialized_cm)
 
 
 @pytest.mark.asyncio
+@pytest.mark.llm_call
 @_handle_project
 async def test_ask_path2_multiple_followup_questions(initialized_cm):
     """
@@ -785,6 +791,7 @@ async def test_ask_path2_multiple_followup_questions(initialized_cm):
 
 
 @pytest.mark.asyncio
+@pytest.mark.llm_call
 @_handle_project
 async def test_ask_returns_pydantic_model(initialized_cm):
     """
@@ -820,6 +827,7 @@ async def test_ask_returns_pydantic_model(initialized_cm):
 
 
 @pytest.mark.asyncio
+@pytest.mark.llm_call
 @_handle_project
 async def test_ask_returns_enum_value(initialized_cm):
     """
@@ -854,6 +862,7 @@ async def test_ask_returns_enum_value(initialized_cm):
 
 
 @pytest.mark.asyncio
+@pytest.mark.llm_call
 @_handle_project
 async def test_ask_without_response_format_returns_string(initialized_cm):
     """
@@ -892,6 +901,7 @@ async def test_ask_without_response_format_returns_string(initialized_cm):
 
 
 @pytest.mark.asyncio
+@pytest.mark.llm_call
 @_handle_project
 async def test_intercepting_handle_delegates_lifecycle_methods(initialized_cm):
     """
@@ -933,6 +943,7 @@ async def test_intercepting_handle_delegates_lifecycle_methods(initialized_cm):
 
 
 @pytest.mark.asyncio
+@pytest.mark.llm_call
 @_handle_project
 async def test_intercepting_handle_clears_active_ask_handle_on_result(initialized_cm):
     """
@@ -973,6 +984,7 @@ async def test_intercepting_handle_clears_active_ask_handle_on_result(initialize
 
 
 @pytest.mark.asyncio
+@pytest.mark.llm_call
 @_handle_project
 async def test_ask_during_phone_call(initialized_cm):
     """
@@ -1014,6 +1026,7 @@ async def test_ask_during_phone_call(initialized_cm):
 
 
 @pytest.mark.asyncio
+@pytest.mark.llm_call
 @_handle_project
 async def test_ask_during_unify_meet(initialized_cm):
     """
@@ -1053,6 +1066,7 @@ async def test_ask_during_unify_meet(initialized_cm):
 
 
 @pytest.mark.asyncio
+@pytest.mark.llm_call
 @_handle_project
 async def test_ask_with_sms_context_only(initialized_cm):
     """
@@ -1088,6 +1102,7 @@ async def test_ask_with_sms_context_only(initialized_cm):
 
 
 @pytest.mark.asyncio
+@pytest.mark.llm_call
 @_handle_project
 async def test_ask_with_email_context(initialized_cm):
     """
@@ -1125,6 +1140,7 @@ async def test_ask_with_email_context(initialized_cm):
 
 
 @pytest.mark.asyncio
+@pytest.mark.llm_call
 @_handle_project
 async def test_ask_with_mixed_modality_context(initialized_cm):
     """
@@ -1198,6 +1214,7 @@ async def test_ask_raises_when_handle_stopped(initialized_cm):
 
 
 @pytest.mark.asyncio
+@pytest.mark.llm_call
 @_handle_project
 async def test_ask_handles_empty_transcript(initialized_cm):
     """
@@ -1239,6 +1256,7 @@ async def test_ask_handles_empty_transcript(initialized_cm):
 
 
 @pytest.mark.asyncio
+@pytest.mark.llm_call
 @_handle_project
 async def test_ask_with_transcript_manager_tool(initialized_cm):
     """
@@ -1279,6 +1297,7 @@ async def test_ask_with_transcript_manager_tool(initialized_cm):
 
 
 @pytest.mark.asyncio
+@pytest.mark.llm_call
 @_handle_project
 async def test_only_one_active_ask_handle_at_a_time(initialized_cm):
     """

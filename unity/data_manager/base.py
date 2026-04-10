@@ -15,8 +15,6 @@ from typing import Any, Callable, Dict, List, Optional, Union
 
 from unity.common.state_managers import BaseStateManager
 from unity.data_manager.types.table import TableDescription
-from unity.data_manager.types.plot import PlotResult
-from unity.data_manager.types.table_view import TableViewResult
 from unity.data_manager.types.ingest import (
     IngestExecutionConfig,
     IngestResult,
@@ -35,7 +33,6 @@ class BaseDataManager(BaseStateManager):
     - **Join operations**: filter_join, search_join, filter_multi_join, search_multi_join
     - **Mutation operations**: insert_rows, update_rows, delete_rows
     - **Embedding operations**: ensure_vector_column, vectorize_rows
-    - **Visualization**: plot, plot_batch
 
     Semantic Ownership
     ------------------
@@ -1576,8 +1573,170 @@ class BaseDataManager(BaseStateManager):
         -----
         - Pre-filters (``left_where``, ``right_where``) are applied before joining,
           which can significantly improve performance on large tables.
-        - The temporary join context is created, queried, and cleaned up automatically.
+        - The join and query are performed in a single server-side round-trip;
+          no temporary context is created.
         - Column references in ``join_expr`` and ``select`` keys use table/context prefixes.
+        """
+
+    @abstractmethod
+    def reduce_join(
+        self,
+        *,
+        tables: Union[str, List[str]],
+        join_expr: str,
+        select: Dict[str, str],
+        metric: str,
+        columns: Union[str, List[str]],
+        mode: str = "inner",
+        left_where: Optional[str] = None,
+        right_where: Optional[str] = None,
+        result_where: Optional[str] = None,
+        group_by: Optional[Union[str, List[str]]] = None,
+    ) -> Any:
+        """
+        Join two tables and aggregate the result in one atomic operation.
+
+        Combines a join with a reduce (aggregation) in a single server-side
+        round-trip. No temporary context is created.
+
+        Use this instead of manually calling ``join_tables`` + ``reduce`` +
+        ``delete_table``.
+
+        Parameters
+        ----------
+        tables : str | list[str]
+            Exactly TWO table names/context paths to join.
+            Example: ``["Orders", "Products"]`` or ``["Data/orders", "Data/products"]``
+
+        join_expr : str
+            Join condition expression using table names as prefixes.
+            Example: ``"Orders.product_id == Products.id"``
+
+            The table names in the expression are automatically rewritten to
+            fully-qualified context paths.
+
+        select : dict[str, str]
+            Mapping of source columns to output column names.
+            Keys use table names as prefixes; values are the output alias.
+
+            Example::
+
+                {
+                    "Orders.id": "order_id",
+                    "Orders.amount": "amount",
+                    "Products.name": "product_name"
+                }
+
+        metric : str
+            Reduction metric: ``"count"``, ``"sum"``, ``"mean"``, ``"var"``,
+            ``"std"``, ``"min"``, ``"max"``, ``"median"``, ``"mode"``,
+            ``"count_distinct"``.
+
+        columns : str | list[str]
+            Column(s) to compute the metric on (uses output aliases from ``select``).
+
+            For ``count``, use any output column (e.g., ``"order_id"``).
+            For ``sum``/``mean``/``min``/``max``, must be numeric output columns.
+
+        mode : str, default ``"inner"``
+            Join mode: ``"inner"``, ``"left"``, ``"right"``, or ``"outer"``.
+
+        left_where : str | None, default ``None``
+            Filter expression applied to LEFT table BEFORE the join.
+            Uses left table's column names without prefix.
+            Example: ``"status == 'active'"``
+
+        right_where : str | None, default ``None``
+            Filter expression applied to RIGHT table BEFORE the join.
+            Uses right table's column names without prefix.
+            Example: ``"category == 'Electronics'"``
+
+        result_where : str | None, default ``None``
+            Filter applied to the joined result BEFORE aggregation.
+            Must use column names from ``select`` values (the output aliases).
+            Example: ``"amount > 100"``
+
+        group_by : str | list[str] | None, default ``None``
+            Column(s) to group by before aggregation (uses output aliases).
+
+        Returns
+        -------
+        Any
+            Depends on ``columns`` and ``group_by``:
+
+            - **Single column, no group_by**: Scalar (int for count, float for sum)
+            - **Multiple columns, no group_by**: Dict mapping column_name to value
+            - **Single column, with group_by**: List of dicts with group columns + metric
+            - **Multiple columns, with group_by**: List of dicts with all metrics
+
+        Usage Examples
+        --------------
+        # Count orders per product (scalar -- no group_by)
+        total = dm.reduce_join(
+            tables=["Data/orders", "Data/products"],
+            join_expr="Data/orders.product_id == Data/products.id",
+            select={
+                "Data/orders.order_id": "order_id",
+                "Data/products.name": "product_name",
+            },
+            metric="count",
+            columns="order_id",
+        )
+
+        # Sum revenue grouped by product name
+        by_product = dm.reduce_join(
+            tables=["Data/orders", "Data/products"],
+            join_expr="Data/orders.product_id == Data/products.id",
+            select={
+                "Data/orders.amount": "amount",
+                "Data/products.name": "product_name",
+            },
+            metric="sum",
+            columns="amount",
+            group_by="product_name",
+        )
+
+        # Count with pre-filters and post-join filter
+        active_high_value = dm.reduce_join(
+            tables=["Data/orders", "Data/customers"],
+            join_expr="Data/orders.customer_id == Data/customers.id",
+            select={
+                "Data/orders.order_id": "order_id",
+                "Data/orders.amount": "amount",
+                "Data/customers.region": "region",
+            },
+            metric="count",
+            columns="order_id",
+            left_where="status == 'completed'",
+            right_where="active == True",
+            result_where="amount > 500",
+            group_by="region",
+        )
+
+        Anti-patterns
+        -------------
+        - WRONG: Using output aliases in ``join_expr``
+          CORRECT: Use source table.column references in ``join_expr``
+
+        - WRONG: Using source references in ``result_where``
+          CORRECT: Use output column names (values from ``select``) in ``result_where``
+
+        - WRONG: ``result_where`` references columns not in ``select``
+          CORRECT: Add all referenced columns to ``select``
+
+        Notes
+        -----
+        - Pre-filters (``left_where``, ``right_where``) are applied before joining,
+          which can significantly improve performance on large tables.
+        - The join and aggregation are performed in a single server-side round-trip;
+          no temporary context is created.
+        - Column references in ``join_expr`` and ``select`` keys use table/context prefixes.
+
+        See Also
+        --------
+        reduce : Aggregate a single table (no join).
+        filter_join : Join + filter in a single round-trip.
+        search_join : Join + semantic search with automatic temp table cleanup.
         """
 
     @abstractmethod
@@ -2297,6 +2456,7 @@ class BaseDataManager(BaseStateManager):
         *,
         source_column: str,
         target_column: Optional[str] = None,
+        async_embeddings: bool = False,
     ) -> str:
         """
         Ensure an embedding column exists for a source column.
@@ -2316,6 +2476,21 @@ class BaseDataManager(BaseStateManager):
             Name for the embedding column. If ``None``, defaults to
             ``"_{source_column}_emb"`` following the convention.
 
+        async_embeddings : bool, default ``False``
+            When ``True``, the backend computes embeddings asynchronously.
+            The call returns immediately but vector values are populated in
+            the background, so a subsequent ``search`` may return zero
+            semantic results until processing completes.
+
+            When ``False`` (the default), embedding computation blocks until
+            vectors are fully materialised.  This is the correct choice for
+            interactive / on-demand workflows where the caller needs to
+            query the embeddings immediately after creation.
+
+            Bulk ingestion pipelines (``DataManager.ingest``,
+            ``FileManager`` parsing) set this to ``True`` internally because
+            throughput matters more than immediate availability.
+
         Returns
         -------
         str
@@ -2323,7 +2498,7 @@ class BaseDataManager(BaseStateManager):
 
         Usage Examples
         --------------
-        # Create embedding column with default name
+        # Create embedding column with default name (synchronous)
         emb_col = dm.ensure_vector_column("Data/docs", source_column="content")
         # Returns: "_content_emb"
 
@@ -2331,13 +2506,14 @@ class BaseDataManager(BaseStateManager):
         emb_col = dm.ensure_vector_column(
             "Data/products",
             source_column="description",
-            target_column="_desc_vectors"
+            target_column="_desc_vectors",
         )
 
         Notes
         -----
-        - Idempotent: safe to call multiple times
-        - Does NOT generate embeddings; use vectorize_rows for that
+        - Idempotent: safe to call multiple times.
+        - Does NOT generate embeddings for existing rows; use
+          ``vectorize_rows`` for that.
         """
 
     @abstractmethod
@@ -2349,6 +2525,7 @@ class BaseDataManager(BaseStateManager):
         target_column: Optional[str] = None,
         row_ids: Optional[List[int]] = None,
         batch_size: int = 100,
+        async_embeddings: bool = False,
     ) -> int:
         """
         Generate embeddings for rows.
@@ -2375,6 +2552,11 @@ class BaseDataManager(BaseStateManager):
             Number of rows to embed per batch. Larger batches are faster but
             use more memory.
 
+        async_embeddings : bool, default ``False``
+            When ``True``, the backend computes embeddings asynchronously and
+            the call returns immediately.  See ``ensure_vector_column`` for
+            the full trade-off discussion.
+
         Returns
         -------
         int
@@ -2382,7 +2564,7 @@ class BaseDataManager(BaseStateManager):
 
         Usage Examples
         --------------
-        # Embed all unembedded rows
+        # Embed all unembedded rows (synchronous, ready for search)
         count = dm.vectorize_rows("Data/documents", source_column="content")
         print(f"Embedded {count} rows")
 
@@ -2390,424 +2572,12 @@ class BaseDataManager(BaseStateManager):
         dm.vectorize_rows(
             "Data/products",
             source_column="description",
-            row_ids=[1, 2, 3, 4, 5]
+            row_ids=[1, 2, 3, 4, 5],
         )
 
         Notes
         -----
-        - Requires ensure_vector_column to be called first
-        - Skips rows that already have embeddings
-        - Uses the default embedding model configured for the project
-        """
-
-    # ──────────────────────────────────────────────────────────────────────────
-    # Visualization
-    # ──────────────────────────────────────────────────────────────────────────
-
-    @abstractmethod
-    def plot(
-        self,
-        context: str,
-        *,
-        plot_type: str,
-        x: str,
-        y: Optional[str] = None,
-        group_by: Optional[str] = None,
-        aggregate: Optional[str] = None,
-        metric: Optional[str] = None,
-        filter: Optional[str] = None,
-        title: Optional[str] = None,
-        scale_x: Optional[str] = None,
-        scale_y: Optional[str] = None,
-        bin_count: Optional[int] = None,
-        show_regression: Optional[bool] = None,
-    ) -> "PlotResult":
-        """
-        Generate a plot visualization from table data.
-
-        Creates visual charts from table data. Supports scatter plots, bar charts,
-        histograms, and line charts.
-
-        Parameters
-        ----------
-        context : str
-            Target context path containing the data to visualize.
-
-        plot_type : str
-            Chart type. One of:
-
-            - ``"scatter"``: Scatter plot for correlations (requires x and y)
-            - ``"bar"``: Bar chart for comparing categories (requires x and y)
-            - ``"histogram"``: Distribution of single variable (requires x only)
-            - ``"line"``: Trend/time series (requires x and y)
-
-        x : str
-            X-axis column name.
-
-        y : str | None, default ``None``
-            Y-axis column name. Required for scatter, bar, line plots.
-            Not used for histogram.
-
-        group_by : str | None, default ``None``
-            Column to group/color data points by. Creates multiple series.
-
-        aggregate : str | None, default ``None``
-            Aggregation function applied when ``group_by`` is set. Changes what's
-            plotted from raw data points to aggregated group metrics. Requires
-            ``group_by``. Valid values: ``"sum"``, ``"mean"``, ``"count"``,
-            ``"min"``, ``"max"``. Works with all plot types.
-
-        metric : str | None, default ``None``
-            Statistic used to compute Y-axis values on bar charts. Valid values:
-            ``"sum"``, ``"mean"``, ``"count"``, ``"min"``, ``"max"``. Only applies
-            to bar charts; other plot types ignore this parameter.
-
-        filter : str | None, default ``None``
-            Filter expression to subset data before plotting.
-
-        title : str | None, default ``None``
-            Chart title displayed above the plot.
-
-        scale_x : str | None, default ``None``
-            X-axis scale: ``"linear"`` or ``"log"``.
-
-        scale_y : str | None, default ``None``
-            Y-axis scale: ``"linear"`` or ``"log"``.
-
-        bin_count : int | None, default ``None``
-            Number of bins for histogram plots.
-
-        show_regression : bool | None, default ``None``
-            Show regression line on scatter plots.
-
-        Returns
-        -------
-        PlotResult
-            Result with URL, token, or error information.
-            Check ``result.succeeded`` to verify generation worked.
-            Access ``result.url`` for the plot image URL.
-
-        Usage Examples
-        --------------
-        # Bar chart: total revenue by region
-        result = dm.plot(
-            "Data/sales",
-            plot_type="bar",
-            x="region",
-            y="revenue",
-            metric="sum",
-            title="Revenue by Region"
-        )
-
-        # Bar chart: average score per department (grouped & aggregated)
-        result = dm.plot(
-            "Data/performance",
-            plot_type="bar",
-            x="department",
-            y="score",
-            group_by="team",
-            aggregate="mean",
-            title="Avg Score by Department"
-        )
-        if result.succeeded:
-            print(f"Plot URL: {result.url}")
-
-        # Scatter plot with regression
-        result = dm.plot(
-            "Data/performance",
-            plot_type="scatter",
-            x="experience_years",
-            y="salary",
-            show_regression=True
-        )
-
-        # Histogram of price distribution
-        result = dm.plot(
-            "Data/products",
-            plot_type="histogram",
-            x="price",
-            bin_count=20,
-            title="Price Distribution"
-        )
-
-        # Line chart with groups
-        result = dm.plot(
-            "Data/metrics",
-            plot_type="line",
-            x="date",
-            y="value",
-            group_by="metric_name"
-        )
-
-        Anti-patterns
-        -------------
-        - WRONG: ``plot(..., aggregate="count")`` without ``group_by``
-          ``aggregate`` requires ``group_by`` to be set.
-
-        - WRONG: ``plot(..., plot_type="histogram", y="col")``
-          Histogram only uses ``x`` (single variable distribution).
-
-        - WRONG: ``plot(..., plot_type="bar", show_regression=True)``
-          ``show_regression`` is scatter-only.
-
-        - WRONG: Omitting ``y`` for bar, scatter, or line plots.
-          All non-histogram plot types require both ``x`` and ``y``.
-
-        - WRONG: Plotting very large datasets without ``filter``.
-          Filter to a reasonable subset for visualization.
-
-        Notes
-        -----
-        - Plot URLs expire after a period (check expires_in_hours)
-        - Large datasets are sampled for plotting performance
-        - Error details available in result.error and result.traceback_str
-        """
-
-    @abstractmethod
-    def plot_batch(
-        self,
-        contexts: List[str],
-        *,
-        plot_type: str,
-        x: str,
-        y: Optional[str] = None,
-        group_by: Optional[str] = None,
-        aggregate: Optional[str] = None,
-        metric: Optional[str] = None,
-        filter: Optional[str] = None,
-        title: Optional[str] = None,
-        **kwargs: Any,
-    ) -> List["PlotResult"]:
-        """
-        Generate the same plot across multiple tables.
-
-        Convenience method for creating comparable visualizations across
-        multiple data sources with identical configuration.
-
-        Parameters
-        ----------
-        contexts : list[str]
-            List of context paths to generate plots for.
-
-        plot_type, x, y, group_by, aggregate, metric, filter, title, **kwargs
-            Same parameters as ``plot()``. Applied to all contexts.
-
-        Returns
-        -------
-        list[PlotResult]
-            One result per context, in the same order as inputs.
-            Check each result's ``succeeded`` property.
-
-        Usage Examples
-        --------------
-        # Compare quarterly revenue across quarters
-        results = dm.plot_batch(
-            contexts=[
-                "Data/sales/Q1",
-                "Data/sales/Q2",
-                "Data/sales/Q3",
-                "Data/sales/Q4"
-            ],
-            plot_type="bar",
-            x="category",
-            y="revenue",
-            metric="sum",
-            title="Revenue by Category"
-        )
-
-        for ctx, result in zip(contexts, results):
-            if result.succeeded:
-                print(f"{ctx}: {result.url}")
-        """
-
-    # ──────────────────────────────────────────────────────────────────────────
-    # Table Views
-    # ──────────────────────────────────────────────────────────────────────────
-
-    @abstractmethod
-    def table_view(
-        self,
-        context: str,
-        *,
-        columns_visible: Optional[List[str]] = None,
-        columns_hidden: Optional[List[str]] = None,
-        columns_order: Optional[List[str]] = None,
-        sort_by: Optional[str] = None,
-        sort_order: Optional[str] = None,
-        row_limit: Optional[int] = None,
-        filter: Optional[str] = None,
-        title: Optional[str] = None,
-    ) -> "TableViewResult":
-        """
-        Create a shareable table view from table data.
-
-        Generates a signed URL to an interactive, read-only table view that
-        can be embedded in chat or shared externally. Use this to give users
-        a browsable snapshot of tabular data with optional column visibility,
-        ordering, sorting, and filtering.
-
-        This is distinct from ``plot`` which creates chart visualizations.
-        Use ``table_view`` when the user needs to browse raw rows and columns
-        interactively, and ``plot`` when they need a visual chart.
-
-        Parameters
-        ----------
-        context : str
-            Target context path containing the data to display.
-
-        columns_visible : list[str] | None, default ``None``
-            Columns to include in the view. If None, all columns are shown.
-            Mutually exclusive with ``columns_hidden``.
-
-        columns_hidden : list[str] | None, default ``None``
-            Columns to exclude from the view. Alternative to
-            ``columns_visible``. Mutually exclusive with ``columns_visible``.
-
-        columns_order : list[str] | None, default ``None``
-            Custom column ordering. Column names listed here appear in this
-            order; unlisted columns appear after in their default order.
-
-        sort_by : str | None, default ``None``
-            Column to sort by.
-
-        sort_order : str | None, default ``None``
-            Sort direction: ``"asc"`` or ``"desc"``. Only used when
-            ``sort_by`` is set.
-
-        row_limit : int | None, default ``None``
-            Maximum number of rows to display. Use this to keep the view
-            compact for large datasets.
-
-        filter : str | None, default ``None``
-            Filter expression to subset data before rendering the view.
-
-        title : str | None, default ``None``
-            Title displayed above the table.
-
-        Returns
-        -------
-        TableViewResult
-            Result with URL, token, or error information.
-            Check ``result.succeeded`` to verify creation worked.
-            Access ``result.url`` for the table view URL.
-
-        Usage Examples
-        --------------
-        # Simple table view
-        result = dm.table_view("Data/sales", title="Sales Data")
-        if result.succeeded:
-            print(f"Table URL: {result.url}")
-
-        # Table with specific columns and sorting
-        result = dm.table_view(
-            "Data/sales",
-            columns_visible=["date", "region", "revenue"],
-            sort_by="revenue",
-            sort_order="desc",
-            row_limit=100,
-            title="Top Sales by Revenue"
-        )
-
-        # Hide internal columns
-        result = dm.table_view(
-            "Data/employees",
-            columns_hidden=["internal_id", "ssn"],
-            title="Employee Directory"
-        )
-
-        # Filtered view
-        result = dm.table_view(
-            "Data/orders",
-            filter="status == 'pending'",
-            sort_by="created_at",
-            sort_order="desc",
-            title="Pending Orders"
-        )
-
-        Anti-patterns
-        -------------
-        - WRONG: Using both columns_visible and columns_hidden
-
-          CORRECT: Pick one or the other -- visible to whitelist, hidden to
-          blacklist
-
-        - WRONG: Confusing table_view with plot
-
-          table_view renders raw rows and columns interactively.
-          plot creates a chart (bar, scatter, line, histogram).
-
-        - WRONG: Using table_view to extract data programmatically
-
-          CORRECT: Use filter() or search() to get row data. table_view
-          produces a URL for human consumption.
-
-        Notes
-        -----
-        - The returned URL is shareable and read-only.
-        - Large datasets are truncated by ``row_limit``; consider filtering
-          to show the most relevant subset.
-        - Error details available in ``result.error`` and
-          ``result.traceback_str``.
-
-        See Also
-        --------
-        plot : Create chart visualizations (scatter, bar, line, histogram)
-        filter : Retrieve rows matching exact criteria
-        reduce : Compute aggregate metrics
-        """
-
-    @abstractmethod
-    def table_view_batch(
-        self,
-        contexts: List[str],
-        *,
-        columns_visible: Optional[List[str]] = None,
-        columns_hidden: Optional[List[str]] = None,
-        columns_order: Optional[List[str]] = None,
-        sort_by: Optional[str] = None,
-        sort_order: Optional[str] = None,
-        row_limit: Optional[int] = None,
-        filter: Optional[str] = None,
-        title: Optional[str] = None,
-    ) -> List["TableViewResult"]:
-        """
-        Create table views for multiple tables with the same configuration.
-
-        Convenience method for generating comparable table views across
-        multiple data sources with identical display settings.
-
-        Parameters
-        ----------
-        contexts : list[str]
-            List of context paths to generate table views for.
-
-        columns_visible, columns_hidden, columns_order, sort_by, sort_order,
-        row_limit, filter, title
-            Same parameters as ``table_view()``. Applied to all contexts.
-
-        Returns
-        -------
-        list[TableViewResult]
-            One result per context, in the same order as inputs.
-            Check each result's ``succeeded`` property.
-
-        Usage Examples
-        --------------
-        # Compare quarterly data side-by-side
-        results = dm.table_view_batch(
-            contexts=[
-                "Data/sales/Q1",
-                "Data/sales/Q2",
-                "Data/sales/Q3",
-                "Data/sales/Q4"
-            ],
-            columns_visible=["region", "revenue", "units"],
-            sort_by="revenue",
-            sort_order="desc",
-            title="Quarterly Sales"
-        )
-
-        for ctx, result in zip(contexts, results):
-            if result.succeeded:
-                print(f"{ctx}: {result.url}")
+        - Requires ``ensure_vector_column`` to be called first.
+        - Skips rows that already have embeddings.
+        - Uses the default embedding model configured for the project.
         """

@@ -7,6 +7,8 @@ from tests.helpers import _handle_project
 from unity.task_scheduler.task_scheduler import TaskScheduler
 from unity.common.read_only_ask_guard import ReadOnlyAskGuardHandle
 
+pytestmark = pytest.mark.llm_call
+
 
 @pytest.mark.asyncio
 @_handle_project

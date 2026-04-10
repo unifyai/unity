@@ -195,6 +195,7 @@ def meet_prompt(base_prompt_kwargs: dict) -> str:
 # =============================================================================
 
 
+@pytest.mark.llm_call
 @pytest.mark.asyncio
 class TestAssistantName:
     """Tests that the fast brain knows and uses its own name."""
@@ -228,6 +229,7 @@ class TestAssistantName:
 # =============================================================================
 
 
+@pytest.mark.llm_call
 @pytest.mark.asyncio
 class TestContactBio:
     """Tests that the fast brain can use contact bio information."""
@@ -272,6 +274,7 @@ class TestContactBio:
 # =============================================================================
 
 
+@pytest.mark.llm_call
 @pytest.mark.asyncio
 class TestMeetParticipants:
     """Tests that the fast brain knows about all participants in a meet."""
@@ -331,6 +334,7 @@ class TestMeetParticipants:
 # =============================================================================
 
 
+@pytest.mark.llm_call
 @pytest.mark.eval
 @pytest.mark.asyncio
 class TestBrevity:
@@ -413,6 +417,7 @@ class TestBrevity:
 # =============================================================================
 
 
+@pytest.mark.llm_call
 @pytest.mark.asyncio
 class TestPlatformKnowledge:
     """Tests that the fast brain can answer questions about external app
@@ -488,6 +493,111 @@ class TestPlatformKnowledge:
 
 
 # =============================================================================
+# Test Class: Outbound Message Acknowledgment
+# =============================================================================
+
+
+class TestOutboundMessagePromptSection:
+    """Tests that the fast brain prompt instructs the voice agent to
+    acknowledge outbound messages (sent to the chat/SMS) verbally."""
+
+    def test_prompt_contains_outbound_message_guidance(
+        self,
+        base_prompt_kwargs: dict,
+    ):
+        """The voice agent prompt includes guidance for acknowledging
+        `[You messaged ...]` / `[You texted ...]` context."""
+        prompt = build_voice_agent_prompt(
+            **base_prompt_kwargs,
+            is_boss_user=True,
+        ).flatten()
+
+        assert "Messages I sent" in prompt
+        assert "[You messaged ...]" in prompt or "You messaged" in prompt
+        assert "[You texted ...]" in prompt or "You texted" in prompt
+
+    def test_outbound_message_guidance_present_for_contact_calls(
+        self,
+        base_prompt_kwargs: dict,
+    ):
+        """Outbound message acknowledgment is present on non-boss calls too."""
+        prompt = build_voice_agent_prompt(
+            **base_prompt_kwargs,
+            is_boss_user=False,
+            contact_first_name="Marcus",
+            contact_surname="Rivera",
+        ).flatten()
+
+        assert "Messages I sent" in prompt
+
+
+@pytest.mark.llm_call
+@pytest.mark.eval
+@pytest.mark.asyncio
+class TestOutboundMessageAcknowledgment:
+    """Eval tests verifying the fast brain verbally acknowledges messages
+    it sent to the chat, rather than leaving them as silent context.
+
+    Regression: in production the assistant sent URLs and OAuth scopes to
+    the chat during a voice call without ever mentioning it on the call.
+    The user had to discover the chat messages on their own.
+    """
+
+    async def test_acknowledges_chat_message_sent(self, boss_call_prompt: str):
+        """When the fast brain sees `[You messaged ...]` context followed by
+        a brief user utterance, it should acknowledge the sent message
+        verbally — e.g., 'I put that in the chat for you.'"""
+        client = new_llm_client(
+            model=FAST_BRAIN_MODEL,
+            reasoning_effort="low",
+        )
+        messages = [
+            {"role": "system", "content": boss_call_prompt},
+            {
+                "role": "user",
+                "content": (
+                    "Those scopes are really long, can you send them "
+                    "to me in the chat so I can just copy-paste?"
+                ),
+            },
+            {
+                "role": "system",
+                "content": (
+                    "[You messaged Sarah Chen] "
+                    "https://www.googleapis.com/auth/gmail.readonly,"
+                    "https://www.googleapis.com/auth/drive,"
+                    "https://www.googleapis.com/auth/calendar"
+                ),
+            },
+            {
+                "role": "user",
+                "content": "Okay.",
+            },
+        ]
+        response = await client.generate(messages=messages)
+        response_lower = response.strip().lower()
+
+        has_acknowledgment = any(
+            phrase in response_lower
+            for phrase in [
+                "chat",
+                "sent",
+                "messaged",
+                "put",
+                "shared",
+                "message",
+                "copy",
+                "paste",
+            ]
+        )
+        assert has_acknowledgment, (
+            f"Fast brain should acknowledge the message it sent to the chat.\n"
+            f"Expected a reference to the chat/message/sent content.\n"
+            f"Full response: {response.strip()}"
+        )
+
+
+# =============================================================================
 # Test Class: Screen Sharing Prompt Section
 # =============================================================================
 
@@ -552,7 +662,7 @@ class TestPlatformKnowledgePromptSection:
         ).flatten()
 
         assert "Platform knowledge" in prompt
-        assert "Resources → Secrets" in prompt
+        assert "Secrets" in prompt
         assert "API" in prompt
         assert "video call" in prompt.lower()
         assert "three panels" in prompt.lower()

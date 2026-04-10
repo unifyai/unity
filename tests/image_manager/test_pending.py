@@ -416,6 +416,7 @@ async def test_multiple_pending_updates_coalesce_and_persist_only_last(monkeypat
 
 @pytest.mark.requires_real_unify
 @pytest.mark.asyncio
+@pytest.mark.llm_call
 @_handle_project
 async def test_ask_on_pending_enqueue_returns_text_only(static_now):
     im = ImageManager()

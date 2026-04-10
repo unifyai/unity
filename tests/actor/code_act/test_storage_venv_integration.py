@@ -24,7 +24,7 @@ import pytest
 from unity.actor.code_act_actor import CodeActActor, _start_storage_check_loop
 from unity.function_manager.function_manager import FunctionManager
 
-pytestmark = pytest.mark.eval
+pytestmark = [pytest.mark.eval, pytest.mark.llm_call]
 
 TRAJECTORY_WITH_THIRD_PARTY_PACKAGES = [
     {

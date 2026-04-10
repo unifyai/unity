@@ -14,7 +14,7 @@ from unity.actor.code_act_actor import CodeActActor
 from unity.function_manager.function_manager import FunctionManager
 from unity.guidance_manager.guidance_manager import GuidanceManager
 
-pytestmark = pytest.mark.eval
+pytestmark = [pytest.mark.eval, pytest.mark.llm_call]
 
 
 @pytest.mark.asyncio

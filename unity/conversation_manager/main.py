@@ -13,6 +13,7 @@ The mode is determined by how this module is invoked:
 from __future__ import annotations
 
 from datetime import datetime
+import json
 import os
 import signal
 import subprocess
@@ -30,6 +31,9 @@ from unity.common.hierarchical_logger import ICONS
 from unity.settings import SETTINGS
 from unity.session_details import SESSION_DETAILS
 from unity.conversation_manager import assistant_jobs
+from unity.conversation_manager.assistant_session_k8s import (
+    collect_shutdown_diagnostics,
+)
 from unity.conversation_manager.comms_manager import CommsManager
 from unity.conversation_manager.metrics import container_spinup
 from unity.conversation_manager.event_broker import get_event_broker
@@ -131,6 +135,7 @@ def create_conversation_manager(
         SESSION_DETAILS.voice.provider,
         SESSION_DETAILS.voice.id or None,
         SESSION_DETAILS.voice.mode,
+        SESSION_DETAILS.assistant.whatsapp_number,
         project_name=project_name,
         stop=stop_event,
     )
@@ -243,6 +248,16 @@ async def run_conversation_manager(
     if should_apply_mocks:
         _apply_test_mocks(cm)
 
+    # Pre-warm the LiveKit worker subprocess so that model loading, Python
+    # imports, and process pool initialization complete while the container is
+    # idle — before any assistant assignment arrives.  The worker registers
+    # with LiveKit using the pod-level job_name (available at boot), so
+    # dispatches can target it immediately once an assignment comes in.
+    try:
+        cm.call_manager.start_persistent_worker()
+    except Exception as e:
+        LOGGER.error("LiveKit worker pre-warm failed (non-fatal): %s", e)
+
     # Start background tasks
     asyncio.create_task(cm.wait_for_events()).add_done_callback(log_task_exc)
     asyncio.create_task(cm.check_inactivity()).add_done_callback(log_task_exc)
@@ -330,6 +345,28 @@ async def main(project_name: str = "Assistants"):
                 f"{ICONS['lifecycle']} OOM memory dump failed: {exc}",
             )
 
+    if _signal_shutdown:
+        _shutdown_reason = "oom_prevention" if _oom_prevention else "external_sigterm"
+        _job_name = SETTINGS.conversation.JOB_NAME
+        LOGGER.warning(
+            f"{ICONS['lifecycle']} Shutdown diagnostics start "
+            f"(reason={_shutdown_reason}, job_name={_job_name or '(none)'})",
+        )
+        if _job_name:
+            try:
+                diagnostics = await asyncio.to_thread(
+                    collect_shutdown_diagnostics,
+                    _job_name,
+                )
+                LOGGER.warning(
+                    f"{ICONS['lifecycle']} Shutdown diagnostics: "
+                    f"{json.dumps(diagnostics, sort_keys=True, default=str)}",
+                )
+            except Exception as exc:
+                LOGGER.warning(
+                    f"{ICONS['lifecycle']} Shutdown diagnostics failed: {exc}",
+                )
+
     LOGGER.debug(f"{ICONS['lifecycle']} Cleaning up conversation manager...")
     await _conversation_manager.cleanup()
     LOGGER.debug(f"{ICONS['lifecycle']} Cleanup finished")
@@ -355,6 +392,7 @@ async def main(project_name: str = "Assistants"):
             os.path.dirname(os.path.abspath(__file__)),
             "..",
             "..",
+            "deploy",
             "scripts",
             "upload_pod_logs.py",
         ),

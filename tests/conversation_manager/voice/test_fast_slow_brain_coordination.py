@@ -707,19 +707,15 @@ class TestFastBrainNotificationSpeakMode:
 
 
 # =============================================================================
-# Test: ask answers are forwarded to fast brain via event rendering
+# Test: symbolic forwarding + guide_voice_agent availability
 # =============================================================================
 
 
 @pytest.mark.asyncio
-class TestAskAnswerEventForwarding:
-    """Verify that ActorHandleResponse events are rendered for the fast brain
-    and that guide_voice_agent is stripped during boss calls.
-
-    The fast brain receives ask answers directly via the notification pipeline
-    (render_event_for_fast_brain renders ActorHandleResponse). The slow brain
-    does not need guide_voice_agent on boss calls — all relevant state flows
-    through event-level forwarding.
+class TestSymbolicForwardingAndSpeechGating:
+    """Verify the hybrid architecture: symbolic event forwarding delivers events
+    to the fast brain as silent context (guaranteed, instant), while the slow
+    brain makes the speech decision via guide_voice_agent (always available).
     """
 
     def test_render_event_for_fast_brain_renders_ask_answer(self):
@@ -751,13 +747,12 @@ class TestAskAnswerEventForwarding:
         assert "Colliers standard workflow" in rendered
 
     @_handle_project
-    async def test_guide_voice_agent_stripped_during_boss_meet(
+    async def test_guide_voice_agent_available_during_boss_meet(
         self,
         initialized_cm,
     ):
-        """guide_voice_agent should be stripped for boss-on-call, preventing
-        stale slow brain guidance. The fast brain receives all relevant state
-        via the notification pipeline instead.
+        """guide_voice_agent should be available during voice calls so the
+        slow brain can relay action results to the fast brain.
         """
         cm = initialized_cm
 
@@ -772,12 +767,6 @@ class TestAskAnswerEventForwarding:
                     "action_name": "act_completed",
                     "query": "All 4 PDFs processed, Excel output generated.",
                     "status": "completed",
-                },
-                {
-                    "action_name": "ask_0",
-                    "query": "How did you break down the task?",
-                    "status": "completed",
-                    "response": "I followed the Colliers standard workflow.",
                 },
             ],
         }
@@ -795,11 +784,57 @@ class TestAskAnswerEventForwarding:
             max_steps=5,
         )
 
-        assert "guide_voice_agent" not in cm.all_tool_calls, (
-            f"guide_voice_agent should be stripped for boss-on-call. "
-            f"The fast brain receives ask answers via event forwarding.\n"
+        assert "guide_voice_agent" in cm.all_tool_calls, (
+            f"guide_voice_agent should be available during voice calls. "
+            f"The slow brain is the sole relay path to the fast brain.\n"
             f"Tool calls: {cm.all_tool_calls}"
         )
+
+
+# =============================================================================
+# Test: slow brain prompt instructs verbal acknowledgment of sent texts
+# =============================================================================
+
+
+class TestSlowBrainTextAcknowledgmentPrompt:
+    """Verify the slow brain prompt tells the model to call guide_voice_agent
+    when sending a text message during a voice call, so the caller hears
+    about it rather than discovering it silently in their chat.
+
+    Regression: in production the slow brain sent ~15 chat messages during a
+    voice call (OAuth scopes, URLs, instructions) without ever calling
+    guide_voice_agent. The user had to say "you should have told me it's
+    in the chat" before the assistant acknowledged the messages.
+    """
+
+    def test_voice_output_block_instructs_verbal_acknowledgment(self):
+        """The voice output block should instruct the slow brain to call
+        guide_voice_agent when it sends a text message during a call."""
+        from unity.conversation_manager.prompt_builders import (
+            build_system_prompt,
+        )
+
+        for is_internal in (True, False):
+            prompt = build_system_prompt(
+                bio="Test assistant.",
+                contact_id=1,
+                first_name="Dan",
+                surname="Lenton",
+                is_voice_call=True,
+                is_internal_call=is_internal,
+            ).flatten()
+
+            assert "guide_voice_agent" in prompt, (
+                f"Slow brain voice prompt (internal={is_internal}) must "
+                f"mention guide_voice_agent for text acknowledgment"
+            )
+            assert "send a text message during a call" in prompt.lower() or (
+                "send a text message" in prompt.lower()
+                and "guide_voice_agent" in prompt
+            ), (
+                f"Slow brain voice prompt (internal={is_internal}) must "
+                f"instruct verbal acknowledgment when sending text during calls"
+            )
 
 
 # =============================================================================
@@ -810,12 +845,11 @@ class TestAskAnswerEventForwarding:
 @pytest.mark.eval
 @pytest.mark.asyncio
 class TestSlowBrainSuppressesTextDuringVoiceCall:
-    """During a Unify Meet with the boss, the fast brain receives all system
-    events directly and handles verbal communication autonomously.  The slow
-    brain should NOT silently send text messages (Unify messages, SMS) to relay
-    results that the fast brain is already handling — this manifests as the
-    caller receiving an unexpected text notification during a live voice
-    conversation with no verbal acknowledgement.
+    """During a voice call, the slow brain is the sole route for event-driven
+    speech via guide_voice_agent. It should NOT silently send text messages
+    (Unify messages, SMS) to relay results — this manifests as the caller
+    receiving an unexpected text notification during a live voice conversation
+    with no verbal acknowledgement.
     """
 
     @_handle_project
@@ -823,22 +857,19 @@ class TestSlowBrainSuppressesTextDuringVoiceCall:
         self,
         initialized_cm,
     ):
-        """When an action completes during a boss Unify Meet, the slow brain
-        should call wait() — not send_unify_message — because the fast brain
-        already receives the ActorResult via the notification pipeline and
-        will relay results verbally.
+        """When an action completes during a Unify Meet, the slow brain should
+        use guide_voice_agent or wait() — not send_unify_message. The slow
+        brain is the sole route for event-driven speech; text messages during
+        a live call are disorienting.
 
         Regression: in production the slow brain consistently sent detailed
-        Unify messages with action results during live voice calls, even
-        though the fast brain was simultaneously verbalising the same
-        information.  The caller would get a silent text notification with
-        no verbal indication that anything was sent.
+        Unify messages with action results during live voice calls. The caller
+        would get a silent text notification with no verbal indication that
+        anything was sent.
 
         The production scenario had an active Unify message thread alongside
         the meet (the user had sent text messages before joining the call),
         which biased the LLM toward replying in that same text channel.
-        The brain was woken by the ActorResult itself — not by a user
-        utterance — and decided to "deliver" the results via text.
         """
         from unity.conversation_manager.events import (
             ActorResult,
@@ -904,11 +935,216 @@ class TestSlowBrainSuppressesTextDuringVoiceCall:
         text_tools = {"send_unify_message", "send_sms", "send_email"}
         used_text_tools = text_tools & set(cm.all_tool_calls)
         assert not used_text_tools, (
-            f"During a Unify Meet with the boss, the slow brain must not "
-            f"send text messages to relay action results — the fast brain "
-            f"handles verbal communication autonomously.  An active text "
-            f"thread from before the call does not justify switching to "
-            f"text mid-conversation.\n"
+            f"During a Unify Meet, the slow brain must not send text "
+            f"messages to relay action results — it should use "
+            f"guide_voice_agent for verbal relay instead.\n"
             f"Text tools called: {used_text_tools}\n"
             f"All tool calls: {cm.all_tool_calls}"
         )
+
+
+# =============================================================================
+# Test: slow brain speaks action results + participant comms via guide_voice_agent
+# =============================================================================
+
+
+@pytest.mark.eval
+@pytest.mark.asyncio
+class TestSlowBrainSpeaksViaGuideVoiceAgent:
+    """The slow brain is the sole route for event-driven speech. When woken by
+    an action result or participant comms during a voice call, it must call
+    guide_voice_agent to relay the information verbally — not stay silent.
+    """
+
+    @_handle_project
+    async def test_slow_brain_speaks_on_action_completion(
+        self,
+        initialized_cm,
+    ):
+        """When an action completes with concrete results during a Meet,
+        the slow brain must call guide_voice_agent to relay the result.
+        Without this, the caller hears nothing — the fast brain does not
+        proactively speak about system events.
+        """
+        cm = initialized_cm
+
+        await cm.step(UnifyMeetReceived(contact=BOSS))
+        await cm.step(UnifyMeetStarted(contact=BOSS))
+        assert cm.cm.mode == Mode.MEET
+
+        cm.cm.completed_actions[0] = {
+            "query": "Count unread emails in Gmail inbox",
+            "handle_actions": [
+                {
+                    "action_name": "act_completed",
+                    "query": "You have 201 unread emails in your inbox.",
+                    "status": "completed",
+                },
+            ],
+        }
+
+        cm.all_tool_calls.clear()
+
+        await cm.step_until_wait(
+            InboundUnifyMeetUtterance(
+                contact=BOSS,
+                content="How did the email check go? How many unread do I have?",
+            ),
+            max_steps=5,
+        )
+
+        assert "guide_voice_agent" in cm.all_tool_calls, (
+            f"The slow brain must call guide_voice_agent to relay action "
+            f"results during a voice call — it is the sole route for "
+            f"event-driven speech.\n"
+            f"Tool calls: {cm.all_tool_calls}"
+        )
+
+    @_handle_project
+    async def test_slow_brain_speaks_on_cross_channel_sms(
+        self,
+        initialized_cm,
+    ):
+        """When an SMS arrives during a Meet from a third party, the slow
+        brain must call guide_voice_agent to relay it verbally. The fast
+        brain sees the SMS as silent context but will not proactively
+        mention it.
+
+        Scenario: boss is on a Meet, a colleague texts about something
+        the boss was waiting for. The slow brain should relay it.
+        """
+        from unity.conversation_manager.events import SMSReceived
+
+        cm = initialized_cm
+
+        await cm.step(UnifyMeetReceived(contact=BOSS))
+        await cm.step(UnifyMeetStarted(contact=BOSS))
+        assert cm.cm.mode == Mode.MEET
+
+        # Boss asks about something they're expecting
+        await cm.step(
+            InboundUnifyMeetUtterance(
+                contact=BOSS,
+                content="Has Alice sent through those contract updates yet?",
+            ),
+        )
+
+        cm.all_tool_calls.clear()
+
+        # The SMS arrives from Alice (a different contact)
+        alice = TEST_CONTACTS[2]
+        await cm.step_until_wait(
+            SMSReceived(
+                contact=alice,
+                content=(
+                    "Hi, just sent the updated contract to your email. "
+                    "Key changes: payment terms moved to net-45, liability "
+                    "cap at $500K as discussed."
+                ),
+            ),
+            max_steps=5,
+        )
+
+        assert "guide_voice_agent" in cm.all_tool_calls, (
+            f"The slow brain must call guide_voice_agent to relay "
+            f"cross-channel SMS during a voice call — the fast brain "
+            f"will not proactively mention it.\n"
+            f"Tool calls: {cm.all_tool_calls}"
+        )
+
+
+# =============================================================================
+# Test: speech deduplication gate suppresses redundant slow brain speech
+# =============================================================================
+
+
+@pytest.mark.eval
+@pytest.mark.asyncio
+class TestSpeechDedupGateInSpeechFlow:
+    """Verify the slow brain passes should_speak through unmodified.
+
+    Dedup is now a fast-brain-only concern (runs at speak time inside
+    ``maybe_speak_queued`` → ``_dedup_and_speak``).  The slow brain publishes
+    the LLM's original should_speak value without server-side suppression.
+    """
+
+    @_handle_project
+    async def test_slow_brain_preserves_should_speak(
+        self,
+        initialized_cm,
+    ):
+        """Even when an assistant utterance already covers the same result,
+        the slow brain publishes should_speak as the LLM produced it.
+
+        Flow:
+        1. Action completes → fast brain gets silent notification, speaks it.
+        2. User asks about the result → fast brain answers from context.
+        3. Slow brain wakes, decides to speak the same result.
+        4. Published event preserves should_speak=True (no server-side dedup).
+        """
+        cm = initialized_cm
+
+        await cm.step(UnifyMeetReceived(contact=BOSS))
+        await cm.step(UnifyMeetStarted(contact=BOSS))
+        assert cm.cm.mode == Mode.MEET
+
+        cm.cm.completed_actions[0] = {
+            "query": "Search the web for nearby Italian restaurants",
+            "handle_actions": [
+                {
+                    "action_name": "act_completed",
+                    "query": (
+                        "Found 3 Italian restaurants nearby: "
+                        "Chez Laurent (4.8★), Pasta Palace (4.5★), "
+                        "Trattoria Roma (4.3★)."
+                    ),
+                    "status": "completed",
+                },
+            ],
+        }
+
+        cm.cm.contact_index.push_message(
+            contact_id=BOSS["contact_id"],
+            sender_name="You",
+            thread_name=Medium.UNIFY_MEET,
+            message_content=(
+                "Found three Italian restaurants near you. The top one's "
+                "Chez Laurent with a 4.8 star rating."
+            ),
+            role="assistant",
+        )
+
+        published: list[dict] = []
+        original_publish = cm.cm.event_broker.publish
+
+        async def capture_publish(channel: str, message: str) -> int:
+            if channel == "app:call:notification":
+                published.append(json.loads(message))
+            return await original_publish(channel, message)
+
+        cm.cm.event_broker.publish = capture_publish
+
+        try:
+            cm.all_tool_calls.clear()
+
+            await cm.step_until_wait(
+                InboundUnifyMeetUtterance(
+                    contact=BOSS,
+                    content="What did you find for Italian restaurants?",
+                ),
+                max_steps=5,
+            )
+
+            for event_data in published:
+                payload = event_data.get("payload", event_data)
+                if payload.get("source") == "slow_brain" and payload.get(
+                    "response_text",
+                ):
+                    assert payload.get("should_speak") is True, (
+                        "The slow brain should pass should_speak=True through "
+                        "unmodified; dedup is now a fast-brain concern.\n"
+                        f"Payload: {payload}\n"
+                        f"Tool calls: {cm.all_tool_calls}"
+                    )
+        finally:
+            cm.cm.event_broker.publish = original_publish

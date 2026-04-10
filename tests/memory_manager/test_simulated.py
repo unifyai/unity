@@ -51,6 +51,7 @@ def _build_transcript(useful_line: str) -> str:
 # 1. update_contacts -- delegation map                                         #
 # --------------------------------------------------------------------------- #
 @pytest.mark.asyncio
+@pytest.mark.llm_call
 @_handle_project
 async def test_update_contacts_invokes_expected_tools(monkeypatch):
     counts = {"cm_create": 0}
@@ -103,6 +104,7 @@ async def test_update_contacts_invokes_expected_tools(monkeypatch):
 # --------------------------------------------------------------------------- #
 @pytest.mark.eval
 @pytest.mark.asyncio
+@pytest.mark.llm_call
 @_handle_project
 async def test_update_contacts_preserves_nameless_service_contact(monkeypatch):
     """When a transcript mentions a named representative on a service/org
@@ -200,6 +202,7 @@ async def test_update_contacts_preserves_nameless_service_contact(monkeypatch):
 # 2. update_knowledge -- should call KnowledgeManager.update at least once     #
 # --------------------------------------------------------------------------- #
 @pytest.mark.asyncio
+@pytest.mark.llm_call
 @_handle_project
 async def test_update_knowledge_invokes_kb_update(monkeypatch):
     counts = {"kb_update": 0}
@@ -246,6 +249,7 @@ async def test_update_knowledge_invokes_kb_update(monkeypatch):
 
 
 @pytest.mark.asyncio
+@pytest.mark.llm_call
 @_handle_project
 async def test_update_tasks_invokes_scheduler_update(monkeypatch):
     counts = {"ts_update": 0}
@@ -288,6 +292,7 @@ async def test_update_tasks_invokes_scheduler_update(monkeypatch):
 # 4. reset -- should complete and manager remains usable                       #
 # --------------------------------------------------------------------------- #
 @pytest.mark.asyncio
+@pytest.mark.llm_call
 @_handle_project
 async def test_reset_remains_usable():
     mm = SimulatedMemoryManager()

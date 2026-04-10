@@ -883,6 +883,7 @@ def _create_async_wrapper(manager: Any, manager_alias: str) -> _AsyncPrimitiveWr
 # Empty string means direct construction (e.g. singleton via metaclass).
 _ALIAS_TO_GETTER: dict[str, str] = {
     "contacts": "get_contact_manager",
+    "dashboards": "get_dashboard_manager",
     "data": "get_data_manager",
     "transcripts": "get_transcript_manager",
     "knowledge": "get_knowledge_manager",
@@ -895,7 +896,7 @@ _ALIAS_TO_GETTER: dict[str, str] = {
 }
 
 # Managers that need async wrapping (sync implementations)
-_SYNC_MANAGERS: frozenset[str] = frozenset({"data", "files"})
+_SYNC_MANAGERS: frozenset[str] = frozenset({"dashboards", "data", "files"})
 
 
 # =============================================================================
@@ -1007,6 +1008,11 @@ class Primitives:
     def contacts(self) -> "ContactManager":
         """Contact management primitives (ask, update)."""
         return self._get_manager("contacts")
+
+    @property
+    def dashboards(self) -> "_AsyncPrimitiveWrapper":
+        """Dashboard primitives (create_tile, create_dashboard, etc.)."""
+        return self._get_manager("dashboards")
 
     @property
     def data(self) -> "_AsyncPrimitiveWrapper":

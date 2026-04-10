@@ -83,6 +83,7 @@ REQUIRED_CONTACT_KEYS = {
     "surname",
     "phone_number",
     "email_address",  # NOT "email" - must be "email_address" for consistency
+    "whatsapp_number",
 }
 
 
@@ -98,6 +99,7 @@ def test_get_local_contact_has_correct_keys():
     mock_user.surname = ""
     mock_user.number = "+15555551234"
     mock_user.email = "test@example.com"
+    mock_user.whatsapp_number = ""
 
     mock_session = MagicMock()
     mock_session.user = mock_user
@@ -157,6 +159,7 @@ def mock_session_details():
         mock.user.surname = ""
         mock.user.number = "+15555550000"
         mock.user.email = "user@test.com"
+        mock.user.whatsapp_number = ""
         mock.unify_key = "test_key"
         mock.get_subprocess_env.return_value = {}
         yield mock
@@ -272,6 +275,7 @@ class TestHelperFunctions:
         # first_name carries the combined name from the mock fixture
         assert result["phone_number"] == "+15555550000"
         assert result["email_address"] == "user@test.com"
+        assert result["whatsapp_number"] == ""
 
 
 # =============================================================================

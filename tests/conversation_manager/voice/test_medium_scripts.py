@@ -38,6 +38,7 @@ conversation while the Main CM Brain (slow brain) handles orchestration.
    - build_voice_agent_prompt output structure
 """
 
+import asyncio
 import json
 from types import SimpleNamespace
 
@@ -889,6 +890,10 @@ class TestFastBrainGuidanceFlow:
                 self.current_speech = None
                 fake_session_holder["session"] = self
 
+            @property
+            def history(self):
+                return self._chat_ctx
+
             def on(self, event_name):
                 def _decorator(fn):
                     self._events[event_name] = fn
@@ -907,10 +912,14 @@ class TestFastBrainGuidanceFlow:
                 self.say_calls.append(text)
                 return _ImmediateAwaitable()
 
+            def interrupt(self):
+                pass
+
         class _FakeAssistant:
             def __init__(self, *args, **kwargs):
                 self._chat_ctx = llm.ChatContext()
                 self.call_received = True
+                self.user_turn_generating = False
 
             def set_call_received(self):
                 self.call_received = True
@@ -932,6 +941,7 @@ class TestFastBrainGuidanceFlow:
                 boss_json=json.dumps(boss),
             ),
             assistant=SimpleNamespace(about="Assistant bio", name="Ava"),
+            unify_key="",
         )
 
         monkeypatch.setattr(call_script, "event_broker", fake_broker)
@@ -1097,6 +1107,10 @@ class TestFastBrainGuidanceFlow:
                 self.current_speech = None
                 fake_session_holder["session"] = self
 
+            @property
+            def history(self):
+                return self._chat_ctx
+
             def on(self, event_name):
                 def _decorator(fn):
                     self._events[event_name] = fn
@@ -1115,10 +1129,14 @@ class TestFastBrainGuidanceFlow:
                 self.say_calls.append(text)
                 return _ImmediateAwaitable()
 
+            def interrupt(self):
+                pass
+
         class _FakeAssistant:
             def __init__(self, *args, **kwargs):
                 self._chat_ctx = llm.ChatContext()
                 self.call_received = True
+                self.user_turn_generating = False
 
             def set_call_received(self):
                 self.call_received = True
@@ -1140,6 +1158,7 @@ class TestFastBrainGuidanceFlow:
                 boss_json=json.dumps(boss),
             ),
             assistant=SimpleNamespace(about="Assistant bio", name="David"),
+            unify_key="",
         )
 
         monkeypatch.setattr(call_script, "event_broker", fake_broker)
@@ -1232,17 +1251,14 @@ class TestFastBrainGuidanceFlow:
             "acknowledge the sent message."
         )
 
-    async def test_should_speak_guidance_not_injected_into_chat_ctx(
+    async def test_should_speak_guidance_injected_into_chat_ctx_immediately(
         self,
         monkeypatch,
     ):
-        """Guidance with should_speak=True must NOT inject a [notification] into
-        chat_ctx. The queued session.say(add_to_chat_ctx=True) handles context
-        synchronization when the speech plays.
-
-        If the notification is injected eagerly, the fast brain can see it and
-        paraphrase it in its next generate_reply — causing the user to hear the
-        same answer twice (once from the fast brain, once from session.say).
+        """Guidance with should_speak=True is injected into chat_ctx immediately
+        so the fast brain sees the latest slow brain state and can regenerate
+        an informed response.  The queued fallback speech is a safety net that
+        the dedup gate suppresses when the fast brain already covers the info.
         """
         from livekit.agents import llm
         from unity.conversation_manager.medium_scripts import call as call_script
@@ -1320,6 +1336,10 @@ class TestFastBrainGuidanceFlow:
                 self.current_speech = None
                 fake_session_holder["session"] = self
 
+            @property
+            def history(self):
+                return self._chat_ctx
+
             def on(self, event_name):
                 def _decorator(fn):
                     self._events[event_name] = fn
@@ -1338,10 +1358,14 @@ class TestFastBrainGuidanceFlow:
                 self.say_calls.append(text)
                 return _ImmediateAwaitable()
 
+            def interrupt(self):
+                pass
+
         class _FakeAssistant:
             def __init__(self, *args, **kwargs):
                 self._chat_ctx = llm.ChatContext()
                 self.call_received = True
+                self.user_turn_generating = False
 
             def set_call_received(self):
                 self.call_received = True
@@ -1363,6 +1387,7 @@ class TestFastBrainGuidanceFlow:
                 boss_json=json.dumps(boss),
             ),
             assistant=SimpleNamespace(about="Assistant bio", name="Ava"),
+            unify_key="",
         )
 
         monkeypatch.setattr(call_script, "event_broker", fake_broker)
@@ -1436,20 +1461,16 @@ class TestFastBrainGuidanceFlow:
             },
         )
 
-        # The notification must NOT be in chat_ctx yet — it should be deferred
-        # until maybe_speak_queued() fires (when the agent is idle).
-        # If injected eagerly, the fast brain sees it during generate_reply
-        # and paraphrases it before session.say() plays — double delivery.
+        # The notification IS in chat_ctx immediately so the fast brain sees it.
         session_texts = [
             item.text_content or ""
             for item in session._chat_ctx.items
             if getattr(item, "type", None) == "message"
         ]
         has_notification = any("No contact named Bob" in txt for txt in session_texts)
-        assert not has_notification, (
-            f"should_speak=True guidance injected a [notification] into chat_ctx "
-            f"while speech is still queued (user speaking). The notification must "
-            f"be deferred until maybe_speak_queued() fires.\n"
+        assert has_notification, (
+            f"should_speak=True guidance must inject [notification] into chat_ctx "
+            f"immediately so the fast brain regenerates with current state.\n"
             f"Chat context messages: {session_texts}"
         )
 
@@ -1458,31 +1479,41 @@ class TestFastBrainGuidanceFlow:
             len(session.say_calls) == 0
         ), "Queued speech must not fire while user is speaking."
 
-        # User stops, agent settles → maybe_speak_queued fires
-        state_cb(SimpleNamespace(new_state="listening"))
-        session.agent_state = "listening"
-        agent_state_cb = session._events["agent_state_changed"]
-        agent_state_cb(SimpleNamespace(new_state="listening"))
+        # Disable dedup so _dedup_and_speak goes straight to _speak_now.
+        from unity.settings import SETTINGS
 
-        # NOW the notification should be in chat_ctx (injected at speech time)
-        session_texts_after = [
-            item.text_content or ""
-            for item in session._chat_ctx.items
-            if getattr(item, "type", None) == "message"
-        ]
-        has_notification_after = any(
-            "No contact named Bob" in txt for txt in session_texts_after
-        )
-        assert has_notification_after, (
-            "After session.say() fires, the notification should be in chat_ctx "
-            "so the fast brain's history shows the correct pattern: "
-            "notification → assistant response."
-        )
+        orig_dedup = SETTINGS.conversation.SPEECH_DEDUP_ENABLED
+        SETTINGS.conversation.SPEECH_DEDUP_ENABLED = False
+        try:
+            # User stops, agent settles → maybe_speak_queued fires
+            state_cb(SimpleNamespace(new_state="listening"))
+            session.agent_state = "listening"
+            agent_state_cb = session._events["agent_state_changed"]
+            agent_state_cb(SimpleNamespace(new_state="listening"))
 
-        # The speech SHOULD have fired
-        assert (
-            len(session.say_calls) == 1
-        ), "should_speak=True guidance must queue speech via session.say()."
+            # _dedup_and_speak is async; yield to let the task complete.
+            await asyncio.sleep(0)
+
+            # Notification was already in chat_ctx from apply_notification.
+            # Verify it's still there after the speech fires.
+            session_texts_after = [
+                item.text_content or ""
+                for item in session._chat_ctx.items
+                if getattr(item, "type", None) == "message"
+            ]
+            has_notification_after = any(
+                "No contact named Bob" in txt for txt in session_texts_after
+            )
+            assert (
+                has_notification_after
+            ), "Notification should remain in chat_ctx after speech fires."
+
+            # The speech SHOULD have fired
+            assert (
+                len(session.say_calls) == 1
+            ), "should_speak=True guidance must queue speech via session.say()."
+        finally:
+            SETTINGS.conversation.SPEECH_DEDUP_ENABLED = orig_dedup
 
     async def test_unify_llm_preserves_base_system_prompt_with_notification(
         self,
@@ -1622,6 +1653,10 @@ class TestFastBrainGuidanceFlow:
                 self.current_speech = None
                 fake_session_holder["session"] = self
 
+            @property
+            def history(self):
+                return self._chat_ctx
+
             def on(self, event_name):
                 def _decorator(fn):
                     self._events[event_name] = fn
@@ -1640,10 +1675,14 @@ class TestFastBrainGuidanceFlow:
                 self.say_calls.append(text)
                 return _ImmediateAwaitable()
 
+            def interrupt(self):
+                pass
+
         class _FakeAssistant:
             def __init__(self, *args, **kwargs):
                 self._chat_ctx = llm.ChatContext()
                 self.call_received = True
+                self.user_turn_generating = False
 
             def set_call_received(self):
                 self.call_received = True
@@ -1665,6 +1704,7 @@ class TestFastBrainGuidanceFlow:
                 boss_json=json.dumps(boss),
             ),
             assistant=SimpleNamespace(about="Assistant bio", name="Ava"),
+            unify_key="",
         )
 
         monkeypatch.setattr(call_script, "event_broker", fake_broker)
@@ -1745,14 +1785,25 @@ class TestFastBrainGuidanceFlow:
             len(session.say_calls) == 0
         ), "Queued speech must not fire from user_state_changed (race condition)."
 
-        # Agent settles to listening — say() fires now
-        agent_state_cb(SimpleNamespace(new_state="listening"))
+        # Disable dedup so _dedup_and_speak goes straight to _speak_now.
+        from unity.settings import SETTINGS
 
-        assert len(session.say_calls) == 1, (
-            "Guidance that arrives while the user is speaking should be surfaced "
-            "via session.say() after the agent settles to listening."
-        )
-        assert session.say_calls[0] == "No, there's no contact named Bob."
+        orig_dedup = SETTINGS.conversation.SPEECH_DEDUP_ENABLED
+        SETTINGS.conversation.SPEECH_DEDUP_ENABLED = False
+        try:
+            # Agent settles to listening — say() fires now
+            agent_state_cb(SimpleNamespace(new_state="listening"))
+
+            # _dedup_and_speak is async; yield to let the task complete.
+            await asyncio.sleep(0)
+
+            assert len(session.say_calls) == 1, (
+                "Guidance that arrives while the user is speaking should be surfaced "
+                "via session.say() after the agent settles to listening."
+            )
+            assert session.say_calls[0] == "No, there's no contact named Bob."
+        finally:
+            SETTINGS.conversation.SPEECH_DEDUP_ENABLED = orig_dedup
 
     async def test_queued_speech_waits_for_agent_thinking_and_speaking_cycle(
         self,
@@ -1836,6 +1887,10 @@ class TestFastBrainGuidanceFlow:
                 self.current_speech = None
                 fake_session_holder["session"] = self
 
+            @property
+            def history(self):
+                return self._chat_ctx
+
             def on(self, event_name):
                 def _decorator(fn):
                     self._events[event_name] = fn
@@ -1854,10 +1909,14 @@ class TestFastBrainGuidanceFlow:
                 self.say_calls.append(text)
                 return _ImmediateAwaitable()
 
+            def interrupt(self):
+                pass
+
         class _FakeAssistant:
             def __init__(self, *args, **kwargs):
                 self._chat_ctx = llm.ChatContext()
                 self.call_received = True
+                self.user_turn_generating = False
 
             def set_call_received(self):
                 self.call_received = True
@@ -1879,6 +1938,7 @@ class TestFastBrainGuidanceFlow:
                 boss_json=json.dumps(boss),
             ),
             assistant=SimpleNamespace(about="Assistant bio", name="Ava"),
+            unify_key="",
         )
 
         monkeypatch.setattr(call_script, "event_broker", fake_broker)
@@ -1961,16 +2021,471 @@ class TestFastBrainGuidanceFlow:
             len(session.say_calls) == 0
         ), "Queued speech must not fire while agent is speaking."
 
-        # Agent finishes speaking → transitions to listening
-        session.agent_state = "listening"
-        agent_state_cb(SimpleNamespace(new_state="listening"))
+        # Disable dedup so _dedup_and_speak goes straight to _speak_now.
+        from unity.settings import SETTINGS
 
-        assert (
-            len(session.say_calls) == 1
-        ), "Queued speech should fire after agent returns to listening."
-        assert session.say_calls[0] == "It's at 3pm."
+        orig_dedup = SETTINGS.conversation.SPEECH_DEDUP_ENABLED
+        SETTINGS.conversation.SPEECH_DEDUP_ENABLED = False
+        try:
+            # Agent finishes speaking → transitions to listening
+            session.agent_state = "listening"
+            agent_state_cb(SimpleNamespace(new_state="listening"))
+
+            # _dedup_and_speak is async; yield to let the task complete.
+            await asyncio.sleep(0)
+
+            assert (
+                len(session.say_calls) == 1
+            ), "Queued speech should fire after agent returns to listening."
+            assert session.say_calls[0] == "It's at 3pm."
+        finally:
+            SETTINGS.conversation.SPEECH_DEDUP_ENABLED = orig_dedup
 
 
+@pytest.mark.asyncio
+class TestFastBrainSpeechDedup:
+    """Tests for the fast brain speech deduplication gate.
+
+    Dedup runs inside _dedup_and_speak (called from maybe_speak_queued) and
+    checks whether queued slow brain speech overlaps with recent assistant
+    utterances in the fast brain's chat context.
+    """
+
+    @pytest_asyncio.fixture
+    async def fast_brain_env(self, monkeypatch):
+        """Bootstrap a fake fast brain environment and return useful handles.
+
+        Yields a dict with keys: session, assistant, guidance_cb,
+        agent_state_cb, say_calls.
+        """
+        from livekit.agents import llm
+        from unity.conversation_manager.medium_scripts import call as call_script
+
+        contact = {
+            "contact_id": 2,
+            "first_name": "Caller",
+            "surname": "Example",
+            "phone_number": "+15550100002",
+            "email_address": "caller@example.com",
+        }
+        boss = {
+            "contact_id": 1,
+            "first_name": "Manager",
+            "surname": "Example",
+            "phone_number": "+15550100001",
+            "email_address": "manager@example.com",
+        }
+
+        class _ImmediateAwaitable:
+            def __await__(self):
+                async def _done():
+                    return None
+
+                return _done().__await__()
+
+        class _FakeLocalParticipant:
+            async def publish_data(self, *args, **kwargs):
+                pass
+
+        class _FakeRoom:
+            name = "fake-room"
+            local_participant = _FakeLocalParticipant()
+
+            def on(self, *args, **kwargs):
+                return lambda fn: fn
+
+        class _FakeJobContext:
+            def __init__(self):
+                self.room = _FakeRoom()
+                self.job = SimpleNamespace()
+
+            async def connect(self):
+                return None
+
+            def add_shutdown_callback(self, cb):
+                pass
+
+            def shutdown(self, reason=""):
+                pass
+
+        class _FakeEventBroker:
+            def __init__(self):
+                self.callbacks = {}
+
+            def set_logger(self, fb_logger):
+                pass
+
+            def register_callback(self, channel, handler):
+                self.callbacks[channel] = handler
+
+            async def publish(self, channel, message):
+                return 1
+
+        fake_session_holder = {}
+
+        class _FakeSession:
+            def __init__(self, *args, **kwargs):
+                self._chat_ctx = llm.ChatContext()
+                self.current_agent = None
+                self._events = {}
+                self.generate_reply_calls = 0
+                self.say_calls = []
+                self.agent_state = "listening"
+                self.current_speech = None
+                fake_session_holder["session"] = self
+
+            @property
+            def history(self):
+                return self._chat_ctx
+
+            def on(self, event_name):
+                def _decorator(fn):
+                    self._events[event_name] = fn
+                    return fn
+
+                return _decorator
+
+            async def start(self, room, agent, room_input_options=None):
+                self.current_agent = agent
+
+            def generate_reply(self, **kwargs):
+                self.generate_reply_calls += 1
+                return _ImmediateAwaitable()
+
+            def say(self, text, **kwargs):
+                self.say_calls.append(text)
+                return _ImmediateAwaitable()
+
+            def interrupt(self):
+                pass
+
+        class _FakeAssistant:
+            def __init__(self, *args, **kwargs):
+                self._chat_ctx = llm.ChatContext()
+                self.call_received = True
+                self.user_turn_generating = False
+
+            def set_call_received(self):
+                self.call_received = True
+
+        async def _noop_async(*args, **kwargs):
+            return None
+
+        async def _noop_end_call():
+            return None
+
+        fake_broker = _FakeEventBroker()
+        fake_session_details = SimpleNamespace(
+            populate_from_env=lambda: None,
+            voice=SimpleNamespace(provider="cartesia", id=""),
+            voice_call=SimpleNamespace(
+                outbound=False,
+                channel="unify_meet",
+                contact_json=json.dumps(contact),
+                boss_json=json.dumps(boss),
+            ),
+            assistant=SimpleNamespace(about="Assistant bio", name="Ava"),
+            unify_key="",
+        )
+
+        monkeypatch.setattr(call_script, "event_broker", fake_broker)
+        monkeypatch.setattr(call_script, "SESSION_DETAILS", fake_session_details)
+        monkeypatch.setattr(call_script, "AgentSession", _FakeSession)
+        monkeypatch.setattr(call_script, "Assistant", _FakeAssistant)
+        monkeypatch.setattr(call_script, "UnifyLLM", lambda *args, **kwargs: object())
+        monkeypatch.setattr(
+            call_script,
+            "build_voice_agent_prompt",
+            lambda **kwargs: SimpleNamespace(flatten=lambda: "system prompt"),
+        )
+        monkeypatch.setattr(call_script, "start_event_broker_receive", _noop_async)
+        monkeypatch.setattr(call_script, "publish_call_started", _noop_async)
+        monkeypatch.setattr(
+            call_script,
+            "create_end_call",
+            lambda *args, **kwargs: _noop_end_call,
+        )
+        monkeypatch.setattr(
+            call_script,
+            "setup_inactivity_timeout",
+            lambda end_call: (lambda: None),
+        )
+        monkeypatch.setattr(
+            call_script,
+            "setup_participant_disconnect_handler",
+            lambda *args, **kwargs: None,
+        )
+        monkeypatch.setattr(call_script, "RoomInputOptions", lambda **kwargs: object())
+        monkeypatch.setattr(call_script, "EnglishModel", lambda: object())
+        monkeypatch.setattr(call_script.cartesia, "TTS", lambda **kwargs: object())
+        monkeypatch.setattr(call_script.elevenlabs, "TTS", lambda **kwargs: object())
+        if hasattr(call_script, "noise_cancellation"):
+            monkeypatch.setattr(call_script.noise_cancellation, "BVC", lambda: object())
+        monkeypatch.setattr(call_script, "STT", object())
+        monkeypatch.setattr(call_script, "VAD", object())
+
+        import unity.common.llm_client as _llm_mod
+
+        class _FakeGreetingClient:
+            async def generate(self, **kwargs):
+                return "Hello!"
+
+        monkeypatch.setattr(
+            _llm_mod,
+            "new_llm_client",
+            lambda *a, **kw: _FakeGreetingClient(),
+        )
+
+        await call_script.entrypoint(_FakeJobContext())
+
+        session = fake_session_holder["session"]
+        session.say_calls.clear()
+
+        yield {
+            "session": session,
+            "assistant": session.current_agent,
+            "guidance_cb": fake_broker.callbacks["app:call:notification"],
+            "agent_state_cb": session._events["agent_state_changed"],
+            "monkeypatch": monkeypatch,
+        }
+
+    def _send_speak_guidance(self, env, content, response_text):
+        """Queue a should_speak=True notification."""
+        env["guidance_cb"](
+            {
+                "payload": {
+                    "content": content,
+                    "response_text": response_text,
+                    "should_speak": True,
+                    "source": "slow_brain",
+                },
+            },
+        )
+
+    async def _settle_and_drain(self, env):
+        """Transition agent to listening and let async dedup task complete."""
+        env["session"].agent_state = "listening"
+        env["agent_state_cb"](SimpleNamespace(new_state="listening"))
+        # Give the async _dedup_and_speak task time to fully complete.
+        # AsyncMock + ensure_future may need multiple event loop ticks.
+        await asyncio.sleep(0.05)
+
+    async def test_dedup_suppresses_redundant_speech(self, fast_brain_env):
+        """When assistant has already said the same info, queued speech is
+        suppressed and downgraded to a silent notification."""
+        env = fast_brain_env
+        from unity.settings import SETTINGS
+        import unity.conversation_manager.domains.speech_dedup as _dedup_mod
+
+        env["assistant"]._chat_ctx.add_message(
+            role="assistant",
+            content="Found three Italian restaurants near you.",
+        )
+
+        class _FakeDedupClient:
+            def set_response_format(self, fmt):
+                pass
+
+            async def generate(self, *, messages=None, **_kw):
+                return '{"already_covered": true, "reasoning": "fast brain already said it"}'
+
+        orig_dedup = SETTINGS.conversation.SPEECH_DEDUP_ENABLED
+        SETTINGS.conversation.SPEECH_DEDUP_ENABLED = True
+        env["monkeypatch"].setattr(
+            _dedup_mod,
+            "new_llm_client",
+            lambda *a, **kw: _FakeDedupClient(),
+        )
+        try:
+            env["session"].agent_state = "thinking"
+            self._send_speak_guidance(
+                env,
+                content="Italian restaurant search results.",
+                response_text="I found three Italian restaurants nearby.",
+            )
+            await self._settle_and_drain(env)
+            assert (
+                len(env["session"].say_calls) == 0
+            ), "Redundant speech should be suppressed by dedup."
+            has_notification = False
+            for item in env["session"]._chat_ctx.items:
+                raw = getattr(item, "content", None)
+                if raw is None:
+                    continue
+                text = (
+                    raw
+                    if isinstance(raw, str)
+                    else " ".join(c for c in raw if isinstance(c, str))
+                )
+                if "[notification]" in text and "Italian restaurant" in text:
+                    has_notification = True
+                    break
+            assert (
+                has_notification
+            ), "Suppressed speech should still inject a [notification]."
+        finally:
+            SETTINGS.conversation.SPEECH_DEDUP_ENABLED = orig_dedup
+
+    async def test_dedup_allows_novel_speech(self, fast_brain_env):
+        """When the proposed speech is genuinely new, it should be spoken."""
+        env = fast_brain_env
+        from unity.settings import SETTINGS
+        import unity.conversation_manager.domains.speech_dedup as _dedup_mod
+
+        env["assistant"]._chat_ctx.add_message(
+            role="assistant",
+            content="I've started the email check.",
+        )
+
+        class _FakeDedupClient:
+            def set_response_format(self, fmt):
+                pass
+
+            async def generate(self, *, messages=None, **_kw):
+                return '{"already_covered": false, "reasoning": "different topic"}'
+
+        orig_dedup = SETTINGS.conversation.SPEECH_DEDUP_ENABLED
+        SETTINGS.conversation.SPEECH_DEDUP_ENABLED = True
+        env["monkeypatch"].setattr(
+            _dedup_mod,
+            "new_llm_client",
+            lambda *a, **kw: _FakeDedupClient(),
+        )
+        try:
+            env["session"].agent_state = "thinking"
+            self._send_speak_guidance(
+                env,
+                content="Weather forecast results.",
+                response_text="It's 22 degrees and sunny in London.",
+            )
+            await self._settle_and_drain(env)
+            assert len(env["session"].say_calls) == 1, "Novel speech should be spoken."
+            assert env["session"].say_calls[0] == "It's 22 degrees and sunny in London."
+        finally:
+            SETTINGS.conversation.SPEECH_DEDUP_ENABLED = orig_dedup
+
+    async def test_dedup_skipped_when_disabled(self, fast_brain_env):
+        """When SPEECH_DEDUP_ENABLED is False, speech plays without a dedup check."""
+        env = fast_brain_env
+        from unity.settings import SETTINGS
+
+        env["assistant"]._chat_ctx.add_message(
+            role="assistant",
+            content="Found three Italian restaurants near you.",
+        )
+
+        orig_dedup = SETTINGS.conversation.SPEECH_DEDUP_ENABLED
+        SETTINGS.conversation.SPEECH_DEDUP_ENABLED = False
+        try:
+            env["session"].agent_state = "thinking"
+            self._send_speak_guidance(
+                env,
+                content="Italian restaurant search results.",
+                response_text="I found three Italian restaurants nearby.",
+            )
+            await self._settle_and_drain(env)
+            assert (
+                len(env["session"].say_calls) == 1
+            ), "With dedup disabled, speech should always play."
+            assert (
+                env["session"].say_calls[0]
+                == "I found three Italian restaurants nearby."
+            )
+        finally:
+            SETTINGS.conversation.SPEECH_DEDUP_ENABLED = orig_dedup
+
+    async def test_dedup_skipped_when_no_recent_utterances(self, fast_brain_env):
+        """With no assistant messages in chat context, dedup is skipped."""
+        env = fast_brain_env
+        from unity.settings import SETTINGS
+        import unity.conversation_manager.domains.speech_dedup as _dedup_mod
+
+        dedup_called = False
+
+        class _TrackingDedupClient:
+            def set_response_format(self, fmt):
+                pass
+
+            async def generate(self, *, messages=None, **_kw):
+                nonlocal dedup_called
+                dedup_called = True
+                return '{"already_covered": true, "reasoning": "should never run"}'
+
+        orig_dedup = SETTINGS.conversation.SPEECH_DEDUP_ENABLED
+        SETTINGS.conversation.SPEECH_DEDUP_ENABLED = True
+        env["monkeypatch"].setattr(
+            _dedup_mod,
+            "new_llm_client",
+            lambda *a, **kw: _TrackingDedupClient(),
+        )
+        try:
+            env["session"].agent_state = "thinking"
+            self._send_speak_guidance(
+                env,
+                content="Weather forecast.",
+                response_text="It's sunny in London.",
+            )
+            await self._settle_and_drain(env)
+            assert (
+                len(env["session"].say_calls) == 1
+            ), "With no recent utterances, speech should play (no dedup needed)."
+            assert (
+                not dedup_called
+            ), "Dedup LLM should not be called when there are no recent utterances."
+        finally:
+            SETTINGS.conversation.SPEECH_DEDUP_ENABLED = orig_dedup
+
+    async def test_latest_guidance_supersedes_older_queued_speech(self, fast_brain_env):
+        """When multiple notifications arrive while the pipeline is busy, only
+        the latest survives — the slow brain always has full context, so newer
+        guidance supersedes older guidance (single-slot queue)."""
+        env = fast_brain_env
+        from unity.settings import SETTINGS
+        import unity.conversation_manager.domains.speech_dedup as _dedup_mod
+
+        env["assistant"]._chat_ctx.add_message(
+            role="assistant",
+            content="I've started the check.",
+        )
+
+        class _PassthroughDedupClient:
+            def set_response_format(self, fmt):
+                pass
+
+            async def generate(self, *, messages=None, **_kw):
+                return '{"already_covered": false, "reasoning": "allowed"}'
+
+        orig_dedup = SETTINGS.conversation.SPEECH_DEDUP_ENABLED
+        SETTINGS.conversation.SPEECH_DEDUP_ENABLED = True
+        env["monkeypatch"].setattr(
+            _dedup_mod,
+            "new_llm_client",
+            lambda *a, **kw: _PassthroughDedupClient(),
+        )
+        try:
+            env["session"].agent_state = "thinking"
+            self._send_speak_guidance(
+                env,
+                content="First result.",
+                response_text="Here is the first result.",
+            )
+            self._send_speak_guidance(
+                env,
+                content="Second result.",
+                response_text="Here is the second result.",
+            )
+            await self._settle_and_drain(env)
+
+            assert len(env["session"].say_calls) == 1, (
+                f"Only the latest guidance should survive (single-slot queue). "
+                f"Got: {env['session'].say_calls}"
+            )
+            assert env["session"].say_calls[0] == "Here is the second result."
+        finally:
+            SETTINGS.conversation.SPEECH_DEDUP_ENABLED = orig_dedup
+
+
+@pytest.mark.llm_call
 @pytest.mark.eval
 @pytest.mark.asyncio
 class TestFastBrainOpeningGreeting:

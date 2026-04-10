@@ -1001,61 +1001,352 @@ async def count_repairs_by_operative(context: str = "Data/MidlandHeart/Repairs")
 '''
 
 
-def get_primitives_data_plot_example() -> str:
-    """Example: generating charts via ``primitives.data.plot(...)``."""
+def get_primitives_dashboards_baked_in_example() -> str:
+    """Example: baked-in data tiles (Plotly, matplotlib) via ``primitives.dashboards``."""
 
     return '''
-# Example: Generate a bar chart from a data context
-async def plot_repairs_by_category(context: str = "Data/MidlandHeart/Repairs") -> str:
-    """Generate a bar chart of repair counts by category."""
-    result = await primitives.data.plot(
-        context=context,
-        plot_type="bar",
+# ============================================================
+# primitives.dashboards is the ONLY way to produce visual output
+# (charts, plots, tables, KPI cards, dashboards).
+#
+# PREFER LIVE TILES (data_bindings + on_data) for production:
+#   - Data is fetched fresh at render time, not baked into HTML
+#   - Works for any query: filter, reduce, join, join-reduce
+#   - Keeps tile HTML lightweight -- just layout + DOM hooks
+#   - Essential for large datasets, joins, or frequently updated data
+#
+# Baked-in data (embed in HTML) only for very small static snapshots.
+#
+# The actor has FULL CREATIVE FREEDOM over tile HTML. Any HTML/CSS/JS
+# that renders in a standard browser will work: custom layouts, CDN
+# libraries (Chart.js, D3, Plotly, Leaflet), inline SVG, canvas
+# graphics, CSS animations, responsive designs, and more.
+# ============================================================
+
+# Example: Plotly chart with baked-in data (small static snapshots only)
+async def chart_repairs_by_category(context: str = "Data/MidlandHeart/Repairs") -> str:
+    """Generate a Plotly bar chart from data and create a shareable tile."""
+    import subprocess
+    subprocess.check_call(["pip", "install", "plotly", "pandas"])
+    import plotly.express as px
+    import pandas as pd
+
+    rows = await primitives.data.filter(context, limit=5000)
+    df = pd.DataFrame(rows)
+    fig = px.bar(
+        df,
         x="SORGroupDescription",
         y="WorksOrderReference",
-        metric="count",
         title="Repairs by Category",
     )
-    if result.succeeded:
-        return result.url
-    return f"Plot failed: {result.error}"
+    html = fig.to_html(include_plotlyjs="cdn", full_html=True)
 
-# Example: Grouped bar chart with aggregation
-async def plot_cost_by_category_and_priority(context: str = "Data/MidlandHeart/Repairs") -> str:
-    """Generate a grouped bar chart of average repair cost by category, colored by priority."""
-    result = await primitives.data.plot(
-        context=context,
-        plot_type="bar",
-        x="SORGroupDescription",
-        y="TotalCost",
-        group_by="Priority",
-        aggregate="mean",
-        title="Avg Repair Cost by Category & Priority",
+    result = await primitives.dashboards.create_tile(
+        html, title="Repairs by Category"
     )
     if result.succeeded:
         return result.url
-    return f"Plot failed: {result.error}"
+    return f"Tile creation failed: {result.error}"
+
+# Example: Matplotlib figure exported as HTML tile
+async def visualize_task_priority_distribution() -> str:
+    """Visualize task priorities using matplotlib and create a tile."""
+    import subprocess
+    subprocess.check_call(["pip", "install", "matplotlib"])
+    import matplotlib.pyplot as plt
+    import io, base64
+
+    rows = await primitives.tasks.ask("List all tasks with their priorities")
+    # Count by priority
+    priorities = {}
+    for task in rows:
+        p = task.get("priority", "unknown")
+        priorities[p] = priorities.get(p, 0) + 1
+
+    fig, ax = plt.subplots(figsize=(8, 5))
+    ax.bar(priorities.keys(), priorities.values(), color=["#ef4444", "#f59e0b", "#22c55e"])
+    ax.set_title("Task Priority Distribution")
+    ax.set_ylabel("Count")
+
+    buf = io.BytesIO()
+    fig.savefig(buf, format="png", bbox_inches="tight")
+    buf.seek(0)
+    img_b64 = base64.b64encode(buf.read()).decode()
+    plt.close(fig)
+
+    html = f"""<!DOCTYPE html>
+<html><body style="margin:0;display:flex;justify-content:center;align-items:center;min-height:100vh;background:#fff;">
+<img src="data:image/png;base64,{img_b64}" style="max-width:100%;height:auto;" />
+</body></html>"""
+
+    result = await primitives.dashboards.create_tile(html, title="Task Priority Distribution")
+    return result.url if result.succeeded else f"Failed: {result.error}"
 '''
 
 
-def get_primitives_data_table_view_example() -> str:
-    """Example: generating an interactive table view via ``primitives.data.table_view(...)``."""
+def get_primitives_dashboards_live_data_example() -> str:
+    """Example: live data bridge tiles via ``primitives.dashboards``.
+
+    Demonstrates the three-way separation: layout HTML, Python data_bindings
+    (single source of truth), and on_data JS callback.  Console auto-generates
+    bridge calls from the serialized bindings.
+    """
 
     return '''
-# Example: Render an interactive table view from a data context
-async def show_top_repairs(context: str = "Data/MidlandHeart/Repairs") -> str:
-    """Generate a shareable table view of the most recent repairs."""
-    result = await primitives.data.table_view(
-        context=context,
-        columns_visible=["WorksOrderReference", "OperativeName", "RaisedDate", "Priority"],
-        sort_by="RaisedDate",
-        sort_order="desc",
-        row_limit=50,
-        title="Recent Repairs",
+# Example: Live table with on_data (FilterBinding)
+# The HTML is layout-only.  data_bindings declare what data to fetch.
+# on_data receives fetched data keyed by alias and populates the DOM.
+async def live_revenue_table() -> str:
+    """Create a tile that fetches live rows at render time."""
+    from unity.dashboard_manager.types.tile import FilterBinding
+
+    html = """<!DOCTYPE html>
+<html><head>
+<style>
+  body { font-family: system-ui, sans-serif; padding: 16px; margin: 0; }
+  table { border-collapse: collapse; width: 100%; }
+  th, td { border: 1px solid #e5e7eb; padding: 10px 12px; text-align: left; }
+  th { background: #f9fafb; font-weight: 600; }
+  tr:nth-child(even) { background: #f9fafb; }
+</style>
+</head><body>
+<h2 style="margin-top:0">Monthly Revenue (Live)</h2>
+<table id="tbl">
+  <thead><tr><th>Month</th><th>Revenue</th></tr></thead>
+  <tbody><tr><td colspan="2">Loading...</td></tr></tbody>
+</table>
+</body></html>"""
+
+    result = await primitives.dashboards.create_tile(
+        html,
+        title="Monthly Revenue (Live)",
+        data_bindings=[
+            FilterBinding(
+                context="Data/Sales/Monthly",
+                alias="sales",
+                columns=["month", "revenue"],
+                order_by="month",
+            ),
+        ],
+        on_data="""
+        const tbody = document.querySelector("#tbl tbody");
+        tbody.innerHTML = "";
+        data.sales.forEach(r => {
+          const tr = document.createElement("tr");
+          tr.innerHTML = `<td>${r.month}</td><td>$${Number(r.revenue).toLocaleString()}</td>`;
+          tbody.appendChild(tr);
+        });
+        """,
+    )
+    return result.url if result.succeeded else f"Failed: {result.error}"
+
+# Example: Live KPI card using ReduceBinding for server-side aggregation
+async def live_kpi_card() -> str:
+    """Create a KPI tile that computes totals at render time."""
+    from unity.dashboard_manager.types.tile import ReduceBinding
+
+    html = """<!DOCTYPE html>
+<html><body style="margin:0;padding:24px;font-family:system-ui;">
+<div id="kpi" style="text-align:center;">
+  <div style="color:#888;font-size:14px;">Total Revenue</div>
+  <div id="val" style="font-size:48px;font-weight:700;">Loading...</div>
+</div>
+</body></html>"""
+
+    result = await primitives.dashboards.create_tile(
+        html,
+        title="Revenue KPI (Live)",
+        data_bindings=[
+            ReduceBinding(
+                context="Data/Sales/Monthly",
+                alias="total",
+                metric="sum",
+                columns="revenue",
+            ),
+        ],
+        on_data="""
+        document.getElementById("val").textContent =
+          "$" + Number(data.total).toLocaleString();
+        """,
+    )
+    return result.url if result.succeeded else f"Failed: {result.error}"
+'''
+
+
+def get_primitives_dashboards_rich_live_data_example() -> str:
+    """Example: join and join-reduce live data tiles via ``primitives.dashboards``.
+
+    Demonstrates JoinBinding and JoinReduceBinding with the on_data pattern.
+    data_bindings declare what to fetch; on_data receives results keyed by alias.
+    """
+
+    return '''
+# Example: Live join table using JoinBinding with on_data
+async def live_order_details() -> str:
+    """Create a tile that joins orders with customers at render time."""
+    from unity.dashboard_manager.types.tile import JoinBinding
+
+    html = """<!DOCTYPE html>
+<html><head>
+<style>
+  body { font-family: system-ui, sans-serif; padding: 16px; margin: 0; }
+  table { border-collapse: collapse; width: 100%; }
+  th, td { border: 1px solid #e5e7eb; padding: 10px 12px; text-align: left; }
+  th { background: #f9fafb; font-weight: 600; }
+</style>
+</head><body>
+<h2 style="margin-top:0">Order Details (Live Join)</h2>
+<table id="tbl">
+  <thead><tr><th>Customer</th><th>Amount</th></tr></thead>
+  <tbody><tr><td colspan="2">Loading...</td></tr></tbody>
+</table>
+</body></html>"""
+
+    result = await primitives.dashboards.create_tile(
+        html,
+        title="Order Details (Live Join)",
+        data_bindings=[
+            JoinBinding(
+                tables=["Data/Orders", "Data/Customers"],
+                join_expr="Data/Orders.customer_id == Data/Customers.id",
+                select={"Data/Orders.amount": "amount", "Data/Customers.name": "customer"},
+                alias="orders",
+                result_limit=200,
+            ),
+        ],
+        on_data="""
+        const tbody = document.querySelector("#tbl tbody");
+        tbody.innerHTML = "";
+        data.orders.forEach(r => {
+          const tr = document.createElement("tr");
+          tr.innerHTML = `<td>${r.customer}</td><td>$${Number(r.amount).toLocaleString()}</td>`;
+          tbody.appendChild(tr);
+        });
+        """,
+    )
+    return result.url if result.succeeded else f"Failed: {result.error}"
+
+# Example: Live KPI via JoinReduceBinding with on_data
+async def live_revenue_by_category() -> str:
+    """KPI card: total revenue per product category from orders+products."""
+    from unity.dashboard_manager.types.tile import JoinReduceBinding
+
+    html = """<!DOCTYPE html>
+<html><body style="margin:0;padding:24px;font-family:system-ui;">
+<h2 style="margin-top:0">Revenue by Category</h2>
+<div id="kpi">Loading...</div>
+</body></html>"""
+
+    result = await primitives.dashboards.create_tile(
+        html,
+        title="Revenue by Category (Live Join-Reduce)",
+        data_bindings=[
+            JoinReduceBinding(
+                tables=["Data/Orders", "Data/Products"],
+                join_expr="Data/Orders.product_id == Data/Products.id",
+                select={"Data/Orders.amount": "amount", "Data/Products.category": "category"},
+                alias="by_category",
+                metric="sum",
+                columns="amount",
+                group_by=["category"],
+            ),
+        ],
+        on_data="""
+        let h = "<ul style='list-style:none;padding:0;'>";
+        for (const [cat, val] of Object.entries(data.by_category))
+          h += `<li style="margin:8px 0;font-size:18px;"><strong>${cat}:</strong> $${Number(val).toLocaleString()}</li>`;
+        document.getElementById("kpi").innerHTML = h + "</ul>";
+        """,
+    )
+    return result.url if result.succeeded else f"Failed: {result.error}"
+'''
+
+
+def get_primitives_dashboards_composition_example() -> str:
+    """Example: composing tiles into dashboards via ``primitives.dashboards``."""
+
+    return '''
+# Example: Full dashboard composition with live tiles
+# Create multiple tiles first, then arrange them in a grid layout.
+# The grid uses a 12-column system. Each TilePosition specifies:
+#   tile_token: token from a create_tile result
+#   x, y: grid position (column, row)
+#   w, h: size in grid units (columns, row-heights)
+async def sales_dashboard() -> str:
+    """Compose live KPI, chart, and table tiles into a dashboard."""
+    from unity.dashboard_manager.types.dashboard import TilePosition
+    from unity.dashboard_manager.types.tile import (
+        FilterBinding, ReduceBinding,
+    )
+
+    # Step 1: Create a live KPI tile (server-side aggregation)
+    kpi_html = """<!DOCTYPE html>
+<html><body style="margin:0;padding:24px;font-family:system-ui;">
+<div style="display:flex;gap:24px;">
+  <div style="flex:1;background:#f0fdf4;border-radius:12px;padding:20px;">
+    <div style="color:#16a34a;font-size:14px;">Total Revenue</div>
+    <div id="rev" style="font-size:32px;font-weight:700;">Loading...</div>
+  </div>
+  <div style="flex:1;background:#eff6ff;border-radius:12px;padding:20px;">
+    <div style="color:#2563eb;font-size:14px;">Total Orders</div>
+    <div id="cnt" style="font-size:32px;font-weight:700;">Loading...</div>
+  </div>
+</div>
+</body></html>"""
+    kpi_tile = await primitives.dashboards.create_tile(
+        kpi_html,
+        title="KPI Summary",
+        data_bindings=[
+            ReduceBinding(context="Data/Sales/Monthly", alias="revenue",
+                          metric="sum", columns="revenue"),
+            ReduceBinding(context="Data/Sales/Monthly", alias="orders",
+                          metric="count", columns="order_id"),
+        ],
+        on_data="""
+        document.getElementById("rev").textContent =
+          "$" + Number(data.revenue).toLocaleString();
+        document.getElementById("cnt").textContent =
+          Number(data.orders).toLocaleString();
+        """,
+    )
+
+    # Step 2: Create a live chart tile (Chart.js from CDN + live data)
+    chart_html = """<!DOCTYPE html>
+<html><head>
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head><body style="margin:0;padding:16px;">
+<canvas id="chart"></canvas>
+</body></html>"""
+    chart_tile = await primitives.dashboards.create_tile(
+        chart_html,
+        title="Revenue Trend",
+        data_bindings=[
+            FilterBinding(context="Data/Sales/Monthly", alias="sales",
+                          columns=["month", "revenue"], order_by="month"),
+        ],
+        on_data="""
+        new Chart(document.getElementById("chart"), {
+          type: "line",
+          data: {
+            labels: data.sales.map(r => r.month),
+            datasets: [{ label: "Revenue", data: data.sales.map(r => r.revenue) }]
+          }
+        });
+        """,
+    )
+
+    # Step 3: Compose into a dashboard
+    result = await primitives.dashboards.create_dashboard(
+        "Sales Overview Q1 2025",
+        description="Live KPIs and revenue trend for the sales team",
+        tiles=[
+            TilePosition(tile_token=kpi_tile.token, x=0, y=0, w=12, h=2),
+            TilePosition(tile_token=chart_tile.token, x=0, y=2, w=12, h=4),
+        ],
     )
     if result.succeeded:
         return result.url
-    return f"Table view failed: {result.error}"
+    return f"Dashboard creation failed: {result.error}"
 '''
 
 
@@ -1553,9 +1844,12 @@ def get_example_function_map() -> dict[str, callable]:
         # Data (using real DataManager primitives)
         "get_primitives_data_filter_example": get_primitives_data_filter_example,
         "get_primitives_data_reduce_example": get_primitives_data_reduce_example,
-        "get_primitives_data_plot_example": get_primitives_data_plot_example,
-        "get_primitives_data_table_view_example": get_primitives_data_table_view_example,
         "get_primitives_data_ingest_example": get_primitives_data_ingest_example,
+        # Dashboards
+        "get_primitives_dashboards_baked_in_example": get_primitives_dashboards_baked_in_example,
+        "get_primitives_dashboards_live_data_example": get_primitives_dashboards_live_data_example,
+        "get_primitives_dashboards_rich_live_data_example": get_primitives_dashboards_rich_live_data_example,
+        "get_primitives_dashboards_composition_example": get_primitives_dashboards_composition_example,
     }
 
 

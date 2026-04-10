@@ -1,4 +1,6 @@
 import asyncio
+import os
+import signal
 import subprocess
 import time
 import traceback
@@ -20,6 +22,7 @@ if TYPE_CHECKING:
 
 
 _AGENT_SERVICE_PID_FILE = Path("/tmp/agent-service.pid")
+_AGENT_SERVICE_LOG = Path("/var/log/unity/agent-service.log")
 
 
 def _find_agent_service_dir() -> Path | None:
@@ -49,15 +52,61 @@ def _update_env_file(env_path: Path, key: str, value: str) -> None:
     env_path.write_text("\n".join(lines) + "\n")
 
 
+def _find_pid_on_port(port: int) -> int | None:
+    """Find the PID of the process listening on the given TCP port via /proc."""
+    hex_port = f"{port:04X}"
+    inode = None
+    for tcp_path in ("/proc/net/tcp", "/proc/net/tcp6"):
+        try:
+            for line in Path(tcp_path).read_text().splitlines()[1:]:
+                fields = line.split()
+                if len(fields) < 10:
+                    continue
+                # 0A = LISTEN state
+                if fields[3] == "0A" and fields[1].endswith(f":{hex_port}"):
+                    inode = fields[9]
+                    break
+        except FileNotFoundError:
+            continue
+        if inode:
+            break
+    if not inode:
+        return None
+
+    for pid_dir in Path("/proc").iterdir():
+        if not pid_dir.name.isdigit():
+            continue
+        try:
+            for fd in (pid_dir / "fd").iterdir():
+                if os.readlink(str(fd)) == f"socket:[{inode}]":
+                    return int(pid_dir.name)
+        except (OSError, PermissionError):
+            continue
+    return None
+
+
+def _kill_port(port: int) -> bool:
+    """Kill the process listening on the given TCP port. Returns True if killed."""
+    pid = _find_pid_on_port(port)
+    if pid is None:
+        return False
+    try:
+        os.kill(pid, signal.SIGTERM)
+        return True
+    except ProcessLookupError:
+        return False
+
+
 def _restart_agent_service_with_key(api_key: str) -> None:
     """Kill and restart the agent-service so it picks up the user's API key.
 
-    1. Updates the agent-service .env file
-    2. Kills the process currently on port 3000
-    3. Spawns a new agent-service (inherits os.environ which already has the
-       correct UNIFY_KEY from export_to_env())
+    1. Updates the agent-service .env file (UNIFY_KEY + infrastructure URLs)
+    2. Kills the process listening on port 3000
+    3. Spawns a new agent-service with logs to /var/log/unity/agent-service.log
     4. Writes the new PID to /tmp/agent-service.pid for entrypoint.sh cleanup
     """
+    from unity.settings import SETTINGS
+
     try:
         agent_dir = _find_agent_service_dir()
         if agent_dir is None:
@@ -67,32 +116,47 @@ def _restart_agent_service_with_key(api_key: str) -> None:
             return
 
         # 1. Update .env
-        _update_env_file(agent_dir / ".env", "UNIFY_KEY", api_key)
+        env_file = agent_dir / ".env"
+        _update_env_file(env_file, "UNIFY_KEY", api_key)
+        _update_env_file(env_file, "ORCHESTRA_URL", SETTINGS.ORCHESTRA_URL)
+        _update_env_file(env_file, "UNITY_COMMS_URL", SETTINGS.conversation.COMMS_URL)
         LOGGER.info(
-            "[agent-service-restart] Updated agent-service .env with user API key",
+            "[agent-service-restart] Updated agent-service .env",
         )
 
-        # 2. Kill existing process on port 3000 (pkill is available on all Linux
-        #    images; mirrors the fallback in entrypoint.sh's stop_agent_service)
-        subprocess.run(["pkill", "-f", "node.*agent-service"], capture_output=True)
-        subprocess.run(["pkill", "-f", "ts-node"], capture_output=True)
-        time.sleep(0.3)
+        # 2. Kill whatever is listening on port 3000 and wait for it to release
+        killed = _kill_port(3000)
+        if killed:
+            for _ in range(50):
+                time.sleep(0.1)
+                if _find_pid_on_port(3000) is None:
+                    break
         LOGGER.info(
-            "[agent-service-restart] Killed existing agent-service on port 3000",
+            (
+                "[agent-service-restart] Killed process on port 3000"
+                if killed
+                else "[agent-service-restart] No process found on port 3000"
+            ),
         )
 
-        # 3. Restart (same logic as entrypoint.sh)
+        # 3. Restart
         compiled = agent_dir / "dist" / "index.js"
         if compiled.exists():
-            cmd = ["node", str(compiled)]
+            cmd = ["node", "--no-deprecation", str(compiled)]
         else:
             cmd = ["npx", "ts-node", str(agent_dir / "src" / "index.ts")]
 
+        log_fh = open(_AGENT_SERVICE_LOG, "a")
         proc = subprocess.Popen(
             cmd,
             cwd=str(agent_dir),
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
+            env={
+                **os.environ,
+                "UNIFY_KEY": api_key,
+                "PLAYWRIGHT_BROWSERS_PATH": "/home/unity/.cache/ms-playwright",
+            },
+            stdout=log_fh,
+            stderr=log_fh,
         )
 
         # 4. Write PID file for entrypoint.sh cleanup
@@ -176,8 +240,13 @@ async def _(event: Ping, cm: "ConversationManager", *args, **kwargs):
     cm._session_logger.debug("ping", log_str)
 
 
-@EventHandler.register(PhoneCallAnswered)
-async def _(event: PhoneCallAnswered, cm: "ConversationManager", *args, **kwargs):
+@EventHandler.register((PhoneCallAnswered, WhatsAppCallAnswered))
+async def _(
+    event: PhoneCallAnswered | WhatsAppCallAnswered,
+    cm: "ConversationManager",
+    *args,
+    **kwargs,
+):
     """
     Forward call answered status to the voice agent subprocess.
 
@@ -191,10 +260,24 @@ async def _(event: PhoneCallAnswered, cm: "ConversationManager", *args, **kwargs
     )
 
 
-CallInitEvents = Union[PhoneCallReceived, PhoneCallSent, UnifyMeetReceived]
+CallInitEvents = Union[
+    PhoneCallReceived,
+    PhoneCallSent,
+    UnifyMeetReceived,
+    WhatsAppCallReceived,
+    WhatsAppCallSent,
+]
 
 
-@EventHandler.register((PhoneCallReceived, PhoneCallSent, UnifyMeetReceived))
+@EventHandler.register(
+    (
+        PhoneCallReceived,
+        PhoneCallSent,
+        UnifyMeetReceived,
+        WhatsAppCallReceived,
+        WhatsAppCallSent,
+    ),
+)
 async def _(event: CallInitEvents, cm: "ConversationManager", *args, **kwargs):
     """
     Handle incoming/outgoing call initiation - spawn voice agent subprocess.
@@ -206,6 +289,12 @@ async def _(event: CallInitEvents, cm: "ConversationManager", *args, **kwargs):
     boss = cm.contact_index.get_contact(contact_id=1)
     if isinstance(event, UnifyMeetReceived):
         contact = boss
+    elif isinstance(event, (WhatsAppCallReceived, WhatsAppCallSent)):
+        contact = cm.contact_index.get_contact(
+            whatsapp_number=event.contact.get("whatsapp_number"),
+        )
+        if contact is None:
+            contact = event.contact
     else:
         contact = cm.contact_index.get_contact(
             phone_number=event.contact["phone_number"],
@@ -218,12 +307,37 @@ async def _(event: CallInitEvents, cm: "ConversationManager", *args, **kwargs):
     )
     sender_name = _get_sender_name(contact)
 
+    # Inject stashed context from make_whatsapp_call if a pending permission
+    # grant triggered this inbound WhatsApp call.
+    if isinstance(event, WhatsAppCallReceived) and contact_id is not None:
+        stashed_context = cm._pending_whatsapp_call_contexts.pop(contact_id, None)
+        if stashed_context:
+            cm.call_manager.initial_notification = stashed_context
+
     match event:
         case PhoneCallReceived() as e:
             cm.call_manager.conference_name = e.conference_name
             await cm.call_manager.start_call(contact, boss)
             message_content = "<Recvieving Call...>"
             notif_content = f"Call received from {sender_name}"
+        case WhatsAppCallReceived() as e:
+            cm.call_manager.conference_name = e.conference_name
+            await cm.call_manager.start_call(
+                contact,
+                boss,
+                channel="whatsapp_call",
+            )
+            message_content = "<Receiving WhatsApp Call...>"
+            notif_content = f"WhatsApp call received from {sender_name}"
+        case WhatsAppCallSent():
+            await cm.call_manager.start_call(
+                contact,
+                boss,
+                outbound=True,
+                channel="whatsapp_call",
+            )
+            message_content = "<Sending WhatsApp Call...>"
+            notif_content = f"WhatsApp call sent to {sender_name}"
         case PhoneCallSent():
             await cm.call_manager.start_call(contact, boss, outbound=True)
             message_content = "<Sending Call...>"
@@ -240,7 +354,13 @@ async def _(event: CallInitEvents, cm: "ConversationManager", *args, **kwargs):
     cm.notifications_bar.push_notif("Comms", notif_content, event.timestamp)
     role = "user" if "received" in event.__class__.__name__.lower() else "assistant"
     medium = (
-        Medium.UNIFY_MEET if isinstance(event, UnifyMeetReceived) else Medium.PHONE_CALL
+        Medium.UNIFY_MEET
+        if isinstance(event, UnifyMeetReceived)
+        else (
+            Medium.WHATSAPP_CALL
+            if isinstance(event, (WhatsAppCallReceived, WhatsAppCallSent))
+            else Medium.PHONE_CALL
+        )
     )
     cm.contact_index.push_message(
         contact_id=contact_id,
@@ -252,17 +372,83 @@ async def _(event: CallInitEvents, cm: "ConversationManager", *args, **kwargs):
     )
 
 
-@EventHandler.register((PhoneCallStarted, UnifyMeetStarted))
+@EventHandler.register(GoogleMeetReceived)
 async def _(
-    event: PhoneCallStarted | UnifyMeetStarted,
+    event: GoogleMeetReceived,
     cm: "ConversationManager",
     *args,
     **kwargs,
 ):
-    if isinstance(event, PhoneCallStarted):
+    """Handle request to join a Google Meet — spawn browser + audio bridge."""
+    if (
+        cm.mode.is_voice
+        or cm.call_manager.has_active_call
+        or cm.call_manager.has_active_google_meet
+    ):
+        return
+
+    boss = cm.contact_index.get_contact(contact_id=1) or {}
+    contact = boss
+
+    contact_id = contact.get("contact_id") if contact else 1
+    sender_name = _get_sender_name(contact)
+
+    joined = await cm.call_manager.start_google_meet(
+        meet_url=event.meet_url,
+        contact=contact,
+        boss=boss,
+    )
+
+    if joined:
+        cm.notifications_bar.push_notif(
+            "Comms",
+            f"Joining Google Meet...",
+            event.timestamp,
+        )
+        cm.contact_index.push_message(
+            contact_id=contact_id,
+            sender_name=sender_name,
+            thread_name=Medium.GOOGLE_MEET,
+            message_content="<Joining Google Meet...>",
+            role="assistant",
+            timestamp=event.timestamp,
+        )
+    else:
+        cm.notifications_bar.push_notif(
+            "Comms",
+            "Failed to join Google Meet. You may retry by calling join_google_meet again.",
+            event.timestamp,
+        )
+        await cm.request_llm_run(
+            delay=0,
+            cancel_running=True,
+            triggering_contact_id=contact_id,
+        )
+
+
+@EventHandler.register(
+    (PhoneCallStarted, UnifyMeetStarted, GoogleMeetStarted, WhatsAppCallStarted),
+)
+async def _(
+    event: (
+        PhoneCallStarted | UnifyMeetStarted | GoogleMeetStarted | WhatsAppCallStarted
+    ),
+    cm: "ConversationManager",
+    *args,
+    **kwargs,
+):
+    if isinstance(event, WhatsAppCallStarted):
+        cm.mode = Mode.CALL
+        whatsapp_number = event.contact.get("whatsapp_number")
+        contact = cm.contact_index.get_contact(whatsapp_number=whatsapp_number)
+    elif isinstance(event, PhoneCallStarted):
         cm.mode = Mode.CALL
         phone_number = event.contact["phone_number"]
         contact = cm.contact_index.get_contact(phone_number=phone_number)
+    elif isinstance(event, GoogleMeetStarted):
+        cm.mode = Mode.MEET
+        contact_id = event.contact.get("contact_id")
+        contact = cm.contact_index.get_contact(contact_id=contact_id)
     else:
         cm.mode = Mode.MEET
         contact_id = event.contact.get("contact_id")
@@ -275,18 +461,31 @@ async def _(
     sender_name = _get_sender_name(contact)
 
     cm.call_manager.call_contact = contact
-    if isinstance(event, PhoneCallStarted):
+    if isinstance(event, (PhoneCallStarted, WhatsAppCallStarted)):
         cm.call_manager.call_start_timestamp = event.timestamp
-    else:
+        label = "Phone Call" if isinstance(event, PhoneCallStarted) else "WhatsApp Call"
+    elif isinstance(event, GoogleMeetStarted):
+        cm.call_manager.google_meet_start_timestamp = event.timestamp
+        label = "Google Meet"
+    elif isinstance(event, UnifyMeetStarted):
         cm.call_manager.unify_meet_start_timestamp = event.timestamp
+        label = "Unify Meet"
+    else:
+        raise ValueError(f"Unknown event type: {event.__class__.__name__}")
+
     cm.notifications_bar.push_notif(
         "Comms",
-        f"Phone Call started with {sender_name}",
+        f"{label} started with {sender_name}",
         timestamp=event.timestamp,
     )
-    medium = (
-        Medium.PHONE_CALL if isinstance(event, PhoneCallStarted) else Medium.UNIFY_MEET
-    )
+    if isinstance(event, GoogleMeetStarted):
+        medium = Medium.GOOGLE_MEET
+    elif isinstance(event, PhoneCallStarted):
+        medium = Medium.PHONE_CALL
+    elif isinstance(event, WhatsAppCallStarted):
+        medium = Medium.WHATSAPP_CALL
+    else:
+        medium = Medium.UNIFY_MEET
     cm.contact_index.push_message(
         contact_id=contact_id,
         sender_name=sender_name,
@@ -323,6 +522,33 @@ async def _(
     # - ActorResult (action completes)
     # - NotificationInjectedEvent (cross-channel notification)
     # - SMSReceived/EmailReceived while on call
+
+
+@EventHandler.register((GoogleMeetParticipantJoined, GoogleMeetParticipantLeft))
+async def _(
+    event: GoogleMeetParticipantJoined | GoogleMeetParticipantLeft,
+    cm: "ConversationManager",
+    *args,
+    **kwargs,
+):
+    """Surface Google Meet roster changes as notifications so the LLM is aware."""
+    name = event.participant_name
+    if isinstance(event, GoogleMeetParticipantJoined):
+        label = f"{name} joined the Google Meet"
+    else:
+        label = f"{name} left the Google Meet"
+
+    cm.notifications_bar.push_notif("Comms", label, event.timestamp)
+
+    contact_id = (event.contact.get("contact_id") if event.contact else None) or 1
+    cm.contact_index.push_message(
+        contact_id=contact_id,
+        sender_name=name,
+        thread_name=Medium.GOOGLE_MEET,
+        message_content=f"<{label}>",
+        role="system",
+        timestamp=event.timestamp,
+    )
 
 
 @EventHandler.register(PhoneCallNotAnswered)
@@ -370,8 +596,10 @@ async def _(
     cm.call_manager.room_name = None
     cm.call_manager.call_start_timestamp = None
     cm.call_manager.unify_meet_start_timestamp = None
+    cm.call_manager.google_meet_start_timestamp = None
     cm.call_manager.call_exchange_id = UNASSIGNED
     cm.call_manager.unify_meet_exchange_id = UNASSIGNED
+    cm.call_manager.google_meet_exchange_id = UNASSIGNED
 
     # Build display content
     reason_display = {
@@ -401,12 +629,183 @@ async def _(
     )
 
 
+@EventHandler.register(WhatsAppCallNotAnswered)
+async def _(
+    event: WhatsAppCallNotAnswered,
+    cm: "ConversationManager",
+    *args,
+    **kwargs,
+):
+    """Handle outbound WhatsApp call not answered — same cleanup as phone."""
+    contact = cm.contact_index.get_contact(
+        whatsapp_number=event.contact.get("whatsapp_number"),
+    )
+    if contact is None:
+        contact = event.contact
+
+    contact_id = contact.get("contact_id") if contact else 1
+    sender_name = _get_sender_name(contact)
+    reason = event.reason or "no-answer"
+
+    await cm.event_broker.publish(
+        "app:call:status",
+        json.dumps({"type": "stop", "reason": f"call_not_answered:{reason}"}),
+    )
+
+    if cm.mode.is_voice:
+        cm.mode = Mode.TEXT
+        cm.call_manager.call_contact = None
+
+    await cm.call_manager.cleanup_call_proc()
+
+    cm.call_manager.conference_name = None
+    cm.call_manager.room_name = None
+    cm.call_manager.call_start_timestamp = None
+    cm.call_manager.unify_meet_start_timestamp = None
+    cm.call_manager.call_exchange_id = UNASSIGNED
+    cm.call_manager.unify_meet_exchange_id = UNASSIGNED
+
+    reason_display = {
+        "no-answer": "did not answer",
+        "busy": "was busy",
+        "canceled": "call was canceled",
+        "failed": "call failed",
+    }.get(reason, f"not answered ({reason})")
+
+    notif_content = f"Outbound WhatsApp call to {sender_name} {reason_display}"
+    cm.notifications_bar.push_notif("Comms", notif_content, event.timestamp)
+
+    cm.contact_index.push_message(
+        contact_id=contact_id,
+        sender_name=sender_name,
+        thread_name=Medium.WHATSAPP_CALL,
+        message_content=f"<WhatsApp Call Not Answered: {reason_display}>",
+        role="assistant",
+        timestamp=event.timestamp,
+    )
+
+    await cm.request_llm_run(
+        delay=0,
+        cancel_running=True,
+        triggering_contact_id=contact_id,
+    )
+
+
+@EventHandler.register(WhatsAppCallPermissionResponse)
+async def _(
+    event: WhatsAppCallPermissionResponse,
+    cm: "ConversationManager",
+    *args,
+    **kwargs,
+):
+    """Handle call permission grant/rejection from a WhatsApp contact."""
+    contact = event.contact
+    contact_id = contact.get("contact_id") if contact else 1
+    sender_name = _get_sender_name(contact)
+
+    has_pending_context = contact_id in cm._pending_whatsapp_call_contexts
+
+    if event.accepted:
+        notif_content = f"{sender_name} granted WhatsApp call permission"
+    else:
+        notif_content = f"{sender_name} rejected WhatsApp call permission"
+        cm._pending_whatsapp_call_contexts.pop(contact_id, None)
+
+    cm.notifications_bar.push_notif("Comms", notif_content, event.timestamp)
+
+    cm.contact_index.push_message(
+        contact_id=contact_id,
+        sender_name=sender_name,
+        thread_name=Medium.WHATSAPP_CALL,
+        message_content=f"<Call Permission: {'Accepted' if event.accepted else 'Rejected'}>",
+        role="user",
+        timestamp=event.timestamp,
+    )
+
+    if event.accepted and has_pending_context:
+        # Permission granted after we sent a VOICE_CALL_REQUEST template.
+        # Place the outbound call directly — no LLM round-trip needed.
+        from unity.conversation_manager.domains import comms_utils
+        from unity.conversation_manager.domains.call_manager import make_room_name
+
+        context = cm._pending_whatsapp_call_contexts.pop(contact_id)
+        cm.call_manager.initial_notification = context
+
+        whatsapp_number = contact.get("whatsapp_number")
+        assistant_id = str(SESSION_DETAILS.assistant.agent_id)
+        agent_name = SESSION_DETAILS.assistant.name or ""
+        room_name = make_room_name(assistant_id, "whatsapp_call")
+
+        cm.call_manager._whatsapp_call_joining = True
+        response = await comms_utils.start_whatsapp_call(
+            to_number=whatsapp_number,
+            agent_name=agent_name,
+            room_name=room_name,
+        )
+        if response.get("success"):
+            call_event = WhatsAppCallSent(contact=contact)
+            await cm._event_broker.publish(
+                "app:comms:whatsapp_call_sent",
+                call_event.to_json(),
+            )
+            return
+
+        cm.call_manager._whatsapp_call_joining = False
+        cm.call_manager.initial_notification = None
+        cm.contact_index.push_message(
+            contact_id=contact_id,
+            sender_name=sender_name,
+            thread_name=Medium.WHATSAPP_CALL,
+            message_content="<WhatsApp Call Failed After Permission Granted>",
+            role="assistant",
+            timestamp=event.timestamp,
+        )
+
+    await cm.request_llm_run(
+        delay=0,
+        cancel_running=True,
+        triggering_contact_id=contact_id,
+    )
+
+
+@EventHandler.register(WhatsAppCallInviteSent)
+async def _(
+    event: WhatsAppCallInviteSent,
+    cm: "ConversationManager",
+    *args,
+    **kwargs,
+):
+    """Log the invite template send in the conversation thread."""
+    contact = event.contact
+    contact_id = contact.get("contact_id") if contact else 1
+    sender_name = _get_sender_name(contact)
+
+    cm.notifications_bar.push_notif(
+        "Comms",
+        f"WhatsApp call invite sent to {sender_name}",
+        event.timestamp,
+    )
+
+    cm.contact_index.push_message(
+        contact_id=contact_id,
+        sender_name=sender_name,
+        thread_name=Medium.WHATSAPP_CALL,
+        message_content="<WhatsApp Call Invite Sent>",
+        role="assistant",
+        timestamp=event.timestamp,
+    )
+
+
 @EventHandler.register(
     (
         InboundPhoneUtterance,
         InboundUnifyMeetUtterance,
+        InboundWhatsAppCallUtterance,
         OutboundPhoneUtterance,
         OutboundUnifyMeetUtterance,
+        OutboundWhatsAppCallUtterance,
+        InboundGoogleMeetUtterance,
+        OutboundGoogleMeetUtterance,
     ),
 )
 async def _(event: Event, cm: "ConversationManager", *args, **kwargs):
@@ -422,11 +821,31 @@ async def _(event: Event, cm: "ConversationManager", *args, **kwargs):
     sender_name = _get_sender_name(contact)
     role = "user" if event.__class__.__name__.startswith("Inbound") else "assistant"
 
+    is_whatsapp_call = isinstance(
+        event,
+        (InboundWhatsAppCallUtterance, OutboundWhatsAppCallUtterance),
+    )
+    is_google_meet = isinstance(
+        event,
+        (InboundGoogleMeetUtterance, OutboundGoogleMeetUtterance),
+    )
     is_unify_meet = isinstance(
         event,
         (InboundUnifyMeetUtterance, OutboundUnifyMeetUtterance),
     )
-    medium = Medium.UNIFY_MEET if is_unify_meet else Medium.PHONE_CALL
+    if is_google_meet:
+        medium = Medium.GOOGLE_MEET
+    elif is_unify_meet:
+        medium = Medium.UNIFY_MEET
+    elif is_whatsapp_call:
+        medium = Medium.WHATSAPP_CALL
+    else:
+        medium = Medium.PHONE_CALL
+
+    # For diarized Meet utterances, prefer the speaker_label from the event
+    if isinstance(event, InboundGoogleMeetUtterance) and event.speaker_label:
+        sender_name = event.speaker_label
+
     message_id = cm.contact_index.push_message(
         contact_id=contact_id,
         sender_name=sender_name,
@@ -470,13 +889,22 @@ async def _(
     *args,
     **kwargs,
 ):
-    contact_id = event.contact["contact_id"]
-    contact = cm.contact_index.get_contact(contact_id=contact_id)
+    contact_id = event.contact.get("contact_id") if event.contact else None
+    contact = (
+        cm.contact_index.get_contact(contact_id=contact_id) if contact_id else None
+    )
     if contact is None:
-        contact = event.contact
+        contact = event.contact or {}
     sender_name = _get_sender_name(contact)
 
-    medium = Medium.UNIFY_MEET if cm.mode == Mode.MEET else Medium.PHONE_CALL
+    if cm.call_manager.has_active_google_meet:
+        medium = Medium.GOOGLE_MEET
+    elif cm.mode == Mode.MEET:
+        medium = Medium.UNIFY_MEET
+    elif cm.call_manager._call_channel == "whatsapp_call":
+        medium = Medium.WHATSAPP_CALL
+    else:
+        medium = Medium.PHONE_CALL
     cm.contact_index.push_message(
         contact_id=contact_id,
         sender_name=sender_name,
@@ -489,16 +917,18 @@ async def _(
         await cm.schedule_proactive_speech()
 
 
-@EventHandler.register((PhoneCallEnded, UnifyMeetEnded))
+@EventHandler.register(
+    (PhoneCallEnded, UnifyMeetEnded, GoogleMeetEnded, WhatsAppCallEnded),
+)
 async def _(
-    event: PhoneCallEnded | UnifyMeetEnded,
+    event: PhoneCallEnded | UnifyMeetEnded | GoogleMeetEnded | WhatsAppCallEnded,
     cm: "ConversationManager",
     *args,
     **kwargs,
 ):
     # Persist session identifiers in exchange metadata and stash the
     # exchange_id so the async RecordingReady handler can find it.
-    if isinstance(event, PhoneCallEnded):
+    if isinstance(event, (PhoneCallEnded, WhatsAppCallEnded)):
         exchange_id = cm.call_manager.call_exchange_id
         if exchange_id != UNASSIGNED and cm.call_manager.conference_name:
             cm.transcript_manager.update_exchange_metadata(
@@ -506,6 +936,14 @@ async def _(
                 {"conference_name": cm.call_manager.conference_name},
             )
             cm._recording_exchange_ids[cm.call_manager.conference_name] = exchange_id
+    elif isinstance(event, GoogleMeetEnded):
+        exchange_id = cm.call_manager.google_meet_exchange_id
+        if exchange_id != UNASSIGNED and cm.call_manager.room_name:
+            cm.transcript_manager.update_exchange_metadata(
+                exchange_id,
+                {"room_name": cm.call_manager.room_name},
+            )
+            cm._recording_exchange_ids[cm.call_manager.room_name] = exchange_id
     else:
         exchange_id = cm.call_manager.unify_meet_exchange_id
         if exchange_id != UNASSIGNED and cm.call_manager.room_name:
@@ -517,9 +955,14 @@ async def _(
 
     cm.mode = Mode.TEXT
     cm.call_manager.call_contact = None
-    if isinstance(event, UnifyMeetEnded):
+
+    if isinstance(event, (UnifyMeetEnded, GoogleMeetEnded)):
         contact_id = event.contact.get("contact_id")
         contact = cm.contact_index.get_contact(contact_id=contact_id)
+    elif isinstance(event, WhatsAppCallEnded):
+        contact = cm.contact_index.get_contact(
+            whatsapp_number=event.contact.get("whatsapp_number"),
+        )
     else:
         contact = cm.contact_index.get_contact(
             phone_number=event.contact["phone_number"],
@@ -535,7 +978,10 @@ async def _(
     if conv_state:
         conv_state.on_call = False
 
-    await cm.call_manager.cleanup_call_proc()
+    if isinstance(event, GoogleMeetEnded):
+        await cm.call_manager.cleanup_google_meet()
+    else:
+        await cm.call_manager.cleanup_call_proc()
     await cm.cancel_proactive_speech()
     await _cleanup_computer_sessions(cm)
 
@@ -544,8 +990,25 @@ async def _(
     cm.call_manager.room_name = None
     cm.call_manager.call_start_timestamp = None
     cm.call_manager.unify_meet_start_timestamp = None
+    cm.call_manager.google_meet_start_timestamp = None
     cm.call_manager.call_exchange_id = UNASSIGNED
     cm.call_manager.unify_meet_exchange_id = UNASSIGNED
+    cm.call_manager.google_meet_exchange_id = UNASSIGNED
+
+    sender_name = _get_sender_name(contact)
+    if isinstance(event, GoogleMeetEnded):
+        label = "Google Meet"
+    elif isinstance(event, UnifyMeetEnded):
+        label = "Unify Meet"
+    elif isinstance(event, WhatsAppCallEnded):
+        label = "WhatsApp call"
+    else:
+        label = "Phone call"
+    cm.notifications_bar.push_notif(
+        "Comms",
+        f"{label} with {sender_name} has ended.",
+        event.timestamp,
+    )
 
     await cm.request_llm_run(
         delay=0,
@@ -621,7 +1084,6 @@ async def _(
     ),
 )
 async def _(event, cm: "ConversationManager", *args, **kwargs):
-    cm._has_non_forwarded_event = True
     if isinstance(event, ActorClarificationRequest):
         if event.handle_id in cm.in_flight_actions:
             from unity.common.prompt_helpers import now as prompt_now
@@ -755,6 +1217,8 @@ def _push_email_to_all_contacts(
     (
         SMSSent,
         SMSReceived,
+        WhatsAppSent,
+        WhatsAppReceived,
         EmailSent,
         EmailReceived,
         UnifyMessageSent,
@@ -782,13 +1246,6 @@ async def _(event, cm: "ConversationManager", *args, **kwargs):
     contact_id = contact.get("contact_id") if isinstance(contact, dict) else None
     sender_name = _get_sender_name(contact)
 
-    # Flag non-participant comms during voice calls. The fast brain only
-    # renders comms from the active call contact; everything else is dropped.
-    if getattr(cm.mode, "is_voice", False):
-        call_contact_id = (cm.call_manager.call_contact or {}).get("contact_id")
-        if contact_id != call_contact_id:
-            cm._has_non_forwarded_event = True
-
     match event:
         case SMSSent():
             medium = Medium.SMS_MESSAGE
@@ -810,6 +1267,44 @@ async def _(event, cm: "ConversationManager", *args, **kwargs):
                 "sms_received",
                 f"SMS from {sender_name}: {event.content}",
             )
+        case WhatsAppSent():
+            medium = Medium.WHATSAPP_MESSAGE
+            message_content = event.content
+            attachments = event.attachments
+            notif_content = f"WhatsApp sent to {sender_name}"
+            role = "assistant"
+            event_trace = getattr(cm, "_current_event_trace", None) or {}
+            cm._session_logger.info(
+                "whatsapp_sent",
+                f"WhatsApp to {sender_name}: {event.content}",
+            )
+        case WhatsAppReceived():
+            medium = Medium.WHATSAPP_MESSAGE
+            message_content = event.content
+            attachments = event.attachments
+            notif_content = f"WhatsApp received from {sender_name}"
+            role = "user"
+            event_trace = getattr(cm, "_current_event_trace", None) or {}
+            cm._session_logger.info(
+                "whatsapp_received",
+                f"WhatsApp from {sender_name}: {event.content}",
+            )
+            pending_content = (
+                cm._pending_whatsapp_resends.pop(contact_id, None)
+                if contact_id is not None
+                else None
+            )
+            if pending_content is not None:
+                cm.notifications_bar.push_notif(
+                    "comms",
+                    (
+                        f"Your earlier WhatsApp message to {sender_name} "
+                        f"was not delivered verbatim. Original message: "
+                        f'"{pending_content}". You can now resend or '
+                        f"rework it via send_whatsapp."
+                    ),
+                    event.timestamp,
+                )
         case EmailSent():
             event_trace = getattr(cm, "_current_event_trace", None) or {}
             recipients = ", ".join((event.to or [])[:2])
@@ -968,7 +1463,6 @@ async def _(event: Error, cm: "ConversationManager", *args, **kwargs):
     lightweight notification and triggers a follow-up brain turn so the brain
     can see the failure and decide how to recover.
     """
-    cm._has_non_forwarded_event = True
     cm.notifications_bar.push_notif("Error", event.message, event.timestamp)
     await cm.request_llm_run(delay=0)
 
@@ -1015,7 +1509,6 @@ async def _(event: UnknownContactCreated, cm: "ConversationManager", *args, **kw
         or "Unknown"
     )
 
-    cm._has_non_forwarded_event = True
     cm._session_logger.info(
         "unknown_contact_created",
         f"New unknown contact created: {contact_name} via {event.medium}",
@@ -1136,6 +1629,8 @@ async def _(event: AssistantUpdateEvent, cm: "ConversationManager", *args, **kwa
         event.user_surname,
         event.user_number,
         event.user_email,
+        event.assistant_whatsapp_number,
+        event.user_whatsapp_number,
     )
 
 
@@ -1160,7 +1655,6 @@ async def _(
     *args,
     **kwargs,
 ):
-    cm._has_non_forwarded_event = True
     cm._session_logger.info(
         "notification_injected",
         f"Notification: {event.content[:50]}...",
@@ -1195,7 +1689,6 @@ async def _(
 
 @EventHandler.register(ActorResult)
 async def _(event: ActorResult, cm: "ConversationManager", *args, **kwargs):
-    cm._has_non_forwarded_event = True
     action_data = cm.in_flight_actions.get(event.handle_id, {})
 
     # Log completion in handle_actions before moving to completed_actions.
@@ -1225,7 +1718,6 @@ async def _(event: ActorSessionResponse, cm: "ConversationManager", *args, **kwa
     a response means the actor is *done with this turn* and will not proceed
     until the brain interjects with the next instruction.
     """
-    cm._has_non_forwarded_event = True
     action_data = cm.in_flight_actions.get(event.handle_id, {})
 
     from unity.common.prompt_helpers import now as prompt_now
@@ -1274,7 +1766,6 @@ async def _(
 ):
     """A visible computer session's act() call completed somewhere in the
     system. Push a notification and wake the slow brain so it can react."""
-    cm._has_non_forwarded_event = True
     snippet = event.summary[:120] if event.summary else event.instruction[:120]
     cm.notifications_bar.push_notif(
         "Computer",
@@ -1403,6 +1894,25 @@ async def _(
     from unity.function_manager.primitives.runtime import _vm_ready
     from unity.session_details import SESSION_DETAILS
 
+    current_binding_id = SESSION_DETAILS.assistant.binding_id or ""
+    if current_binding_id and not event.binding_id:
+        cm._session_logger.info(
+            "desktop_ready_missing_binding",
+            "Ignoring desktop_ready without binding_id because the session already has a current binding",
+        )
+        return
+    if (
+        event.binding_id
+        and current_binding_id
+        and event.binding_id != current_binding_id
+    ):
+        cm._session_logger.info(
+            "desktop_ready_stale",
+            f"Ignoring stale desktop_ready for binding {event.binding_id}; current binding is {current_binding_id}",
+        )
+        return
+
+    resolved_binding_id = event.binding_id or current_binding_id
     desktop_url = event.desktop_url or SESSION_DETAILS.assistant.desktop_url or ""
 
     cm._session_logger.info(
@@ -1451,6 +1961,7 @@ async def _(
     )
 
     await comms_utils.publish_assistant_desktop_ready(
+        resolved_binding_id,
         desktop_url,
         liveview_url,
         event.vm_type,
@@ -1698,7 +2209,7 @@ async def _(
 @EventHandler.register(LogMessageResponse)
 async def _(event: LogMessageResponse, cm: "ConversationManager", *args, **kwargs):
     if (
-        event.medium == Medium.PHONE_CALL
+        event.medium in (Medium.PHONE_CALL, Medium.WHATSAPP_CALL)
         and cm.call_manager.call_exchange_id == UNASSIGNED
     ):
         cm.call_manager.call_exchange_id = event.exchange_id
@@ -1707,6 +2218,11 @@ async def _(event: LogMessageResponse, cm: "ConversationManager", *args, **kwarg
         and cm.call_manager.unify_meet_exchange_id == UNASSIGNED
     ):
         cm.call_manager.unify_meet_exchange_id = event.exchange_id
+    if (
+        event.medium == Medium.GOOGLE_MEET
+        and cm.call_manager.google_meet_exchange_id == UNASSIGNED
+    ):
+        cm.call_manager.google_meet_exchange_id = event.exchange_id
 
 
 @EventHandler.register(PreHireMessage)
@@ -1735,7 +2251,14 @@ async def _(event: DirectMessageEvent, cm: "ConversationManager", *args, **kwarg
     contact_id = contact.get("contact_id") if contact else 1
     sender_name = _get_sender_name(contact)
 
-    medium = Medium.UNIFY_MEET if cm.mode == Mode.MEET else Medium.PHONE_CALL
+    if cm.call_manager.has_active_google_meet:
+        medium = Medium.GOOGLE_MEET
+    elif cm.mode == Mode.MEET:
+        medium = Medium.UNIFY_MEET
+    elif cm.call_manager._call_channel == "whatsapp_call":
+        medium = Medium.WHATSAPP_CALL
+    else:
+        medium = Medium.PHONE_CALL
     cm.contact_index.push_message(
         contact_id=contact_id,
         sender_name=sender_name,

@@ -1,14 +1,24 @@
 import os
 import sys
 import json
+import queue
 import asyncio
+import threading
 
 os.environ["UNITY_TERMINAL_LOG"] = "true"
 
 from dotenv import load_dotenv
 
-from livekit import agents
-from livekit.agents import AgentSession, Agent, RoomInputOptions
+from livekit import agents, rtc
+from livekit.agents import (
+    AgentSession,
+    Agent,
+    RoomInputOptions,
+    utils,
+    tokenize,
+    tts,
+    stt,
+)
 from livekit.plugins import (
     cartesia,
     deepgram,
@@ -23,7 +33,8 @@ if sys.platform == "darwin":
 
 from livekit.plugins.turn_detector.english import EnglishModel
 from livekit.agents import ChatContext, ChatMessage
-from livekit.agents import ModelSettings, llm, FunctionTool
+from livekit.agents import ModelSettings, llm
+from livekit.agents.llm import Tool
 
 from typing import AsyncIterable
 
@@ -76,6 +87,95 @@ VAD = None
 _log = FastBrainLogger()
 
 
+class MeetAudioBridge:
+    """Owns all PortAudio/sounddevice streams on a single dedicated thread.
+
+    PortAudio is thread-hostile: all API calls (open/start/stop/close) must
+    happen on the same thread.  Keeping streams open for the entire Meet
+    session also avoids the PulseAudio ring-buffer memory leak triggered by
+    repeated open/close cycles (PortAudio issue #968).
+    """
+
+    def __init__(self, capture_rate: int = 16000):
+        self._capture_rate = capture_rate
+        self.capture_q: asyncio.Queue[bytes] = asyncio.Queue()
+        self._playback_q: queue.Queue[tuple[bytes, int, int] | None] | None = None
+        self._loop: asyncio.AbstractEventLoop | None = None
+        self._thread: threading.Thread | None = None
+        self._stop_event: threading.Event | None = None
+        self._in_stream = None
+        self._out_stream = None
+
+    def start(self, loop: asyncio.AbstractEventLoop) -> None:
+        self._loop = loop
+        self._playback_q = queue.Queue()
+        self._stop_event = threading.Event()
+        self._thread = threading.Thread(target=self._run, daemon=True)
+        self._thread.start()
+
+    def write_playback(self, pcm: bytes, sample_rate: int, num_channels: int) -> None:
+        if self._playback_q is not None:
+            self._playback_q.put((pcm, sample_rate, num_channels))
+
+    def stop(self) -> None:
+        if self._stop_event is not None:
+            self._stop_event.set()
+        if self._playback_q is not None:
+            self._playback_q.put(None)
+        if self._thread is not None:
+            self._thread.join(timeout=5)
+            self._thread = None
+
+    def _run(self) -> None:
+        import sounddevice as sd
+        import numpy as np
+
+        def _capture_callback(indata, frames, time_info, status):
+            pcm = (indata * 32767).astype(np.int16).tobytes()
+            if self._loop is not None:
+                self._loop.call_soon_threadsafe(self.capture_q.put_nowait, pcm)
+
+        self._in_stream = sd.InputStream(
+            channels=1,
+            samplerate=self._capture_rate,
+            dtype="float32",
+            blocksize=1024,
+            callback=_capture_callback,
+        )
+        self._in_stream.start()
+
+        try:
+            while not self._stop_event.is_set():
+                try:
+                    item = self._playback_q.get(timeout=0.1)
+                except Exception:
+                    continue
+                if item is None:
+                    break
+                pcm_bytes, sample_rate, num_channels = item
+                if self._out_stream is None:
+                    self._out_stream = sd.OutputStream(
+                        samplerate=sample_rate,
+                        channels=num_channels,
+                        dtype="int16",
+                        latency="high",
+                    )
+                    self._out_stream.start()
+                audio_arr = np.frombuffer(pcm_bytes, dtype=np.int16)
+                if num_channels > 1:
+                    audio_arr = audio_arr.reshape(-1, num_channels)
+                self._out_stream.write(audio_arr)
+        finally:
+            if self._out_stream is not None:
+                self._out_stream.stop()
+                self._out_stream.close()
+                self._out_stream = None
+            if self._in_stream is not None:
+                self._in_stream.stop()
+                self._in_stream.close()
+                self._in_stream = None
+
+
 def prewarm(_ctx=None):
     global STT, VAD
     try:
@@ -106,22 +206,27 @@ class Assistant(Agent):
         channel: str,
         instructions: str,
         outbound: bool = False,
+        audio_bridge: MeetAudioBridge | None = None,
     ) -> None:
         self.contact = contact
         self.boss = boss
         self.channel = channel
-        self.utterance_event = (
-            InboundPhoneUtterance
-            if channel == "phone_call"
-            else InboundUnifyMeetUtterance
-        )
-        self.assistant_utterance_event = (
-            OutboundPhoneUtterance
-            if channel == "phone_call"
-            else OutboundUnifyMeetUtterance
-        )
+        self.audio_bridge = audio_bridge
+        if channel == "phone_call":
+            self.utterance_event = InboundPhoneUtterance
+            self.assistant_utterance_event = OutboundPhoneUtterance
+        elif channel == "whatsapp_call":
+            self.utterance_event = InboundWhatsAppCallUtterance
+            self.assistant_utterance_event = OutboundWhatsAppCallUtterance
+        elif channel == "google_meet":
+            self.utterance_event = InboundGoogleMeetUtterance
+            self.assistant_utterance_event = OutboundGoogleMeetUtterance
+        else:
+            self.utterance_event = InboundUnifyMeetUtterance
+            self.assistant_utterance_event = OutboundUnifyMeetUtterance
         self.call_received = not outbound
         self._user_speech_logged = False
+        self.user_turn_generating = False
 
         super().__init__(instructions=instructions)
 
@@ -142,35 +247,129 @@ class Assistant(Agent):
     async def llm_node(
         self,
         chat_ctx: llm.ChatContext,
-        tools: list[FunctionTool],
+        tools: list[Tool],
         model_settings: ModelSettings,
     ) -> AsyncIterable[llm.ChatChunk]:
         """Wait for call connection then delegate to parent LLM."""
-        _log.info("Waiting for call to be received…")
-        while not self.call_received:
-            await asyncio.sleep(0.1)
-        _log.call_status("call_received")
+        self.user_turn_generating = True
+        try:
+            _log.info("Waiting for call to be received…")
+            while not self.call_received:
+                await asyncio.sleep(0.1)
+            _log.call_status("call_received")
 
-        await self._capture_screenshots_for_llm(chat_ctx)
+            await self._capture_screenshots_for_llm(chat_ctx)
 
-        asyncio.create_task(
-            event_broker.publish("app:comms:fast_brain_generating", "{}"),
-        )
+            asyncio.create_task(
+                event_broker.publish("app:comms:fast_brain_generating", "{}"),
+            )
 
-        from unity.settings import SETTINGS
+            from unity.settings import SETTINGS
 
-        window = SETTINGS.conversation.FAST_BRAIN_CONTEXT_WINDOW
-        trimmed_items = trim_fast_brain_context(chat_ctx.items, window)
-        if len(trimmed_items) < len(chat_ctx.items):
-            trimmed_ctx = llm.ChatContext()
-            for item in trimmed_items:
-                trimmed_ctx.items.append(item)
-        else:
-            trimmed_ctx = chat_ctx
+            window = SETTINGS.conversation.FAST_BRAIN_CONTEXT_WINDOW
+            trimmed_items = trim_fast_brain_context(chat_ctx.items, window)
+            if len(trimmed_items) < len(chat_ctx.items):
+                trimmed_ctx = llm.ChatContext()
+                for item in trimmed_items:
+                    trimmed_ctx.items.append(item)
+            else:
+                trimmed_ctx = chat_ctx
 
-        _log.info("LLM thinking… (llm_node_start)")
-        async for chunk in super().llm_node(trimmed_ctx, tools, model_settings):
-            yield chunk
+            _log.info("LLM thinking… (llm_node_start)")
+            async for chunk in super().llm_node(
+                trimmed_ctx,
+                tools,
+                model_settings,
+            ):
+                yield chunk
+        finally:
+            self.user_turn_generating = False
+
+    async def stt_node(
+        self,
+        audio: AsyncIterable[rtc.AudioFrame],
+        model_settings: ModelSettings,
+    ):
+        if self.channel != "google_meet" or self.audio_bridge is None:
+            async for event in super().stt_node(audio, model_settings):
+                yield event
+            return
+
+        activity = self._get_activity_or_raise()
+        assert activity.stt is not None
+
+        wrapped_stt = activity.stt
+        if not activity.stt.capabilities.streaming:
+            if not activity.vad:
+                raise RuntimeError(
+                    "STT does not support streaming and no VAD is available",
+                )
+            wrapped_stt = stt.StreamAdapter(stt=wrapped_stt, vad=activity.vad)
+
+        _RATE = self.audio_bridge._capture_rate
+
+        async def _audio_from_bridge():
+            while True:
+                pcm = await self.audio_bridge.capture_q.get()
+                samples = len(pcm) // 2
+                yield rtc.AudioFrame(
+                    data=pcm,
+                    sample_rate=_RATE,
+                    num_channels=1,
+                    samples_per_channel=samples,
+                )
+
+        async with wrapped_stt.stream() as stt_stream:
+
+            async def _forward():
+                async for frame in _audio_from_bridge():
+                    stt_stream.push_frame(frame)
+
+            fwd = asyncio.create_task(_forward())
+            try:
+                async for event in stt_stream:
+                    yield event
+            finally:
+                await utils.aio.cancel_and_wait(fwd)
+
+    async def tts_node(
+        self,
+        text: AsyncIterable[str],
+        model_settings: ModelSettings,
+    ) -> AsyncIterable:
+        if self.channel != "google_meet" or self.audio_bridge is None:
+            async for frame in super().tts_node(text, model_settings):
+                yield frame
+            return
+
+        activity = self._get_activity_or_raise()
+        assert activity.tts is not None
+
+        wrapped_tts = activity.tts
+        if not activity.tts.capabilities.streaming:
+            wrapped_tts = tts.StreamAdapter(
+                tts=wrapped_tts,
+                sentence_tokenizer=tokenize.basic.SentenceTokenizer(),
+            )
+
+        async with wrapped_tts.stream() as tts_stream:
+
+            async def _forward_input():
+                async for chunk in text:
+                    tts_stream.push_text(chunk)
+                tts_stream.end_input()
+
+            fwd = asyncio.create_task(_forward_input())
+            try:
+                async for ev in tts_stream:
+                    frame = ev.frame
+                    self.audio_bridge.write_playback(
+                        frame.data,
+                        frame.sample_rate,
+                        frame.num_channels,
+                    )
+            finally:
+                await utils.aio.cancel_and_wait(fwd)
 
 
 def _load_config_from_metadata(ctx: agents.JobContext) -> dict | None:
@@ -269,6 +468,20 @@ async def entrypoint(ctx: agents.JobContext):
         contact = json.loads(SESSION_DETAILS.voice_call.contact_json or "{}")
         boss = json.loads(SESSION_DETAILS.voice_call.boss_json or "{}")
 
+    # Google Meet diarization config
+    gmeet_session_id: str = ""
+    gmeet_meet_url: str = ""
+    gmeet_agent_service_url: str = ""
+    if channel == "google_meet":
+        if meta:
+            gmeet_session_id = meta.get("gmeet_session_id", "")
+            gmeet_meet_url = meta.get("gmeet_meet_url", "")
+            gmeet_agent_service_url = meta.get("agent_service_url", "")
+        else:
+            gmeet_session_id = os.environ.get("GMEET_SESSION_ID", "")
+            gmeet_meet_url = os.environ.get("GMEET_MEET_URL", "")
+            gmeet_agent_service_url = os.environ.get("AGENT_SERVICE_URL", "")
+
     _log.config(
         f"voice_provider={voice_provider} voice_id={voice_id} outbound={outbound} channel={channel}",
     )
@@ -302,6 +515,223 @@ async def entrypoint(ctx: agents.JobContext):
         STT = deepgram.STT(model="nova-3", language="en-GB")
         VAD = silero.VAD.load(min_speech_duration=0.15, min_silence_duration=1.0)
 
+    stt_instance = STT
+    if channel == "google_meet":
+        stt_instance = deepgram.STT(
+            model="nova-3",
+            language="en-GB",
+            enable_diarization=True,
+        )
+
+    # --- Google Meet speaker + participant tracker ---
+    # Speaker identity uses two complementary signals:
+    # 1. Deepgram diarization (enable_diarization=True) for precise per-utterance
+    #    anonymous speaker IDs (S0, S1, ...).
+    # 2. DOM scraping (activeSpeaker) via _gmeet_poll_loop for display names.
+    # The correlation mapping table (_gmeet_speaker_map) links the two.
+    _gmeet_auth_key = SESSION_DETAILS.unify_key
+    _gmeet_cached_active_speaker: str | None = None
+    _gmeet_cached_participants: list[dict] = []
+    _gmeet_prev_participant_names: set[str] = set()
+    _gmeet_latest_screenshot: str | None = None
+    _gmeet_display_name: str = ""
+    _gmeet_last_speaker_id: str | None = None
+    _gmeet_speaker_map: dict[str, dict[str, int]] = {}
+    if channel == "google_meet":
+        if meta:
+            _gmeet_display_name = meta.get("gmeet_display_name", "")
+        if not _gmeet_display_name:
+            _gmeet_display_name = SESSION_DETAILS.assistant.name or "Unity Assistant"
+
+    def _resolve_contact_by_name(display_name: str) -> dict | None:
+        """Best-effort contact resolution from a Meet display name.
+
+        Tries an exact first_name+surname match across known contacts
+        (the caller contact and the boss). Falls back to None if no match,
+        letting the caller use the original contact dict.
+        """
+        if not display_name:
+            return None
+        dn_lower = display_name.strip().lower()
+        for candidate in (contact, boss):
+            full = f"{candidate.get('first_name', '')} {candidate.get('surname', '')}".strip()
+            if full.lower() == dn_lower:
+                return candidate
+            if candidate.get("first_name", "").lower() == dn_lower:
+                return candidate
+        return None
+
+    def _resolve_speaker() -> tuple[dict, str | None, str | None]:
+        """Resolve the current Google Meet speaker to (contact_dict, display_name, speaker_id).
+
+        Uses two signals in priority order:
+        1. Diarization speaker_id → correlation mapping (precise, audio-level).
+        2. DOM-scraped activeSpeaker name (fallback, 2s polling granularity).
+        Returns (contact_dict, display_name_or_None, diarization_speaker_id_or_None).
+        """
+        if channel != "google_meet":
+            return contact, None, None
+
+        sid = _gmeet_last_speaker_id
+
+        # Primary: diarization speaker_id → mapped display name
+        if sid and sid in _gmeet_speaker_map:
+            votes = _gmeet_speaker_map[sid]
+            if votes:
+                top_name = max(votes, key=votes.get)
+                top_count = votes[top_name]
+                total = sum(votes.values())
+                if top_count >= 2 and top_count / total > 0.6:
+                    resolved = _resolve_contact_by_name(top_name)
+                    if resolved:
+                        label = f"{resolved.get('first_name', '')} {resolved.get('surname', '')}".strip()
+                        return resolved, label or None, sid
+                    return contact, top_name, sid
+
+        # Fallback: DOM active speaker
+        active_name = _gmeet_cached_active_speaker
+        if active_name:
+            resolved = _resolve_contact_by_name(active_name)
+            if resolved:
+                label = f"{resolved.get('first_name', '')} {resolved.get('surname', '')}".strip()
+                return resolved, label or None, sid
+            return contact, active_name, sid
+
+        return contact, None, sid
+
+    def _get_gmeet_participant_names() -> list[str]:
+        """Return display names of all human participants (excluding the assistant)."""
+        return [
+            p["name"]
+            for p in _gmeet_cached_participants
+            if p.get("name") and p["name"] != _gmeet_display_name
+        ]
+
+    async def _gmeet_poll_loop() -> None:
+        """Background loop: poll agent-service for active speaker + meeting status.
+
+        Two phases:
+        1. Discovery — if gmeet_session_id wasn't provided at dispatch time,
+           poll GET /googlemeet/sessions and match by meetUrl.
+        2. State polling — poll GET /googlemeet/state for active speaker,
+           participant roster, and meeting-end detection.
+        """
+        nonlocal _gmeet_cached_active_speaker, _gmeet_cached_participants
+        nonlocal _gmeet_prev_participant_names, gmeet_session_id
+        nonlocal _gmeet_latest_screenshot
+        import aiohttp as _aiohttp
+
+        try:
+            async with _aiohttp.ClientSession() as http:
+                # Phase 1: discover session ID if not provided
+                while not gmeet_session_id:
+                    _log.info(
+                        "Discovering Google Meet session ID via /googlemeet/sessions...",
+                    )
+                    try:
+                        resp = await http.get(
+                            f"{gmeet_agent_service_url}/googlemeet/sessions",
+                            headers={"authorization": f"Bearer {_gmeet_auth_key}"},
+                            timeout=_aiohttp.ClientTimeout(total=5),
+                        )
+                        if resp.status == 200:
+                            body = await resp.json()
+                            for s in body.get("sessions", []):
+                                if (
+                                    gmeet_meet_url
+                                    and s.get("meetUrl") == gmeet_meet_url
+                                ):
+                                    gmeet_session_id = s["sessionId"]
+                                    _log.info(
+                                        f"Discovered Google Meet session ID: {gmeet_session_id}",
+                                    )
+                                    break
+                    except Exception:
+                        pass
+                    if not gmeet_session_id:
+                        await asyncio.sleep(1)
+
+                # Phase 2: poll state for active speaker + meeting end
+                while True:
+                    await asyncio.sleep(1)
+                    try:
+                        resp = await http.get(
+                            f"{gmeet_agent_service_url}/googlemeet/state",
+                            params={"sessionId": gmeet_session_id},
+                            headers={"authorization": f"Bearer {_gmeet_auth_key}"},
+                            timeout=_aiohttp.ClientTimeout(total=5),
+                        )
+                        if resp.status != 200:
+                            continue
+                        body = await resp.json()
+                    except Exception:
+                        continue
+
+                    _gmeet_cached_active_speaker = body.get("activeSpeaker")
+                    _gmeet_cached_participants = body.get("participants", [])
+
+                    # Diff roster for join/leave notifications
+                    current_names = {
+                        p["name"] for p in _gmeet_cached_participants if p.get("name")
+                    }
+                    joined = current_names - _gmeet_prev_participant_names
+                    left = _gmeet_prev_participant_names - current_names
+                    _gmeet_prev_participant_names = current_names
+
+                    for name in joined:
+                        if name == _gmeet_display_name:
+                            continue
+                        evt = GoogleMeetParticipantJoined(
+                            contact=contact,
+                            participant_name=name,
+                        )
+                        asyncio.create_task(
+                            event_broker.publish(
+                                "app:comms:googlemeet_participant",
+                                evt.to_json(),
+                            ),
+                        )
+
+                    for name in left:
+                        if name == _gmeet_display_name:
+                            continue
+                        evt = GoogleMeetParticipantLeft(
+                            contact=contact,
+                            participant_name=name,
+                        )
+                        asyncio.create_task(
+                            event_broker.publish(
+                                "app:comms:googlemeet_participant",
+                                evt.to_json(),
+                            ),
+                        )
+
+                    # Fetch cached screenshot (non-blocking — agent-service
+                    # captures during its own poll cycle)
+                    try:
+                        ss_resp = await http.get(
+                            f"{gmeet_agent_service_url}/googlemeet/screenshot/latest",
+                            params={"sessionId": gmeet_session_id},
+                            headers={"authorization": f"Bearer {_gmeet_auth_key}"},
+                            timeout=_aiohttp.ClientTimeout(total=5),
+                        )
+                        if ss_resp.status == 200:
+                            ss_body = await ss_resp.json()
+                            _gmeet_latest_screenshot = ss_body.get("screenshot")
+                    except Exception:
+                        pass
+
+                    status = body.get("status", "")
+                    if status in ("ended", "removed", "error"):
+                        _log.info(f"Google Meet ended (status={status})")
+                        ctx.shutdown(reason=f"gmeet_{status}")
+                        return
+        except asyncio.CancelledError:
+            pass
+
+    if channel == "google_meet":
+        asyncio.create_task(_gmeet_poll_loop())
+
     from unity.settings import SETTINGS
 
     # Fast brain LLM - lightweight model for responsive conversation
@@ -325,16 +755,17 @@ async def entrypoint(ctx: agents.JobContext):
         contact_phone_number=contact.get("phone_number", ""),
         contact_email=contact.get("email_address", ""),
         contact_bio=contact.get("bio") or None,
-        is_boss_user=contact.get("contact_id") == 1,
+        is_boss_user=bool(contact.get("is_system", False)),
         contact_rolling_summary=contact.get("rolling_summary", ""),
         demo_mode=SETTINGS.DEMO_MODE,
         channel=channel,
+        user_desktop_control=SETTINGS.conversation.USER_DESKTOP_CONTROL_ENABLED,
     ).flatten()
     _log.config(f"System prompt ({len(system_prompt)} chars)")
 
     session = AgentSession(
         llm=llm_model,
-        stt=STT,
+        stt=stt_instance,
         tts=(
             elevenlabs.TTS(
                 voice_id=voice_id if voice_id != "" else elevenlabs.DEFAULT_VOICE_ID,
@@ -346,18 +777,22 @@ async def entrypoint(ctx: agents.JobContext):
             )
         ),
         vad=VAD,
-        turn_detection=EnglishModel(),
-        min_endpointing_delay=0.75,
+        turn_handling={
+            "turn_detection": EnglishModel(),
+            "endpointing": {"min_delay": 0.75},
+            "interruption": {"enabled": True},
+        },
+        preemptive_generation=False,
     )
 
     user_is_speaking = False
-    _queued_speech: list[tuple[str, str, str]] = []  # (text, notification_id, source)
+    _queued_speech: list[tuple[str, str, str, str, str]] = []
     _say_meta_queue: list[dict] = []
+    _dedup_in_flight = False
     generation_seq = 0
     user_state_seq = 0
     _was_quiescent = True
     _pending_reply_timer: asyncio.TimerHandle | None = None
-    _pending_notification_eval_task: asyncio.Task | None = None
     _NOTIFY_COALESCE_S = 0.05
 
     def _log_reply_task(task: asyncio.Task) -> None:
@@ -437,9 +872,30 @@ async def entrypoint(ctx: agents.JobContext):
             user_input,
         )
 
+    def _invalidate_current_generation(reason: str, source_id: str) -> None:
+        """Cancel in-flight FastBrain generation and re-trigger with updated context.
+
+        Called when a significant IPC event (slow brain notification, outbound
+        message confirmation) arrives while the FastBrain LLM is mid-generation.
+        The 50 ms coalescence in ``trigger_generate_reply`` naturally collapses
+        bursts (e.g. notification + message_sent arriving ~100 ms apart) into a
+        single regeneration.
+        """
+        if not assistant.user_turn_generating:
+            return
+        _log.info(f"Invalidating in-flight generation: {reason}")
+        session.interrupt()
+        trigger_generate_reply(reason=reason, source_id=source_id)
+
     if channel == "phone_call":
         user_utterance_event = InboundPhoneUtterance
         assistant_utterance_event = OutboundPhoneUtterance
+    elif channel == "whatsapp_call":
+        user_utterance_event = InboundWhatsAppCallUtterance
+        assistant_utterance_event = OutboundWhatsAppCallUtterance
+    elif channel == "google_meet":
+        user_utterance_event = InboundGoogleMeetUtterance
+        assistant_utterance_event = OutboundGoogleMeetUtterance
     else:
         user_utterance_event = InboundUnifyMeetUtterance
         assistant_utterance_event = OutboundUnifyMeetUtterance
@@ -447,6 +903,8 @@ async def entrypoint(ctx: agents.JobContext):
     # Register cleanup as a LiveKit shutdown callback so it runs on any
     # exit path: participant disconnect, inactivity, or explicit stop.
     async def _on_job_shutdown():
+        if audio_bridge is not None:
+            await asyncio.to_thread(audio_bridge.stop)
         await delete_livekit_room(ctx.room.name)
         await publish_call_ended(contact, channel)
 
@@ -509,6 +967,20 @@ async def entrypoint(ctx: agents.JobContext):
             maybe_speak_queued()
         _check_quiescence_transition()
 
+    # -- Diarization ↔ DOM speaker correlation --
+    if channel == "google_meet":
+
+        @session.on("user_input_transcribed")
+        def _on_user_input_transcribed(ev):
+            nonlocal _gmeet_last_speaker_id
+            if not ev.is_final or not ev.speaker_id:
+                return
+            _gmeet_last_speaker_id = ev.speaker_id
+            dom_speaker = _gmeet_cached_active_speaker
+            if dom_speaker and dom_speaker != _gmeet_display_name:
+                bucket = _gmeet_speaker_map.setdefault(ev.speaker_id, {})
+                bucket[dom_speaker] = bucket.get(dom_speaker, 0) + 1
+
     # -- Screenshot state --
     screenshot_history = ScreenshotHistory()
     assistant_screen_share_active = False
@@ -524,7 +996,7 @@ async def entrypoint(ctx: agents.JobContext):
         nonlocal _visual_ctx_msg_id
         screenshot_history.clear(source=source)
         if not screenshot_history.build_visual_context_content():
-            for ctx in (assistant._chat_ctx, session._chat_ctx):
+            for ctx in (assistant._chat_ctx, session.history):
                 if _visual_ctx_msg_id is not None:
                     idx = ctx.index_by_id(_visual_ctx_msg_id)
                     if idx is not None:
@@ -538,13 +1010,13 @@ async def entrypoint(ctx: agents.JobContext):
         if not content:
             return
         # Remove the previous visual context message if present.
-        for ctx in (assistant._chat_ctx, session._chat_ctx):
+        for ctx in (assistant._chat_ctx, session.history):
             if _visual_ctx_msg_id is not None:
                 idx = ctx.index_by_id(_visual_ctx_msg_id)
                 if idx is not None:
                     ctx.items.pop(idx)
         msg = assistant._chat_ctx.add_message(role="user", content=content)
-        session._chat_ctx.add_message(
+        session.history.add_message(
             role="user",
             content=content,
             id=msg.id,
@@ -625,6 +1097,16 @@ async def entrypoint(ctx: agents.JobContext):
             if entry and assistant_screen_share_active:
                 _handle_screenshot(entry)
 
+        if channel == "google_meet" and _gmeet_latest_screenshot:
+            _handle_screenshot(
+                ScreenshotEntry(
+                    b64=_gmeet_latest_screenshot,
+                    utterance="",
+                    timestamp=datetime.now(timezone.utc),
+                    source="google_meet",
+                ),
+            )
+
     @session.on("conversation_item_added")
     def _on_chat_item_added(ev):
         """Publish both user and assistant utterances from a single location."""
@@ -651,7 +1133,6 @@ async def entrypoint(ctx: agents.JobContext):
                 log_path = ""
             _log.assistant_speech(text, source=source, llm_log_path=log_path)
         if role == "user":
-            event = user_utterance_event(contact, content=text)
             from datetime import datetime, timezone
 
             b64 = screen_capture.capture_screenshot()
@@ -674,13 +1155,59 @@ async def entrypoint(ctx: agents.JobContext):
                         source="webcam",
                     ),
                 )
-        else:
-            event = assistant_utterance_event(contact, content=text)
+            if channel == "google_meet" and _gmeet_latest_screenshot:
+                _handle_screenshot(
+                    ScreenshotEntry(
+                        b64=_gmeet_latest_screenshot,
+                        utterance=text,
+                        timestamp=datetime.now(timezone.utc),
+                        source="google_meet",
+                    ),
+                )
 
-        asyncio.create_task(
-            event_broker.publish(f"app:comms:{channel}_utterance", event.to_json()),
-        )
+            async def _publish_user_utterance(text: str) -> None:
+                nonlocal _gmeet_last_speaker_id
+                resolved_contact, speaker_label, dia_sid = _resolve_speaker()
+                _gmeet_last_speaker_id = None
+                if channel == "google_meet":
+                    event = InboundGoogleMeetUtterance(
+                        contact=resolved_contact,
+                        content=text,
+                        speaker_label=speaker_label,
+                        participant_names=_get_gmeet_participant_names() or None,
+                        diarization_speaker_id=dia_sid,
+                    )
+                else:
+                    event = user_utterance_event(resolved_contact, content=text)
+                await event_broker.publish(
+                    f"app:comms:{channel}_utterance",
+                    event.to_json(),
+                )
+
+            asyncio.create_task(
+                _publish_user_utterance(text),
+            )
+        else:
+            if channel == "google_meet":
+                event = OutboundGoogleMeetUtterance(
+                    contact=contact,
+                    content=text,
+                    participant_names=_get_gmeet_participant_names() or None,
+                )
+            else:
+                event = assistant_utterance_event(contact, content=text)
+            asyncio.create_task(
+                event_broker.publish(
+                    f"app:comms:{channel}_utterance",
+                    event.to_json(),
+                ),
+            )
         touch_activity()
+
+    audio_bridge: MeetAudioBridge | None = None
+    if channel == "google_meet":
+        audio_bridge = MeetAudioBridge()
+        audio_bridge.start(asyncio.get_event_loop())
 
     assistant = Assistant(
         contact=contact,
@@ -688,6 +1215,7 @@ async def entrypoint(ctx: agents.JobContext):
         channel=channel,
         instructions=system_prompt,
         outbound=outbound,
+        audio_bridge=audio_bridge,
     )
 
     async def _capture_screenshots_for_llm(chat_ctx) -> None:
@@ -695,7 +1223,7 @@ async def entrypoint(ctx: agents.JobContext):
 
         The LiveKit pipeline passes a **copy** of the chat context to
         ``llm_node``.  ``_refresh_screenshots`` updates the live
-        ``session._chat_ctx`` (for subsequent turns and IPC), but that copy
+        ``session.history`` (for subsequent turns and IPC), but that copy
         is stale.  After refreshing, we rebuild the visual context content
         and inject it directly into the ``chat_ctx`` parameter so the
         current LLM call sees the screenshot.
@@ -723,6 +1251,7 @@ async def entrypoint(ctx: agents.JobContext):
         noise_cancellation=(
             noise_cancellation.BVC() if sys.platform == "darwin" else None
         ),
+        close_on_disconnect=(channel != "google_meet"),
     )
 
     # Publish call started (shared helper)
@@ -735,7 +1264,8 @@ async def entrypoint(ctx: agents.JobContext):
     session_ready = False
 
     def on_status(data: dict) -> None:
-        """Handle status events (call_answered, stop)."""
+        """Handle status events (call_answered, stop, gmeet_session_id)."""
+        nonlocal gmeet_session_id
         event_type = data.get("type", "")
         _log.call_status(event_type)
         touch_activity()
@@ -743,6 +1273,8 @@ async def entrypoint(ctx: agents.JobContext):
         if event_type == "call_answered":
             call_answered_flag.set()
             assistant.set_call_received()
+        elif event_type == "gmeet_session_id":
+            gmeet_session_id = data.get("session_id", "")
         elif event_type == "stop":
             ctx.shutdown(reason="stopped")
 
@@ -772,15 +1304,8 @@ async def entrypoint(ctx: agents.JobContext):
                 "llm_log_path": llm_log_path,
             },
         )
-        notification_message = f"[notification] {notification_content}"
-        assistant._chat_ctx.add_message(
-            role="system",
-            content=[notification_message],
-        )
-        session._chat_ctx.add_message(
-            role="system",
-            content=[notification_message],
-        )
+        # Context injection is handled by apply_notification unconditionally
+        # for non-proactive notifications. No injection here to avoid doubles.
         _log.notification_say(text, notification_source=notification_source)
         session.say(text, allow_interruptions=True, add_to_chat_ctx=True)
 
@@ -841,61 +1366,6 @@ async def entrypoint(ctx: agents.JobContext):
             messages = messages[-tail:]
         return messages
 
-    async def _evaluate_notification_reply() -> None:
-        """Structured-output sidecar: decide whether to speak for pending notification(s)."""
-        nonlocal _pending_notification_eval_task
-        from unity.conversation_manager.domains.notification_reply import (
-            NotificationReplyEvaluator,
-        )
-
-        await _refresh_screenshots()
-
-        evaluator = NotificationReplyEvaluator(
-            model=SETTINGS.conversation.FAST_BRAIN_MODEL,
-        )
-        chat_messages = _extract_chat_messages(
-            session._chat_ctx,
-            tail=SETTINGS.conversation.NOTIFICATION_REPLY_CONTEXT_WINDOW,
-        )
-        decision, log_path = await evaluator.evaluate(
-            chat_history=chat_messages,
-        )
-        _pending_notification_eval_task = None
-
-        if decision.speak and decision.content:
-            _say_meta_queue.append(
-                {
-                    "notification_id": "",
-                    "source": "notification_reply",
-                    "text": decision.content,
-                    "llm_log_path": log_path,
-                },
-            )
-            _log.notification_say(
-                decision.content,
-                notification_source="notification_reply",
-            )
-            session.say(
-                decision.content,
-                allow_interruptions=True,
-                add_to_chat_ctx=True,
-            )
-        else:
-            _log._emit("wait", "Decided to wait")
-
-    def _schedule_notification_eval() -> None:
-        """Schedule a structured notification evaluation with the same coalesce window."""
-        nonlocal _pending_notification_eval_task
-        if _pending_notification_eval_task is not None:
-            _pending_notification_eval_task.cancel()
-            _pending_notification_eval_task = None
-
-        async def _debounced_eval():
-            await asyncio.sleep(_NOTIFY_COALESCE_S)
-            await _evaluate_notification_reply()
-
-        _pending_notification_eval_task = asyncio.ensure_future(_debounced_eval())
-
     def apply_notification(
         content: str,
         response_text: str = "",
@@ -906,6 +1376,20 @@ async def entrypoint(ctx: agents.JobContext):
         notification_source: str = "",
         llm_log_path: str = "",
     ) -> None:
+        # Inject into chat context unconditionally so the fast brain always
+        # sees the latest slow brain understanding.  Proactive speech is
+        # fire-and-forget filler — it never updates context.
+        if notification_source != "proactive_speech":
+            notification_message = f"[notification] {content}"
+            assistant._chat_ctx.add_message(
+                role="system",
+                content=[notification_message],
+            )
+            session.history.add_message(
+                role="system",
+                content=[notification_message],
+            )
+
         if should_speak and response_text:
             if notification_source == "proactive_speech":
                 # Proactive speech exists purely to fill silence — never queue it.
@@ -921,6 +1405,8 @@ async def entrypoint(ctx: agents.JobContext):
                     llm_log_path,
                 )
             else:
+                # Latest slow brain guidance supersedes older queued speech.
+                _queued_speech.clear()
                 _queued_speech.append(
                     (
                         response_text,
@@ -931,18 +1417,82 @@ async def entrypoint(ctx: agents.JobContext):
                     ),
                 )
                 maybe_speak_queued()
-        else:
-            notification_message = f"[notification] {content}"
-            assistant._chat_ctx.add_message(
-                role="system",
-                content=[notification_message],
+
+    def _get_recent_assistant_utterances(n: int = 10) -> list[str]:
+        """Return the last *n* assistant utterances from the fast brain's chat context.
+
+        Walks ``assistant._chat_ctx.items`` in reverse, collecting up to *n*
+        text strings from items with ``role == "assistant"``.  Returns them in
+        chronological order (oldest first).
+        """
+        results: list[str] = []
+        for item in reversed(assistant._chat_ctx.items):
+            if getattr(item, "role", None) != "assistant":
+                continue
+            raw = getattr(item, "content", None)
+            if isinstance(raw, str) and raw:
+                results.append(raw)
+            elif isinstance(raw, list):
+                text = " ".join(c for c in raw if isinstance(c, str)).strip()
+                if text:
+                    results.append(text)
+            if len(results) >= n:
+                break
+        results.reverse()
+        return results
+
+    def _get_recent_notifications(n: int = 5) -> list[str]:
+        """Return the last *n* ``[notification]`` system messages from the chat context."""
+        results: list[str] = []
+        prefix = "[notification] "
+        for item in reversed(assistant._chat_ctx.items):
+            if getattr(item, "role", None) != "system":
+                continue
+            raw = getattr(item, "content", None)
+            if isinstance(raw, list):
+                raw = " ".join(c for c in raw if isinstance(c, str)).strip()
+            if isinstance(raw, str) and raw.startswith(prefix):
+                results.append(raw[len(prefix) :])
+            if len(results) >= n:
+                break
+        results.reverse()
+        return results
+
+    async def _dedup_and_speak(
+        text: str,
+        notification_id: str,
+        notification_source: str,
+        notification_content: str,
+        llm_log_path: str,
+    ) -> None:
+        nonlocal _dedup_in_flight
+        _dedup_in_flight = True
+        try:
+            recent = _get_recent_assistant_utterances()
+            notifications = _get_recent_notifications() if recent else []
+            if recent and SETTINGS.conversation.SPEECH_DEDUP_ENABLED:
+                from unity.conversation_manager.domains.speech_dedup import (
+                    SpeechDeduplicationChecker,
+                )
+
+                dedup = await SpeechDeduplicationChecker().evaluate(
+                    proposed_speech=text,
+                    recent_utterances=recent,
+                    recent_notifications=notifications,
+                )
+                if dedup.should_suppress:
+                    _log.dedup_suppressed(text, dedup.reasoning)
+                    return
+            _speak_now(
+                text,
+                notification_id,
+                notification_source,
+                notification_content,
+                llm_log_path,
             )
-            session._chat_ctx.add_message(
-                role="system",
-                content=[notification_message],
-            )
-            if notification_source not in ("meet_interaction", "initialization"):
-                _schedule_notification_eval()
+        finally:
+            _dedup_in_flight = False
+            maybe_speak_queued()
 
     def maybe_speak_queued() -> None:
         """Speak the next queued response when user is silent and assistant is idle.
@@ -951,8 +1501,12 @@ async def entrypoint(ctx: agents.JobContext):
         After the user stops speaking, the agent transitions through thinking →
         speaking → listening. We only speak queued text once the agent has settled
         back to a quiescent state, guaranteeing the fast brain's reply comes first.
+
+        When dedup is enabled, the actual speak is async (LLM call to check for
+        redundancy).  The ``_dedup_in_flight`` guard prevents a second item from
+        being dispatched while the first is still being checked.
         """
-        if not _queued_speech or not _is_pipeline_quiescent():
+        if _dedup_in_flight or not _queued_speech or not _is_pipeline_quiescent():
             return
         (
             text,
@@ -961,12 +1515,14 @@ async def entrypoint(ctx: agents.JobContext):
             notification_content,
             llm_log_path,
         ) = _queued_speech.pop(0)
-        _speak_now(
-            text,
-            notification_id,
-            notification_source,
-            notification_content,
-            llm_log_path,
+        asyncio.ensure_future(
+            _dedup_and_speak(
+                text,
+                notification_id,
+                notification_source,
+                notification_content,
+                llm_log_path,
+            ),
         )
 
     def on_notification(data: dict) -> None:
@@ -1010,9 +1566,9 @@ async def entrypoint(ctx: agents.JobContext):
         notification_source = payload.get("source", "")
         llm_log_path = payload.get("llm_log_path", "")
         notification_id = content_trace_id("guid", content)
-        triggers_turn = (
-            not (should_speak and response_text)
-            and notification_source != "meet_interaction"
+        triggers_turn = notification_source not in (
+            "meet_interaction",
+            "proactive_speech",
         )
         _log.notification(
             notification_source,
@@ -1045,21 +1601,25 @@ async def entrypoint(ctx: agents.JobContext):
                     notification_source=notification_source,
                     llm_log_path=llm_log_path,
                 )
+                if triggers_turn:
+                    _invalidate_current_generation(
+                        "notification_during_generation",
+                        notification_id,
+                    )
 
     event_broker.register_callback("app:call:status", on_status)
     event_broker.register_callback("app:call:notification", on_notification)
 
     # --- Tier 1: Comms from call participants (all calls) ---
-    is_boss_user = contact.get("contact_id") == 1
+    is_boss_user = bool(contact.get("is_system", False))
     participant_ids: set[int] = set()
     if contact.get("contact_id") is not None:
         participant_ids.add(contact["contact_id"])
 
-    def _inject_and_reply(msg: str, reason: str) -> None:
-        """Inject a system message into chat context and trigger a reply."""
+    def _inject_silent_context(msg: str) -> None:
+        """Inject a system message into chat context as silent background."""
         assistant._chat_ctx.add_message(role="system", content=[msg])
-        session._chat_ctx.add_message(role="system", content=[msg])
-        trigger_generate_reply(reason=reason, source_id="system_event")
+        session.history.add_message(role="system", content=[msg])
 
     def on_participant_comms(data: dict) -> None:
         raw = data.get("event") if "event" in data else json.dumps(data)
@@ -1073,7 +1633,18 @@ async def entrypoint(ctx: agents.JobContext):
         touch_activity()
         if not session_ready:
             return
-        _inject_and_reply(text, reason="participant_comms")
+        _inject_silent_context(text)
+        if text.startswith("[You "):
+            if assistant.user_turn_generating:
+                _invalidate_current_generation(
+                    "outbound_action_during_generation",
+                    "participant_comms",
+                )
+            else:
+                trigger_generate_reply(
+                    reason="outbound_message_acknowledgment",
+                    source_id="participant_comms",
+                )
 
     event_broker.register_callback("app:comms:*", on_participant_comms)
 
@@ -1082,16 +1653,17 @@ async def entrypoint(ctx: agents.JobContext):
         _log.call_status("call_answered (arrived during init)")
         assistant.set_call_received()
 
-    _log.session_start("Starting AgentSession")
-    await session.start(room=ctx.room, agent=assistant, room_input_options=rio)
-
-    # Hydrate historical context from EventBus into the fast brain.
-    history_lines = await hydrate_fast_brain_history(
-        participant_ids=participant_ids,
-        is_boss_user=is_boss_user,
-        assistant_name=assistant_name or "Assistant",
-        limit=SETTINGS.conversation.FAST_BRAIN_CONTEXT_WINDOW,
+    _log.session_start("Starting AgentSession + history hydration (parallel)")
+    history_task = asyncio.create_task(
+        hydrate_fast_brain_history(
+            participant_ids=participant_ids,
+            is_boss_user=is_boss_user,
+            assistant_name=assistant_name or "Assistant",
+            limit=SETTINGS.conversation.FAST_BRAIN_CONTEXT_WINDOW,
+        ),
     )
+    await session.start(room=ctx.room, agent=assistant, room_input_options=rio)
+    history_lines = await history_task
     if history_lines:
         history_block = (
             "--- Recent conversation history ---\n"
@@ -1099,7 +1671,7 @@ async def entrypoint(ctx: agents.JobContext):
             + "\n--- Current call ---"
         )
         assistant._chat_ctx.add_message(role="system", content=[history_block])
-        session._chat_ctx.add_message(role="system", content=[history_block])
+        session.history.add_message(role="system", content=[history_block])
         _log.info(f"Hydrated {len(history_lines)} historical events into context")
 
     # Mark session ready and process any buffered notifications BEFORE first utterance.
@@ -1149,7 +1721,7 @@ async def entrypoint(ctx: agents.JobContext):
     )
     greeting_messages = [
         {"role": "system", "content": system_prompt},
-        *_extract_chat_messages(session._chat_ctx),
+        *_extract_chat_messages(session.history),
     ]
     greeting_text = await greeting_client.generate(messages=greeting_messages)
 
@@ -1186,7 +1758,7 @@ async def entrypoint(ctx: agents.JobContext):
             "when everything is ready."
         )
         assistant._chat_ctx.add_message(role="system", content=[_init_note])
-        session._chat_ctx.add_message(role="system", content=[_init_note])
+        session.history.add_message(role="system", content=[_init_note])
         _log.info("Injected initializing-state system message (CM not yet initialized)")
 
 

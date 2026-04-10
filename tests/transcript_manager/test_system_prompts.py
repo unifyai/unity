@@ -167,11 +167,6 @@ def test_ask_system_prompt_formatting():
     assert_section_spacing(prompt)
     assert_time_footer(prompt, "Current UTC time is ")
 
-    print(
-        "TranscriptManager ask system message passed formatting checks;\n"
-        "The following system message resulted in no assertion errors:\n\n\n" + prompt,
-    )
-
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Stability: prompts should be identical across serial builder calls

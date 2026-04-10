@@ -144,6 +144,7 @@ async def test_compact_returns_typed_models_by_format(
 
 
 @pytest.mark.asyncio
+@pytest.mark.llm_call
 @_handle_project
 async def test_ask_about_file_with_response_format(file_manager, tmp_path: Path):
     """Test that ask_about_file respects response_format schema."""

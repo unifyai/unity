@@ -6,7 +6,7 @@ steps:
   args:
   - '-c'
   - |
-    docker pull ${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPOSITORY}/unity-preview:latest || true
+    docker pull ${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPOSITORY}/unity-base-preview:latest || true
 
   # Resolve latest commit SHAs from dependency repos so the Docker layer cache
   # is busted whenever unify or unillm change.
@@ -32,27 +32,27 @@ steps:
   - |
     DEP_SHA=$$(cat /workspace/dep_repos_sha.txt)
     DOCKER_BUILDKIT=1 docker build \
-      --cache-from ${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPOSITORY}/unity-preview:latest \
+      --cache-from ${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPOSITORY}/unity-base-preview:latest \
       --build-arg BUILDKIT_INLINE_CACHE=1 \
       --build-arg UNIFY_KEY=$$ORCHESTRA_API_KEY \
       --build-arg GITHUB_TOKEN=$$GITHUB_TOKEN \
       --build-arg BRANCH=preview \
       --build-arg DEP_REPOS_SHA=$$DEP_SHA \
       -f deploy/Dockerfile \
-      -t ${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPOSITORY}/unity-preview:${SHORT_SHA} \
-      -t ${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPOSITORY}/unity-preview:latest .
+      -t ${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPOSITORY}/unity-base-preview:${SHORT_SHA} \
+      -t ${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPOSITORY}/unity-base-preview:latest .
   secretEnv: ['ORCHESTRA_API_KEY', 'GITHUB_TOKEN']
   waitFor: ['pull-cache', 'resolve-dep-shas']
 
   # Push Docker Image (SHA and latest tags in parallel)
 - name: 'gcr.io/cloud-builders/docker'
   id: 'push-sha-tag'
-  args: ['push', '${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPOSITORY}/unity-preview:${SHORT_SHA}']
+  args: ['push', '${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPOSITORY}/unity-base-preview:${SHORT_SHA}']
   waitFor: ['build-image']
 
 - name: 'gcr.io/cloud-builders/docker'
   id: 'push-latest-tag'
-  args: ['push', '${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPOSITORY}/unity-preview:latest']
+  args: ['push', '${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPOSITORY}/unity-base-preview:latest']
   waitFor: ['build-image']
 
   # Build job-watcher image
@@ -88,38 +88,21 @@ steps:
       deploy/scripts/job-watcher/deployment_preview.yaml | kubectl apply -f -
   waitFor: ['push-job-watcher']
 
-  # Upload SHA to Cloud Storage
-- name: 'gcr.io/cloud-builders/gsutil'
-  id: 'upload-sha'
-  entrypoint: 'bash'
+  # Trigger enterprise overlay build in unity-deploy.
+  # Passes the just-pushed base image as a substitution so unity-deploy
+  # builds FROM this exact image (not a stale :latest).
+  # unity-deploy handles GCS upload and idle job refresh.
+- name: 'gcr.io/cloud-builders/gcloud'
+  id: 'trigger-deploy-build'
   args:
-  - '-c'
-  - |
-    echo ${SHORT_SHA} | gsutil cp - gs://unity-image-hash/image_hash_preview.txt
-  waitFor: ['push-latest-tag']
-
-  # Refresh idle containers so they pick up the new image
-- name: 'gcr.io/google.com/cloudsdktool/cloud-sdk:slim'
-  id: 'refresh-idle-jobs'
-  entrypoint: 'bash'
-  args:
-  - '-c'
-  - |
-    set -e
-    ADAPTERS=$(gcloud run services describe unity-adapters-preview --region=${_REGION} --format='value(status.url)')
-    AUTH="Authorization: Bearer $$ORCHESTRA_ADMIN_KEY"
-
-    echo "Refreshing idle jobs with new image..."
-    curl -sf -X POST -H "$${AUTH}" "$${ADAPTERS}/scheduled/jobs/create?refresh=true" && echo
-
-    echo "Waiting 120s for jobs to register as idle..."
-    sleep 120
-
-    echo "Cleaning up stale idle jobs..."
-    curl -sf -X POST -H "$${AUTH}" "$${ADAPTERS}/scheduled/jobs/cleanup" && echo
-    echo "Idle job refresh complete."
-  secretEnv: ['ORCHESTRA_ADMIN_KEY']
-  waitFor: ['upload-sha']
+  - 'builds'
+  - 'triggers'
+  - 'run'
+  - 'unity-deploy-preview'
+  - '--project=${PROJECT_ID}'
+  - '--branch=preview'
+  - '--substitutions=_BASE_IMAGE=${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPOSITORY}/unity-base-preview:${SHORT_SHA}'
+  waitFor: ['push-sha-tag', 'push-latest-tag']
 
 options:
   substitutionOption: ALLOW_LOOSE
@@ -135,13 +118,11 @@ availableSecrets:
     env: 'ORCHESTRA_API_KEY'
   - versionName: projects/${PROJECT_ID}/secrets/DEVBOT_GITHUB_TOKEN/versions/latest
     env: 'GITHUB_TOKEN'
-  - versionName: projects/${PROJECT_ID}/secrets/ORCHESTRA_ADMIN_KEY/versions/latest
-    env: 'ORCHESTRA_ADMIN_KEY'
 
 timeout: '1800s'
 
 images:
-- '${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPOSITORY}/unity-preview:${SHORT_SHA}'
-- '${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPOSITORY}/unity-preview:latest'
+- '${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPOSITORY}/unity-base-preview:${SHORT_SHA}'
+- '${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPOSITORY}/unity-base-preview:latest'
 - '${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPOSITORY}/job-watcher-preview:${SHORT_SHA}'
 - '${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPOSITORY}/job-watcher-preview:latest'

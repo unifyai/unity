@@ -49,6 +49,8 @@ def _ensure_mock_computer_primitives():
 def _enable_computer_fast_path(cm_driver):
     """Activate computer fast-path tools by turning on screen share."""
     cm_driver.cm.assistant_screen_share_active = True
+    cm_driver.cm.vm_ready = True
+    cm_driver.cm.file_sync_complete = True
 
 
 def _setup_computer_fast_path_from_real_act(cm_driver):
@@ -57,6 +59,8 @@ def _setup_computer_fast_path_from_real_act(cm_driver):
     Call this AFTER a ``step_until_wait`` that triggered ``act``.
     """
     cm_driver.cm.assistant_screen_share_active = True
+    cm_driver.cm.vm_ready = True
+    cm_driver.cm.file_sync_complete = True
 
 
 def _teardown_computer_fast_path(cm_driver):
@@ -75,6 +79,8 @@ async def test_web_search_routes_to_web_act(initialized_cm):
     """A web search request should route to web_act when fast paths are active."""
     cm = initialized_cm
     _ensure_mock_computer_primitives()
+    cm.cm.vm_ready = True
+    cm.cm.file_sync_complete = True
 
     result = await cm.step_until_wait(
         SMSReceived(
@@ -114,6 +120,8 @@ async def test_web_navigation_routes_to_web_act(initialized_cm):
     """Navigating to a URL should route to web_act."""
     cm = initialized_cm
     _ensure_mock_computer_primitives()
+    cm.cm.vm_ready = True
+    cm.cm.file_sync_complete = True
 
     result = await cm.step_until_wait(
         SMSReceived(
@@ -152,6 +160,8 @@ async def test_web_page_scroll_routes_to_web_act(initialized_cm):
     """Scrolling on a web page should route to web_act, not desktop_act."""
     cm = initialized_cm
     _ensure_mock_computer_primitives()
+    cm.cm.vm_ready = True
+    cm.cm.file_sync_complete = True
 
     result = await cm.step_until_wait(
         SMSReceived(
@@ -194,6 +204,8 @@ async def test_native_app_routes_to_desktop_act_not_web_act(initialized_cm):
     """Opening a native desktop app should use desktop_act, not web_act."""
     cm = initialized_cm
     _ensure_mock_computer_primitives()
+    cm.cm.vm_ready = True
+    cm.cm.file_sync_complete = True
 
     result = await cm.step_until_wait(
         SMSReceived(
@@ -237,6 +249,8 @@ async def test_complex_cross_domain_routes_to_act(initialized_cm):
     through act, not fast paths."""
     cm = initialized_cm
     _ensure_mock_computer_primitives()
+    cm.cm.vm_ready = True
+    cm.cm.file_sync_complete = True
 
     result = await cm.step_until_wait(
         SMSReceived(
@@ -295,6 +309,8 @@ async def test_login_with_stored_credentials_routes_to_interject(initialized_cm)
     """
     cm = initialized_cm
     _ensure_mock_computer_primitives()
+    cm.cm.vm_ready = True
+    cm.cm.file_sync_complete = True
 
     # Set up Unify Meet with assistant screen share (no LLM run for setup)
     await cm.step(UnifyMeetStarted(contact=BOSS), run_llm=False)
@@ -360,6 +376,8 @@ async def test_browser_task_without_act_session_routes_to_web_act_and_act(
     """
     cm = initialized_cm
     _ensure_mock_computer_primitives()
+    cm.cm.vm_ready = True
+    cm.cm.file_sync_complete = True
 
     await cm.step(UnifyMeetStarted(contact=BOSS), run_llm=False)
     await cm.step(AssistantScreenShareStarted(), run_llm=False)

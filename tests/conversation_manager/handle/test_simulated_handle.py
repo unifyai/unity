@@ -52,6 +52,7 @@ def test_docstrings_match_base():
 # 1.  Basic start-and-ask
 # ────────────────────────────────────────────────────────────────────────────
 @pytest.mark.asyncio
+@pytest.mark.llm_call
 @_handle_project
 async def test_start_and_ask():
     cm_handle = SimulatedConversationManagerHandle(
@@ -69,6 +70,7 @@ async def test_start_and_ask():
 # 2.  Stateful memory – serial asks
 # ────────────────────────────────────────────────────────────────────────────
 @pytest.mark.asyncio
+@pytest.mark.llm_call
 @_handle_project
 async def test_stateful_memory_serial_asks():
     """
@@ -100,6 +102,7 @@ async def test_stateful_memory_serial_asks():
 # 3.  Interject then ask – state propagated
 # ────────────────────────────────────────────────────────────────────────────
 @pytest.mark.asyncio
+@pytest.mark.llm_call
 @_handle_project
 async def test_stateful_interject_then_ask():
     """
@@ -126,6 +129,7 @@ async def test_stateful_interject_then_ask():
 # 4. Test description and simulation_guidance
 # ────────────────────────────────────────────────────────────────────────────
 @pytest.mark.asyncio
+@pytest.mark.llm_call
 @_handle_project
 async def test_description_and_guidance():
     """
@@ -165,6 +169,7 @@ async def test_description_and_guidance():
 # 5. Test ask with structured output (Pydantic)
 # ────────────────────────────────────────────────────────────────────────────
 @pytest.mark.asyncio
+@pytest.mark.llm_call
 @_handle_project
 async def test_ask_with_structured_output():
     """
@@ -207,6 +212,7 @@ async def test_ask_with_structured_output():
 # 6.  Interject
 # ────────────────────────────────────────────────────────────────────────────
 @pytest.mark.asyncio
+@pytest.mark.llm_call
 @_handle_project
 async def test_interject(monkeypatch):
     """Verify that interject is called and influences the conversation state."""
@@ -303,6 +309,7 @@ async def test_pause_and_resume(monkeypatch):
 # 9.  Nested ask on handle
 # ────────────────────────────────────────────────────────────────────────────
 @pytest.mark.asyncio
+@pytest.mark.llm_call
 @_handle_project
 async def test_handle_ask():
     """

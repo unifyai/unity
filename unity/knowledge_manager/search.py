@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor, as_completed
-import uuid
 from typing import Any, Dict, List, Optional, Union, TYPE_CHECKING
 
 from ..common.filter_utils import normalize_filter_expr
@@ -176,85 +175,85 @@ def search(
     )
 
 
-def _create_join(
+def _resolve_and_rewrite(
     knowledge_manager: "KnowledgeManager",
-    *,
-    dest_table: str,
     tables: Union[str, List[str]],
     join_expr: str,
     select: Dict[str, str],
-    mode: str = "inner",
-    left_where: Optional[str] = None,
-    right_where: Optional[str] = None,
-) -> str:
-    """
-    Create a join and store results in a destination table.
-
-    Parameters
-    ----------
-    knowledge_manager : KnowledgeManager
-        The KnowledgeManager instance.
-    dest_table : str
-        Name for the destination table.
-    tables : str | list[str]
-        Exactly TWO table names.
-    join_expr : str
-        Join condition expression.
-    select : dict[str, str]
-        Column selection mapping.
-    mode : str
-        Join mode (inner, left, right, outer).
-    left_where : str | None
-        Pre-filter for left table.
-    right_where : str | None
-        Pre-filter for right table.
-
-    Returns
-    -------
-    str
-        The destination context path.
-    """
-    dm = knowledge_manager._data_manager
-
-    # Resolve & validate the inputs
-    if isinstance(tables, str):
-        tables = [tables]
-    if len(tables) != 2:
+    left_where: Optional[str],
+    right_where: Optional[str],
+) -> tuple[
+    List[str],
+    str,
+    Dict[str, str],
+    Optional[str],
+    Optional[str],
+]:
+    """Resolve KM table names to full ``Knowledge/…`` paths and rewrite expressions."""
+    tables_list = [tables] if isinstance(tables, str) else list(tables)
+    if len(tables_list) != 2:
         raise ValueError("Exactly TWO tables are required.")
 
-    left_table, right_table = tables
-    left_ctx = ctx_for_table(knowledge_manager, left_table)
-    right_ctx = ctx_for_table(knowledge_manager, right_table)
+    left, right = tables_list
+    left_ctx = ctx_for_table(knowledge_manager, left)
+    right_ctx = ctx_for_table(knowledge_manager, right)
 
-    # Rewrite pre-filters to fully-qualified contexts
-    def _rewrite_filter(expr: Optional[str], table: str, ctx: str) -> Optional[str]:
-        return None if expr is None else expr.replace(table, ctx)
-
-    left_where = _rewrite_filter(left_where, left_table, left_ctx)
-    right_where = _rewrite_filter(right_where, right_table, right_ctx)
-
-    # Fully-qualify the join expression and selected columns
-    join_expr = join_expr.replace(left_table, left_ctx).replace(right_table, right_ctx)
+    join_expr = join_expr.replace(left, left_ctx).replace(right, right_ctx)
     select = {
-        c.replace(left_table, left_ctx).replace(right_table, right_ctx): v
+        c.replace(left, left_ctx).replace(right, right_ctx): v
         for c, v in select.items()
     }
+    if left_where is not None:
+        left_where = left_where.replace(left, left_ctx)
+    if right_where is not None:
+        right_where = right_where.replace(right, right_ctx)
 
-    # Destination context
-    dest_ctx = ctx_for_table(knowledge_manager, dest_table)
+    return [left_ctx, right_ctx], join_expr, select, left_where, right_where
 
-    # Delegate to DataManager.join_tables
-    dm.join_tables(
-        left_table=left_ctx,
-        right_table=right_ctx,
-        join_expr=join_expr,
-        dest_table=dest_ctx,
-        select=select,
-        mode=mode,
-        left_where=left_where,
-        right_where=right_where,
-    )
-    return dest_ctx
+
+def _resolve_joins(
+    knowledge_manager: "KnowledgeManager",
+    joins: List[Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    """Resolve KM table names in multi-join steps, rewriting expressions."""
+    _PREV = {"$prev", "__prev__", "_"}
+    resolved: List[Dict[str, Any]] = []
+    for step in joins:
+        s = dict(step)
+        tables = s.get("tables", [])
+        tables = [tables] if isinstance(tables, str) else list(tables)
+
+        mapping: Dict[str, str] = {}
+        for t in tables:
+            if t not in _PREV:
+                mapping[t] = ctx_for_table(knowledge_manager, t)
+
+        s["tables"] = [mapping.get(t, t) for t in tables]
+
+        for field in ("join_expr", "left_where", "right_where"):
+            val = s.get(field)
+            if val is not None:
+                for short, full in mapping.items():
+                    val = val.replace(short, full)
+                s[field] = val
+
+        sel = s.get("select")
+        if isinstance(sel, dict):
+            new_sel: Dict[str, str] = {}
+            for k, v in sel.items():
+                new_k = k
+                for short, full in mapping.items():
+                    new_k = new_k.replace(short, full)
+                new_sel[new_k] = v
+            s["select"] = new_sel
+
+        resolved.append(s)
+    return resolved
+
+
+def _private_field_names(rows: List[Dict[str, Any]]) -> set[str]:
+    """Derive private (``_``-prefixed) field names directly from row data."""
+    return {k for row in rows for k in row if k.startswith("_")}
 
 
 def search_join(
@@ -272,6 +271,9 @@ def search_join(
 ) -> List[Dict[str, Any]]:
     """
     Perform a semantic search over the result of joining two tables.
+
+    Delegates to :pymethod:`DataManager.search_join` after resolving table
+    names to fully-qualified ``Knowledge/…`` context paths.
 
     Parameters
     ----------
@@ -306,36 +308,31 @@ def search_join(
     ValueError
         If k is not between 1 and 1000.
     """
-    if k > 1000 or k < 1:
-        raise ValueError("k must be between 1 and 1000")
-
-    dm = knowledge_manager._data_manager
-    dest_table = f"_tmp_join_{uuid.uuid4().hex[:8]}"
-    dest_ctx = _create_join(
+    resolved_tables, join_expr, select, left_where, right_where = _resolve_and_rewrite(
         knowledge_manager,
-        dest_table=dest_table,
-        tables=tables,
+        tables,
+        join_expr,
+        select,
+        left_where,
+        right_where,
+    )
+
+    rows = knowledge_manager._data_manager.search_join(
+        tables=resolved_tables,
         join_expr=join_expr,
         select=select,
         mode=mode,
         left_where=left_where,
         right_where=right_where,
+        references=references or {},
+        k=k,
+        filter=filter,
     )
-    try:
-        normalized = normalize_filter_expr(filter)
-        rows: List[Dict[str, Any]] = table_search_top_k(
-            context=dest_ctx,
-            references=references,
-            k=k,
-            row_filter=normalized,
-        )
-        return maybe_group_rows(
-            rows=rows,
-            exclude_fields=list_private_fields(dest_ctx),
-            enabled=getattr(knowledge_manager, "_group_results", False),
-        )
-    finally:
-        dm.delete_table(dest_ctx, dangerous_ok=True)
+    return maybe_group_rows(
+        rows=rows,
+        exclude_fields=_private_field_names(rows),
+        enabled=getattr(knowledge_manager, "_group_results", False),
+    )
 
 
 def search_multi_join(
@@ -348,6 +345,9 @@ def search_multi_join(
 ) -> List[Dict[str, Any]]:
     """
     Perform a semantic search over the result of chaining multiple joins.
+
+    Delegates to :pymethod:`DataManager.search_multi_join` after resolving
+    table names in each step to fully-qualified ``Knowledge/…`` context paths.
 
     Parameters
     ----------
@@ -372,99 +372,19 @@ def search_multi_join(
     ValueError
         If joins is empty or k is out of range.
     """
-    if not joins:
-        raise ValueError("`joins` must contain at least one join step.")
-    if k > 1000 or k < 1:
-        raise ValueError("k must be between 1 and 1000")
+    resolved_joins = _resolve_joins(knowledge_manager, joins)
 
-    dm = knowledge_manager._data_manager
-    tmp_prefix = f"_tmp_mjoin_{uuid.uuid4().hex[:6]}"
-    tmp_tables: List[str] = []
-    previous_table: Optional[str] = None
-
-    for idx, step in enumerate(joins):
-        local_step = step.copy()
-        raw_tables = local_step.get("tables")
-        raw_tables = [raw_tables] if isinstance(raw_tables, str) else raw_tables
-        if not isinstance(raw_tables, list) or len(raw_tables) != 2:
-            raise ValueError(
-                f"Step {idx} must specify exactly TWO tables – got {raw_tables!r}",
-            )
-
-        # Substitute `$prev` placeholder
-        step_tables = [
-            (previous_table if t in {"$prev", "__prev__", "_"} else t)
-            for t in raw_tables
-        ]
-        if any(t is None for t in step_tables):
-            raise ValueError(
-                "Misplaced `$prev` in first join – there is no previous result.",
-            )
-
-        # Fix-up join_expr & columns that reference `$prev`
-        def _replace_prev(s: Optional[Union[str, List[str], Dict[str, str]]]):
-            if s is None or previous_table is None:
-                return s
-
-            def repl(txt: str) -> str:
-                return (
-                    txt.replace("$prev", previous_table)
-                    .replace("__prev__", previous_table)
-                    .replace("_.", f"{previous_table}.")
-                )
-
-            if isinstance(s, str):
-                return repl(s)
-            elif isinstance(s, dict):
-                return {repl(k): v for k, v in s.items()}
-            return [repl(c) for c in s]
-
-        join_expr_step = _replace_prev(local_step.get("join_expr"))
-        select_step = _replace_prev(local_step.get("select"))
-
-        # Destination table for this hop
-        is_last = idx == len(joins) - 1
-        dest_table = f"{tmp_prefix}_final" if is_last else f"{tmp_prefix}_{idx}"
-        tmp_tables.append(dest_table)
-
-        # Materialise the join
-        _create_join(
-            knowledge_manager,
-            dest_table=dest_table,
-            tables=step_tables,
-            join_expr=join_expr_step,  # type: ignore[arg-type]
-            select=select_step,  # type: ignore[arg-type]
-            mode=local_step.get("mode", "inner"),
-            left_where=local_step.get("left_where"),
-            right_where=local_step.get("right_where"),
-        )
-
-        previous_table = dest_table
-
-    assert previous_table is not None
-
-    final_ctx = ctx_for_table(knowledge_manager, previous_table)
-    try:
-        normalized = normalize_filter_expr(filter)
-        rows: List[Dict[str, Any]] = table_search_top_k(
-            context=final_ctx,
-            references=references,
-            k=k,
-            row_filter=normalized,
-        )
-        return maybe_group_rows(
-            rows=rows,
-            exclude_fields=list_private_fields(final_ctx),
-            enabled=getattr(knowledge_manager, "_group_results", False),
-        )
-    finally:
-        # Clean up intermediate tables
-        for tbl in tmp_tables:
-            try:
-                ctx = ctx_for_table(knowledge_manager, tbl)
-                dm.delete_table(ctx, dangerous_ok=True)
-            except Exception:
-                pass
+    rows = knowledge_manager._data_manager.search_multi_join(
+        joins=resolved_joins,
+        references=references or {},
+        k=k,
+        filter=filter,
+    )
+    return maybe_group_rows(
+        rows=rows,
+        exclude_fields=_private_field_names(rows),
+        enabled=getattr(knowledge_manager, "_group_results", False),
+    )
 
 
 def filter_join(
@@ -482,6 +402,10 @@ def filter_join(
 ) -> List[Dict[str, Any]]:
     """
     Join two tables and return rows with optional filtering.
+
+    Delegates to :pymethod:`DataManager.filter_join` (which uses the fused
+    ``join_query`` endpoint — a single server round-trip with no temporary
+    table materialisation) after resolving table names.
 
     Parameters
     ----------
@@ -516,60 +440,31 @@ def filter_join(
     ValueError
         If result_limit exceeds 1000 or result_where references invalid columns.
     """
-    import re as _re
-
-    if result_limit > 1000:
-        raise ValueError("Limit must be less than 1000")
-
-    dm = knowledge_manager._data_manager
-
-    # Helper to catch mismatches early
-    def _qualified_refs(expr: str) -> set[str]:
-        return set(
-            m.group(0) for m in _re.finditer(r"\b[A-Za-z_]\w*\.[A-Za-z_]\w*\b", expr)
-        )
-
-    if result_where:
-        missing = _qualified_refs(result_where) - set(select)
-        if missing:
-            raise ValueError(
-                "`result_where` references column(s) that are not present in `select`. "
-                "Either add them to `select` or move the predicate to `left_where` / `right_where`. "
-                f"Missing: {', '.join(sorted(missing))}",
-            )
-
-    dest_table = f"_tmp_join_{uuid.uuid4().hex[:8]}"
-    dest_ctx = _create_join(
+    resolved_tables, join_expr, select, left_where, right_where = _resolve_and_rewrite(
         knowledge_manager,
-        dest_table=dest_table,
-        tables=tables,
+        tables,
+        join_expr,
+        select,
+        left_where,
+        right_where,
+    )
+
+    rows = knowledge_manager._data_manager.filter_join(
+        tables=resolved_tables,
         join_expr=join_expr,
         select=select,
         mode=mode,
         left_where=left_where,
         right_where=right_where,
+        result_where=result_where,
+        result_limit=result_limit,
+        result_offset=result_offset,
     )
-
-    try:
-        # Delegate to DataManager.filter
-        rows = dm.filter(
-            dest_ctx,
-            filter=result_where,
-            limit=result_limit,
-            offset=result_offset,
-        )
-        # Exclude private fields
-        excl = list_private_fields(dest_ctx)
-        filtered_rows = [
-            {k: v for k, v in row.items() if k not in excl} for row in rows
-        ]
-        return maybe_group_rows(
-            rows=filtered_rows,
-            exclude_fields=excl,
-            enabled=getattr(knowledge_manager, "_group_results", False),
-        )
-    finally:
-        dm.delete_table(dest_ctx, dangerous_ok=True)
+    return maybe_group_rows(
+        rows=rows,
+        exclude_fields=_private_field_names(rows),
+        enabled=getattr(knowledge_manager, "_group_results", False),
+    )
 
 
 def filter_multi_join(
@@ -582,6 +477,9 @@ def filter_multi_join(
 ) -> List[Dict[str, Any]]:
     """
     Chain together multiple joins, then filter the final result.
+
+    Delegates to :pymethod:`DataManager.filter_multi_join` after resolving
+    table names in each step to fully-qualified ``Knowledge/…`` context paths.
 
     Parameters
     ----------
@@ -606,123 +504,16 @@ def filter_multi_join(
     ValueError
         If joins is empty or result_limit exceeds 1000.
     """
-    if not joins:
-        raise ValueError("`joins` must contain at least one join step.")
-    if result_limit > 1000:
-        raise ValueError("Limit must be less than 1000")
+    resolved_joins = _resolve_joins(knowledge_manager, joins)
 
-    dm = knowledge_manager._data_manager
-    tmp_prefix = f"_tmp_mjoin_{uuid.uuid4().hex[:6]}"
-    tmp_tables: List[str] = []
-    previous_table: Optional[str] = None
-    final_select_names: Optional[set[str]] = None
-
-    for idx, step in enumerate(joins):
-        local = step.copy()
-        raw_tables = local.get("tables")
-        raw_tables = [raw_tables] if isinstance(raw_tables, str) else raw_tables
-        if not isinstance(raw_tables, list) or len(raw_tables) != 2:
-            raise ValueError(
-                f"Step {idx} must specify exactly TWO tables – got {raw_tables!r}",
-            )
-
-        # Substitute `$prev` placeholder
-        step_tables = [
-            (previous_table if t in {"$prev", "__prev__", "_"} else t)
-            for t in raw_tables
-        ]
-        if any(t is None for t in step_tables):
-            raise ValueError(
-                "Misplaced `$prev` in first join – there is no previous result.",
-            )
-
-        # Fix-up join_expr & columns that reference `$prev`
-        def _replace_prev(s: Optional[Union[str, List[str], Dict[str, str]]]):
-            if s is None or previous_table is None:
-                return s
-
-            def repl(txt: str) -> str:
-                return (
-                    txt.replace("$prev", previous_table)
-                    .replace("__prev__", previous_table)
-                    .replace("_.", f"{previous_table}.")
-                )
-
-            if isinstance(s, str):
-                return repl(s)
-            elif isinstance(s, dict):
-                return {repl(k): v for k, v in s.items()}
-            return [repl(c) for c in s]
-
-        join_expr_step = _replace_prev(local.get("join_expr"))
-        select_step = _replace_prev(local.get("select"))
-
-        # Destination table for this hop
-        is_last = idx == len(joins) - 1
-        dest_table = f"{tmp_prefix}_final" if is_last else f"{tmp_prefix}_{idx}"
-        tmp_tables.append(dest_table)
-
-        # Materialise the join
-        _create_join(
-            knowledge_manager,
-            dest_table=dest_table,
-            tables=step_tables,
-            join_expr=join_expr_step,  # type: ignore[arg-type]
-            select=select_step,  # type: ignore[arg-type]
-            mode=local.get("mode", "inner"),
-            left_where=local.get("left_where"),
-            right_where=local.get("right_where"),
-        )
-
-        previous_table = dest_table
-        if is_last and isinstance(select_step, dict):
-            try:
-                final_select_names = set(select_step.values())
-            except Exception:
-                final_select_names = None
-
-    assert previous_table is not None
-
-    # Validate that result_where only references the final projection names
-    if result_where and final_select_names is not None:
-        import re as _re
-
-        tokens = set(
-            m.group(0) for m in _re.finditer(r"\b[A-Za-z_]\w*\b", result_where)
-        )
-        _reserved = {"and", "or", "not", "in", "is", "True", "False", "None"}
-        candidate_cols = {t for t in tokens if t not in _reserved and not t.isdigit()}
-        missing = candidate_cols - final_select_names
-        if missing:
-            raise ValueError(
-                "`result_where` references column(s) not present in the final step's "
-                f"`select` mapping. Missing: {', '.join(sorted(missing))}",
-            )
-
-    final_ctx = ctx_for_table(knowledge_manager, previous_table)
-
-    try:
-        # Delegate to DataManager.filter
-        rows = dm.filter(
-            final_ctx,
-            filter=result_where,
-            limit=result_limit,
-            offset=result_offset,
-        )
-        excl = list_private_fields(final_ctx)
-        filtered_rows = [
-            {k: v for k, v in row.items() if k not in excl} for row in rows
-        ]
-        return maybe_group_rows(
-            rows=filtered_rows,
-            exclude_fields=excl,
-            enabled=getattr(knowledge_manager, "_group_results", False),
-        )
-    finally:
-        # Clean up intermediate tables
-        for tbl in tmp_tables:
-            try:
-                ctx = ctx_for_table(knowledge_manager, tbl)
-                dm.delete_table(ctx, dangerous_ok=True)
-            except Exception:
-                pass
+    rows = knowledge_manager._data_manager.filter_multi_join(
+        joins=resolved_joins,
+        result_where=result_where,
+        result_limit=result_limit,
+        result_offset=result_offset,
+    )
+    return maybe_group_rows(
+        rows=rows,
+        exclude_fields=_private_field_names(rows),
+        enabled=getattr(knowledge_manager, "_group_results", False),
+    )

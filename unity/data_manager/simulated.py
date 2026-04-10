@@ -23,8 +23,6 @@ from unity.data_manager.types.table import (
     TableSchema,
     ColumnInfo,
 )
-from unity.data_manager.types.plot import PlotResult
-from unity.data_manager.types.table_view import TableViewResult
 from unity.data_manager.types.ingest import (
     IngestExecutionConfig,
     IngestResult,
@@ -32,6 +30,64 @@ from unity.data_manager.types.ingest import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Shared reduce helpers (used by both reduce() and reduce_join())
+# ──────────────────────────────────────────────────────────────────────────────
+
+
+def _compute_metric(data: List[Dict[str, Any]], col: str, metric: str) -> Any:
+    """Compute a single aggregate metric over *col* in *data*."""
+    values = [row.get(col) for row in data if row.get(col) is not None]
+    if metric == "count":
+        return len(values)
+    elif metric == "count_distinct":
+        return len(set(values))
+    elif metric == "sum":
+        return sum(float(v) for v in values if v is not None)
+    elif metric in ("avg", "mean"):
+        if not values:
+            return 0.0
+        return sum(float(v) for v in values) / len(values)
+    elif metric == "min":
+        return min(values) if values else None
+    elif metric == "max":
+        return max(values) if values else None
+    return 0
+
+
+def _reduce_rows(
+    rows: List[Dict[str, Any]],
+    *,
+    metric: str,
+    columns: Union[str, List[str]],
+    group_by: Optional[Union[str, List[str]]] = None,
+) -> Any:
+    """Shared reduce logic for both ``reduce()`` and ``reduce_join()``."""
+    cols_list = [columns] if isinstance(columns, str) else list(columns)
+
+    if group_by is None:
+        if len(cols_list) == 1:
+            return _compute_metric(rows, cols_list[0], metric)
+        return {col: _compute_metric(rows, col, metric) for col in cols_list}
+
+    groups_list = [group_by] if isinstance(group_by, str) else list(group_by)
+    grouped: Dict[tuple, List[Dict[str, Any]]] = defaultdict(list)
+    for row in rows:
+        key = tuple(row.get(g) for g in groups_list)
+        grouped[key].append(row)
+
+    results = []
+    for key, group_rows in grouped.items():
+        result = dict(zip(groups_list, key))
+        if len(cols_list) == 1:
+            result[metric] = _compute_metric(group_rows, cols_list[0], metric)
+        else:
+            for col in cols_list:
+                result[col] = _compute_metric(group_rows, col, metric)
+        results.append(result)
+    return results
 
 
 class SimulatedDataManager(BaseDataManager):
@@ -489,7 +545,6 @@ class SimulatedDataManager(BaseDataManager):
         resolved = self._resolve_context(context)
         rows = list(self._tables.get(resolved, []))
 
-        # Apply filter
         if filter:
             filtered = []
             for row in rows:
@@ -500,56 +555,7 @@ class SimulatedDataManager(BaseDataManager):
                     pass
             rows = filtered
 
-        # Normalize columns to list
-        cols_list = [columns] if isinstance(columns, str) else list(columns)
-
-        def _compute_metric(data: List[Dict[str, Any]], col: str, m: str) -> Any:
-            values = [row.get(col) for row in data if row.get(col) is not None]
-            if m == "count":
-                return len(values)
-            elif m == "count_distinct":
-                return len(set(values))
-            elif m == "sum":
-                return sum(float(v) for v in values if v is not None)
-            elif m in ("avg", "mean"):
-                if not values:
-                    return 0.0
-                return sum(float(v) for v in values) / len(values)
-            elif m == "min":
-                return min(values) if values else None
-            elif m == "max":
-                return max(values) if values else None
-            return 0
-
-        if group_by is None:
-            # No grouping
-            if len(cols_list) == 1:
-                # Single column: return scalar
-                return _compute_metric(rows, cols_list[0], metric)
-            else:
-                # Multiple columns: return dict
-                return {col: _compute_metric(rows, col, metric) for col in cols_list}
-
-        # Group by
-        groups_list = [group_by] if isinstance(group_by, str) else list(group_by)
-        grouped: Dict[tuple, List[Dict[str, Any]]] = defaultdict(list)
-        for row in rows:
-            key = tuple(row.get(g) for g in groups_list)
-            grouped[key].append(row)
-
-        results = []
-        for key, group_rows in grouped.items():
-            result = dict(zip(groups_list, key))
-            if len(cols_list) == 1:
-                # Single column: add metric result
-                result[metric] = _compute_metric(group_rows, cols_list[0], metric)
-            else:
-                # Multiple columns: add all metric results
-                for col in cols_list:
-                    result[col] = _compute_metric(group_rows, col, metric)
-            results.append(result)
-
-        return results
+        return _reduce_rows(rows, metric=metric, columns=columns, group_by=group_by)
 
     # ──────────────────────────────────────────────────────────────────────────
     # Join Operations
@@ -694,6 +700,49 @@ class SimulatedDataManager(BaseDataManager):
         results = results[result_offset : result_offset + result_limit]
 
         return results
+
+    @functools.wraps(BaseDataManager.reduce_join, updated=())
+    def reduce_join(
+        self,
+        *,
+        tables: Union[str, List[str]],
+        join_expr: str,
+        select: Dict[str, str],
+        metric: str,
+        columns: Union[str, List[str]],
+        mode: str = "inner",
+        left_where: Optional[str] = None,
+        right_where: Optional[str] = None,
+        result_where: Optional[str] = None,
+        group_by: Optional[Union[str, List[str]]] = None,
+    ) -> Any:
+        if isinstance(tables, str):
+            tables = [tables]
+        if len(tables) != 2:
+            raise ValueError("Exactly TWO tables are required.")
+
+        left_resolved = self._resolve_context(tables[0])
+        right_resolved = self._resolve_context(tables[1])
+
+        rows = self._simple_join(
+            left_resolved,
+            right_resolved,
+            select,
+            left_where,
+            right_where,
+        )
+
+        if result_where:
+            filtered = []
+            for row in rows:
+                try:
+                    if eval(result_where, {"__builtins__": {}}, row):
+                        filtered.append(row)
+                except Exception:
+                    pass
+            rows = filtered
+
+        return _reduce_rows(rows, metric=metric, columns=columns, group_by=group_by)
 
     @functools.wraps(BaseDataManager.search_join, updated=())
     def search_join(
@@ -990,6 +1039,7 @@ class SimulatedDataManager(BaseDataManager):
         *,
         source_column: str,
         target_column: Optional[str] = None,
+        async_embeddings: bool = False,
     ) -> str:
         target = target_column or f"_{source_column}_emb"
         resolved = self._resolve_context(context)
@@ -1006,6 +1056,7 @@ class SimulatedDataManager(BaseDataManager):
         target_column: Optional[str] = None,
         row_ids: Optional[List[int]] = None,
         batch_size: int = 100,
+        async_embeddings: bool = False,
     ) -> int:
         # Simulated: just count rows that would be embedded
         resolved = self._resolve_context(context)
@@ -1013,118 +1064,6 @@ class SimulatedDataManager(BaseDataManager):
         if row_ids:
             return len(row_ids)
         return len(rows)
-
-    # ──────────────────────────────────────────────────────────────────────────
-    # Visualization
-    # ──────────────────────────────────────────────────────────────────────────
-
-    @functools.wraps(BaseDataManager.plot, updated=())
-    def plot(
-        self,
-        context: str,
-        *,
-        plot_type: str,
-        x: str,
-        y: Optional[str] = None,
-        group_by: Optional[str] = None,
-        aggregate: Optional[str] = None,
-        metric: Optional[str] = None,
-        filter: Optional[str] = None,
-        title: Optional[str] = None,
-        scale_x: Optional[str] = None,
-        scale_y: Optional[str] = None,
-        bin_count: Optional[int] = None,
-        show_regression: Optional[bool] = None,
-    ) -> PlotResult:
-        resolved = self._resolve_context(context)
-        return PlotResult(
-            url=f"https://simulated-plot.example.com/{resolved}/{plot_type}",
-            token="simulated-token",
-            expires_in_hours=24,
-            title=title or f"Simulated {plot_type} plot",
-            context=resolved,
-        )
-
-    @functools.wraps(BaseDataManager.plot_batch, updated=())
-    def plot_batch(
-        self,
-        contexts: List[str],
-        *,
-        plot_type: str,
-        x: str,
-        y: Optional[str] = None,
-        group_by: Optional[str] = None,
-        aggregate: Optional[str] = None,
-        metric: Optional[str] = None,
-        filter: Optional[str] = None,
-        title: Optional[str] = None,
-        **kwargs: Any,
-    ) -> List[PlotResult]:
-        return [
-            self.plot(
-                ctx,
-                plot_type=plot_type,
-                x=x,
-                y=y,
-                group_by=group_by,
-                aggregate=aggregate,
-                metric=metric,
-                filter=filter,
-                title=title,
-            )
-            for ctx in contexts
-        ]
-
-    @functools.wraps(BaseDataManager.table_view, updated=())
-    def table_view(
-        self,
-        context: str,
-        *,
-        columns_visible: Optional[List[str]] = None,
-        columns_hidden: Optional[List[str]] = None,
-        columns_order: Optional[List[str]] = None,
-        sort_by: Optional[str] = None,
-        sort_order: Optional[str] = None,
-        row_limit: Optional[int] = None,
-        filter: Optional[str] = None,
-        title: Optional[str] = None,
-    ) -> TableViewResult:
-        resolved = self._resolve_context(context)
-        return TableViewResult(
-            url=f"https://simulated-table-view.example.com/{resolved}",
-            token="simulated-token",
-            title=title or "Simulated Table View",
-            context=resolved,
-        )
-
-    @functools.wraps(BaseDataManager.table_view_batch, updated=())
-    def table_view_batch(
-        self,
-        contexts: List[str],
-        *,
-        columns_visible: Optional[List[str]] = None,
-        columns_hidden: Optional[List[str]] = None,
-        columns_order: Optional[List[str]] = None,
-        sort_by: Optional[str] = None,
-        sort_order: Optional[str] = None,
-        row_limit: Optional[int] = None,
-        filter: Optional[str] = None,
-        title: Optional[str] = None,
-    ) -> List[TableViewResult]:
-        return [
-            self.table_view(
-                ctx,
-                columns_visible=columns_visible,
-                columns_hidden=columns_hidden,
-                columns_order=columns_order,
-                sort_by=sort_by,
-                sort_order=sort_order,
-                row_limit=row_limit,
-                filter=filter,
-                title=title,
-            )
-            for ctx in contexts
-        ]
 
     # ──────────────────────────────────────────────────────────────────────────
     # Utility Methods

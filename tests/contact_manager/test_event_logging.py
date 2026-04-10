@@ -6,7 +6,7 @@ from unity.contact_manager.contact_manager import ContactManager
 from tests.helpers import _handle_project, capture_events
 
 # All tests in this file require EventBus publishing to verify event behavior
-pytestmark = pytest.mark.enable_eventbus
+pytestmark = [pytest.mark.enable_eventbus, pytest.mark.llm_call]
 
 
 @pytest.mark.asyncio
@@ -27,7 +27,6 @@ async def test_ask_events():
         and e.payload.get("phase") == "incoming"
         and e.payload.get("question") == user_q
     ]
-    print([e.payload for e in events if e.payload.get("method") == "ask"])
     assert incoming, "No incoming ManagerMethod event recorded for ask()"
     call_id = incoming[0].calling_id
 

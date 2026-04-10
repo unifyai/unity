@@ -3733,33 +3733,53 @@ async def async_tool_loop_inner(
                     "Persist mode: waiting for next interjection...",
                     prefix=ICONS["pause"],
                 )
-                # Block until an interjection arrives or cancellation is requested
-                cancel_waiter = asyncio.create_task(
-                    cancel_event.wait(),
-                    name="PersistCancelWait",
-                )
-                interject_waiter = asyncio.create_task(
-                    interject_queue.get(),
-                    name="PersistInterjectWait",
-                )
-                done, pending = await asyncio.wait(
-                    {cancel_waiter, interject_waiter},
-                    return_when=asyncio.FIRST_COMPLETED,
-                )
-                # Clean up the waiter that didn't finish
-                for p in pending:
-                    p.cancel()
-                    await asyncio.gather(p, return_exceptions=True)
+                while True:
+                    # Block until an interjection arrives or cancellation is requested
+                    cancel_waiter = asyncio.create_task(
+                        cancel_event.wait(),
+                        name="PersistCancelWait",
+                    )
+                    interject_waiter = asyncio.create_task(
+                        interject_queue.get(),
+                        name="PersistInterjectWait",
+                    )
+                    done, pending = await asyncio.wait(
+                        {cancel_waiter, interject_waiter},
+                        return_when=asyncio.FIRST_COMPLETED,
+                    )
+                    for p in pending:
+                        p.cancel()
+                        await asyncio.gather(p, return_exceptions=True)
 
-                # Check if we were cancelled
-                if cancel_event.is_set():
-                    raise asyncio.CancelledError
+                    if cancel_event.is_set():
+                        raise asyncio.CancelledError
 
-                # An interjection arrived - put it back in the queue for normal processing
-                # at the top of the loop
-                if interject_waiter in done:
+                    if interject_waiter not in done:
+                        continue
+
+                    interjection = interject_waiter.result()
+
+                    # Mirror sentinels are transcript-only (no user message).
+                    # Process them in-place and stay in persist wait — resuming
+                    # the full loop would trigger an LLM call with a trailing
+                    # assistant message, which strict models reject.
+                    if isinstance(interjection, dict) and "_mirror" in interjection:
+                        try:
+                            _ms = interjection.get("_mirror") or {}
+                            _m = _ms.get("method")
+                            _kw = _ms.get("kwargs") or {}
+                            if isinstance(_m, str) and _m:
+                                merged = dict(_kw if isinstance(_kw, dict) else {})
+                                for _key in ("_custom", "_aliases", "_fallback"):
+                                    if _key in _ms:
+                                        merged[_key] = _ms[_key]
+                                await _synthesize_mirrored_helper_calls(_m, merged)
+                        except Exception:
+                            pass
+                        continue
+
+                    # Real interjection — put it back for normal processing
                     try:
-                        interjection = interject_waiter.result()
                         await interject_queue.put(interjection)
                         logger.info(
                             "Persist mode: interjection received, resuming loop",
@@ -3767,6 +3787,8 @@ async def async_tool_loop_inner(
                         )
                     except Exception:
                         pass
+                    break
+
                 # Reset timer for the new "turn"
                 timer.reset()
                 continue  # Back to top of loop to process the interjection

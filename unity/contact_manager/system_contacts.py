@@ -102,11 +102,15 @@ def _resolve_user_details(self) -> Dict[str, Any]:
         "bio": data.get("bio"),
         "timezone": data.get("timezone"),
         "phone_number": data.get("phone_number"),
+        "whatsapp_number": data.get("whatsapp_number"),
     }
     user_info.update({k: v for k, v in mapped.items() if v is not None})
 
     if "phone_number" not in user_info and SESSION_DETAILS.user.number:
         user_info["phone_number"] = SESSION_DETAILS.user.number
+
+    if "whatsapp_number" not in user_info and SESSION_DETAILS.user.whatsapp_number:
+        user_info["whatsapp_number"] = SESSION_DETAILS.user.whatsapp_number
 
     if user_info:
         return user_info
@@ -141,6 +145,9 @@ def provision_assistant_contact(self, assistant_log) -> None:
             "surname": ast.surname if populated else PLACEHOLDER_ASSISTANT_SURNAME,
             "email_address": ast.email if populated else PLACEHOLDER_ASSISTANT_EMAIL,
             "phone_number": ast.number if populated else PLACEHOLDER_ASSISTANT_PHONE,
+            "whatsapp_number": (
+                ast.whatsapp_number if populated and ast.whatsapp_number else None
+            ),
             "bio": ast.about if populated else PLACEHOLDER_ASSISTANT_BIO,
             "timezone": (ast.timezone or "UTC") if populated else "UTC",
             "rolling_summary": None,
@@ -153,12 +160,18 @@ def provision_assistant_contact(self, assistant_log) -> None:
             fetched_bio = ast.about if populated else None
             fetched_tz = ast.timezone if populated else None
             fetched_phone = ast.number if populated else None
+            fetched_whatsapp = (
+                ast.whatsapp_number if populated and ast.whatsapp_number else None
+            )
             fetched_first_name = ast.first_name if populated else None
             fetched_surname = ast.surname if populated else None
 
             needs_timezone = fetched_tz and entries.get("timezone") != fetched_tz
             needs_bio = fetched_bio and entries.get("bio") != fetched_bio
             needs_phone = fetched_phone and entries.get("phone_number") != fetched_phone
+            needs_whatsapp = (
+                fetched_whatsapp and entries.get("whatsapp_number") != fetched_whatsapp
+            )
             needs_is_system = entries.get("is_system") is not True
             needs_first_name = (
                 fetched_first_name and entries.get("first_name") != fetched_first_name
@@ -171,6 +184,7 @@ def provision_assistant_contact(self, assistant_log) -> None:
                 needs_timezone
                 or needs_bio
                 or needs_phone
+                or needs_whatsapp
                 or needs_is_system
                 or needs_first_name
                 or needs_surname
@@ -185,6 +199,8 @@ def provision_assistant_contact(self, assistant_log) -> None:
                     update_kwargs["bio"] = fetched_bio
                 if needs_phone:
                     update_kwargs["phone_number"] = fetched_phone
+                if needs_whatsapp:
+                    update_kwargs["whatsapp_number"] = fetched_whatsapp
                 if needs_is_system:
                     update_kwargs["is_system"] = True
                 if needs_first_name:
@@ -273,6 +289,7 @@ def provision_user_contact(self, user_log) -> None:
             "surname": user_info.get("last_name"),
             "email_address": user_info.get("email"),
             "phone_number": user_info.get("phone_number"),
+            "whatsapp_number": user_info.get("whatsapp_number"),
             "bio": user_info.get("bio"),
             "response_policy": self.USER_MANAGER_RESPONSE_POLICY,
         },
@@ -296,6 +313,7 @@ def provision_user_contact(self, user_log) -> None:
             "last_name",
             "email",
             "phone_number",
+            "whatsapp_number",
         }
     }
     if extra_fields:
@@ -307,13 +325,23 @@ def provision_user_contact(self, user_log) -> None:
             fetched_bio = user_info.get("bio")
             fetched_tz = user_info.get("timezone")
             fetched_phone = user_info.get("phone_number")
+            fetched_whatsapp = user_info.get("whatsapp_number")
 
             needs_timezone = fetched_tz and entries.get("timezone") != fetched_tz
             needs_bio = fetched_bio and entries.get("bio") != fetched_bio
             needs_phone = fetched_phone and entries.get("phone_number") != fetched_phone
+            needs_whatsapp = (
+                fetched_whatsapp and entries.get("whatsapp_number") != fetched_whatsapp
+            )
             needs_is_system = entries.get("is_system") is not True
 
-            if needs_timezone or needs_bio or needs_phone or needs_is_system:
+            if (
+                needs_timezone
+                or needs_bio
+                or needs_phone
+                or needs_whatsapp
+                or needs_is_system
+            ):
                 update_kwargs: Dict[str, Any] = {
                     "contact_id": 1,
                     "_log_id": user_log.id,
@@ -324,6 +352,8 @@ def provision_user_contact(self, user_log) -> None:
                     update_kwargs["bio"] = fetched_bio
                 if needs_phone:
                     update_kwargs["phone_number"] = fetched_phone
+                if needs_whatsapp:
+                    update_kwargs["whatsapp_number"] = fetched_whatsapp
                 if needs_is_system:
                     update_kwargs["is_system"] = True
                 self.update_contact(**update_kwargs)
@@ -440,6 +470,7 @@ def provision_org_member_contacts(self) -> None:
                 fetched_bio = member.get("bio")
                 fetched_tz = member.get("timezone")
                 fetched_phone = member.get("phone_number")
+                fetched_whatsapp = member.get("whatsapp_number")
                 fetched_user_id = member.get("user_id")
 
                 needs_is_system = not entries.get("is_system")
@@ -447,6 +478,10 @@ def provision_org_member_contacts(self) -> None:
                 needs_timezone = fetched_tz and entries.get("timezone") != fetched_tz
                 needs_phone = (
                     fetched_phone and entries.get("phone_number") != fetched_phone
+                )
+                needs_whatsapp = (
+                    fetched_whatsapp
+                    and entries.get("whatsapp_number") != fetched_whatsapp
                 )
                 needs_user_id = (
                     fetched_user_id and entries.get("user_id") != fetched_user_id
@@ -457,6 +492,7 @@ def provision_org_member_contacts(self) -> None:
                     or needs_bio
                     or needs_timezone
                     or needs_phone
+                    or needs_whatsapp
                     or needs_user_id
                 ):
                     update_kwargs: Dict[str, Any] = {
@@ -471,6 +507,8 @@ def provision_org_member_contacts(self) -> None:
                         update_kwargs["timezone"] = fetched_tz
                     if needs_phone:
                         update_kwargs["phone_number"] = fetched_phone
+                    if needs_whatsapp:
+                        update_kwargs["whatsapp_number"] = fetched_whatsapp
                     if needs_user_id:
                         update_kwargs["user_id"] = fetched_user_id
                     self.update_contact(**update_kwargs)
@@ -481,6 +519,7 @@ def provision_org_member_contacts(self) -> None:
                     surname=surname,
                     email_address=email,
                     phone_number=member.get("phone_number"),
+                    whatsapp_number=member.get("whatsapp_number"),
                     bio=member.get("bio"),
                     timezone=member.get("timezone") or "UTC",
                     is_system=True,

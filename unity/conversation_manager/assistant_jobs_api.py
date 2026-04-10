@@ -22,6 +22,7 @@ import unify
 log = logging.getLogger(__name__)
 
 VM_RELEASE_ATTEMPTS = 3
+SESSION_STOP_ATTEMPTS = 3
 
 PROJECT_NAME = "AssistantJobs"
 CONTEXT = "startup_events"
@@ -78,30 +79,6 @@ def create_assistant_log(api_key: str, **entries) -> "unify.Log":
 # ---------------------------------------------------------------------------
 
 
-def read_own_job(
-    comms_url: str,
-    admin_key: str,
-    job_name: str,
-) -> dict | None:
-    """Read the current state of this container's Job from the comms service.
-
-    Returns ``{job_name, labels, annotations, resource_version, active}``
-    or ``None`` on any error (fail-silent so the polling loop continues).
-    """
-    try:
-        resp = requests.get(
-            f"{comms_url}/infra/job/{job_name}",
-            headers={"Authorization": f"Bearer {admin_key}"},
-            timeout=10,
-        )
-        if resp.status_code == 200:
-            return resp.json()
-        return None
-    except Exception:
-        log.debug("Failed to read own job %s (will retry)", job_name, exc_info=True)
-        return None
-
-
 def patch_job_label(
     comms_url: str,
     admin_key: str,
@@ -148,68 +125,56 @@ def patch_job_label(
     return False
 
 
-# ---------------------------------------------------------------------------
-# VM operations (via comms service)
-# ---------------------------------------------------------------------------
-
-
-def detach_disk(
-    comms_url: str,
-    admin_key: str,
-    assistant_id: str,
-) -> None:
-    """Best-effort detach of the assistant's persistent disk."""
-    headers = {"Authorization": f"Bearer {admin_key}"}
-    try:
-        resp = requests.post(
-            f"{comms_url}/infra/vm/pool/disk/detach/{assistant_id}",
-            headers=headers,
-            timeout=60,
-        )
-        if resp.ok:
-            log.info("Disk detached for %s: %s", assistant_id, resp.json())
-        else:
-            log.error(
-                "Failed to detach disk for %s: %d %s",
-                assistant_id,
-                resp.status_code,
-                resp.text,
-            )
-    except Exception:
-        log.exception("Error detaching disk for %s", assistant_id)
-        traceback.print_exc()
-
-
 def release_pool_vm(
     comms_url: str,
     admin_key: str,
     assistant_id: str,
+    binding_id: str,
     max_attempts: int = VM_RELEASE_ATTEMPTS,
+    *,
+    job_name: str | None = None,
+    vm_name: str | None = None,
 ) -> None:
-    """Release the pool VM assigned to *assistant_id* (with retries)."""
+    """Request pool VM release for the current job or VM target.
+
+    The caller should pass the most specific runtime identity it has
+    (typically ``job_name`` for Unity containers and the job-watcher) so
+    Comms can reject stale cleanup from older runtimes.
+    """
     headers = {"Authorization": f"Bearer {admin_key}"}
+    payload = {"assistant_id": assistant_id, "binding_id": binding_id}
+    if job_name:
+        payload["job_name"] = job_name
+    if vm_name:
+        payload["vm_name"] = vm_name
 
     for attempt in range(1, max_attempts + 1):
         try:
             resp = requests.post(
                 f"{comms_url}/infra/vm/pool/release",
-                json={"assistant_id": assistant_id},
+                json=payload,
                 headers=headers,
                 timeout=60,
             )
             if resp.ok:
                 body = resp.json()
                 if body.get("released"):
-                    log.info("Pool VM released for %s: %s", assistant_id, body)
+                    log.info("Pool VM release accepted for %s: %s", assistant_id, body)
                     return
 
-                log.warning(
-                    "Release returned released=false for %s: %s — "
-                    "attempting disk detach",
+                if body.get("pool_role") == "releasing":
+                    log.info(
+                        "Pool VM release already in progress for %s: %s",
+                        assistant_id,
+                        body,
+                    )
+                    return
+
+                log.info(
+                    "No additional pool VM release action needed for %s: %s",
                     assistant_id,
                     body,
                 )
-                detach_disk(comms_url, admin_key, assistant_id)
                 return
 
             if resp.status_code >= 500 and attempt < max_attempts:
@@ -234,3 +199,60 @@ def release_pool_vm(
             log.exception("Error releasing pool VM for %s", assistant_id)
             traceback.print_exc()
             return
+
+
+def stop_assistant_session(
+    comms_url: str,
+    admin_key: str,
+    assistant_id: str,
+    max_attempts: int = SESSION_STOP_ATTEMPTS,
+) -> bool:
+    """Ask Comms to transition the assistant session intent offline.
+
+    Unity uses this before a normal inactivity shutdown so the controller can
+    distinguish an intentional "go offline" transition from a crash that
+    should be restarted.
+    """
+    headers = {"Authorization": f"Bearer {admin_key}"}
+
+    for attempt in range(1, max_attempts + 1):
+        try:
+            resp = requests.post(
+                f"{comms_url}/infra/session/{assistant_id}/stop",
+                headers=headers,
+                timeout=10,
+            )
+            if resp.ok:
+                try:
+                    body = resp.json()
+                except ValueError:
+                    body = {}
+                log.info(
+                    "Assistant session stop accepted for %s: %s",
+                    assistant_id,
+                    body,
+                )
+                return True
+
+            if resp.status_code >= 500 and attempt < max_attempts:
+                log.warning(
+                    "Assistant session stop got %d for %s, retrying (%d/%d)",
+                    resp.status_code,
+                    assistant_id,
+                    attempt,
+                    max_attempts,
+                )
+                time.sleep(attempt)
+                continue
+
+            log.error(
+                "Failed to stop assistant session for %s: %d %s",
+                assistant_id,
+                resp.status_code,
+                resp.text,
+            )
+            return False
+        except Exception:
+            log.exception("Error stopping assistant session for %s", assistant_id)
+            traceback.print_exc()
+            return False

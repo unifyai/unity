@@ -590,11 +590,16 @@ def run_ingest(
             coercion_stats.total_cells,
         )
 
-        # Merge prescan types into fields for create_table (unify.create_fields)
+        # Merge prescan types into fields for create_table (unify.create_fields).
+        # If a field already exists as a structured dict (e.g. with a description
+        # but no type), inject the prescan type into it rather than skipping.
         fields = dict(fields or {})
         for col, col_type in column_types.items():
-            if col not in fields:
+            existing = fields.get(col)
+            if existing is None:
                 fields[col] = col_type
+            elif isinstance(existing, dict) and "type" not in existing:
+                existing["type"] = col_type
 
         # Inject explicit_types into every row so Orchestra bypasses its own inference
         explicit_types = {

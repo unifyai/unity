@@ -94,8 +94,15 @@ class BrainSpec:
         if len(sources) > 1:
             header = (
                 "The following screenshots were captured from multiple visual "
-                "sources (desktop, user screen, and/or webcam), each paired with "
-                "what the user said at that moment. They are in chronological order."
+                "sources (desktop, user screen, meeting view, and/or webcam), "
+                "each paired with what the user said at that moment. They are "
+                "in chronological order."
+            )
+        elif "google_meet" in sources:
+            header = (
+                "The following screenshots were captured from the Google Meet "
+                "call, showing the meeting view as you see it. They are paired "
+                "with what was said at each moment and are in chronological order."
             )
         elif "user" in sources:
             header = (
@@ -130,6 +137,7 @@ class BrainSpec:
             "assistant": "Assistant's Screen",
             "user": "User's Screen",
             "webcam": "User's Webcam",
+            "google_meet": "Google Meet",
         }
         for i, entry in enumerate(self.screenshots, 1):
             label = source_labels.get(entry.source, "Screenshot")
@@ -191,8 +199,8 @@ def build_brain_spec(
 
     # Get boss contact (contact_id=1) from ContactManager - the source of truth
     boss_contact = cm.contact_index.get_contact(1) or {}
-    is_boss_on_call = cm.mode.is_voice and (
-        (cm.get_active_contact() or {}).get("contact_id") == 1
+    is_internal_call = cm.mode.is_voice and bool(
+        (cm.get_active_contact() or {}).get("is_system", False),
     )
     system_prompt = build_system_prompt(
         bio=cm.assistant_about,
@@ -202,11 +210,13 @@ def build_brain_spec(
         phone_number=boss_contact.get("phone_number"),
         email_address=boss_contact.get("email_address"),
         is_voice_call=cm.mode.is_voice,
-        is_boss_on_call=is_boss_on_call,
+        is_internal_call=is_internal_call,
         demo_mode=SETTINGS.DEMO_MODE,
         computer_fast_path=cm.computer_fast_path_eligible,
         assistant_has_phone=bool(cm.assistant_number),
         assistant_has_email=bool(cm.assistant_email),
+        assistant_has_whatsapp=bool(cm.assistant_whatsapp_number),
+        user_desktop_control=SETTINGS.conversation.USER_DESKTOP_CONTROL_ENABLED,
     )
 
     response_model = _RESPONSE_MODELS[cm.mode]

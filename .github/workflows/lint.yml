@@ -1,0 +1,21 @@
+name: Lint
+
+on:
+  push:
+    branches:
+    - '**'
+
+jobs:
+  black:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v6
+
+    - name: Set up Python
+      uses: actions/setup-python@v6
+
+    - name: Install black
+      run: pip install black==26.1.0
+
+    - name: Run black check
+      run: black --diff --color --check .

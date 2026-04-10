@@ -20,6 +20,7 @@ from unity.conversation_manager.domains.contact_index import (
     Message,
     EmailMessage,
     UnifyMessage,
+    WhatsAppMessage,
     GuidanceMessage,
     ConversationState,
     ContactIndex,
@@ -478,6 +479,7 @@ class Renderer:
         user_screen_share_active: bool = False,
         user_webcam_active: bool = False,
         user_remote_control_active: bool = False,
+        google_meet_active: bool = False,
         active_web_sessions: list | None = None,
         managers_initialized: bool = True,
         vm_ready: bool = True,
@@ -507,6 +509,7 @@ class Renderer:
             user_screen_share_active=user_screen_share_active,
             user_webcam_active=user_webcam_active,
             user_remote_control_active=user_remote_control_active,
+            google_meet_active=google_meet_active,
         )
 
         web_sessions_render = self.render_active_web_sessions(
@@ -605,6 +608,8 @@ class Renderer:
                 "notification that the VM is ready. If a user asks you to do "
                 "something on the computer, let them know you will action it "
                 "in just a moment.\n"
+                "Note: join_google_meet does NOT depend on the desktop VM — "
+                "it uses a local browser and is available immediately.\n"
                 "</infrastructure>",
             )
 
@@ -633,6 +638,7 @@ class Renderer:
         user_screen_share_active: bool = False,
         user_webcam_active: bool = False,
         user_remote_control_active: bool = False,
+        google_meet_active: bool = False,
     ) -> str:
         """Render active meet interaction states as top-level sections.
 
@@ -681,6 +687,16 @@ class Renderer:
                 "interrupt the user's input. Wait for them to release control "
                 "before resuming desktop operations.\n"
                 "</user_remote_control>",
+            )
+
+        if google_meet_active:
+            parts.append(
+                "<google_meet_visual status='active'>\n"
+                "You are in a Google Meet call and receiving periodic "
+                "screenshots of the meeting view. You can see participants, "
+                "any content being presented, and the meeting UI. When users "
+                "ask if you can see the meeting, confirm that you can.\n"
+                "</google_meet_visual>",
             )
 
         return "\n\n".join(parts)
@@ -1053,7 +1069,14 @@ class Renderer:
 
     def render_message(
         self,
-        message: Message | EmailMessage | UnifyMessage | ApiMessage | GuidanceMessage,
+        message: (
+            Message
+            | EmailMessage
+            | UnifyMessage
+            | WhatsAppMessage
+            | ApiMessage
+            | GuidanceMessage
+        ),
         last_snapshot: datetime = None,
         contact_index: ContactIndex | None = None,
         contact_name: str | None = None,
@@ -1147,7 +1170,7 @@ class Renderer:
                 f"{message.body}"
             )
 
-        if isinstance(message, UnifyMessage):
+        if isinstance(message, (UnifyMessage, WhatsAppMessage)):
             attachments_line = ""
             if message.attachments:
 

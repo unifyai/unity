@@ -12,8 +12,7 @@ import uuid
 from typing import Any
 
 from livekit.agents import llm
-from livekit.agents.llm import ChatChunk, ChoiceDelta
-from livekit.agents.llm.tool_context import FunctionTool, RawFunctionTool
+from livekit.agents.llm import ChatChunk, ChoiceDelta, Tool
 from livekit.agents.types import (
     DEFAULT_API_CONNECT_OPTIONS,
     NOT_GIVEN,
@@ -63,6 +62,10 @@ class UnifyLLM(llm.LLM):
     def model(self) -> str:
         return self._model
 
+    @property
+    def provider(self) -> str:
+        return "unify"
+
     def enqueue_trace_context(self, trace_context: dict[str, Any]) -> None:
         """Attach metadata to the next generation request."""
         self._pending_trace_contexts.append(dict(trace_context))
@@ -71,7 +74,7 @@ class UnifyLLM(llm.LLM):
         self,
         *,
         chat_ctx: llm.ChatContext,
-        tools: list[FunctionTool | RawFunctionTool] | None = None,
+        tools: list[Tool] | None = None,
         conn_options: APIConnectOptions = DEFAULT_API_CONNECT_OPTIONS,
         parallel_tool_calls: NotGivenOr[bool] = NOT_GIVEN,
         tool_choice: NotGivenOr[llm.ToolChoice] = NOT_GIVEN,
@@ -103,7 +106,7 @@ class UnifyLLMStream(llm.LLMStream):
         self,
         llm: UnifyLLM,
         chat_ctx: llm.ChatContext,
-        tools: list[FunctionTool | RawFunctionTool],
+        tools: list[Tool],
         conn_options: APIConnectOptions,
         model: str,
         reasoning_effort: str | None,

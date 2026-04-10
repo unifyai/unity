@@ -56,6 +56,8 @@ async def test_second_act_includes_failure_context(initialized_cm):
        previous failure so the actor can adjust its strategy.
     """
     cm = initialized_cm
+    cm.cm.vm_ready = True
+    cm.cm.file_sync_complete = True
 
     result = await cm.step_until_wait(
         UnifyMessageReceived(

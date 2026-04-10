@@ -141,6 +141,7 @@ def test_updates_transcripts():
 # ─────────────────────────────────────────────────────────────────────────────
 @pytest.mark.slow
 @pytest.mark.asyncio
+@pytest.mark.llm_call
 @_handle_project
 async def test_via_update():
     """Ask the LLM (update method) to merge two contacts."""

@@ -7,6 +7,8 @@ from tests.helpers import _handle_project
 from unity.task_scheduler.types.status import Status
 from unity.task_scheduler.types.priority import Priority
 
+pytestmark = pytest.mark.llm_call
+
 
 # ----------------------------------------------------------------------------
 # shared helper

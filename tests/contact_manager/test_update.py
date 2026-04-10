@@ -12,7 +12,7 @@ from tests.helpers import _handle_project
 from tests.async_helpers import _wait_for_next_assistant_response_event
 
 # All tests in this file exercise end-to-end LLM reasoning for contact mutations
-pytestmark = pytest.mark.eval
+pytestmark = [pytest.mark.eval, pytest.mark.llm_call]
 
 
 def _programmatic_contact_check(

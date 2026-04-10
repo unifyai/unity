@@ -35,6 +35,7 @@ def config():
         assistant_number="+15551234567",
         voice_provider="elevenlabs",
         voice_id="test_voice_id",
+        job_name="unity-test-pod-abc123",
     )
 
 
@@ -69,12 +70,12 @@ def boss_contact():
 
 
 class TestWorkerAgentName:
-    def test_agent_name_format(self, call_manager):
-        assert call_manager.worker_agent_name == "unity_42"
+    def test_agent_name_uses_job_name(self, call_manager):
+        assert call_manager.worker_agent_name == "unity_unity-test-pod-abc123"
 
-    def test_agent_name_updates_with_config(self, call_manager):
-        call_manager.assistant_id = "99"
-        assert call_manager.worker_agent_name == "unity_99"
+    def test_agent_name_updates_with_job_name(self, call_manager):
+        call_manager.job_name = "unity-other-pod-xyz"
+        assert call_manager.worker_agent_name == "unity_unity-other-pod-xyz"
 
 
 # ---------------------------------------------------------------------------
@@ -98,7 +99,7 @@ class TestPersistentWorkerStartup:
             args = mock_run.call_args[0]
             assert "worker.py" in str(args[0])
             assert "dev" in args
-            assert "unity_42" in args
+            assert "unity_unity-test-pod-abc123" in args
             assert call_manager._worker_proc is mock_proc
 
     @pytest.mark.asyncio
@@ -176,7 +177,7 @@ class TestJobDispatch:
 
         mock_lk.agent_dispatch.create_dispatch.assert_called_once()
         req = mock_lk.agent_dispatch.create_dispatch.call_args[0][0]
-        assert req.agent_name == "unity_42"
+        assert req.agent_name == "unity_unity-test-pod-abc123"
         assert req.room == "unity_42_phone"
 
         meta = json.loads(req.metadata)
@@ -209,7 +210,7 @@ class TestJobDispatch:
 
             mock_dispatch.assert_called_once_with(
                 make_room_name("42", "phone"),
-                "phone",
+                "phone_call",
                 sample_contact,
                 boss_contact,
                 False,
@@ -239,7 +240,7 @@ class TestJobDispatch:
 
             mock_dispatch.assert_called_once_with(
                 "unity_42_meet",
-                "unify",
+                "unify_meet",
                 sample_contact,
                 boss_contact,
                 False,

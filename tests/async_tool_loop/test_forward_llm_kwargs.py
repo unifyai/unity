@@ -5,6 +5,8 @@ import pytest
 from unity.common.async_tool_loop import start_async_tool_loop
 from unity.common.llm_client import new_llm_client
 
+pytestmark = pytest.mark.llm_call
+
 
 @pytest.mark.asyncio
 async def test_all_llm_kwargs_are_forwarded_verbatim(llm_config, monkeypatch):

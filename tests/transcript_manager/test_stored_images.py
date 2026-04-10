@@ -94,6 +94,7 @@ def test_attach_image_promotes_block():
 
 @pytest.mark.asyncio
 @pytest.mark.requires_real_unify
+@pytest.mark.llm_call
 @_handle_project
 async def test_ask_uses_images_for_color(static_now):
     """
@@ -173,6 +174,7 @@ async def test_ask_uses_images_for_color(static_now):
 
 @pytest.mark.asyncio
 @pytest.mark.requires_real_unify
+@pytest.mark.llm_call
 @_handle_project
 async def test_ask_boot_option(static_now):
     tm = TranscriptManager()
@@ -263,6 +265,7 @@ async def test_ask_boot_option(static_now):
 
 @pytest.mark.asyncio
 @pytest.mark.requires_real_unify
+@pytest.mark.llm_call
 @_handle_project
 async def test_compare_screens_raw_context(static_now):
     """

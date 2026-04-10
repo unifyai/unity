@@ -78,6 +78,8 @@ async def test_file_read_csv_extracts_names(initialized_cm_codeact, test_files):
 async def test_file_missing_path_returns_helpful_error(initialized_cm_codeact):
     """Missing file path is handled gracefully (no crash; returns a helpful error)."""
     cm = initialized_cm_codeact
+    cm.cm.vm_ready = True
+    cm.cm.file_sync_complete = True
 
     result = await cm.step_until_wait(
         SMSReceived(
@@ -110,6 +112,8 @@ async def test_downloaded_attachment_readable_by_actor(initialized_cm_codeact):
     file (open(), primitives.files.*, etc.) — it only checks the answer.
     """
     cm = initialized_cm_codeact
+    cm.cm.vm_ready = True
+    cm.cm.file_sync_complete = True
 
     # Simulate an attachment download: save a .txt file with known content.
     fm = ManagerRegistry.get_file_manager()

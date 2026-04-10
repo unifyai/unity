@@ -22,7 +22,7 @@ from unity.conversation_manager.events import *
 from unity.common.prompt_helpers import now as prompt_now
 from unity.events.event_bus import EVENT_BUS
 from unity.manager_registry import ManagerRegistry
-from unity.conversation_manager.types import Medium
+from unity.conversation_manager.types import Medium, Mode
 
 if TYPE_CHECKING:
     from unity.actor.base import BaseActor
@@ -74,13 +74,27 @@ _MESSAGE_PRODUCING_EVENTS = {
     "OutboundPhoneUtterance",
     "InboundUnifyMeetUtterance",
     "OutboundUnifyMeetUtterance",
+    "InboundWhatsAppCallUtterance",
+    "OutboundWhatsAppCallUtterance",
+    "InboundGoogleMeetUtterance",
+    "OutboundGoogleMeetUtterance",
     "FastBrainNotification",
     "PhoneCallReceived",
     "PhoneCallSent",
     "UnifyMeetReceived",
+    "GoogleMeetReceived",
     "PhoneCallStarted",
     "UnifyMeetStarted",
+    "GoogleMeetStarted",
     "PhoneCallNotAnswered",
+    "WhatsAppReceived",
+    "WhatsAppSent",
+    "WhatsAppCallReceived",
+    "WhatsAppCallSent",
+    "WhatsAppCallStarted",
+    "WhatsAppCallNotAnswered",
+    "WhatsAppCallInviteSent",
+    "WhatsAppCallPermissionResponse",
     "ApiMessageReceived",
     "ApiMessageSent",
 }
@@ -161,6 +175,28 @@ async def hydrate_global_thread(cm: "ConversationManager") -> None:
                     message_content=cm_event.content,
                     role="assistant",
                     timestamp=ts,
+                )
+
+            # --- WhatsApp Messages ---
+            case "WhatsAppReceived":
+                entry = cm.contact_index.build_message(
+                    contact_id=contact_id,
+                    sender_name=sender_name,
+                    thread_name=Medium.WHATSAPP_MESSAGE,
+                    message_content=cm_event.content,
+                    role="user",
+                    timestamp=ts,
+                    attachments=getattr(cm_event, "attachments", None),
+                )
+            case "WhatsAppSent":
+                entry = cm.contact_index.build_message(
+                    contact_id=contact_id,
+                    sender_name=sender_name,
+                    thread_name=Medium.WHATSAPP_MESSAGE,
+                    message_content=cm_event.content,
+                    role="assistant",
+                    timestamp=ts,
+                    attachments=getattr(cm_event, "attachments", None),
                 )
 
             # --- Unify Messages ---
@@ -278,13 +314,57 @@ async def hydrate_global_thread(cm: "ConversationManager") -> None:
                     role="assistant",
                     timestamp=ts,
                 )
-
-            # --- Fast brain notification ---
-            case "FastBrainNotification":
+            case "InboundWhatsAppCallUtterance":
                 entry = cm.contact_index.build_message(
                     contact_id=contact_id,
                     sender_name=sender_name,
-                    thread_name=Medium.PHONE_CALL,
+                    thread_name=Medium.WHATSAPP_CALL,
+                    message_content=cm_event.content,
+                    role="user",
+                    timestamp=ts,
+                )
+            case "OutboundWhatsAppCallUtterance":
+                entry = cm.contact_index.build_message(
+                    contact_id=contact_id,
+                    sender_name=sender_name,
+                    thread_name=Medium.WHATSAPP_CALL,
+                    message_content=cm_event.content,
+                    role="assistant",
+                    timestamp=ts,
+                )
+            case "InboundGoogleMeetUtterance":
+                entry = cm.contact_index.build_message(
+                    contact_id=contact_id,
+                    sender_name=sender_name,
+                    thread_name=Medium.GOOGLE_MEET,
+                    message_content=cm_event.content,
+                    role="user",
+                    timestamp=ts,
+                )
+            case "OutboundGoogleMeetUtterance":
+                entry = cm.contact_index.build_message(
+                    contact_id=contact_id,
+                    sender_name=sender_name,
+                    thread_name=Medium.GOOGLE_MEET,
+                    message_content=cm_event.content,
+                    role="assistant",
+                    timestamp=ts,
+                )
+
+            # --- Fast brain notification ---
+            case "FastBrainNotification":
+                if cm.call_manager.has_active_google_meet:
+                    notif_medium = Medium.GOOGLE_MEET
+                elif cm.mode == Mode.MEET:
+                    notif_medium = Medium.UNIFY_MEET
+                elif cm.call_manager._call_channel == "whatsapp_call":
+                    notif_medium = Medium.WHATSAPP_CALL
+                else:
+                    notif_medium = Medium.PHONE_CALL
+                entry = cm.contact_index.build_message(
+                    contact_id=contact_id,
+                    sender_name=sender_name,
+                    thread_name=notif_medium,
                     message_content=cm_event.content,
                     role="guidance",
                     timestamp=ts,
@@ -318,17 +398,92 @@ async def hydrate_global_thread(cm: "ConversationManager") -> None:
                     role="user",
                     timestamp=ts,
                 )
-            case "PhoneCallStarted" | "UnifyMeetStarted":
+            case "GoogleMeetReceived":
+                entry = cm.contact_index.build_message(
+                    contact_id=contact_id,
+                    sender_name=sender_name,
+                    thread_name=Medium.GOOGLE_MEET,
+                    message_content="<Joining Google Meet...>",
+                    role="assistant",
+                    timestamp=ts,
+                )
+            case "PhoneCallStarted" | "UnifyMeetStarted" | "GoogleMeetStarted":
                 medium = (
-                    Medium.UNIFY_MEET
-                    if payload_cls == "UnifyMeetStarted"
-                    else Medium.PHONE_CALL
+                    Medium.GOOGLE_MEET
+                    if payload_cls == "GoogleMeetStarted"
+                    else (
+                        Medium.UNIFY_MEET
+                        if payload_cls == "UnifyMeetStarted"
+                        else Medium.PHONE_CALL
+                    )
                 )
                 entry = cm.contact_index.build_message(
                     contact_id=contact_id,
                     sender_name=sender_name,
                     thread_name=medium,
                     message_content="<Call Started>",
+                    role="user",
+                    timestamp=ts,
+                )
+            case "WhatsAppCallReceived":
+                entry = cm.contact_index.build_message(
+                    contact_id=contact_id,
+                    sender_name=sender_name,
+                    thread_name=Medium.WHATSAPP_CALL,
+                    message_content="<Receiving WhatsApp Call...>",
+                    role="user",
+                    timestamp=ts,
+                )
+            case "WhatsAppCallStarted":
+                entry = cm.contact_index.build_message(
+                    contact_id=contact_id,
+                    sender_name=sender_name,
+                    thread_name=Medium.WHATSAPP_CALL,
+                    message_content="<Call Started>",
+                    role="user",
+                    timestamp=ts,
+                )
+            case "WhatsAppCallSent":
+                entry = cm.contact_index.build_message(
+                    contact_id=contact_id,
+                    sender_name=sender_name,
+                    thread_name=Medium.WHATSAPP_CALL,
+                    message_content="<Sending WhatsApp Call...>",
+                    role="assistant",
+                    timestamp=ts,
+                )
+            case "WhatsAppCallNotAnswered":
+                reason = getattr(cm_event, "reason", "no-answer") or "no-answer"
+                reason_display = {
+                    "no-answer": "did not answer",
+                    "busy": "was busy",
+                    "canceled": "call was canceled",
+                    "failed": "call failed",
+                }.get(reason, f"not answered ({reason})")
+                entry = cm.contact_index.build_message(
+                    contact_id=contact_id,
+                    sender_name=sender_name,
+                    thread_name=Medium.WHATSAPP_CALL,
+                    message_content=f"<WhatsApp Call Not Answered: {reason_display}>",
+                    role="assistant",
+                    timestamp=ts,
+                )
+            case "WhatsAppCallInviteSent":
+                entry = cm.contact_index.build_message(
+                    contact_id=contact_id,
+                    sender_name=sender_name,
+                    thread_name=Medium.WHATSAPP_CALL,
+                    message_content="<WhatsApp Call Invite Sent>",
+                    role="assistant",
+                    timestamp=ts,
+                )
+            case "WhatsAppCallPermissionResponse":
+                accepted = getattr(cm_event, "accepted", False)
+                entry = cm.contact_index.build_message(
+                    contact_id=contact_id,
+                    sender_name=sender_name,
+                    thread_name=Medium.WHATSAPP_CALL,
+                    message_content=f"<Call Permission: {'Accepted' if accepted else 'Rejected'}>",
                     role="user",
                     timestamp=ts,
                 )
@@ -507,6 +662,28 @@ async def actor_watch_clarifications(
         )
 
 
+def _resolve_gmeet_name_to_contact(
+    cm: "ConversationManager",
+    display_name: str,
+) -> dict | None:
+    """Best-effort resolution of a Google Meet display name to a contact.
+
+    Iterates the contact_index's fallback cache and checks for exact
+    full-name or first-name matches.  Returns the contact dict on match,
+    None otherwise.
+    """
+    if not display_name:
+        return None
+    dn_lower = display_name.strip().lower()
+    for c in cm.contact_index._fallback_contacts.values():
+        full = f"{c.get('first_name', '')} {c.get('surname', '')}".strip()
+        if full.lower() == dn_lower:
+            return c
+        if c.get("first_name", "").lower() == dn_lower:
+            return c
+    return None
+
+
 async def log_message(
     cm: "ConversationManager",
     event: Event,
@@ -523,11 +700,21 @@ async def log_message(
         medium = Medium.UNIFY_MEET if "meet" in event_name else Medium.UNIFY_MESSAGE
     elif "phone" in event_name:
         medium = Medium.PHONE_CALL
+    elif "whatsapp" in event_name:
+        medium = (
+            Medium.WHATSAPP_CALL if "call" in event_name else Medium.WHATSAPP_MESSAGE
+        )
     elif "sms" in event_name:
         medium = Medium.SMS_MESSAGE
+    elif "googlemeet" in event_name:
+        medium = Medium.GOOGLE_MEET
     else:
         medium = Medium.EMAIL
-    role = "Assistant" if "sent" in event_name or "assistant" in event_name else "User"
+    role = (
+        "Assistant"
+        if "sent" in event_name or "assistant" in event_name or "outbound" in event_name
+        else "User"
+    )
     if "prehire" in event_name:
         role = event.role.capitalize()
     if isinstance(event, (EmailSent, EmailReceived)):
@@ -546,6 +733,8 @@ async def log_message(
             UnifyMessageReceived,
             InboundUnifyMeetUtterance,
             OutboundUnifyMeetUtterance,
+            InboundGoogleMeetUtterance,
+            OutboundGoogleMeetUtterance,
             ApiMessageSent,
             ApiMessageReceived,
         ),
@@ -566,6 +755,32 @@ async def log_message(
         sender_id, receiver_ids = 0, [contact_id]
     else:
         sender_id, receiver_ids = contact_id, [0]
+
+    # For Google Meet utterances, resolve participant names to contact IDs
+    # so receiver_ids reflects all known meeting participants.
+    gmeet_participants_meta: list[dict] = []
+    if isinstance(event, (InboundGoogleMeetUtterance, OutboundGoogleMeetUtterance)):
+        participant_names = getattr(event, "participant_names", None) or []
+        if participant_names:
+            resolved_ids: set[int] = set()
+            for name in participant_names:
+                resolved = _resolve_gmeet_name_to_contact(cm, name)
+                cid = resolved.get("contact_id") if resolved else None
+                if cid is not None:
+                    resolved_ids.add(cid)
+                gmeet_participants_meta.append(
+                    {"name": name, "contact_id": cid},
+                )
+            if role == "Assistant":
+                if contact_id is not None:
+                    resolved_ids.add(contact_id)
+                if resolved_ids:
+                    receiver_ids = sorted(resolved_ids)
+            else:
+                resolved_ids.add(0)
+                resolved_ids.discard(sender_id)
+                if resolved_ids:
+                    receiver_ids = sorted(resolved_ids)
 
     # For emails, resolve to/cc/bcc addresses to contact IDs so that
     # receiver_ids reflects all known recipients.
@@ -591,20 +806,25 @@ async def log_message(
         if _pre_hire_exchange_id is not None:
             exchange_id = _pre_hire_exchange_id
         # else: stays UNASSIGNED, will create new exchange
-    elif medium == Medium.PHONE_CALL:
+    elif medium in (Medium.PHONE_CALL, Medium.WHATSAPP_CALL):
         exchange_id = cm.call_manager.call_exchange_id
     elif medium == Medium.UNIFY_MEET:
         exchange_id = cm.call_manager.unify_meet_exchange_id
+    elif medium == Medium.GOOGLE_MEET:
+        exchange_id = cm.call_manager.google_meet_exchange_id
 
     call_utterance_timestamp = ""
-    # Compute utterance timestamp based on active call type.
     call_start = (
         cm.call_manager.call_start_timestamp
-        if medium == Medium.PHONE_CALL
+        if medium in (Medium.PHONE_CALL, Medium.WHATSAPP_CALL)
         else (
             cm.call_manager.unify_meet_start_timestamp
             if medium == Medium.UNIFY_MEET
-            else None
+            else (
+                cm.call_manager.google_meet_start_timestamp
+                if medium == Medium.GOOGLE_MEET
+                else None
+            )
         )
     )
     if call_start:
@@ -642,6 +862,18 @@ async def log_message(
                     "cc": event.cc,
                     "bcc": event.bcc,
                 }
+            elif isinstance(
+                event,
+                (InboundGoogleMeetUtterance, OutboundGoogleMeetUtterance),
+            ):
+                participant_names = getattr(event, "participant_names", None) or []
+                if participant_names:
+                    metadata = metadata or {}
+                    metadata["gmeet_participants"] = gmeet_participants_meta
+                dia_sid = getattr(event, "diarization_speaker_id", None)
+                if dia_sid:
+                    metadata = metadata or {}
+                    metadata["diarization_speaker_id"] = dia_sid
 
             if call_utterance_timestamp:
                 metadata = metadata or {}
@@ -706,6 +938,29 @@ async def log_message(
 
     exchange_id = await asyncio.to_thread(_publish_transcript)
 
+    # Cache the exchange_id on the call manager immediately so that
+    # subsequent queued utterances in the same call reuse it.  The
+    # LogMessageResponse handler also sets this, but it runs
+    # asynchronously on the event loop — by which time the worker may
+    # have already started the next log_message call and created a
+    # duplicate exchange.
+    if exchange_id is not None and exchange_id != UNASSIGNED:
+        if (
+            medium in (Medium.PHONE_CALL, Medium.WHATSAPP_CALL)
+            and cm.call_manager.call_exchange_id == UNASSIGNED
+        ):
+            cm.call_manager.call_exchange_id = exchange_id
+        elif (
+            medium == Medium.UNIFY_MEET
+            and cm.call_manager.unify_meet_exchange_id == UNASSIGNED
+        ):
+            cm.call_manager.unify_meet_exchange_id = exchange_id
+        elif (
+            medium == Medium.GOOGLE_MEET
+            and cm.call_manager.google_meet_exchange_id == UNASSIGNED
+        ):
+            cm.call_manager.google_meet_exchange_id = exchange_id
+
     # publish reply as event envelope
     await event_broker.publish(
         "app:logging:message_logged",
@@ -732,6 +987,8 @@ async def update_session_contacts(
     user_surname: str,
     user_number: str,
     user_email: str,
+    assistant_whatsapp_number: str | None = None,
+    user_whatsapp_number: str | None = None,
 ) -> None:
     """
     Update the assistant (contact_id=0) and boss (contact_id=1) contacts
@@ -757,15 +1014,21 @@ async def update_session_contacts(
         surname: str,
         phone_number: str,
         email_address: str,
+        whatsapp_number: str | None = None,
     ):
         try:
-            await asyncio.to_thread(
-                cm.contact_manager.update_contact,
+            kwargs: dict = dict(
                 contact_id=contact_id,
                 phone_number=phone_number,
                 email_address=email_address,
                 first_name=first_name,
                 surname=surname,
+            )
+            if whatsapp_number is not None:
+                kwargs["whatsapp_number"] = whatsapp_number
+            await asyncio.to_thread(
+                cm.contact_manager.update_contact,
+                **kwargs,
             )
             LOGGER.info(
                 f"{ICONS['managers_worker']} [ManagersWorker] Updated contact {contact_id}: {first_name} {surname}",
@@ -781,6 +1044,7 @@ async def update_session_contacts(
         assistant_surname,
         assistant_number,
         assistant_email,
+        assistant_whatsapp_number,
     )
 
     # In demo mode:
@@ -791,10 +1055,24 @@ async def update_session_contacts(
             f"{ICONS['managers_worker']} [ManagersWorker] Demo mode: skipping boss contact (contact_id=1), "
             "updating demoer contact (contact_id=2)",
         )
-        await _update_contact(2, user_first_name, user_surname, user_number, user_email)
+        await _update_contact(
+            2,
+            user_first_name,
+            user_surname,
+            user_number,
+            user_email,
+            user_whatsapp_number,
+        )
         return
 
-    await _update_contact(1, user_first_name, user_surname, user_number, user_email)
+    await _update_contact(
+        1,
+        user_first_name,
+        user_surname,
+        user_number,
+        user_email,
+        user_whatsapp_number,
+    )
 
 
 # Queueing operations that need managers
@@ -1093,7 +1371,40 @@ def _init_managers(
     )
     per_manager_init.record(_cmhandle_dur, {"manager": "conversation_manager_handle"})
 
-    # 7. Initialize Actor (use provided actor or create via ManagerRegistry)
+    # 7. Run startup hooks (environment-gated plugin discovery)
+    _startup_config: dict | None = None
+    _hook_group = os.environ.get("_UNITY_STARTUP_HOOK_GROUP")
+    _hook_package = os.environ.get("_UNITY_STARTUP_HOOK_PACKAGE")
+    if _hook_group:
+        try:
+            from importlib.metadata import entry_points as _eps
+
+            for ep in _eps(group=_hook_group):
+                if _hook_package and ep.dist.name != _hook_package:
+                    LOGGER.warning(
+                        f"{ICONS['managers_worker']} [ManagersWorker] "
+                        f"Ignoring startup hook from unexpected package: {ep.dist.name}",
+                    )
+                    continue
+                LOGGER.info(
+                    f"{ICONS['managers_worker']} [ManagersWorker] "
+                    f"Running startup hook: {ep.name}",
+                )
+                local_start_time = perf_counter()
+                hook_fn = ep.load()
+                _startup_config = hook_fn(cm, SESSION_DETAILS)
+                _hook_dur = perf_counter() - local_start_time
+                LOGGER.info(
+                    f"{ICONS['managers_worker']} [ManagersWorker] "
+                    f"Startup hook '{ep.name}' completed in {_hook_dur:.2f}s",
+                )
+        except Exception as e:
+            LOGGER.warning(
+                f"{ICONS['managers_worker']} [ManagersWorker] "
+                f"Startup hook failed (degraded): {e}",
+            )
+
+    # 8. Initialize Actor (use provided actor or create via ManagerRegistry)
     LOGGER.debug(f"{ICONS['managers_worker']} [ManagersWorker] Initializing Actor...")
     try:
         local_start_time = perf_counter()
@@ -1110,6 +1421,11 @@ def _init_managers(
             from unity.function_manager.primitives import ComputerPrimitives
 
             cp = ComputerPrimitives()
+            if _startup_config and _startup_config.get("url_mappings"):
+                cp.url_mappings = _startup_config["url_mappings"]
+
+            extra_envs = (_startup_config or {}).get("environments", [])
+            actor_kwargs = (_startup_config or {}).get("actor_kwargs", {})
 
             cm.actor = ManagerRegistry.get_actor(
                 description="production deployment",
@@ -1117,7 +1433,9 @@ def _init_managers(
                     StateManagerEnvironment(),
                     ComputerEnvironment(cp),
                     ActorEnvironment(),
-                ],
+                ]
+                + extra_envs,
+                **actor_kwargs,
             )
         _actor_dur = perf_counter() - local_start_time
         actor_cls = type(cm.actor).__name__

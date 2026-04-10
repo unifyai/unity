@@ -208,6 +208,7 @@ def test_child_overlay_creates_subdirectory_of_parent():
 
 
 @pytest.mark.asyncio
+@pytest.mark.llm_call
 @pytest.mark.timeout(120)
 async def test_packages_not_importable_after_act_completes():
     """Packages installed during act() are cleaned up when the trajectory ends."""

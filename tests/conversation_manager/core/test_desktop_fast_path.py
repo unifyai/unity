@@ -491,13 +491,11 @@ async def test_computer_act_completed_bridge_skipped_when_screen_share_inactive(
 @pytest.mark.asyncio
 @_handle_project
 async def test_computer_act_completed_event_handler_wakes_slow_brain(initialized_cm):
-    """EventHandler for ComputerActCompleted should set _has_non_forwarded_event
-    and request an LLM run."""
+    """EventHandler for ComputerActCompleted should request an LLM run."""
     from unity.conversation_manager.domains.event_handlers import EventHandler
     from unity.conversation_manager.events import ComputerActCompleted
 
     cm = initialized_cm.cm
-    cm._has_non_forwarded_event = False
 
     request_called = []
     original_request = cm.request_llm_run
@@ -514,7 +512,6 @@ async def test_computer_act_completed_event_handler_wakes_slow_brain(initialized
         )
         await EventHandler.handle_event(event, cm)
 
-        assert cm._has_non_forwarded_event
         assert request_called, "request_llm_run should have been called"
     finally:
         cm.request_llm_run = original_request
@@ -542,11 +539,6 @@ def test_render_actor_result_empty_success_not_misleading():
     """An ActorResult with success=True but no result must NOT say
     'completed successfully' — it must clearly indicate no results were
     returned so the fast brain doesn't fabricate a positive outcome.
-
-    Regression: in production the Actor exhausted its context budget,
-    returned success=True with result=None, and the fast brain received
-    'Action completed successfully' which it interpreted as 'Drive is
-    connected and ready' — a hallucination.
     """
     from unity.conversation_manager.events import ActorResult
     from unity.conversation_manager.medium_scripts.common import (

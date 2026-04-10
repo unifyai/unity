@@ -239,6 +239,7 @@ pytestmark_eval = pytest.mark.eval
 
 @pytestmark_eval
 @pytest.mark.asyncio
+@pytest.mark.llm_call
 @pytest.mark.timeout(300)
 async def test_persist_stop_with_memoize_intent_stores_function():
     """A persist=True session stopped with "remember this" stores a function.

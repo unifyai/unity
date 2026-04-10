@@ -26,14 +26,17 @@ class Medium(StrEnum):
     Each medium value can be used directly as a conversation thread key.
 
     Naming convention uses _MESSAGE/_CALL suffixes to disambiguate related
-    mediums (e.g., WHATSAPP_MESSAGE vs WHATSAPP_CALL in future).
+    mediums (e.g., WHATSAPP_MESSAGE vs WHATSAPP_CALL).
     """
 
     UNIFY_MESSAGE = "unify_message"
     UNIFY_MEET = "unify_meet"
     EMAIL = "email"
     SMS_MESSAGE = "sms_message"
+    WHATSAPP_MESSAGE = "whatsapp_message"
+    WHATSAPP_CALL = "whatsapp_call"
     PHONE_CALL = "phone_call"
+    GOOGLE_MEET = "google_meet"
     API_MESSAGE = "api_message"
 
     @property
@@ -74,10 +77,25 @@ MEDIUM_REGISTRY: dict[Medium, MediumInfo] = {
         description="A standard SMS text message sent via cellular network.",
         mode=Mode.TEXT,
     ),
+    Medium.WHATSAPP_MESSAGE: MediumInfo(
+        value=Medium.WHATSAPP_MESSAGE,
+        description="A WhatsApp message sent via Twilio WhatsApp Business API.",
+        mode=Mode.TEXT,
+    ),
+    Medium.WHATSAPP_CALL: MediumInfo(
+        value=Medium.WHATSAPP_CALL,
+        description="A voice call initiated via WhatsApp Business calling.",
+        mode=Mode.CALL,
+    ),
     Medium.PHONE_CALL: MediumInfo(
         value=Medium.PHONE_CALL,
         description="A standard telephonic voice call.",
         mode=Mode.CALL,
+    ),
+    Medium.GOOGLE_MEET: MediumInfo(
+        value=Medium.GOOGLE_MEET,
+        description="A voice/video meeting conducted via Google Meet, joined by browser.",
+        mode=Mode.MEET,
     ),
     Medium.API_MESSAGE: MediumInfo(
         value=Medium.API_MESSAGE,

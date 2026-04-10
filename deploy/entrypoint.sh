@@ -11,6 +11,21 @@ export CONTAINER_START_TIME_MS=$(date +%s%3N)
 MAIN_PID=""
 AGENT_PID=""
 WATCHDOG_PID=""
+DISPLAY_PID=""
+DEVICE_PID=""
+
+uptime_ms() {
+    now_ms=$(date +%s%3N)
+    echo $((now_ms - CONTAINER_START_TIME_MS))
+}
+
+shutdown_reason() {
+    if [ -f /tmp/oom_prevention_shutdown ]; then
+        echo "oom_prevention"
+    else
+        echo "external_sigterm"
+    fi
+}
 
 # Monitor cgroup memory usage and send SIGTERM before the kernel OOM-kills us.
 # Runs as a background process with negligible overhead (reads a sysfs file
@@ -78,7 +93,9 @@ stop_agent_service() {
 # Signal handler: forward SIGTERM to the Python process and wait for it to
 # finish its own shutdown sequence (which now includes the GCS log upload).
 on_signal() {
-    echo "$(date '+%Y-%m-%d %H:%M:%S.%3N') - [ENTRYPOINT] Received shutdown signal, cleaning up..."
+    local reason
+    reason=$(shutdown_reason)
+    echo "$(date '+%Y-%m-%d %H:%M:%S.%3N') - [ENTRYPOINT] Received shutdown signal (reason=${reason}, uptime_ms=$(uptime_ms), main_pid=${MAIN_PID:-none}, agent_pid=${AGENT_PID:-none}), cleaning up..."
 
     if [ ! -z "$WATCHDOG_PID" ]; then
         kill $WATCHDOG_PID 2>/dev/null || true
@@ -91,6 +108,14 @@ on_signal() {
     fi
 
     stop_agent_service
+
+    if [ ! -z "$DEVICE_PID" ]; then
+        kill $DEVICE_PID 2>/dev/null || true
+    fi
+    if [ ! -z "$DISPLAY_PID" ]; then
+        kill $DISPLAY_PID 2>/dev/null || true
+    fi
+
     echo "Cleanup complete"
     exit 0
 }
@@ -125,17 +150,30 @@ if [ -d /opt/hf-cache ] && [ ! -d /tmp/huggingface ]; then
     cp -r /opt/hf-cache /tmp/huggingface &
 fi
 
-# Start agent-service on port 3000 (for web automation via Magnitude)
-echo "⬥ Starting agent-service..."
-# Use pre-compiled JavaScript if available, otherwise fallback to ts-node
-if [ -f "/app/agent-service/dist/index.js" ]; then
-    cd /app/agent-service && node --no-deprecation dist/index.js &
-else
-    cd /app/agent-service && NODE_OPTIONS="--no-deprecation" npx ts-node src/index.ts &
-fi
-AGENT_PID=$!
-cd /app
-echo "⬥ Agent-service started with PID: $AGENT_PID"
+# ── Desktop stack (virtual display + audio devices) ──────────────────────────
+# Reuses deploy/desktop/display.sh and deploy/desktop/device.sh to provide the
+# same TigerVNC + XFCE + PipeWire/PulseAudio environment as the desktop container.
+# Required for non-headless browser sessions (e.g. Google Meet join).
+export XDG_RUNTIME_DIR=/tmp/runtime-unity
+mkdir -p "$XDG_RUNTIME_DIR" 2>/dev/null || true
+chmod 700 "$XDG_RUNTIME_DIR" 2>/dev/null || true
+
+dbus-daemon --system --fork 2>/dev/null || true
+eval "$(dbus-launch)"
+export DBUS_SESSION_BUS_ADDRESS
+
+echo "⬥ Starting virtual display..."
+bash /app/deploy/desktop/display.sh &
+DISPLAY_PID=$!
+
+echo "⬥ Starting virtual audio devices..."
+bash /app/deploy/desktop/device.sh &
+DEVICE_PID=$!
+
+sleep 3
+
+# agent-service is started by the Python process after StartupEvent
+# (see event_handlers.py _restart_agent_service_with_key)
 
 # Start the main application
 echo "⬥ Starting convo manager..."
@@ -149,6 +187,10 @@ WATCHDOG_PID=$!
 
 # Wait for the main process to exit (inactivity timeout or other self-initiated shutdown).
 # The SIGTERM path is handled by the on_signal trap above and never reaches here.
-wait $MAIN_PID || true
+MAIN_EXIT_CODE=0
+wait $MAIN_PID || MAIN_EXIT_CODE=$?
+echo "$(date '+%Y-%m-%d %H:%M:%S.%3N') - [ENTRYPOINT] Main process exited (code=${MAIN_EXIT_CODE}, uptime_ms=$(uptime_ms))"
 kill $WATCHDOG_PID 2>/dev/null || true
 stop_agent_service
+kill $DEVICE_PID 2>/dev/null || true
+kill $DISPLAY_PID 2>/dev/null || true

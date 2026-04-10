@@ -22,7 +22,7 @@ from unity.actor.environments.computer import ComputerEnvironment
 from unity.function_manager.primitives.runtime import ComputerPrimitives
 from unity.manager_registry import ManagerRegistry
 
-pytestmark = pytest.mark.eval
+pytestmark = [pytest.mark.eval, pytest.mark.llm_call]
 
 
 # ---------------------------------------------------------------------------

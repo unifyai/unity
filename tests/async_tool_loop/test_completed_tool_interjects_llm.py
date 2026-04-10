@@ -14,6 +14,8 @@ from tests.async_helpers import (
     _is_synthetic_check_status_tool_msg,
 )
 
+pytestmark = pytest.mark.llm_call
+
 # ────────────────────────────────────────────────────────────────────────────
 # Wait log helper – `wait` calls are pruned from transcript, so we watch logs
 # ────────────────────────────────────────────────────────────────────────────
