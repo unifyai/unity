@@ -893,10 +893,11 @@ class ScreenshotHistory:
             "assistant": "=== YOUR SCREEN (this is what YOUR machine currently shows) ===",
             "user": "=== USER'S SCREEN (this is THEIR machine, not yours) ===",
             "webcam": "=== USER'S WEBCAM ===",
+            "google_meet": "=== GOOGLE MEET (live view of the meeting) ===",
         }
 
         parts: list = []
-        for source in ("assistant", "user", "webcam"):
+        for source in ("assistant", "user", "webcam", "google_meet"):
             entry = latest_by_source.get(source)
             if entry is None:
                 continue

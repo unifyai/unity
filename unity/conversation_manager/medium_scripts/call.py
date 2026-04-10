@@ -533,6 +533,7 @@ async def entrypoint(ctx: agents.JobContext):
     _gmeet_cached_active_speaker: str | None = None
     _gmeet_cached_participants: list[dict] = []
     _gmeet_prev_participant_names: set[str] = set()
+    _gmeet_latest_screenshot: str | None = None
     _gmeet_display_name: str = ""
     _gmeet_last_speaker_id: str | None = None
     _gmeet_speaker_map: dict[str, dict[str, int]] = {}
@@ -617,6 +618,7 @@ async def entrypoint(ctx: agents.JobContext):
         """
         nonlocal _gmeet_cached_active_speaker, _gmeet_cached_participants
         nonlocal _gmeet_prev_participant_names, gmeet_session_id
+        nonlocal _gmeet_latest_screenshot
         import aiohttp as _aiohttp
 
         try:
@@ -651,7 +653,7 @@ async def entrypoint(ctx: agents.JobContext):
 
                 # Phase 2: poll state for active speaker + meeting end
                 while True:
-                    await asyncio.sleep(2)
+                    await asyncio.sleep(1)
                     try:
                         resp = await http.get(
                             f"{gmeet_agent_service_url}/googlemeet/state",
@@ -703,6 +705,21 @@ async def entrypoint(ctx: agents.JobContext):
                                 evt.to_json(),
                             ),
                         )
+
+                    # Fetch cached screenshot (non-blocking — agent-service
+                    # captures during its own poll cycle)
+                    try:
+                        ss_resp = await http.get(
+                            f"{gmeet_agent_service_url}/googlemeet/screenshot/latest",
+                            params={"sessionId": gmeet_session_id},
+                            headers={"authorization": f"Bearer {_gmeet_auth_key}"},
+                            timeout=_aiohttp.ClientTimeout(total=5),
+                        )
+                        if ss_resp.status == 200:
+                            ss_body = await ss_resp.json()
+                            _gmeet_latest_screenshot = ss_body.get("screenshot")
+                    except Exception:
+                        pass
 
                     status = body.get("status", "")
                     if status in ("ended", "removed", "error"):
@@ -1080,6 +1097,16 @@ async def entrypoint(ctx: agents.JobContext):
             if entry and assistant_screen_share_active:
                 _handle_screenshot(entry)
 
+        if channel == "google_meet" and _gmeet_latest_screenshot:
+            _handle_screenshot(
+                ScreenshotEntry(
+                    b64=_gmeet_latest_screenshot,
+                    utterance="",
+                    timestamp=datetime.now(timezone.utc),
+                    source="google_meet",
+                ),
+            )
+
     @session.on("conversation_item_added")
     def _on_chat_item_added(ev):
         """Publish both user and assistant utterances from a single location."""
@@ -1126,6 +1153,15 @@ async def entrypoint(ctx: agents.JobContext):
                         utterance=text,
                         timestamp=datetime.now(timezone.utc),
                         source="webcam",
+                    ),
+                )
+            if channel == "google_meet" and _gmeet_latest_screenshot:
+                _handle_screenshot(
+                    ScreenshotEntry(
+                        b64=_gmeet_latest_screenshot,
+                        utterance=text,
+                        timestamp=datetime.now(timezone.utc),
+                        source="google_meet",
                     ),
                 )
 

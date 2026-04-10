@@ -818,6 +818,7 @@ interface GoogleMeetSessionInfo {
   participants: GoogleMeetParticipant[];
   activeSpeaker: string | null;
   pollIntervalId: ReturnType<typeof setInterval> | null;
+  latestScreenshot: string | null;
 }
 
 const googleMeetSessions = new Map<string, GoogleMeetSessionInfo>();
@@ -1065,6 +1066,14 @@ async function googleMeetPollState(sessionId: string): Promise<void> {
 
     session.participants = participants;
     session.activeSpeaker = activeSpeaker;
+
+    // Cache a screenshot of the Meet tab for non-blocking reads
+    try {
+      const raw = await session.agent.page.screenshot({ type: 'jpeg', quality: 85 });
+      session.latestScreenshot = Buffer.from(raw).toString('base64');
+    } catch {
+      // Screenshot may fail transiently; keep the previous cached value
+    }
   } catch {
     // Browser may have disconnected
     session.status = 'error';
@@ -1949,6 +1958,7 @@ app.post('/googlemeet/join', auth, async (req: Request, res: Response) => {
       participants: [],
       activeSpeaker: null,
       pollIntervalId: null,
+      latestScreenshot: null,
     };
 
     // Start polling the DOM for meeting state and active speaker
@@ -1961,7 +1971,7 @@ app.post('/googlemeet/join', auth, async (req: Request, res: Response) => {
           console.log(`[googlemeet] Session ${sessionId} ended (status=${s.status}), polling stopped.`);
         }
       });
-    }, 2000);
+    }, 1000);
 
     googleMeetSessions.set(sessionId, sessionInfo);
 
@@ -2036,6 +2046,24 @@ app.get('/googlemeet/state', auth, async (req: Request, res: Response) => {
     participants: session.participants,
     activeSpeaker: session.activeSpeaker,
   });
+});
+
+app.get('/googlemeet/screenshot/latest', auth, async (req: Request, res: Response) => {
+  const sessionId = req.query.sessionId as string;
+  if (!sessionId) {
+    return res.status(400).json({ error: 'bad_request', message: 'sessionId query parameter is required.' });
+  }
+
+  const session = googleMeetSessions.get(sessionId);
+  if (!session) {
+    return res.status(404).json({ error: 'session_not_found', message: `Google Meet session ${sessionId} not found.` });
+  }
+
+  if (!session.latestScreenshot) {
+    return res.status(204).end();
+  }
+
+  res.json({ screenshot: session.latestScreenshot });
 });
 
 // --- /exec endpoint: Execute shell commands (use /files first to upload files) ---

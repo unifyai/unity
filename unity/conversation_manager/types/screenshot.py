@@ -12,12 +12,17 @@ class ScreenshotEntry(NamedTuple):
     b64: str
     utterance: str
     timestamp: datetime
-    source: str  # "assistant" | "user" (screen share) | "webcam"
+    source: str  # "assistant" | "user" (screen share) | "webcam" | "google_meet"
     local_message_id: int | None = None
     filepath: str | None = None
 
 
-_SOURCE_SUBFOLDER = {"assistant": "Assistant", "user": "User", "webcam": "Webcam"}
+_SOURCE_SUBFOLDER = {
+    "assistant": "Assistant",
+    "user": "User",
+    "webcam": "Webcam",
+    "google_meet": "GoogleMeet",
+}
 
 
 def generate_screenshot_path(entry: ScreenshotEntry) -> str:
