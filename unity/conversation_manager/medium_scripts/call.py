@@ -1,7 +1,9 @@
 import os
 import sys
 import json
+import queue
 import asyncio
+import threading
 
 os.environ["UNITY_TERMINAL_LOG"] = "true"
 
@@ -85,6 +87,95 @@ VAD = None
 _log = FastBrainLogger()
 
 
+class MeetAudioBridge:
+    """Owns all PortAudio/sounddevice streams on a single dedicated thread.
+
+    PortAudio is thread-hostile: all API calls (open/start/stop/close) must
+    happen on the same thread.  Keeping streams open for the entire Meet
+    session also avoids the PulseAudio ring-buffer memory leak triggered by
+    repeated open/close cycles (PortAudio issue #968).
+    """
+
+    def __init__(self, capture_rate: int = 16000):
+        self._capture_rate = capture_rate
+        self.capture_q: asyncio.Queue[bytes] = asyncio.Queue()
+        self._playback_q: queue.Queue[tuple[bytes, int, int] | None] | None = None
+        self._loop: asyncio.AbstractEventLoop | None = None
+        self._thread: threading.Thread | None = None
+        self._stop_event: threading.Event | None = None
+        self._in_stream = None
+        self._out_stream = None
+
+    def start(self, loop: asyncio.AbstractEventLoop) -> None:
+        self._loop = loop
+        self._playback_q = queue.Queue()
+        self._stop_event = threading.Event()
+        self._thread = threading.Thread(target=self._run, daemon=True)
+        self._thread.start()
+
+    def write_playback(self, pcm: bytes, sample_rate: int, num_channels: int) -> None:
+        if self._playback_q is not None:
+            self._playback_q.put((pcm, sample_rate, num_channels))
+
+    def stop(self) -> None:
+        if self._stop_event is not None:
+            self._stop_event.set()
+        if self._playback_q is not None:
+            self._playback_q.put(None)
+        if self._thread is not None:
+            self._thread.join(timeout=5)
+            self._thread = None
+
+    def _run(self) -> None:
+        import sounddevice as sd
+        import numpy as np
+
+        def _capture_callback(indata, frames, time_info, status):
+            pcm = (indata * 32767).astype(np.int16).tobytes()
+            if self._loop is not None:
+                self._loop.call_soon_threadsafe(self.capture_q.put_nowait, pcm)
+
+        self._in_stream = sd.InputStream(
+            channels=1,
+            samplerate=self._capture_rate,
+            dtype="float32",
+            blocksize=1024,
+            callback=_capture_callback,
+        )
+        self._in_stream.start()
+
+        try:
+            while not self._stop_event.is_set():
+                try:
+                    item = self._playback_q.get(timeout=0.1)
+                except Exception:
+                    continue
+                if item is None:
+                    break
+                pcm_bytes, sample_rate, num_channels = item
+                if self._out_stream is None:
+                    self._out_stream = sd.OutputStream(
+                        samplerate=sample_rate,
+                        channels=num_channels,
+                        dtype="int16",
+                        latency="high",
+                    )
+                    self._out_stream.start()
+                audio_arr = np.frombuffer(pcm_bytes, dtype=np.int16)
+                if num_channels > 1:
+                    audio_arr = audio_arr.reshape(-1, num_channels)
+                self._out_stream.write(audio_arr)
+        finally:
+            if self._out_stream is not None:
+                self._out_stream.stop()
+                self._out_stream.close()
+                self._out_stream = None
+            if self._in_stream is not None:
+                self._in_stream.stop()
+                self._in_stream.close()
+                self._in_stream = None
+
+
 def prewarm(_ctx=None):
     global STT, VAD
     try:
@@ -115,10 +206,12 @@ class Assistant(Agent):
         channel: str,
         instructions: str,
         outbound: bool = False,
+        audio_bridge: MeetAudioBridge | None = None,
     ) -> None:
         self.contact = contact
         self.boss = boss
         self.channel = channel
+        self.audio_bridge = audio_bridge
         if channel == "phone_call":
             self.utterance_event = InboundPhoneUtterance
             self.assistant_utterance_event = OutboundPhoneUtterance
@@ -197,13 +290,10 @@ class Assistant(Agent):
         audio: AsyncIterable[rtc.AudioFrame],
         model_settings: ModelSettings,
     ):
-        if self.channel != "google_meet":
+        if self.channel != "google_meet" or self.audio_bridge is None:
             async for event in super().stt_node(audio, model_settings):
                 yield event
             return
-
-        import sounddevice as sd
-        import numpy as np
 
         activity = self._get_activity_or_raise()
         assert activity.stt is not None
@@ -216,38 +306,23 @@ class Assistant(Agent):
                 )
             wrapped_stt = stt.StreamAdapter(stt=wrapped_stt, vad=activity.vad)
 
-        _RATE = 16000
+        _RATE = self.audio_bridge._capture_rate
 
-        async def _audio_from_meet_mic():
-            q: asyncio.Queue[bytes] = asyncio.Queue()
-            loop = asyncio.get_event_loop()
-
-            def _callback(indata, frames, time_info, status):
-                pcm = (indata * 32767).astype(np.int16).tobytes()
-                loop.call_soon_threadsafe(q.put_nowait, pcm)
-
-            stream = sd.InputStream(
-                channels=1,
-                samplerate=_RATE,
-                dtype="float32",
-                blocksize=1024,
-                callback=_callback,
-            )
-            with stream:
-                while True:
-                    pcm = await q.get()
-                    samples = len(pcm) // 2
-                    yield rtc.AudioFrame(
-                        data=pcm,
-                        sample_rate=_RATE,
-                        num_channels=1,
-                        samples_per_channel=samples,
-                    )
+        async def _audio_from_bridge():
+            while True:
+                pcm = await self.audio_bridge.capture_q.get()
+                samples = len(pcm) // 2
+                yield rtc.AudioFrame(
+                    data=pcm,
+                    sample_rate=_RATE,
+                    num_channels=1,
+                    samples_per_channel=samples,
+                )
 
         async with wrapped_stt.stream() as stt_stream:
 
             async def _forward():
-                async for frame in _audio_from_meet_mic():
+                async for frame in _audio_from_bridge():
                     stt_stream.push_frame(frame)
 
             fwd = asyncio.create_task(_forward())
@@ -262,13 +337,10 @@ class Assistant(Agent):
         text: AsyncIterable[str],
         model_settings: ModelSettings,
     ) -> AsyncIterable:
-        if self.channel != "google_meet":
+        if self.channel != "google_meet" or self.audio_bridge is None:
             async for frame in super().tts_node(text, model_settings):
                 yield frame
             return
-
-        import sounddevice as sd
-        import numpy as np
 
         activity = self._get_activity_or_raise()
         assert activity.tts is not None
@@ -280,9 +352,6 @@ class Assistant(Agent):
                 sentence_tokenizer=tokenize.basic.SentenceTokenizer(),
             )
 
-        import queue
-        import threading
-
         async with wrapped_tts.stream() as tts_stream:
 
             async def _forward_input():
@@ -292,43 +361,13 @@ class Assistant(Agent):
 
             fwd = asyncio.create_task(_forward_input())
             try:
-                out_stream = None
-                write_q: queue.Queue[np.ndarray | None] = queue.Queue()
-                writer_thread: threading.Thread | None = None
-
-                def _writer_loop():
-                    while True:
-                        data = write_q.get()
-                        if data is None:
-                            break
-                        out_stream.write(data)
-
                 async for ev in tts_stream:
                     frame = ev.frame
-                    if out_stream is None:
-                        out_stream = sd.OutputStream(
-                            samplerate=frame.sample_rate,
-                            channels=frame.num_channels,
-                            dtype="int16",
-                            latency="high",
-                        )
-                        out_stream.start()
-                        writer_thread = threading.Thread(
-                            target=_writer_loop,
-                            daemon=True,
-                        )
-                        writer_thread.start()
-                    audio_arr = np.frombuffer(frame.data, dtype=np.int16)
-                    if frame.num_channels > 1:
-                        audio_arr = audio_arr.reshape(-1, frame.num_channels)
-                    write_q.put(audio_arr)
-
-                write_q.put(None)
-                if writer_thread is not None:
-                    writer_thread.join(timeout=5)
-                if out_stream is not None:
-                    out_stream.stop()
-                    out_stream.close()
+                    self.audio_bridge.write_playback(
+                        frame.data,
+                        frame.sample_rate,
+                        frame.num_channels,
+                    )
             finally:
                 await utils.aio.cancel_and_wait(fwd)
 
@@ -847,6 +886,8 @@ async def entrypoint(ctx: agents.JobContext):
     # Register cleanup as a LiveKit shutdown callback so it runs on any
     # exit path: participant disconnect, inactivity, or explicit stop.
     async def _on_job_shutdown():
+        if audio_bridge is not None:
+            await asyncio.to_thread(audio_bridge.stop)
         await delete_livekit_room(ctx.room.name)
         await publish_call_ended(contact, channel)
 
@@ -1127,12 +1168,18 @@ async def entrypoint(ctx: agents.JobContext):
             )
         touch_activity()
 
+    audio_bridge: MeetAudioBridge | None = None
+    if channel == "google_meet":
+        audio_bridge = MeetAudioBridge()
+        audio_bridge.start(asyncio.get_event_loop())
+
     assistant = Assistant(
         contact=contact,
         boss=boss,
         channel=channel,
         instructions=system_prompt,
         outbound=outbound,
+        audio_bridge=audio_bridge,
     )
 
     async def _capture_screenshots_for_llm(chat_ctx) -> None:
