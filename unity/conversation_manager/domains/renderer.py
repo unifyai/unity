@@ -479,6 +479,7 @@ class Renderer:
         user_screen_share_active: bool = False,
         user_webcam_active: bool = False,
         user_remote_control_active: bool = False,
+        google_meet_active: bool = False,
         active_web_sessions: list | None = None,
         managers_initialized: bool = True,
         vm_ready: bool = True,
@@ -508,6 +509,7 @@ class Renderer:
             user_screen_share_active=user_screen_share_active,
             user_webcam_active=user_webcam_active,
             user_remote_control_active=user_remote_control_active,
+            google_meet_active=google_meet_active,
         )
 
         web_sessions_render = self.render_active_web_sessions(
@@ -636,6 +638,7 @@ class Renderer:
         user_screen_share_active: bool = False,
         user_webcam_active: bool = False,
         user_remote_control_active: bool = False,
+        google_meet_active: bool = False,
     ) -> str:
         """Render active meet interaction states as top-level sections.
 
@@ -684,6 +687,16 @@ class Renderer:
                 "interrupt the user's input. Wait for them to release control "
                 "before resuming desktop operations.\n"
                 "</user_remote_control>",
+            )
+
+        if google_meet_active:
+            parts.append(
+                "<google_meet_visual status='active'>\n"
+                "You are in a Google Meet call and receiving periodic "
+                "screenshots of the meeting view. You can see participants, "
+                "any content being presented, and the meeting UI. When users "
+                "ask if you can see the meeting, confirm that you can.\n"
+                "</google_meet_visual>",
             )
 
         return "\n\n".join(parts)

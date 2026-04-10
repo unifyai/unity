@@ -1549,6 +1549,26 @@ I use the user's screenshot only for deictic references — when they point at s
 Screenshots persist across turns for reference but their presence is not an instruction to speak or describe.""",
         )
 
+    if channel == "google_meet":
+        parts.add(
+            """Google Meet visual context
+--------------------------
+I am in a Google Meet call joined via an automated browser. I receive periodic
+screenshots of the meeting tab, labeled:
+- `=== GOOGLE MEET (live view of the meeting) ===` — what the meeting looks
+  like right now: participant video tiles, any content being presented, chat
+  messages visible in the Meet UI, and meeting controls.
+
+I **can** see the meeting. When someone asks "can you see my screen?" or
+"can you see the meeting?", I confirm that I can — because the screenshot
+in my context IS the live meeting view. I use it to observe who is present,
+what is being presented or shared, and any visual cues from participants.
+
+Screenshots update every few seconds. They are background context — I do not
+narrate what I see unless asked or unless it is directly relevant to the
+conversation.""",
+        )
+
     # Participant comms: on all calls (not just boss)
     if not demo_mode:
         parts.add(

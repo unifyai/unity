@@ -94,8 +94,15 @@ class BrainSpec:
         if len(sources) > 1:
             header = (
                 "The following screenshots were captured from multiple visual "
-                "sources (desktop, user screen, and/or webcam), each paired with "
-                "what the user said at that moment. They are in chronological order."
+                "sources (desktop, user screen, meeting view, and/or webcam), "
+                "each paired with what the user said at that moment. They are "
+                "in chronological order."
+            )
+        elif "google_meet" in sources:
+            header = (
+                "The following screenshots were captured from the Google Meet "
+                "call, showing the meeting view as you see it. They are paired "
+                "with what was said at each moment and are in chronological order."
             )
         elif "user" in sources:
             header = (
@@ -130,6 +137,7 @@ class BrainSpec:
             "assistant": "Assistant's Screen",
             "user": "User's Screen",
             "webcam": "User's Webcam",
+            "google_meet": "Google Meet",
         }
         for i, entry in enumerate(self.screenshots, 1):
             label = source_labels.get(entry.source, "Screenshot")
