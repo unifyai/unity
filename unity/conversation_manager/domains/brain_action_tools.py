@@ -1677,6 +1677,41 @@ class ConversationManagerBrainActionTools:
         await self._event_broker.publish(event.topic, event.to_json())
         return {"status": "ok", "message": "Leaving Google Meet"}
 
+    async def start_google_meet_screenshare(self) -> dict[str, Any]:
+        """Share the assistant's desktop screen in the active Google Meet call.
+
+        Opens a live view of the assistant's desktop and presents it to all
+        meeting participants. Use this when participants need to see what the
+        assistant is doing on its computer.
+        """
+        result = await self._cm.call_manager.start_gmeet_screenshare()
+        if result:
+            return {
+                "status": "ok",
+                "message": "Now presenting desktop in Google Meet.",
+            }
+        return {
+            "status": "error",
+            "message": "Failed to start screen sharing.",
+        }
+
+    async def stop_google_meet_screenshare(self) -> dict[str, Any]:
+        """Stop sharing the assistant's desktop screen in Google Meet.
+
+        Ends the current screen presentation. Meeting participants will no
+        longer see the assistant's desktop.
+        """
+        result = await self._cm.call_manager.stop_gmeet_screenshare()
+        if result:
+            return {
+                "status": "ok",
+                "message": "Stopped presenting in Google Meet.",
+            }
+        return {
+            "status": "error",
+            "message": "Failed to stop screen sharing.",
+        }
+
     async def act(
         self,
         *,
@@ -1701,9 +1736,11 @@ class ConversationManagerBrainActionTools:
           schedule tasks, create reminders
         - **Combined**: Find information and act on it (e.g., "find David's email")
 
-        **Excluded:** Do not use ``act`` to join Google Meet calls — use the
-        dedicated ``join_google_meet`` tool instead, which handles audio device
-        configuration and voice pipeline setup.
+        **Excluded:** Do not use ``act`` for Google Meet operations — use the
+        dedicated tools instead: ``join_google_meet`` to join,
+        ``leave_google_meet`` to leave, ``start_google_meet_screenshare`` to
+        present the assistant's desktop, and ``stop_google_meet_screenshare``
+        to stop presenting.
 
         **When uncertain, call ``act``**: If you need information you don't have (like
         a contact's email address), call ``act`` to search for it. If ``act`` can't find
@@ -2486,6 +2523,17 @@ class ConversationManagerBrainActionTools:
             tools["join_google_meet"] = self.join_google_meet
         if self._cm.call_manager.has_active_google_meet:
             tools["leave_google_meet"] = self.leave_google_meet
+            from unity.session_details import SESSION_DETAILS
+
+            if SESSION_DETAILS.assistant.desktop_url:
+                if not self._cm.call_manager.has_gmeet_presenting:
+                    tools["start_google_meet_screenshare"] = (
+                        self.start_google_meet_screenshare
+                    )
+                else:
+                    tools["stop_google_meet_screenshare"] = (
+                        self.stop_google_meet_screenshare
+                    )
         if self._cm.assistant_number:
             tools["send_sms"] = self.send_sms
             if not call_or_meet_in_progress:

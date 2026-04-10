@@ -764,6 +764,7 @@ const startGoogleMeetBrowser = async (meetUrl: string): Promise<BrowserAgent> =>
             "--disable-blink-features=AutomationControlled",
             "--disable-features=IsolateOrigins,site-per-process",
             '--auto-select-desktop-capture-source="Entire screen"',
+            '--auto-select-tab-capture-source-by-title=Desktop',
           ],
           env: {
             ...process.env,
@@ -819,6 +820,8 @@ interface GoogleMeetSessionInfo {
   activeSpeaker: string | null;
   pollIntervalId: ReturnType<typeof setInterval> | null;
   latestScreenshot: string | null;
+  presenting: boolean;
+  desktopTabPage: any | null;
 }
 
 const googleMeetSessions = new Map<string, GoogleMeetSessionInfo>();
@@ -842,8 +845,21 @@ const MEET_CLICK_JOIN_TASK =
   `Ignore any warnings about camera/microphone not being found — those are expected.\n` +
   `If the page shows a fatal error like "invalid meeting link" or "this meeting has ended", do nothing — just stop.`;
 
+const MEET_PRESENT_TAB_TASK =
+  `You are in an active Google Meet call.\n` +
+  `Click the "Present now" button (screen share icon in the bottom toolbar).\n` +
+  `Then select "A tab" from the options that appear.\n` +
+  `A tab will be auto-selected — just confirm the selection if a dialog appears.\n` +
+  `Do NOT select "Your entire screen" or "A window".`;
+
+const MEET_STOP_PRESENT_TASK =
+  `You are in an active Google Meet call and currently presenting a tab.\n` +
+  `Click the "Stop presenting" or "Stop sharing" button to end the presentation.\n` +
+  `If there is no stop button visible, look for a "You are presenting" banner or bar and click stop there.`;
+
 const MEET_PREPARE_MAX_ITERATIONS = 3;
 const MEET_JOIN_MAX_ITERATIONS = 3;
+const MEET_PRESENT_MAX_ITERATIONS = 3;
 
 async function runMagnitudeLoop(
   agent: BrowserAgent,
@@ -1959,6 +1975,8 @@ app.post('/googlemeet/join', auth, async (req: Request, res: Response) => {
       activeSpeaker: null,
       pollIntervalId: null,
       latestScreenshot: null,
+      presenting: false,
+      desktopTabPage: null,
     };
 
     // Start polling the DOM for meeting state and active speaker
@@ -2001,6 +2019,12 @@ app.post('/googlemeet/leave', auth, async (req: Request, res: Response) => {
       clearInterval(session.pollIntervalId);
       session.pollIntervalId = null;
     }
+
+    if (session.desktopTabPage) {
+      await session.desktopTabPage.close().catch(() => {});
+      session.desktopTabPage = null;
+    }
+    session.presenting = false;
 
     await session.agent.stop();
     session.status = 'ended';
@@ -2064,6 +2088,88 @@ app.get('/googlemeet/screenshot/latest', auth, async (req: Request, res: Respons
   }
 
   res.json({ screenshot: session.latestScreenshot });
+});
+
+app.post('/googlemeet/present', auth, async (req: Request, res: Response) => {
+  const { sessionId, desktopUrl } = req.body;
+  if (!sessionId || !desktopUrl) {
+    return res.status(400).json({ error: 'bad_request', message: 'sessionId and desktopUrl are required.' });
+  }
+
+  const session = googleMeetSessions.get(sessionId);
+  if (!session) {
+    return res.status(404).json({ error: 'session_not_found', message: `Google Meet session ${sessionId} not found.` });
+  }
+  if (session.presenting) {
+    return res.json({ status: 'already_presenting' });
+  }
+
+  const t0 = Date.now();
+  console.log(`[googlemeet/present] BEGIN sessionId=${sessionId} desktopUrl=${desktopUrl}`);
+
+  try {
+    const context = session.agent.context;
+    const desktopTab = await context.newPage();
+    await desktopTab.goto(desktopUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
+    console.log(`[googlemeet/present] Desktop tab opened [${Date.now() - t0}ms]`);
+
+    // Switch back to the Meet tab for the LLM to click "Present now"
+    const meetPage = session.agent.page;
+    await meetPage.bringToFront();
+
+    await runMagnitudeLoop(session.agent, MEET_PRESENT_TAB_TASK, MEET_PRESENT_MAX_ITERATIONS, 'googlemeet/present');
+    console.log(`[googlemeet/present] Present flow completed [${Date.now() - t0}ms]`);
+
+    session.presenting = true;
+    session.desktopTabPage = desktopTab;
+
+    res.json({ status: 'presenting' });
+    console.log(`[googlemeet/present] DONE [${Date.now() - t0}ms]`);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.error(`[googlemeet/present] EXCEPTION after ${Date.now() - t0}ms: ${message}`);
+    res.status(500).json({ error: 'present_failed', message });
+  }
+});
+
+app.post('/googlemeet/stop-present', auth, async (req: Request, res: Response) => {
+  const { sessionId } = req.body;
+  if (!sessionId) {
+    return res.status(400).json({ error: 'bad_request', message: 'sessionId is required.' });
+  }
+
+  const session = googleMeetSessions.get(sessionId);
+  if (!session) {
+    return res.status(404).json({ error: 'session_not_found', message: `Google Meet session ${sessionId} not found.` });
+  }
+  if (!session.presenting) {
+    return res.json({ status: 'not_presenting' });
+  }
+
+  const t0 = Date.now();
+  console.log(`[googlemeet/stop-present] BEGIN sessionId=${sessionId}`);
+
+  try {
+    // Ensure Meet tab is in front for the LLM
+    await session.agent.page.bringToFront();
+
+    await runMagnitudeLoop(session.agent, MEET_STOP_PRESENT_TASK, MEET_PRESENT_MAX_ITERATIONS, 'googlemeet/stop-present');
+    console.log(`[googlemeet/stop-present] Stop flow completed [${Date.now() - t0}ms]`);
+
+    if (session.desktopTabPage) {
+      await session.desktopTabPage.close().catch(() => {});
+    }
+
+    session.presenting = false;
+    session.desktopTabPage = null;
+
+    res.json({ status: 'stopped' });
+    console.log(`[googlemeet/stop-present] DONE [${Date.now() - t0}ms]`);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.error(`[googlemeet/stop-present] EXCEPTION after ${Date.now() - t0}ms: ${message}`);
+    res.status(500).json({ error: 'stop_present_failed', message });
+  }
 });
 
 // --- /exec endpoint: Execute shell commands (use /files first to upload files) ---

@@ -102,6 +102,7 @@ class LivekitCallManager:
         # Google Meet state
         self._gmeet_session_id: str | None = None
         self._gmeet_joining: bool = False
+        self._gmeet_presenting: bool = False
         self.google_meet_start_timestamp = None
         self.google_meet_exchange_id = UNASSIGNED
 
@@ -379,6 +380,10 @@ class LivekitCallManager:
     def has_active_google_meet(self) -> bool:
         return self._gmeet_session_id is not None or self._gmeet_joining
 
+    @property
+    def has_gmeet_presenting(self) -> bool:
+        return self._gmeet_presenting
+
     async def start_google_meet(
         self,
         meet_url: str,
@@ -509,6 +514,7 @@ class LivekitCallManager:
         room_name = self.room_name
         self._gmeet_session_id = None
         self._gmeet_joining = False
+        self._gmeet_presenting = False
         self.google_meet_start_timestamp = None
         self.google_meet_exchange_id = UNASSIGNED
 
@@ -539,6 +545,84 @@ class LivekitCallManager:
             await delete_livekit_room(room_name)
 
         await self.cleanup_call_proc()
+
+    async def start_gmeet_screenshare(self) -> bool:
+        """Start presenting the assistant desktop in the active Google Meet."""
+        session_id = self._gmeet_session_id
+        if not session_id:
+            return False
+
+        from unity.session_details import SESSION_DETAILS
+
+        desktop_url = SESSION_DETAILS.assistant.desktop_url
+        if not desktop_url:
+            return False
+
+        from urllib.parse import urlparse
+
+        parsed = urlparse(desktop_url)
+        liveview_url = (
+            f"{parsed.scheme}://{parsed.netloc}/desktop/custom.html"
+            f"?password={SESSION_DETAILS.unify_key}"
+        )
+
+        base_url = "http://localhost:3000"
+        auth_key = SESSION_DETAILS.unify_key
+        try:
+            async with aiohttp.ClientSession() as session:
+                resp = await session.post(
+                    f"{base_url}/googlemeet/present",
+                    json={"sessionId": session_id, "desktopUrl": liveview_url},
+                    headers={"authorization": f"Bearer {auth_key}"},
+                    timeout=aiohttp.ClientTimeout(total=120),
+                )
+                if resp.status == 200:
+                    self._gmeet_presenting = True
+                    return True
+                body = await resp.json()
+                LOGGER.warning(
+                    f"{ICONS['ipc']} [LivekitCallManager] "
+                    f"Google Meet present failed: {body}",
+                )
+        except Exception as exc:
+            LOGGER.warning(
+                f"{ICONS['ipc']} [LivekitCallManager] "
+                f"Error starting Google Meet screenshare: {exc}",
+            )
+        return False
+
+    async def stop_gmeet_screenshare(self) -> bool:
+        """Stop presenting the assistant desktop in Google Meet."""
+        session_id = self._gmeet_session_id
+        if not session_id:
+            return False
+
+        from unity.session_details import SESSION_DETAILS
+
+        base_url = "http://localhost:3000"
+        auth_key = SESSION_DETAILS.unify_key
+        try:
+            async with aiohttp.ClientSession() as session:
+                resp = await session.post(
+                    f"{base_url}/googlemeet/stop-present",
+                    json={"sessionId": session_id},
+                    headers={"authorization": f"Bearer {auth_key}"},
+                    timeout=aiohttp.ClientTimeout(total=60),
+                )
+                if resp.status == 200:
+                    self._gmeet_presenting = False
+                    return True
+                body = await resp.json()
+                LOGGER.warning(
+                    f"{ICONS['ipc']} [LivekitCallManager] "
+                    f"Google Meet stop-present failed: {body}",
+                )
+        except Exception as exc:
+            LOGGER.warning(
+                f"{ICONS['ipc']} [LivekitCallManager] "
+                f"Error stopping Google Meet screenshare: {exc}",
+            )
+        return False
 
     async def _start_call_subprocess(
         self,
