@@ -44,6 +44,10 @@ from unity.conversation_manager.events import (
     EmailSent,
     UnifyMessageReceived,
     UnifyMessageSent,
+    DiscordMessageReceived,
+    DiscordMessageSent,
+    DiscordChannelMessageReceived,
+    DiscordChannelMessageSent,
     ActorNotification,
     ActorResult,
     ActorHandleStarted,
@@ -1186,7 +1190,11 @@ def _contact_name(contact: dict) -> str:
     last = contact.get("surname", "")
     name = f"{first} {last}".strip()
     return (
-        name or contact.get("phone_number") or contact.get("email_address") or "Unknown"
+        name
+        or contact.get("phone_number")
+        or contact.get("email_address")
+        or contact.get("discord_id")
+        or "Unknown"
     )
 
 
@@ -1229,6 +1237,8 @@ def render_participant_comms(event_json: str, participant_ids: set[int]) -> str 
         )
     if isinstance(event, UnifyMessageReceived):
         return f"[Message from {name}] {event.content}"
+    if isinstance(event, (DiscordMessageReceived, DiscordChannelMessageReceived)):
+        return f"[Discord from {name}] {event.content}"
 
     # Outbound
     if isinstance(event, SMSSent):
@@ -1244,6 +1254,8 @@ def render_participant_comms(event_json: str, participant_ids: set[int]) -> str 
         return f"[You emailed {name}] {subj}"
     if isinstance(event, UnifyMessageSent):
         return f"[You messaged {name}] {event.content}"
+    if isinstance(event, (DiscordMessageSent, DiscordChannelMessageSent)):
+        return f"[You Discord messaged {name}] {event.content}"
 
     return None
 
@@ -1423,6 +1435,14 @@ def _render_history_event(
     if isinstance(event, UnifyMessageSent):
         if cid is not None and cid in participant_ids:
             return f"[Message to {name}] {event.content}"
+        return None
+    if isinstance(event, (DiscordMessageReceived, DiscordChannelMessageReceived)):
+        if cid is not None and cid in participant_ids:
+            return f"[Discord from {name}] {event.content}"
+        return None
+    if isinstance(event, (DiscordMessageSent, DiscordChannelMessageSent)):
+        if cid is not None and cid in participant_ids:
+            return f"[Discord to {name}] {event.content}"
         return None
 
     # -- Boss-only: Actor events --

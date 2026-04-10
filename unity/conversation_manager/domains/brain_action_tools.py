@@ -2662,6 +2662,8 @@ class ConversationManagerBrainActionTools:
                 tools["make_whatsapp_call"] = self.make_whatsapp_call
         if self._cm.assistant_email:
             tools["send_email"] = self.send_email
+        if self._cm.assistant_discord_bot_id:
+            tools["send_discord_message"] = self.send_discord_message
         if getattr(self._cm.mode, "is_voice", False):
             tools["guide_voice_agent"] = self.guide_voice_agent
         if SETTINGS.DEMO_MODE:

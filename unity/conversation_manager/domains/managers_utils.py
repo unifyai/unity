@@ -58,6 +58,7 @@ def _get_sender_name(contact: dict | None) -> str:
         name
         or contact.get("phone_number", "")
         or contact.get("email_address", "")
+        or contact.get("discord_id", "")
         or "Unknown"
     )
 
@@ -97,6 +98,10 @@ _MESSAGE_PRODUCING_EVENTS = {
     "WhatsAppCallPermissionResponse",
     "ApiMessageReceived",
     "ApiMessageSent",
+    "DiscordMessageReceived",
+    "DiscordMessageSent",
+    "DiscordChannelMessageReceived",
+    "DiscordChannelMessageSent",
 }
 
 
@@ -243,6 +248,46 @@ async def hydrate_global_thread(cm: "ConversationManager") -> None:
                     timestamp=ts,
                     attachments=getattr(cm_event, "attachments", None),
                     tags=getattr(cm_event, "tags", None),
+                )
+
+            # --- Discord Messages ---
+            case "DiscordMessageReceived":
+                entry = cm.contact_index.build_message(
+                    contact_id=contact_id,
+                    sender_name=sender_name,
+                    thread_name=Medium.DISCORD_MESSAGE,
+                    message_content=cm_event.content,
+                    role="user",
+                    timestamp=ts,
+                    attachments=getattr(cm_event, "attachments", None),
+                )
+            case "DiscordMessageSent":
+                entry = cm.contact_index.build_message(
+                    contact_id=contact_id,
+                    sender_name=sender_name,
+                    thread_name=Medium.DISCORD_MESSAGE,
+                    message_content=cm_event.content,
+                    role="assistant",
+                    timestamp=ts,
+                )
+            case "DiscordChannelMessageReceived":
+                entry = cm.contact_index.build_message(
+                    contact_id=contact_id,
+                    sender_name=sender_name,
+                    thread_name=Medium.DISCORD_CHANNEL_MESSAGE,
+                    message_content=cm_event.content,
+                    role="user",
+                    timestamp=ts,
+                    attachments=getattr(cm_event, "attachments", None),
+                )
+            case "DiscordChannelMessageSent":
+                entry = cm.contact_index.build_message(
+                    contact_id=contact_id,
+                    sender_name=sender_name,
+                    thread_name=Medium.DISCORD_CHANNEL_MESSAGE,
+                    message_content=cm_event.content,
+                    role="assistant",
+                    timestamp=ts,
                 )
 
             # --- Email ---
@@ -708,6 +753,12 @@ async def log_message(
         medium = Medium.SMS_MESSAGE
     elif "googlemeet" in event_name:
         medium = Medium.GOOGLE_MEET
+    elif "discord" in event_name:
+        medium = (
+            Medium.DISCORD_CHANNEL_MESSAGE
+            if "channel" in event_name
+            else Medium.DISCORD_MESSAGE
+        )
     else:
         medium = Medium.EMAIL
     role = (
