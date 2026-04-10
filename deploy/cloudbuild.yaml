@@ -99,7 +99,7 @@ steps:
   - 'builds'
   - 'triggers'
   - 'run'
-  - 'unity-deploy-production'
+  - 'unity-deploy'
   - '--project=${PROJECT_ID}'
   - '--branch=main'
   - '--substitutions=_BASE_IMAGE=${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPOSITORY}/unity-base:${SHORT_SHA}'
