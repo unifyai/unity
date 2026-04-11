@@ -11,13 +11,19 @@
 
 # Unity
 
-The open-source brain of an AI assistant — steerable async tool loops, CodeAct planning, and distributed manager orchestration. Clone it, run it, talk to it.
+**An AI agent you can steer while it works.** Interrupt it mid-task, ask what it's doing, give it new instructions, or run five things at once — without restarting anything. Voice-native, with memory that compounds over time.
+
+<table>
+<tr><td><b>Steerable at every layer</b></td><td>Every operation returns a live handle you can pause, resume, interject into, or query — at any depth. Redirect a running task without losing progress.</td></tr>
+<tr><td><b>Talks while it thinks</b></td><td>A fast real-time voice agent keeps the conversation alive while a slower deliberation brain does the actual work in the background. No awkward silence.</td></tr>
+<tr><td><b>Programs, not tool calls</b></td><td>The agent writes Python plans over typed primitives — with variables, loops, and real control flow — instead of picking from a JSON tool menu one step at a time.</td></tr>
+<tr><td><b>Memory that compounds</b></td><td>Contacts, knowledge, tasks, and communication preferences are continuously extracted from conversations into structured, queryable tables. After a month, the agent knows your world.</td></tr>
+<tr><td><b>Concurrent by default</b></td><td>Run several tasks at once. Steer each one independently — ask for progress on one while redirecting another.</td></tr>
+</table>
 
 ## Quick Start
 
-Get the assistant running in your terminal in under 5 minutes.
-
-The default sandbox path is optimized for the shortest route to the architecture: `unity` runs locally, `unillm` uses the model provider you choose, and `unify` connects to Unify's hosted persistence layer for state. That means no local database or Docker for the first run.
+Get the agent running in your terminal in under 5 minutes. Unity runs locally, uses the model provider you choose, and connects to Unify's hosted persistence layer — no local database or Docker for the first run.
 
 ### Prerequisites
 
@@ -101,17 +107,17 @@ See the full sandbox docs at [`sandboxes/conversation_manager/README.md`](sandbo
 
 ---
 
-## What is Unity?
+## How it works
 
-Most agent frameworks work like this: one LLM, one loop, one tool call at a time. The model picks a tool, calls it, reads the result, picks the next tool. If you want to interrupt, you cancel and start over.
+Most agent frameworks give you one loop: the model picks a tool, calls it, reads the result, picks the next. If you want to change course, you cancel and start over.
 
-Unity works differently. Every operation — whether it's searching contacts, updating knowledge, or executing a multi-step task — runs inside its own async LLM tool loop and returns a **steerable handle**. These handles compose: the ConversationManager steers the Actor, the Actor steers the managers, and the user steers the ConversationManager. Steering propagates through the full depth.
+Unity gives every operation its own loop and returns a **live handle** you can steer. These handles nest: the user steers the ConversationManager, the ConversationManager steers the Actor, the Actor steers the managers. Corrections, pauses, and queries propagate through the full depth.
 
-This means the assistant can:
-- Run several things at once and let you steer each one independently
-- Accept corrections mid-task without restarting ("actually, also include the Q2 numbers")
-- Pause work, handle something urgent, and resume where it left off
-- Hold a real-time voice conversation while doing background work
+In practice, this means:
+- "Also include Q2 numbers" mid-way through a report → the agent adjusts without restarting
+- "Pause that, something urgent" → work freezes and resumes exactly where it left off
+- "How's the flight search going?" → you get a status update without disrupting the work
+- Three tasks running at once, each independently steerable
 
 ## Steerable handles
 
@@ -241,19 +247,15 @@ State Managers (each runs its own async LLM tool loop)
 5. The MemoryManager observes message events and periodically distills conversations into structured knowledge.
 6. The EventBus carries typed events with hierarchy labels aligned to tool-loop lineage, making everything observable.
 
-## System dependencies
+## Repos
 
-Unity is the "brain" in a larger system. In the default open-source quickstart, the layers break down like this:
+| Repo | What it does |
+|------|-------------|
+| **unity** (this) | The agent runtime — managers, tool loops, CodeAct, voice, orchestration |
+| **[unify](https://github.com/unifyai/unify)** | Python SDK for persistence and logging (connects to Unify's hosted backend) |
+| **[unillm](https://github.com/unifyai/unillm)** | LLM access layer — routes to OpenAI, Anthropic, or any compatible endpoint |
 
-| Layer | Repo | Open? | Role in the default quickstart |
-|------|------|-------|--------------------------------|
-| Runtime / orchestration | **unity** (this) | ✅ MIT | Runs locally: managers, tool loops, CodeAct, orchestration |
-| Persistence / state | **[unify](https://github.com/unifyai/unify)** | ✅ MIT | Python SDK used by the managers; points at Unify's hosted backend in the default quickstart |
-| Model access | **[unillm](https://github.com/unifyai/unillm)** | ✅ MIT | LLM abstraction layer; routes requests to the provider or compatible endpoint you choose |
-
-This is the default trade-off today: keep the runtime fully inspectable, let developers choose their own model provider, and use a managed persistence plane to remove local infrastructure from the first run.
-
-The backend API, communication gateway (voice/SMS/email), and web console are hosted services. The full product — with voice calls, messaging channels, and a management dashboard — runs on [Unify's platform](https://unify.ai).
+All three are MIT-licensed. The full product — with voice calls, messaging channels, and a management dashboard — runs on [Unify's platform](https://unify.ai).
 
 ---
 
