@@ -1,0 +1,37 @@
+# Internal: triggers the hosted deployment pipeline on push.
+# Requires GCP_SERVICE_ACCOUNT_JSON and GCP_PROJECT_ID secrets.
+# Has no effect on forks (secrets are not available).
+name: Trigger Deploy Build
+on:
+  push:
+    branches: [main, staging, preview]
+
+jobs:
+  trigger:
+    runs-on: ubuntu-latest
+    if: github.repository == 'unifyai/unity'
+    permissions:
+      contents: read
+    steps:
+    - name: Authenticate to GCP
+      uses: google-github-actions/auth@v2
+      with:
+        credentials_json: ${{ secrets.GCP_SERVICE_ACCOUNT_JSON }}
+
+    - name: Set up Cloud SDK
+      uses: google-github-actions/setup-gcloud@v2
+
+    - name: Trigger base image build
+      run: |
+        BRANCH="${GITHUB_REF_NAME}"
+        case "$BRANCH" in
+          main)    TRIGGER_NAME="unity" ;;
+          staging) TRIGGER_NAME="unity-staging" ;;
+          preview) TRIGGER_NAME="unity-preview" ;;
+          *)       echo "Unknown branch: $BRANCH"; exit 0 ;;
+        esac
+
+        echo "Triggering $TRIGGER_NAME build for branch $BRANCH..."
+        gcloud builds triggers run "$TRIGGER_NAME" \
+          --project=${{ secrets.GCP_PROJECT_ID }} \
+          --branch="$BRANCH"
