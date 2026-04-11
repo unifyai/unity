@@ -62,3 +62,6 @@ logs/ci/*
 .repairs_queries/
 # Self-hosted LiveKit Agents Playground (sandbox developer tooling)
 .livekit-playground/
+
+# Dev-only shared cursor rules (optional submodule)
+.cursor/rules/global-rules/

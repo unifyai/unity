@@ -1,3 +1,0 @@
-[submodule ".cursor/rules/global-rules"]
-	path = .cursor/rules/global-rules
-	url = git@github.com:unifyai/global-cursor-rules.git
