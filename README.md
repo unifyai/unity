@@ -295,8 +295,7 @@ unity/
 ├── sandboxes/                    # Interactive playgrounds
 │   └── conversation_manager/     # Full ConversationManager sandbox (start here)
 ├── tests/
-├── agent-service/                # Node.js desktop/browser automation
-└── deploy/                       # Dockerfiles, Kubernetes, virtual desktop
+└── agent-service/                # Node.js desktop/browser automation
 ```
 
 ## Design convictions
