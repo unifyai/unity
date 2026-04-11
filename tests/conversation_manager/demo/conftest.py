@@ -45,8 +45,8 @@ DEMO_BOSS_INITIAL = {
 # prospect to the assistant.
 DEMO_OPERATOR = {
     "contact_id": 2,
-    "first_name": "Daniel",
-    "surname": "Lenton",
+    "first_name": "Alex",
+    "surname": "Demo",
     "email_address": "user@example.com",
     "phone_number": "+15555559999",
     "should_respond": True,

@@ -81,10 +81,10 @@ def response_promises_text(response: str) -> bool:
 def voice_agent_prompt():
     return build_voice_agent_prompt(
         bio="A helpful and efficient assistant.",
-        boss_first_name="Dan",
-        boss_surname="Lenton",
-        boss_phone_number="+44-7700-900000",
-        boss_email_address="dan@unify.ai",
+        boss_first_name="Alex",
+        boss_surname="Demo",
+        boss_phone_number="+15550001234",
+        boss_email_address="alex@example.com",
         is_boss_user=True,
         contact_rolling_summary=None,
     ).flatten()

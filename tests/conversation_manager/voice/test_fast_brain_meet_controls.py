@@ -67,8 +67,8 @@ def _build_meet_prompt() -> str:
     return build_voice_agent_prompt(
         bio="A helpful and efficient assistant.",
         assistant_name="David Miller",
-        boss_first_name="Dan",
-        boss_surname="Lenton",
+        boss_first_name="Alex",
+        boss_surname="Demo",
         boss_email_address="user@example.com",
         is_boss_user=True,
         contact_rolling_summary=None,

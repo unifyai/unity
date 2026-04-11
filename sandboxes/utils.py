@@ -2396,7 +2396,7 @@ class TranscriptGenerator:
             details = details or {}
             # Robustly split *name* into first_name and (optional) surname so that
             # we never treat the full name as the first_name.  This fixes the issue
-            # where "Daniel Lenton" was stored with first_name="Daniel Lenton" and
+            # where "Jane Smith" was stored with first_name="Jane Smith" and
             # surname=None, leading to duplicate contact creation.
 
             first, *rest = name.strip().split()

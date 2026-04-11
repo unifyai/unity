@@ -1042,10 +1042,10 @@ class TestFastBrainGuidanceFlow:
 
         contact = {
             "contact_id": 1,
-            "first_name": "Dan",
-            "surname": "Lenton",
+            "first_name": "Alex",
+            "surname": "Demo",
             "phone_number": "+15550100001",
-            "email_address": "dan@example.com",
+            "email_address": "alex@example.com",
         }
         boss = contact
 
@@ -1219,7 +1219,7 @@ class TestFastBrainGuidanceFlow:
 
         comms_cb = fake_broker.callbacks["app:comms:*"]
         event = UnifyMessageSent(
-            contact={"contact_id": 1, "first_name": "Dan", "surname": "Lenton"},
+            contact={"contact_id": 1, "first_name": "Alex", "surname": "Demo"},
             content="Here's the full breakdown of your OneDrive contents.",
         )
         comms_cb({"event": event.to_json()})
@@ -2507,10 +2507,10 @@ class TestFastBrainOpeningGreeting:
 
         prompt = build_voice_agent_prompt(
             bio="A helpful AI assistant.",
-            boss_first_name="Yusha",
+            boss_first_name="Alex",
             boss_surname="",
             boss_phone_number="+15550000001",
-            boss_email_address="yusha@example.com",
+            boss_email_address="alex@example.com",
             is_boss_user=True,
         ).flatten()
 
@@ -2591,9 +2591,9 @@ class TestSayMetaTextMatching:
         meta = {
             "guidance_id": "guid-abc",
             "source": "proactive_speech",
-            "text": "Still there, Yusha?",
+            "text": "Still there, Alex?",
         }
-        result = match_say_meta(meta, "Still there, Yusha?")
+        result = match_say_meta(meta, "Still there, Alex?")
         assert result is not None
         assert result["guidance_id"] == "guid-abc"
 
@@ -2658,7 +2658,7 @@ class TestParticipantCommsRendering:
         )
 
         event = UnifyMessageSent(
-            contact={"contact_id": 1, "first_name": "Dan", "surname": "Lenton"},
+            contact={"contact_id": 1, "first_name": "Alex", "surname": "Demo"},
             content="Here's the detailed breakdown of your OneDrive contents.",
         )
         result = render_participant_comms(event.to_json(), {1})
@@ -2666,7 +2666,7 @@ class TestParticipantCommsRendering:
             "render_participant_comms must render outbound UnifyMessageSent "
             "to a call participant so the fast brain can acknowledge it verbally"
         )
-        assert "Dan Lenton" in result
+        assert "Alex Demo" in result
         assert "OneDrive" in result
 
     def test_outbound_sms_to_participant_rendered(self):

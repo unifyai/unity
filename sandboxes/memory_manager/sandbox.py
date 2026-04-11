@@ -319,7 +319,7 @@ async def _main_async() -> None:
 
         We now parse the *name* into first_name and (optional) surname so that
         only the first token is stored as first_name.  This prevents cases
-        like "Daniel Lenton" being recorded with first_name="Daniel Lenton".
+        like "Jane Smith" being recorded with first_name="Jane Smith".
         """
 
         first, *rest = name.strip().split()

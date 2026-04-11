@@ -55,7 +55,7 @@ class TestOutboundEventPrefixConvention:
 
     def test_unify_message_sent_prefix(self, participant_ids):
         event = UnifyMessageSent(
-            contact={"contact_id": 1, "first_name": "Dan", "surname": "Lenton"},
+            contact={"contact_id": 1, "first_name": "Alex", "surname": "Demo"},
             content="Here are the OAuth scopes.",
         )
         text = self._render(event, participant_ids)
@@ -67,7 +67,7 @@ class TestOutboundEventPrefixConvention:
 
     def test_sms_sent_prefix(self, participant_ids):
         event = SMSSent(
-            contact={"contact_id": 1, "first_name": "Dan", "surname": "Lenton"},
+            contact={"contact_id": 1, "first_name": "Alex", "surname": "Demo"},
             content="Here is the link.",
         )
         text = self._render(event, participant_ids)
@@ -78,7 +78,7 @@ class TestOutboundEventPrefixConvention:
 
     def test_email_sent_prefix(self, participant_ids):
         event = EmailSent(
-            contact={"contact_id": 1, "first_name": "Dan", "surname": "Lenton"},
+            contact={"contact_id": 1, "first_name": "Alex", "surname": "Demo"},
             subject="OAuth setup instructions",
             body="Step-by-step instructions for setting up OAuth.",
         )
@@ -91,7 +91,7 @@ class TestOutboundEventPrefixConvention:
 
     def test_whatsapp_sent_prefix(self, participant_ids):
         event = WhatsAppSent(
-            contact={"contact_id": 1, "first_name": "Dan", "surname": "Lenton"},
+            contact={"contact_id": 1, "first_name": "Alex", "surname": "Demo"},
             content="Here are the scopes.",
         )
         text = self._render(event, participant_ids)
