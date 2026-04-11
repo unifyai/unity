@@ -17,14 +17,16 @@ The open-source brain of an AI assistant — steerable async tool loops, CodeAct
 
 Get the assistant running in your terminal in under 5 minutes.
 
+The default sandbox path is optimized for the shortest route to the architecture: `unity` runs locally, `unillm` uses the model provider you choose, and `unify` connects to Unify's hosted persistence layer for state. That means no local database or Docker for the first run.
+
 ### Prerequisites
 
 - **Python 3.12+**
 - **PortAudio** (system dependency for audio support)
   - macOS: `brew install portaudio`
   - Ubuntu/Debian: `sudo apt-get install portaudio19-dev python3-dev`
-- **A [Unify](https://unify.ai) account** — sign up free, then grab your API key from the dashboard
-- **An LLM API key** — [OpenAI](https://platform.openai.com/api-keys) or [Anthropic](https://console.anthropic.com/)
+- **A [Unify](https://unify.ai) account** — the default quickstart uses Unify's hosted persistence plane for projects, logs, and manager state
+- **An LLM provider key** — [OpenAI](https://platform.openai.com/api-keys) or [Anthropic](https://console.anthropic.com/) are the simplest paths from this README
 
 ### Install
 
@@ -35,7 +37,11 @@ git clone https://github.com/unifyai/unify.git
 git clone https://github.com/unifyai/unillm.git
 
 cd unity
-pip install uv && uv sync
+
+# Install uv (skip if already installed: https://docs.astral.sh/uv/getting-started/installation/)
+curl -LsSf https://astral.sh/uv/install.sh | sh
+
+uv sync
 ```
 
 ### Configure
@@ -44,14 +50,17 @@ pip install uv && uv sync
 cp .env.example .env
 ```
 
-Open `.env` and fill in the three required keys:
+Open `.env` and fill in the required credentials for the default quickstart:
 
 ```bash
 UNIFY_KEY=your-unify-key
-OPENAI_API_KEY=sk-...        # and/or ANTHROPIC_API_KEY
+OPENAI_API_KEY=sk-...        # simplest path
+# or: ANTHROPIC_API_KEY=...
 ```
 
-Everything else has sensible defaults. The sandbox connects to Unify's hosted backend (`api.unify.ai`) for persistence — no local database or Docker needed.
+You bring the model provider. OpenAI and Anthropic are the most direct options from this README, while `unillm` can also be configured for other supported providers and compatible local endpoints.
+
+Everything else has sensible defaults. The default sandbox connects to Unify's hosted backend (`api.unify.ai`) for persistence, so you can explore the runtime without first standing up a local database or event stack.
 
 ### Run
 
@@ -81,6 +90,14 @@ Commands: `msg` (Unify message), `sms` (SMS), `email` (email), `call` (phone cal
 Mode 1 simulates everything to show the ConversationManager's orchestration. For the real CodeAct architecture (where the Actor writes and executes Python plans against the manager APIs), select **Mode 2** at the configuration prompt.
 
 See the full sandbox docs at [`sandboxes/conversation_manager/README.md`](sandboxes/conversation_manager/README.md) — it covers Mode 3 (real computer interface), voice mode, live voice calls, real comms, GUI mode, and more.
+
+---
+
+## Quick answers
+
+- **Is Unity fully local today?** Not end-to-end. The supported quickstart runs the brain locally but uses Unify's hosted backend for persistence and state.
+- **Do I have to use OpenAI or Anthropic?** No. Those are the simplest documented paths here. `unillm` can be pointed at other supported providers and compatible local endpoints.
+- **Do I have to use the hosted backend?** The default quickstart does. A broader self-hosted path is on the roadmap below.
 
 ---
 
@@ -226,13 +243,15 @@ State Managers (each runs its own async LLM tool loop)
 
 ## System dependencies
 
-Unity is the "brain" in a larger system. It persists state through a backend API (via a Python SDK) and makes LLM calls through a caching/tracing layer:
+Unity is the "brain" in a larger system. In the default open-source quickstart, the layers break down like this:
 
-| Repo | Open? | What it does |
-|------|-------|-------------|
-| **unity** (this) | ✅ MIT | The brain — managers, tool loops, CodeAct, orchestration |
-| **[unify](https://github.com/unifyai/unify)** | ✅ MIT | Python SDK for persistence and logging |
-| **[unillm](https://github.com/unifyai/unillm)** | ✅ MIT | LLM abstraction — caching, tracing, cost tracking |
+| Layer | Repo | Open? | Role in the default quickstart |
+|------|------|-------|--------------------------------|
+| Runtime / orchestration | **unity** (this) | ✅ MIT | Runs locally: managers, tool loops, CodeAct, orchestration |
+| Persistence / state | **[unify](https://github.com/unifyai/unify)** | ✅ MIT | Python SDK used by the managers; points at Unify's hosted backend in the default quickstart |
+| Model access | **[unillm](https://github.com/unifyai/unillm)** | ✅ MIT | LLM abstraction layer; routes requests to the provider or compatible endpoint you choose |
+
+This is the default trade-off today: keep the runtime fully inspectable, let developers choose their own model provider, and use a managed persistence plane to remove local infrastructure from the first run.
 
 The backend API, communication gateway (voice/SMS/email), and web console are hosted services. The full product — with voice calls, messaging channels, and a management dashboard — runs on [Unify's platform](https://unify.ai).
 
