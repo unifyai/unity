@@ -346,6 +346,7 @@ We'll update this list as milestones are completed. Follow [GitHub Issues](https
 
 ## Community
 
+- [Documentation](https://docs.unify.ai) — architecture deep-dives, quickstart, guides
 - [Discord](https://discord.com/invite/sXyFF8tDtm)
 - [Issues](https://github.com/unifyai/unity/issues)
 - [Discussions](https://github.com/unifyai/unity/discussions)
