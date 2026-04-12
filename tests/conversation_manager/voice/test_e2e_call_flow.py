@@ -335,7 +335,7 @@ class TestEndToEndCallFlow:
             LivekitCallManager,
         )
         from unity.conversation_manager.events import UnifyMeetReceived
-        from unity.conversation_manager.types import Mode
+        from unity.conversation_manager.cm_types import Mode
 
         # Create mock ConversationManager with real CallManager
         mock_cm = MagicMock()
@@ -403,7 +403,7 @@ class TestEndToEndCallFlow:
             LivekitCallManager,
         )
         from unity.conversation_manager.events import UnifyMeetReceived
-        from unity.conversation_manager.types import Mode
+        from unity.conversation_manager.cm_types import Mode
 
         mock_cm = MagicMock()
         mock_cm.mode = Mode.CALL  # ALREADY in voice mode
@@ -572,7 +572,7 @@ class TestRoomNameHandling:
             LivekitCallManager,
         )
         from unity.conversation_manager.events import UnifyMeetReceived
-        from unity.conversation_manager.types import Mode
+        from unity.conversation_manager.cm_types import Mode
 
         mock_cm = MagicMock()
         mock_cm.mode = Mode.TEXT  # Not in voice mode

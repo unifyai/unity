@@ -7,7 +7,7 @@ from unity.conversation_manager.events import (
     ApiMessageSent,
     Event,
 )
-from unity.conversation_manager.types import Medium, MEDIUM_REGISTRY, Mode
+from unity.conversation_manager.cm_types import Medium, MEDIUM_REGISTRY, Mode
 
 
 def test_medium_enum_has_api_message():

@@ -18,7 +18,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from unity.conversation_manager.types.screenshot import ScreenshotEntry
+from unity.conversation_manager.cm_types.screenshot import ScreenshotEntry
 
 
 def _make_screenshot(mid: int | None = None) -> ScreenshotEntry:

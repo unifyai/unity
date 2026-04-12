@@ -483,7 +483,7 @@ class TestMessageModelAttachments:
     def test_message_has_attachments_field(self):
         """Message model has an attachments field."""
         from unity.transcript_manager.types.message import Message
-        from unity.conversation_manager.types import Medium
+        from unity.conversation_manager.cm_types import Medium
 
         msg = Message(
             message_id=1,
@@ -518,7 +518,7 @@ class TestMessageModelAttachments:
     def test_message_to_post_json_includes_attachments(self):
         """to_post_json includes attachments in the payload."""
         from unity.transcript_manager.types.message import Message
-        from unity.conversation_manager.types import Medium
+        from unity.conversation_manager.cm_types import Medium
 
         msg = Message(
             message_id=1,

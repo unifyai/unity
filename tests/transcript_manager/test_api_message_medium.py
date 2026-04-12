@@ -7,14 +7,14 @@ from datetime import UTC, datetime
 import unify
 
 from tests.helpers import _handle_project
-from unity.conversation_manager.types import Medium
+from unity.conversation_manager.cm_types import Medium
 from unity.transcript_manager.transcript_manager import TranscriptManager
 
 
 @_handle_project
 def test_api_message_in_valid_media():
     """api_message is a valid medium value."""
-    from unity.conversation_manager.types import VALID_MEDIA
+    from unity.conversation_manager.cm_types import VALID_MEDIA
 
     assert "api_message" in VALID_MEDIA
     assert Medium.API_MESSAGE == "api_message"

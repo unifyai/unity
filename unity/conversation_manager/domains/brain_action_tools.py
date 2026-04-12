@@ -43,7 +43,7 @@ from unity.conversation_manager.events import (
 )
 from unity.common._async_tool.dynamic_tools_factory import DynamicToolFactory
 from unity.common._async_tool.utils import get_handle_paused_state
-from unity.conversation_manager.types import Medium
+from unity.conversation_manager.cm_types import Medium
 from unity.conversation_manager.task_actions import (
     STEERING_OPERATIONS,
     OPERATION_MAP,

@@ -39,7 +39,7 @@ def make_contacts_visible(cm: "CMStepDriver", *contact_ids: int) -> None:
     not about contact resolution.  The contacts must already exist in the
     ContactManager (e.g., via TEST_CONTACTS in conftest).
     """
-    from unity.conversation_manager.types import Medium
+    from unity.conversation_manager.cm_types import Medium
 
     for cid in contact_ids:
         cm.contact_index.push_message(

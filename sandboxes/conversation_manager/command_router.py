@@ -615,7 +615,7 @@ class CommandRouter:
         except Exception:
             pass
         try:
-            from unity.conversation_manager.types import Mode
+            from unity.conversation_manager.cm_types import Mode
 
             cm.mode = Mode.TEXT
         except Exception:

@@ -22,7 +22,7 @@ from unity.conversation_manager.domains.event_handlers import (
     EventHandler,
     _event_type_to_log_key,
 )
-from unity.conversation_manager.types import ScreenshotEntry
+from unity.conversation_manager.cm_types import ScreenshotEntry
 from unity.conversation_manager.events import (
     Event,
     Ping,
@@ -65,7 +65,7 @@ from unity.conversation_manager.events import (
 from unity.contact_manager.simulated import SimulatedContactManager
 from unity.conversation_manager.domains.contact_index import ContactIndex
 from unity.conversation_manager.domains.notifications import NotificationBar
-from unity.conversation_manager.types import Medium, Mode
+from unity.conversation_manager.cm_types import Medium, Mode
 
 # =============================================================================
 # Test Fixtures

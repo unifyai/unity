@@ -52,7 +52,7 @@ from unity.conversation_manager.events import *
 from unity.conversation_manager.metrics import pubsub_e2e_latency
 from unity.session_details import SESSION_DETAILS
 from unity.contact_manager.types.contact import UNASSIGNED
-from unity.conversation_manager.types import Medium
+from unity.conversation_manager.cm_types import Medium
 
 load_dotenv()
 

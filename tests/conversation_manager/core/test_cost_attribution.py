@@ -22,7 +22,7 @@ from unity.conversation_manager.domains.brain_action_tools import (
 )
 from unity.conversation_manager.domains.contact_index import ContactIndex
 from unity.conversation_manager.domains.notifications import NotificationBar
-from unity.conversation_manager.types.mode import Mode
+from unity.conversation_manager.cm_types.mode import Mode
 from unity.events.cost_attribution import COST_ATTRIBUTION
 
 SUPERVISOR_UID = "supervisor_uid_999"

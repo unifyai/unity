@@ -38,7 +38,7 @@ from unity.conversation_manager.events import (
     UnifyMessageReceived,
     UnifyMessageSent,
 )
-from unity.conversation_manager.types import Medium
+from unity.conversation_manager.cm_types import Medium
 
 # =============================================================================
 # Helpers

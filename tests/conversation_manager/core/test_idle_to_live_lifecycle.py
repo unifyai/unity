@@ -234,7 +234,7 @@ class TestIdleContainerEventProcessing:
             await asyncio.sleep(0.3)
 
             # The SMS should have been added to the contact index
-            from unity.conversation_manager.types import Medium
+            from unity.conversation_manager.cm_types import Medium
 
             msgs = cm.contact_index.get_messages_for_contact(1, Medium.SMS_MESSAGE)
             assert len(msgs) >= 1, (
@@ -490,7 +490,7 @@ class TestFullIdleToLiveFlow:
             # Wait for SMS to be processed
             await asyncio.sleep(0.3)
 
-            from unity.conversation_manager.types import Medium
+            from unity.conversation_manager.cm_types import Medium
 
             msgs = cm.contact_index.get_messages_for_contact(1, Medium.SMS_MESSAGE)
             assert len(msgs) >= 1, (

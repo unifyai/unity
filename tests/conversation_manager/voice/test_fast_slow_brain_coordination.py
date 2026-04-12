@@ -79,7 +79,7 @@ from unity.conversation_manager.events import (
     UnifyMeetStarted,
     FastBrainNotification,
 )
-from unity.conversation_manager.types import Medium, Mode
+from unity.conversation_manager.cm_types import Medium, Mode
 
 from tests.conversation_manager.conftest import BOSS, TEST_CONTACTS
 from tests.helpers import _handle_project
@@ -276,7 +276,7 @@ class TestSlowBrainDecisionBoundaries:
         from unity.conversation_manager.domains.brain_action_tools import (
             ConversationManagerBrainActionTools,
         )
-        from unity.conversation_manager.types import Mode
+        from unity.conversation_manager.cm_types import Mode
 
         # guide_voice_agent should exist as a standalone method
         guide_sig = inspect.signature(

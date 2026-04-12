@@ -42,7 +42,7 @@ from unity.conversation_manager.events import (
     PhoneCallStarted,
     InboundPhoneUtterance,
 )
-from unity.conversation_manager.types import Mode
+from unity.conversation_manager.cm_types import Mode
 
 from tests.conversation_manager.conftest import BOSS
 

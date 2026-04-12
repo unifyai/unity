@@ -8,7 +8,7 @@ from pydantic import BaseModel, Field, create_model
 
 from unity.common.prompt_helpers import PromptParts
 from unity.conversation_manager.prompt_builders import build_system_prompt
-from unity.conversation_manager.types import Mode, ScreenshotEntry
+from unity.conversation_manager.cm_types import Mode, ScreenshotEntry
 
 if TYPE_CHECKING:
     from unity.conversation_manager.conversation_manager import ConversationManager

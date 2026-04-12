@@ -7,7 +7,7 @@ from typing import Dict, Any
 from unity.contact_manager.contact_manager import ContactManager
 from unity.contact_manager.types.contact import Contact
 from unity.blacklist_manager.blacklist_manager import BlackListManager
-from unity.conversation_manager.types import Medium
+from unity.conversation_manager.cm_types import Medium
 from tests.helpers import _handle_project
 from tests.async_helpers import _wait_for_next_assistant_response_event
 
