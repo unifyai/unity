@@ -30,7 +30,7 @@ from tests.conversation_manager.actions.integration.helpers import (
     wait_for_actor_completion,
 )
 from unity.conversation_manager.events import UnifyMessageReceived
-from unity.conversation_manager.types import ScreenshotEntry
+from unity.conversation_manager.cm_types import ScreenshotEntry
 from unity.file_manager.settings import get_local_root
 
 pytestmark = [pytest.mark.integration, pytest.mark.eval, pytest.mark.llm_call]
@@ -80,7 +80,7 @@ async def test_screenshot_crop_via_act(initialized_cm_codeact):
     # In production, _register_screenshots_background handles this as a
     # fire-and-forget task after the LLM turn. In tests, step_until_wait
     # returns before that task completes, so we write eagerly.
-    from unity.conversation_manager.types.screenshot import (
+    from unity.conversation_manager.cm_types.screenshot import (
         generate_screenshot_path,
         write_screenshot_to_disk,
     )

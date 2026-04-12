@@ -54,7 +54,7 @@ from unity.conversation_manager.events import (
     OutboundUnifyMeetUtterance,
     FastBrainNotification,
 )
-from unity.conversation_manager.types import Medium, Mode
+from unity.conversation_manager.cm_types import Medium, Mode
 
 from tests.conversation_manager.conftest import TEST_CONTACTS
 

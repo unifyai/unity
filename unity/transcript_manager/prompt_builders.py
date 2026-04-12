@@ -19,7 +19,7 @@ from typing import Callable, Dict, Union, List, Optional
 # Schemas used in the prompt -------------------------------------------------
 from ..contact_manager.types.contact import Contact
 from .types.message import Message
-from unity.conversation_manager.types import Medium
+from unity.conversation_manager.cm_types import Medium
 from ..common.prompt_helpers import (
     clarification_guidance,
     sig_dict,

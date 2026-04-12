@@ -5,8 +5,8 @@ import os
 from datetime import datetime, timezone
 from pathlib import Path
 
-from unity.conversation_manager.types import ScreenshotEntry
-from unity.conversation_manager.types.screenshot import (
+from unity.conversation_manager.cm_types import ScreenshotEntry
+from unity.conversation_manager.cm_types.screenshot import (
     generate_screenshot_path,
     write_screenshot_to_disk,
 )

@@ -72,7 +72,7 @@ from unity.conversation_manager.medium_scripts.common import (
     hydrate_fast_brain_history,
     trim_fast_brain_context,
 )
-from unity.conversation_manager.types.screenshot import (
+from unity.conversation_manager.cm_types.screenshot import (
     ScreenshotEntry,
     generate_screenshot_path,
     write_screenshot_to_disk,

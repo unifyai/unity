@@ -42,7 +42,7 @@ from unity.conversation_manager.events import (
     PhoneCallStarted,
     UnifyMeetStarted,
 )
-from unity.conversation_manager.types import Medium, Mode
+from unity.conversation_manager.cm_types import Medium, Mode
 
 # Path to audio fixtures
 FIXTURES_DIR = Path(__file__).parent / "fixtures" / "audio"

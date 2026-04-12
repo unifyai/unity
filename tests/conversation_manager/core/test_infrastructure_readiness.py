@@ -224,7 +224,7 @@ async def test_brain_acts_after_initialization_complete(initialized_cm):
     it (or at minimum, send a corrective message to the user).
     """
     from datetime import datetime, timezone, timedelta
-    from unity.conversation_manager.types import Medium
+    from unity.conversation_manager.cm_types import Medium
 
     cm = initialized_cm
     cm.cm.initialized = False

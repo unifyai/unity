@@ -52,7 +52,7 @@ from unity.conversation_manager.events import (
     UnifyMessageSent,
 )
 from unity.conversation_manager.domains import comms_utils
-from unity.conversation_manager.types import Medium
+from unity.conversation_manager.cm_types import Medium
 
 pytestmark = pytest.mark.eval
 

@@ -29,7 +29,7 @@ from unity.conversation_manager.domains.proactive_speech import (
 )
 from datetime import datetime, timezone
 
-from unity.conversation_manager.types import Medium, Mode, ScreenshotEntry
+from unity.conversation_manager.cm_types import Medium, Mode, ScreenshotEntry
 
 # =============================================================================
 # Mock Helpers

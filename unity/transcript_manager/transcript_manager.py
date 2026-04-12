@@ -608,7 +608,7 @@ class TranscriptManager(BaseTranscriptManager):
 
         2. Simplified sandbox dicts::
 
-               {"sender": "Daniel Lenton", "content": "Hi"}
+               {"sender": "Jane Smith", "content": "Hi"}
 
         An optional ``contact_manager`` can be supplied; otherwise a fresh
         ``ContactManager`` is constructed lazily. Numeric ``sender_id`` values are

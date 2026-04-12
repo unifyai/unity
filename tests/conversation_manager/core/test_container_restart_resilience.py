@@ -51,7 +51,7 @@ from unity.conversation_manager.events import (
     PhoneCallStarted,
     BackupContactsEvent,
 )
-from unity.conversation_manager.types import Mode
+from unity.conversation_manager.cm_types import Mode
 
 # =============================================================================
 # Subprocess Helpers for True Process Isolation
@@ -87,7 +87,7 @@ def _run_cm_in_subprocess(code_body: str, env_vars: dict | None = None) -> dict:
             reset_in_memory_event_broker,
         )
         from unity.conversation_manager.conversation_manager import ConversationManager
-        from unity.conversation_manager.types import Mode
+        from unity.conversation_manager.cm_types import Mode
         from datetime import datetime
 
         def create_cm(assistant_id="test_assistant"):
@@ -338,7 +338,7 @@ return get_cm_state(cm)
             await EventHandler.handle_event(event, cm2)
 
         # Verify the message was processed
-        from unity.conversation_manager.types import Medium
+        from unity.conversation_manager.cm_types import Medium
 
         sms_thread = cm2.contact_index.get_messages_for_contact(
             alice_contact["contact_id"],

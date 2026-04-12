@@ -656,7 +656,7 @@ async def test_received_email_appears_in_all_cc_recipient_threads(initialized_cm
 
     This ensures the LLM has complete context when viewing any contact's thread.
     """
-    from unity.conversation_manager.types import Medium
+    from unity.conversation_manager.cm_types import Medium
     from unity.conversation_manager.domains.contact_index import EmailMessage
 
     cm = initialized_cm
@@ -735,7 +735,7 @@ async def test_sent_email_appears_in_all_recipient_threads(initialized_cm):
     This ensures the LLM knows what each contact has seen when viewing
     their conversation thread.
     """
-    from unity.conversation_manager.types import Medium
+    from unity.conversation_manager.cm_types import Medium
     from unity.conversation_manager.domains.contact_index import EmailMessage
 
     cm = initialized_cm
@@ -873,7 +873,7 @@ async def test_email_with_to_and_cc_shows_correct_roles(initialized_cm):
     When a received email has both TO and CC recipients, each contact should
     see the email with their correct role (to vs cc).
     """
-    from unity.conversation_manager.types import Medium
+    from unity.conversation_manager.cm_types import Medium
 
     cm = initialized_cm
     alice = TEST_CONTACTS[0]  # Sender
@@ -931,7 +931,7 @@ async def test_no_duplicate_email_when_contact_in_multiple_fields(initialized_cm
     If a contact appears in multiple fields (e.g., both sender and TO), they
     should only get ONE copy of the email in their thread (no duplicates).
     """
-    from unity.conversation_manager.types import Medium
+    from unity.conversation_manager.cm_types import Medium
 
     cm = initialized_cm
     alice = TEST_CONTACTS[0]

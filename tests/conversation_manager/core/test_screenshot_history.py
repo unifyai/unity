@@ -14,7 +14,7 @@ from datetime import datetime, timezone
 
 
 from unity.conversation_manager.medium_scripts.common import ScreenshotHistory
-from unity.conversation_manager.types.screenshot import ScreenshotEntry
+from unity.conversation_manager.cm_types.screenshot import ScreenshotEntry
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
 

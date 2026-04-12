@@ -30,7 +30,7 @@ from unity.conversation_manager.events import (
     ActorNotification,
     ActorSessionResponse,
 )
-from unity.conversation_manager.types.mode import Mode
+from unity.conversation_manager.cm_types.mode import Mode
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Fixtures

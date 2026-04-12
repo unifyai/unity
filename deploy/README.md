@@ -1,18 +1,29 @@
-# Deployment (Internal)
+# Deployment
 
-This directory contains deployment configurations and operational tooling for the
-hosted Unify platform. If you're using Unity as an open-source project, you can
-ignore this directory entirely — nothing here is needed for local development or
-the sandbox.
+Docker image and CI/CD configuration for the Unity container.
 
 ## Contents
 
-- `Dockerfile` / `entrypoint.sh` — Production container image
-- `cloudbuild*.yaml` — GCP Cloud Build CI/CD pipelines
-- `desktop/` — Virtual desktop container image (VNC/noVNC + browser automation)
-- `guides/` — Internal infrastructure documentation (GKE, call recording, etc.)
-- `scripts/dev/` — Developer utilities for managing live K8s jobs, assistants, and logs
-- `scripts/job-watcher/` — Kopf operator for K8s job lifecycle management
-- `scripts/kubernetes/` — Cluster setup, priority classes, job creation helpers
-- `scripts/stress_test/` — Load testing and multi-assistant orchestration
-- `scripts/visualizer/` — Log visualization tool (requires GCP access)
+- `Dockerfile` — Production container image (Python, Node, system deps, agent-service, browser automation)
+- `entrypoint.sh` — Container entrypoint (memory watchdog, display setup, app startup)
+- `cloudbuild.yaml` / `cloudbuild-staging.yaml` / `cloudbuild-preview.yaml` — GCP Cloud Build pipelines
+- `desktop/` — Virtual desktop stack (VNC/noVNC, audio devices, browser) for computer-use sessions
+
+## Docker
+
+Build the image locally:
+
+```bash
+docker build -f deploy/Dockerfile \
+  --build-arg GITHUB_TOKEN=your-token \
+  --build-arg UNIFY_KEY=your-key \
+  -t unity .
+```
+
+The Dockerfile clones `unify` and `unillm` from GitHub at build time (they're not bundled in the image context). A `GITHUB_TOKEN` with repo read access is required.
+
+## Cloud Build
+
+The Cloud Build configs are triggered by pushes to `main`, `staging`, and `preview`. They build the base image, push to Artifact Registry, and trigger a downstream enterprise overlay build.
+
+These configs use `${PROJECT_ID}` and other Cloud Build substitution variables — no credentials are hardcoded.

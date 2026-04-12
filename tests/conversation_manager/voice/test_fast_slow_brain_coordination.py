@@ -79,7 +79,7 @@ from unity.conversation_manager.events import (
     UnifyMeetStarted,
     FastBrainNotification,
 )
-from unity.conversation_manager.types import Medium, Mode
+from unity.conversation_manager.cm_types import Medium, Mode
 
 from tests.conversation_manager.conftest import BOSS, TEST_CONTACTS
 from tests.helpers import _handle_project
@@ -276,7 +276,7 @@ class TestSlowBrainDecisionBoundaries:
         from unity.conversation_manager.domains.brain_action_tools import (
             ConversationManagerBrainActionTools,
         )
-        from unity.conversation_manager.types import Mode
+        from unity.conversation_manager.cm_types import Mode
 
         # guide_voice_agent should exist as a standalone method
         guide_sig = inspect.signature(
@@ -732,7 +732,7 @@ class TestSymbolicForwardingAndSpeechGating:
             action_name="ask",
             query="How did you break down the task?",
             response=(
-                "I followed the Colliers standard workflow: "
+                "I followed the standard analysis workflow: "
                 "1) searched for guidance, 2) verified all 4 PDFs, "
                 "3) rendered pages 2-3 at a time, 4) extracted into "
                 "FiscalYearData schema, 5) saved JSON, 6) generated "
@@ -744,7 +744,7 @@ class TestSymbolicForwardingAndSpeechGating:
         rendered = render_event_for_fast_brain(event.to_json())
         assert rendered is not None, "ActorHandleResponse should be rendered"
         assert "Ask answered" in rendered
-        assert "Colliers standard workflow" in rendered
+        assert "standard analysis workflow" in rendered
 
     @_handle_project
     async def test_guide_voice_agent_available_during_boss_meet(
@@ -818,8 +818,8 @@ class TestSlowBrainTextAcknowledgmentPrompt:
             prompt = build_system_prompt(
                 bio="Test assistant.",
                 contact_id=1,
-                first_name="Dan",
-                surname="Lenton",
+                first_name="Alex",
+                surname="Demo",
                 is_voice_call=True,
                 is_internal_call=is_internal,
             ).flatten()

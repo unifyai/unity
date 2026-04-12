@@ -29,7 +29,7 @@ from unity.conversation_manager.events import (
     UnifyMessageSent,
     ActorHandleStarted,
 )
-from unity.conversation_manager.types import ScreenshotEntry
+from unity.conversation_manager.cm_types import ScreenshotEntry
 
 pytestmark = pytest.mark.eval
 

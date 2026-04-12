@@ -82,7 +82,7 @@ spec:
       serviceAccountName: comm-sa
       containers:
       - name: job-watcher-staging
-        image: us-central1-docker.pkg.dev/responsive-city-458413-a2/unity/job-watcher-staging:latest
+        image: us-central1-docker.pkg.dev/your-gcp-project-id/unity/job-watcher-staging:latest
         command: ["kopf", "run", "watcher.py", "--liveness=http://0.0.0.0:8080/healthz", "--namespace=staging", "--standalone"]
         ports:
         - containerPort: 8080

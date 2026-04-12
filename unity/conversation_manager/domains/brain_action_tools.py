@@ -43,7 +43,7 @@ from unity.conversation_manager.events import (
 )
 from unity.common._async_tool.dynamic_tools_factory import DynamicToolFactory
 from unity.common._async_tool.utils import get_handle_paused_state
-from unity.conversation_manager.types import Medium
+from unity.conversation_manager.cm_types import Medium
 from unity.conversation_manager.task_actions import (
     STEERING_OPERATIONS,
     OPERATION_MAP,
@@ -729,6 +729,15 @@ class ConversationManagerBrainActionTools:
                 abs_path = adapter._abspath(attachment_filepath)
                 with open(abs_path, "rb") as f:
                     file_contents = f.read()
+
+                file_size_mb = len(file_contents) / (1024 * 1024)
+                if file_size_mb > 25:
+                    return await self._surface_comms_error(
+                        f"File too large: {file_size_mb:.1f}MB exceeds "
+                        f"25MB attachment limit.",
+                        _unify_topic,
+                        **_unify_err,
+                    )
 
                 attachment_filename = os.path.basename(attachment_filepath)
                 upload_result = await comms_utils.upload_unify_attachment(

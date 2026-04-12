@@ -31,7 +31,7 @@ from ..common.read_only_ask_guard import ReadOnlyAskGuardHandle
 from ..common.llm_client import new_llm_client
 from ..events.event_bus import EVENT_BUS, Event
 from ..blacklist_manager.blacklist_manager import BlackListManager
-from ..conversation_manager.types import Medium
+from ..conversation_manager.cm_types import Medium
 
 # Module delegations (split helpers)
 from .storage import (

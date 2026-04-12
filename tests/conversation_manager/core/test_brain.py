@@ -18,7 +18,7 @@ from datetime import datetime, timezone
 
 from unity.common.prompt_helpers import PromptParts
 from unity.conversation_manager.domains.brain import BrainSpec
-from unity.conversation_manager.types import ScreenshotEntry
+from unity.conversation_manager.cm_types import ScreenshotEntry
 
 # =============================================================================
 # Helpers

@@ -42,7 +42,7 @@ class BusinessContextPayload:
     role_description : str
         Primary identity statement for the agent. This appears FIRST in the
         final prompt to establish the correct persona (primacy effect).
-        Example: "You are an expert data analyst for Midland Heart..."
+        Example: "You are an expert data analyst for Acme Housing..."
 
     domain_rules : str
         Domain-specific knowledge in natural language:

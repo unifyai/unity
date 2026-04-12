@@ -9,7 +9,7 @@ import sys
 from typing import TYPE_CHECKING, Awaitable, Callable, Optional
 
 if TYPE_CHECKING:
-    from unity.conversation_manager.types.screenshot import ScreenshotEntry
+    from unity.conversation_manager.cm_types.screenshot import ScreenshotEntry
 
 from unity.conversation_manager.event_broker import get_event_broker
 from unity.conversation_manager.events import (
@@ -996,7 +996,7 @@ async def capture_assistant_screenshot(
 
     from datetime import datetime, timezone
     from unity.session_details import SESSION_DETAILS
-    from unity.conversation_manager.types.screenshot import ScreenshotEntry
+    from unity.conversation_manager.cm_types.screenshot import ScreenshotEntry
 
     base_url = agent_service_url or _resolve_agent_service_url()
     auth_key = SESSION_DETAILS.unify_key

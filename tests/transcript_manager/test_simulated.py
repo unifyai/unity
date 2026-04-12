@@ -6,7 +6,7 @@ from unity.transcript_manager.simulated import (
     SimulatedTranscriptManager,
 )
 from unity.transcript_manager.types.message import Message
-from unity.conversation_manager.types import Medium
+from unity.conversation_manager.cm_types import Medium
 from datetime import datetime, timezone
 
 # Helper identical to the one used elsewhere in the test-suite

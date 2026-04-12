@@ -36,7 +36,7 @@ from unity.conversation_manager.domains.contact_index import (
     Message,
     EmailMessage,
 )
-from unity.conversation_manager.types import Medium
+from unity.conversation_manager.cm_types import Medium
 
 # Alias for backward compatibility with tests
 Contact = ConversationState

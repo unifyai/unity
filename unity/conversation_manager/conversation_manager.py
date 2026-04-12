@@ -39,8 +39,8 @@ from unity.conversation_manager.domains.utils import Debouncer, log_task_exc
 from unity.memory_manager.memory_manager import MemoryManager
 from unity.contact_manager.contact_manager import ContactManager
 from unity.transcript_manager.transcript_manager import TranscriptManager
-from unity.conversation_manager.types import Medium, Mode, ScreenshotEntry
-from unity.conversation_manager.types.screenshot import (
+from unity.conversation_manager.cm_types import Medium, Mode, ScreenshotEntry
+from unity.conversation_manager.cm_types.screenshot import (
     generate_screenshot_path,
     write_screenshot_to_disk,
 )

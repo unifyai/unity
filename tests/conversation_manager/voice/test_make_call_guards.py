@@ -18,7 +18,7 @@ from unity.conversation_manager.domains.brain_action_tools import (
 )
 from unity.conversation_manager.domains.contact_index import ContactIndex
 from unity.conversation_manager.domains.notifications import NotificationBar
-from unity.conversation_manager.types import Mode
+from unity.conversation_manager.cm_types import Mode
 from unity.common.single_shot import (
     single_shot_tool_decision,
 )

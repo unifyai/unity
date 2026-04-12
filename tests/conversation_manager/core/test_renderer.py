@@ -760,7 +760,7 @@ class TestRenderStateWithTracking:
         notification_bar,
     ):
         """Messages in conversations are tracked with identity."""
-        from unity.conversation_manager.types import Medium
+        from unity.conversation_manager.cm_types import Medium
 
         # Add a message to the conversation
         ts1 = datetime(2025, 6, 13, 12, 0, 0, tzinfo=timezone.utc)

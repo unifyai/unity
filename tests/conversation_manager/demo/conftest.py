@@ -45,8 +45,8 @@ DEMO_BOSS_INITIAL = {
 # prospect to the assistant.
 DEMO_OPERATOR = {
     "contact_id": 2,
-    "first_name": "Daniel",
-    "surname": "Lenton",
+    "first_name": "Alex",
+    "surname": "Demo",
     "email_address": "user@example.com",
     "phone_number": "+15555559999",
     "should_respond": True,
@@ -87,6 +87,11 @@ def _enable_demo_mode() -> None:
     SESSION_DETAILS.user.number = DEMO_OPERATOR["phone_number"]
     SESSION_DETAILS.user.email = DEMO_OPERATOR["email_address"]
 
+    os.environ["USER_FIRST_NAME"] = DEMO_OPERATOR["first_name"]
+    os.environ["USER_SURNAME"] = DEMO_OPERATOR["surname"]
+    os.environ["USER_NUMBER"] = DEMO_OPERATOR["phone_number"]
+    os.environ["USER_EMAIL"] = DEMO_OPERATOR["email_address"]
+
 
 def _disable_demo_mode() -> None:
     """Restore SETTINGS and env after a demo-mode fixture tears down."""
@@ -101,6 +106,11 @@ def _disable_demo_mode() -> None:
     SESSION_DETAILS.user.surname = ""
     SESSION_DETAILS.user.number = ""
     SESSION_DETAILS.user.email = ""
+
+    os.environ.pop("USER_FIRST_NAME", None)
+    os.environ.pop("USER_SURNAME", None)
+    os.environ.pop("USER_NUMBER", None)
+    os.environ.pop("USER_EMAIL", None)
 
 
 # ─────────────────────────────────────────────────────────────────────────────

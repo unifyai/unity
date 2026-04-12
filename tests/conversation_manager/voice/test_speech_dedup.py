@@ -36,7 +36,7 @@ from unity.conversation_manager.events import (
     UnifyMeetReceived,
     UnifyMeetStarted,
 )
-from unity.conversation_manager.types import Medium, Mode
+from unity.conversation_manager.cm_types import Medium, Mode
 
 from tests.conversation_manager.conftest import BOSS, TEST_CONTACTS
 from tests.helpers import _handle_project
