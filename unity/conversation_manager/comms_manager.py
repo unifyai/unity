@@ -247,31 +247,74 @@ class CommsManager:
             pubsub_e2e_latency.record(latency, {"topic": topic})
         message.ack()
 
-    def handle_message(
+    def _ack_callback(self, ack, publish_timestamp, topic):
+        """Ack a message callback while preserving latency metrics."""
+        if publish_timestamp is not None:
+            latency = time.time() - publish_timestamp
+            pubsub_e2e_latency.record(latency, {"topic": topic})
+        ack()
+
+    def _log_dispatch_future(self, future) -> None:
+        """Log unexpected failures from background envelope dispatch tasks."""
+        exc = future.exception()
+        if exc is not None:
+            LOGGER.error(f"{DEFAULT_ICON} Error processing message: {exc}")
+
+    async def dispatch_envelope_payload(
         self,
-        message: pubsub_v1.types.PubsubMessage,
-        subscription_id: str = "",
-    ):
-        """
-        Handle incoming messages from PubSub subscriptions.
+        payload: dict,
+        *,
+        direct_publish: bool = True,
+        source_topic: str = "",
+        ack=None,
+        nack=None,
+    ) -> None:
+        """Dispatch a normalized {thread, event} payload to the event broker."""
+        await self.dispatch_inbound_envelope(
+            thread=payload["thread"],
+            event=payload["event"],
+            publish_timestamp=payload.get("publish_timestamp"),
+            direct_publish=direct_publish,
+            source_topic=source_topic,
+            ack=ack,
+            nack=nack,
+        )
 
-        NOTE: This method is called from a GCP PubSub thread pool thread,
-        NOT from the asyncio event loop. All async operations must use
-        `_publish_from_callback` or `asyncio.run_coroutine_threadsafe`.
-        """
-        topic = subscription_id.removesuffix("-sub")
+    async def dispatch_inbound_envelope(
+        self,
+        *,
+        thread: str,
+        event: dict,
+        publish_timestamp: float | None = None,
+        direct_publish: bool = True,
+        source_topic: str = "",
+        ack=None,
+        nack=None,
+    ) -> None:
+        """Map a comms envelope onto the existing app:comms:* broker contract."""
+
+        async def publish(channel: str, payload: str) -> None:
+            if direct_publish:
+                await self.event_broker.publish(channel, payload)
+                return
+            asyncio.create_task(self.event_broker.publish(channel, payload))
+
+        async def publish_blocking(channel: str, payload: str) -> None:
+            await self.event_broker.publish(channel, payload)
+
+        def schedule(coro) -> None:
+            asyncio.create_task(coro)
+
+        def ack_now() -> None:
+            if ack is not None:
+                self._ack_callback(ack, publish_timestamp, source_topic)
+
+        def nack_now() -> None:
+            if nack is not None:
+                nack()
+
         try:
-            data = json.loads(message.data.decode("utf-8"))
-            thread = data["thread"]
-            event = data["event"]
-            publish_timestamp = data.get("publish_timestamp")
-            LOGGER.debug(
-                f"{DEFAULT_ICON} Received message from {thread}: {message.data.decode('utf-8')}",
-            )
             if thread == "assistant_update":
-                self._ack_with_latency(message, publish_timestamp, topic)
-
-                # publish
                 details = {
                     "api_key": event["api_key"],
                     "binding_id": event.get("binding_id", ""),
@@ -309,40 +352,41 @@ class CommsManager:
                     "team_ids": event.get("team_ids") or [],
                     "demo_id": event.get("demo_id"),
                 }
-                self._publish_from_callback(
+                await publish(
                     "app:comms:assistant_update",
                     AssistantUpdateEvent(**details).to_json(),
                 )
-            elif thread == "ping":
-                self._publish_from_callback(
+                ack_now()
+                return
+
+            if thread == "ping":
+                await publish(
                     "app:comms:ping",
                     Ping(kind="keepalive").to_json(),
                 )
-                self._ack_with_latency(message, publish_timestamp, topic)
-            elif thread == "unity_system_event":
+                ack_now()
+                return
+
+            if thread == "unity_system_event":
                 system_event_type = event.get("event_type")
                 system_message = event.get("message")
                 reason = str(system_message) if system_message is not None else ""
 
-                # Desktop-ready events are only valid within 5 minutes of
-                # publish; stale ones from previous sessions must be discarded
-                # to avoid falsely marking the desktop as ready.
-                _DESKTOP_READY_TTL = 300
+                desktop_ready_ttl = 300
                 if (
                     system_event_type == "assistant_desktop_ready"
                     and publish_timestamp is not None
-                    and time.time() - publish_timestamp > _DESKTOP_READY_TTL
+                    and time.time() - publish_timestamp > desktop_ready_ttl
                 ):
                     age = time.time() - publish_timestamp
                     LOGGER.warning(
                         f"{DEFAULT_ICON} Discarding stale assistant_desktop_ready "
-                        f"(age={age:.0f}s, TTL={_DESKTOP_READY_TTL}s)",
+                        f"(age={age:.0f}s, TTL={desktop_ready_ttl}s)",
                     )
-                    self._ack_with_latency(message, publish_timestamp, topic)
+                    ack_now()
                     return
 
-                # Map system event types to internal event classes.
-                _SYSTEM_EVENT_MAP = {
+                system_event_map = {
                     "sync_contacts": lambda r: SyncContacts(
                         reason=r or "Contact sync requested via system event.",
                     ),
@@ -377,49 +421,42 @@ class CommsManager:
                     ),
                 }
 
-                factory = _SYSTEM_EVENT_MAP.get(system_event_type)
+                factory = system_event_map.get(system_event_type)
                 if factory is not None:
-                    evt = factory(reason)
-                    self._publish_from_callback(
+                    await publish(
                         f"app:comms:{system_event_type}",
-                        evt.to_json(),
+                        factory(reason).to_json(),
                     )
-                self._ack_with_latency(message, publish_timestamp, topic)
-            elif thread in events_map:
-                # Get contacts for message routing
-                contacts = [*event.get("contacts", []), _get_local_contact()]
+                ack_now()
+                return
 
-                # Publish backup contacts for use before ContactManager is initialized
-                self._publish_from_callback(
+            if thread in events_map:
+                contacts = [*event.get("contacts", []), _get_local_contact()]
+                await publish(
                     "app:comms:backup_contacts",
                     BackupContactsEvent(contacts=contacts).to_json(),
                 )
 
                 content = event["body"]
-                contact_detail = ""
-                medium_for_blacklist = ""
 
                 if thread == "email":
                     content = "Subject: " + event["subject"] + "\n\n" + event["body"]
                     contact_detail = event["from"].split("<")[1][:-1]
                     medium_for_blacklist = Medium.EMAIL
 
-                    # Check blacklist before processing
                     if _is_blacklisted(medium_for_blacklist, contact_detail):
                         LOGGER.debug(
                             f"{DEFAULT_ICON} Ignoring blacklisted email from: {contact_detail}",
                         )
-                        self._ack_with_latency(message, publish_timestamp, topic)
+                        ack_now()
                         return
 
-                    # Find or create contact
                     contact = next(
                         (c for c in contacts if c["email_address"] == contact_detail),
                         None,
                     )
                     is_new_unknown = False
                     if contact is None:
-                        # Unknown sender - create minimal contact
                         contact = _get_or_create_unknown_contact(
                             medium_for_blacklist,
                             contact_detail,
@@ -430,21 +467,19 @@ class CommsManager:
                         LOGGER.error(
                             f"{DEFAULT_ICON} Failed to resolve contact for email from: {contact_detail}",
                         )
-                        self._ack_with_latency(message, publish_timestamp, topic)
+                        ack_now()
                         return
 
-                    # Extract attachment metadata for the event
                     attachments = event.get("attachments") or []
 
-                    # Extract to/cc/bcc - normalize to lists
-                    def _normalize_recipients(val):
-                        if not val:
+                    def _normalize_recipients(value):
+                        if not value:
                             return []
-                        if isinstance(val, str):
-                            return [val] if val else []
-                        return list(val)
+                        if isinstance(value, str):
+                            return [value] if value else []
+                        return list(value)
 
-                    self._publish_from_callback(
+                    await publish(
                         f"app:comms:{thread}_message",
                         events_map[thread](
                             subject=event["subject"],
@@ -458,9 +493,8 @@ class CommsManager:
                         ).to_json(),
                     )
 
-                    # Publish UnknownContactCreated event if this was a new unknown contact
                     if is_new_unknown:
-                        self._publish_from_callback(
+                        await publish(
                             "app:comms:unknown_contact_created",
                             UnknownContactCreated(
                                 contact=contact,
@@ -473,34 +507,28 @@ class CommsManager:
                             ).to_json(),
                         )
 
-                    # add attachments (if any) to Attachments using async helper
-                    try:
-                        if attachments:
-                            asyncio.run_coroutine_threadsafe(
-                                add_email_attachments(
-                                    attachments,
-                                    SESSION_DETAILS.assistant.email,
-                                    event.get("gmail_message_id", ""),
-                                ),
-                                self.loop,
-                            )
-                    except Exception as e:
-                        LOGGER.error(
-                            f"{DEFAULT_ICON} Failed scheduling attachment download: {e}",
+                    if attachments:
+                        schedule(
+                            add_email_attachments(
+                                attachments,
+                                SESSION_DETAILS.assistant.email,
+                                event.get("gmail_message_id", ""),
+                            ),
                         )
 
-                elif thread == "unify_message":
-                    # contact_id is required - no default to prevent silent privilege escalation
-                    # Note: unify_message comes from internal interface, not external unknown senders
-                    # so we don't apply blacklist check or unknown contact creation here
+                    ack_now()
+                    return
+
+                if thread == "unify_message":
                     target_contact_id = event.get("contact_id")
                     if target_contact_id is None:
                         LOGGER.error(
                             f"{DEFAULT_ICON} Error: contact_id is required for unify_message, "
                             "skipping message",
                         )
-                        self._ack_with_latency(message, publish_timestamp, topic)
+                        ack_now()
                         return
+
                     contact = next(
                         (c for c in contacts if c["contact_id"] == target_contact_id),
                         None,
@@ -510,34 +538,26 @@ class CommsManager:
                             f"{DEFAULT_ICON} Error: contact_id {target_contact_id} not found in "
                             f"contacts list, skipping message",
                         )
-                        self._ack_with_latency(message, publish_timestamp, topic)
+                        ack_now()
                         return
 
-                    # Extract attachments with full metadata for the event
                     attachments = event.get("attachments") or []
-
-                    self._publish_from_callback(
+                    await publish(
                         f"app:comms:{thread}_message",
                         events_map[thread](
                             content=content,
                             contact=contact,
-                            attachments=attachments,  # Pass full metadata
+                            attachments=attachments,
                         ).to_json(),
                     )
 
-                    # Download attachments (if any) to Attachments using async helper
-                    try:
-                        if attachments:
-                            asyncio.run_coroutine_threadsafe(
-                                add_unify_message_attachments(attachments),
-                                self.loop,
-                            )
-                    except Exception as e:
-                        LOGGER.error(
-                            f"{DEFAULT_ICON} Failed scheduling attachment download: {e}",
-                        )
+                    if attachments:
+                        schedule(add_unify_message_attachments(attachments))
 
-                elif thread == "api_message":
+                    ack_now()
+                    return
+
+                if thread == "api_message":
                     target_contact_id = event.get("contact_id", 1)
                     contact = next(
                         (c for c in contacts if c["contact_id"] == target_contact_id),
@@ -547,7 +567,7 @@ class CommsManager:
                     attachments = event.get("attachments") or []
                     tags = event.get("tags") or []
 
-                    self._publish_from_callback(
+                    await publish(
                         f"app:comms:{thread}_message",
                         events_map[thread](
                             content=content,
@@ -558,22 +578,13 @@ class CommsManager:
                         ).to_json(),
                     )
 
-                    # Download attachments (if any) to Attachments — reuse the
-                    # same helper used by unify_message.
-                    try:
-                        if attachments:
-                            asyncio.run_coroutine_threadsafe(
-                                add_unify_message_attachments(attachments),
-                                self.loop,
-                            )
-                    except Exception as e:
-                        LOGGER.error(
-                            f"{DEFAULT_ICON} Failed scheduling api_message attachment download: {e}",
-                        )
+                    if attachments:
+                        schedule(add_unify_message_attachments(attachments))
 
-                elif thread == "whatsapp":
-                    # Call permission responses arrive on the whatsapp thread
-                    # with a special type field — intercept before normal flow.
+                    ack_now()
+                    return
+
+                if thread == "whatsapp":
                     if event.get("type") == "call_permission_response":
                         contact_number = event.get("contact_number", "")
                         accepted = event.get("payload") == "ACCEPTED"
@@ -598,21 +609,19 @@ class CommsManager:
                             LOGGER.error(
                                 f"{DEFAULT_ICON} Failed to resolve contact for WhatsApp call permission from: {contact_number}",
                             )
-                            self._ack_with_latency(message, publish_timestamp, topic)
+                            ack_now()
                             return
 
-                        perm_event = WhatsAppCallPermissionResponse(
-                            contact=contact,
-                            accepted=accepted,
-                        )
-                        self._publish_from_callback(
+                        await publish(
                             "app:comms:whatsapp_call_permission",
-                            perm_event.to_json(),
+                            WhatsAppCallPermissionResponse(
+                                contact=contact,
+                                accepted=accepted,
+                            ).to_json(),
                         )
-                        self._ack_with_latency(message, publish_timestamp, topic)
+                        ack_now()
                         return
 
-                    # Strip whatsapp: prefix from sender number
                     raw_from = event["from_number"].strip()
                     contact_detail = (
                         raw_from.replace("whatsapp:", "")
@@ -625,7 +634,7 @@ class CommsManager:
                         LOGGER.debug(
                             f"{DEFAULT_ICON} Ignoring blacklisted WhatsApp from: {contact_detail}",
                         )
-                        self._ack_with_latency(message, publish_timestamp, topic)
+                        ack_now()
                         return
 
                     contact = next(
@@ -649,12 +658,11 @@ class CommsManager:
                         LOGGER.error(
                             f"{DEFAULT_ICON} Failed to resolve contact for WhatsApp from: {contact_detail}",
                         )
-                        self._ack_with_latency(message, publish_timestamp, topic)
+                        ack_now()
                         return
 
                     attachments = event.get("attachments") or []
-
-                    self._publish_from_callback(
+                    await publish(
                         f"app:comms:{thread}_message",
                         events_map[thread](
                             content=content,
@@ -664,18 +672,10 @@ class CommsManager:
                     )
 
                     if attachments:
-                        try:
-                            asyncio.run_coroutine_threadsafe(
-                                add_unify_message_attachments(attachments),
-                                self.loop,
-                            )
-                        except Exception as e:
-                            LOGGER.error(
-                                f"{DEFAULT_ICON} Failed scheduling WhatsApp attachment download: {e}",
-                            )
+                        schedule(add_unify_message_attachments(attachments))
 
                     if is_new_unknown:
-                        self._publish_from_callback(
+                        await publish(
                             "app:comms:unknown_contact_created",
                             UnknownContactCreated(
                                 contact=contact,
@@ -684,319 +684,326 @@ class CommsManager:
                             ).to_json(),
                         )
 
-                else:
-                    # SMS message (thread == "msg")
-                    contact_detail = event["from_number"].strip()
-                    medium_for_blacklist = Medium.SMS_MESSAGE
+                    ack_now()
+                    return
 
-                    # Check blacklist before processing
-                    if _is_blacklisted(medium_for_blacklist, contact_detail):
-                        LOGGER.debug(
-                            f"{DEFAULT_ICON} Ignoring blacklisted SMS from: {contact_detail}",
-                        )
-                        self._ack_with_latency(message, publish_timestamp, topic)
-                        return
+                contact_detail = event["from_number"].strip()
+                medium_for_blacklist = Medium.SMS_MESSAGE
 
-                    # Find or create contact
-                    contact = next(
-                        (c for c in contacts if c["phone_number"] == contact_detail),
-                        None,
+                if _is_blacklisted(medium_for_blacklist, contact_detail):
+                    LOGGER.debug(
+                        f"{DEFAULT_ICON} Ignoring blacklisted SMS from: {contact_detail}",
                     )
-                    is_new_unknown = False
-                    if contact is None:
-                        # Unknown sender - create minimal contact
-                        contact = _get_or_create_unknown_contact(
-                            medium_for_blacklist,
-                            contact_detail,
-                        )
-                        is_new_unknown = contact is not None
+                    ack_now()
+                    return
 
-                    if contact is None:
-                        LOGGER.error(
-                            f"{DEFAULT_ICON} Failed to resolve contact for SMS from: {contact_detail}",
-                        )
-                        self._ack_with_latency(message, publish_timestamp, topic)
-                        return
+                contact = next(
+                    (c for c in contacts if c["phone_number"] == contact_detail),
+                    None,
+                )
+                is_new_unknown = False
+                if contact is None:
+                    contact = _get_or_create_unknown_contact(
+                        medium_for_blacklist,
+                        contact_detail,
+                    )
+                    is_new_unknown = contact is not None
 
-                    self._publish_from_callback(
-                        f"app:comms:{thread}_message",
-                        events_map[thread](
-                            content=content,
+                if contact is None:
+                    LOGGER.error(
+                        f"{DEFAULT_ICON} Failed to resolve contact for SMS from: {contact_detail}",
+                    )
+                    ack_now()
+                    return
+
+                await publish(
+                    f"app:comms:{thread}_message",
+                    events_map[thread](
+                        content=content,
+                        contact=contact,
+                    ).to_json(),
+                )
+
+                if is_new_unknown:
+                    await publish(
+                        "app:comms:unknown_contact_created",
+                        UnknownContactCreated(
                             contact=contact,
+                            medium=medium_for_blacklist,
+                            message_preview=content[:100] if content else "",
                         ).to_json(),
                     )
 
-                    # Publish UnknownContactCreated event if this was a new unknown contact
-                    if is_new_unknown:
-                        self._publish_from_callback(
-                            "app:comms:unknown_contact_created",
-                            UnknownContactCreated(
-                                contact=contact,
-                                medium=medium_for_blacklist,
-                                message_preview=content[:100] if content else "",
-                            ).to_json(),
-                        )
+                ack_now()
+                return
 
-                self._ack_with_latency(message, publish_timestamp, topic)
-            elif thread == "log_pre_hire_chats":
+            if thread == "log_pre_hire_chats":
                 try:
-                    contacts = [*event.get("contacts", []), _get_local_contact()]
                     assistant_id = event.get("assistant_id", "")
                     body = event.get("body", []) or []
 
                     published = 0
                     for item in body:
                         try:
-                            role = item.get("role")
                             msg_content = item.get("msg", "")
                             if not isinstance(msg_content, str):
                                 msg_content = str(msg_content)
 
-                            payload = PreHireMessage(
-                                content=msg_content,
-                                role=role,
-                                exchange_id=UNASSIGNED,
-                            )
-
-                            self._publish_from_callback(
+                            await publish(
                                 "app:comms:pre_hire",
-                                payload.to_json(),
+                                PreHireMessage(
+                                    content=msg_content,
+                                    role=item.get("role"),
+                                    exchange_id=UNASSIGNED,
+                                ).to_json(),
                             )
                             published += 1
-                        except Exception as inner_e:
+                        except Exception as inner_exc:
                             LOGGER.debug(
-                                f"{DEFAULT_ICON} Skipping malformed pre-hire item: {inner_e}",
+                                f"{DEFAULT_ICON} Skipping malformed pre-hire item: {inner_exc}",
                             )
 
                     LOGGER.debug(
                         f"{DEFAULT_ICON} Logged {published} pre-hire chat message(s) for assistant {assistant_id}",
                     )
-                    self._ack_with_latency(message, publish_timestamp, topic)
-                except Exception as e:
-                    LOGGER.error(f"{DEFAULT_ICON} Error processing pre-hire logs: {e}")
-                    message.nack()
-            elif thread == "recording_ready":
-                recording_event = RecordingReady(
-                    conference_name=event.get("conference_name", ""),
-                    recording_url=event.get("recording_url", ""),
-                )
-                self._publish_from_callback(
-                    "app:comms:recording_ready",
-                    recording_event.to_json(),
-                )
-                self._ack_with_latency(message, publish_timestamp, topic)
-            elif "call" in thread or "meet" in thread:
-                try:
-                    # Get contacts for call routing
-                    contacts = [*event.get("contacts", []), _get_local_contact()]
-
-                    # Publish backup contacts for use before ContactManager is initialized
-                    self._publish_from_callback(
-                        "app:comms:backup_contacts",
-                        BackupContactsEvent(contacts=contacts).to_json(),
+                    ack_now()
+                except Exception as exc:
+                    LOGGER.error(
+                        f"{DEFAULT_ICON} Error processing pre-hire logs: {exc}",
                     )
+                    nack_now()
+                return
 
-                    # Create the event based on the thread
-                    if thread == "unify_meet":
-                        # unify_meet is internal, no blacklist check needed
-                        call_event = UnifyMeetReceived(
-                            contact=next(c for c in contacts if c["contact_id"] == 1),
-                            room_name=event.get("livekit_room"),
-                        )
-                        topic = "app:comms:unify_meet_received"
-                    elif thread == "whatsapp_call":
-                        number = event.get("caller_number", event.get("user_number"))
-                        if number and number.startswith("whatsapp:"):
-                            number = number[len("whatsapp:") :]
+            if thread == "recording_ready":
+                await publish(
+                    "app:comms:recording_ready",
+                    RecordingReady(
+                        conference_name=event.get("conference_name", ""),
+                        recording_url=event.get("recording_url", ""),
+                    ).to_json(),
+                )
+                ack_now()
+                return
 
-                        if _is_blacklisted(Medium.WHATSAPP_MESSAGE, number):
-                            LOGGER.debug(
-                                f"{DEFAULT_ICON} Ignoring blacklisted WhatsApp call from: {number}",
-                            )
-                            self._ack_with_latency(message, publish_timestamp, topic)
-                            return
+            if "call" in thread or "meet" in thread:
+                contacts = [*event.get("contacts", []), _get_local_contact()]
+                await publish(
+                    "app:comms:backup_contacts",
+                    BackupContactsEvent(contacts=contacts).to_json(),
+                )
 
-                        contact = next(
-                            (c for c in contacts if c.get("whatsapp_number") == number),
-                            None,
-                        )
-                        is_new_unknown = False
-                        if contact is None:
-                            contact = _get_or_create_unknown_contact(
-                                Medium.WHATSAPP_CALL,
-                                number,
-                            )
-                            is_new_unknown = contact is not None
+                if thread == "unify_meet":
+                    call_event = UnifyMeetReceived(
+                        contact=next(c for c in contacts if c["contact_id"] == 1),
+                        room_name=event.get("livekit_room"),
+                    )
+                    event_topic = "app:comms:unify_meet_received"
+                elif thread == "whatsapp_call":
+                    number = event.get("caller_number", event.get("user_number"))
+                    if number and number.startswith("whatsapp:"):
+                        number = number[len("whatsapp:") :]
 
-                        if contact is None:
-                            LOGGER.error(
-                                f"{DEFAULT_ICON} Failed to resolve contact for WhatsApp call from: {number}",
-                            )
-                            self._ack_with_latency(message, publish_timestamp, topic)
-                            return
-
-                        call_event = WhatsAppCallReceived(
-                            contact=contact,
-                            conference_name=event.get("conference_name", ""),
+                    if _is_blacklisted(Medium.WHATSAPP_MESSAGE, number):
+                        LOGGER.debug(
+                            f"{DEFAULT_ICON} Ignoring blacklisted WhatsApp call from: {number}",
                         )
-                        topic = "app:comms:whatsapp_call_received"
-
-                        if is_new_unknown:
-                            self._publish_from_callback(
-                                "app:comms:unknown_contact_created",
-                                UnknownContactCreated(
-                                    contact=contact,
-                                    medium=Medium.WHATSAPP_CALL,
-                                    message_preview="Incoming WhatsApp call",
-                                ).to_json(),
-                            )
-                    elif thread == "call":
-                        number = event.get("caller_number", event.get("user_number"))
-
-                        # Check blacklist before processing
-                        if _is_blacklisted(Medium.PHONE_CALL, number):
-                            LOGGER.debug(
-                                f"{DEFAULT_ICON} Ignoring blacklisted call from: {number}",
-                            )
-                            self._ack_with_latency(message, publish_timestamp, topic)
-                            return
-
-                        # Find or create contact
-                        contact = next(
-                            (c for c in contacts if c["phone_number"] == number),
-                            None,
-                        )
-                        is_new_unknown = False
-                        if contact is None:
-                            # Unknown caller - create minimal contact
-                            contact = _get_or_create_unknown_contact(
-                                Medium.PHONE_CALL,
-                                number,
-                            )
-                            is_new_unknown = contact is not None
-
-                        if contact is None:
-                            LOGGER.error(
-                                f"{DEFAULT_ICON} Failed to resolve contact for call from: {number}",
-                            )
-                            self._ack_with_latency(message, publish_timestamp, topic)
-                            return
-
-                        call_event = PhoneCallReceived(
-                            contact=contact,
-                            conference_name=event.get("conference_name", ""),
-                        )
-                        topic = "app:comms:call_received"
-
-                        # Publish UnknownContactCreated event if this was a new unknown contact
-                        if is_new_unknown:
-                            self._publish_from_callback(
-                                "app:comms:unknown_contact_created",
-                                UnknownContactCreated(
-                                    contact=contact,
-                                    medium=Medium.PHONE_CALL,
-                                    message_preview="Incoming phone call",
-                                ).to_json(),
-                            )
-                    elif thread == "whatsapp_call_answered":
-                        number = event.get("user_number")
-                        if number and number.startswith("whatsapp:"):
-                            number = number[len("whatsapp:") :]
-                        contact = next(
-                            (c for c in contacts if c.get("whatsapp_number") == number),
-                            None,
-                        )
-                        if contact is None:
-                            contact = next(
-                                (
-                                    c
-                                    for c in contacts
-                                    if c.get("phone_number") == number
-                                ),
-                                None,
-                            )
-                        if contact is None:
-                            contact = next(c for c in contacts if c["contact_id"] == 1)
-                        call_event = WhatsAppCallAnswered(contact=contact)
-                        topic = "app:comms:whatsapp_call_answered"
-                    elif thread == "whatsapp_call_not_answered":
-                        number = event.get("user_number")
-                        if number and number.startswith("whatsapp:"):
-                            number = number[len("whatsapp:") :]
-                        call_status = event.get("call_status", "no-answer")
-                        contact = next(
-                            (c for c in contacts if c.get("whatsapp_number") == number),
-                            None,
-                        )
-                        if contact is None:
-                            contact = next(
-                                (
-                                    c
-                                    for c in contacts
-                                    if c.get("phone_number") == number
-                                ),
-                                None,
-                            )
-                        if contact is None:
-                            contact = next(c for c in contacts if c["contact_id"] == 1)
-                        call_event = WhatsAppCallNotAnswered(
-                            contact=contact,
-                            reason=call_status,
-                        )
-                        topic = "app:comms:whatsapp_call_not_answered"
-                    elif thread == "call_not_answered":
-                        number = event.get("user_number")
-                        call_status = event.get("call_status", "no-answer")
-                        contact = next(
-                            (c for c in contacts if c["phone_number"] == number),
-                            None,
-                        )
-                        if contact is None:
-                            contact = next(c for c in contacts if c["contact_id"] == 1)
-                        call_event = PhoneCallNotAnswered(
-                            contact=contact,
-                            reason=call_status,
-                        )
-                        topic = "app:comms:call_not_answered"
-                    elif thread == "call_answered":
-                        number = event.get("user_number")
-                        contact = next(
-                            (c for c in contacts if c["phone_number"] == number),
-                            None,
-                        )
-                        if contact is None:
-                            contact = next(c for c in contacts if c["contact_id"] == 1)
-                        call_event = PhoneCallAnswered(contact=contact)
-                        topic = "app:comms:call_answered"
-                    else:
-                        LOGGER.warning(
-                            f"{DEFAULT_ICON} Unhandled call/meet thread: {thread}",
-                        )
-                        self._ack_with_latency(message, publish_timestamp, topic)
+                        ack_now()
                         return
 
-                    # Publish the event (blocking wait for call events)
-                    future = asyncio.run_coroutine_threadsafe(
-                        self.event_broker.publish(topic, call_event.to_json()),
-                        self.loop,
+                    contact = next(
+                        (c for c in contacts if c.get("whatsapp_number") == number),
+                        None,
                     )
-                    self._ack_with_latency(message, publish_timestamp, topic)
-                    future.result()  # Wait for publish to complete
-                except json.JSONDecodeError:
-                    LOGGER.error(
-                        f"{DEFAULT_ICON} Invalid message format for {thread} event",
-                    )
-                    self._ack_with_latency(message, publish_timestamp, topic)
-                except Exception as e:
-                    LOGGER.error(f"{DEFAULT_ICON} Error processing {thread} event: {e}")
-                    import traceback
+                    is_new_unknown = False
+                    if contact is None:
+                        contact = _get_or_create_unknown_contact(
+                            Medium.WHATSAPP_CALL,
+                            number,
+                        )
+                        is_new_unknown = contact is not None
 
-                    traceback.print_exc()
-                    self._ack_with_latency(message, publish_timestamp, topic)
-            else:
-                if thread != "assistant_desktop_ready":
-                    LOGGER.error(f"{DEFAULT_ICON} Unknown event type: {thread}")
-                self._ack_with_latency(message, publish_timestamp, topic)
+                    if contact is None:
+                        LOGGER.error(
+                            f"{DEFAULT_ICON} Failed to resolve contact for WhatsApp call from: {number}",
+                        )
+                        ack_now()
+                        return
+
+                    call_event = WhatsAppCallReceived(
+                        contact=contact,
+                        conference_name=event.get("conference_name", ""),
+                    )
+                    event_topic = "app:comms:whatsapp_call_received"
+
+                    if is_new_unknown:
+                        await publish(
+                            "app:comms:unknown_contact_created",
+                            UnknownContactCreated(
+                                contact=contact,
+                                medium=Medium.WHATSAPP_CALL,
+                                message_preview="Incoming WhatsApp call",
+                            ).to_json(),
+                        )
+                elif thread == "call":
+                    number = event.get("caller_number", event.get("user_number"))
+
+                    if _is_blacklisted(Medium.PHONE_CALL, number):
+                        LOGGER.debug(
+                            f"{DEFAULT_ICON} Ignoring blacklisted call from: {number}",
+                        )
+                        ack_now()
+                        return
+
+                    contact = next(
+                        (c for c in contacts if c["phone_number"] == number),
+                        None,
+                    )
+                    is_new_unknown = False
+                    if contact is None:
+                        contact = _get_or_create_unknown_contact(
+                            Medium.PHONE_CALL,
+                            number,
+                        )
+                        is_new_unknown = contact is not None
+
+                    if contact is None:
+                        LOGGER.error(
+                            f"{DEFAULT_ICON} Failed to resolve contact for call from: {number}",
+                        )
+                        ack_now()
+                        return
+
+                    call_event = PhoneCallReceived(
+                        contact=contact,
+                        conference_name=event.get("conference_name", ""),
+                    )
+                    event_topic = "app:comms:call_received"
+
+                    if is_new_unknown:
+                        await publish(
+                            "app:comms:unknown_contact_created",
+                            UnknownContactCreated(
+                                contact=contact,
+                                medium=Medium.PHONE_CALL,
+                                message_preview="Incoming phone call",
+                            ).to_json(),
+                        )
+                elif thread == "whatsapp_call_answered":
+                    number = event.get("user_number")
+                    if number and number.startswith("whatsapp:"):
+                        number = number[len("whatsapp:") :]
+                    contact = next(
+                        (c for c in contacts if c.get("whatsapp_number") == number),
+                        None,
+                    )
+                    if contact is None:
+                        contact = next(
+                            (c for c in contacts if c.get("phone_number") == number),
+                            None,
+                        )
+                    if contact is None:
+                        contact = next(c for c in contacts if c["contact_id"] == 1)
+                    call_event = WhatsAppCallAnswered(contact=contact)
+                    event_topic = "app:comms:whatsapp_call_answered"
+                elif thread == "whatsapp_call_not_answered":
+                    number = event.get("user_number")
+                    if number and number.startswith("whatsapp:"):
+                        number = number[len("whatsapp:") :]
+                    call_status = event.get("call_status", "no-answer")
+                    contact = next(
+                        (c for c in contacts if c.get("whatsapp_number") == number),
+                        None,
+                    )
+                    if contact is None:
+                        contact = next(
+                            (c for c in contacts if c.get("phone_number") == number),
+                            None,
+                        )
+                    if contact is None:
+                        contact = next(c for c in contacts if c["contact_id"] == 1)
+                    call_event = WhatsAppCallNotAnswered(
+                        contact=contact,
+                        reason=event.get("call_status", "no-answer"),
+                    )
+                    event_topic = "app:comms:whatsapp_call_not_answered"
+                elif thread == "call_not_answered":
+                    number = event.get("user_number")
+                    contact = next(
+                        (c for c in contacts if c["phone_number"] == number),
+                        None,
+                    )
+                    if contact is None:
+                        contact = next(c for c in contacts if c["contact_id"] == 1)
+                    call_event = PhoneCallNotAnswered(
+                        contact=contact,
+                        reason=event.get("call_status", "no-answer"),
+                    )
+                    event_topic = "app:comms:call_not_answered"
+                elif thread == "call_answered":
+                    number = event.get("user_number")
+                    contact = next(
+                        (c for c in contacts if c["phone_number"] == number),
+                        None,
+                    )
+                    if contact is None:
+                        contact = next(c for c in contacts if c["contact_id"] == 1)
+                    call_event = PhoneCallAnswered(contact=contact)
+                    event_topic = "app:comms:call_answered"
+                else:
+                    LOGGER.warning(
+                        f"{DEFAULT_ICON} Unhandled call/meet thread: {thread}",
+                    )
+                    ack_now()
+                    return
+
+                await publish_blocking(event_topic, call_event.to_json())
+                ack_now()
+                return
+
+            if thread != "assistant_desktop_ready":
+                LOGGER.error(f"{DEFAULT_ICON} Unknown event type: {thread}")
+            ack_now()
+        except Exception as exc:
+            LOGGER.error(f"{DEFAULT_ICON} Error processing message: {exc}")
+            publish_system_error(
+                "An internal error occurred while processing a message. "
+                "The assistant may not have received your last message.",
+                error_type="message_failed",
+            )
+            ack_now()
+
+    def handle_message(
+        self,
+        message: pubsub_v1.types.PubsubMessage,
+        subscription_id: str = "",
+    ):
+        """
+        Handle incoming messages from PubSub subscriptions.
+
+        NOTE: This method is called from a GCP PubSub thread pool thread,
+        NOT from the asyncio event loop. It decodes the Pub/Sub payload and
+        schedules the shared async envelope dispatcher on the main loop.
+        """
+        topic = subscription_id.removesuffix("-sub")
+        try:
+            payload = json.loads(message.data.decode("utf-8"))
+            thread = payload["thread"]
+            LOGGER.debug(
+                f"{DEFAULT_ICON} Received message from {thread}: {message.data.decode('utf-8')}",
+            )
+            future = asyncio.run_coroutine_threadsafe(
+                self.dispatch_envelope_payload(
+                    payload,
+                    direct_publish=False,
+                    source_topic=topic,
+                    ack=message.ack,
+                    nack=message.nack,
+                ),
+                self.loop,
+            )
+            future.add_done_callback(self._log_dispatch_future)
+            if "call" in thread or "meet" in thread:
+                future.result()
         except Exception as e:
             LOGGER.error(f"{DEFAULT_ICON} Error processing message: {e}")
             publish_system_error(

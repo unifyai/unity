@@ -97,7 +97,57 @@ Commands: `msg` (Unify message), `sms` (SMS), `email` (email), `call` (phone cal
 
 Mode 1 simulates everything to show the ConversationManager's orchestration. For the real CodeAct architecture (where the Actor writes and executes Python plans against the manager APIs), select **Mode 2** at the configuration prompt.
 
-See the full sandbox docs at [`sandboxes/conversation_manager/README.md`](sandboxes/conversation_manager/README.md) — it covers Mode 3 (real computer interface), voice mode, live voice calls, real comms, GUI mode, and more.
+See the full sandbox docs at [`sandboxes/conversation_manager/README.md`](sandboxes/conversation_manager/README.md) — it covers Mode 3 (real computer interface), voice mode, live voice calls, local comms, hosted comms, GUI mode, and more.
+
+### Real Channels Locally
+
+The default quickstart stays simulated so you can explore the ConversationManager without touching external services. If you want to run real inbound and outbound channels from your own machine, Unity now includes a local comms ingress inside this repo.
+
+That local path keeps the same internal broker contract used by the managed deployment, but swaps the hosted communication edge for Unity-owned local endpoints such as:
+
+- `/local/twilio/sms`
+- `/local/twilio/whatsapp`
+- `/local/livekit/recording-complete`
+- direct IMAP/SMTP email via `UNITY_LOCAL_EMAIL_*`
+
+#### Example: local WhatsApp via Twilio
+
+Add the local comms settings and your Twilio credentials to `.env`:
+
+```bash
+UNITY_CONVERSATION_LOCAL_COMMS_ENABLED=true
+UNITY_CONVERSATION_LOCAL_COMMS_MODE=local
+UNITY_CONVERSATION_LOCAL_COMMS_PUBLIC_URL=https://<your-public-tunnel>
+
+TWILIO_ACCOUNT_SID=AC...
+TWILIO_AUTH_TOKEN=...
+
+# Optional: use separate WhatsApp Business credentials if you have them.
+# TWILIO_WA_ACCOUNT_SID=AC...
+# TWILIO_WA_AUTH_TOKEN=...
+```
+
+Start Unity locally:
+
+```bash
+scripts/local.sh start --full
+
+# or run the sandbox with real channel confirmations enabled
+python -m sandboxes.conversation_manager.sandbox --real-comms --project_name Sandbox --overwrite
+```
+
+Then point your Twilio WhatsApp webhook at:
+
+```text
+https://<your-public-tunnel>/local/twilio/whatsapp
+```
+
+Notes:
+
+- You need a public URL or tunnel for inbound webhooks to reach your machine.
+- Outbound WhatsApp sends use the same local Twilio credentials.
+- Voice and phone-call flows also require `LIVEKIT_SIP_URI`, `LIVEKIT_URL`, `LIVEKIT_API_KEY`, and `LIVEKIT_API_SECRET`.
+- `.env.example` and `sandboxes/conversation_manager/README.md` contain the fuller local-setup matrix.
 
 ---
 
@@ -105,7 +155,7 @@ See the full sandbox docs at [`sandboxes/conversation_manager/README.md`](sandbo
 
 - **Is Unity fully local today?** Not end-to-end. The supported quickstart runs the brain locally but uses Unify's hosted backend for persistence and state.
 - **Do I have to use OpenAI or Anthropic?** No. Those are the simplest documented paths here. `unillm` can be pointed at other supported providers and compatible local endpoints.
-- **Do I have to use the hosted backend?** The default quickstart does. A broader self-hosted path is on the roadmap below.
+- **Do I have to use the hosted backend?** The default quickstart does for persistence. Local channel ingress for Twilio/WhatsApp/LiveKit/email is also available if you bring your own provider credentials.
 
 ---
 
@@ -339,8 +389,8 @@ We think of English as an API. Managers communicate through natural-language int
 Unity is under active development. Here's what we're working on:
 
 - [ ] **Local deployment** — `docker compose up` for the full system (brain + persistence + communication) on your machine. This is the top priority.
-- [ ] **Decouple Pub/Sub** — replace GCP Pub/Sub with a portable event delivery layer (local broker or direct async queues)
-- [ ] **Local webhook adapters** — REST endpoints that replace Cloud Function webhook handlers for Twilio, Gmail, and other channel integrations
+- [ ] **Managed/local convergence** — narrow the remaining gap between the managed Pub/Sub path and the local ingress path
+- [ ] **Broader local provider coverage** — expand turnkey local channel setup beyond the current Twilio/LiveKit/IMAP/SMTP path
 - [ ] **Local storage** — filesystem or S3-compatible alternative to GCS signed URLs
 - [ ] **Simplified Orchestra** — lightweight local mode for the persistence layer, reducing external dependencies
 - [ ] **One-command onboarding** — guided setup that provisions API keys, configures channels, and starts the assistant
