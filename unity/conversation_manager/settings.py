@@ -59,6 +59,12 @@ class ConversationSettings(BaseSettings):
     ASSISTANT_SESSION_PLURAL: str = "assistantsessions"
     ASSISTANT_SESSION_PROTOCOL_VERSION: str = "v1"
     ASSIGNMENT_POLL_INTERVAL: float = 0.5
+    LOCAL_COMMS_ENABLED: bool = False
+    LOCAL_COMMS_MODE: str = "hosted"
+    LOCAL_COMMS_HOST: str = "127.0.0.1"
+    LOCAL_COMMS_PORT: int = 8787
+    LOCAL_COMMS_PUBLIC_URL: str = ""
+    LOCAL_EMAIL_POLL_INTERVAL: float = 15.0
 
     model_config = SettingsConfigDict(
         env_prefix="UNITY_CONVERSATION_",

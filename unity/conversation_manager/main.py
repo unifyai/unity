@@ -35,6 +35,7 @@ from unity.conversation_manager.assistant_session_k8s import (
     collect_shutdown_diagnostics,
 )
 from unity.conversation_manager.comms_manager import CommsManager
+from unity.conversation_manager.local_ingress import LocalCommsIngress
 from unity.conversation_manager.metrics import container_spinup
 from unity.conversation_manager.event_broker import get_event_broker
 from unity.conversation_manager.domains import comms_utils, managers_utils
@@ -292,7 +293,17 @@ async def run_conversation_manager(
                 )
 
         comms_manager = CommsManager(event_broker=event_broker)
-        asyncio.create_task(comms_manager.start())
+        cm.comms_manager = comms_manager
+        local_comms_enabled = (
+            SETTINGS.conversation.LOCAL_COMMS_ENABLED
+            or SETTINGS.conversation.LOCAL_COMMS_MODE == "local"
+        )
+        if local_comms_enabled:
+            local_ingress = LocalCommsIngress(comms_manager)
+            cm._local_comms_ingress = local_ingress
+            await local_ingress.start()
+        else:
+            asyncio.create_task(comms_manager.start())
 
     LOGGER.debug(f"{ICONS['lifecycle']} ConversationManager is running...")
     return cm

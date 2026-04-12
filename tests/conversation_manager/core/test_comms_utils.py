@@ -15,6 +15,7 @@ posting to COMMS_URL when the endpoint lives on the adapters service).
 
 from __future__ import annotations
 
+import base64
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -27,12 +28,12 @@ COMMS_URL = "http://comms.test:8080"
 ADAPTERS_URL = "http://adapters.test:8081"
 
 
-def _mock_aiohttp_session(response_json=None, raise_on_status=None):
+def _mock_aiohttp_session(response_json=None, raise_on_status=None, status=200):
     """Build a mock aiohttp session + response pair."""
     import json
 
     mock_response = MagicMock()
-    mock_response.status = 200
+    mock_response.status = status
     if raise_on_status:
         mock_response.raise_for_status = MagicMock(side_effect=raise_on_status)
     else:
@@ -154,7 +155,8 @@ class TestUploadUnifyAttachment:
     async def test_upload_failure_returns_error(self):
         """Returns error dict when upload fails."""
         mock_session = _mock_aiohttp_session(
-            raise_on_status=Exception("Connection refused"),
+            response_json={"error": "Connection refused"},
+            status=503,
         )
 
         with (
@@ -482,3 +484,147 @@ class TestSendEmailViaAddress:
             assert payload["to"] == ["user@example.com"]
             assert payload["cc"] == ["cc1@example.com", "cc2@example.com"]
             assert payload["bcc"] == ["bcc@example.com"]
+
+
+class TestLocalCommsBackends:
+    @pytest.mark.asyncio
+    async def test_send_sms_uses_local_twilio_backend(self):
+        with (
+            patch(
+                "unity.conversation_manager.domains.comms_utils._use_local_comms",
+                return_value=True,
+            ),
+            patch(
+                "unity.conversation_manager.local_providers.twilio.send_sms_message",
+                new=AsyncMock(return_value={"success": True, "sid": "SM123"}),
+            ) as mock_send_sms,
+            patch(
+                "unity.conversation_manager.domains.comms_utils.SESSION_DETAILS",
+            ) as mock_session_details,
+        ):
+            mock_session_details.assistant.number = "+15551234567"
+
+            result = await comms_utils.send_sms_message_via_number(
+                to_number="+15559876543",
+                content="Hello from tests",
+            )
+
+            assert result["success"] is True
+            mock_send_sms.assert_awaited_once_with(
+                "+15559876543",
+                "+15551234567",
+                "Hello from tests",
+            )
+
+    @pytest.mark.asyncio
+    async def test_send_unify_message_uses_local_outbox(self):
+        with (
+            patch(
+                "unity.conversation_manager.domains.comms_utils._use_local_comms",
+                return_value=True,
+            ),
+            patch(
+                "unity.conversation_manager.domains.comms_utils._publish_local_outbox_async",
+                new=AsyncMock(return_value=True),
+            ) as mock_publish,
+        ):
+            result = await comms_utils.send_unify_message(
+                content="Hello world",
+                contact_id=7,
+            )
+
+            assert result["success"] is True
+            mock_publish.assert_awaited_once()
+            payload = mock_publish.await_args.args[0]
+            assert payload["thread"] == "unify_message_outbound"
+            assert payload["event"]["content"] == "Hello world"
+            assert payload["event"]["contact_id"] == 7
+
+    @pytest.mark.asyncio
+    async def test_upload_unify_attachment_uses_local_attachment_store(self):
+        mock_session = _mock_aiohttp_session(response_json={"success": True})
+
+        with (
+            patch("aiohttp.ClientSession", return_value=mock_session),
+            patch(
+                "unity.conversation_manager.domains.comms_utils._use_local_comms",
+                return_value=True,
+            ),
+            patch(
+                "unity.conversation_manager.domains.comms_utils.SETTINGS",
+            ) as mock_settings,
+        ):
+            mock_settings.conversation.LOCAL_COMMS_PUBLIC_URL = ""
+            mock_settings.conversation.LOCAL_COMMS_HOST = "127.0.0.1"
+            mock_settings.conversation.LOCAL_COMMS_PORT = 8787
+
+            result = await comms_utils.upload_unify_attachment(
+                file_content=b"local file content",
+                filename="document.pdf",
+            )
+
+            assert result["filename"] == "document.pdf"
+            assert result["url"].startswith(
+                "http://127.0.0.1:8787/local/comms/attachments/",
+            )
+            posted_url = mock_session.post.call_args[0][0]
+            assert posted_url == "http://127.0.0.1:8787/local/comms/attachments"
+
+    @pytest.mark.asyncio
+    async def test_send_email_uses_local_email_backend(self):
+        with (
+            patch(
+                "unity.conversation_manager.domains.comms_utils._use_local_comms",
+                return_value=True,
+            ),
+            patch(
+                "unity.conversation_manager.local_providers.email.send_email",
+                new=AsyncMock(return_value={"success": True, "id": "email-123"}),
+            ) as mock_send_email,
+        ):
+            result = await comms_utils.send_email_via_address(
+                to=["user@example.com"],
+                subject="Report",
+                body="Please see attached.",
+                attachment={
+                    "filename": "report.pdf",
+                    "content_base64": "UERGIGNvbnRlbnQ=",
+                },
+            )
+
+            assert result["success"] is True
+            mock_send_email.assert_awaited_once()
+            kwargs = mock_send_email.await_args.kwargs
+            assert kwargs["to"] == ["user@example.com"]
+            assert kwargs["subject"] == "Report"
+
+    @pytest.mark.asyncio
+    async def test_add_email_attachments_supports_inline_content(self):
+        mock_session = _mock_aiohttp_session(response_json={"success": True})
+        mock_file_manager = MagicMock()
+
+        with (
+            patch("aiohttp.ClientSession", return_value=mock_session),
+            patch(
+                "unity.manager_registry.ManagerRegistry.get_file_manager",
+                return_value=mock_file_manager,
+            ),
+        ):
+            await comms_utils.add_email_attachments(
+                [
+                    {
+                        "id": "att-1",
+                        "filename": "note.txt",
+                        "content_base64": base64.b64encode(b"hello").decode("ascii"),
+                    },
+                ],
+                receiver_email="assistant@example.com",
+                gmail_message_id="",
+            )
+
+            mock_session.get.assert_not_called()
+            mock_file_manager.save_attachment.assert_called_once_with(
+                "att-1",
+                "note.txt",
+                b"hello",
+            )

@@ -213,12 +213,34 @@ These populate `SESSION_DETAILS` and the boss contact record. Without them the s
 | `ASSISTANT_ID` | (auto) | Assistant ID |
 | `ASSISTANT_AGE` | `""` | Assistant's age (used in prompts) |
 
-### Real-comms mode (`--real-comms`)
+### Comms backends (`--real-comms`)
+
+The sandbox supports two comms backends:
+
+1. Unity-owned local ingress, which is the open-source-friendly default for self-hosting.
+2. A hosted communication service, for teams that still want the managed path.
+
+#### Local comms backend
 
 | Variable | Required | Description |
 |---|---|---|
-| `UNITY_COMMS_URL` | **Yes** | Communication service URL |
-| `ORCHESTRA_ADMIN_KEY` | **Yes** | Admin key used by comms service for auth headers |
+| `UNITY_CONVERSATION_LOCAL_COMMS_ENABLED` | Recommended | Set to `true` to enable Unity's local ingress |
+| `UNITY_CONVERSATION_LOCAL_COMMS_MODE` | Recommended | Set to `local` |
+| `UNITY_CONVERSATION_LOCAL_COMMS_HOST` | No | Bind host for local ingress (default: `127.0.0.1`) |
+| `UNITY_CONVERSATION_LOCAL_COMMS_PORT` | No | Bind port for local ingress (default: `8787`) |
+| `UNITY_CONVERSATION_LOCAL_COMMS_PUBLIC_URL` | For external webhooks | Public base URL Twilio/LiveKit/email providers can reach |
+| `ORCHESTRA_ADMIN_KEY` | Usually yes | Required for admin-authenticated local endpoints and some provider flows |
+| `ASSISTANT_NUMBER` | For SMS/calls | Twilio-provisioned number for outbound SMS and calls |
+| `ASSISTANT_EMAIL` | For email | Email address for outbound email |
+| `USER_NUMBER` | For SMS/calls | Boss's real phone number |
+| `USER_EMAIL` | For email | Boss's real email |
+
+#### Hosted comms backend
+
+| Variable | Required | Description |
+|---|---|---|
+| `UNITY_COMMS_URL` | **Yes** | Hosted communication service URL |
+| `ORCHESTRA_ADMIN_KEY` | **Yes** | Admin key used by the hosted comms service for auth headers |
 | `ASSISTANT_NUMBER` | **Yes** | Twilio-provisioned number for outbound SMS and calls |
 | `ASSISTANT_EMAIL` | **Yes** | Email address for outbound email |
 | `USER_NUMBER` | **Yes** | Boss's real phone number (SMS replies go here) |
@@ -264,7 +286,7 @@ These populate `SESSION_DETAILS` and the boss contact record. Without them the s
 | `VERTEXAI_PROJECT` | Depends | GCP project ID |
 | `VERTEXAI_LOCATION` | Depends | GCP region (e.g. `europe-west1`) |
 
-### Example `.env` (real-comms + live-voice)
+### Example `.env` (local comms + live-voice)
 
 ```bash
 # Core
@@ -289,7 +311,11 @@ ASSISTANT_EMAIL=sam@example.com
 ASSISTANT_ID=1
 
 # Comms
-UNITY_COMMS_URL=https://your-comms-service-url
+UNITY_CONVERSATION_LOCAL_COMMS_ENABLED=true
+UNITY_CONVERSATION_LOCAL_COMMS_MODE=local
+UNITY_CONVERSATION_LOCAL_COMMS_HOST=127.0.0.1
+UNITY_CONVERSATION_LOCAL_COMMS_PORT=8787
+UNITY_CONVERSATION_LOCAL_COMMS_PUBLIC_URL=https://your-public-tunnel.example.com
 
 # Voice
 LIVEKIT_URL=wss://your-project.livekit.cloud
@@ -317,7 +343,10 @@ The placeholder number means `USER_NUMBER` is not set in `.env`. Set it to the b
 Scenario seeding is idle-only. Wait for the active action to complete.
 
 ### Real-comms mode fails to start
-Real-comms requires backend infrastructure and correct env/session configuration. Check your `.env` / `SESSION_DETAILS` settings and comms deployment.
+Check which backend you intended to use:
+
+- Local backend: verify `UNITY_CONVERSATION_LOCAL_COMMS_MODE=local` and that your public webhook URL reaches the machine running Unity.
+- Hosted backend: verify `UNITY_COMMS_URL` and `ORCHESTRA_ADMIN_KEY` are set correctly.
 
 ### Mode 3 fails validation ("agent-service is not running or unreachable")
 Mode 3 requires:

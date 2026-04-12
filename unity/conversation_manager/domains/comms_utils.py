@@ -1,9 +1,12 @@
 from dotenv import load_dotenv
-import json
 import asyncio
+import base64
 import aiohttp
+import json
+import mimetypes
 import os
 from pathlib import Path
+import uuid
 
 from unity.logger import LOGGER
 from unity.common.hierarchical_logger import ICONS
@@ -27,6 +30,51 @@ def _get_publisher():
     return _publisher
 
 
+def _use_local_comms() -> bool:
+    enabled = getattr(SETTINGS.conversation, "LOCAL_COMMS_ENABLED", False)
+    mode = getattr(SETTINGS.conversation, "LOCAL_COMMS_MODE", "hosted")
+    return enabled is True or (isinstance(mode, str) and mode == "local")
+
+
+def _local_comms_base_url() -> str:
+    public_url = SETTINGS.conversation.LOCAL_COMMS_PUBLIC_URL.strip()
+    if public_url:
+        return public_url.rstrip("/")
+    return (
+        f"http://{SETTINGS.conversation.LOCAL_COMMS_HOST}:"
+        f"{SETTINGS.conversation.LOCAL_COMMS_PORT}"
+    )
+
+
+async def _publish_local_outbox_async(payload: dict) -> bool:
+    async with aiohttp.ClientSession() as session:
+        async with session.post(
+            f"{_local_comms_base_url()}/local/comms/outbox",
+            json=payload,
+        ) as response:
+            return response.status < 400
+
+
+def _publish_local_outbox_sync(payload: dict) -> bool:
+    import requests
+
+    response = requests.post(
+        f"{_local_comms_base_url()}/local/comms/outbox",
+        json=payload,
+        timeout=10,
+    )
+    return response.status_code < 400
+
+
+def _inline_attachment_bytes(attachment: dict) -> bytes | None:
+    encoded = attachment.get("content_base64")
+    if not encoded:
+        return None
+    if attachment.get("content_encoding") == "hex":
+        return bytes.fromhex(encoded)
+    return base64.b64decode(encoded.encode("ascii"))
+
+
 async def send_sms_message_via_number(to_number: str, content: str) -> str:
     """
     Send an SMS message using the SMS provider API.
@@ -41,6 +89,15 @@ async def send_sms_message_via_number(to_number: str, content: str) -> str:
     from_number = SESSION_DETAILS.assistant.number
     if not from_number:
         return {"success": False}
+
+    if _use_local_comms():
+        from unity.conversation_manager.local_providers import twilio as local_twilio
+
+        try:
+            return await local_twilio.send_sms_message(to_number, from_number, content)
+        except Exception as e:
+            LOGGER.error(f"{ICONS['comms_outbound']} {e}")
+            return {"success": False, "error": str(e)}
 
     async with aiohttp.ClientSession() as session:
         async with session.post(
@@ -90,6 +147,26 @@ async def send_whatsapp_message(
     if agent_id is None:
         return {"success": False}
 
+    if _use_local_comms():
+        from unity.conversation_manager.local_providers import twilio as local_twilio
+
+        from_number = (
+            SESSION_DETAILS.assistant.whatsapp_number
+            or SESSION_DETAILS.assistant.number
+        )
+        if not from_number:
+            return {"success": False, "error": "No WhatsApp sender number configured"}
+        try:
+            return await local_twilio.send_whatsapp_message(
+                to_number=to_number,
+                from_number=from_number,
+                body=content,
+                media_url=media_url,
+            )
+        except Exception as e:
+            LOGGER.error(f"{ICONS['comms_outbound']} WhatsApp send failed: {e}")
+            return {"success": False, "error": str(e)}
+
     payload = {
         "to": to_number,
         "body": content,
@@ -134,14 +211,23 @@ async def send_unify_message(
         dict with "success" key indicating delivery status.
     """
     agent_id = SESSION_DETAILS.assistant.agent_id
+    event_data = {"content": content, "role": "assistant", "contact_id": contact_id}
+    if attachment:
+        event_data["attachments"] = [attachment]
+
+    if _use_local_comms():
+        success = await _publish_local_outbox_async(
+            {
+                "thread": "unify_message_outbound",
+                "event": event_data,
+            },
+        )
+        return {"success": success}
+
     env_suffix = SETTINGS.ENV_SUFFIX if agent_id is not None else ""
     topic_name = f"unity-{agent_id}{env_suffix}"
     publisher = _get_publisher()
     topic_path = publisher.topic_path(SETTINGS.GCP_PROJECT_ID, topic_name)
-
-    event_data = {"content": content, "role": "assistant", "contact_id": contact_id}
-    if attachment:
-        event_data["attachments"] = [attachment]
 
     message_data = {
         "thread": "unify_message_outbound",
@@ -186,6 +272,24 @@ def publish_system_error(error_message: str, error_type: str = "unknown") -> Non
     agent_id = SESSION_DETAILS.assistant.agent_id
     if agent_id is None:
         return
+
+    if _use_local_comms():
+        try:
+            _publish_local_outbox_sync(
+                {
+                    "thread": "system_error",
+                    "event": {
+                        "content": error_message,
+                        "error_type": error_type,
+                    },
+                },
+            )
+        except Exception as e:
+            LOGGER.error(
+                f"{ICONS['comms_outbound']} Failed to publish system error: {e}",
+            )
+        return
+
     env_suffix = SETTINGS.ENV_SUFFIX if agent_id is not None else ""
     topic_name = f"unity-{agent_id}{env_suffix}"
     try:
@@ -260,6 +364,25 @@ async def publish_assistant_desktop_ready(
     The Console subscribes to this thread to update the liveview iframe.
     """
     agent_id = SESSION_DETAILS.assistant.agent_id
+    if _use_local_comms():
+        try:
+            await _publish_local_outbox_async(
+                {
+                    "thread": "assistant_desktop_ready",
+                    "event": {
+                        "binding_id": binding_id,
+                        "desktop_url": desktop_url,
+                        "liveview_url": liveview_url,
+                        "vm_type": vm_type,
+                    },
+                },
+            )
+        except Exception as e:
+            LOGGER.error(
+                f"{ICONS['comms_outbound']} Error publishing assistant_desktop_ready: {e}",
+            )
+        return
+
     env_suffix = SETTINGS.ENV_SUFFIX if agent_id is not None else ""
     topic_name = f"unity-{agent_id}{env_suffix}"
     publisher = _get_publisher()
@@ -310,7 +433,28 @@ async def upload_unify_attachment(
     if assistant_id is None:
         assistant_id = SESSION_DETAILS.assistant.agent_id
 
-    import aiohttp
+    if _use_local_comms():
+        content_type = mimetypes.guess_type(filename)[0] or "application/octet-stream"
+        attachment = {
+            "id": str(uuid.uuid4()),
+            "filename": filename,
+            "content_base64": base64.b64encode(file_content).decode("ascii"),
+            "content_type": content_type,
+            "size_bytes": len(file_content),
+        }
+        attachment["url"] = (
+            f"{_local_comms_base_url()}/local/comms/attachments/{attachment['id']}"
+        )
+        async with aiohttp.ClientSession() as session:
+            async with session.post(
+                f"{_local_comms_base_url()}/local/comms/attachments",
+                json=attachment,
+            ) as response:
+                if response.status >= 400:
+                    detail = await response.text()
+                    return {"success": False, "error": detail}
+        return attachment
+
     from io import BytesIO
 
     adapters_url = SETTINGS.conversation.ADAPTERS_URL
@@ -383,6 +527,19 @@ async def send_email_via_address(
     Returns:
         dict: Response with 'success' bool and optionally 'error' message
     """
+    if _use_local_comms():
+        from unity.conversation_manager.local_providers import email as local_email
+
+        return await local_email.send_email(
+            to=to,
+            subject=subject,
+            body=body,
+            cc=cc,
+            bcc=bcc,
+            email_id=email_id,
+            attachment=attachment,
+        )
+
     from_email = SESSION_DETAILS.assistant.email
     if not from_email:
         return {"success": False, "error": "No sender email configured"}
@@ -433,6 +590,17 @@ async def start_call(to_number: str) -> str:
     assistant_id = str(SESSION_DETAILS.assistant.agent_id)
     room_name = make_room_name(assistant_id, "phone")
 
+    if _use_local_comms():
+        from unity.conversation_manager.local_providers import twilio as local_twilio
+
+        try:
+            return await local_twilio.start_call(to_number, from_number, room_name)
+        except Exception:
+            return {
+                "success": False,
+                "error": f"Failed to initiate call to {to_number}",
+            }
+
     async with aiohttp.ClientSession() as session:
         async with session.post(
             f"{SETTINGS.conversation.COMMS_URL}/phone/send-call",
@@ -477,6 +645,27 @@ async def start_whatsapp_call(
     if agent_id is None:
         return {"success": False}
 
+    if _use_local_comms():
+        from unity.conversation_manager.local_providers import twilio as local_twilio
+
+        from_number = (
+            SESSION_DETAILS.assistant.whatsapp_number
+            or SESSION_DETAILS.assistant.number
+        )
+        if not from_number:
+            return {"success": False, "error": "No WhatsApp sender number configured"}
+        try:
+            return await local_twilio.start_whatsapp_call(
+                to_number=to_number,
+                from_number=from_number,
+                room_name=room_name,
+            )
+        except Exception:
+            return {
+                "success": False,
+                "error": f"Failed to initiate WhatsApp call to {to_number}",
+            }
+
     async with aiohttp.ClientSession() as session:
         async with session.post(
             f"{SETTINGS.conversation.COMMS_URL}/whatsapp/send-call",
@@ -518,16 +707,18 @@ async def add_email_attachments(
                 att_id = att.get("id", "")
                 raw_filename = att.get("filename") or f"attachment_{att_id}"
                 safe_filename = os.path.basename(raw_filename)
-
-                url = f"{SETTINGS.conversation.COMMS_URL}/gmail/attachment"
-                params = {
-                    "receiver_email": receiver_email,
-                    "gmail_message_id": gmail_message_id,
-                    "attachment_id": att_id,
-                }
-
-                async with session.get(url, headers=headers, params=params) as resp:
-                    data = await resp.read()
+                inline_bytes = _inline_attachment_bytes(att)
+                if inline_bytes is not None:
+                    data = inline_bytes
+                else:
+                    url = f"{SETTINGS.conversation.COMMS_URL}/gmail/attachment"
+                    params = {
+                        "receiver_email": receiver_email,
+                        "gmail_message_id": gmail_message_id,
+                        "attachment_id": att_id,
+                    }
+                    async with session.get(url, headers=headers, params=params) as resp:
+                        data = await resp.read()
 
                 from unity.manager_registry import ManagerRegistry
 
@@ -605,7 +796,11 @@ async def _download_single_attachment(
             )
             url = None
 
-    if url:
+    inline_bytes = _inline_attachment_bytes(att)
+
+    if inline_bytes is not None:
+        data = inline_bytes
+    elif url:
         async with session.get(url) as resp:
             resp.raise_for_status()
             data = await resp.read()

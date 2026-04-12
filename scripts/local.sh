@@ -3,8 +3,9 @@
 # local.sh — Local Unity for chat testing
 # =============================================================================
 #
-# Starts either the full ConversationManager (if LLM keys are available) or
-# a lightweight echo responder (no API keys needed) against a Pub/Sub emulator.
+# Starts either the full ConversationManager with Unity-owned local comms ingress
+# (if LLM keys are available) or a lightweight echo responder for simple
+# Pub/Sub plumbing checks.
 #
 # Designed to be called by Console's local.sh --chat, but can also be used
 # standalone.
@@ -18,8 +19,14 @@
 #   ./scripts/local.sh check              # Quick check (returns 0 if running)
 #
 # Environment (all optional — sensible defaults for local testing):
-#   PUBSUB_EMULATOR_HOST    Pub/Sub emulator (default: localhost:8085)
-#   GCP_PROJECT_ID          Project ID (default: local-test-project)
+#   UNITY_CONVERSATION_LOCAL_COMMS_ENABLED  Enable Unity-owned local comms ingress
+#   UNITY_CONVERSATION_LOCAL_COMMS_MODE     local|hosted (default: local unless UNITY_COMMS_URL is set)
+#   UNITY_CONVERSATION_LOCAL_COMMS_HOST     Local ingress bind host (default: 127.0.0.1)
+#   UNITY_CONVERSATION_LOCAL_COMMS_PORT     Local ingress bind port (default: 8787)
+#   UNITY_CONVERSATION_LOCAL_COMMS_PUBLIC_URL Public URL for external webhooks
+#   UNITY_COMMS_URL         Hosted communication service URL (optional)
+#   PUBSUB_EMULATOR_HOST    Pub/Sub emulator (echo mode only; default: localhost:8085)
+#   GCP_PROJECT_ID          Project ID (echo mode / hosted comms only)
 #   ASSISTANT_ID            Test assistant ID (default: default-test-assistant)
 #   DEPLOY_ENV              Environment suffix (default: staging)
 #   ORCHESTRA_URL           Orchestra URL (default: http://127.0.0.1:8000/v0)
@@ -42,6 +49,26 @@ GCP_PROJECT_ID="${GCP_PROJECT_ID:-local-test-project}"
 ASSISTANT_ID="${ASSISTANT_ID:-default-test-assistant}"
 DEPLOY_ENV="${DEPLOY_ENV:-staging}"
 ORCHESTRA_URL="${ORCHESTRA_URL:-http://127.0.0.1:8000/v0}"
+
+if [[ -n "${UNITY_CONVERSATION_LOCAL_COMMS_MODE:-}" ]]; then
+  LOCAL_COMMS_MODE="$UNITY_CONVERSATION_LOCAL_COMMS_MODE"
+elif [[ -n "${UNITY_COMMS_URL:-}" ]]; then
+  LOCAL_COMMS_MODE="hosted"
+else
+  LOCAL_COMMS_MODE="local"
+fi
+
+if [[ -n "${UNITY_CONVERSATION_LOCAL_COMMS_ENABLED:-}" ]]; then
+  LOCAL_COMMS_ENABLED="$UNITY_CONVERSATION_LOCAL_COMMS_ENABLED"
+elif [[ "$LOCAL_COMMS_MODE" == "local" ]]; then
+  LOCAL_COMMS_ENABLED="true"
+else
+  LOCAL_COMMS_ENABLED="false"
+fi
+
+LOCAL_COMMS_HOST="${UNITY_CONVERSATION_LOCAL_COMMS_HOST:-127.0.0.1}"
+LOCAL_COMMS_PORT="${UNITY_CONVERSATION_LOCAL_COMMS_PORT:-8787}"
+LOCAL_COMMS_PUBLIC_URL="${UNITY_CONVERSATION_LOCAL_COMMS_PUBLIC_URL:-}"
 
 PIDFILE="/tmp/unity-local.pid"
 LOGFILE="/tmp/unity-local.log"
@@ -112,12 +139,30 @@ get_mode() {
   cat "$MODEFILE" 2>/dev/null || echo "unknown"
 }
 
+local_comms_base_url() {
+  if [[ -n "$LOCAL_COMMS_PUBLIC_URL" ]]; then
+    echo "$LOCAL_COMMS_PUBLIC_URL"
+  else
+    echo "http://$LOCAL_COMMS_HOST:$LOCAL_COMMS_PORT"
+  fi
+}
+
+describe_comms_backend() {
+  if [[ "$LOCAL_COMMS_ENABLED" == "true" || "$LOCAL_COMMS_MODE" == "local" ]]; then
+    echo "local ingress ($(local_comms_base_url))"
+  elif [[ -n "${UNITY_COMMS_URL:-}" ]]; then
+    echo "hosted service ($UNITY_COMMS_URL)"
+  else
+    echo "simulated / no external comms"
+  fi
+}
+
 # =============================================================================
 # Echo responder mode
 # =============================================================================
 
 start_echo() {
-  log_info "Starting echo responder (auto-discovers all topics) ..."
+  log_info "Starting echo responder (Pub/Sub plumbing check) ..."
 
   cd "$UNITY_REPO_PATH"
   local python_cmd
@@ -168,11 +213,16 @@ start_full_cm() {
     "ASSISTANT_ID=$ASSISTANT_ID"
     "DEPLOY_ENV=$DEPLOY_ENV"
     "ORCHESTRA_URL=$ORCHESTRA_URL"
+    "UNITY_CONVERSATION_LOCAL_COMMS_ENABLED=$LOCAL_COMMS_ENABLED"
+    "UNITY_CONVERSATION_LOCAL_COMMS_MODE=$LOCAL_COMMS_MODE"
+    "UNITY_CONVERSATION_LOCAL_COMMS_HOST=$LOCAL_COMMS_HOST"
+    "UNITY_CONVERSATION_LOCAL_COMMS_PORT=$LOCAL_COMMS_PORT"
     "UNITY_VALIDATE_LLM_PROVIDERS=false"
     "EVENTBUS_PUBLISHING_ENABLED=false"
     "EVENTBUS_PUBSUB_STREAMING=false"
     "TEST=false"
   )
+  [[ -n "$LOCAL_COMMS_PUBLIC_URL" ]] && env_vars+=("UNITY_CONVERSATION_LOCAL_COMMS_PUBLIC_URL=$LOCAL_COMMS_PUBLIC_URL")
 
   # Forward API keys if present.
   [[ -n "${OPENAI_API_KEY:-}" ]]       && env_vars+=("OPENAI_API_KEY=$OPENAI_API_KEY")
@@ -206,6 +256,7 @@ start_full_cm() {
 
   log_success "ConversationManager running (PID $pid)"
   log_info "Full LLM-powered responses enabled."
+  log_info "Comms backend: $(describe_comms_backend)"
 }
 
 # =============================================================================
@@ -263,7 +314,11 @@ cmd_start() {
   echo ""
   echo "  Mode:       $mode"
   echo "  Assistant:  $ASSISTANT_ID"
-  echo "  Pub/Sub:    $PUBSUB_EMULATOR_HOST"
+  if [[ "$mode" == "echo" ]]; then
+    echo "  Echo bus:   $PUBSUB_EMULATOR_HOST"
+  else
+    echo "  Comms:      $(describe_comms_backend)"
+  fi
   echo "  Log:        $LOGFILE"
   echo ""
 }
@@ -299,8 +354,12 @@ cmd_status() {
     echo -e "${RED}not running${NC}"
   fi
   echo "  Assistant: $ASSISTANT_ID"
-  echo "  Pub/Sub:   $PUBSUB_EMULATOR_HOST"
-  echo "  Project:   $GCP_PROJECT_ID"
+  if [[ "$(get_mode)" == "echo" ]]; then
+    echo "  Echo bus:  $PUBSUB_EMULATOR_HOST"
+    echo "  Project:   $GCP_PROJECT_ID"
+  else
+    echo "  Comms:     $(describe_comms_backend)"
+  fi
   echo "  Log:       $LOGFILE"
   echo ""
 }
@@ -323,15 +382,20 @@ cmd_help() {
   echo "  --full    Force full ConversationManager (requires LLM keys)"
   echo ""
   echo "Modes:"
-  echo "  echo      Echoes messages back (tests plumbing, no LLM)"
+  echo "  echo      Echoes messages back via Pub/Sub (plumbing check, no LLM)"
   echo "  full-cm   Full ConversationManager with LLM responses"
   echo ""
   echo "Auto-detection: if OPENAI_API_KEY or ANTHROPIC_API_KEY and UNIFY_KEY"
   echo "are set, starts full CM. Otherwise falls back to echo responder."
   echo ""
   echo "Environment:"
-  echo "  PUBSUB_EMULATOR_HOST    Pub/Sub emulator host (default: localhost:8085)"
-  echo "  GCP_PROJECT_ID          GCP project ID (default: local-test-project)"
+  echo "  UNITY_CONVERSATION_LOCAL_COMMS_ENABLED  Enable local comms ingress"
+  echo "  UNITY_CONVERSATION_LOCAL_COMMS_MODE     local|hosted"
+  echo "  UNITY_CONVERSATION_LOCAL_COMMS_HOST     Local ingress bind host"
+  echo "  UNITY_CONVERSATION_LOCAL_COMMS_PORT     Local ingress bind port"
+  echo "  UNITY_COMMS_URL                         Hosted comms service URL"
+  echo "  PUBSUB_EMULATOR_HOST                    Pub/Sub host for echo mode"
+  echo "  GCP_PROJECT_ID                          Project ID for echo mode"
   echo "  ASSISTANT_ID            Assistant ID (default: default-test-assistant)"
   echo "  DEPLOY_ENV              Deploy env for topic suffix (default: staging)"
   echo "  OPENAI_API_KEY          OpenAI key (for full CM mode)"
