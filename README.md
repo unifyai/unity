@@ -21,6 +21,8 @@
 <tr><td><b>Concurrent by default</b></td><td>Run several tasks at once. Steer each one independently — ask for progress on one while redirecting another.</td></tr>
 </table>
 
+Unity's continual learning happens at the agent layer: it updates durable structured state that later reasoning can query directly, rather than fine-tuning model weights during ordinary chats.
+
 ## Quick Start
 
 Get the agent running in your terminal in under 5 minutes. Unity runs locally, uses the model provider you choose, and connects to Unify's hosted persistence layer — no local database or Docker for the first run.
