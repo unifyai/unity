@@ -79,8 +79,10 @@ def _setup_mock_contacts(
 @pytest.fixture
 def mock_cm():
     """Create a minimal mock ConversationManager for testing."""
+    from unity.conversation_manager.cm_types.mode import Mode
+
     cm = MagicMock()
-    cm.mode = "text"
+    cm.mode = Mode.TEXT
     cm.contact_index = ContactIndex()
     cm.in_flight_actions = {}
     cm.completed_actions = {}
@@ -145,17 +147,23 @@ class TestCmGetMode:
 
     def test_returns_text_mode(self, brain_tools, mock_cm):
         """Returns 'text' when CM is in text mode."""
-        mock_cm.mode = "text"
+        from unity.conversation_manager.cm_types.mode import Mode
+
+        mock_cm.mode = Mode.TEXT
         assert brain_tools.cm_get_mode() == "text"
 
     def test_returns_call_mode(self, brain_tools, mock_cm):
         """Returns 'call' when CM is in call mode."""
-        mock_cm.mode = "call"
+        from unity.conversation_manager.cm_types.mode import Mode
+
+        mock_cm.mode = Mode.CALL
         assert brain_tools.cm_get_mode() == "call"
 
     def test_returns_meet_mode(self, brain_tools, mock_cm):
         """Returns 'meet' when CM is in meet mode."""
-        mock_cm.mode = "meet"
+        from unity.conversation_manager.cm_types.mode import Mode
+
+        mock_cm.mode = Mode.MEET
         assert brain_tools.cm_get_mode() == "meet"
 
     def test_converts_mode_to_string(self, brain_tools, mock_cm):
