@@ -120,9 +120,9 @@ def test_classify_status_check_assistant():
             },
         ],
     }
-    # check_status assistant stubs are classified as regular tool_calls;
-    # the STATUS_CHECK kind only applies to the tool-role reply.
-    assert classify_tool_loop_message(msg) == ToolLoopKind.TOOL_CALL
+    # When all tool_calls are check_status_*, the message is classified
+    # as STATUS_CHECK (both assistant and tool roles).
+    assert classify_tool_loop_message(msg) == ToolLoopKind.STATUS_CHECK
 
 
 def test_classify_wait_noop():
