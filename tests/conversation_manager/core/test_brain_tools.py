@@ -90,6 +90,10 @@ def mock_cm():
     cm.chat_history = []
     cm.assistant_number = "+15555550000"
     cm.assistant_email = "assistant@test.com"
+    cm.assistant_whatsapp_number = ""
+    cm.call_manager.has_active_call = False
+    cm.call_manager.has_active_google_meet = False
+    cm.call_manager._whatsapp_call_joining = False
     # Set up SimulatedContactManager (starts with system contacts 0 and 1)
     cm.contact_manager = _setup_mock_contacts(cm.contact_index, [])
     return cm
@@ -503,15 +507,26 @@ class TestSendUnifyMessageTool:
         large_file = tmp_path / "large_file.bin"
         large_file.write_bytes(b"x" * (26 * 1024 * 1024))
 
-        # Root the adapter at tmp_path so test files pass the subpath check
+        # Patch the class in its home module so the deferred import inside
+        # send_unify_message picks up the rooted adapter.
+        rooted = type(
+            "RootedAdapter",
+            (LocalFileSystemAdapter,),
+            {
+                "__init__": lambda self: LocalFileSystemAdapter.__init__(
+                    self,
+                    root=str(tmp_path),
+                ),
+            },
+        )
         with patch(
             "unity.file_manager.filesystem_adapters.local_adapter.LocalFileSystemAdapter",
-            lambda: LocalFileSystemAdapter(root=str(tmp_path)),
+            rooted,
         ):
             result = await brain_action_tools.send_unify_message(
                 content="Here's the file",
                 contact_id=1,
-                attachment_filepath=str(large_file),
+                attachment_filepath="large_file.bin",
             )
 
         assert result["status"] == "error"
@@ -1336,6 +1351,9 @@ class TestMakeSteeringTool:
                 "handle_actions": [],
             },
         }
+        mock_cm._pending_steering_tasks = set()
+        mock_cm._current_state_snapshot = None
+        mock_cm.event_broker.publish = AsyncMock()
 
         tool = brain_action_tools._make_steering_tool(
             handle_id=0,
@@ -1347,9 +1365,9 @@ class TestMakeSteeringTool:
         )
         result = await tool(query="What is the status?")
 
-        # The ask operation spawns a background task, so we need to
-        # yield control to let it run before asserting
-        await asyncio.sleep(0)
+        # The ask operation spawns a background task — await it directly.
+        for task in list(mock_cm._pending_steering_tasks):
+            await task
 
         mock_handle.ask.assert_called_once()
         assert result["status"] == "ok"
