@@ -5,7 +5,7 @@ import subprocess
 import time
 import traceback
 from pathlib import Path
-from typing import TYPE_CHECKING, Union
+from typing import TYPE_CHECKING, Any, Union
 
 from unity.contact_manager.types.contact import UNASSIGNED
 from unity.common.hierarchical_logger import DEFAULT_ICON
@@ -16,6 +16,11 @@ from unity.conversation_manager.domains.comms_utils import publish_system_error
 from unity.conversation_manager.cm_types import Medium, Mode
 from unity.logger import LOGGER
 from unity.session_details import SESSION_DETAILS
+from unity.task_scheduler.machine_state import (
+    TaskActivationSnapshot,
+    list_trigger_activations,
+    validate_task_due_activation,
+)
 
 if TYPE_CHECKING:
     from unity.conversation_manager.conversation_manager import ConversationManager
@@ -234,6 +239,183 @@ class EventHandler:
         return f(event, cm, *args, **kwargs)
 
 
+def _task_due_notification_text(event: TaskDue) -> str:
+    """Return the slow-brain instruction for a validated due task."""
+
+    return (
+        f"Scheduled task {event.task_id} is due now "
+        f"(scheduled for {event.scheduled_for}). Start it by calling "
+        f"primitives.tasks.execute(task_id={event.task_id})."
+    )
+
+
+def _task_due_event_from_wake_reason(reason: Any) -> TaskDue | None:
+    """Convert one startup wake-reason payload into a typed `TaskDue` event."""
+
+    if not isinstance(reason, dict) or reason.get("type") != "task_due":
+        return None
+    task_id = reason.get("task_id")
+    source_task_log_id = reason.get("source_task_log_id")
+    activation_revision = str(reason.get("activation_revision") or "")
+    scheduled_for = str(reason.get("scheduled_for") or "")
+    if task_id is None or source_task_log_id is None:
+        return None
+    if not activation_revision or not scheduled_for:
+        return None
+    try:
+        return TaskDue(
+            task_id=int(task_id),
+            source_task_log_id=int(source_task_log_id),
+            activation_revision=activation_revision,
+            scheduled_for=scheduled_for,
+            execution_mode=str(reason.get("execution_mode") or "live"),
+            source_type=str(reason.get("source_type") or "scheduled"),
+            reason=f"Scheduled task {task_id} became due.",
+        )
+    except (TypeError, ValueError):
+        return None
+
+
+def _handle_task_due_event(event: TaskDue, cm: "ConversationManager") -> bool:
+    """Validate and surface one due-task event to the notification bar."""
+
+    assistant_id = (
+        str(SESSION_DETAILS.assistant.agent_id)
+        if SESSION_DETAILS.assistant.agent_id is not None
+        else None
+    )
+    activation, stale_reason = validate_task_due_activation(
+        assistant_id=assistant_id,
+        task_id=event.task_id,
+        activation_revision=event.activation_revision,
+        source_task_log_id=event.source_task_log_id,
+        scheduled_for=event.scheduled_for,
+    )
+    if stale_reason is not None:
+        cm._session_logger.debug(
+            "task_due",
+            f"Ignoring stale task_due for task {event.task_id}: {stale_reason}",
+        )
+        return False
+    cm.notifications_bar.push_notif(
+        "Tasks",
+        _task_due_notification_text(event),
+        event.timestamp,
+    )
+    cm._session_logger.info(
+        "task_due",
+        (
+            f"Accepted due task {event.task_id} "
+            f"(activation_revision={activation.activation_revision or '-'})"
+        ),
+    )
+    return True
+
+
+async def _consume_startup_wake_reasons(cm: "ConversationManager") -> None:
+    """Replay startup wake reasons once managers are initialized."""
+
+    wake_reasons = list(getattr(cm, "_startup_wake_reasons", []) or [])
+    cm._startup_wake_reasons = []
+    for wake_reason in wake_reasons:
+        task_due_event = _task_due_event_from_wake_reason(wake_reason)
+        if task_due_event is None:
+            continue
+        _handle_task_due_event(task_due_event, cm)
+
+
+def _filter_trigger_candidates(
+    *,
+    medium: Medium,
+    contact_id: int | None,
+) -> list[TaskActivationSnapshot]:
+    """Return mechanically matching trigger activations for one inbound event."""
+
+    assistant_id = (
+        str(SESSION_DETAILS.assistant.agent_id)
+        if SESSION_DETAILS.assistant.agent_id is not None
+        else None
+    )
+    candidates = list_trigger_activations(
+        assistant_id=assistant_id,
+        medium=medium.value,
+    )
+    matching: list[TaskActivationSnapshot] = []
+    for candidate in candidates:
+        if candidate.execution_mode != "live":
+            continue
+        if contact_id is not None and contact_id in candidate.trigger_omit_contact_ids:
+            continue
+        if candidate.trigger_from_contact_ids and (
+            contact_id is None or contact_id not in candidate.trigger_from_contact_ids
+        ):
+            continue
+        matching.append(candidate)
+    return matching
+
+
+def _trigger_candidate_notification_text(
+    *,
+    medium: Medium,
+    sender_name: str,
+    candidates: list[TaskActivationSnapshot],
+) -> str:
+    """Return the slow-brain instruction for mechanically matched trigger tasks."""
+
+    candidate_labels = [
+        f"{candidate.task_id} ({'interrupt' if candidate.interrupt else 'non-interrupt'})"
+        for candidate in candidates[:5]
+    ]
+    if len(candidates) > 5:
+        candidate_labels.append("...")
+    task_word = "task" if len(candidates) == 1 else "tasks"
+    return (
+        f"This inbound {medium.value.replace('_', ' ')} from {sender_name} "
+        f"mechanically matches trigger criteria for {task_word} "
+        f"{', '.join(candidate_labels)}. Decide whether this communication truly "
+        "satisfies any candidate trigger based on the task descriptions and this "
+        "inbound. If yes, immediately start the matching task with "
+        "primitives.tasks.execute(task_id=<task_id>) and treat this inbound as the "
+        "triggering communication."
+    )
+
+
+def _surface_trigger_task_candidates(
+    *,
+    cm: "ConversationManager",
+    medium: Medium,
+    contact_id: int | None,
+    sender_name: str,
+    timestamp,
+) -> bool:
+    """Push one trigger-candidate notification when any live candidates match."""
+
+    candidates = _filter_trigger_candidates(
+        medium=medium,
+        contact_id=contact_id,
+    )
+    if not candidates:
+        return False
+    candidate_ids = [candidate.task_id for candidate in candidates]
+    cm.notifications_bar.push_notif(
+        "Tasks",
+        _trigger_candidate_notification_text(
+            medium=medium,
+            sender_name=sender_name,
+            candidates=candidates,
+        ),
+        timestamp,
+    )
+    cm._session_logger.info(
+        "task_trigger",
+        (
+            f"Matched trigger candidates {candidate_ids} for medium={medium.value} "
+            f"contact_id={contact_id}"
+        ),
+    )
+    return True
+
+
 @EventHandler.register(Ping)
 async def _(event: Ping, cm: "ConversationManager", *args, **kwargs):
     log_str = "Ping received - keeping conversation manager alive"
@@ -370,6 +552,17 @@ async def _(event: CallInitEvents, cm: "ConversationManager", *args, **kwargs):
         role=role,
         timestamp=event.timestamp,
     )
+    if role == "user" and _surface_trigger_task_candidates(
+        cm=cm,
+        medium=medium,
+        contact_id=contact_id,
+        sender_name=sender_name,
+        timestamp=event.timestamp,
+    ):
+        await cm.request_llm_run(
+            delay=0,
+            triggering_contact_id=contact_id,
+        )
 
 
 @EventHandler.register(GoogleMeetReceived)
@@ -413,7 +606,25 @@ async def _(
             role="assistant",
             timestamp=event.timestamp,
         )
+        if _surface_trigger_task_candidates(
+            cm=cm,
+            medium=Medium.GOOGLE_MEET,
+            contact_id=contact_id,
+            sender_name=sender_name,
+            timestamp=event.timestamp,
+        ):
+            await cm.request_llm_run(
+                delay=0,
+                triggering_contact_id=contact_id,
+            )
     else:
+        _surface_trigger_task_candidates(
+            cm=cm,
+            medium=Medium.GOOGLE_MEET,
+            contact_id=contact_id,
+            sender_name=sender_name,
+            timestamp=event.timestamp,
+        )
         cm.notifications_bar.push_notif(
             "Comms",
             "Failed to join Google Meet. You may retry by calling join_google_meet again.",
@@ -1486,6 +1697,14 @@ async def _(event, cm: "ConversationManager", *args, **kwargs):
             tags=tags,
         )
     cm.notifications_bar.push_notif("comms", notif_content, event.timestamp)
+    if role == "user":
+        _surface_trigger_task_candidates(
+            cm=cm,
+            medium=medium,
+            contact_id=contact_id,
+            sender_name=sender_name,
+            timestamp=event.timestamp,
+        )
 
     if role == "user":
         await cm.cancel_proactive_speech()
@@ -1595,6 +1814,7 @@ async def _startup_sequence(cm: "ConversationManager", medium: str = ""):
 async def _(event: StartupEvent, cm: "ConversationManager", *args, **kwargs):
     try:
         cm._session_logger.info("startup", "Received startup event")
+        cm._startup_wake_reasons = list(event.wake_reasons or [])
 
         # Set demo mode from startup event before initializing managers
         # Demo mode is derived from the presence of a demo_id
@@ -1716,6 +1936,17 @@ async def _(
 
     await cm.schedule_proactive_speech()
     await cm.request_llm_run(delay=0, cancel_running=True)
+
+
+@EventHandler.register(TaskDue)
+async def _(
+    event: TaskDue,
+    cm: "ConversationManager",
+    *args,
+    **kwargs,
+):
+    if _handle_task_due_event(event, cm):
+        await cm.request_llm_run(delay=0)
 
 
 @EventHandler.register(NotificationUnpinnedEvent)
@@ -2071,6 +2302,7 @@ async def _(
             fast_brain_notification.to_json(),
         )
 
+    await _consume_startup_wake_reasons(cm)
     await cm.request_llm_run(delay=0)
 
 

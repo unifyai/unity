@@ -737,6 +737,7 @@ class _SessionConfigBase(Event):
     org_id: int | None = None
     org_name: str = ""
     team_ids: list[int] = field(default_factory=list)
+    wake_reasons: list[dict[str, Any]] = field(default_factory=list)
     # Demo assistant metadata ID. If set, this is a demo session.
     # Unity derives demo_mode from (demo_id is not None).
     demo_id: int | None = None
@@ -1009,6 +1010,27 @@ class AssistantDesktopReady(Event):
     binding_id: str = ""
     desktop_url: str = ""
     vm_type: str = ""
+
+
+@dataclass
+class TaskDue(Event):
+    """A scheduled task activation became due for the live assistant.
+
+    Communication publishes this payload either directly as a `unity_system_event`
+    or indirectly via `StartupEvent.wake_reasons` during a cold start. Unity uses
+    the activation identity fields to reject stale deliveries before nudging the
+    slow brain to execute the task.
+    """
+
+    topic: ClassVar[str | None] = "app:comms:task_due"
+
+    task_id: int
+    source_task_log_id: int
+    activation_revision: str
+    scheduled_for: str
+    execution_mode: str = "live"
+    source_type: str = "scheduled"
+    reason: str = ""
 
 
 @dataclass

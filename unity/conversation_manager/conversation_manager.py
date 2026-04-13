@@ -1,5 +1,5 @@
 import asyncio
-from typing import Optional
+from typing import Any, Optional
 import contextlib
 
 from unity.logger import LOGGER
@@ -245,6 +245,7 @@ class ConversationManager(metaclass=SingletonABCMeta):
         # When the contact grants permission (taps "Call now"), the context is
         # injected as call_manager.initial_notification.  Maps contact_id → context.
         self._pending_whatsapp_call_contexts: dict[int, str] = {}
+        self._startup_wake_reasons: list[dict[str, Any]] = []
 
         # Hierarchical session logger for consistent nested logging
         self._session_logger = SessionLogger("ConversationManager")
