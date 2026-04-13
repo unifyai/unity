@@ -1756,7 +1756,7 @@ class TestTaskDueEventHandlers:
         )
 
         with patch(
-            "unity.conversation_manager.domains.event_handlers.validate_task_due_activation",
+            "unity.conversation_manager.domains.task_activation.validate_task_due_activation",
             return_value=(MagicMock(activation_revision="rev-1"), None),
         ):
             await EventHandler.handle_event(event, mock_cm)
@@ -1783,7 +1783,7 @@ class TestTaskDueEventHandlers:
         mock_cm.call_manager._socket_server = mock_socket
 
         with patch(
-            "unity.conversation_manager.domains.event_handlers.validate_task_due_activation",
+            "unity.conversation_manager.domains.task_activation.validate_task_due_activation",
             return_value=(
                 TaskActivationSnapshot(
                     assistant_id="42",
@@ -1816,7 +1816,7 @@ class TestTaskDueEventHandlers:
         )
 
         with patch(
-            "unity.conversation_manager.domains.event_handlers.validate_task_due_activation",
+            "unity.conversation_manager.domains.task_activation.validate_task_due_activation",
             return_value=(None, "activation_revision_mismatch"),
         ):
             await EventHandler.handle_event(event, mock_cm)
@@ -1843,7 +1843,7 @@ class TestTaskDueEventHandlers:
         ]
 
         with patch(
-            "unity.conversation_manager.domains.event_handlers.validate_task_due_activation",
+            "unity.conversation_manager.domains.task_activation.validate_task_due_activation",
             return_value=(MagicMock(activation_revision="rev-1"), None),
         ):
             await EventHandler.handle_event(InitializationComplete(), mock_cm)
@@ -1898,11 +1898,11 @@ class TestTriggeredTaskNotifications:
 
         with (
             patch(
-                "unity.conversation_manager.domains.event_handlers.list_trigger_activations",
+                "unity.conversation_manager.domains.task_activation.list_trigger_activations",
                 return_value=candidates,
             ),
             patch(
-                "unity.conversation_manager.domains.event_handlers._dispatch_offline_trigger_candidate",
+                "unity.conversation_manager.domains.task_activation._dispatch_offline_trigger_candidate",
                 return_value={"status": "launched"},
             ) as mock_offline_dispatch,
         ):
@@ -1945,11 +1945,11 @@ class TestTriggeredTaskNotifications:
 
         with (
             patch(
-                "unity.conversation_manager.domains.event_handlers.list_trigger_activations",
+                "unity.conversation_manager.domains.task_activation.list_trigger_activations",
                 return_value=candidates,
             ),
             patch(
-                "unity.conversation_manager.domains.event_handlers._dispatch_offline_trigger_candidate",
+                "unity.conversation_manager.domains.task_activation._dispatch_offline_trigger_candidate",
                 return_value={"status": "launched"},
             ) as mock_offline_dispatch,
         ):
@@ -1989,7 +1989,7 @@ class TestTriggeredTaskNotifications:
         ]
 
         with patch(
-            "unity.conversation_manager.domains.event_handlers.list_trigger_activations",
+            "unity.conversation_manager.domains.task_activation.list_trigger_activations",
             return_value=candidates,
         ):
             await EventHandler.handle_event(event, mock_cm)
@@ -2035,7 +2035,7 @@ class TestTriggeredTaskNotifications:
         ]
 
         with patch(
-            "unity.conversation_manager.domains.event_handlers.list_trigger_activations",
+            "unity.conversation_manager.domains.task_activation.list_trigger_activations",
             return_value=candidates,
         ):
             await EventHandler.handle_event(event, mock_cm)

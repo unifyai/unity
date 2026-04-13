@@ -70,7 +70,6 @@ from ..actor.base import BaseActor
 from ..actor.simulated import SimulatedActor
 from .active_task import ActiveTask
 from .active_queue import ActiveQueue
-from dataclasses import dataclass
 
 from ..events.manager_event_logging import log_manager_call
 from ..common.search_utils import table_search_top_k

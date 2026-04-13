@@ -22,6 +22,7 @@ import requests
 from unity.actor.single_function_actor import SingleFunctionActor
 from unity.logger import LOGGER
 from unity.session_details import SESSION_DETAILS
+from unity.task_scheduler.machine_state import TASK_MACHINE_STATE_PROJECT
 
 TASK_RUN_UPDATE_PATH = "/admin/task-run/update"
 HTTP_TIMEOUT_SECONDS = 30
@@ -87,7 +88,7 @@ def _task_run_update_payload(run_key: str, updates: dict[str, Any]) -> dict[str,
     """Return the admin payload for one partial run update."""
 
     return {
-        "project_name": "Unity",
+        "project_name": TASK_MACHINE_STATE_PROJECT,
         "run_key": run_key,
         "updates": updates,
     }
