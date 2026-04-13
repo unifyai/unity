@@ -31,7 +31,7 @@ JOB_NAME = os.environ.get("UNITY_CONVERSATION_JOB_NAME", "")
 
 
 def _derive_namespace(job_name: str) -> str:
-    for env in ("staging", "preview", "production"):
+    for env in ("staging", "production"):
         if job_name.endswith(f"-{env}"):
             return env
     return "unknown"

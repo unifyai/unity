@@ -40,8 +40,7 @@ RUN git config --global url."https://${GITHUB_TOKEN}@github.com/".insteadOf "htt
 RUN uv pip install --system --no-cache torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu
 
 # Clone unify and unillm repos (no PyPI releases; pyproject.toml references ../unify and ../unillm)
-# Branch logic mirrors CI: main→main, staging/preview→staging
-# This keeps preview aligned with the existing staging dependency branches.
+# Branch logic mirrors CI: main→main, non-main branches→staging.
 # DEP_REPOS_SHA is set at build time to the latest commit SHAs of unify+unillm;
 # changing it busts the Docker layer cache so stale clones are never reused.
 # The value is referenced in the RUN to ensure Docker includes it in the cache key.
