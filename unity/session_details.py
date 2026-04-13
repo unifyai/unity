@@ -419,6 +419,8 @@ class SessionDetails:
             self.assistant.email = val
         if val := os.environ.get("ASSISTANT_WHATSAPP_NUMBER"):
             self.assistant.whatsapp_number = val
+        if val := os.environ.get("ASSISTANT_DISCORD_BOT_ID"):
+            self.assistant.discord_bot_id = val
         if val := os.environ.get("ASSISTANT_CONTACT_ID"):
             try:
                 self.assistant.contact_id = int(val)
