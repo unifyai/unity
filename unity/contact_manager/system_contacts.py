@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import logging
-from typing import Any, Dict
+from typing import Any, Dict, List
 
 import unify
 from unify.utils.http import RequestError
@@ -103,6 +103,7 @@ def _resolve_user_details(self) -> Dict[str, Any]:
         "timezone": data.get("timezone"),
         "phone_number": data.get("phone_number"),
         "whatsapp_number": data.get("whatsapp_number"),
+        "discord_id": data.get("discord_id"),
     }
     user_info.update({k: v for k, v in mapped.items() if v is not None})
 
@@ -148,6 +149,9 @@ def provision_assistant_contact(self, assistant_log) -> None:
             "whatsapp_number": (
                 ast.whatsapp_number if populated and ast.whatsapp_number else None
             ),
+            "discord_id": (
+                ast.discord_bot_id if populated and ast.discord_bot_id else None
+            ),
             "bio": ast.about if populated else PLACEHOLDER_ASSISTANT_BIO,
             "timezone": (ast.timezone or "UTC") if populated else "UTC",
             "rolling_summary": None,
@@ -163,6 +167,9 @@ def provision_assistant_contact(self, assistant_log) -> None:
             fetched_whatsapp = (
                 ast.whatsapp_number if populated and ast.whatsapp_number else None
             )
+            fetched_discord = (
+                ast.discord_bot_id if populated and ast.discord_bot_id else None
+            )
             fetched_first_name = ast.first_name if populated else None
             fetched_surname = ast.surname if populated else None
 
@@ -171,6 +178,9 @@ def provision_assistant_contact(self, assistant_log) -> None:
             needs_phone = fetched_phone and entries.get("phone_number") != fetched_phone
             needs_whatsapp = (
                 fetched_whatsapp and entries.get("whatsapp_number") != fetched_whatsapp
+            )
+            needs_discord = (
+                fetched_discord and entries.get("discord_id") != fetched_discord
             )
             needs_is_system = entries.get("is_system") is not True
             needs_first_name = (
@@ -185,6 +195,7 @@ def provision_assistant_contact(self, assistant_log) -> None:
                 or needs_bio
                 or needs_phone
                 or needs_whatsapp
+                or needs_discord
                 or needs_is_system
                 or needs_first_name
                 or needs_surname
@@ -201,6 +212,8 @@ def provision_assistant_contact(self, assistant_log) -> None:
                     update_kwargs["phone_number"] = fetched_phone
                 if needs_whatsapp:
                     update_kwargs["whatsapp_number"] = fetched_whatsapp
+                if needs_discord:
+                    update_kwargs["discord_id"] = fetched_discord
                 if needs_is_system:
                     update_kwargs["is_system"] = True
                 if needs_first_name:
@@ -290,6 +303,7 @@ def provision_user_contact(self, user_log) -> None:
             "email_address": user_info.get("email"),
             "phone_number": user_info.get("phone_number"),
             "whatsapp_number": user_info.get("whatsapp_number"),
+            "discord_id": user_info.get("discord_id"),
             "bio": user_info.get("bio"),
             "response_policy": self.USER_MANAGER_RESPONSE_POLICY,
         },
@@ -314,6 +328,7 @@ def provision_user_contact(self, user_log) -> None:
             "email",
             "phone_number",
             "whatsapp_number",
+            "discord_id",
         }
     }
     if extra_fields:
@@ -326,12 +341,16 @@ def provision_user_contact(self, user_log) -> None:
             fetched_tz = user_info.get("timezone")
             fetched_phone = user_info.get("phone_number")
             fetched_whatsapp = user_info.get("whatsapp_number")
+            fetched_discord = user_info.get("discord_id")
 
             needs_timezone = fetched_tz and entries.get("timezone") != fetched_tz
             needs_bio = fetched_bio and entries.get("bio") != fetched_bio
             needs_phone = fetched_phone and entries.get("phone_number") != fetched_phone
             needs_whatsapp = (
                 fetched_whatsapp and entries.get("whatsapp_number") != fetched_whatsapp
+            )
+            needs_discord = (
+                fetched_discord and entries.get("discord_id") != fetched_discord
             )
             needs_is_system = entries.get("is_system") is not True
 
@@ -340,6 +359,7 @@ def provision_user_contact(self, user_log) -> None:
                 or needs_bio
                 or needs_phone
                 or needs_whatsapp
+                or needs_discord
                 or needs_is_system
             ):
                 update_kwargs: Dict[str, Any] = {
@@ -354,6 +374,8 @@ def provision_user_contact(self, user_log) -> None:
                     update_kwargs["phone_number"] = fetched_phone
                 if needs_whatsapp:
                     update_kwargs["whatsapp_number"] = fetched_whatsapp
+                if needs_discord:
+                    update_kwargs["discord_id"] = fetched_discord
                 if needs_is_system:
                     update_kwargs["is_system"] = True
                 self.update_contact(**update_kwargs)
