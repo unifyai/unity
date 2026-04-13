@@ -1,5 +1,8 @@
 import asyncio
+import hashlib
+import json
 import os
+import requests
 import signal
 import subprocess
 import time
@@ -249,6 +252,98 @@ def _task_due_notification_text(event: TaskDue) -> str:
     )
 
 
+def _task_due_fast_brain_context(
+    event: TaskDue,
+    activation: TaskActivationSnapshot | None,
+) -> str:
+    """Return the silent fast-brain context for one validated due task."""
+
+    label = (
+        activation.task_name
+        if activation and activation.task_name
+        else f"task {event.task_id}"
+    )
+    return (
+        f"Background context: scheduled {label} is due now "
+        f"(task_id={event.task_id}, scheduled_for={event.scheduled_for}). "
+        "The slow brain is handling the task wake reason."
+    )
+
+
+def _trigger_candidate_fast_brain_context(
+    *,
+    medium: Medium,
+    sender_name: str,
+    candidates: list[TaskActivationSnapshot],
+) -> str:
+    """Return silent fast-brain context for live trigger candidates."""
+
+    labels = [
+        candidate.task_name or f"task {candidate.task_id}"
+        for candidate in candidates[:5]
+    ]
+    if len(candidates) > 5:
+        labels.append("...")
+    return (
+        f"Background context: this {medium.value.replace('_', ' ')} from {sender_name} "
+        f"mechanically matches live trigger candidates: {', '.join(labels)}. "
+        "The slow brain is deciding whether a trigger truly applies."
+    )
+
+
+def _voice_fast_brain_available(cm: "ConversationManager") -> bool:
+    """Return True when a voice fast-brain subprocess exists or is about to start."""
+
+    call_manager = getattr(cm, "call_manager", None)
+    if call_manager is None:
+        return False
+    return bool(
+        getattr(cm.mode, "is_voice", False)
+        or getattr(call_manager, "has_active_call", False)
+        or getattr(call_manager, "has_active_google_meet", False)
+        or getattr(call_manager, "_whatsapp_call_joining", False)
+        or getattr(call_manager, "_gmeet_joining", False)
+        or getattr(call_manager, "_socket_server", None) is not None,
+    )
+
+
+def _append_initial_call_notification(cm: "ConversationManager", content: str) -> None:
+    """Append silent task context to the next call-start notification payload."""
+
+    existing = getattr(cm.call_manager, "initial_notification", "") or ""
+    if existing:
+        cm.call_manager.initial_notification = f"{existing}\n\n{content}"
+    else:
+        cm.call_manager.initial_notification = content
+
+
+async def _queue_fast_brain_task_context(
+    cm: "ConversationManager",
+    *,
+    content: str,
+    source: str,
+    contact: dict | None = None,
+) -> None:
+    """Send silent task context to the voice fast brain before it speaks."""
+
+    if not content or not _voice_fast_brain_available(cm):
+        return
+    notification = FastBrainNotification(
+        contact=contact or getattr(cm.call_manager, "_disconnect_contact", None) or {},
+        content=content,
+        should_speak=False,
+        source=source,
+    )
+    socket_server = getattr(cm.call_manager, "_socket_server", None)
+    if socket_server is None:
+        _append_initial_call_notification(cm, content)
+        return
+    await socket_server.queue_for_clients(
+        "app:call:notification",
+        notification.to_json(),
+    )
+
+
 def _task_due_event_from_wake_reason(reason: Any) -> TaskDue | None:
     """Convert one startup wake-reason payload into a typed `TaskDue` event."""
 
@@ -276,7 +371,7 @@ def _task_due_event_from_wake_reason(reason: Any) -> TaskDue | None:
         return None
 
 
-def _handle_task_due_event(event: TaskDue, cm: "ConversationManager") -> bool:
+async def _handle_task_due_event(event: TaskDue, cm: "ConversationManager") -> bool:
     """Validate and surface one due-task event to the notification bar."""
 
     assistant_id = (
@@ -312,6 +407,11 @@ def _handle_task_due_event(event: TaskDue, cm: "ConversationManager") -> bool:
             f"(activation_revision={activation.activation_revision or '-'})"
         ),
     )
+    await _queue_fast_brain_task_context(
+        cm,
+        content=_task_due_fast_brain_context(event, activation),
+        source="task_due",
+    )
     return True
 
 
@@ -334,15 +434,15 @@ async def _consume_startup_wake_reasons(cm: "ConversationManager") -> None:
                 f"Ignoring unparseable startup wake reason: {wake_reason!r}",
             )
             continue
-        _handle_task_due_event(task_due_event, cm)
+        await _handle_task_due_event(task_due_event, cm)
 
 
 def _filter_trigger_candidates(
     *,
     medium: Medium,
     contact_id: int | None,
-) -> list[TaskActivationSnapshot]:
-    """Return mechanically matching trigger activations for one inbound event."""
+) -> tuple[list[TaskActivationSnapshot], list[TaskActivationSnapshot]]:
+    """Return mechanically matching live and offline trigger activations."""
 
     assistant_id = (
         str(SESSION_DETAILS.assistant.agent_id)
@@ -355,8 +455,6 @@ def _filter_trigger_candidates(
     )
     matching: list[TaskActivationSnapshot] = []
     for candidate in candidates:
-        if candidate.execution_mode != "live":
-            continue
         if contact_id is not None and contact_id in candidate.trigger_omit_contact_ids:
             continue
         if candidate.trigger_from_contact_ids and (
@@ -364,7 +462,13 @@ def _filter_trigger_candidates(
         ):
             continue
         matching.append(candidate)
-    return matching
+    live_candidates = [
+        candidate for candidate in matching if candidate.execution_mode == "live"
+    ]
+    offline_candidates = [
+        candidate for candidate in matching if candidate.execution_mode == "offline"
+    ]
+    return live_candidates, offline_candidates
 
 
 def _trigger_candidate_notification_text(
@@ -393,9 +497,89 @@ def _trigger_candidate_notification_text(
     )
 
 
-def _surface_trigger_task_candidates(
+def _build_trigger_source_ref(
+    *,
+    event: Any,
+    medium: Medium,
+    contact_id: int | None,
+) -> str:
+    """Return a stable idempotency key fragment for one inbound trigger event."""
+
+    explicit_ref = (
+        getattr(event, "api_message_id", None)
+        or getattr(event, "email_id", None)
+        or getattr(event, "conference_name", None)
+        or getattr(event, "room_name", None)
+        or getattr(event, "meet_url", None)
+    )
+    if explicit_ref:
+        return str(explicit_ref)
+    content = (
+        getattr(event, "content", None)
+        or getattr(event, "body", None)
+        or getattr(event, "subject", None)
+        or ""
+    )
+    digest = hashlib.sha256(str(content).encode("utf-8")).hexdigest()[:12]
+    timestamp = getattr(event, "timestamp", None)
+    timestamp_component = timestamp.isoformat() if timestamp is not None else "unknown"
+    contact_component = str(contact_id) if contact_id is not None else "unknown"
+    return (
+        f"{event.__class__.__name__}:{medium.value}:{contact_component}:"
+        f"{timestamp_component}:{digest}"
+    )
+
+
+def _dispatch_offline_trigger_candidate(
+    *,
+    candidate: TaskActivationSnapshot,
+    event: Any,
+    medium: Medium,
+    contact_id: int | None,
+) -> dict[str, Any]:
+    """Ask Communication to execute one offline trigger candidate headlessly."""
+
+    from unity.settings import SETTINGS
+
+    comms_url = (SETTINGS.conversation.COMMS_URL or "").rstrip("/")
+    admin_key = SETTINGS.ORCHESTRA_ADMIN_KEY.get_secret_value()
+    if not comms_url:
+        raise RuntimeError("UNITY_COMMS_URL is not configured")
+    if not admin_key:
+        raise RuntimeError("ORCHESTRA_ADMIN_KEY is not configured")
+    assistant_id = candidate.assistant_id or (
+        str(SESSION_DETAILS.assistant.agent_id)
+        if SESSION_DETAILS.assistant.agent_id is not None
+        else ""
+    )
+    response = requests.post(
+        f"{comms_url}/infra/task-activation/offline-dispatch",
+        json={
+            "assistant_id": assistant_id,
+            "task_id": candidate.task_id,
+            "source_task_log_id": candidate.source_task_log_id,
+            "activation_revision": candidate.activation_revision,
+            "execution_mode": "offline",
+            "source_type": "triggered",
+            "source_ref": _build_trigger_source_ref(
+                event=event,
+                medium=medium,
+                contact_id=contact_id,
+            ),
+            "source_medium": medium.value,
+            "source_contact_id": contact_id,
+        },
+        headers={"Authorization": f"Bearer {admin_key}"},
+        timeout=15,
+    )
+    response.raise_for_status()
+    return response.json()
+
+
+async def _surface_trigger_task_candidates(
     *,
     cm: "ConversationManager",
+    event: Any,
     medium: Medium,
     contact_id: int | None,
     sender_name: str,
@@ -403,19 +587,50 @@ def _surface_trigger_task_candidates(
 ) -> bool:
     """Push one trigger-candidate notification when any live candidates match."""
 
-    candidates = _filter_trigger_candidates(
+    live_candidates, offline_candidates = _filter_trigger_candidates(
         medium=medium,
         contact_id=contact_id,
     )
-    if not candidates:
+    if offline_candidates:
+        offline_statuses: list[str] = []
+        for candidate in offline_candidates:
+            try:
+                result = await asyncio.to_thread(
+                    _dispatch_offline_trigger_candidate,
+                    candidate=candidate,
+                    event=event,
+                    medium=medium,
+                    contact_id=contact_id,
+                )
+                offline_statuses.append(
+                    f"{candidate.task_id}:{result.get('status', 'unknown')}",
+                )
+            except Exception as exc:
+                offline_statuses.append(f"{candidate.task_id}:error")
+                cm._session_logger.info(
+                    "task_trigger",
+                    (
+                        f"Offline trigger dispatch failed for task {candidate.task_id} "
+                        f"(medium={medium.value}, contact_id={contact_id}): {exc}"
+                    ),
+                )
+        if offline_statuses:
+            cm._session_logger.info(
+                "task_trigger",
+                (
+                    f"Offline trigger candidates dispatched for medium={medium.value} "
+                    f"contact_id={contact_id}: {', '.join(offline_statuses)}"
+                ),
+            )
+    if not live_candidates:
         return False
-    candidate_ids = [candidate.task_id for candidate in candidates]
+    candidate_ids = [candidate.task_id for candidate in live_candidates]
     cm.notifications_bar.push_notif(
         "Tasks",
         _trigger_candidate_notification_text(
             medium=medium,
             sender_name=sender_name,
-            candidates=candidates,
+            candidates=live_candidates,
         ),
         timestamp,
     )
@@ -425,6 +640,16 @@ def _surface_trigger_task_candidates(
             f"Matched trigger candidates {candidate_ids} for medium={medium.value} "
             f"contact_id={contact_id}"
         ),
+    )
+    await _queue_fast_brain_task_context(
+        cm,
+        content=_trigger_candidate_fast_brain_context(
+            medium=medium,
+            sender_name=sender_name,
+            candidates=live_candidates,
+        ),
+        source="task_trigger",
+        contact=getattr(event, "contact", None),
     )
     return True
 
@@ -565,8 +790,9 @@ async def _(event: CallInitEvents, cm: "ConversationManager", *args, **kwargs):
         role=role,
         timestamp=event.timestamp,
     )
-    if role == "user" and _surface_trigger_task_candidates(
+    if role == "user" and await _surface_trigger_task_candidates(
         cm=cm,
+        event=event,
         medium=medium,
         contact_id=contact_id,
         sender_name=sender_name,
@@ -619,8 +845,9 @@ async def _(
             role="assistant",
             timestamp=event.timestamp,
         )
-        if _surface_trigger_task_candidates(
+        if await _surface_trigger_task_candidates(
             cm=cm,
+            event=event,
             medium=Medium.GOOGLE_MEET,
             contact_id=contact_id,
             sender_name=sender_name,
@@ -631,8 +858,9 @@ async def _(
                 triggering_contact_id=contact_id,
             )
     else:
-        _surface_trigger_task_candidates(
+        await _surface_trigger_task_candidates(
             cm=cm,
+            event=event,
             medium=Medium.GOOGLE_MEET,
             contact_id=contact_id,
             sender_name=sender_name,
@@ -1711,8 +1939,9 @@ async def _(event, cm: "ConversationManager", *args, **kwargs):
         )
     cm.notifications_bar.push_notif("comms", notif_content, event.timestamp)
     if role == "user":
-        _surface_trigger_task_candidates(
+        await _surface_trigger_task_candidates(
             cm=cm,
+            event=event,
             medium=medium,
             contact_id=contact_id,
             sender_name=sender_name,
@@ -1973,7 +2202,7 @@ async def _(
     *args,
     **kwargs,
 ):
-    if _handle_task_due_event(event, cm):
+    if await _handle_task_due_event(event, cm):
         await cm.request_llm_run(delay=0)
 
 

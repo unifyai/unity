@@ -26,6 +26,8 @@ _ACTIVATION_QUERY_FIELDS = [
     "activation_kind",
     "execution_mode",
     "status",
+    "task_name",
+    "task_description",
     "next_due_at",
     "trigger_medium",
     "trigger_from_contact_ids",
@@ -56,13 +58,15 @@ class TaskActivationSnapshot:
     activation_kind: str | None = None
     execution_mode: str | None = None
     status: str | None = None
+    task_name: str | None = None
+    task_description: str | None = None
     next_due_at: str | None = None
     trigger_medium: str | None = None
     trigger_from_contact_ids: list[int] = field(default_factory=list)
     trigger_omit_contact_ids: list[int] = field(default_factory=list)
     interrupt: bool = False
     trigger_recurring: bool = False
-    entrypoint: str | None = None
+    entrypoint: int | None = None
     repeat: list[Any] | None = None
     activation_revision: str | None = None
 
@@ -190,6 +194,8 @@ def _row_to_activation(row: Any) -> TaskActivationSnapshot | None:
         activation_kind=_coerce_str(entries.get("activation_kind")),
         execution_mode=_coerce_str(entries.get("execution_mode")),
         status=_coerce_str(entries.get("status")),
+        task_name=_coerce_str(entries.get("task_name")),
+        task_description=_coerce_str(entries.get("task_description")),
         next_due_at=_coerce_str(entries.get("next_due_at")),
         trigger_medium=_coerce_str(entries.get("trigger_medium")),
         trigger_from_contact_ids=_coerce_int_list(
@@ -200,7 +206,7 @@ def _row_to_activation(row: Any) -> TaskActivationSnapshot | None:
         ),
         interrupt=bool(entries.get("interrupt", False)),
         trigger_recurring=bool(entries.get("trigger_recurring", False)),
-        entrypoint=_coerce_str(entries.get("entrypoint")),
+        entrypoint=_coerce_int(entries.get("entrypoint")),
         repeat=_coerce_list(entries.get("repeat")),
         activation_revision=_coerce_str(entries.get("activation_revision")),
     )

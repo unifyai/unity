@@ -61,6 +61,13 @@ class TaskBase(BaseModel):
             "When null, the task is executed by an Actor interpreting the free-form description on the fly."
         ),
     )
+    offline: bool = Field(
+        default=False,
+        description=(
+            "Whether this task should execute in the hidden offline lane instead of waking "
+            "the live assistant runtime. Offline tasks must provide a numeric entrypoint."
+        ),
+    )
     activated_by: Optional[ActivatedBy] = Field(
         default=None,
         description=(
@@ -100,6 +107,9 @@ class TaskBase(BaseModel):
         #     raise ValueError(
         #         "`activated_by` may only be set when status is 'active'",
         #     )
+
+        if self.offline and self.entrypoint is None:
+            raise ValueError("Offline tasks require a numeric entrypoint.")
 
         return self
 
