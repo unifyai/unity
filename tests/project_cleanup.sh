@@ -39,7 +39,7 @@ Options:
   --shared-only       Only delete the shared "UnityTests" project (not random ones)
   --random-only       Only delete random "UnityTests_*" projects (not the shared one)
   --prefix PREFIX     Override prefix for random projects (default: UnityTests_)
-  --env ENV           Target environment: production, staging, or preview (skips prompt)
+  --env ENV           Target environment: production or staging (skips prompt)
   -h, --help          Show this help
 
 By default, both the shared "UnityTests" project and all "UnityTests_*" random
@@ -83,8 +83,8 @@ while (( "$#" )); do
       shift
       EXPLICIT_ENV="${1:-}"
       case "$EXPLICIT_ENV" in
-        production|staging|preview) ;;
-        *) echo "Invalid --env value: $EXPLICIT_ENV (expected production, staging, or preview)" >&2; exit 2 ;;
+        production|staging) ;;
+        *) echo "Invalid --env value: $EXPLICIT_ENV (expected production or staging)" >&2; exit 2 ;;
       esac
       ;;
     -h|--help)
@@ -120,17 +120,16 @@ if [[ -n "${ORCHESTRA_URL:-}" ]]; then
   API_BASE="$ORCHESTRA_URL"
 else
   if [[ -z "$EXPLICIT_ENV" ]]; then
-    read -r -p "Select Unify environment: [p]roduction, [s]taging, or pre[v]iew? (default: p) " env_ans
+    read -r -p "Select Unify environment: [p]roduction or [s]taging? (default: p) " env_ans
     env_ans_lc=$(printf '%s' "$env_ans" | tr '[:upper:]' '[:lower:]')
     case "$env_ans_lc" in
       s|staging) EXPLICIT_ENV="staging" ;;
-      v|preview) EXPLICIT_ENV="preview" ;;
       p|production|"") EXPLICIT_ENV="production" ;;
       *) EXPLICIT_ENV="production" ;;
     esac
   fi
   case "$EXPLICIT_ENV" in
-    staging|preview) API_BASE="${ORCHESTRA_STAGING_URL:-https://api.unify.ai/v0}" ;;
+    staging) API_BASE="${ORCHESTRA_STAGING_URL:-https://api.unify.ai/v0}" ;;
     *) API_BASE="https://api.unify.ai/v0" ;;
   esac
 fi

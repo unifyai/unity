@@ -35,7 +35,7 @@ _provider: MeterProvider | None = None
 def _deploy_env() -> str:
     """Return the current deployment environment."""
     deploy_env = (os.getenv("DEPLOY_ENV") or "production").strip().lower()
-    if deploy_env not in {"production", "staging", "preview"}:
+    if deploy_env not in {"production", "staging"}:
         return "production"
     return deploy_env
 

@@ -44,8 +44,8 @@ def _parse_deploy_env(v: Any) -> str:
     if v is None:
         return "production"
     env = str(v).strip().lower() or "production"
-    if env not in {"production", "staging", "preview"}:
-        raise ValueError("DEPLOY_ENV must be one of production, staging, or preview")
+    if env not in {"production", "staging"}:
+        raise ValueError("DEPLOY_ENV must be one of production or staging")
     return env
 
 
@@ -171,7 +171,7 @@ class ProductionSettings(BaseSettings):
     UNITY_READONLY_ASK_GUARD: bool = True
     FIRST_ASK_TOOL_IS_SEARCH: bool = False
     FIRST_MUTATION_TOOL_IS_ASK: bool = False
-    DEPLOY_ENV: Literal["production", "staging", "preview"] = "production"
+    DEPLOY_ENV: Literal["production", "staging"] = "production"
     DEMO_MODE: bool = False
     DEMO_ID: int | None = None  # Demo assistant metadata ID (if DEMO_MODE is True)
 

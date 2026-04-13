@@ -417,6 +417,61 @@ class WhatsAppCallPermissionResponse(Event):
 
 
 @dataclass
+class DiscordMessageReceived(Event):
+    """A direct message received from a user via a Discord bot."""
+
+    topic: ClassVar[str | None] = "app:comms:discord_message"
+    content_logged: ClassVar[bool] = True
+
+    contact: dict
+    content: str
+    channel_id: str = ""
+    bot_id: str = ""
+    message_id: str = ""
+    attachments: list[dict] = field(default_factory=list)
+
+
+@dataclass
+class DiscordChannelMessageReceived(Event):
+    """A message received in a Discord guild channel via @mention."""
+
+    topic: ClassVar[str | None] = "app:comms:discord_channel_message"
+    content_logged: ClassVar[bool] = True
+
+    contact: dict
+    content: str
+    channel_id: str = ""
+    guild_id: str = ""
+    bot_id: str = ""
+    message_id: str = ""
+    attachments: list[dict] = field(default_factory=list)
+
+
+@dataclass
+class DiscordMessageSent(Event):
+    """A direct message sent to a user via a Discord bot."""
+
+    topic: ClassVar[str | None] = "app:comms:discord_message_sent"
+    content_logged: ClassVar[bool] = True
+
+    contact: dict
+    content: str
+
+
+@dataclass
+class DiscordChannelMessageSent(Event):
+    """A message sent to a Discord guild channel via a bot."""
+
+    topic: ClassVar[str | None] = "app:comms:discord_channel_message_sent"
+    content_logged: ClassVar[bool] = True
+
+    contact: dict
+    content: str
+    channel_id: str = ""
+    guild_id: str = ""
+
+
+@dataclass
 class UnifyMessageReceived(Event):
     """A message was received via the Unify console chat interface.
 
@@ -669,6 +724,7 @@ class _SessionConfigBase(Event):
     binding_id: str = ""
     voice_provider: str = "cartesia"
     assistant_whatsapp_number: str = ""
+    assistant_discord_bot_id: str = ""
     assistant_timezone: str = (
         ""  # IANA timezone identifier; default empty for backward compat
     )

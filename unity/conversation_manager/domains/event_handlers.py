@@ -1225,6 +1225,10 @@ def _push_email_to_all_contacts(
         UnifyMessageReceived,
         ApiMessageSent,
         ApiMessageReceived,
+        DiscordMessageReceived,
+        DiscordMessageSent,
+        DiscordChannelMessageReceived,
+        DiscordChannelMessageSent,
     ),
 )
 async def _(event, cm: "ConversationManager", *args, **kwargs):
@@ -1426,6 +1430,48 @@ async def _(event, cm: "ConversationManager", *args, **kwargs):
             if event.api_message_id:
                 cm._pending_api_message_id = event.api_message_id
                 cm._pending_api_message_tags = event.tags
+        case DiscordMessageSent():
+            medium = Medium.DISCORD_MESSAGE
+            message_content = event.content
+            notif_content = f"Discord DM sent to {sender_name}"
+            role = "assistant"
+            event_trace = getattr(cm, "_current_event_trace", None) or {}
+            cm._session_logger.info(
+                "discord_message_sent",
+                f"Discord DM to {sender_name}: {event.content}",
+            )
+        case DiscordMessageReceived():
+            medium = Medium.DISCORD_MESSAGE
+            message_content = event.content
+            attachments = event.attachments
+            notif_content = f"Discord DM from {sender_name}"
+            role = "user"
+            event_trace = getattr(cm, "_current_event_trace", None) or {}
+            cm._session_logger.info(
+                "discord_message_received",
+                f"Discord DM from {sender_name}: {event.content}",
+            )
+        case DiscordChannelMessageSent():
+            medium = Medium.DISCORD_CHANNEL_MESSAGE
+            message_content = event.content
+            notif_content = f"Discord channel message sent"
+            role = "assistant"
+            event_trace = getattr(cm, "_current_event_trace", None) or {}
+            cm._session_logger.info(
+                "discord_channel_message_sent",
+                f"Discord channel message: {event.content}",
+            )
+        case DiscordChannelMessageReceived():
+            medium = Medium.DISCORD_CHANNEL_MESSAGE
+            message_content = event.content
+            attachments = event.attachments
+            notif_content = f"Discord channel message from {sender_name}"
+            role = "user"
+            event_trace = getattr(cm, "_current_event_trace", None) or {}
+            cm._session_logger.info(
+                "discord_channel_message_received",
+                f"Discord channel from {sender_name}: {event.content}",
+            )
 
     # Non-email messages: push to single contact only
     if contact_id is not None:

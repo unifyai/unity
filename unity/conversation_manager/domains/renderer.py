@@ -950,6 +950,7 @@ class Renderer:
         surname = contact_info.get("surname") or ""
         phone_number = contact_info.get("phone_number") or ""
         email_address = contact_info.get("email_address") or ""
+        discord_id = contact_info.get("discord_id") or ""
         timezone = contact_info.get("timezone") or ""
         bio = contact_info.get("bio") or ""
         rolling_summary = contact_info.get("rolling_summary") or ""
@@ -1014,6 +1015,7 @@ class Renderer:
         return (
             f'<contact contact_id="{contact_id}" first_name="{first_name}" surname="{surname}" '
             f'is_boss="{is_boss}" phone_number="{phone_number}" email_address="{email_address}" '
+            f'discord_id="{discord_id}" '
             f'timezone="{timezone}" on_call="{conv_state.on_call}" should_respond="{should_respond}">\n'
             f"<bio>{bio}</bio>\n"
             f"<rolling_summary>{rolling_summary}</rolling_summary>\n"

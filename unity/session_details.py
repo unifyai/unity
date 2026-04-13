@@ -72,6 +72,7 @@ class AssistantDetails:
     number: str = ""
     email: str = ""
     whatsapp_number: str = ""
+    discord_bot_id: str = ""
     contact_id: int = 0  # Contact ID in Contacts table
     desktop_mode: str = "ubuntu"  # "ubuntu" or "windows" - determines VM type
     desktop_url: str | None = None  # URL for managed VM desktop access
@@ -275,6 +276,7 @@ class SessionDetails:
         assistant_number: str = "",
         assistant_email: str = "",
         assistant_whatsapp_number: str = "",
+        assistant_discord_bot_id: str = "",
         assistant_contact_id: int = 0,
         user_id: str = "",
         user_first_name: str = "",
@@ -307,6 +309,7 @@ class SessionDetails:
         self.assistant.number = assistant_number
         self.assistant.email = assistant_email
         self.assistant.whatsapp_number = assistant_whatsapp_number
+        self.assistant.discord_bot_id = assistant_discord_bot_id
         self.assistant.contact_id = assistant_contact_id
         self.assistant.binding_id = binding_id
         self.assistant.desktop_mode = desktop_mode
@@ -416,6 +419,8 @@ class SessionDetails:
             self.assistant.email = val
         if val := os.environ.get("ASSISTANT_WHATSAPP_NUMBER"):
             self.assistant.whatsapp_number = val
+        if val := os.environ.get("ASSISTANT_DISCORD_BOT_ID"):
+            self.assistant.discord_bot_id = val
         if val := os.environ.get("ASSISTANT_CONTACT_ID"):
             try:
                 self.assistant.contact_id = int(val)

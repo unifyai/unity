@@ -48,7 +48,7 @@ def test_read_job_assignment_record_uses_controller_binding_metadata(monkeypatch
     )
 
     monkeypatch.setattr(assistant_session_k8s_module, "_load_clients", lambda: None)
-    monkeypatch.setattr(assistant_session_k8s_module, "_namespace", lambda: "preview")
+    monkeypatch.setattr(assistant_session_k8s_module, "_namespace", lambda: "staging")
     monkeypatch.setattr(assistant_session_k8s_module, "_batch_api", batch_api)
 
     record = assistant_session_k8s_module.read_job_assignment_record("unity-job-42")
@@ -59,7 +59,7 @@ def test_read_job_assignment_record_uses_controller_binding_metadata(monkeypatch
     )
     batch_api.read_namespaced_job.assert_called_once_with(
         name="unity-job-42",
-        namespace="preview",
+        namespace="staging",
     )
 
 
@@ -75,7 +75,7 @@ def test_read_session_bootstrap_secret_record_returns_owner_annotations(monkeypa
     )
 
     monkeypatch.setattr(assistant_session_k8s_module, "_load_clients", lambda: None)
-    monkeypatch.setattr(assistant_session_k8s_module, "_namespace", lambda: "preview")
+    monkeypatch.setattr(assistant_session_k8s_module, "_namespace", lambda: "staging")
     monkeypatch.setattr(assistant_session_k8s_module, "_core_api", core_api)
 
     record = assistant_session_k8s_module.read_session_bootstrap_secret_record(
@@ -90,5 +90,5 @@ def test_read_session_bootstrap_secret_record_returns_owner_annotations(monkeypa
     )
     core_api.read_namespaced_secret.assert_called_once_with(
         name="assistant-session-bootstrap-42-activation-42",
-        namespace="preview",
+        namespace="staging",
     )

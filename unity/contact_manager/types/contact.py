@@ -82,6 +82,7 @@ class Contact(BaseModel):
         "email_address": "email",
         "phone_number": "phone",
         "whatsapp_number": "wa",
+        "discord_id": "disc",
         "bio": "bio",
         "rolling_summary": "rs",
         "should_respond": "resp",
@@ -126,6 +127,11 @@ class Contact(BaseModel):
         default=None,
         description="WhatsApp number — optional leading +, then digits only",
         pattern=r"^\+?[0-9]+$",
+    )
+    discord_id: Optional[str] = Field(
+        default=None,
+        description="Discord user snowflake ID (digits only)",
+        pattern=r"^[0-9]+$",
     )
     bio: Optional[str] = Field(
         default=None,
@@ -189,6 +195,7 @@ class Contact(BaseModel):
         "email_address",
         "phone_number",
         "whatsapp_number",
+        "discord_id",
         "bio",
         "rolling_summary",
         "timezone",

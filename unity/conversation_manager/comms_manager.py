@@ -59,6 +59,25 @@ load_dotenv()
 # Lock for unknown contact creation to prevent duplicates
 _unknown_contact_lock = threading.Lock()
 
+# In-memory dedup for Discord message snowflake IDs.
+# Keyed on message ID; values are insertion timestamps for TTL eviction.
+_seen_discord_ids: dict[str, float] = {}
+_DISCORD_DEDUP_TTL = 300.0
+
+
+def _already_seen_discord(message_id: str) -> bool:
+    """Return True if this Discord message_id was already processed recently."""
+    now = time.time()
+    cutoff = now - _DISCORD_DEDUP_TTL
+    expired = [k for k, t in _seen_discord_ids.items() if t < cutoff]
+    for k in expired:
+        del _seen_discord_ids[k]
+    if message_id in _seen_discord_ids:
+        return True
+    _seen_discord_ids[message_id] = now
+    return False
+
+
 if TYPE_CHECKING:
     from unity.conversation_manager.in_memory_event_broker import InMemoryEventBroker
 
@@ -91,6 +110,7 @@ events_map: dict[str, Event] = {
     "email": EmailReceived,
     "unify_message": UnifyMessageReceived,
     "api_message": ApiMessageReceived,
+    "discord": DiscordMessageReceived,
 }
 
 
@@ -176,6 +196,8 @@ def _get_or_create_unknown_contact(
                 field_name = "phone_number"
             elif medium == "email":
                 field_name = "email_address"
+            elif medium in ("discord_message", "discord_channel_message"):
+                field_name = "discord_id"
             else:
                 # For unify_message, we don't have external contact details
                 return None
@@ -331,6 +353,10 @@ class CommsManager:
                     "assistant_email": event["assistant_email"],
                     "assistant_whatsapp_number": event.get(
                         "assistant_whatsapp_number",
+                        "",
+                    ),
+                    "assistant_discord_bot_id": event.get(
+                        "assistant_discord_bot_id",
                         "",
                     ),
                     "user_first_name": event["user_first_name"],
@@ -687,6 +713,101 @@ class CommsManager:
                     ack_now()
                     return
 
+                if thread == "discord":
+                    sender_discord_id = event.get("sender_discord_id", "")
+                    message_id = event.get("message_id", "")
+                    is_channel = event.get("is_channel", False)
+                    channel_id = event.get("channel_id", "")
+                    guild_id = event.get("guild_id")
+                    bot_id = event.get("bot_id", "")
+                    attachments = event.get("attachments") or []
+
+                    if message_id and _already_seen_discord(message_id):
+                        LOGGER.debug(
+                            f"{DEFAULT_ICON} Skipping duplicate Discord message {message_id}",
+                        )
+                        ack_now()
+                        return
+
+                    medium_for_blacklist = (
+                        Medium.DISCORD_CHANNEL_MESSAGE
+                        if is_channel
+                        else Medium.DISCORD_MESSAGE
+                    )
+
+                    if _is_blacklisted(medium_for_blacklist, sender_discord_id):
+                        LOGGER.debug(
+                            f"{DEFAULT_ICON} Ignoring blacklisted Discord from: {sender_discord_id}",
+                        )
+                        ack_now()
+                        return
+
+                    contact = next(
+                        (
+                            c
+                            for c in contacts
+                            if c.get("discord_id") == sender_discord_id
+                        ),
+                        None,
+                    )
+                    is_new_unknown = False
+                    if contact is None:
+                        contact = _get_or_create_unknown_contact(
+                            medium_for_blacklist,
+                            sender_discord_id,
+                        )
+                        is_new_unknown = contact is not None
+
+                    if contact is None:
+                        LOGGER.error(
+                            f"{DEFAULT_ICON} Failed to resolve contact for Discord from: {sender_discord_id}",
+                        )
+                        ack_now()
+                        return
+
+                    if is_channel:
+                        discord_event = DiscordChannelMessageReceived(
+                            contact=contact,
+                            content=content,
+                            channel_id=channel_id,
+                            guild_id=guild_id or "",
+                            bot_id=bot_id,
+                            message_id=message_id,
+                            attachments=attachments,
+                        )
+                        await publish(
+                            "app:comms:discord_channel_message",
+                            discord_event.to_json(),
+                        )
+                    else:
+                        await publish(
+                            "app:comms:discord_message",
+                            events_map[thread](
+                                content=content,
+                                contact=contact,
+                                channel_id=channel_id,
+                                bot_id=bot_id,
+                                message_id=message_id,
+                                attachments=attachments,
+                            ).to_json(),
+                        )
+
+                    if attachments:
+                        schedule(add_unify_message_attachments(attachments))
+
+                    if is_new_unknown:
+                        await publish(
+                            "app:comms:unknown_contact_created",
+                            UnknownContactCreated(
+                                contact=contact,
+                                medium=medium_for_blacklist,
+                                message_preview=content[:100] if content else "",
+                            ).to_json(),
+                        )
+
+                    ack_now()
+                    return
+
                 contact_detail = event["from_number"].strip()
                 medium_for_blacklist = Medium.SMS_MESSAGE
 
@@ -737,7 +858,7 @@ class CommsManager:
                 ack_now()
                 return
 
-            if thread == "log_pre_hire_chats":
+            elif thread == "log_pre_hire_chats":
                 try:
                     assistant_id = event.get("assistant_id", "")
                     body = event.get("body", []) or []
@@ -1229,6 +1350,10 @@ class CommsManager:
                     "assistant_email": event["assistant_email"],
                     "assistant_whatsapp_number": event.get(
                         "assistant_whatsapp_number",
+                        "",
+                    ),
+                    "assistant_discord_bot_id": event.get(
+                        "assistant_discord_bot_id",
                         "",
                     ),
                     "user_first_name": event["user_first_name"],
