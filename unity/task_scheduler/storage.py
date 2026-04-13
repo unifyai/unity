@@ -9,6 +9,8 @@ Storage and local view utilities for the Task Scheduler.
 
 from __future__ import annotations
 
+import datetime
+import logging
 from typing import Any, Dict, Iterable, List, Optional, Union, Literal, overload
 from enum import Enum
 from functools import cached_property
@@ -20,10 +22,11 @@ from unify.utils.http import RequestError as _UnifyRequestError
 from unity.common.context_store import _PRIVATE_FIELDS
 from unity.common.log_utils import log as unity_log, create_logs as unity_create_logs
 from unity.task_scheduler.types.queue_summary import QueueSummary
-import datetime
 from pydantic import BaseModel
 from .types.task import Task
 from .types.status import Status
+
+LOGGER = logging.getLogger(__name__)
 
 
 class TasksStore:
@@ -34,9 +37,16 @@ class TasksStore:
     helpers used by the scheduler and related utilities.
     """
 
-    def __init__(self, context: str, *, add_to_all_context: bool = False) -> None:
+    def __init__(
+        self,
+        context: str,
+        *,
+        add_to_all_context: bool = False,
+        project: str | None = None,
+    ) -> None:
         self._ctx = context
         self._add_to_all_context = add_to_all_context
+        self._project = project or unify.active_project()
 
     # ----------------------------- Context ---------------------------------
     def ensure_context(
@@ -62,23 +72,40 @@ class TasksStore:
             auto_counting=auto_counting,
             description=description,
             foreign_keys=foreign_keys,
+            project=self._project,
         )
 
         # Ensure all required fields exist (idempotent per-field)
         try:
-            existing = unify.get_fields(context=self._ctx) or {}
+            existing = (
+                unify.get_fields(
+                    project=self._project,
+                    context=self._ctx,
+                )
+                or {}
+            )
         except Exception:
             existing = {}
         missing = {k: v for k, v in fields.items() if k not in existing}
         if missing:
             try:
-                unify.create_fields(missing, context=self._ctx)
+                unify.create_fields(
+                    missing,
+                    project=self._project,
+                    context=self._ctx,
+                )
             except Exception:
                 pass  # Fields already exist or transient failure
         # Refresh the local fields cache from the backend so we only ever
         # read the canonical 'data_type' representation.
         try:
-            updated = unify.get_fields(context=self._ctx) or {}
+            updated = (
+                unify.get_fields(
+                    project=self._project,
+                    context=self._ctx,
+                )
+                or {}
+            )
         except Exception:
             updated = existing
         try:
@@ -138,7 +165,11 @@ class TasksStore:
             else:
                 description = f"Aggregation of {self._ctx.split('/')[-1]} across all assistants for this user"
 
-            unify.create_context(all_ctx, description=description)
+            unify.create_context(
+                all_ctx,
+                description=description,
+                project=self._project,
+            )
 
             # Merge manager fields with private fields for All context
             fields_with_private = dict(fields)
@@ -146,7 +177,13 @@ class TasksStore:
 
             # Ensure all required fields exist (idempotent per-field)
             try:
-                existing = unify.get_fields(context=all_ctx) or {}
+                existing = (
+                    unify.get_fields(
+                        project=self._project,
+                        context=all_ctx,
+                    )
+                    or {}
+                )
             except Exception:
                 existing = {}
             missing = {
@@ -154,7 +191,11 @@ class TasksStore:
             }
             if missing:
                 try:
-                    unify.create_fields(missing, context=all_ctx)
+                    unify.create_fields(
+                        missing,
+                        project=self._project,
+                        context=all_ctx,
+                    )
                 except Exception:
                     pass  # Fields already exist or transient failure
 
@@ -162,7 +203,13 @@ class TasksStore:
     @cached_property
     def fields(self) -> Dict[str, str]:
         try:
-            fields = unify.get_fields(context=self._ctx) or {}
+            fields = (
+                unify.get_fields(
+                    project=self._project,
+                    context=self._ctx,
+                )
+                or {}
+            )
             return {
                 k: (v.get("data_type") if isinstance(v, dict) else str(v))
                 for k, v in fields.items()
@@ -172,16 +219,30 @@ class TasksStore:
 
     def _safe_get_logs(self, **kwargs) -> List[unify.Log] | List[int]:
         """Get logs, treating missing contexts as empty during fresh/test runs."""
+        if "project" not in kwargs:
+            kwargs["project"] = self._project
         try:
             return unify.get_logs(**kwargs)
         except _UnifyRequestError as e:
             status = getattr(getattr(e, "response", None), "status_code", None)
             if status == 404:
+                LOGGER.warning(
+                    "TasksStore read returned 404; treating as empty. "
+                    "project=%s context=%s filter=%r",
+                    kwargs.get("project"),
+                    kwargs.get("context"),
+                    kwargs.get("filter"),
+                )
                 return []
             raise
 
     def get_metric_count(self, *, key: str) -> int:
-        ret = unify.get_logs_metric(metric="count", key=key, context=self._ctx)
+        ret = unify.get_logs_metric(
+            metric="count",
+            key=key,
+            project=self._project,
+            context=self._ctx,
+        )
         return 0 if ret is None else int(ret)
 
     def get_metric_max(self, *, key: str) -> int:
@@ -190,7 +251,12 @@ class TasksStore:
 
         When the backend does not return a value (e.g., empty context), 0 is returned.
         """
-        ret = unify.get_logs_metric(metric="max", key=key, context=self._ctx)
+        ret = unify.get_logs_metric(
+            metric="max",
+            key=key,
+            project=self._project,
+            context=self._ctx,
+        )
         return 0 if ret is None else int(ret)
 
     def get_rows(
@@ -338,6 +404,7 @@ class TasksStore:
         norm_entries = TasksStore._norm(entries)
         # Create with expanded fields so auto-counting applies when ids are omitted
         return unity_log(
+            project=self._project,
             context=self._ctx,
             new=new,
             add_to_all_context=self._add_to_all_context,
@@ -356,6 +423,7 @@ class TasksStore:
         normalised = [{**TasksStore._norm(e)} for e in entries_list]
         try:
             return unity_create_logs(
+                project=self._project,
                 context=self._ctx,
                 entries=normalised,
                 add_to_all_context=self._add_to_all_context,
@@ -365,6 +433,7 @@ class TasksStore:
             log_ids: list[int] = []
             for e in normalised:
                 lg = unity_log(
+                    project=self._project,
                     context=self._ctx,
                     new=True,
                     add_to_all_context=self._add_to_all_context,
@@ -396,7 +465,11 @@ class TasksStore:
         return res
 
     def delete(self, *, logs: Union[int, List[int]]) -> Dict[str, str]:
-        return unify.delete_logs(context=self._ctx, logs=logs)
+        return unify.delete_logs(
+            project=self._project,
+            context=self._ctx,
+            logs=logs,
+        )
 
     # (removed) Checkpoint helpers – checkpoints are in-memory only in TaskScheduler
 

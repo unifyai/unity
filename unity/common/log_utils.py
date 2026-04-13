@@ -186,7 +186,12 @@ def _derive_all_contexts(context: str) -> List[str]:
     ]
 
 
-def _add_to_all(log_ids: List[int], context: str) -> None:
+def _add_to_all(
+    log_ids: List[int],
+    context: str,
+    *,
+    project: Optional[str] = None,
+) -> None:
     """Add logs by reference to all aggregation contexts (best-effort)."""
     if not log_ids:
         return
@@ -196,7 +201,7 @@ def _add_to_all(log_ids: List[int], context: str) -> None:
             unify.add_logs_to_context(
                 log_ids,
                 context=all_ctx,
-                project=unify.active_project(),
+                project=project or unify.active_project(),
             )
         except Exception:
             pass  # Best-effort: don't fail the main operation
@@ -208,6 +213,7 @@ def log(
     add_to_all_context: bool = False,
     new: bool = True,
     mutable: bool = False,
+    project: Optional[str] = None,
     **entries: Any,
 ) -> unify.Log:
     """
@@ -234,11 +240,17 @@ def log(
         The created log object
     """
     entries = _inject_private_fields(entries)
-    result = unify.log(context=context, new=new, mutable=mutable, **entries)
+    result = unify.log(
+        project=project,
+        context=context,
+        new=new,
+        mutable=mutable,
+        **entries,
+    )
 
     if add_to_all_context:
         try:
-            _add_to_all([result.id], context)
+            _add_to_all([result.id], context, project=project)
         except Exception:
             pass
 
@@ -250,6 +262,7 @@ def create_logs(
     *,
     entries: List[Dict[str, Any]],
     add_to_all_context: bool = False,
+    project: Optional[str] = None,
     **kwargs: Any,
 ) -> Any:
     """
@@ -275,7 +288,12 @@ def create_logs(
         or a list of Log objects when batched=True.
     """
     entries = [_inject_private_fields(e) for e in entries]
-    result = unify.create_logs(context=context, entries=entries, **kwargs)
+    result = unify.create_logs(
+        project=project,
+        context=context,
+        entries=entries,
+        **kwargs,
+    )
 
     if add_to_all_context:
         # Handle both dict (normal) and list (batched=True) return types
@@ -288,7 +306,7 @@ def create_logs(
             log_ids = []
 
         if log_ids:
-            _add_to_all(log_ids, context)
+            _add_to_all(log_ids, context, project=project)
 
     return result
 

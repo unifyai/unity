@@ -17,6 +17,7 @@ from .storage import TasksStore
 
 TASK_ACTIVATIONS_CONTEXT_NAME = "Tasks/Activations"
 TASK_RUNS_CONTEXT_NAME = "Tasks/Runs"
+TASK_MACHINE_STATE_PROJECT = "Unity"
 _ACTIVATION_QUERY_FIELDS = [
     "assistant_id",
     "activation_key",
@@ -161,7 +162,10 @@ def validate_task_due_activation(
 def _activation_store() -> TasksStore:
     """Return a lightweight reader for the internal activations context."""
 
-    return TasksStore(TASK_ACTIVATIONS_CONTEXT_NAME)
+    return TasksStore(
+        TASK_ACTIVATIONS_CONTEXT_NAME,
+        project=TASK_MACHINE_STATE_PROJECT,
+    )
 
 
 def _row_to_activation(row: Any) -> TaskActivationSnapshot | None:

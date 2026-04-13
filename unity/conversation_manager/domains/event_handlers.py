@@ -292,9 +292,12 @@ def _handle_task_due_event(event: TaskDue, cm: "ConversationManager") -> bool:
         scheduled_for=event.scheduled_for,
     )
     if stale_reason is not None:
-        cm._session_logger.debug(
+        cm._session_logger.info(
             "task_due",
-            f"Ignoring stale task_due for task {event.task_id}: {stale_reason}",
+            (
+                f"Rejected due task {event.task_id}: {stale_reason} "
+                f"(assistant_id={assistant_id or '-'})"
+            ),
         )
         return False
     cm.notifications_bar.push_notif(
@@ -317,9 +320,19 @@ async def _consume_startup_wake_reasons(cm: "ConversationManager") -> None:
 
     wake_reasons = list(getattr(cm, "_startup_wake_reasons", []) or [])
     cm._startup_wake_reasons = []
+    if not wake_reasons:
+        return
+    cm._session_logger.info(
+        "task_due",
+        f"Replaying {len(wake_reasons)} startup wake reason(s)",
+    )
     for wake_reason in wake_reasons:
         task_due_event = _task_due_event_from_wake_reason(wake_reason)
         if task_due_event is None:
+            cm._session_logger.info(
+                "task_due",
+                f"Ignoring unparseable startup wake reason: {wake_reason!r}",
+            )
             continue
         _handle_task_due_event(task_due_event, cm)
 
@@ -1815,6 +1828,21 @@ async def _(event: StartupEvent, cm: "ConversationManager", *args, **kwargs):
     try:
         cm._session_logger.info("startup", "Received startup event")
         cm._startup_wake_reasons = list(event.wake_reasons or [])
+        if cm._startup_wake_reasons:
+            wake_reason_types = sorted(
+                {
+                    str(reason.get("type") or "unknown")
+                    for reason in cm._startup_wake_reasons
+                    if isinstance(reason, dict)
+                },
+            )
+            cm._session_logger.info(
+                "startup",
+                (
+                    f"Stored {len(cm._startup_wake_reasons)} startup wake reason(s) "
+                    f"of type(s): {', '.join(wake_reason_types) or 'unknown'}"
+                ),
+            )
 
         # Set demo mode from startup event before initializing managers
         # Demo mode is derived from the presence of a demo_id
