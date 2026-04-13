@@ -696,6 +696,9 @@ class ConversationManagerBrainActionTools:
     ) -> dict[str, Any]:
         """Send a Discord message to an existing contact.
 
+        Use this to reply when the inbound message arrived via Discord
+        (thread ``discord_message`` or ``discord_channel_message``).
+
         Supports two modes determined by the context:
 
         - **DM** (direct message): The default when the inbound message was a

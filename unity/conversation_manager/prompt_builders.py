@@ -197,7 +197,9 @@ def _build_comms_tool_listing(
         lines.append("- `send_email`: Send an email to a contact")
     lines.append("- `send_unify_message`: Send a Unify platform message to a contact")
     if assistant_has_discord:
-        lines.append("- `send_discord_message`: Send a Discord message to a contact")
+        lines.append(
+            "- `send_discord_message`: Send a Discord message to a contact (use when the inbound thread is `discord_message`)",
+        )
     lines.append(
         "- `send_api_response`: Reply to a programmatic API message (use when the inbound medium is `api_message`). Supports optional `attachment_filepaths` and `tags`.",
     )
