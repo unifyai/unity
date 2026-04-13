@@ -427,6 +427,7 @@ class DiscordMessageReceived(Event):
     content: str
     channel_id: str = ""
     bot_id: str = ""
+    message_id: str = ""
     attachments: list[dict] = field(default_factory=list)
 
 
@@ -442,6 +443,7 @@ class DiscordChannelMessageReceived(Event):
     channel_id: str = ""
     guild_id: str = ""
     bot_id: str = ""
+    message_id: str = ""
     attachments: list[dict] = field(default_factory=list)
 
 
