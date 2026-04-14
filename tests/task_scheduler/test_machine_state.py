@@ -65,7 +65,7 @@ def test_validate_task_due_activation_rejects_revision_mismatch(monkeypatch):
     assert stale_reason == "activation_revision_mismatch"
 
 
-def test_get_task_activation_queries_unity_machine_state_project(monkeypatch):
+def test_get_task_activation_queries_assistants_machine_state_project(monkeypatch):
     captured: dict[str, object] = {}
 
     class _FakeRow:

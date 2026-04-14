@@ -1,4 +1,4 @@
-"""Read-only helpers for Orchestra-projected Unity task machine state.
+"""Read-only helpers for Orchestra-projected assistant task machine state.
 
 The user-authored `Tasks` context remains the source of truth for scheduler
 mutations. Orchestra mirrors the machine-facing activation and run state into
@@ -17,7 +17,7 @@ from .storage import TasksStore
 
 TASK_ACTIVATIONS_CONTEXT_NAME = "Tasks/Activations"
 TASK_RUNS_CONTEXT_NAME = "Tasks/Runs"
-TASK_MACHINE_STATE_PROJECT = "Unity"
+TASK_MACHINE_STATE_PROJECT = "Assistants"
 _ACTIVATION_QUERY_FIELDS = [
     "assistant_id",
     "activation_key",
