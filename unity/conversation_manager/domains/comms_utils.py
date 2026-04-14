@@ -616,12 +616,9 @@ async def send_email_via_address(
     if attachment:
         payload["attachment"] = attachment
 
-    provider = SESSION_DETAILS.assistant.email_provider
-    send_path = "/outlook/send" if provider == "microsoft_365" else "/gmail/send"
-
     async with aiohttp.ClientSession() as session:
         async with session.post(
-            f"{SETTINGS.conversation.COMMS_URL}{send_path}",
+            f"{SETTINGS.conversation.COMMS_URL}/email/send",
             headers=headers,
             json=payload,
         ) as response:
@@ -761,9 +758,6 @@ async def add_email_attachments(
     if not attachments:
         return
 
-    provider = SESSION_DETAILS.assistant.email_provider
-    is_outlook = provider == "microsoft_365"
-
     LOGGER.debug(f"{ICONS['comms_outbound']} Saving email attachments...")
     async with aiohttp.ClientSession() as session:
         for att in attachments:
@@ -775,20 +769,12 @@ async def add_email_attachments(
                 if inline_bytes is not None:
                     data = inline_bytes
                 else:
-                    if is_outlook:
-                        url = f"{SETTINGS.conversation.COMMS_URL}/outlook/attachment"
-                        params = {
-                            "user_email": receiver_email,
-                            "message_id": message_id,
-                            "attachment_id": att_id,
-                        }
-                    else:
-                        url = f"{SETTINGS.conversation.COMMS_URL}/gmail/attachment"
-                        params = {
-                            "receiver_email": receiver_email,
-                            "gmail_message_id": message_id,
-                            "attachment_id": att_id,
-                        }
+                    url = f"{SETTINGS.conversation.COMMS_URL}/email/attachment"
+                    params = {
+                        "receiver_email": receiver_email,
+                        "message_id": message_id,
+                        "attachment_id": att_id,
+                    }
                     async with session.get(url, headers=headers, params=params) as resp:
                         data = await resp.read()
 

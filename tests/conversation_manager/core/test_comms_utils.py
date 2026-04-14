@@ -413,7 +413,7 @@ class TestSendEmailViaAddress:
 
     @pytest.mark.asyncio
     async def test_send_with_attachment(self):
-        """Sends email with attachment to /gmail/send on COMMS_URL."""
+        """Sends email with attachment to /email/send on COMMS_URL."""
         mock_session = _mock_aiohttp_session(
             response_json={"success": True, "id": "email-123"},
         )
@@ -428,7 +428,6 @@ class TestSendEmailViaAddress:
             ) as mock_settings,
         ):
             mock_session_details.assistant.email = "assistant@test.com"
-            mock_session_details.assistant.email_provider = "google_workspace"
             mock_settings.conversation.COMMS_URL = COMMS_URL
 
             attachment = {
@@ -446,12 +445,12 @@ class TestSendEmailViaAddress:
             assert result["success"] is True
 
             call_args = mock_session.post.call_args
-            assert call_args[0][0] == f"{COMMS_URL}/gmail/send"
+            assert call_args[0][0] == f"{COMMS_URL}/email/send"
             assert call_args.kwargs["json"]["attachment"] == attachment
 
     @pytest.mark.asyncio
     async def test_send_with_cc_and_bcc(self):
-        """Sends email with cc and bcc to /gmail/send on COMMS_URL."""
+        """Sends email with cc and bcc to /email/send on COMMS_URL."""
         mock_session = _mock_aiohttp_session(
             response_json={"success": True, "id": "email-123"},
         )
@@ -466,7 +465,6 @@ class TestSendEmailViaAddress:
             ) as mock_settings,
         ):
             mock_session_details.assistant.email = "assistant@test.com"
-            mock_session_details.assistant.email_provider = "google_workspace"
             mock_settings.conversation.COMMS_URL = COMMS_URL
 
             result = await comms_utils.send_email_via_address(
@@ -480,7 +478,7 @@ class TestSendEmailViaAddress:
             assert result["success"] is True
 
             call_args = mock_session.post.call_args
-            assert call_args[0][0] == f"{COMMS_URL}/gmail/send"
+            assert call_args[0][0] == f"{COMMS_URL}/email/send"
 
             payload = call_args.kwargs["json"]
             assert payload["to"] == ["user@example.com"]
@@ -488,8 +486,8 @@ class TestSendEmailViaAddress:
             assert payload["bcc"] == ["bcc@example.com"]
 
     @pytest.mark.asyncio
-    async def test_send_routes_to_outlook_for_ms365(self):
-        """MS365 provider routes to /outlook/send instead of /gmail/send."""
+    async def test_send_uses_provider_agnostic_endpoint(self):
+        """All providers route to the provider-agnostic /email/send endpoint."""
         mock_session = _mock_aiohttp_session(
             response_json={"success": True, "id": "email-456"},
         )
@@ -504,48 +502,18 @@ class TestSendEmailViaAddress:
             ) as mock_settings,
         ):
             mock_session_details.assistant.email = "assistant@outlook.unify.ai"
-            mock_session_details.assistant.email_provider = "microsoft_365"
             mock_settings.conversation.COMMS_URL = COMMS_URL
 
             result = await comms_utils.send_email_via_address(
                 to=["user@example.com"],
                 subject="Hello",
-                body="From Outlook.",
+                body="Test email.",
             )
 
             assert result["success"] is True
 
             posted_url = mock_session.post.call_args[0][0]
-            assert posted_url == f"{COMMS_URL}/outlook/send"
-
-    @pytest.mark.asyncio
-    async def test_send_routes_to_gmail_by_default(self):
-        """Default email_provider routes to /gmail/send."""
-        mock_session = _mock_aiohttp_session(
-            response_json={"success": True, "id": "email-789"},
-        )
-
-        with (
-            patch("aiohttp.ClientSession", return_value=mock_session),
-            patch(
-                "unity.conversation_manager.domains.comms_utils.SESSION_DETAILS",
-            ) as mock_session_details,
-            patch(
-                "unity.conversation_manager.domains.comms_utils.SETTINGS",
-            ) as mock_settings,
-        ):
-            mock_session_details.assistant.email = "assistant@unify.ai"
-            mock_session_details.assistant.email_provider = "google_workspace"
-            mock_settings.conversation.COMMS_URL = COMMS_URL
-
-            await comms_utils.send_email_via_address(
-                to=["user@example.com"],
-                subject="Hello",
-                body="From Gmail.",
-            )
-
-            posted_url = mock_session.post.call_args[0][0]
-            assert posted_url == f"{COMMS_URL}/gmail/send"
+            assert posted_url == f"{COMMS_URL}/email/send"
 
 
 class TestLocalCommsBackends:
@@ -693,11 +661,11 @@ class TestLocalCommsBackends:
 
 
 class TestAddEmailAttachmentsRouting:
-    """Tests for provider-aware routing in add_email_attachments."""
+    """Tests for provider-agnostic routing in add_email_attachments."""
 
     @pytest.mark.asyncio
-    async def test_routes_to_gmail_by_default(self):
-        """Default provider fetches attachments from /gmail/attachment."""
+    async def test_fetches_via_provider_agnostic_endpoint(self):
+        """Attachments are fetched from /email/attachment with unified params."""
         mock_response = MagicMock()
         mock_response.read = AsyncMock(return_value=b"file-bytes")
 
@@ -715,9 +683,6 @@ class TestAddEmailAttachmentsRouting:
         with (
             patch("aiohttp.ClientSession", return_value=mock_session),
             patch(
-                "unity.conversation_manager.domains.comms_utils.SESSION_DETAILS",
-            ) as mock_sd,
-            patch(
                 "unity.conversation_manager.domains.comms_utils.SETTINGS",
             ) as mock_settings,
             patch(
@@ -725,66 +690,18 @@ class TestAddEmailAttachmentsRouting:
                 return_value=mock_file_manager,
             ),
         ):
-            mock_sd.assistant.email_provider = "google_workspace"
             mock_settings.conversation.COMMS_URL = COMMS_URL
 
             await comms_utils.add_email_attachments(
                 [{"id": "att-1", "filename": "doc.pdf"}],
                 receiver_email="assistant@unify.ai",
-                message_id="gmail-msg-123",
+                message_id="msg-123",
             )
 
             get_url = mock_session.get.call_args[0][0]
-            assert get_url == f"{COMMS_URL}/gmail/attachment"
+            assert get_url == f"{COMMS_URL}/email/attachment"
 
             params = mock_session.get.call_args.kwargs["params"]
             assert params["receiver_email"] == "assistant@unify.ai"
-            assert params["gmail_message_id"] == "gmail-msg-123"
+            assert params["message_id"] == "msg-123"
             assert params["attachment_id"] == "att-1"
-
-    @pytest.mark.asyncio
-    async def test_routes_to_outlook_for_ms365(self):
-        """MS365 provider fetches attachments from /outlook/attachment."""
-        mock_response = MagicMock()
-        mock_response.read = AsyncMock(return_value=b"file-bytes")
-
-        mock_session = MagicMock()
-        mock_session.get = MagicMock(
-            return_value=AsyncMock(
-                __aenter__=AsyncMock(return_value=mock_response),
-            ),
-        )
-        mock_session.__aenter__ = AsyncMock(return_value=mock_session)
-        mock_session.__aexit__ = AsyncMock(return_value=None)
-
-        mock_file_manager = MagicMock()
-
-        with (
-            patch("aiohttp.ClientSession", return_value=mock_session),
-            patch(
-                "unity.conversation_manager.domains.comms_utils.SESSION_DETAILS",
-            ) as mock_sd,
-            patch(
-                "unity.conversation_manager.domains.comms_utils.SETTINGS",
-            ) as mock_settings,
-            patch(
-                "unity.manager_registry.ManagerRegistry.get_file_manager",
-                return_value=mock_file_manager,
-            ),
-        ):
-            mock_sd.assistant.email_provider = "microsoft_365"
-            mock_settings.conversation.COMMS_URL = COMMS_URL
-
-            await comms_utils.add_email_attachments(
-                [{"id": "att-2", "filename": "report.xlsx"}],
-                receiver_email="assistant@outlook.unify.ai",
-                message_id="outlook-msg-456",
-            )
-
-            get_url = mock_session.get.call_args[0][0]
-            assert get_url == f"{COMMS_URL}/outlook/attachment"
-
-            params = mock_session.get.call_args.kwargs["params"]
-            assert params["user_email"] == "assistant@outlook.unify.ai"
-            assert params["message_id"] == "outlook-msg-456"
-            assert params["attachment_id"] == "att-2"
