@@ -1410,6 +1410,10 @@ class ConversationManager(metaclass=SingletonABCMeta):
         self.assistant_about = payload["assistant_about"]
         self.assistant_number = payload["assistant_number"]
         self.assistant_email = payload["assistant_email"]
+        self.assistant_email_provider = payload.get(
+            "assistant_email_provider",
+            "google_workspace",
+        )
         self.assistant_whatsapp_number = payload.get("assistant_whatsapp_number", "")
         self.assistant_discord_bot_id = payload.get("assistant_discord_bot_id", "")
         self.user_first_name = payload["user_first_name"]
@@ -1441,6 +1445,7 @@ class ConversationManager(metaclass=SingletonABCMeta):
             assistant_about=self.assistant_about,
             assistant_number=self.assistant_number,
             assistant_email=self.assistant_email,
+            assistant_email_provider=self.assistant_email_provider,
             assistant_whatsapp_number=self.assistant_whatsapp_number,
             assistant_discord_bot_id=self.assistant_discord_bot_id,
             user_id=self.user_id,

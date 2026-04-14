@@ -716,6 +716,7 @@ class _SessionConfigBase(Event):
     assistant_about: str
     assistant_number: str
     assistant_email: str
+    assistant_email_provider: str = "google_workspace"
     user_first_name: str
     user_surname: str
     user_number: str

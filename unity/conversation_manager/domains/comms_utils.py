@@ -616,9 +616,12 @@ async def send_email_via_address(
     if attachment:
         payload["attachment"] = attachment
 
+    provider = SESSION_DETAILS.assistant.email_provider
+    send_path = "/outlook/send" if provider == "microsoft_365" else "/gmail/send"
+
     async with aiohttp.ClientSession() as session:
         async with session.post(
-            f"{SETTINGS.conversation.COMMS_URL}/gmail/send",
+            f"{SETTINGS.conversation.COMMS_URL}{send_path}",
             headers=headers,
             json=payload,
         ) as response:
@@ -748,7 +751,7 @@ async def start_whatsapp_call(
 async def add_email_attachments(
     attachments: list[dict[str, str]],
     receiver_email: str,
-    gmail_message_id: str,
+    message_id: str,
 ) -> None:
     """
     Download email attachments and save to Attachments folder.
@@ -757,6 +760,9 @@ async def add_email_attachments(
     """
     if not attachments:
         return
+
+    provider = SESSION_DETAILS.assistant.email_provider
+    is_outlook = provider == "microsoft_365"
 
     LOGGER.debug(f"{ICONS['comms_outbound']} Saving email attachments...")
     async with aiohttp.ClientSession() as session:
@@ -769,12 +775,20 @@ async def add_email_attachments(
                 if inline_bytes is not None:
                     data = inline_bytes
                 else:
-                    url = f"{SETTINGS.conversation.COMMS_URL}/gmail/attachment"
-                    params = {
-                        "receiver_email": receiver_email,
-                        "gmail_message_id": gmail_message_id,
-                        "attachment_id": att_id,
-                    }
+                    if is_outlook:
+                        url = f"{SETTINGS.conversation.COMMS_URL}/outlook/attachment"
+                        params = {
+                            "user_email": receiver_email,
+                            "message_id": message_id,
+                            "attachment_id": att_id,
+                        }
+                    else:
+                        url = f"{SETTINGS.conversation.COMMS_URL}/gmail/attachment"
+                        params = {
+                            "receiver_email": receiver_email,
+                            "gmail_message_id": message_id,
+                            "attachment_id": att_id,
+                        }
                     async with session.get(url, headers=headers, params=params) as resp:
                         data = await resp.read()
 

@@ -71,6 +71,7 @@ class AssistantDetails:
     about: str = ""
     number: str = ""
     email: str = ""
+    email_provider: str = "google_workspace"
     whatsapp_number: str = ""
     discord_bot_id: str = ""
     contact_id: int = 0  # Contact ID in Contacts table
@@ -275,6 +276,7 @@ class SessionDetails:
         assistant_about: str = "",
         assistant_number: str = "",
         assistant_email: str = "",
+        assistant_email_provider: str = "google_workspace",
         assistant_whatsapp_number: str = "",
         assistant_discord_bot_id: str = "",
         assistant_contact_id: int = 0,
@@ -308,6 +310,7 @@ class SessionDetails:
         self.assistant.about = assistant_about
         self.assistant.number = assistant_number
         self.assistant.email = assistant_email
+        self.assistant.email_provider = assistant_email_provider
         self.assistant.whatsapp_number = assistant_whatsapp_number
         self.assistant.discord_bot_id = assistant_discord_bot_id
         self.assistant.contact_id = assistant_contact_id
@@ -358,6 +361,7 @@ class SessionDetails:
         os.environ["ASSISTANT_ABOUT"] = self.assistant.about
         os.environ["ASSISTANT_NUMBER"] = self.assistant.number
         os.environ["ASSISTANT_EMAIL"] = self.assistant.email
+        os.environ["ASSISTANT_EMAIL_PROVIDER"] = self.assistant.email_provider
         os.environ["ASSISTANT_WHATSAPP_NUMBER"] = self.assistant.whatsapp_number
         os.environ["ASSISTANT_DESKTOP_MODE"] = self.assistant.desktop_mode
         os.environ["ASSISTANT_DESKTOP_URL"] = self.assistant.desktop_url or ""
@@ -417,6 +421,8 @@ class SessionDetails:
             self.assistant.number = val
         if val := os.environ.get("ASSISTANT_EMAIL"):
             self.assistant.email = val
+        if val := os.environ.get("ASSISTANT_EMAIL_PROVIDER"):
+            self.assistant.email_provider = val
         if val := os.environ.get("ASSISTANT_WHATSAPP_NUMBER"):
             self.assistant.whatsapp_number = val
         if val := os.environ.get("ASSISTANT_DISCORD_BOT_ID"):

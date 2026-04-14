@@ -120,7 +120,7 @@ class TestAttachmentIngestion:
             await comms_utils.add_email_attachments(
                 attachments,
                 receiver_email="assistant@example.com",
-                gmail_message_id="msg-123",
+                message_id="msg-123",
             )
 
         display_name = "Attachments/att-email-1_data.csv"

@@ -396,6 +396,10 @@ class CommsManager:
                     "assistant_about": event["assistant_about"],
                     "assistant_number": event["assistant_number"],
                     "assistant_email": event["assistant_email"],
+                    "assistant_email_provider": event.get(
+                        "assistant_email_provider",
+                        "google_workspace",
+                    ),
                     "assistant_whatsapp_number": event.get(
                         "assistant_whatsapp_number",
                         "",
@@ -589,7 +593,8 @@ class CommsManager:
                             add_email_attachments(
                                 attachments,
                                 SESSION_DETAILS.assistant.email,
-                                event.get("gmail_message_id", ""),
+                                event.get("message_id")
+                                or event.get("gmail_message_id", ""),
                             ),
                         )
 
@@ -1404,6 +1409,10 @@ class CommsManager:
                     "assistant_about": event["assistant_about"],
                     "assistant_number": event["assistant_number"],
                     "assistant_email": event["assistant_email"],
+                    "assistant_email_provider": event.get(
+                        "assistant_email_provider",
+                        "google_workspace",
+                    ),
                     "assistant_whatsapp_number": event.get(
                         "assistant_whatsapp_number",
                         "",
