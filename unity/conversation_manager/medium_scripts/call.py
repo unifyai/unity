@@ -42,7 +42,10 @@ load_dotenv()
 
 from unity.conversation_manager.events import *
 from unity.conversation_manager.utils import dispatch_livekit_agent
-from unity.conversation_manager.prompt_builders import build_voice_agent_prompt
+from unity.conversation_manager.prompt_builders import (
+    build_opening_greeting_messages,
+    build_voice_agent_prompt,
+)
 from unity.conversation_manager.tracing import (
     content_trace_id,
     monotonic_ms,
@@ -1719,10 +1722,10 @@ async def entrypoint(ctx: agents.JobContext):
         origin="fast_brain_greeting",
         reasoning_effort="low",
     )
-    greeting_messages = [
-        {"role": "system", "content": system_prompt},
-        *_extract_chat_messages(session.history),
-    ]
+    greeting_messages = build_opening_greeting_messages(
+        system_prompt=system_prompt,
+        history_messages=_extract_chat_messages(session.history),
+    )
     greeting_text = await greeting_client.generate(messages=greeting_messages)
 
     if channel != "phone":

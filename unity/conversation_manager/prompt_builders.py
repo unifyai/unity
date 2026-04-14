@@ -6,6 +6,8 @@ by programmatically building prompts using shared utilities from common/prompt_h
 
 from __future__ import annotations
 
+from typing import Any, Sequence
+
 from ..common.prompt_helpers import now, PromptParts
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -32,6 +34,32 @@ Live call audio is generated from text by TTS. Numbered lists, markdown bullets,
 The test: if a real person on a phone call would comfortably say the URL aloud (e.g. "google dot com slash maps"), I speak it phonetically. If they would instead say "I'll send you the link", I do the same — without including the actual content.
 
 Short human-pronounceable data (phone numbers, names, times, brief email addresses) is fine to speak normally."""
+
+_OPENING_GREETING_GUARDRAIL = (
+    "[system] Opening line rule: start with a normal human greeting. "
+    "Use background notifications for awareness, but do not proactively mention "
+    "background task reminders or status updates in the first spoken turn "
+    "unless the caller has already asked about them."
+)
+
+
+def build_opening_greeting_messages(
+    *,
+    system_prompt: str,
+    history_messages: Sequence[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Build the sidecar prompt used for the startup greeting.
+
+    This is intentionally separate from `build_voice_agent_prompt()`: the
+    greeting sidecar should keep buffered notification context available for
+    later turns while still biasing the first spoken line toward a simple,
+    social hello.
+    """
+
+    messages: list[dict[str, Any]] = [{"role": "system", "content": system_prompt}]
+    messages.extend(dict(message) for message in history_messages)
+    messages.append({"role": "system", "content": _OPENING_GREETING_GUARDRAIL})
+    return messages
 
 
 def _build_boss_details_block(
