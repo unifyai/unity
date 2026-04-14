@@ -129,6 +129,7 @@ def _task_due_event_from_payload(
         return None
     if not activation_revision or not scheduled_for:
         return None
+    task_label = str(payload.get("task_label") or "")
     return TaskDue(
         task_id=task_id,
         source_task_log_id=source_task_log_id,
@@ -136,7 +137,16 @@ def _task_due_event_from_payload(
         scheduled_for=scheduled_for,
         execution_mode=str(payload.get("execution_mode") or "live"),
         source_type=str(payload.get("source_type") or "scheduled"),
-        reason=reason or f"Scheduled task {task_id} became due.",
+        task_label=task_label,
+        task_summary=str(payload.get("task_summary") or ""),
+        visibility_policy=str(payload.get("visibility_policy") or "silent_by_default"),
+        recurrence_hint=str(payload.get("recurrence_hint") or "one_off"),
+        reason=reason
+        or (
+            f"Scheduled task '{task_label}' became due."
+            if task_label
+            else f"Scheduled task {task_id} became due."
+        ),
     )
 
 

@@ -957,13 +957,17 @@ class TestSystemEvents:
                 "unity_system_event",
                 {
                     "event_type": "task_due",
-                    "message": "Scheduled task 101 became due.",
+                    "message": "Scheduled task 'Morning briefing' became due.",
                     "task_id": 101,
                     "source_task_log_id": 555,
                     "activation_revision": "rev-1",
                     "scheduled_for": "2026-04-10T09:00:00+00:00",
                     "execution_mode": "live",
                     "source_type": "scheduled",
+                    "task_label": "Morning briefing",
+                    "task_summary": "Prepare the morning update before the user checks in.",
+                    "visibility_policy": "silent_by_default",
+                    "recurrence_hint": "recurring",
                 },
             )
 
@@ -979,6 +983,13 @@ class TestSystemEvents:
             assert event.source_task_log_id == 555
             assert event.activation_revision == "rev-1"
             assert event.scheduled_for == "2026-04-10T09:00:00+00:00"
+            assert event.task_label == "Morning briefing"
+            assert (
+                event.task_summary
+                == "Prepare the morning update before the user checks in."
+            )
+            assert event.visibility_policy == "silent_by_default"
+            assert event.recurrence_hint == "recurring"
 
 
 # =============================================================================

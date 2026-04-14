@@ -1793,6 +1793,10 @@ class TestTaskDueEventHandlers:
             source_task_log_id=555,
             activation_revision="rev-1",
             scheduled_for="2026-04-10T09:00:00+00:00",
+            task_label="Morning briefing",
+            task_summary="Prepare the morning update before the user checks in.",
+            visibility_policy="silent_by_default",
+            recurrence_hint="recurring",
         )
 
         with patch(
@@ -1802,9 +1806,11 @@ class TestTaskDueEventHandlers:
             await EventHandler.handle_event(event, mock_cm)
 
         assert len(mock_cm.notifications_bar.notifications) == 1
-        assert "primitives.tasks.execute(task_id=101)" in (
-            mock_cm.notifications_bar.notifications[0].content
-        )
+        notification = mock_cm.notifications_bar.notifications[0].content
+        assert "Morning briefing" in notification
+        assert "Prepare the morning update before the user checks in" in notification
+        assert "work silently unless you genuinely need the user" in notification
+        assert "primitives.tasks.execute(task_id=101)" in notification
         mock_cm.request_llm_run.assert_called_once_with(delay=0)
 
     @pytest.mark.asyncio
@@ -1816,6 +1822,10 @@ class TestTaskDueEventHandlers:
             source_task_log_id=555,
             activation_revision="rev-1",
             scheduled_for="2026-04-10T09:00:00+00:00",
+            task_label="Morning briefing",
+            task_summary="Prepare the morning update before the user checks in.",
+            visibility_policy="silent_by_default",
+            recurrence_hint="recurring",
         )
         mock_cm.mode = Mode.CALL
         mock_socket = MagicMock()
@@ -1843,6 +1853,10 @@ class TestTaskDueEventHandlers:
         guidance = FastBrainNotification.from_json(payload)
         assert guidance.should_speak is False
         assert "Morning briefing" in guidance.content
+        assert (
+            "Prepare the morning update before the user checks in" in guidance.content
+        )
+        assert "silent action unless the user is needed" in guidance.content
 
     @pytest.mark.asyncio
     async def test_task_due_ignores_stale_activation(self, mock_cm):
@@ -1879,6 +1893,10 @@ class TestTaskDueEventHandlers:
                 "source_task_log_id": 555,
                 "activation_revision": "rev-1",
                 "scheduled_for": "2026-04-10T09:00:00+00:00",
+                "task_label": "Morning briefing",
+                "task_summary": "Prepare the morning update before the user checks in.",
+                "visibility_policy": "silent_by_default",
+                "recurrence_hint": "recurring",
             },
         ]
 
@@ -1892,6 +1910,10 @@ class TestTaskDueEventHandlers:
         assert len(mock_cm.notifications_bar.notifications) == 2
         assert any(
             "primitives.tasks.execute(task_id=101)" in notif.content
+            for notif in mock_cm.notifications_bar.notifications
+        )
+        assert any(
+            "Morning briefing" in notif.content
             for notif in mock_cm.notifications_bar.notifications
         )
         mock_cm.request_llm_run.assert_called_once_with(delay=0)
@@ -1917,6 +1939,8 @@ class TestTriggeredTaskNotifications:
                 execution_mode="live",
                 trigger_from_contact_ids=[2],
                 interrupt=True,
+                task_name="Invoice follow-up",
+                task_description="Help handle invoice-related requests from Alice.",
             ),
             TaskActivationSnapshot(
                 assistant_id="42",
@@ -1925,6 +1949,7 @@ class TestTriggeredTaskNotifications:
                 activation_kind="triggered",
                 execution_mode="offline",
                 trigger_from_contact_ids=[2],
+                task_name="Hidden offline task",
             ),
             TaskActivationSnapshot(
                 assistant_id="42",
@@ -1933,6 +1958,7 @@ class TestTriggeredTaskNotifications:
                 activation_kind="triggered",
                 execution_mode="live",
                 trigger_omit_contact_ids=[2],
+                task_name="Wrong sender task",
             ),
         ]
 
@@ -1950,9 +1976,11 @@ class TestTriggeredTaskNotifications:
 
         assert len(mock_cm.notifications_bar.notifications) == 2
         trigger_notification = mock_cm.notifications_bar.notifications[1].content
-        assert "301 (interrupt)" in trigger_notification
-        assert "302" not in trigger_notification
-        assert "303" not in trigger_notification
+        assert "Invoice follow-up" in trigger_notification
+        assert "Help handle invoice-related requests from Alice" in trigger_notification
+        assert "Semantic judgement is still pending" in trigger_notification
+        assert "Hidden offline task" not in trigger_notification
+        assert "Wrong sender task" not in trigger_notification
         mock_offline_dispatch.assert_called_once()
         mock_cm.request_llm_run.assert_called_once_with(triggering_contact_id=2)
 
@@ -2025,6 +2053,8 @@ class TestTriggeredTaskNotifications:
                 activation_kind="triggered",
                 execution_mode="live",
                 trigger_from_contact_ids=[2],
+                task_name="Handle VIP caller",
+                task_description="Prioritize urgent inbound calls from Alice.",
             ),
         ]
 
@@ -2035,7 +2065,11 @@ class TestTriggeredTaskNotifications:
             await EventHandler.handle_event(event, mock_cm)
 
         assert any(
-            "401 (non-interrupt)" in notif.content
+            "Handle VIP caller" in notif.content
+            for notif in mock_cm.notifications_bar.notifications
+        )
+        assert any(
+            "Semantic judgement is still pending" in notif.content
             for notif in mock_cm.notifications_bar.notifications
         )
         mock_cm.request_llm_run.assert_called_once_with(
@@ -2071,6 +2105,7 @@ class TestTriggeredTaskNotifications:
                 execution_mode="live",
                 trigger_from_contact_ids=[2],
                 task_name="Handle VIP caller",
+                task_description="Prioritize urgent inbound calls from Alice.",
             ),
         ]
 
@@ -2087,6 +2122,8 @@ class TestTriggeredTaskNotifications:
         guidance = FastBrainNotification.from_json(payload)
         assert guidance.should_speak is False
         assert "Handle VIP caller" in guidance.content
+        assert "Prioritize urgent inbound calls from Alice" in guidance.content
+        assert "Do not mention the task unless it naturally helps" in guidance.content
 
 
 # =============================================================================

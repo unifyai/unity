@@ -1019,7 +1019,9 @@ class TaskDue(Event):
     Communication publishes this payload either directly as a `unity_system_event`
     or indirectly via `StartupEvent.wake_reasons` during a cold start. Unity uses
     the activation identity fields to reject stale deliveries before nudging the
-    slow brain to execute the task.
+    slow brain to execute the task. The packet also carries compact human-facing
+    wake context so the slow and fast brains do not have to infer meaning from a
+    bare task id alone.
     """
 
     topic: ClassVar[str | None] = "app:comms:task_due"
@@ -1030,6 +1032,10 @@ class TaskDue(Event):
     scheduled_for: str
     execution_mode: str = "live"
     source_type: str = "scheduled"
+    task_label: str = ""
+    task_summary: str = ""
+    visibility_policy: str = "silent_by_default"
+    recurrence_hint: str = "one_off"
     reason: str = ""
 
 

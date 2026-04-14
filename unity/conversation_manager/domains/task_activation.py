@@ -18,6 +18,9 @@ from unity.task_scheduler.machine_state import (
 if TYPE_CHECKING:
     from unity.conversation_manager.conversation_manager import ConversationManager
 
+_TASK_CONTEXT_SUMMARY_MAX_CHARS = 220
+_TRIGGER_CONTEXT_CANDIDATE_LIMIT = 3
+
 
 def _current_task_assistant_id() -> str | None:
     """Return the current assistant id in the string form task state expects."""
@@ -26,14 +29,83 @@ def _current_task_assistant_id() -> str | None:
     return str(assistant_id) if assistant_id is not None else None
 
 
-def _task_due_notification_text(event: TaskDue) -> str:
+def _compact_task_text(text: str | None, *, fallback: str) -> str:
+    """Return one compact human-readable task summary line."""
+
+    candidate = " ".join(str(text or "").split())
+    if not candidate:
+        candidate = " ".join(fallback.split())
+    candidate = candidate.rstrip(" .")
+    if len(candidate) <= _TASK_CONTEXT_SUMMARY_MAX_CHARS:
+        return candidate
+    truncated = candidate[: _TASK_CONTEXT_SUMMARY_MAX_CHARS - 3].rstrip(" ,.;:")
+    return f"{truncated}..."
+
+
+def _task_due_label(
+    event: TaskDue,
+    activation: TaskActivationSnapshot | None,
+) -> str:
+    """Return the human-facing label for one due-task wake."""
+
+    if event.task_label:
+        return event.task_label
+    if activation and activation.task_name:
+        return activation.task_name
+    return f"task {event.task_id}"
+
+
+def _task_due_summary(
+    event: TaskDue,
+    activation: TaskActivationSnapshot | None,
+) -> str:
+    """Return one compact summary for one due-task wake."""
+
+    label = _task_due_label(event, activation)
+    activation_description = (
+        activation.task_description
+        if activation and activation.task_description
+        else ""
+    )
+    return _compact_task_text(
+        event.task_summary or activation_description,
+        fallback=label,
+    )
+
+
+def _task_due_recurrence_hint(
+    event: TaskDue,
+    activation: TaskActivationSnapshot | None,
+) -> str:
+    """Return whether the due task should be treated as recurring or one-off."""
+
+    if activation and isinstance(activation.repeat, list) and activation.repeat:
+        return "recurring"
+    return event.recurrence_hint or "one_off"
+
+
+def _task_due_notification_text(
+    event: TaskDue,
+    activation: TaskActivationSnapshot | None,
+) -> str:
     """Return the slow-brain instruction for a validated due task."""
 
-    return (
-        f"Scheduled task {event.task_id} is due now "
-        f"(scheduled for {event.scheduled_for}). Start it by calling "
-        f"primitives.tasks.execute(task_id={event.task_id})."
+    label = _task_due_label(event, activation)
+    summary = _task_due_summary(event, activation)
+    parts = [f"Scheduled task due now: '{label}'."]
+    if summary and summary != label:
+        parts.append(f"Summary: {summary}.")
+    parts.append(f"Due time: {event.scheduled_for}.")
+    if _task_due_recurrence_hint(event, activation) == "recurring":
+        parts.append("This is a recurring task.")
+    if event.visibility_policy == "silent_by_default":
+        parts.append(
+            "Default behavior: work silently unless you genuinely need the user.",
+        )
+    parts.append(
+        f"If the task still applies, start it with primitives.tasks.execute(task_id={event.task_id}).",
     )
+    return " ".join(parts)
 
 
 def _task_due_fast_brain_context(
@@ -42,16 +114,41 @@ def _task_due_fast_brain_context(
 ) -> str:
     """Return the silent fast-brain context for one validated due task."""
 
-    label = (
-        activation.task_name
-        if activation and activation.task_name
-        else f"task {event.task_id}"
-    )
-    return (
-        f"Background context: scheduled {label} is due now "
-        f"(task_id={event.task_id}, scheduled_for={event.scheduled_for}). "
-        "The slow brain is handling the task wake reason."
-    )
+    label = _task_due_label(event, activation)
+    summary = _task_due_summary(event, activation)
+    parts = [f"Background context: the scheduled task '{label}' is due now."]
+    if summary and summary != label:
+        parts.append(f"Summary: {summary}.")
+    if _task_due_recurrence_hint(event, activation) == "recurring":
+        parts.append("This is a recurring task.")
+    if event.visibility_policy == "silent_by_default":
+        parts.append("Default is silent action unless the user is needed.")
+    parts.append("The slow brain is handling the wake reason.")
+    return " ".join(parts)
+
+
+def _activation_label(candidate: TaskActivationSnapshot) -> str:
+    """Return one human-facing label for a trigger candidate."""
+
+    return candidate.task_name or f"task {candidate.task_id}"
+
+
+def _activation_summary(candidate: TaskActivationSnapshot) -> str:
+    """Return one compact summary for a trigger candidate."""
+
+    label = _activation_label(candidate)
+    return _compact_task_text(candidate.task_description, fallback=label)
+
+
+def _describe_trigger_candidate(candidate: TaskActivationSnapshot) -> str:
+    """Render one live trigger candidate for slow-brain review."""
+
+    label = _activation_label(candidate)
+    summary = _activation_summary(candidate)
+    urgency = "interrupting" if candidate.interrupt else "non-interrupting"
+    if summary and summary != label:
+        return f"'{label}' ({urgency}): {summary}"
+    return f"'{label}' ({urgency})"
 
 
 def _trigger_candidate_fast_brain_context(
@@ -62,16 +159,22 @@ def _trigger_candidate_fast_brain_context(
 ) -> str:
     """Return silent fast-brain context for live trigger candidates."""
 
-    labels = [
-        candidate.task_name or f"task {candidate.task_id}"
-        for candidate in candidates[:5]
-    ]
-    if len(candidates) > 5:
-        labels.append("...")
+    candidate_descriptions = []
+    for candidate in candidates[:_TRIGGER_CONTEXT_CANDIDATE_LIMIT]:
+        label = _activation_label(candidate)
+        summary = _activation_summary(candidate)
+        if summary and summary != label:
+            candidate_descriptions.append(f"'{label}' ({summary})")
+        else:
+            candidate_descriptions.append(f"'{label}'")
+    if len(candidates) > _TRIGGER_CONTEXT_CANDIDATE_LIMIT:
+        candidate_descriptions.append("...")
+    candidate_text = "; ".join(candidate_descriptions)
     return (
         f"Background context: this {medium.value.replace('_', ' ')} from {sender_name} "
-        f"mechanically matches live trigger candidates: {', '.join(labels)}. "
-        "The slow brain is deciding whether a trigger truly applies."
+        f"may relate to live trigger candidates {candidate_text}. "
+        "The slow brain is still deciding whether the trigger truly applies. "
+        "Do not mention the task unless it naturally helps the conversation."
     )
 
 
@@ -149,7 +252,17 @@ def _task_due_event_from_wake_reason(reason: Any) -> TaskDue | None:
             scheduled_for=scheduled_for,
             execution_mode=str(reason.get("execution_mode") or "live"),
             source_type=str(reason.get("source_type") or "scheduled"),
-            reason=f"Scheduled task {task_id} became due.",
+            task_label=str(reason.get("task_label") or ""),
+            task_summary=str(reason.get("task_summary") or ""),
+            visibility_policy=str(
+                reason.get("visibility_policy") or "silent_by_default",
+            ),
+            recurrence_hint=str(reason.get("recurrence_hint") or "one_off"),
+            reason=(
+                f"Scheduled task '{reason['task_label']}' became due."
+                if reason.get("task_label")
+                else f"Scheduled task {task_id} became due."
+            ),
         )
     except (TypeError, ValueError):
         return None
@@ -177,7 +290,7 @@ async def _handle_task_due_event(event: TaskDue, cm: "ConversationManager") -> b
         return False
     cm.notifications_bar.push_notif(
         "Tasks",
-        _task_due_notification_text(event),
+        _task_due_notification_text(event, activation),
         event.timestamp,
     )
     cm._session_logger.info(
@@ -256,18 +369,19 @@ def _trigger_candidate_notification_text(
     """Return the slow-brain instruction for mechanically matched trigger tasks."""
 
     candidate_labels = [
-        f"{candidate.task_id} ({'interrupt' if candidate.interrupt else 'non-interrupt'})"
-        for candidate in candidates[:5]
+        _describe_trigger_candidate(candidate)
+        for candidate in candidates[:_TRIGGER_CONTEXT_CANDIDATE_LIMIT]
     ]
-    if len(candidates) > 5:
+    if len(candidates) > _TRIGGER_CONTEXT_CANDIDATE_LIMIT:
         candidate_labels.append("...")
-    task_word = "task" if len(candidates) == 1 else "tasks"
     return (
         f"This inbound {medium.value.replace('_', ' ')} from {sender_name} "
-        f"mechanically matches trigger criteria for {task_word} "
-        f"{', '.join(candidate_labels)}. Decide whether this communication truly "
-        "satisfies any candidate trigger based on the task descriptions and this "
-        "inbound. If yes, immediately start the matching task with "
+        "mechanically matched live trigger candidates. "
+        f"Candidates: {'; '.join(candidate_labels)}. "
+        "Why they matched: the inbound medium and sender fit these trigger filters. "
+        "Semantic judgement is still pending. Decide whether this communication "
+        "truly satisfies any candidate based on the task summaries and the inbound "
+        "itself. If yes, immediately start the best match with "
         "primitives.tasks.execute(task_id=<task_id>) and treat this inbound as the "
         "triggering communication."
     )
