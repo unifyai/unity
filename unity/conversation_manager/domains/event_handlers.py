@@ -17,7 +17,6 @@ from unity.conversation_manager.domains import managers_utils
 from unity.conversation_manager.domains.comms_utils import publish_system_error
 from unity.conversation_manager.domains.task_activation import (
     _consume_startup_wake_reasons,
-    _current_task_assistant_id,
     _handle_task_due_event,
     _surface_trigger_task_candidates,
 )
@@ -794,7 +793,7 @@ async def _(
         cm.call_manager.initial_notification = context
 
         whatsapp_number = contact.get("whatsapp_number")
-        assistant_id = _current_task_assistant_id() or ""
+        assistant_id = str(SESSION_DETAILS.assistant.agent_id)
         agent_name = SESSION_DETAILS.assistant.name or ""
         room_name = make_room_name(assistant_id, "whatsapp_call")
 

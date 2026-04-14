@@ -35,6 +35,7 @@ from unity.conversation_manager.events import (
     PhoneCallStarted,
     PhoneCallEnded,
     PhoneCallAnswered,
+    WhatsAppCallPermissionResponse,
     UnifyMeetReceived,
     UnifyMeetStarted,
     UnifyMeetEnded,
@@ -730,6 +731,45 @@ class TestPhoneCallHandlers:
             cancel_running=True,
             triggering_contact_id=2,
         )
+
+    @pytest.mark.asyncio
+    async def test_whatsapp_permission_keeps_legacy_room_name_when_agent_id_missing(
+        self,
+        mock_cm,
+    ):
+        """Accepted WhatsApp permission should preserve the pre-refactor room-name fallback."""
+
+        mock_cm._pending_whatsapp_call_contexts = {2: "pending call context"}
+        mock_cm._event_broker = mock_cm.event_broker
+        event = WhatsAppCallPermissionResponse(
+            contact={
+                "contact_id": 2,
+                "first_name": "Alice",
+                "surname": "Smith",
+                "whatsapp_number": "+15555552222",
+            },
+            accepted=True,
+        )
+
+        with (
+            patch(
+                "unity.conversation_manager.domains.comms_utils.start_whatsapp_call",
+                new_callable=AsyncMock,
+                return_value={"success": True},
+            ) as mock_start_whatsapp_call,
+            patch(
+                "unity.conversation_manager.domains.event_handlers.SESSION_DETAILS",
+            ) as mock_session_details,
+        ):
+            mock_session_details.assistant.agent_id = None
+            mock_session_details.assistant.name = "Test Assistant"
+
+            await EventHandler.handle_event(event, mock_cm)
+
+        assert mock_start_whatsapp_call.await_args.kwargs["room_name"] == (
+            "unity_None_whatsapp_call"
+        )
+        mock_cm.request_llm_run.assert_not_called()
 
 
 # =============================================================================
