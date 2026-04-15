@@ -69,11 +69,15 @@ class ParseConfig(BaseModel):
 
     # Per-subprocess virtual-address-space cap expressed as a fraction of total
     # system RAM.  Applied via resource.setrlimit(RLIMIT_AS, ...) on Linux.
-    # Disabled by default because RLIMIT_AS limits *virtual* address space
-    # (not RSS), and Python + Docling routinely map 4–8 GB of virtual memory
-    # even when RSS is well under 1 GB.  Enable and tune this only in
-    # environments where you have measured the baseline virtual footprint.
-    max_subprocess_memory_pct: Optional[float] = None
+    # Defaulted on for Linux subprocess workers so oversized parses fail inside
+    # the child process instead of letting the kernel OOM killer destabilize the
+    # entire host.  Unsupported platforms remain best-effort no-ops.
+    max_subprocess_memory_pct: Optional[float] = 0.70
+
+    # Total memory budget for concurrently submitted "light" files.  The batch
+    # scheduler groups light files into waves whose combined estimated peak
+    # memory stays under this fraction of system RAM.
+    light_file_memory_pct: float = 0.60
 
     # Maximum wall-clock seconds to wait for a single subprocess parse to
     # finish.  If a child process hangs (e.g., MemoryError leaves it wedged),
