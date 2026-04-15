@@ -334,6 +334,41 @@ class DiagnosticsConfig(BaseModel):
     run_ledger_file: Optional[str] = None
 
 
+class CostRateCardConfig(BaseModel):
+    """Versioned local rate card used for immediate pipeline cost estimates."""
+
+    version: str = "local-default-v1"
+    currency: str = "USD"
+    parse_cpu_per_second: float = 0.000011
+    parse_memory_gb_second: float = 0.0000015
+    artifact_storage_gb_month: float = 0.020
+    row_ingest_request: float = 0.0005
+    row_ingest_row: float = 0.000001
+    embedding_row: float = 0.00002
+    llm_enrichment_call: float = 0.002
+    observability_event: float = 0.0000005
+
+
+class CostLedgerConfig(BaseModel):
+    """Controls optional per-run cost estimation output.
+
+    - enable_cost_ledger: when True, emit a typed per-run estimated cost ledger.
+    - cost_ledger_file: destination JSONL path for ledger output. If omitted,
+      an auto-generated file is created under `logs/file_manager_runs/`.
+    - environment: environment tag recorded on the ledger for later reconciliation.
+    - tenant_id: optional tenant/customer identifier for downstream joins.
+    - artifact_retention_days: assumed retention window for artifact storage estimates.
+    - rate_card: local versioned unit-cost rates used for immediate estimates.
+    """
+
+    enable_cost_ledger: bool = False
+    cost_ledger_file: Optional[str] = None
+    environment: str = "local"
+    tenant_id: Optional[str] = None
+    artifact_retention_days: int = 30
+    rate_card: CostRateCardConfig = CostRateCardConfig()
+
+
 class ExecutionConfig(BaseModel):
     """Controls pipeline execution behavior.
 
@@ -393,6 +428,7 @@ class FilePipelineConfig(BaseModel):
     output: OutputConfig = OutputConfig()
     transport: TransportConfig = TransportConfig()
     diagnostics: DiagnosticsConfig = DiagnosticsConfig()
+    cost: CostLedgerConfig = CostLedgerConfig()
     execution: ExecutionConfig = ExecutionConfig()
     retry: RetryConfig = RetryConfig()
 
@@ -440,6 +476,7 @@ class FilePipelineConfig(BaseModel):
             output: Optional[Dict[str, Any]] = None
             transport: Optional[Dict[str, Any]] = None
             diagnostics: Optional[Dict[str, Any]] = None
+            cost: Optional[Dict[str, Any]] = None
             execution: Optional[Dict[str, Any]] = None
             retry: Optional[Dict[str, Any]] = None
 
@@ -603,6 +640,27 @@ class FilePipelineConfig(BaseModel):
                 cfg.diagnostics.run_ledger_file = config_file.diagnostics[
                     "run_ledger_file"
                 ]
+
+        # Cost ledger config
+        if config_file.cost:
+            if "enable_cost_ledger" in config_file.cost:
+                cfg.cost.enable_cost_ledger = config_file.cost["enable_cost_ledger"]
+            if "cost_ledger_file" in config_file.cost:
+                cfg.cost.cost_ledger_file = config_file.cost["cost_ledger_file"]
+            if "environment" in config_file.cost:
+                cfg.cost.environment = str(config_file.cost["environment"])
+            if "tenant_id" in config_file.cost:
+                tenant_id = config_file.cost["tenant_id"]
+                cfg.cost.tenant_id = str(tenant_id) if tenant_id is not None else None
+            if "artifact_retention_days" in config_file.cost:
+                cfg.cost.artifact_retention_days = int(
+                    config_file.cost["artifact_retention_days"],
+                )
+            rate_card = config_file.cost.get("rate_card")
+            if isinstance(rate_card, dict):
+                for key, value in rate_card.items():
+                    if hasattr(cfg.cost.rate_card, key):
+                        setattr(cfg.cost.rate_card, key, value)
 
         # Execution config
         if config_file.execution:

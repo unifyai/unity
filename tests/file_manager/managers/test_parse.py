@@ -124,6 +124,132 @@ async def test_parse_can_emit_run_ledger(file_manager, tmp_path: Path):
     assert file_records[0]["status"] == "success"
 
 
+@pytest.mark.asyncio
+async def test_parse_can_emit_correlated_progress_events(file_manager, tmp_path: Path):
+    from unittest.mock import patch
+
+    csv = tmp_path / "people.csv"
+    csv.write_text("Name,Age,City\nJohn,30,NYC\nJane,25,LDN\n", encoding="utf-8")
+    progress_path = tmp_path / "progress.jsonl"
+
+    from unity.file_manager.types import FilePipelineConfig
+
+    cfg = FilePipelineConfig(
+        diagnostics={
+            "enable_progress": True,
+            "progress_mode": "json_file",
+            "progress_file": str(progress_path),
+            "verbosity": "high",
+        },
+    )
+
+    with patch(
+        "unity.file_manager.parse_adapter.lowering.content_rows.summarize_table_profile",
+        return_value="stub table summary",
+    ):
+        result = file_manager.ingest_files(str(csv), config=cfg)
+
+    assert result[str(csv)].status == "success"
+    assert progress_path.exists()
+
+    events = [
+        json.loads(line)
+        for line in progress_path.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    assert events
+    assert all(event.get("event_id") for event in events)
+
+    run_ids = {event["run_id"] for event in events if event.get("run_id")}
+    assert len(run_ids) == 1
+
+    parse_events = [event for event in events if event["phase"] == "parse"]
+    assert {event["status"] for event in parse_events} >= {"started", "completed"}
+
+    stage_events = [
+        event
+        for event in events
+        if event["phase"] in {"file_record", "ingest_content", "ingest_table"}
+    ]
+    assert stage_events
+    assert all(event.get("stage_id") for event in stage_events)
+    assert all(event.get("file_id") is not None for event in stage_events)
+    assert all(event.get("storage_id") for event in stage_events)
+
+    table_events = [event for event in events if event["phase"] == "ingest_table"]
+    assert table_events
+    assert table_events[0].get("table_id")
+    assert table_events[0]["meta"]["table_label"] == "people"
+    assert table_events[0]["meta"]["row_count"] == 2
+
+    file_complete = [event for event in events if event["phase"] == "file_complete"]
+    assert file_complete
+    assert file_complete[0]["status"] == "completed"
+    assert file_complete[0]["meta"]["parse_backend"] == "native_csv_backend"
+
+
+@pytest.mark.asyncio
+async def test_parse_can_emit_estimated_cost_ledger(file_manager, tmp_path: Path):
+    from unittest.mock import patch
+
+    csv = tmp_path / "cost_people.csv"
+    csv.write_text("Name,Age,City\nJohn,30,NYC\nJane,25,LDN\n", encoding="utf-8")
+    cost_ledger_path = tmp_path / "cost_ledger.jsonl"
+    artifact_root = tmp_path / "artifacts"
+
+    from unity.file_manager.types import FilePipelineConfig
+
+    cfg = FilePipelineConfig(
+        transport={
+            "table_input_mode": "materialized_artifact",
+            "artifact_root_dir": str(artifact_root),
+        },
+        cost={
+            "enable_cost_ledger": True,
+            "cost_ledger_file": str(cost_ledger_path),
+            "tenant_id": "tenant-local",
+            "environment": "test",
+        },
+    )
+
+    with patch(
+        "unity.file_manager.parse_adapter.lowering.content_rows.summarize_table_profile",
+        return_value="stub table summary",
+    ):
+        result = file_manager.ingest_files(str(csv), config=cfg)
+
+    assert result[str(csv)].status == "success"
+    assert cost_ledger_path.exists()
+
+    ledgers = [
+        json.loads(line)
+        for line in cost_ledger_path.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    assert len(ledgers) == 1
+
+    ledger = ledgers[0]
+    assert ledger["record_type"] == "cost_ledger"
+    assert ledger["tenant_id"] == "tenant-local"
+    assert ledger["environment"] == "test"
+    assert ledger["estimated_total"] > 0
+
+    line_items = ledger["line_items"]
+    components = {item["component"] for item in line_items}
+    assert "parse_compute_cpu" in components
+    assert "parse_compute_memory" in components
+    assert "artifact_storage" in components
+    assert "row_ingest_requests" in components
+    assert "row_ingest_storage" in components
+    assert "observability" in components
+
+    artifact_item = next(
+        item for item in line_items if item["component"] == "artifact_storage"
+    )
+    assert artifact_item["meta"]["artifact_bytes"] > 0
+    assert artifact_item["meta"]["artifact_count"] == 1
+
+
 def test_executor_retry_policy_retries_transient_errors_and_stops_on_non_retryable():
     from unity.file_manager.managers.utils.executor import _run_with_retry
     from unity.file_manager.types import RetryConfig
