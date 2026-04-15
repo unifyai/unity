@@ -97,7 +97,17 @@ class BaseDocumentBackend(BaseFileParserBackend):
 
             docling_doc = None
             with traced_step(trace, name="docling_convert") as step:
-                conv = docling_convert(converter=converter, source=str(path))
+                conv = docling_convert(
+                    converter=converter,
+                    source=str(path),
+                    settings=FILE_PARSER_SETTINGS,
+                )
+                if conv.warnings:
+                    step.warnings.extend(list(conv.warnings))
+                    trace.warnings.extend(list(conv.warnings))
+                if conv.status == "partial_success":
+                    step.status = StepStatus.DEGRADED
+                    trace.status = StepStatus.DEGRADED
                 if not conv.ok or conv.document is None:
                     if self.allow_text_fallback_on_convert_failure:
                         step.status = StepStatus.DEGRADED
