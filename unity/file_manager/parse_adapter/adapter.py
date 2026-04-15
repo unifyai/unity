@@ -30,6 +30,8 @@ from unity.file_manager.file_parsers.types.table import ExtractedTable
 from unity.file_manager.pipeline import (
     CsvFileHandle,
     InlineRowsHandle,
+    LocalArtifactStore,
+    ObjectStoreArtifactHandle,
     ParsedFileBundle,
     XlsxSheetHandle,
 )
@@ -76,7 +78,7 @@ def adapt_parse_result_for_file_manager(
 
     # Tables remain semantic at the parser boundary; transport handles live in the bundle.
     tables = list(getattr(parse_result, "tables", []) or [])
-    bundle = _build_parsed_file_bundle(parse_result, tables=tables)
+    bundle = _build_parsed_file_bundle(parse_result, tables=tables, config=config)
 
     if getattr(parse_result, "status", "error") != "success":
         return AdaptedParseOutput(
@@ -126,14 +128,19 @@ def _build_parsed_file_bundle(
     parse_result: FileParseResult,
     *,
     tables: List[ExtractedTable],
+    config: FilePipelineConfig,
 ) -> ParsedFileBundle:
     table_inputs = {}
     fmt = getattr(parse_result, "file_format", None)
     trace = getattr(parse_result, "trace", None)
     source_local_path = _resolve_source_local_path(trace)
     storage_uri = _to_storage_uri(source_local_path)
+    logical_path = str(getattr(parse_result, "logical_path", "") or "")
+    artifact_store = _build_artifact_store(config)
+    parse_succeeded = getattr(parse_result, "status", "error") == "success"
 
     for index, table in enumerate(tables, start=1):
+        table_id = str(getattr(table, "table_id", f"table:{index}"))
         rows = list(getattr(table, "rows", []) or [])
         row_count = getattr(table, "num_rows", None)
         if row_count is None:
@@ -180,7 +187,19 @@ def _build_parsed_file_bundle(
                 row_count=row_count,
             )
 
-        table_inputs[str(getattr(table, "table_id", f"table:{index}"))] = handle
+        if (
+            artifact_store is not None
+            and parse_succeeded
+            and _can_materialize_handle(handle)
+        ):
+            handle = artifact_store.materialize_table_input(
+                handle,
+                logical_path=logical_path,
+                table_id=table_id,
+                artifact_format=config.transport.artifact_format,
+            )
+
+        table_inputs[table_id] = handle
 
     return ParsedFileBundle(result=parse_result, table_inputs=table_inputs)
 
@@ -195,6 +214,24 @@ def _to_storage_uri(source_local_path: str) -> str:
     if not source_local_path:
         return ""
     return Path(source_local_path).expanduser().resolve().as_uri()
+
+
+def _build_artifact_store(config: FilePipelineConfig) -> LocalArtifactStore | None:
+    if getattr(config.transport, "table_input_mode", "source_reference") != (
+        "materialized_artifact"
+    ):
+        return None
+    return LocalArtifactStore(root_dir=config.transport.artifact_root_dir)
+
+
+def _can_materialize_handle(
+    handle: (
+        InlineRowsHandle | CsvFileHandle | XlsxSheetHandle | ObjectStoreArtifactHandle
+    ),
+) -> bool:
+    if isinstance(handle, InlineRowsHandle):
+        return bool(handle.rows)
+    return True
 
 
 def _detect_csv_dialect(path: Path) -> dict[str, object]:

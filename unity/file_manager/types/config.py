@@ -283,6 +283,30 @@ class OutputConfig(BaseModel):
     return_mode: Literal["compact", "full", "none"] = "compact"
 
 
+class TransportConfig(BaseModel):
+    """Controls how table payloads cross the parser -> ingest boundary.
+
+    table_input_mode:
+        - "source_reference" (default): large tables stream from the original source.
+        - "materialized_artifact": table inputs are copied into a local artifact file
+          and then referenced via ``ObjectStoreArtifactHandle``.
+
+    artifact_format:
+        - "jsonl": newline-delimited JSON rows for local, portable artifact
+          materialization. This mode is opt-in and disabled by default.
+
+    artifact_root_dir:
+        Root directory for materialized table artifacts when
+        ``table_input_mode == "materialized_artifact"``.
+    """
+
+    table_input_mode: Literal["source_reference", "materialized_artifact"] = (
+        "source_reference"
+    )
+    artifact_format: Literal["jsonl"] = "jsonl"
+    artifact_root_dir: str = "logs/file_manager_artifacts"
+
+
 class DiagnosticsConfig(BaseModel):
     """Controls optional pipeline diagnostics output.
 
@@ -297,12 +321,17 @@ class DiagnosticsConfig(BaseModel):
         - "low" (default): minimal events (file_path, phase, status, timestamp)
         - "medium": detailed (include chunk numbers, row counts, table labels, durations)
         - "high": verbose (all metadata plus intermediate step details)
+    - enable_run_ledger: when True, emit typed JSONL run/file/stage manifests.
+    - run_ledger_file: path for JSON-lines run manifest output. If not provided,
+      an auto-generated file is created under `logs/file_manager_runs/`.
     """
 
     enable_progress: bool = False
     progress_mode: Literal["json_file", "callback", "off"] = "json_file"
     progress_file: Optional[str] = None
     verbosity: Literal["low", "medium", "high"] = "low"
+    enable_run_ledger: bool = False
+    run_ledger_file: Optional[str] = None
 
 
 class ExecutionConfig(BaseModel):
@@ -352,6 +381,7 @@ class FilePipelineConfig(BaseModel):
     ingest: IngestConfig = IngestConfig()
     embed: EmbeddingsConfig = EmbeddingsConfig()
     output: OutputConfig = OutputConfig()
+    transport: TransportConfig = TransportConfig()
     diagnostics: DiagnosticsConfig = DiagnosticsConfig()
     execution: ExecutionConfig = ExecutionConfig()
     retry: RetryConfig = RetryConfig()
@@ -398,6 +428,7 @@ class FilePipelineConfig(BaseModel):
             ingest: Optional[Dict[str, Any]] = None
             embed: Optional[Dict[str, Any]] = None
             output: Optional[Dict[str, Any]] = None
+            transport: Optional[Dict[str, Any]] = None
             diagnostics: Optional[Dict[str, Any]] = None
             execution: Optional[Dict[str, Any]] = None
             retry: Optional[Dict[str, Any]] = None
@@ -529,6 +560,19 @@ class FilePipelineConfig(BaseModel):
             if "return_mode" in config_file.output:
                 cfg.output.return_mode = config_file.output["return_mode"]
 
+        # Transport config
+        if config_file.transport:
+            if "table_input_mode" in config_file.transport:
+                cfg.transport.table_input_mode = config_file.transport[
+                    "table_input_mode"
+                ]
+            if "artifact_format" in config_file.transport:
+                cfg.transport.artifact_format = config_file.transport["artifact_format"]
+            if "artifact_root_dir" in config_file.transport:
+                cfg.transport.artifact_root_dir = str(
+                    config_file.transport["artifact_root_dir"],
+                )
+
         # Diagnostics config
         if config_file.diagnostics:
             if "enable_progress" in config_file.diagnostics:
@@ -541,6 +585,14 @@ class FilePipelineConfig(BaseModel):
                 cfg.diagnostics.progress_file = config_file.diagnostics["progress_file"]
             if "verbosity" in config_file.diagnostics:
                 cfg.diagnostics.verbosity = config_file.diagnostics["verbosity"]
+            if "enable_run_ledger" in config_file.diagnostics:
+                cfg.diagnostics.enable_run_ledger = config_file.diagnostics[
+                    "enable_run_ledger"
+                ]
+            if "run_ledger_file" in config_file.diagnostics:
+                cfg.diagnostics.run_ledger_file = config_file.diagnostics[
+                    "run_ledger_file"
+                ]
 
         # Execution config
         if config_file.execution:
