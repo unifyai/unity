@@ -84,6 +84,7 @@ def ensure_forkserver_preload() -> None:
                 "docling.document_converter",
                 "docling.datamodel.pipeline_options",
                 "docling.datamodel.base_models",
+                "polars",
             ],
         )
     except (RuntimeError, ValueError):
@@ -103,6 +104,7 @@ def warm_imports() -> None:
     import docling.document_converter  # noqa: F401
     import docling.datamodel.pipeline_options  # noqa: F401
     import docling.datamodel.base_models  # noqa: F401
+    import polars  # noqa: F401
 
 
 # ---------------------------------------------------------------------------
@@ -125,7 +127,12 @@ def apply_memory_limit(parse_config: Optional["ParseConfig"]) -> None:
     if platform.system() != "Linux" or _resource is None:
         return
     try:
-        limit = int(psutil.virtual_memory().total * pct)
+        total_memory = psutil.virtual_memory().total
+        limit = max(int(total_memory * pct), 1 << 30)
+        current_soft, current_hard = _resource.getrlimit(_resource.RLIMIT_AS)
+        hard_limit = current_hard
+        if hard_limit not in (-1, _resource.RLIM_INFINITY):
+            limit = min(limit, int(hard_limit))
         _resource.setrlimit(_resource.RLIMIT_AS, (limit, limit))
     except Exception as exc:
         logger.debug("Could not set RLIMIT_AS: %s", exc)
@@ -154,13 +161,41 @@ def subprocess_parse_single(
     ``ProcessPoolExecutor`` workers may not run ``atexit`` handlers
     reliably when ``max_tasks_per_child=1`` causes the child to exit.
     """
+    from pathlib import Path
+
     from unity.file_manager.file_parsers.file_parser import FileParser
+    from unity.file_manager.file_parsers.registry import BackendRegistry
+    from unity.file_manager.file_parsers.types.formats import (
+        FileFormat,
+        extension_to_format,
+    )
     from unity.file_manager.file_parsers.utils.diagnostics import flush_writer
 
     parser = FileParser()
+    registry = (
+        BackendRegistry.from_config(
+            backend_class_paths_by_format=getattr(
+                parse_config,
+                "backend_class_paths_by_format",
+                None,
+            ),
+        )
+        if parse_config is not None
+        else parser._default_registry
+    )
+
+    source_path = Path(request.source_local_path).expanduser().resolve()
+    fmt = request.file_format or extension_to_format(source_path.suffix)
+    if fmt == FileFormat.UNKNOWN:
+        fmt = FileFormat.TXT
+
+    # Warm the selected backend import before RLIMIT_AS is installed. Backends
+    # are loaded lazily, so applying the memory cap first can make even the
+    # import itself fail (for example when importing polars or Docling).
+    parser._pick_backend(fmt, registry=registry)
     apply_memory_limit(parse_config)
-    # parser.parse() already calls save_result_to_disk() internally
-    result = parser.parse(request, parse_config=parse_config)
+    # _parse_single() already calls save_result_to_disk() internally.
+    result = parser._parse_single(request, registry=registry)
     flush_writer()
     return result
 

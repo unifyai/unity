@@ -56,9 +56,23 @@ def classify_file(
         file_size = os.path.getsize(request.source_local_path)
     except OSError:
         return "light"
-    estimated_peak = file_size * config.expansion_factor
+    estimated_peak = estimate_peak_memory_bytes(request, config=config)
     threshold = sys_memory * config.heavy_file_memory_pct
     return "heavy" if estimated_peak > threshold else "light"
+
+
+def estimate_peak_memory_bytes(
+    request: "FileParseRequest",
+    *,
+    config: "ParseConfig",
+) -> int:
+    """Estimate peak parse memory for a request using on-disk size expansion."""
+
+    try:
+        file_size = os.path.getsize(request.source_local_path)
+    except OSError:
+        return 0
+    return int(file_size * config.expansion_factor)
 
 
 def fmt_bytes(n: int) -> str:
