@@ -43,6 +43,7 @@ from unity.file_manager.file_parsers.types.formats import (
 from unity.file_manager.file_parsers.utils.diagnostics import save_result_to_disk
 from unity.file_manager.file_parsers.utils.memory_scheduler import (
     classify_file,
+    estimate_peak_memory_bytes,
     fmt_bytes,
     get_system_memory_bytes,
 )
@@ -354,6 +355,17 @@ class FileParser:
         use_subprocess = bool(
             getattr(parse_config, "subprocess_isolation", False),
         )
+        if use_subprocess and self._backends is not None:
+            logger.debug(
+                "Ignoring subprocess isolation because FileParser is using injected backends",
+            )
+            use_subprocess = False
+        bound_parse_single = getattr(self._parse_single, "__func__", None)
+        if use_subprocess and bound_parse_single is not FileParser._parse_single:
+            logger.debug(
+                "Ignoring subprocess isolation because FileParser._parse_single is overridden",
+            )
+            use_subprocess = False
 
         reg = (
             BackendRegistry.from_config(
@@ -378,8 +390,20 @@ class FileParser:
             min(int(requested) if isinstance(requested, int) else 1, 8),
         )
 
+        # Single-file parse never benefits from the batch subprocess scheduler.
+        # Run it directly so interactive call sites avoid extra worker lifecycle
+        # overhead and subprocess-only failure modes.
+        if len(reqs) <= 1:
+            outcomes: List[FileParseResult] = []
+            for req in reqs:
+                out = self._parse_single(req, registry=reg)
+                if raises_on_error and out.status == "error":
+                    raise RuntimeError(out.error or "parse failed")
+                outcomes.append(out)
+            return outcomes
+
         # Sequential fallback (no subprocess isolation needed for serial)
-        if (workers <= 1 or len(reqs) <= 1) and not use_subprocess:
+        if workers <= 1 and not use_subprocess:
             outcomes: List[FileParseResult] = []
             for req in reqs:
                 out = self._parse_single(req, registry=reg)
@@ -463,11 +487,31 @@ class FileParser:
         results: List[Optional[FileParseResult]] = [None] * len(reqs)
         pool_needs_reset = False
 
-        # Light files — dispatched concurrently to the pool.
-        if light:
-            pool = get_or_create_pool(effective_workers)
+        light_waves, light_budget_bytes = _partition_light_requests(
+            light,
+            config=config,
+            sys_memory=sys_mem,
+            max_workers=effective_workers,
+        )
+        if light_waves and len(light_waves) > 1:
+            logger.info(
+                "Adaptive light scheduler: %d waves for %d light files "
+                "(budget=%s, max_workers=%d)",
+                len(light_waves),
+                len(light),
+                fmt_bytes(light_budget_bytes),
+                effective_workers,
+            )
+
+        # Light files — dispatched concurrently to the pool in memory-bounded waves.
+        for wave in light_waves:
+            if pool_needs_reset:
+                force_reset_pool(effective_workers)
+                pool_needs_reset = False
+
+            pool = get_or_create_pool(max(1, min(effective_workers, len(wave))))
             light_futures: List[Tuple[Future, int]] = []  # type: ignore[type-arg]
-            for idx, req in light:
+            for idx, req in wave:
                 try:
                     fut = pool.submit(
                         subprocess_parse_single,
@@ -632,6 +676,51 @@ def _collect_future(
     if raises_on_error and out.status == "error":
         raise RuntimeError(out.error or "parse failed")
     return out, pool_needs_reset
+
+
+def _partition_light_requests(
+    light: List[Tuple[int, FileParseRequest]],
+    *,
+    config: ParseConfig,
+    sys_memory: int,
+    max_workers: int,
+) -> Tuple[List[List[Tuple[int, FileParseRequest]]], int]:
+    """Group light files into memory-bounded concurrency waves."""
+
+    if not light:
+        return [], 0
+
+    budget_bytes = max(int(sys_memory * config.light_file_memory_pct), 1)
+    waves: List[List[Tuple[int, FileParseRequest]]] = []
+    current_wave: List[Tuple[int, FileParseRequest]] = []
+    current_bytes = 0
+
+    for item in light:
+        idx, req = item
+        estimated_bytes = max(
+            estimate_peak_memory_bytes(req, config=config),
+            1,
+        )
+        exceeds_wave_budget = (
+            current_wave and current_bytes + estimated_bytes > budget_bytes
+        )
+        if exceeds_wave_budget or len(current_wave) >= max_workers:
+            waves.append(current_wave)
+            current_wave = []
+            current_bytes = 0
+
+        current_wave.append((idx, req))
+        current_bytes += estimated_bytes
+
+        if len(current_wave) >= max_workers:
+            waves.append(current_wave)
+            current_wave = []
+            current_bytes = 0
+
+    if current_wave:
+        waves.append(current_wave)
+
+    return waves, budget_bytes
 
 
 def _error_result(req: FileParseRequest, warning: str) -> FileParseResult:
