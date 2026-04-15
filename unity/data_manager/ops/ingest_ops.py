@@ -28,7 +28,7 @@ import logging
 import threading
 import time
 import uuid
-from typing import Any, Dict, List, Optional, TYPE_CHECKING
+from typing import Any, Dict, List, Literal, Optional, TYPE_CHECKING
 
 import unify as _unify
 
@@ -109,6 +109,24 @@ def _chunk_rows(
 ) -> List[List[Dict[str, Any]]]:
     """Split *rows* into sublists of at most *chunk_size* elements."""
     return [rows[i : i + chunk_size] for i in range(0, len(rows), chunk_size)]
+
+
+def _chunk_ids(ids: List[int], batch_size: int) -> List[List[int]]:
+    """Split log IDs into embedding-sized batches."""
+    return [ids[i : i + batch_size] for i in range(0, len(ids), batch_size)]
+
+
+def _should_serialize_insert_chunks(
+    *,
+    auto_counting: Optional[Dict[str, Optional[str]]],
+    insert_parallelism: Literal["auto", "serial", "parallel"],
+) -> bool:
+    """Decide whether insert chunks must run sequentially."""
+    if insert_parallelism == "serial":
+        return True
+    if insert_parallelism == "parallel":
+        return False
+    return bool(auto_counting)
 
 
 def _derive_target_name(field_name: str, suffix: str) -> str:
@@ -268,6 +286,8 @@ def _make_embed_func(
     async_embeddings: bool = True,
     ids_store: Optional[_InsertedIdsStore] = None,
     insert_task_id: Optional[str] = None,
+    embedding_batch_size: int = 1000,
+    sync_first_batch: bool = False,
 ):
     """Return a zero-arg callable that embeds columns for specific rows.
 
@@ -309,17 +329,25 @@ def _make_embed_func(
             logger.info("No row IDs to embed for %s -- skipping", context)
             return {"rows_embedded": 0}
 
+        id_batches = _chunk_ids(from_ids, embedding_batch_size)
+
         def _do_col(col: str) -> int:
             target = f"_{col}_emb"
-            _ensure_vector_column(
-                context=context,
-                embed_column=target,
-                source_column=col,
-                derived_expr=None,
-                from_ids=from_ids,
-                async_embeddings=async_embeddings,
-            )
-            return len(from_ids)
+            embedded = 0
+            for batch_index, id_batch in enumerate(id_batches):
+                batch_async = async_embeddings
+                if sync_first_batch and batch_index == 0:
+                    batch_async = False
+                _ensure_vector_column(
+                    context=context,
+                    embed_column=target,
+                    source_column=col,
+                    derived_expr=None,
+                    from_ids=id_batch,
+                    async_embeddings=batch_async,
+                )
+                embedded += len(id_batch)
+            return embedded
 
         if len(embed_columns) == 1:
             total = _do_col(embed_columns[0])
@@ -350,6 +378,8 @@ def _build_ingest_graph(
     infer_untyped_fields: bool,
     add_to_all_context: bool = False,
     total_rows: int = 0,
+    insert_parallelism: Literal["auto", "serial", "parallel"] = "auto",
+    embedding_batch_size: int = 1000,
 ) -> TaskGraph:
     """Build a :class:`TaskGraph` for a full ingest operation.
 
@@ -385,12 +415,16 @@ def _build_ingest_graph(
     )
 
     # -- insert chunks ------------------------------------------------------
-    # Inserts are chained (each depends on the previous) so the backend's
-    # auto_counting counter advances atomically between batches.  Embed
-    # chunks still pipeline: embed_N starts as soon as insert_N finishes,
-    # overlapping with insert_N+1.
+    # Insert ordering is execution-configurable:
+    # - serial: every chunk depends on the previous chunk
+    # - parallel: every chunk fans out from create_table
+    # - auto: serial only when auto_counting is configured
     insert_ids: List[str] = []
     pad = len(str(total_chunks - 1)) if total_chunks > 0 else 1
+    serialize_inserts = _should_serialize_insert_chunks(
+        auto_counting=auto_counting,
+        insert_parallelism=insert_parallelism,
+    )
     prev_insert_id = create_id
     for idx, chunk in enumerate(chunks):
         task_id = f"insert_chunk_{idx:0{pad}d}_{nonce}"
@@ -405,30 +439,28 @@ def _build_ingest_graph(
                     ids_store=ids_store,
                     task_id=task_id,
                 ),
-                dependencies={prev_insert_id},
+                dependencies={prev_insert_id} if serialize_inserts else {create_id},
                 metadata={
                     "context": context,
                     "chunk_index": idx,
                     "chunk_size": len(chunk),
                     "total_chunks": total_chunks,
                     "total_rows": total_rows,
+                    "insert_parallelism": (
+                        "serial" if serialize_inserts else "parallel"
+                    ),
                 },
             ),
         )
         insert_ids.append(task_id)
-        prev_insert_id = task_id
+        if serialize_inserts:
+            prev_insert_id = task_id
 
     # -- optional embedding -------------------------------------------------
     if embed_columns:
         if embed_strategy == "along":
             for idx, ins_id in enumerate(insert_ids):
                 embed_task_id = f"embed_chunk_{idx:0{pad}d}_{nonce}"
-                # First chunk uses sync embeddings to guarantee the
-                # FieldType (field_category="derived_entry") is created
-                # via Orchestra's sync path.  The async path queues
-                # embeddings but returns NULLs which can prevent
-                # FieldType creation.  Subsequent chunks use async.
-                use_async = idx > 0
                 graph.add_task(
                     Task(
                         id=embed_task_id,
@@ -436,9 +468,11 @@ def _build_ingest_graph(
                         func=_make_embed_func(
                             context,
                             embed_columns,
-                            async_embeddings=use_async,
+                            async_embeddings=True,
                             ids_store=ids_store,
                             insert_task_id=ins_id,
+                            embedding_batch_size=embedding_batch_size,
+                            sync_first_batch=(idx == 0),
                         ),
                         dependencies={ins_id},
                         metadata={
@@ -447,6 +481,7 @@ def _build_ingest_graph(
                             "total_chunks": total_chunks,
                             "embed_columns": embed_columns,
                             "depends_on_ingest": ins_id,
+                            "embedding_batch_size": embedding_batch_size,
                         },
                     ),
                 )
@@ -458,7 +493,10 @@ def _build_ingest_graph(
                     func=_make_embed_func(
                         context,
                         embed_columns,
+                        async_embeddings=True,
                         ids_store=ids_store,
+                        embedding_batch_size=embedding_batch_size,
+                        sync_first_batch=True,
                     ),
                     dependencies=set(insert_ids),
                     metadata={
@@ -466,6 +504,7 @@ def _build_ingest_graph(
                         "strategy": "after",
                         "embed_columns": embed_columns,
                         "total_rows": total_rows,
+                        "embedding_batch_size": embedding_batch_size,
                     },
                 ),
             )
@@ -649,6 +688,8 @@ def run_ingest(
         infer_untyped_fields=infer_untyped_fields,
         add_to_all_context=add_to_all_context,
         total_rows=len(rows),
+        insert_parallelism=exec_cfg.insert_parallelism,
+        embedding_batch_size=exec_cfg.embedding_batch_size,
     )
 
     executor = PipelineExecutor(config=pipeline_cfg, on_task_complete=on_task_complete)

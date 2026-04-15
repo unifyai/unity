@@ -144,6 +144,8 @@ def test_ingest_execution_config_defaults():
     assert cfg.max_retries == 3
     assert cfg.retry_delay_seconds == 3.0
     assert cfg.fail_fast is False
+    assert cfg.insert_parallelism == "auto"
+    assert cfg.embedding_batch_size == 1000
 
 
 def test_ingest_execution_config_custom():
@@ -153,12 +155,16 @@ def test_ingest_execution_config_custom():
         max_retries=5,
         retry_delay_seconds=1.0,
         fail_fast=True,
+        insert_parallelism="parallel",
+        embedding_batch_size=250,
     )
 
     assert cfg.max_workers == 8
     assert cfg.max_retries == 5
     assert cfg.retry_delay_seconds == 1.0
     assert cfg.fail_fast is True
+    assert cfg.insert_parallelism == "parallel"
+    assert cfg.embedding_batch_size == 250
 
 
 def test_ingest_execution_config_validation():
@@ -173,6 +179,12 @@ def test_ingest_execution_config_validation():
 
     with pytest.raises(Exception):
         IngestExecutionConfig(retry_delay_seconds=-0.5)  # ge=0.0
+
+    with pytest.raises(Exception):
+        IngestExecutionConfig(insert_parallelism="invalid")
+
+    with pytest.raises(Exception):
+        IngestExecutionConfig(embedding_batch_size=0)
 
 
 # ────────────────────────────────────────────────────────────────────────────
