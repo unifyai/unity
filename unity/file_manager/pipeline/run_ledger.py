@@ -14,7 +14,11 @@ class PipelineStageManifest(BaseModel):
 
     record_type: Literal["stage"] = "stage"
     run_id: str
+    stage_id: str | None = None
     file_path: str
+    file_id: int | None = None
+    storage_id: str | None = None
+    table_id: str | None = None
     stage_name: str
     status: Literal["success", "error"]
     duration_ms: float = 0.0
@@ -30,6 +34,8 @@ class PipelineFileManifest(BaseModel):
     record_type: Literal["file"] = "file"
     run_id: str
     file_path: str
+    file_id: int | None = None
+    storage_id: str | None = None
     status: Literal["success", "error"]
     total_duration_ms: float = 0.0
     retries_used: int = 0

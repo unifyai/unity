@@ -842,8 +842,10 @@ class FileManager(BaseFileManager):
             parse_results: list[FileParseResult] = []
             try:
                 import time as _time
+                from uuid import uuid4
 
                 parse_start_time = _time.perf_counter()
+                run_id = uuid4().hex
 
                 # Report parse started for all files
                 if enable_progress and _reporter is not None:
@@ -856,6 +858,7 @@ class FileManager(BaseFileManager):
                                 orig,
                                 "parse",
                                 "started",
+                                run_id=run_id,
                                 duration_ms=0.0,
                                 elapsed_ms=0.0,
                             ),
@@ -897,8 +900,52 @@ class FileManager(BaseFileManager):
                                         orig,
                                         "parse",
                                         "completed",
+                                        run_id=run_id,
+                                        trace_id=(
+                                            str(
+                                                getattr(
+                                                    getattr(pr, "trace", None),
+                                                    "trace_id",
+                                                    "",
+                                                )
+                                                or "",
+                                            )
+                                            or None
+                                        ),
                                         duration_ms=parse_duration_ms,
                                         elapsed_ms=parse_duration_ms,
+                                        meta={
+                                            "parse_backend": getattr(
+                                                getattr(pr, "trace", None),
+                                                "backend",
+                                                None,
+                                            ),
+                                            "parse_trace_status": (
+                                                getattr(
+                                                    getattr(
+                                                        getattr(pr, "trace", None),
+                                                        "status",
+                                                        None,
+                                                    ),
+                                                    "value",
+                                                    None,
+                                                )
+                                            ),
+                                            "warnings_count": len(
+                                                list(
+                                                    getattr(
+                                                        getattr(pr, "trace", None),
+                                                        "warnings",
+                                                        [],
+                                                    )
+                                                    or [],
+                                                ),
+                                            ),
+                                            "table_count": len(
+                                                list(getattr(pr, "tables", []) or []),
+                                            ),
+                                        },
+                                        verbosity=verbosity,
                                     ),
                                 )
                             else:
@@ -907,9 +954,40 @@ class FileManager(BaseFileManager):
                                         orig,
                                         "parse",
                                         "failed",
+                                        run_id=run_id,
+                                        trace_id=(
+                                            str(
+                                                getattr(
+                                                    getattr(pr, "trace", None),
+                                                    "trace_id",
+                                                    "",
+                                                )
+                                                or "",
+                                            )
+                                            or None
+                                        ),
                                         duration_ms=parse_duration_ms,
                                         elapsed_ms=parse_duration_ms,
                                         error=str(getattr(pr, "error", "") or ""),
+                                        meta={
+                                            "parse_backend": getattr(
+                                                getattr(pr, "trace", None),
+                                                "backend",
+                                                None,
+                                            ),
+                                            "parse_trace_status": (
+                                                getattr(
+                                                    getattr(
+                                                        getattr(pr, "trace", None),
+                                                        "status",
+                                                        None,
+                                                    ),
+                                                    "value",
+                                                    None,
+                                                )
+                                            ),
+                                        },
+                                        verbosity=verbosity,
                                     ),
                                 )
                         except Exception:
@@ -921,6 +999,23 @@ class FileManager(BaseFileManager):
                     if "parse_start_time" in dir()
                     else 0.0
                 )
+                if enable_progress and _reporter is not None:
+                    from .utils.progress import create_progress_event
+
+                    for exp in exported_paths:
+                        original_path = exported_paths_to_original_paths.get(exp, exp)
+                        _reporter.report(
+                            create_progress_event(
+                                original_path,
+                                "parse",
+                                "failed",
+                                run_id=run_id,
+                                duration_ms=parse_duration_ms,
+                                elapsed_ms=parse_duration_ms,
+                                error=str(e),
+                                verbosity=verbosity,
+                            ),
+                        )
                 # Catastrophic parse failure → mark all remaining as errors
                 from unity.file_manager.file_parsers.types.contracts import (
                     FileParseResult,
@@ -1009,6 +1104,59 @@ class FileManager(BaseFileManager):
                 successful_paths.append(orig)
 
             if not successful_parse_results:
+                if getattr(getattr(cfg, "cost", None), "enable_cost_ledger", False):
+                    from unity.file_manager.pipeline import (
+                        JsonlCostLedger,
+                        PipelineCostAccumulator,
+                        PipelineCostRateCard,
+                        build_observability_cost_line_items,
+                        build_parse_cost_line_items,
+                        generate_cost_ledger_path,
+                    )
+
+                    rate_card = PipelineCostRateCard.from_config(cfg.cost)
+                    accumulator = PipelineCostAccumulator(
+                        run_id=run_id,
+                        rate_card=rate_card,
+                        environment=getattr(cfg.cost, "environment", "local"),
+                        tenant_id=getattr(cfg.cost, "tenant_id", None),
+                    )
+                    for pr in parse_results:
+                        accumulator.add_line_items(
+                            build_parse_cost_line_items(
+                                run_id=run_id,
+                                file_path=str(getattr(pr, "logical_path", "") or ""),
+                                parse_result=pr,
+                                parse_config=cfg.parse,
+                                rate_card=rate_card,
+                            ),
+                        )
+                    accumulator.add_line_items(
+                        build_observability_cost_line_items(
+                            run_id=run_id,
+                            rate_card=rate_card,
+                            progress_event_count=(
+                                2 * len(parse_results)
+                                if enable_progress and _reporter is not None
+                                else 0
+                            ),
+                            run_manifest_count=0,
+                            file_manifest_count=0,
+                            stage_manifest_count=0,
+                            cost_ledger_count=1,
+                        ),
+                    )
+                    cost_ledger = JsonlCostLedger(
+                        path=(
+                            getattr(cfg.cost, "cost_ledger_file", None)
+                            or generate_cost_ledger_path()
+                        ),
+                    )
+                    try:
+                        cost_ledger.write(accumulator.build_ledger())
+                    finally:
+                        cost_ledger.flush()
+                        cost_ledger.close()
                 return IngestPipelineResult.from_results(error_results)
 
             # Build results and ingest per-file artifacts using the PipelineExecutor
@@ -1023,6 +1171,8 @@ class FileManager(BaseFileManager):
                 file_paths=successful_paths,
                 config=cfg,
                 reporter=_reporter,
+                all_parse_results=parse_results,
+                run_id=run_id,
                 enable_progress=enable_progress,
                 verbosity=verbosity,
             )
