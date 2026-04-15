@@ -2000,12 +2000,17 @@ class TestTriggeredTaskNotifications:
         assert "Invoice follow-up" in trigger_notification
         assert "Help handle invoice-related requests from Alice" in trigger_notification
         assert "Semantic judgement is still pending" in trigger_notification
+        assert (
+            'primitives.tasks.execute(task_id=301, trigger_attempt_token="'
+            in trigger_notification
+        )
         assert "Hidden offline task" not in trigger_notification
         assert "Wrong sender task" not in trigger_notification
         remembered = mock_remember_provenance.call_args.args[0]
         assert remembered.task_id == 301
         assert remembered.source_type == "triggered"
         assert remembered.source_medium == "sms_message"
+        assert remembered.attempt_token
         mock_offline_dispatch.assert_called_once()
         mock_cm.request_llm_run.assert_called_once_with(triggering_contact_id=2)
 

@@ -76,8 +76,47 @@ async def _make_ordered_queue(ts: TaskScheduler, names: List[str]) -> List[int]:
 @pytest.mark.asyncio
 @pytest.mark.llm_call
 @_handle_project
-async def test_execute_materializes_live_run_at_start(monkeypatch):
-    """Execution should create/adopt the live run row before the actor starts."""
+async def test_execute_uses_trigger_source_type_when_attempt_token_present(monkeypatch):
+    """Trigger execution should consume provenance with the explicit attempt token."""
+
+    actor = SimulatedActor(steps=None, duration=None)
+    scheduler = TaskScheduler(actor=actor)
+    task_id = scheduler._create_task(
+        name="Trigger-aware run",
+        description="Trigger-aware run",
+    )["details"]["task_id"]
+    captured: dict[str, object] = {}
+
+    monkeypatch.setattr(task_scheduler_module.SESSION_DETAILS.assistant, "agent_id", 42)
+
+    def _fake_consume(**kwargs):
+        captured.update(kwargs)
+        return None
+
+    monkeypatch.setattr(
+        task_scheduler_module,
+        "consume_live_task_run_provenance",
+        _fake_consume,
+    )
+
+    handle = await scheduler.execute(
+        task_id=task_id,
+        trigger_attempt_token="trigger-123",
+    )
+    await handle.stop(cancel=False)
+    await handle.result()
+
+    assert captured["task_id"] == task_id
+    assert captured["assistant_id"] == 42
+    assert captured["source_type"] == "triggered"
+    assert captured["trigger_attempt_token"] == "trigger-123"
+
+
+@pytest.mark.asyncio
+@pytest.mark.llm_call
+@_handle_project
+async def test_execute_materializes_live_run_after_actor_start(monkeypatch):
+    """Execution should create/adopt the live run row only after the actor starts."""
 
     actor = SimulatedActor(steps=None, duration=None)
     scheduler = TaskScheduler(actor=actor)
@@ -86,6 +125,7 @@ async def test_execute_materializes_live_run_at_start(monkeypatch):
         description="Persist live run",
     )["details"]["task_id"]
     captured: dict[str, object] = {}
+    events: list[str] = []
 
     monkeypatch.setattr(task_scheduler_module.SESSION_DETAILS.assistant, "agent_id", 42)
     monkeypatch.setattr(
@@ -99,7 +139,16 @@ async def test_execute_materializes_live_run_at_start(monkeypatch):
         ),
     )
 
+    original_act = SimulatedActor.act
+
+    async def _spy_act(self, *args, **kwargs):
+        events.append("act")
+        return await original_act(self, *args, **kwargs)
+
+    monkeypatch.setattr(SimulatedActor, "act", _spy_act)
+
     def _fake_create_or_adopt(provenance: TaskRunProvenance) -> TaskRunReference:
+        events.append("materialize")
         captured["provenance"] = provenance
         return TaskRunReference(
             assistant_id=provenance.assistant_id,
@@ -107,8 +156,7 @@ async def test_execute_materializes_live_run_at_start(monkeypatch):
         )
 
     monkeypatch.setattr(
-        task_scheduler_module,
-        "create_or_adopt_live_task_run",
+        "unity.task_scheduler.active_task.create_or_adopt_live_task_run",
         _fake_create_or_adopt,
     )
     monkeypatch.setattr(
@@ -125,6 +173,7 @@ async def test_execute_materializes_live_run_at_start(monkeypatch):
     assert provenance.task_id == task_id
     assert provenance.assistant_id == "42"
     assert provenance.execution_mode == "live"
+    assert events == ["act", "materialize"]
 
 
 # --------------------------------------------------------------------------- #

@@ -2,8 +2,11 @@ from unity.task_scheduler import machine_state
 from unity.task_scheduler.machine_state import (
     TASK_MACHINE_STATE_PROJECT,
     TaskActivationSnapshot,
+    TaskRunProvenance,
     build_task_activation_context_name,
+    consume_live_task_run_provenance,
     get_task_activation,
+    remember_live_task_run_provenance,
     validate_task_due_activation,
 )
 
@@ -96,3 +99,74 @@ def test_get_task_activation_queries_assistants_machine_state_project(monkeypatc
         user_context="user-1",
         assistant_context="42",
     )
+
+
+def test_trigger_provenance_keeps_attempts_separate(monkeypatch):
+    monkeypatch.setattr(machine_state, "_PENDING_LIVE_TASK_RUNS", {})
+    monkeypatch.setattr(machine_state, "_PENDING_TRIGGER_LIVE_TASK_RUNS", {})
+
+    activation = TaskActivationSnapshot(
+        assistant_id="42",
+        activation_key="42:301",
+        task_id=301,
+        source_task_log_id=555,
+        activation_kind="triggered",
+        execution_mode="live",
+        trigger_medium="sms_message",
+        activation_revision="rev-1",
+    )
+    monkeypatch.setattr(
+        machine_state,
+        "get_task_activation",
+        lambda **_: activation,
+    )
+
+    remember_live_task_run_provenance(
+        TaskRunProvenance(
+            assistant_id="42",
+            task_id=301,
+            source_type="triggered",
+            source_medium="sms_message",
+            source_ref="message-1",
+            source_contact_id="2",
+            attempt_token="attempt-a",
+        ),
+    )
+    remember_live_task_run_provenance(
+        TaskRunProvenance(
+            assistant_id="42",
+            task_id=301,
+            source_type="triggered",
+            source_medium="sms_message",
+            source_ref="message-2",
+            source_contact_id="2",
+            attempt_token="attempt-b",
+        ),
+    )
+
+    first = consume_live_task_run_provenance(
+        assistant_id="42",
+        task_id=301,
+        source_type="triggered",
+        trigger_attempt_token="attempt-a",
+    )
+    second = consume_live_task_run_provenance(
+        assistant_id="42",
+        task_id=301,
+        source_type="triggered",
+        trigger_attempt_token="attempt-b",
+    )
+    fallback = consume_live_task_run_provenance(
+        assistant_id="42",
+        task_id=301,
+        source_type="triggered",
+    )
+
+    assert first is not None
+    assert first.source_ref == "message-1"
+    assert second is not None
+    assert second.source_ref == "message-2"
+    assert fallback is not None
+    assert fallback.source_ref is None
+    assert fallback.source_contact_id is None
+    assert fallback.source_medium == "sms_message"

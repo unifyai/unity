@@ -88,7 +88,6 @@ from ..common.sentinels import _UnsetSentinel
 from ..common.context_registry import ContextRegistry, TableContext
 from .machine_state import (
     consume_live_task_run_provenance,
-    create_or_adopt_live_task_run,
     source_type_from_activation_reason,
 )
 from ..session_details import SESSION_DETAILS
@@ -618,6 +617,7 @@ class TaskScheduler(BaseTaskScheduler):
         self,
         task_id: int,
         *,
+        trigger_attempt_token: str | None = None,
         response_format: Optional[Type[BaseModel]] = None,
         isolated: Optional[bool] = None,
         _parent_chat_context: list[dict] | None = None,
@@ -644,6 +644,7 @@ class TaskScheduler(BaseTaskScheduler):
         # Execute strictly by id; choose isolation semantics based on flag
         handle = await self._execute_queue_internal(
             task_id=task_id,
+            trigger_attempt_token=trigger_attempt_token,
             parent_chat_context=_parent_chat_context,
             clarification_up_q=_clarification_up_q,
             clarification_down_q=_clarification_down_q,
@@ -659,6 +660,7 @@ class TaskScheduler(BaseTaskScheduler):
         self,
         *,
         task_id: int,
+        trigger_attempt_token: str | None = None,
         parent_chat_context: list[dict] | None = None,
         clarification_up_q: asyncio.Queue[str] | None = None,
         clarification_down_q: asyncio.Queue[str] | None = None,
@@ -736,17 +738,18 @@ class TaskScheduler(BaseTaskScheduler):
             else:
                 reason = ActivatedBy.explicit
 
+        task_run_source_type = (
+            "triggered"
+            if trigger_attempt_token
+            else source_type_from_activation_reason(reason.value)
+        )
         source_task_log_id = self._task_id_to_log_id_map([task_id]).get(task_id)
         task_run_provenance = consume_live_task_run_provenance(
             assistant_id=SESSION_DETAILS.assistant.agent_id,
             task_id=task_id,
-            source_type=source_type_from_activation_reason(reason.value),
+            source_type=task_run_source_type,
             source_task_log_id=source_task_log_id,
-        )
-        task_run_reference = (
-            create_or_adopt_live_task_run(task_run_provenance)
-            if task_run_provenance is not None
-            else None
+            trigger_attempt_token=trigger_attempt_token,
         )
 
         # Adjust queue linkages for activation (and record reintegration plan).
@@ -772,7 +775,7 @@ class TaskScheduler(BaseTaskScheduler):
             instance_id=task.instance_id,
             scheduler=self,
             entrypoint=task.entrypoint,
-            task_run_reference=task_run_reference,
+            task_run_provenance=task_run_provenance,
         )
 
         self._active_task = TaskScheduler.ActivePointer(
@@ -808,6 +811,7 @@ class TaskScheduler(BaseTaskScheduler):
         self,
         *,
         task_id: int,
+        trigger_attempt_token: str | None = None,
         parent_chat_context: list[dict] | None = None,
         clarification_up_q: asyncio.Queue[str] | None = None,
         clarification_down_q: asyncio.Queue[str] | None = None,
@@ -816,6 +820,7 @@ class TaskScheduler(BaseTaskScheduler):
         """Start queue execution at `task_id` and return a composite queue handle."""
         first = await self._execute_internal(
             task_id=task_id,
+            trigger_attempt_token=trigger_attempt_token,
             parent_chat_context=parent_chat_context,
             clarification_up_q=clarification_up_q,
             clarification_down_q=clarification_down_q,

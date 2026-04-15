@@ -181,6 +181,16 @@ def _trigger_candidate_fast_brain_context(
     )
 
 
+def _build_trigger_execute_call(*, task_id: int, attempt_token: str) -> str:
+    """Return the exact execute call the slow brain should use for one trigger."""
+
+    return (
+        "primitives.tasks.execute("
+        f'task_id={task_id}, trigger_attempt_token="{attempt_token}"'
+        ")"
+    )
+
+
 def _voice_fast_brain_available(cm: "ConversationManager") -> bool:
     """Return True when a voice fast-brain subprocess exists or is about to start."""
 
@@ -380,16 +390,21 @@ def _trigger_candidate_notification_text(
     *,
     medium: Medium,
     sender_name: str,
-    candidates: list[TaskActivationSnapshot],
+    candidates: list[tuple[TaskActivationSnapshot, str]],
 ) -> str:
     """Return the slow-brain instruction for mechanically matched trigger tasks."""
 
     candidate_labels = [
         _describe_trigger_candidate(candidate)
-        for candidate in candidates[:_TRIGGER_CONTEXT_CANDIDATE_LIMIT]
+        for candidate, _attempt_token in candidates[:_TRIGGER_CONTEXT_CANDIDATE_LIMIT]
+    ]
+    execute_calls = [
+        f"{candidate.task_id} -> {_build_trigger_execute_call(task_id=candidate.task_id, attempt_token=attempt_token)}"
+        for candidate, attempt_token in candidates[:_TRIGGER_CONTEXT_CANDIDATE_LIMIT]
     ]
     if len(candidates) > _TRIGGER_CONTEXT_CANDIDATE_LIMIT:
         candidate_labels.append("...")
+        execute_calls.append("...")
     return (
         f"This inbound {medium.value.replace('_', ' ')} from {sender_name} "
         "mechanically matched live trigger candidates. "
@@ -397,9 +412,8 @@ def _trigger_candidate_notification_text(
         "Why they matched: the inbound medium and sender fit these trigger filters. "
         "Semantic judgement is still pending. Decide whether this communication "
         "truly satisfies any candidate based on the task summaries and the inbound "
-        "itself. If yes, immediately start the best match with "
-        "primitives.tasks.execute(task_id=<task_id>) and treat this inbound as the "
-        "triggering communication."
+        "itself. If yes, immediately start the best match with its exact execute "
+        f"call so the triggering inbound stays attached: {'; '.join(execute_calls)}."
     )
 
 
@@ -531,10 +545,12 @@ async def _surface_trigger_task_candidates(
         medium=medium,
         contact_id=contact_id,
     )
+    live_candidates_with_tokens: list[tuple[TaskActivationSnapshot, str]] = []
     for candidate in live_candidates:
         assistant_id = candidate.assistant_id or (_current_task_assistant_id() or "")
         if not assistant_id:
             continue
+        attempt_token = uuid.uuid4().hex[:12]
         remember_live_task_run_provenance(
             TaskRunProvenance(
                 assistant_id=assistant_id,
@@ -546,16 +562,21 @@ async def _surface_trigger_task_candidates(
                 source_medium=medium.value,
                 source_ref=source_ref,
                 source_contact_id=(str(contact_id) if contact_id is not None else None),
-                attempt_token=uuid.uuid4().hex[:12],
+                attempt_token=attempt_token,
             ),
         )
-    candidate_ids = [candidate.task_id for candidate in live_candidates]
+        live_candidates_with_tokens.append((candidate, attempt_token))
+    if not live_candidates_with_tokens:
+        return False
+    candidate_ids = [
+        candidate.task_id for candidate, _attempt_token in live_candidates_with_tokens
+    ]
     cm.notifications_bar.push_notif(
         "Tasks",
         _trigger_candidate_notification_text(
             medium=medium,
             sender_name=sender_name,
-            candidates=live_candidates,
+            candidates=live_candidates_with_tokens,
         ),
         timestamp,
     )
@@ -571,7 +592,9 @@ async def _surface_trigger_task_candidates(
         content=_trigger_candidate_fast_brain_context(
             medium=medium,
             sender_name=sender_name,
-            candidates=live_candidates,
+            candidates=[
+                candidate for candidate, _attempt_token in live_candidates_with_tokens
+            ],
         ),
         source="task_trigger",
         contact=getattr(event, "contact", None),

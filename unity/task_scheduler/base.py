@@ -255,6 +255,7 @@ class BaseTaskScheduler(BaseStateManager, metaclass=SingletonABCMeta):
         self,
         task_id: int,
         *,
+        trigger_attempt_token: Optional[str] = None,
         response_format: Optional[Type[BaseModel]] = None,
         isolated: Optional[bool] = None,
         _parent_chat_context: Optional[List[Dict[str, Any]]] = None,
@@ -273,6 +274,9 @@ class BaseTaskScheduler(BaseStateManager, metaclass=SingletonABCMeta):
         task_id : int
             Identifier of the task to start. Must reference a single, non‑terminal,
             non‑active instance.
+        trigger_attempt_token : str | None, default ``None``
+            Optional trigger-attempt token used only for live triggered executions
+            so the run can adopt the exact inbound provenance that caused it.
         response_format : Type[BaseModel] | None, default ``None``
             Optional Pydantic model to request a structured result. When provided,
             the final result should conform to this schema.

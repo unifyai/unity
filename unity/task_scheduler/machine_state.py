@@ -53,6 +53,7 @@ _ACTIVATION_QUERY_FIELDS = [
 ]
 _DEFAULT_TRIGGER_PAGE_SIZE = 200
 _PENDING_LIVE_TASK_RUNS: dict[int, "TaskRunProvenance"] = {}
+_PENDING_TRIGGER_LIVE_TASK_RUNS: dict[str, "TaskRunProvenance"] = {}
 
 logger = logging.getLogger(__name__)
 
@@ -170,6 +171,12 @@ def _build_task_machine_context_name(
 def remember_live_task_run_provenance(provenance: TaskRunProvenance) -> None:
     """Remember one pending live-run provenance until the task actually starts."""
 
+    normalized_attempt_token = _normalize_pending_trigger_attempt_token(
+        provenance.attempt_token,
+    )
+    if provenance.source_type == "triggered" and normalized_attempt_token:
+        _PENDING_TRIGGER_LIVE_TASK_RUNS[normalized_attempt_token] = provenance
+        return
     _PENDING_LIVE_TASK_RUNS[provenance.task_id] = provenance
 
 
@@ -179,14 +186,18 @@ def consume_live_task_run_provenance(
     task_id: int,
     source_type: str,
     source_task_log_id: int | None = None,
+    trigger_attempt_token: str | None = None,
 ) -> TaskRunProvenance | None:
     """Claim the pending live-run provenance for one task, or build a fallback."""
 
-    pending = _PENDING_LIVE_TASK_RUNS.pop(task_id, None)
     normalized_assistant_id = _coerce_str(assistant_id)
+    pending = _claim_pending_live_task_run_provenance(
+        assistant_id=normalized_assistant_id,
+        task_id=task_id,
+        source_type=source_type,
+        trigger_attempt_token=trigger_attempt_token,
+    )
     if pending is not None:
-        if normalized_assistant_id and pending.assistant_id == normalized_assistant_id:
-            return pending
         return pending
     if not normalized_assistant_id:
         return None
@@ -217,6 +228,55 @@ def consume_live_task_run_provenance(
             else None
         ),
     )
+
+
+def _claim_pending_live_task_run_provenance(
+    *,
+    assistant_id: str | None,
+    task_id: int,
+    source_type: str,
+    trigger_attempt_token: str | None,
+) -> TaskRunProvenance | None:
+    """Claim one pending provenance entry without misattributing another attempt."""
+
+    pending: TaskRunProvenance | None
+    if source_type == "triggered":
+        normalized_attempt_token = _normalize_pending_trigger_attempt_token(
+            trigger_attempt_token,
+        )
+        if not normalized_attempt_token:
+            return None
+        pending = _PENDING_TRIGGER_LIVE_TASK_RUNS.pop(normalized_attempt_token, None)
+    else:
+        pending = _PENDING_LIVE_TASK_RUNS.pop(task_id, None)
+    if pending is None:
+        return None
+    if pending.task_id != task_id:
+        logger.warning(
+            "Discarding pending live task provenance for mismatched task id "
+            "(expected=%s, actual=%s, source_type=%s)",
+            task_id,
+            pending.task_id,
+            source_type,
+        )
+        return None
+    if assistant_id and pending.assistant_id != assistant_id:
+        logger.warning(
+            "Discarding pending live task provenance for mismatched assistant "
+            "(expected=%s, actual=%s, task_id=%s, source_type=%s)",
+            assistant_id,
+            pending.assistant_id,
+            task_id,
+            source_type,
+        )
+        return None
+    return pending
+
+
+def _normalize_pending_trigger_attempt_token(attempt_token: str | None) -> str | None:
+    """Return the normalized pending-provenance key for one trigger attempt token."""
+
+    return _normalize_run_key_component(attempt_token)
 
 
 def source_type_from_activation_reason(reason: str | None) -> str:
