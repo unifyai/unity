@@ -1,77 +1,73 @@
-"""Tests for idle-timeout session stop behavior in AssistantJobs helpers."""
+"""Tests for the public assistant_jobs wrapper surface."""
 
-import importlib
-from unittest.mock import patch
+from __future__ import annotations
+
+from unity.conversation_manager import assistant_jobs
+from unity.deploy_runtime import register_deploy_runtime, reset_deploy_runtime
 
 
-class TestMarkJobDoneIdleStop:
-    """`mark_job_done()` should only stop the session for true idle shutdowns."""
+class _RecordingJobsBackend:
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, tuple, dict]] = []
 
-    @patch("unity.conversation_manager.assistant_jobs.release_pool_vm")
-    @patch("unity.conversation_manager.assistant_jobs.mark_job_label")
-    @patch("unity.conversation_manager.assistant_jobs.stop_assistant_session")
-    @patch("unity.conversation_manager.assistant_jobs.SETTINGS")
-    @patch("unity.conversation_manager.assistant_jobs.SESSION_DETAILS")
-    def test_mark_job_done_stops_session_before_marking_job_done(
-        self,
-        mock_session_details,
-        mock_settings,
-        mock_stop_session,
-        mock_mark_job_label,
-        _mock_release_pool_vm,
-    ):
-        assistant_jobs = importlib.import_module(
-            "unity.conversation_manager.assistant_jobs",
-        )
-        mock_settings.conversation.COMMS_URL = "http://comms:8080"
-        mock_settings.ORCHESTRA_ADMIN_KEY.get_secret_value.return_value = "key"
-        mock_session_details.assistant.agent_id = 123
-        mock_session_details.assistant.desktop_mode = "none"
+    def mark_job_label(self, *args, **kwargs):
+        self.calls.append(("mark_job_label", args, kwargs))
+        return True
 
-        call_order: list[str] = []
-        mock_stop_session.side_effect = lambda *args, **kwargs: call_order.append(
-            "stop",
-        )
-        mock_mark_job_label.side_effect = lambda *args, **kwargs: call_order.append(
-            "mark",
-        )
+    def log_job_startup(self, *args, **kwargs):
+        self.calls.append(("log_job_startup", args, kwargs))
 
-        with patch.object(assistant_jobs, "_session_start_perf", None):
-            assistant_jobs.mark_job_done(
-                "unity-job-1",
-                shutdown_reason="idle_timeout",
-            )
+    def update_liveview_url(self, *args, **kwargs):
+        self.calls.append(("update_liveview_url", args, kwargs))
 
-        mock_stop_session.assert_called_once_with("http://comms:8080", "key", "123")
-        mock_mark_job_label.assert_called_once_with("unity-job-1", "done")
-        assert call_order == ["stop", "mark"]
+    def mark_job_done(self, *args, **kwargs):
+        self.calls.append(("mark_job_done", args, kwargs))
 
-    @patch("unity.conversation_manager.assistant_jobs.release_pool_vm")
-    @patch("unity.conversation_manager.assistant_jobs.mark_job_label")
-    @patch("unity.conversation_manager.assistant_jobs.stop_assistant_session")
-    @patch("unity.conversation_manager.assistant_jobs.SETTINGS")
-    @patch("unity.conversation_manager.assistant_jobs.SESSION_DETAILS")
-    def test_mark_job_done_keeps_non_idle_shutdowns_on_restart_path(
-        self,
-        mock_session_details,
-        mock_settings,
-        mock_stop_session,
-        mock_mark_job_label,
-        _mock_release_pool_vm,
-    ):
-        assistant_jobs = importlib.import_module(
-            "unity.conversation_manager.assistant_jobs",
-        )
-        mock_settings.conversation.COMMS_URL = "http://comms:8080"
-        mock_settings.ORCHESTRA_ADMIN_KEY.get_secret_value.return_value = "key"
-        mock_session_details.assistant.agent_id = 123
-        mock_session_details.assistant.desktop_mode = "none"
 
-        with patch.object(assistant_jobs, "_session_start_perf", None):
-            assistant_jobs.mark_job_done(
-                "unity-job-1",
-                shutdown_reason="external_sigterm",
-            )
+def teardown_function() -> None:
+    reset_deploy_runtime()
 
-        mock_stop_session.assert_not_called()
-        mock_mark_job_label.assert_called_once_with("unity-job-1", "done")
+
+def test_mark_job_done_delegates_to_registered_backend():
+    backend = _RecordingJobsBackend()
+    register_deploy_runtime(jobs=backend)
+
+    assistant_jobs.mark_job_done(
+        "unity-job-1",
+        inactivity_timeout=30.0,
+        shutdown_reason="idle_timeout",
+    )
+
+    assert backend.calls == [
+        (
+            "mark_job_done",
+            ("unity-job-1",),
+            {"inactivity_timeout": 30.0, "shutdown_reason": "idle_timeout"},
+        ),
+    ]
+
+
+def test_mark_job_label_delegates_to_registered_backend():
+    backend = _RecordingJobsBackend()
+    register_deploy_runtime(jobs=backend)
+
+    result = assistant_jobs.mark_job_label(
+        "unity-job-1",
+        "running",
+        assistant_id="42",
+        ack_ts="1711800000",
+    )
+
+    assert result is True
+    assert backend.calls == [
+        (
+            "mark_job_label",
+            ("unity-job-1", "running"),
+            {
+                "assistant_id": "42",
+                "ack_ts": "1711800000",
+                "timeout": 30,
+                "retries": 0,
+            },
+        ),
+    ]

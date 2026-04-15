@@ -35,6 +35,11 @@ CodeActActor ── generates Python plans ──► primitives.* API
 
 Steering propagates through the full tree: stopping the Actor stops its inner manager loops; interjecting into the ConversationManager can reach a deeply nested knowledge query.
 
+Hosted deployment concerns are intentionally optional at this boundary. The
+public repo exposes a small `unity.deploy_runtime` SPI for session assignment,
+job lifecycle hooks, metrics export, and shutdown log archival, with local/no-op
+defaults when no private hosted backend is installed.
+
 ---
 
 ## The async tool loop

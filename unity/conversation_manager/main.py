@@ -16,8 +16,6 @@ from datetime import datetime
 import json
 import os
 import signal
-import subprocess
-import sys
 import time
 from typing import TYPE_CHECKING
 
@@ -31,8 +29,11 @@ from unity.common.hierarchical_logger import ICONS
 from unity.settings import SETTINGS
 from unity.session_details import SESSION_DETAILS
 from unity.conversation_manager import assistant_jobs
-from unity.conversation_manager.assistant_session_k8s import (
+from unity.deploy_runtime import (
     collect_shutdown_diagnostics,
+    init_metrics,
+    shutdown_metrics,
+    upload_shutdown_logs,
 )
 from unity.conversation_manager.comms_manager import CommsManager
 from unity.conversation_manager.local_ingress import LocalCommsIngress
@@ -41,7 +42,6 @@ from unity.conversation_manager.event_broker import get_event_broker
 from unity.conversation_manager.domains import comms_utils, managers_utils
 from unity.conversation_manager.domains.utils import log_task_exc
 from unity.conversation_manager.conversation_manager import ConversationManager
-from unity.conversation_manager.metrics_push import init_metrics, shutdown_metrics
 from unity.helpers import cleanup_dangling_call_processes
 
 if TYPE_CHECKING:
@@ -396,27 +396,14 @@ async def main(project_name: str = "Assistants"):
 
     LOGGER.debug(f"{ICONS['lifecycle']} Shutdown finished")
 
-    # Upload pod logs to GCS so they survive pod termination.
-    # This runs here (not in entrypoint.sh) so it executes on all exit paths:
-    # both SIGTERM from Kubernetes and self-initiated inactivity shutdown.
-    _upload_script = os.path.normpath(
-        os.path.join(
-            os.path.dirname(os.path.abspath(__file__)),
-            "..",
-            "..",
-            "deploy",
-            "scripts",
-            "upload_pod_logs.py",
-        ),
-    )
-    if os.path.isfile(_upload_script):
-        LOGGER.info(f"{ICONS['lifecycle']} Uploading pod logs to GCS...")
-        try:
-            subprocess.run([sys.executable, _upload_script], timeout=120)
-        except Exception as e:
-            LOGGER.warning(
-                f"{ICONS['lifecycle']} Pod log upload failed (non-fatal): {e}",
-            )
+    # Upload pod logs via the hosted deploy backend when available.
+    LOGGER.info(f"{ICONS['lifecycle']} Checking shutdown log archival...")
+    try:
+        upload_shutdown_logs()
+    except Exception as e:
+        LOGGER.warning(
+            f"{ICONS['lifecycle']} Pod log upload failed (non-fatal): {e}",
+        )
 
     # Final hard exit to ensure the pod is deallocated.
     # sys.exit() can hang if there are non-daemon threads (e.g. from OTel or PubSub)

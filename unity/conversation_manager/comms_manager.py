@@ -31,12 +31,16 @@ import time
 from typing import TYPE_CHECKING, Any
 
 from dotenv import load_dotenv
-from google.cloud import pubsub_v1
+
+try:
+    from google.cloud import pubsub_v1
+except ImportError:  # pragma: no cover - exercised in local-only installs
+    pubsub_v1 = None
 
 from unity.logger import LOGGER
 from unity.common.hierarchical_logger import DEFAULT_ICON, ICONS
 from unity.settings import SETTINGS
-from unity.conversation_manager.assistant_session_k8s import (
+from unity.deploy_runtime import (
     mark_job_container_ready,
     read_assistant_session,
     read_job_assignment_record,
@@ -1148,7 +1152,7 @@ class CommsManager:
 
     def handle_message(
         self,
-        message: pubsub_v1.types.PubsubMessage,
+        message: Any,
         subscription_id: str = "",
     ):
         """
@@ -1189,6 +1193,12 @@ class CommsManager:
 
     def subscribe_to_topic(self, subscription_id: str, max_messages: int | None = None):
         """Subscribe to a specific PubSub topic and process messages."""
+        if pubsub_v1 is None:
+            LOGGER.error(
+                f"{ICONS['subscription']} Google Pub/Sub client is unavailable; "
+                "hosted subscriptions are disabled in this environment.",
+            )
+            return
         if not SETTINGS.GCP_PROJECT_ID:
             LOGGER.error(
                 f"{ICONS['subscription']} GCP_PROJECT_ID is not set — "

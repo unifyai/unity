@@ -3,7 +3,7 @@ from __future__ import annotations
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from unity.conversation_manager.assistant_session_k8s import (
+from unity.deploy_runtime import (
     BootstrapSecretRecord,
     JobAssignmentRecord,
 )

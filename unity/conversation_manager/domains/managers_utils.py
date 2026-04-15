@@ -1444,6 +1444,22 @@ def _init_managers(
                 local_start_time = perf_counter()
                 hook_fn = ep.load()
                 _startup_config = hook_fn(cm, SESSION_DETAILS)
+                _runtime_backends = (_startup_config or {}).get("runtime_backends")
+                if _runtime_backends:
+                    from unity.deploy_runtime import (
+                        DeployRuntimeBackends,
+                        register_deploy_runtime,
+                    )
+
+                    if isinstance(_runtime_backends, DeployRuntimeBackends):
+                        register_deploy_runtime(_runtime_backends)
+                    else:
+                        register_deploy_runtime(
+                            session=_runtime_backends.get("session"),
+                            jobs=_runtime_backends.get("jobs"),
+                            metrics=_runtime_backends.get("metrics"),
+                            logs=_runtime_backends.get("logs"),
+                        )
                 _hook_dur = perf_counter() - local_start_time
                 LOGGER.info(
                     f"{ICONS['managers_worker']} [ManagersWorker] "
