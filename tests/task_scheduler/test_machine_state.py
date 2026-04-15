@@ -2,6 +2,7 @@ from unity.task_scheduler import machine_state
 from unity.task_scheduler.machine_state import (
     TASK_MACHINE_STATE_PROJECT,
     TaskActivationSnapshot,
+    build_task_activation_context_name,
     get_task_activation,
     validate_task_due_activation,
 )
@@ -83,9 +84,15 @@ def test_get_task_activation_queries_assistants_machine_state_project(monkeypatc
         return [_FakeRow()]
 
     monkeypatch.setattr("unity.task_scheduler.storage.unify.get_logs", _fake_get_logs)
+    monkeypatch.setattr(machine_state.SESSION_DETAILS.user, "id", "user-1")
+    monkeypatch.setattr(machine_state.SESSION_DETAILS.assistant, "agent_id", 42)
 
     activation = get_task_activation(assistant_id="42", task_id=101)
 
     assert activation is not None
     assert activation.task_id == 101
     assert captured["project"] == TASK_MACHINE_STATE_PROJECT
+    assert captured["context"] == build_task_activation_context_name(
+        user_context="user-1",
+        assistant_context="42",
+    )

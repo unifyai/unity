@@ -86,6 +86,12 @@ from ..common.llm_client import new_llm_client
 from ..common.read_only_ask_guard import ReadOnlyAskGuardHandle
 from ..common.sentinels import _UnsetSentinel
 from ..common.context_registry import ContextRegistry, TableContext
+from .machine_state import (
+    consume_live_task_run_provenance,
+    create_or_adopt_live_task_run,
+    source_type_from_activation_reason,
+)
+from ..session_details import SESSION_DETAILS
 
 # Sentinel for optional-argument presence detection
 _UNSET = _UnsetSentinel()
@@ -718,6 +724,31 @@ class TaskScheduler(BaseTaskScheduler):
         ):
             raise ValueError(f"Task {task_id} is already {task.status!r}.")
 
+        if activated_by is not None:
+            reason = activated_by
+        else:
+            if task.trigger is not None:
+                reason = ActivatedBy.trigger
+            elif (task.schedule_prev is None) and (task.schedule_start_at is not None):
+                reason = ActivatedBy.schedule
+            elif task.schedule_prev is not None:
+                reason = ActivatedBy.queue
+            else:
+                reason = ActivatedBy.explicit
+
+        source_task_log_id = self._task_id_to_log_id_map([task_id]).get(task_id)
+        task_run_provenance = consume_live_task_run_provenance(
+            assistant_id=SESSION_DETAILS.assistant.agent_id,
+            task_id=task_id,
+            source_type=source_type_from_activation_reason(reason.value),
+            source_task_log_id=source_task_log_id,
+        )
+        task_run_reference = (
+            create_or_adopt_live_task_run(task_run_provenance)
+            if task_run_provenance is not None
+            else None
+        )
+
         # Adjust queue linkages for activation (and record reintegration plan).
         # detach=True → isolation semantics; detach=False → chain semantics.
 
@@ -741,6 +772,7 @@ class TaskScheduler(BaseTaskScheduler):
             instance_id=task.instance_id,
             scheduler=self,
             entrypoint=task.entrypoint,
+            task_run_reference=task_run_reference,
         )
 
         self._active_task = TaskScheduler.ActivePointer(
@@ -756,20 +788,6 @@ class TaskScheduler(BaseTaskScheduler):
             self._clone_task_instance(task)
 
         # Promote status to active (and record the activation reason) and clear the primed pointer if needed
-
-        # Infer activation reason based on provided cause or task configuration
-        reason: ActivatedBy
-        if activated_by is not None:
-            reason = activated_by
-        else:
-            if task.trigger is not None:
-                reason = ActivatedBy.trigger
-            elif (task.schedule_prev is None) and (task.schedule_start_at is not None):
-                reason = ActivatedBy.schedule
-            elif task.schedule_prev is not None:
-                reason = ActivatedBy.queue
-            else:
-                reason = ActivatedBy.explicit
 
         self._update_task_status_instance(
             task_id=task_id,

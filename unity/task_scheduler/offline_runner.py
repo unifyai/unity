@@ -33,6 +33,7 @@ SUMMARY_LIMIT = 4000
 class OfflineTaskConfig:
     """Environment-backed configuration for one offline execution attempt."""
 
+    assistant_id: str
     run_key: str
     task_id: int
     function_id: int
@@ -61,6 +62,7 @@ def _load_config_from_env() -> OfflineTaskConfig:
     """Construct one validated offline task config from process environment."""
 
     return OfflineTaskConfig(
+        assistant_id=_require_env("ASSISTANT_ID"),
         run_key=_require_env("UNITY_OFFLINE_TASK_RUN_KEY"),
         task_id=int(_require_env("UNITY_OFFLINE_TASK_ID")),
         function_id=int(_require_env("UNITY_OFFLINE_TASK_FUNCTION_ID")),
@@ -84,23 +86,28 @@ def _orchestra_admin_headers() -> dict[str, str]:
     return {"Authorization": f"Bearer {admin_key}"}
 
 
-def _task_run_update_payload(run_key: str, updates: dict[str, Any]) -> dict[str, Any]:
+def _task_run_update_payload(
+    assistant_id: str,
+    run_key: str,
+    updates: dict[str, Any],
+) -> dict[str, Any]:
     """Return the admin payload for one partial run update."""
 
     return {
         "project_name": TASK_MACHINE_STATE_PROJECT,
+        "assistant_id": assistant_id,
         "run_key": run_key,
         "updates": updates,
     }
 
 
-def _update_task_run(run_key: str, updates: dict[str, Any]) -> None:
+def _update_task_run(assistant_id: str, run_key: str, updates: dict[str, Any]) -> None:
     """Persist one partial run update back to Orchestra."""
 
     orchestra_url = _require_env("ORCHESTRA_URL")
     response = requests.post(
         f"{orchestra_url}{TASK_RUN_UPDATE_PATH}",
-        json=_task_run_update_payload(run_key, updates),
+        json=_task_run_update_payload(assistant_id, run_key, updates),
         headers=_orchestra_admin_headers(),
         timeout=HTTP_TIMEOUT_SECONDS,
     )
@@ -177,6 +184,7 @@ def main() -> int:
         config.run_key,
     )
     _update_task_run(
+        config.assistant_id,
         config.run_key,
         {
             "state": "running",
@@ -193,6 +201,7 @@ def main() -> int:
             config.run_key,
         )
         _update_task_run(
+            config.assistant_id,
             config.run_key,
             {
                 "state": "failed",
@@ -226,7 +235,7 @@ def main() -> int:
             config.run_key,
             error,
         )
-        _update_task_run(config.run_key, updates)
+        _update_task_run(config.assistant_id, config.run_key, updates)
         return 1
 
     updates["state"] = "completed"
@@ -235,7 +244,7 @@ def main() -> int:
         config.task_id,
         config.run_key,
     )
-    _update_task_run(config.run_key, updates)
+    _update_task_run(config.assistant_id, config.run_key, updates)
     return 0
 
 

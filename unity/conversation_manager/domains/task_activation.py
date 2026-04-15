@@ -2,6 +2,7 @@
 
 import asyncio
 import hashlib
+import uuid
 from typing import TYPE_CHECKING, Any
 
 import requests
@@ -11,7 +12,9 @@ from unity.conversation_manager.events import FastBrainNotification, TaskDue
 from unity.session_details import SESSION_DETAILS
 from unity.task_scheduler.machine_state import (
     TaskActivationSnapshot,
+    TaskRunProvenance,
     list_trigger_activations,
+    remember_live_task_run_provenance,
     validate_task_due_activation,
 )
 
@@ -288,6 +291,19 @@ async def _handle_task_due_event(event: TaskDue, cm: "ConversationManager") -> b
             ),
         )
         return False
+    assistant_id_for_run = assistant_id or activation.assistant_id or ""
+    if assistant_id_for_run:
+        remember_live_task_run_provenance(
+            TaskRunProvenance(
+                assistant_id=assistant_id_for_run,
+                task_id=event.task_id,
+                source_type="scheduled",
+                execution_mode="live",
+                source_task_log_id=event.source_task_log_id,
+                activation_revision=event.activation_revision,
+                scheduled_for=event.scheduled_for,
+            ),
+        )
     cm.notifications_bar.push_notif(
         "Tasks",
         _task_due_notification_text(event, activation),
@@ -510,6 +526,29 @@ async def _surface_trigger_task_candidates(
             )
     if not live_candidates:
         return False
+    source_ref = _build_trigger_source_ref(
+        event=event,
+        medium=medium,
+        contact_id=contact_id,
+    )
+    for candidate in live_candidates:
+        assistant_id = candidate.assistant_id or (_current_task_assistant_id() or "")
+        if not assistant_id:
+            continue
+        remember_live_task_run_provenance(
+            TaskRunProvenance(
+                assistant_id=assistant_id,
+                task_id=candidate.task_id,
+                source_type="triggered",
+                execution_mode="live",
+                source_task_log_id=candidate.source_task_log_id,
+                activation_revision=candidate.activation_revision,
+                source_medium=medium.value,
+                source_ref=source_ref,
+                source_contact_id=(str(contact_id) if contact_id is not None else None),
+                attempt_token=uuid.uuid4().hex[:12],
+            ),
+        )
     candidate_ids = [candidate.task_id for candidate in live_candidates]
     cm.notifications_bar.push_notif(
         "Tasks",

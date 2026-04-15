@@ -1799,9 +1799,23 @@ class TestTaskDueEventHandlers:
             recurrence_hint="recurring",
         )
 
-        with patch(
-            "unity.conversation_manager.domains.task_activation.validate_task_due_activation",
-            return_value=(MagicMock(activation_revision="rev-1"), None),
+        with (
+            patch(
+                "unity.conversation_manager.domains.task_activation.validate_task_due_activation",
+                return_value=(
+                    TaskActivationSnapshot(
+                        assistant_id="42",
+                        activation_key="42:101",
+                        task_id=101,
+                        source_task_log_id=555,
+                        activation_revision="rev-1",
+                    ),
+                    None,
+                ),
+            ),
+            patch(
+                "unity.conversation_manager.domains.task_activation.remember_live_task_run_provenance",
+            ) as mock_remember_provenance,
         ):
             await EventHandler.handle_event(event, mock_cm)
 
@@ -1811,6 +1825,10 @@ class TestTaskDueEventHandlers:
         assert "Prepare the morning update before the user checks in" in notification
         assert "work silently unless you genuinely need the user" in notification
         assert "primitives.tasks.execute(task_id=101)" in notification
+        remembered = mock_remember_provenance.call_args.args[0]
+        assert remembered.assistant_id == "42"
+        assert remembered.source_type == "scheduled"
+        assert remembered.scheduled_for == "2026-04-10T09:00:00+00:00"
         mock_cm.request_llm_run.assert_called_once_with(delay=0)
 
     @pytest.mark.asyncio
@@ -1968,6 +1986,9 @@ class TestTriggeredTaskNotifications:
                 return_value=candidates,
             ),
             patch(
+                "unity.conversation_manager.domains.task_activation.remember_live_task_run_provenance",
+            ) as mock_remember_provenance,
+            patch(
                 "unity.conversation_manager.domains.task_activation._dispatch_offline_trigger_candidate",
                 return_value={"status": "launched"},
             ) as mock_offline_dispatch,
@@ -1981,6 +2002,10 @@ class TestTriggeredTaskNotifications:
         assert "Semantic judgement is still pending" in trigger_notification
         assert "Hidden offline task" not in trigger_notification
         assert "Wrong sender task" not in trigger_notification
+        remembered = mock_remember_provenance.call_args.args[0]
+        assert remembered.task_id == 301
+        assert remembered.source_type == "triggered"
+        assert remembered.source_medium == "sms_message"
         mock_offline_dispatch.assert_called_once()
         mock_cm.request_llm_run.assert_called_once_with(triggering_contact_id=2)
 

@@ -16,6 +16,8 @@ from datetime import datetime, timezone
 
 import pytest
 
+from unity.task_scheduler import task_scheduler as task_scheduler_module
+from unity.task_scheduler.machine_state import TaskRunProvenance, TaskRunReference
 from unity.task_scheduler.task_scheduler import TaskScheduler
 from unity.actor.simulated import SimulatedActor
 from unity.actor.simulated import SimulatedActorHandle
@@ -69,6 +71,60 @@ async def _make_ordered_queue(ts: TaskScheduler, names: List[str]) -> List[int]:
     # Put a start_at timestamp on the head only
     ts._update_task(task_id=ids[0], start_at=datetime.now(timezone.utc))
     return ids
+
+
+@pytest.mark.asyncio
+@pytest.mark.llm_call
+@_handle_project
+async def test_execute_materializes_live_run_at_start(monkeypatch):
+    """Execution should create/adopt the live run row before the actor starts."""
+
+    actor = SimulatedActor(steps=None, duration=None)
+    scheduler = TaskScheduler(actor=actor)
+    task_id = scheduler._create_task(
+        name="Persist live run",
+        description="Persist live run",
+    )["details"]["task_id"]
+    captured: dict[str, object] = {}
+
+    monkeypatch.setattr(task_scheduler_module.SESSION_DETAILS.assistant, "agent_id", 42)
+    monkeypatch.setattr(
+        task_scheduler_module,
+        "consume_live_task_run_provenance",
+        lambda **_: TaskRunProvenance(
+            assistant_id="42",
+            task_id=task_id,
+            source_type="explicit",
+            execution_mode="live",
+        ),
+    )
+
+    def _fake_create_or_adopt(provenance: TaskRunProvenance) -> TaskRunReference:
+        captured["provenance"] = provenance
+        return TaskRunReference(
+            assistant_id=provenance.assistant_id,
+            run_key="live:explicit:42:1:rev:once",
+        )
+
+    monkeypatch.setattr(
+        task_scheduler_module,
+        "create_or_adopt_live_task_run",
+        _fake_create_or_adopt,
+    )
+    monkeypatch.setattr(
+        "unity.task_scheduler.active_task.update_task_run_record",
+        lambda *args, **kwargs: None,
+    )
+
+    handle = await scheduler.execute(task_id=task_id)
+    await handle.stop(cancel=False)
+    await handle.result()
+
+    provenance = captured["provenance"]
+    assert isinstance(provenance, TaskRunProvenance)
+    assert provenance.task_id == task_id
+    assert provenance.assistant_id == "42"
+    assert provenance.execution_mode == "live"
 
 
 # --------------------------------------------------------------------------- #

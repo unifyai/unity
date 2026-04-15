@@ -4,6 +4,7 @@ from types import SimpleNamespace
 
 
 def _seed_env(monkeypatch):
+    monkeypatch.setenv("ASSISTANT_ID", "42")
     monkeypatch.setenv("UNITY_OFFLINE_TASK_RUN_KEY", "offline:scheduled:42:101:rev")
     monkeypatch.setenv("UNITY_OFFLINE_TASK_ID", "101")
     monkeypatch.setenv("UNITY_OFFLINE_TASK_FUNCTION_ID", "777")
@@ -47,15 +48,18 @@ def test_offline_runner_marks_run_completed(monkeypatch):
     monkeypatch.setattr(
         offline_runner,
         "_update_task_run",
-        lambda run_key, payload: updates.append((run_key, payload)),
+        lambda assistant_id, run_key, payload: updates.append(
+            (assistant_id, run_key, payload),
+        ),
     )
 
     exit_code = offline_runner.main()
 
     assert exit_code == 0
-    assert updates[0][1]["state"] == "running"
-    assert updates[1][1]["state"] == "completed"
-    assert "result_summary" in updates[1][1]
+    assert updates[0][0] == "42"
+    assert updates[0][2]["state"] == "running"
+    assert updates[1][2]["state"] == "completed"
+    assert "result_summary" in updates[1][2]
 
 
 def test_offline_runner_marks_run_failed_when_function_errors(monkeypatch):
@@ -89,12 +93,15 @@ def test_offline_runner_marks_run_failed_when_function_errors(monkeypatch):
     monkeypatch.setattr(
         offline_runner,
         "_update_task_run",
-        lambda run_key, payload: updates.append((run_key, payload)),
+        lambda assistant_id, run_key, payload: updates.append(
+            (assistant_id, run_key, payload),
+        ),
     )
 
     exit_code = offline_runner.main()
 
     assert exit_code == 1
-    assert updates[0][1]["state"] == "running"
-    assert updates[1][1]["state"] == "failed"
-    assert updates[1][1]["error"] == "boom"
+    assert updates[0][0] == "42"
+    assert updates[0][2]["state"] == "running"
+    assert updates[1][2]["state"] == "failed"
+    assert updates[1][2]["error"] == "boom"

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import functools
+from types import SimpleNamespace
 from typing import Dict
 
 import pytest
@@ -17,6 +18,7 @@ from unity.task_scheduler.active_task import ActiveTask
 from unity.actor.simulated import SimulatedActor
 from unity.actor.simulated import SimulatedActorHandle
 from unity.function_manager.function_manager import FunctionManager
+from unity.task_scheduler.machine_state import TaskRunReference
 
 #  The helper used in the existing test-suite – applies project-level monkey-
 #  patches (e.g. env vars, tracers) so we keep behaviour consistent.
@@ -27,6 +29,41 @@ from tests.helpers import _handle_project
 # --------------------------------------------------------------------------- #
 
 pytestmark = pytest.mark.llm_call
+
+
+class _FakeHandle:
+    async def ask(self, question: str) -> str:
+        return question
+
+    async def interject(self, instruction: str, *, images=None) -> None:
+        return None
+
+    async def stop(self, reason: str | None = None, **kwargs) -> None:
+        return None
+
+    async def result(self) -> str:
+        return "ok"
+
+    def done(self) -> bool:
+        return True
+
+
+class _FakeScheduler:
+    def __init__(self):
+        self._active_task = SimpleNamespace(task_id=101, instance_id=0)
+        self.status_updates = []
+
+    def _update_task_status_instance(
+        self,
+        *,
+        task_id: int,
+        instance_id: int,
+        new_status,
+    ):
+        self.status_updates.append((task_id, instance_id, str(new_status)))
+
+    def _update_task_instance(self, **kwargs):
+        return None
 
 
 @pytest.mark.asyncio
@@ -207,6 +244,77 @@ async def test_result_and_done():
 
     assert "stopped" in result.lower()
     assert task.done(), "`done()` must return True after explicit stop"
+
+
+@pytest.mark.asyncio
+@_handle_project
+async def test_result_persists_completed_task_run(monkeypatch):
+    """Completed live tasks should patch the durable run row once."""
+
+    captured = []
+    scheduler = _FakeScheduler()
+    monkeypatch.setattr(
+        "unity.task_scheduler.active_task.update_task_run_record",
+        lambda run_reference, updates: captured.append((run_reference, updates)),
+    )
+    monkeypatch.setattr(
+        ActiveTask,
+        "_save_final_summary",
+        lambda self, final_status: asyncio.sleep(0),
+    )
+
+    task = ActiveTask(
+        _FakeHandle(),
+        task_id=101,
+        instance_id=0,
+        scheduler=scheduler,  # type: ignore[arg-type]
+        task_run_reference=TaskRunReference(
+            assistant_id="42",
+            run_key="live:explicit:42:101:rev:once",
+        ),
+    )
+
+    result = await task.result()
+
+    assert result == "ok"
+    assert scheduler.status_updates[-1] == (101, 0, "completed")
+    assert captured[-1][1]["state"] == "completed"
+    assert captured[-1][1]["result_summary"] == "ok"
+
+
+@pytest.mark.asyncio
+@_handle_project
+async def test_stop_persists_cancelled_task_run(monkeypatch):
+    """Stopping a live task should mark the durable run row cancelled."""
+
+    captured = []
+    scheduler = _FakeScheduler()
+    monkeypatch.setattr(
+        "unity.task_scheduler.active_task.update_task_run_record",
+        lambda run_reference, updates: captured.append((run_reference, updates)),
+    )
+    monkeypatch.setattr(
+        ActiveTask,
+        "_save_final_summary",
+        lambda self, final_status: asyncio.sleep(0),
+    )
+
+    task = ActiveTask(
+        _FakeHandle(),
+        task_id=101,
+        instance_id=0,
+        scheduler=scheduler,  # type: ignore[arg-type]
+        task_run_reference=TaskRunReference(
+            assistant_id="42",
+            run_key="live:explicit:42:101:rev:once",
+        ),
+    )
+
+    await task.stop(cancel=False, reason="do this later")
+    await asyncio.sleep(0)
+
+    assert captured[-1][1]["state"] == "cancelled"
+    assert "do this later" in captured[-1][1]["result_summary"]
 
 
 # --------------------------------------------------------------------------- #
