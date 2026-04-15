@@ -214,6 +214,65 @@ def report_file_complete(
         logger.debug(f"File complete report failed: {e}")
 
 
+def _record_stage_manifest(
+    ledger,
+    *,
+    run_id: str | None,
+    file_path: str,
+    stage_name: str,
+    result: _StepResult,
+    meta: Optional[Dict[str, Any]] = None,
+) -> None:
+    if ledger is None or not run_id:
+        return
+    try:
+        from unity.file_manager.pipeline import PipelineStageManifest
+
+        ledger.write(
+            PipelineStageManifest(
+                run_id=run_id,
+                file_path=file_path,
+                stage_name=stage_name,
+                status="success" if result.success else "error",
+                duration_ms=result.duration_ms,
+                retries_used=result.retries,
+                error=result.error,
+                meta=dict(meta or {}),
+            ),
+        )
+    except Exception as exc:
+        logger.debug("Stage ledger write failed: %s", exc)
+
+
+def _record_file_manifest(
+    ledger,
+    *,
+    run_id: str | None,
+    file_path: str,
+    status: str,
+    total_duration_ms: float,
+    retries_used: int,
+    meta: Optional[Dict[str, Any]] = None,
+) -> None:
+    if ledger is None or not run_id:
+        return
+    try:
+        from unity.file_manager.pipeline import PipelineFileManifest
+
+        ledger.write(
+            PipelineFileManifest(
+                run_id=run_id,
+                file_path=file_path,
+                status="success" if status == "success" else "error",
+                total_duration_ms=total_duration_ms,
+                retries_used=retries_used,
+                meta=dict(meta or {}),
+            ),
+        )
+    except Exception as exc:
+        logger.debug("File ledger write failed: %s", exc)
+
+
 # ---------------------------------------------------------------------------
 # Return model builders (private)
 # ---------------------------------------------------------------------------
@@ -331,6 +390,8 @@ def process_single_file(
     file_path: str,
     config,
     reporter=None,
+    ledger=None,
+    run_id: str | None = None,
     enable_progress: bool = False,
     verbosity: str = "low",
 ):
@@ -396,6 +457,14 @@ def process_single_file(
             max_retries=max_retries,
             retry_delay=retry_delay,
             label=f"file_record({file_path})",
+        )
+        _record_stage_manifest(
+            ledger,
+            run_id=run_id,
+            file_path=file_path,
+            stage_name="file_record",
+            result=fr_result,
+            meta={"content_row_count": len(content_rows)},
         )
         if not fr_result.success:
             raise RuntimeError(f"File record creation failed: {fr_result.error}")
@@ -474,6 +543,20 @@ def process_single_file(
                     content_result = res
                 else:
                     table_results.append(res)
+                _record_stage_manifest(
+                    ledger,
+                    run_id=run_id,
+                    file_path=file_path,
+                    stage_name=(
+                        "ingest_content"
+                        if item["kind"] == "content"
+                        else "ingest_table"
+                    ),
+                    result=res,
+                    meta={
+                        key: item[key] for key in ("label", "row_count") if key in item
+                    },
+                )
         elif work_items:
             max_workers = getattr(config.execution, "max_embed_workers", 8)
             with _TPE(max_workers=min(len(work_items), max_workers)) as pool:
@@ -498,6 +581,22 @@ def process_single_file(
                         content_result = res
                     else:
                         table_results.append(res)
+                    _record_stage_manifest(
+                        ledger,
+                        run_id=run_id,
+                        file_path=file_path,
+                        stage_name=(
+                            "ingest_content"
+                            if item["kind"] == "content"
+                            else "ingest_table"
+                        ),
+                        result=res,
+                        meta={
+                            key: item[key]
+                            for key in ("label", "row_count")
+                            if key in item
+                        },
+                    )
 
         # 4. Aggregate
         result_dict = _aggregate_results(
@@ -517,6 +616,20 @@ def process_single_file(
                 result_dict,
                 verbosity,
             )
+
+        _record_file_manifest(
+            ledger,
+            run_id=run_id,
+            file_path=file_path,
+            status=result_dict["status"],
+            total_duration_ms=result_dict["total_duration_ms"],
+            retries_used=result_dict["retries_used"],
+            meta={
+                "ingest_failures": result_dict["failures"]["ingest_failures"],
+                **result_dict["timing_breakdown"],
+                **result_dict["chunks"],
+            },
+        )
 
         # 5. Build return model
         return _build_return_model(
@@ -547,6 +660,16 @@ def process_single_file(
                 verbosity=verbosity,
             )
             reporter.report(event)
+
+        _record_file_manifest(
+            ledger,
+            run_id=run_id,
+            file_path=file_path,
+            status="error",
+            total_duration_ms=elapsed_ms,
+            retries_used=0,
+            meta={"fatal_error": str(e)},
+        )
 
         return _build_error_model(file_path, str(e), elapsed_ms, return_mode)
 
@@ -593,6 +716,7 @@ def run_pipeline(
     IngestPipelineResult
     """
     import time as _time
+    from uuid import uuid4
     from concurrent.futures import ThreadPoolExecutor as _TPE, as_completed as _asc
 
     pipeline_start = _time.perf_counter()
@@ -607,6 +731,24 @@ def run_pipeline(
 
     parallel = getattr(getattr(config, "execution", None), "parallel_files", False)
     max_workers = getattr(getattr(config, "execution", None), "max_file_workers", 4)
+    run_id = uuid4().hex
+    ledger = None
+
+    if getattr(getattr(config, "diagnostics", None), "enable_run_ledger", False):
+        from unity.file_manager.pipeline import JsonlRunLedger, PipelineRunManifest
+        from unity.file_manager.pipeline import generate_run_ledger_path
+
+        ledger_path = getattr(config.diagnostics, "run_ledger_file", None)
+        ledger = JsonlRunLedger(path=ledger_path or generate_run_ledger_path())
+        ledger.write(
+            PipelineRunManifest(
+                run_id=run_id,
+                status="started",
+                file_count=len(parse_results),
+                parallel_files=parallel,
+                meta={"max_file_workers": max_workers},
+            ),
+        )
 
     if enable_progress:
         logger.info(
@@ -625,6 +767,8 @@ def run_pipeline(
                 file_path=path,
                 config=config,
                 reporter=reporter,
+                ledger=ledger,
+                run_id=run_id,
                 enable_progress=enable_progress,
                 verbosity=verbosity,
             )
@@ -646,6 +790,8 @@ def run_pipeline(
                     file_path=path,
                     config=config,
                     reporter=reporter,
+                    ledger=ledger,
+                    run_id=run_id,
                     enable_progress=enable_progress,
                     verbosity=verbosity,
                 ): path
@@ -662,11 +808,46 @@ def run_pipeline(
                         0.0,
                         return_mode,
                     )
+                    _record_file_manifest(
+                        ledger,
+                        run_id=run_id,
+                        file_path=path,
+                        status="error",
+                        total_duration_ms=0.0,
+                        retries_used=0,
+                        meta={"fatal_error": str(e)},
+                    )
 
     if enable_progress and reporter:
         reporter.flush()
 
     total_ms = (_time.perf_counter() - pipeline_start) * 1000
+    if ledger is not None:
+        try:
+            from unity.file_manager.pipeline import PipelineRunManifest
+
+            success_count = sum(
+                1
+                for value in results.values()
+                if getattr(value, "status", "error") == "success"
+            )
+            failure_count = len(results) - success_count
+            ledger.write(
+                PipelineRunManifest(
+                    run_id=run_id,
+                    status="completed",
+                    file_count=len(results),
+                    success_count=success_count,
+                    failure_count=failure_count,
+                    parallel_files=parallel,
+                    total_duration_ms=total_ms,
+                    meta={"max_file_workers": max_workers},
+                ),
+            )
+        finally:
+            ledger.flush()
+            ledger.close()
+
     from unity.file_manager.types.ingest import IngestPipelineResult as _IPR
 
     return _IPR.from_results(results, total_duration_ms=total_ms)

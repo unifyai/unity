@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import csv
+import json
 from collections.abc import Iterator
 from datetime import date, datetime, time
 from decimal import Decimal
@@ -36,9 +37,8 @@ def iter_table_input_rows(handle: TableInputHandle) -> Iterator[JsonObject]:
         return
 
     if isinstance(handle, ObjectStoreArtifactHandle):
-        raise NotImplementedError(
-            f"Artifact streaming is not implemented for {handle.artifact_format!r}",
-        )
+        yield from _iter_object_store_rows(handle)
+        return
 
     raise TypeError(f"Unsupported table input handle: {type(handle)!r}")
 
@@ -124,6 +124,23 @@ def _iter_xlsx_rows(handle: XlsxSheetHandle) -> Iterator[JsonObject]:
             yield _row_from_pairs(columns, [_normalize_excel_cell(v) for v in row])
     finally:
         workbook.close()
+
+
+def _iter_object_store_rows(handle: ObjectStoreArtifactHandle) -> Iterator[JsonObject]:
+    if handle.artifact_format != "jsonl":
+        raise NotImplementedError(
+            f"Artifact streaming is not implemented for {handle.artifact_format!r}",
+        )
+
+    path = _resolve_local_path(source_local_path="", storage_uri=handle.storage_uri)
+    with path.open("r", encoding="utf-8") as fh:
+        for line in fh:
+            text = line.strip()
+            if not text:
+                continue
+            loaded = json.loads(text)
+            if isinstance(loaded, dict):
+                yield {str(key): value for key, value in loaded.items()}
 
 
 def _row_from_pairs(columns: list[str], values: list[object]) -> JsonObject:

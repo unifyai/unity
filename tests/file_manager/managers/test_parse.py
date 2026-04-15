@@ -4,6 +4,7 @@ FileManager parse functionality tests.
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
@@ -76,6 +77,51 @@ async def test_parse_with_options(file_manager, supported_file_examples: dict):
     item = result[display_name]
     # All returns are now Pydantic models - use attribute access
     assert item.status == "success"
+
+
+@pytest.mark.asyncio
+async def test_parse_can_emit_run_ledger(file_manager, tmp_path: Path):
+    txt = tmp_path / "ledger.txt"
+    txt.write_text("Alpha paragraph.\n\nBeta paragraph.", encoding="utf-8")
+    ledger_path = tmp_path / "run_ledger.jsonl"
+
+    from unity.file_manager.types import FilePipelineConfig
+
+    result = file_manager.ingest_files(
+        str(txt),
+        config=FilePipelineConfig(
+            diagnostics={
+                "enable_run_ledger": True,
+                "run_ledger_file": str(ledger_path),
+            },
+        ),
+    )
+
+    assert result[str(txt)].status == "success"
+    assert ledger_path.exists()
+
+    records = [
+        json.loads(line)
+        for line in ledger_path.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    assert records
+
+    run_ids = {record["run_id"] for record in records}
+    assert len(run_ids) == 1
+
+    record_types = {record["record_type"] for record in records}
+    assert {"run", "file", "stage"} <= record_types
+
+    stage_names = {
+        record["stage_name"] for record in records if record["record_type"] == "stage"
+    }
+    assert "file_record" in stage_names
+    assert "ingest_content" in stage_names
+
+    file_records = [record for record in records if record["record_type"] == "file"]
+    assert file_records
+    assert file_records[0]["status"] == "success"
 
 
 @pytest.mark.asyncio
