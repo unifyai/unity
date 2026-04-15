@@ -43,7 +43,7 @@ DEFERRAL_PHRASES = [
 ]
 
 # The model used by the fast brain in production
-FAST_BRAIN_MODEL = "gpt-5-mini@openai"
+FAST_BRAIN_MODEL = "gpt-5.4-mini@openai"
 
 
 # =============================================================================

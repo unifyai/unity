@@ -196,7 +196,7 @@ class Assistant(Agent):
     """
     TTS Fast Brain - handles real-time conversation independently.
 
-    Uses a lightweight LLM (gpt-5-mini via UnifyLLM adapter) for fast
+    Uses a lightweight LLM (gpt-5.4-mini via UnifyLLM adapter) for fast
     conversational responses. Routes through unillm.AsyncUnify for local
     caching (CI) and usage tracking.
     Communicates with the Main CM Brain (slow brain) via Unix domain socket IPC.

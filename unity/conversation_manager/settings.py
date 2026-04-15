@@ -43,7 +43,7 @@ class ConversationSettings(BaseSettings):
             the other way around.
     """
 
-    FAST_BRAIN_MODEL: str = "gpt-5-mini@openai"
+    FAST_BRAIN_MODEL: str = "gpt-5.4-mini@openai"
     FAST_BRAIN_CONTEXT_WINDOW: int = 50
     IMPL: str = "real"
     COMMS_URL: str = Field(default="", validation_alias="UNITY_COMMS_URL")

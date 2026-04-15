@@ -115,7 +115,7 @@ User speaks → STT transcribes → Fast Brain (text LLM) → TTS speaks
     └────── Main CM Brain sends FastBrainNotification ─────┘
 ```
 
-Uses separate STT/TTS services with a lightweight text-based LLM (gpt-5-mini) for fast responses.
+Uses separate STT/TTS services with a lightweight text-based LLM (gpt-5.4-mini) for fast responses.
 
 ---
 
