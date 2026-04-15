@@ -12,7 +12,7 @@ for certain formats like XLSX).
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Optional
 
 from unity.file_manager.file_parsers.settings import FileParserSettings
@@ -24,6 +24,8 @@ class DoclingConvertResult:
     ok: bool
     document: Optional[object]
     error: Optional[ParseError] = None
+    status: Optional[str] = None
+    warnings: tuple[str, ...] = field(default_factory=tuple)
 
 
 def new_docling_converter(*, settings: FileParserSettings):
@@ -46,6 +48,7 @@ def new_docling_converter(*, settings: FileParserSettings):
 
     pipeline_options = PdfPipelineOptions()
     pipeline_options.images_scale = 2.0
+    pipeline_options.do_ocr = settings.DOCLING_OCR_ENABLED
     pipeline_options.generate_picture_images = settings.PICTURE_DESCRIPTION_ENABLED
 
     # Docling's built-in graceful per-document timeout.  When exceeded the
@@ -101,7 +104,12 @@ def _release_backend(res: object) -> None:
         pass
 
 
-def docling_convert(*, converter, source: str) -> DoclingConvertResult:
+def docling_convert(
+    *,
+    converter,
+    source: str,
+    settings: FileParserSettings | None = None,
+) -> DoclingConvertResult:
     """Convert a source path into a DoclingDocument."""
     try:
         from docling.datamodel.base_models import ConversionStatus
@@ -117,30 +125,72 @@ def docling_convert(*, converter, source: str) -> DoclingConvertResult:
             ),
         )
 
+    fallback_without_ocr = False
+    fallback_warning = ""
     try:
         res = converter.convert(source=source)
     except Exception as e:
-        return DoclingConvertResult(
-            ok=False,
-            document=None,
-            error=ParseError(
-                code="docling_convert_exception",
-                message=str(e),
-                exception_type=type(e).__name__,
-                details={"source": source},
-            ),
-        )
+        if (
+            settings is not None
+            and settings.DOCLING_OCR_ENABLED
+            and _should_retry_without_ocr(str(e))
+        ):
+            fallback_settings = settings.model_copy(
+                update={"DOCLING_OCR_ENABLED": False},
+            )
+            fallback_warning = (
+                "docling OCR assets unavailable; retried conversion without OCR"
+            )
+            try:
+                fallback_converter = new_docling_converter(settings=fallback_settings)
+                res = fallback_converter.convert(source=source)
+                fallback_without_ocr = True
+            except Exception:
+                return DoclingConvertResult(
+                    ok=False,
+                    document=None,
+                    error=ParseError(
+                        code="docling_convert_exception",
+                        message=str(e),
+                        exception_type=type(e).__name__,
+                        details={"source": source},
+                    ),
+                )
+        else:
+            return DoclingConvertResult(
+                ok=False,
+                document=None,
+                error=ParseError(
+                    code="docling_convert_exception",
+                    message=str(e),
+                    exception_type=type(e).__name__,
+                    details={"source": source},
+                ),
+            )
 
-    if getattr(res, "status", None) != ConversionStatus.SUCCESS:
+    status = getattr(res, "status", None)
+    status_value = getattr(status, "value", None) or (
+        str(status).lower() if status is not None else None
+    )
+    partial_success = getattr(ConversionStatus, "PARTIAL_SUCCESS", None)
+    allowed_statuses = {ConversionStatus.SUCCESS}
+    if partial_success is not None:
+        allowed_statuses.add(partial_success)
+
+    if status not in allowed_statuses and status_value not in {
+        "success",
+        "partial_success",
+    }:
         return DoclingConvertResult(
             ok=False,
             document=None,
             error=ParseError(
                 code="docling_convert_failed",
-                message=f"Docling conversion failed with status: {getattr(res, 'status', None)}",
+                message=f"Docling conversion failed with status: {status}",
                 exception_type=None,
                 details={"source": source},
             ),
+            status=status_value,
         )
 
     doc = getattr(res, "document", None)
@@ -150,4 +200,35 @@ def docling_convert(*, converter, source: str) -> DoclingConvertResult:
     # the backend, so this is safe.
     _release_backend(res)
 
-    return DoclingConvertResult(ok=True, document=doc)
+    warnings: list[str] = []
+    if fallback_without_ocr:
+        warnings.append(fallback_warning)
+        if status_value == "success":
+            status_value = "partial_success"
+    if status_value == "partial_success":
+        warnings.append(
+            "docling returned PARTIAL_SUCCESS; continuing with partial document output",
+        )
+
+    return DoclingConvertResult(
+        ok=True,
+        document=doc,
+        status=status_value,
+        warnings=tuple(warnings),
+    )
+
+
+def _should_retry_without_ocr(message: str) -> bool:
+    text = (message or "").strip().lower()
+    if not text:
+        return False
+    return any(
+        token in text
+        for token in (
+            "rapidocr",
+            "pp-ocr",
+            "modelscope",
+            "download failed",
+            "failed to download",
+        )
+    )

@@ -75,7 +75,15 @@ class CsvBackend(BaseFileParserBackend):
                 converter = new_docling_converter(settings=FILE_PARSER_SETTINGS)
 
             with traced_step(trace, name="docling_convert"):
-                conv = docling_convert(converter=converter, source=str(path))
+                conv = docling_convert(
+                    converter=converter,
+                    source=str(path),
+                    settings=FILE_PARSER_SETTINGS,
+                )
+                if conv.warnings:
+                    trace.warnings.extend(list(conv.warnings))
+                if conv.status == "partial_success":
+                    trace.status = StepStatus.DEGRADED
                 if not conv.ok or conv.document is None:
                     raise RuntimeError(
                         (
