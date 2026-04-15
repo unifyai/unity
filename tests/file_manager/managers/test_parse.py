@@ -242,7 +242,7 @@ async def test_parse_trace_backend_routing(file_manager, tmp_path: Path):
     assert ContentType.DOCUMENT in ctypes_txt
     assert ContentType.PARAGRAPH in ctypes_txt
 
-    # --------------------------- CSV -> csv_backend --------------------------- #
+    # ---------------------- CSV -> native_csv_backend ------------------------ #
     csv = tmp_path / "people.csv"
     csv.write_text("Name,Age,City\nJohn,30,NYC\nJane,25,LDN\n", encoding="utf-8")
     csv_path = str(csv)
@@ -276,7 +276,7 @@ async def test_parse_trace_backend_routing(file_manager, tmp_path: Path):
     out_csv = csv_res[csv_path]
     assert out_csv.status == "success"
     assert out_csv.trace is not None
-    assert out_csv.trace.backend == "csv_backend"
+    assert out_csv.trace.backend == "native_csv_backend"
     assert out_csv.trace.logical_path == csv_path
     assert out_csv.trace.source_local_path and out_csv.trace.parsed_local_path
     assert out_csv.trace.parsed_local_path == out_csv.trace.source_local_path
