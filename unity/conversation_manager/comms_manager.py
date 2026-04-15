@@ -522,7 +522,12 @@ class CommsManager:
 
                 if thread == "email":
                     content = "Subject: " + event["subject"] + "\n\n" + event["body"]
-                    contact_detail = event["from"].split("<")[1][:-1]
+                    raw_from = event["from"]
+                    contact_detail = (
+                        raw_from.split("<")[1].rstrip(">")
+                        if "<" in raw_from
+                        else raw_from.strip()
+                    )
                     medium_for_blacklist = Medium.EMAIL
 
                     if _is_blacklisted(medium_for_blacklist, contact_detail):
