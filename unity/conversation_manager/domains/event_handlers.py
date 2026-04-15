@@ -1429,6 +1429,14 @@ async def _(event, cm: "ConversationManager", *args, **kwargs):
             notif_content = f"Email Received from {sender_name}"
             cm.notifications_bar.push_notif("comms", notif_content, event.timestamp)
             await cm.cancel_proactive_speech()
+            await _surface_trigger_task_candidates(
+                cm=cm,
+                event=event,
+                medium=Medium.EMAIL,
+                contact_id=contact_id,
+                sender_name=sender_name,
+                timestamp=event.timestamp,
+            )
             await cm.request_llm_run(
                 triggering_contact_id=contact_id,
             )
