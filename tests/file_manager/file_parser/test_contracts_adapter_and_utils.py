@@ -65,8 +65,8 @@ def test_registry_routes_known_formats_to_expected_backends():
 
     assert pdf is not None and pdf.name == "pdf_backend"
     assert docx is not None and docx.name == "ms_word_backend"
-    assert csv is not None and csv.name == "csv_backend"
-    assert xlsx is not None and xlsx.name == "ms_excel_backend"
+    assert csv is not None and csv.name == "native_csv_backend"
+    assert xlsx is not None and xlsx.name == "native_excel_backend"
     assert txt is not None and txt.name == "text_backend"
     assert html is not None and html.name == "html_backend"
     assert jsn is not None and jsn.name == "json_backend"

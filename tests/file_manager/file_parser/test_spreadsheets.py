@@ -26,7 +26,7 @@ def test_csv_employee_records_extracts_expected_schema_and_rows(sample_file):
     assert res.status == "success"
     assert res.file_format == FileFormat.CSV
     assert res.trace is not None
-    assert res.trace.backend == "csv_backend"
+    assert res.trace.backend == "native_csv_backend"
 
     # CSV is parsed as a single-sheet spreadsheet; full_text is bounded profile text
     _assert_non_empty(res.full_text, label="full_text")
@@ -184,7 +184,7 @@ def test_xlsx_project_status_extracts_tables_and_has_bounded_profile_text(sample
     assert res.status == "success"
     assert res.file_format == FileFormat.XLSX
     assert res.trace is not None
-    assert res.trace.backend == "ms_excel_backend"
+    assert res.trace.backend == "native_excel_backend"
 
     _assert_non_empty(res.full_text, label="full_text")
     assert "Spreadsheet:" in res.full_text
