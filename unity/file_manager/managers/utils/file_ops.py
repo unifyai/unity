@@ -100,8 +100,8 @@ def build_compact_ingest_model(
     content_ctx = file_manager._ctx_for_file_content(storage_id)
     from unity.file_manager.parse_adapter import adapt_parse_result_for_file_manager
 
-    adapted = adapt_parse_result_for_file_manager(parse_result, config=config)
-    record_count = len(list(adapted.content_rows or []))
+    ingest_payload = adapt_parse_result_for_file_manager(parse_result, config=config)
+    record_count = len(list(ingest_payload.content_rows or []))
     try:
         text_chars = len(parse_result.full_text)
     except Exception:
@@ -196,7 +196,7 @@ def build_compact_ingest_model(
 
     if Model is _IngestedPDF:
         # Derive counts from lowered content rows and tables
-        rows = list(adapted.content_rows or [])
+        rows = list(ingest_payload.content_rows or [])
 
         return Model(
             **base_kwargs,
@@ -208,7 +208,7 @@ def build_compact_ingest_model(
             total_records=len(rows),
         )
     if Model in (_IngestedDocx, _IngestedDoc):
-        rows = list(adapted.content_rows or [])
+        rows = list(ingest_payload.content_rows or [])
         return Model(
             **base_kwargs,
             total_sections=sum(1 for r in rows if _ctype(r) == ContentType.SECTION)
@@ -218,7 +218,7 @@ def build_compact_ingest_model(
             total_records=len(rows),
         )
     if Model is _IngestedXlsx:
-        rows = list(adapted.content_rows or [])
+        rows = list(ingest_payload.content_rows or [])
         sheet_names: List[str] = []
         for r in rows:
             try:

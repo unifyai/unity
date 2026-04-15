@@ -42,8 +42,8 @@ from .lowering.content_rows import lower_graph_to_content_rows
 
 
 @dataclass(frozen=True)
-class AdaptedParseOutput:
-    """Ingestion-ready payloads derived from a `FileParseResult`."""
+class FileManagerIngestPayload:
+    """FileManager-owned ingest payloads derived from a `FileParseResult`."""
 
     content_rows: List[FileContentRow]
     tables: List[ExtractedTable]
@@ -55,7 +55,7 @@ def adapt_parse_result_for_file_manager(
     parse_result: FileParseResult,
     *,
     config: FilePipelineConfig,
-) -> AdaptedParseOutput:
+) -> FileManagerIngestPayload:
     """
     Adapt parse artifacts into FileManager ingestion inputs.
 
@@ -81,7 +81,7 @@ def adapt_parse_result_for_file_manager(
     bundle = _build_parsed_file_bundle(parse_result, tables=tables, config=config)
 
     if getattr(parse_result, "status", "error") != "success":
-        return AdaptedParseOutput(
+        return FileManagerIngestPayload(
             content_rows=[],
             tables=tables,
             bundle=bundle,
@@ -90,7 +90,7 @@ def adapt_parse_result_for_file_manager(
 
     graph = getattr(parse_result, "graph", None)
     if graph is None:
-        return AdaptedParseOutput(
+        return FileManagerIngestPayload(
             content_rows=[],
             tables=tables,
             bundle=bundle,
@@ -98,7 +98,7 @@ def adapt_parse_result_for_file_manager(
         )
 
     try:
-        low = lower_graph_to_content_rows(
+        lowered_content = lower_graph_to_content_rows(
             graph=graph,
             file_path=str(getattr(parse_result, "logical_path", "") or ""),
             file_format=getattr(parse_result, "file_format", None),
@@ -109,14 +109,14 @@ def adapt_parse_result_for_file_manager(
                 None,
             ),
         )
-        return AdaptedParseOutput(
-            content_rows=list(low.rows or []),
+        return FileManagerIngestPayload(
+            content_rows=list(lowered_content.rows or []),
             tables=tables,
             bundle=bundle,
-            document_summary=str(low.document_summary or ""),
+            document_summary=str(lowered_content.document_summary or ""),
         )
     except Exception:
-        return AdaptedParseOutput(
+        return FileManagerIngestPayload(
             content_rows=[],
             tables=tables,
             bundle=bundle,
