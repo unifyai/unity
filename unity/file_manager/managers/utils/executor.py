@@ -54,7 +54,7 @@ logger = logging.getLogger(__name__)
 
 
 @dataclass
-class _StepResult:
+class _PipelineStepOutcome:
     """Outcome of a single pipeline step."""
 
     success: bool
@@ -71,7 +71,7 @@ def _run_with_retry(
     *,
     retry_config=None,
     label: str = "",
-) -> _StepResult:
+) -> _PipelineStepOutcome:
     """Call *fn* with typed retry policy, backoff, jitter, and deadline."""
     from unity.file_manager.pipeline import ResilientRequestPolicy
 
@@ -82,7 +82,7 @@ def _run_with_retry(
         t0 = time.perf_counter()
         try:
             value = fn(**kwargs)
-            return _StepResult(
+            return _PipelineStepOutcome(
                 success=True,
                 value=value,
                 duration_ms=(time.perf_counter() - t0) * 1000,
@@ -109,14 +109,14 @@ def _run_with_retry(
                     f"[Pipeline] {label} failed after {attempt + 1} attempts "
                     f"({elapsed:.0f}ms): {exc}",
                 )
-                return _StepResult(
+                return _PipelineStepOutcome(
                     success=False,
                     error=last_error,
                     failure_kind=decision.failure_kind,
                     duration_ms=elapsed,
                     retries=attempt,
                 )
-    return _StepResult(success=False, error=last_error)
+    return _PipelineStepOutcome(success=False, error=last_error)
 
 
 # ---------------------------------------------------------------------------
@@ -127,9 +127,9 @@ def _run_with_retry(
 def _aggregate_results(
     file_path: str,
     *,
-    file_record_result: _StepResult,
-    content_result: Optional[_StepResult],
-    table_results: List[_StepResult],
+    file_record_result: _PipelineStepOutcome,
+    content_result: Optional[_PipelineStepOutcome],
+    table_results: List[_PipelineStepOutcome],
     file_start_time: float,
     parse_result: FileParseResult,
 ) -> Dict[str, Any]:
@@ -268,7 +268,7 @@ def _report_stage_progress(
     run_id: str | None,
     file_path: str,
     stage_name: str,
-    result: _StepResult,
+    result: _PipelineStepOutcome,
     file_start_time: float,
     verbosity: str,
     stage_id: str | None = None,
@@ -318,7 +318,7 @@ def _record_stage_manifest(
     run_id: str | None,
     file_path: str,
     stage_name: str,
-    result: _StepResult,
+    result: _PipelineStepOutcome,
     stage_id: str | None = None,
     file_id: int | None = None,
     storage_id: str | None = None,
@@ -401,7 +401,7 @@ def _build_return_model(
     parse_result: FileParseResult,
     config: Any,
     return_mode: str,
-    adapted: Any,
+    ingest_payload: Any,
 ) -> FileResultType:
     """Build the appropriate Pydantic result based on *return_mode*."""
     if return_mode == "full":
@@ -431,14 +431,14 @@ def _build_return_model(
             ),
             graph=getattr(parse_result, "graph", None),
             tables=list(getattr(parse_result, "tables", []) or []),
-            content_rows=list(adapted.content_rows or []),
+            content_rows=list(ingest_payload.content_rows or []),
             content_ref=getattr(compact, "content_ref", None),
             tables_ref=list(getattr(compact, "tables_ref", []) or []),
             metrics=getattr(compact, "metrics", None),
         )
 
     if return_mode == "none":
-        total_records = len(list(adapted.content_rows or []))
+        total_records = len(list(ingest_payload.content_rows or []))
         return IngestedMinimal(
             file_path=file_path,
             status=parse_result.status,
@@ -561,8 +561,11 @@ def process_single_file(
             execute_ingest_table,
         )
 
-        adapted = adapt_parse_result_for_file_manager(parse_result, config=config)
-        content_rows = list(adapted.content_rows or [])
+        ingest_payload = adapt_parse_result_for_file_manager(
+            parse_result,
+            config=config,
+        )
+        content_rows = list(ingest_payload.content_rows or [])
         parse_trace = getattr(parse_result, "trace", None)
         trace_id = str(getattr(parse_trace, "trace_id", "") or "") or None
         parse_backend = getattr(parse_trace, "backend", None)
@@ -580,7 +583,7 @@ def process_single_file(
                 "file_path": file_path,
                 "parse_result": parse_result,
                 "config": config,
-                "document_summary": adapted.document_summary,
+                "document_summary": ingest_payload.document_summary,
                 "total_records": len(content_rows),
             },
             retry_config=config.retry,
@@ -630,7 +633,7 @@ def process_single_file(
                     file_path=file_path,
                     file_id=file_id,
                     storage_id=storage_id,
-                    bundle=adapted.bundle,
+                    bundle=ingest_payload.bundle,
                     rate_card=cost_accumulator.rate_card,
                     retention_days=getattr(config.cost, "artifact_retention_days", 30),
                 ),
@@ -675,7 +678,7 @@ def process_single_file(
                 table_label = str(getattr(tbl, "label", None) or f"{i:02d}")
                 columns = list(getattr(tbl, "columns", []) or [])
                 rows = list(getattr(tbl, "rows", []) or [])
-                table_input = getattr(adapted.bundle, "table_inputs", {}).get(
+                table_input = getattr(ingest_payload.bundle, "table_inputs", {}).get(
                     str(getattr(tbl, "table_id", "")),
                 )
                 if not columns and rows and isinstance(rows[0], dict):
@@ -804,7 +807,7 @@ def process_single_file(
                     try:
                         res = future.result()
                     except Exception as exc:
-                        res = _StepResult(success=False, error=str(exc))
+                        res = _PipelineStepOutcome(success=False, error=str(exc))
                     if item["kind"] == "content":
                         content_result = res
                     else:
@@ -924,7 +927,7 @@ def process_single_file(
             parse_result,
             config,
             return_mode,
-            adapted,
+            ingest_payload,
         )
 
     except Exception as e:
