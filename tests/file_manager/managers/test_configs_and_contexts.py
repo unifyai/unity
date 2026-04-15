@@ -4,6 +4,7 @@ Config and context structure tests for FileManager.
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
@@ -131,6 +132,35 @@ def test_embedding_specs_smoke(file_manager, tmp_path: Path):
     # Column existence for index embeddings may be model-driven; ensure schema still accessible
     cols = fm.list_columns()
     assert "file_path" in cols and "status" in cols
+
+
+@_handle_project
+def test_file_pipeline_config_loads_extended_retry_policy(tmp_path: Path):
+    config_data = {
+        "retry": {
+            "max_retries": 4,
+            "retry_delay_seconds": 1.5,
+            "backoff_multiplier": 3.0,
+            "max_backoff_seconds": 15.0,
+            "jitter_ratio": 0.0,
+            "deadline_seconds": 20.0,
+            "retry_mode": "all_errors",
+            "fail_fast": True,
+        },
+    }
+    config_file = tmp_path / "retry_config.json"
+    config_file.write_text(json.dumps(config_data), encoding="utf-8")
+
+    cfg = FilePipelineConfig.from_file(str(config_file))
+
+    assert cfg.retry.max_retries == 4
+    assert cfg.retry.retry_delay_seconds == 1.5
+    assert cfg.retry.backoff_multiplier == 3.0
+    assert cfg.retry.max_backoff_seconds == 15.0
+    assert cfg.retry.jitter_ratio == 0.0
+    assert cfg.retry.deadline_seconds == 20.0
+    assert cfg.retry.retry_mode == "all_errors"
+    assert cfg.retry.fail_fast is True
 
 
 @_handle_project

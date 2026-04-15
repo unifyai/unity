@@ -29,6 +29,7 @@ from .config import (
     BusinessContextsConfig,
     OutputConfig,
     DiagnosticsConfig,
+    RetryConfig,
 )
 from .ingest import (
     BaseIngestedFile,
@@ -83,6 +84,7 @@ __all__ = [
     "BusinessContextsConfig",
     "OutputConfig",
     "DiagnosticsConfig",
+    "RetryConfig",
     # Ingested models
     "BaseIngestedFile",
     "IngestedPDF",

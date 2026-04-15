@@ -1,6 +1,12 @@
 from __future__ import annotations
 
 from .artifact_store import ArtifactStore, LocalArtifactStore
+from .retry_policy import (
+    FailureKind,
+    ResilientRequestPolicy,
+    RetryDecision,
+    is_retryable_exception,
+)
 from .row_streaming import iter_table_input_row_batches, iter_table_input_rows
 from .run_ledger import (
     JsonlRunLedger,
@@ -22,6 +28,7 @@ from .types import (
 __all__ = [
     "ArtifactStore",
     "CsvFileHandle",
+    "FailureKind",
     "InlineRowsHandle",
     "JsonlRunLedger",
     "LocalArtifactStore",
@@ -30,10 +37,13 @@ __all__ = [
     "PipelineRunManifest",
     "PipelineStageManifest",
     "ParsedFileBundle",
+    "ResilientRequestPolicy",
+    "RetryDecision",
     "RunLedger",
     "TableInputHandle",
     "XlsxSheetHandle",
     "generate_run_ledger_path",
+    "is_retryable_exception",
     "iter_table_input_row_batches",
     "iter_table_input_rows",
 ]

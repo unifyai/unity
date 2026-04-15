@@ -124,6 +124,43 @@ async def test_parse_can_emit_run_ledger(file_manager, tmp_path: Path):
     assert file_records[0]["status"] == "success"
 
 
+def test_executor_retry_policy_retries_transient_errors_and_stops_on_non_retryable():
+    from unity.file_manager.managers.utils.executor import _run_with_retry
+    from unity.file_manager.types import RetryConfig
+
+    retry_cfg = RetryConfig(
+        max_retries=3,
+        retry_delay_seconds=0.0,
+        jitter_ratio=0.0,
+        retry_mode="transient_only",
+    )
+
+    transient_attempts = {"count": 0}
+
+    def flaky() -> str:
+        transient_attempts["count"] += 1
+        if transient_attempts["count"] < 3:
+            raise TimeoutError("timed out")
+        return "ok"
+
+    transient_result = _run_with_retry(flaky, {}, retry_config=retry_cfg, label="flaky")
+    assert transient_result.success is True
+    assert transient_result.value == "ok"
+    assert transient_result.retries == 2
+    assert transient_attempts["count"] == 3
+
+    fatal_attempts = {"count": 0}
+
+    def fatal() -> None:
+        fatal_attempts["count"] += 1
+        raise ValueError("bad input")
+
+    fatal_result = _run_with_retry(fatal, {}, retry_config=retry_cfg, label="fatal")
+    assert fatal_result.success is False
+    assert fatal_result.failure_kind == "non_retryable"
+    assert fatal_attempts["count"] == 1
+
+
 @pytest.mark.asyncio
 async def test_parse_empty(file_manager, sample_files: Path):
     """Test parsing an empty file."""
