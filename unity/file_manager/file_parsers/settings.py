@@ -38,12 +38,26 @@ class FileParserSettings(BaseSettings):
     EMBEDDING_ENCODING: str = "cl100k_base"
     EMBEDDING_MAX_INPUT_TOKENS: int = 8000
 
+    # Skip expensive enrichment on trivially short text.
+    ENRICHMENT_MIN_TEXT_CHARS: int = 200
+    PARAGRAPH_SUMMARY_MIN_CHARS: int = 200
+    MAX_PARAGRAPH_SUMMARY_CALLS: int = 250
+    MAX_SECTION_SUMMARY_CALLS: int = 120
+
+    # Tabular transport + bounded profiling
+    TABULAR_SAMPLE_ROWS: int = 25
+    TABULAR_INLINE_ROW_LIMIT: int = 1000
+    TABULAR_PROFILE_MAX_TABLES: int = 12
+    TABULAR_PROFILE_MAX_SAMPLE_ROWS: int = 5
+
     # ---------------------------------------------------------------------
     # Docling / extraction knobs
     # ---------------------------------------------------------------------
     # Run Docling's VLM picture-description pipeline on extracted images.
     # Off by default — it downloads a model and adds significant latency.
     PICTURE_DESCRIPTION_ENABLED: bool = False
+    # OCR stays on by default for PDFs so scanned documents work out of the box.
+    DOCLING_OCR_ENABLED: bool = True
     # Model repo used by Docling's picture description pipeline.
     PICTURE_DESCRIPTION_MODEL_REPO: str = "HuggingFaceTB/SmolVLM-500M-Instruct"
 
