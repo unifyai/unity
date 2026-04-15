@@ -120,7 +120,9 @@ def build_compact_ingest_model(
             label = str(getattr(tbl, "label", None) or f"{idx:02d}")
             label_safe = file_manager.safe(label)
             columns = list(getattr(tbl, "columns", []) or [])[:16]
-            row_count = len(getattr(tbl, "rows", []) or [])
+            row_count = getattr(tbl, "num_rows", None)
+            if row_count is None:
+                row_count = len(getattr(tbl, "rows", []) or [])
             # Use storage_id-based context
             table_ctx = file_manager._ctx_for_file_table(storage_id, label_safe)
             tables_meta.append(
@@ -229,6 +231,11 @@ def build_compact_ingest_model(
             except Exception:
                 continue
         tables = list(getattr(parse_result, "tables", []) or [])
+        if not sheet_names:
+            for table in tables:
+                sheet_name = str(getattr(table, "sheet_name", "") or "").strip()
+                if sheet_name and sheet_name not in sheet_names:
+                    sheet_names.append(sheet_name)
         return Model(
             **base_kwargs,
             sheet_count=len(sheet_names) if sheet_names else (len(tables) or None),

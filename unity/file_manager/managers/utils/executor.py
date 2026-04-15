@@ -429,12 +429,18 @@ def process_single_file(
                 table_label = str(getattr(tbl, "label", None) or f"{i:02d}")
                 columns = list(getattr(tbl, "columns", []) or [])
                 rows = list(getattr(tbl, "rows", []) or [])
+                table_input = getattr(adapted.bundle, "table_inputs", {}).get(
+                    str(getattr(tbl, "table_id", "")),
+                )
                 if not columns and rows and isinstance(rows[0], dict):
                     try:
                         columns = [str(k) for k in rows[0].keys()]
                     except Exception:
                         columns = []
-                if not rows:
+                row_count = getattr(tbl, "num_rows", None)
+                if row_count is None:
+                    row_count = len(rows)
+                if table_input is None and not rows:
                     continue
                 work_items.append(
                     {
@@ -445,10 +451,12 @@ def process_single_file(
                             "file_path": file_path,
                             "table_label": table_label,
                             "table_rows": rows,
+                            "table_input": table_input,
                             "columns": columns,
                             "config": config,
                         },
                         "label": f"table({file_path}/{table_label})",
+                        "row_count": row_count,
                     },
                 )
 
