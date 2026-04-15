@@ -8,6 +8,8 @@ Covers:
 from __future__ import annotations
 
 import threading
+from unittest.mock import patch
+
 from unity.data_manager.utils.pipeline import (
     ExecutionConfig,
     PipelineExecutor,
@@ -351,3 +353,161 @@ class TestPipelineExecutor:
 
         assert g.tasks["a"].metadata["chunk_index"] == 0
         assert results["a"].value == {"inserted_ids": [1, 2, 3]}
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# DataManager ingest graph scheduling
+# ────────────────────────────────────────────────────────────────────────────
+
+
+class TestIngestGraphScheduling:
+    def test_build_ingest_graph_serializes_only_when_required(self):
+        from unity.data_manager.ops.ingest_ops import _build_ingest_graph
+
+        chunks = [[{"value": 1}], [{"value": 2}], [{"value": 3}]]
+
+        serial_graph = _build_ingest_graph(
+            "Data/test/serial",
+            chunks,
+            description=None,
+            fields={"value": "int"},
+            unique_keys={"row_id": "int"},
+            embed_columns=None,
+            embed_strategy="along",
+            auto_counting={"row_id": None},
+            infer_untyped_fields=False,
+        )
+        parallel_graph = _build_ingest_graph(
+            "Data/test/parallel",
+            chunks,
+            description=None,
+            fields={"value": "int"},
+            unique_keys=None,
+            embed_columns=None,
+            embed_strategy="along",
+            auto_counting=None,
+            infer_untyped_fields=False,
+        )
+        forced_parallel_graph = _build_ingest_graph(
+            "Data/test/forced_parallel",
+            chunks,
+            description=None,
+            fields={"value": "int"},
+            unique_keys={"row_id": "int"},
+            embed_columns=None,
+            embed_strategy="along",
+            auto_counting={"row_id": None},
+            infer_untyped_fields=False,
+            insert_parallelism="parallel",
+        )
+
+        def _insert_deps(graph: TaskGraph) -> list[set[str]]:
+            insert_tasks = sorted(
+                (
+                    task
+                    for task in graph.tasks.values()
+                    if task.task_type == "insert_chunk"
+                ),
+                key=lambda task: task.id,
+            )
+            return [task.dependencies for task in insert_tasks]
+
+        serial_deps = _insert_deps(serial_graph)
+        parallel_deps = _insert_deps(parallel_graph)
+        forced_parallel_deps = _insert_deps(forced_parallel_graph)
+
+        serial_create = next(
+            task.id
+            for task in serial_graph.tasks.values()
+            if task.task_type == "create_table"
+        )
+        parallel_create = next(
+            task.id
+            for task in parallel_graph.tasks.values()
+            if task.task_type == "create_table"
+        )
+        forced_parallel_create = next(
+            task.id
+            for task in forced_parallel_graph.tasks.values()
+            if task.task_type == "create_table"
+        )
+
+        assert serial_deps[0] == {serial_create}
+        assert serial_deps[1] != {serial_create}
+        assert serial_deps[2] != {serial_create}
+
+        assert parallel_deps == [
+            {parallel_create},
+            {parallel_create},
+            {parallel_create},
+        ]
+        assert forced_parallel_deps == [
+            {forced_parallel_create},
+            {forced_parallel_create},
+            {forced_parallel_create},
+        ]
+
+    def test_make_embed_func_batches_ids_and_syncs_first_batch(self):
+        from unity.data_manager.ops.ingest_ops import (
+            _InsertedIdsStore,
+            _make_embed_func,
+        )
+
+        ids_store = _InsertedIdsStore()
+        ids_store.put("insert_chunk_000", [1, 2, 3, 4, 5])
+        calls = []
+
+        def _fake_ensure_vector_column(*, from_ids, async_embeddings, **kwargs):
+            calls.append(
+                {
+                    "from_ids": list(from_ids or []),
+                    "async_embeddings": async_embeddings,
+                    "embed_column": kwargs["embed_column"],
+                },
+            )
+
+        with patch(
+            "unity.data_manager.ops.ingest_ops._ensure_vector_column",
+            side_effect=_fake_ensure_vector_column,
+        ):
+            result = _make_embed_func(
+                "Data/test/embed",
+                ["body"],
+                async_embeddings=True,
+                ids_store=ids_store,
+                insert_task_id="insert_chunk_000",
+                embedding_batch_size=2,
+                sync_first_batch=True,
+            )()
+
+        assert result["rows_embedded"] == 5
+        assert [call["from_ids"] for call in calls] == [[1, 2], [3, 4], [5]]
+        assert [call["async_embeddings"] for call in calls] == [False, True, True]
+
+    @patch("unity.data_manager.ops.ingest_ops.PipelineExecutor")
+    @patch("unity.data_manager.ops.ingest_ops._build_ingest_graph")
+    def test_run_ingest_passes_throughput_execution_knobs(
+        self,
+        mock_build_ingest_graph,
+        mock_executor_cls,
+    ):
+        from unity.data_manager.ops.ingest_ops import run_ingest
+        from unity.data_manager.types.ingest import IngestExecutionConfig
+
+        mock_build_ingest_graph.return_value = TaskGraph(name="mock-ingest")
+        mock_executor_cls.return_value.execute.return_value = {}
+
+        run_ingest(
+            None,
+            "Data/test/throughput",
+            rows=[{"text": "alpha"}, {"text": "beta"}],
+            embed_columns=["text"],
+            execution=IngestExecutionConfig(
+                insert_parallelism="parallel",
+                embedding_batch_size=128,
+            ),
+        )
+
+        kwargs = mock_build_ingest_graph.call_args.kwargs
+        assert kwargs["insert_parallelism"] == "parallel"
+        assert kwargs["embedding_batch_size"] == 128
