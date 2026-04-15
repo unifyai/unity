@@ -59,6 +59,7 @@ class _StepResult:
     success: bool
     value: Any = None
     error: Optional[str] = None
+    failure_kind: Optional[str] = None
     duration_ms: float = 0.0
     retries: int = 0
 
@@ -67,13 +68,16 @@ def _run_with_retry(
     fn: Callable[..., Any],
     kwargs: Dict[str, Any],
     *,
-    max_retries: int = 2,
-    retry_delay: float = 1.0,
+    retry_config=None,
     label: str = "",
 ) -> _StepResult:
-    """Call *fn* with retries and exponential backoff."""
+    """Call *fn* with typed retry policy, backoff, jitter, and deadline."""
+    from unity.file_manager.pipeline import ResilientRequestPolicy
+
+    policy = ResilientRequestPolicy.from_config(retry_config)
     last_error = ""
-    for attempt in range(1 + max_retries):
+    started_at = time.perf_counter()
+    for attempt in range(policy.max_retries + 1):
         t0 = time.perf_counter()
         try:
             value = fn(**kwargs)
@@ -86,13 +90,19 @@ def _run_with_retry(
         except Exception as exc:
             last_error = str(exc)
             elapsed = (time.perf_counter() - t0) * 1000
-            if attempt < max_retries:
-                delay = retry_delay * (2**attempt)
+            decision = policy.check_retry(
+                exc,
+                attempt_index=attempt,
+                started_at=started_at,
+            )
+            if decision.should_retry:
+                delay = policy.compute_delay(attempt_index=attempt)
                 logger.warning(
                     f"[Pipeline] {label} attempt {attempt + 1} failed "
                     f"({elapsed:.0f}ms): {exc} -- retrying in {delay:.1f}s",
                 )
-                time.sleep(delay)
+                if delay > 0:
+                    time.sleep(delay)
             else:
                 logger.error(
                     f"[Pipeline] {label} failed after {attempt + 1} attempts "
@@ -101,6 +111,7 @@ def _run_with_retry(
                 return _StepResult(
                     success=False,
                     error=last_error,
+                    failure_kind=decision.failure_kind,
                     duration_ms=elapsed,
                     retries=attempt,
                 )
@@ -237,7 +248,14 @@ def _record_stage_manifest(
                 duration_ms=result.duration_ms,
                 retries_used=result.retries,
                 error=result.error,
-                meta=dict(meta or {}),
+                meta={
+                    **dict(meta or {}),
+                    **(
+                        {"failure_kind": result.failure_kind}
+                        if result.failure_kind is not None
+                        else {}
+                    ),
+                },
             ),
         )
     except Exception as exc:
@@ -429,8 +447,6 @@ def process_single_file(
 
     file_start_time = _time.perf_counter()
     return_mode = getattr(getattr(config, "output", None), "return_mode", "compact")
-    max_retries = getattr(config.retry, "max_retries", 2)
-    retry_delay = getattr(config.retry, "retry_delay_seconds", 1.0)
 
     try:
         from unity.file_manager.parse_adapter import adapt_parse_result_for_file_manager
@@ -454,8 +470,7 @@ def process_single_file(
                 "document_summary": adapted.document_summary,
                 "total_records": len(content_rows),
             },
-            max_retries=max_retries,
-            retry_delay=retry_delay,
+            retry_config=config.retry,
             label=f"file_record({file_path})",
         )
         _record_stage_manifest(
@@ -535,8 +550,7 @@ def process_single_file(
                 res = _run_with_retry(
                     item["fn"],
                     item["kwargs"],
-                    max_retries=max_retries,
-                    retry_delay=retry_delay,
+                    retry_config=config.retry,
                     label=item["label"],
                 )
                 if item["kind"] == "content":
@@ -565,8 +579,7 @@ def process_single_file(
                         _run_with_retry,
                         item["fn"],
                         item["kwargs"],
-                        max_retries=max_retries,
-                        retry_delay=retry_delay,
+                        retry_config=config.retry,
                         label=item["label"],
                     ): item
                     for item in work_items

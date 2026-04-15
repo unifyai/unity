@@ -353,12 +353,22 @@ class RetryConfig(BaseModel):
 
     - max_retries: maximum retry attempts for failed tasks (0 = no retries).
     - retry_delay_seconds: base delay between retries (with exponential backoff).
+    - backoff_multiplier: multiplicative backoff factor applied after each retry.
+    - max_backoff_seconds: optional cap on exponential backoff growth.
+    - jitter_ratio: random jitter as a fraction of the computed backoff delay.
+    - deadline_seconds: optional wall-clock deadline for a single step across all attempts.
+    - retry_mode: whether to retry all errors or only transient/network-shaped failures.
     - fail_fast: when True, stop pipeline on first failure without processing
       remaining files/tasks.
     """
 
     max_retries: int = 3
     retry_delay_seconds: float = 3.0
+    backoff_multiplier: float = 2.0
+    max_backoff_seconds: float | None = 60.0
+    jitter_ratio: float = 0.1
+    deadline_seconds: float | None = None
+    retry_mode: Literal["all_errors", "transient_only"] = "transient_only"
     fail_fast: bool = False
 
 
@@ -613,6 +623,16 @@ class FilePipelineConfig(BaseModel):
                 cfg.retry.max_retries = config_file.retry["max_retries"]
             if "retry_delay_seconds" in config_file.retry:
                 cfg.retry.retry_delay_seconds = config_file.retry["retry_delay_seconds"]
+            if "backoff_multiplier" in config_file.retry:
+                cfg.retry.backoff_multiplier = config_file.retry["backoff_multiplier"]
+            if "max_backoff_seconds" in config_file.retry:
+                cfg.retry.max_backoff_seconds = config_file.retry["max_backoff_seconds"]
+            if "jitter_ratio" in config_file.retry:
+                cfg.retry.jitter_ratio = config_file.retry["jitter_ratio"]
+            if "deadline_seconds" in config_file.retry:
+                cfg.retry.deadline_seconds = config_file.retry["deadline_seconds"]
+            if "retry_mode" in config_file.retry:
+                cfg.retry.retry_mode = config_file.retry["retry_mode"]
             if "fail_fast" in config_file.retry:
                 cfg.retry.fail_fast = config_file.retry["fail_fast"]
 
