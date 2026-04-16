@@ -46,17 +46,26 @@ class ResilientRequestPolicy:
         )
         self.retry_mode = retry_mode
 
+    _KNOWN_FIELDS = frozenset(
+        {
+            "max_retries",
+            "retry_delay_seconds",
+            "backoff_multiplier",
+            "max_backoff_seconds",
+            "jitter_ratio",
+            "deadline_seconds",
+            "retry_mode",
+        },
+    )
+
     @classmethod
     def from_config(cls, config) -> "ResilientRequestPolicy":
-        return cls(
-            max_retries=getattr(config, "max_retries", 3),
-            retry_delay_seconds=getattr(config, "retry_delay_seconds", 3.0),
-            backoff_multiplier=getattr(config, "backoff_multiplier", 2.0),
-            max_backoff_seconds=getattr(config, "max_backoff_seconds", 60.0),
-            jitter_ratio=getattr(config, "jitter_ratio", 0.1),
-            deadline_seconds=getattr(config, "deadline_seconds", None),
-            retry_mode=getattr(config, "retry_mode", "transient_only"),
+        raw = (
+            config.model_dump()
+            if hasattr(config, "model_dump")
+            else {k: v for k, v in vars(config).items() if not k.startswith("_")}
         )
+        return cls(**{k: v for k, v in raw.items() if k in cls._KNOWN_FIELDS})
 
     def check_retry(
         self,
