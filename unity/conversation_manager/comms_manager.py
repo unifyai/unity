@@ -337,7 +337,6 @@ class CommsManager:
         self,
         payload: dict,
         *,
-        direct_publish: bool = True,
         source_topic: str = "",
         ack=None,
         nack=None,
@@ -347,7 +346,6 @@ class CommsManager:
             thread=payload["thread"],
             event=payload["event"],
             publish_timestamp=payload.get("publish_timestamp"),
-            direct_publish=direct_publish,
             source_topic=source_topic,
             ack=ack,
             nack=nack,
@@ -359,7 +357,6 @@ class CommsManager:
         thread: str,
         event: dict,
         publish_timestamp: float | None = None,
-        direct_publish: bool = True,
         source_topic: str = "",
         ack=None,
         nack=None,
@@ -367,10 +364,7 @@ class CommsManager:
         """Map a comms envelope onto the existing app:comms:* broker contract."""
 
         async def publish(channel: str, payload: str) -> None:
-            if direct_publish:
-                await self.event_broker.publish(channel, payload)
-                return
-            asyncio.create_task(self.event_broker.publish(channel, payload))
+            await self.event_broker.publish(channel, payload)
 
         async def publish_blocking(channel: str, payload: str) -> None:
             await self.event_broker.publish(channel, payload)
@@ -965,7 +959,7 @@ class CommsManager:
 
             if "call" in thread or "meet" in thread:
                 contacts = [*event.get("contacts", []), _get_local_contact()]
-                await publish(
+                await publish_blocking(
                     "app:comms:backup_contacts",
                     BackupContactsEvent(contacts=contacts).to_json(),
                 )
@@ -1172,7 +1166,6 @@ class CommsManager:
             future = asyncio.run_coroutine_threadsafe(
                 self.dispatch_envelope_payload(
                     payload,
-                    direct_publish=False,
                     source_topic=topic,
                     ack=message.ack,
                     nack=message.nack,

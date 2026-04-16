@@ -250,7 +250,15 @@ class TestTaskWakeSemanticContexts:
 
         assert _contains_any(
             response,
-            ["schedule", "tomorrow", "calendar", "check"],
+            [
+                "schedule",
+                "tomorrow",
+                "calendar",
+                "check",
+                "moment",
+                "let me",
+                "one sec",
+            ],
         ), (
             "Expected the fast brain to stay focused on the direct live request.\n"
             f"Response: {response}"

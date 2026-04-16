@@ -11,7 +11,9 @@
 
 # Unity
 
-**Unity is the runtime behind persistent AI colleagues.** It gives them memory across messaging, voice, screenshare guidance, and meetings, plus a dedicated computer and filesystem for ongoing work.
+**Unity is the cognitive architecture behind [Unify's](https://unify.ai) persistent AI colleagues.** It handles steerable multi-agent orchestration, code-based planning, dual-brain voice, and structured memory across messaging, calls, and meetings.
+
+This is a **production system**, open-sourced primarily because we think the architecture could be useful to others. It is not a fully self-contained, install-and-forget alternative to projects like [OpenClaw](https://github.com/openclaw/openclaw) or [Hermes Agent](https://github.com/nousresearch/hermes-agent) — those are excellent if you want a fully self-hosted personal AI agent today. Unity's contribution is different: it's how we solved steerable execution, nested tool-loop composition, and runtime orchestration at depth in a system that actually runs in production.
 
 > **Demo:** [Launch video](https://youtu.be/qjSWiCd8Bq8?si=8eM0XnHH842_pbgo)
 >
@@ -19,29 +21,37 @@
 >
 > **Technical overview:** [ARCHITECTURE.md](ARCHITECTURE.md)
 
-<table>
-<tr><td><b>Persistent identity across channels</b></td><td>Messages, SMS, email, phone calls, and meetings all update the same identity, memory, and task state.</td></tr>
-<tr><td><b>Dedicated computer and filesystem</b></td><td>Each colleague works from its own virtual desktop with a browser, terminal, and files rather than a shared chat sandbox.</td></tr>
-<tr><td><b>Steerable execution</b></td><td>Every operation returns a live handle you can pause, resume, interject into, or query at any depth without restarting the work.</td></tr>
-<tr><td><b>Live voice with background work</b></td><td>A real-time voice process keeps the conversation moving while a slower orchestration layer continues tool use and planning in the background.</td></tr>
-<tr><td><b>Code execution over typed primitives</b></td><td>The agent writes Python plans over typed primitives with variables, loops, and control flow instead of selecting one JSON tool call at a time.</td></tr>
-<tr><td><b>Memory from onboarding and work</b></td><td>Docs, screenshares, calls, tasks, and follow-up corrections are consolidated into structured memory and reusable guidance for later work.</td></tr>
-<tr><td><b>Concurrent actions</b></td><td>Multiple tasks can run at once, each with its own steering surface for inspection, interruption, and redirection.</td></tr>
-</table>
+## What's open and what's not
 
-Unity's continual learning happens at the agent layer: it updates durable structured state that later reasoning can query directly rather than fine-tuning model weights during ordinary chats.
+**Fully open (MIT):** The entire agent runtime — steerable handles, CodeAct actor, all state managers, dual-brain voice coordination, EventBus, memory consolidation — plus the [LLM access layer](https://github.com/unifyai/unillm) and the [Python SDK](https://github.com/unifyai/unify) for persistence.
+
+**Not open:** The default persistence backend. Unity stores state through Unify's hosted API (`api.unify.ai`). The quickstart connects there with a free account so you can explore the runtime without standing up infrastructure, but you cannot run the full system without it today.
+
+**Can I replace the hosted backend?** In principle, yes. The state managers talk to the backend through the `unify` SDK, and the system already has simulated implementations for testing. Swapping in a local store (Postgres, SQLite) would mean reimplementing the SDK's storage surface — context-scoped CRUD, log streams, field metadata — which is a non-trivial but well-bounded piece of work. We'd welcome it as a community contribution, and the [simulated backends](unity/contact_manager/simulated.py) serve as a reference for the interface contracts.
+
+If you're here to **study the architecture**, start with [ARCHITECTURE.md](ARCHITECTURE.md). If you're here to **run it**, the [Quick Start](#quick-start) below gets you a working sandbox in under 5 minutes.
+
+## What makes this different
+
+<table>
+<tr><td><b>Steerable execution</b></td><td>Every operation returns a live handle you can pause, resume, interject into, or query at any depth without restarting the work. Handles nest: steering at any level propagates through the full tree.</td></tr>
+<tr><td><b>Code plans, not tool menus</b></td><td>The Actor writes Python programs over typed primitives with variables, loops, and control flow — not one JSON tool call at a time.</td></tr>
+<tr><td><b>Dual-brain voice</b></td><td>A real-time voice process (sub-second latency) runs alongside a slower orchestration layer that continues tool use and planning in the background. They coordinate over IPC.</td></tr>
+<tr><td><b>Distributed state managers</b></td><td>Contacts, knowledge, tasks, transcripts, guidance, files, and more — each owned by a specialized manager running its own async LLM tool loop, composed via English-language APIs.</td></tr>
+<tr><td><b>Structured memory</b></td><td>Docs, screenshares, calls, tasks, and follow-up corrections are consolidated into typed, queryable state — not freeform transcript summaries.</td></tr>
+<tr><td><b>Concurrent actions</b></td><td>Multiple tasks run at once, each with its own steering surface for inspection, interruption, and redirection.</td></tr>
+<tr><td><b>Persistent identity</b></td><td>Messages, SMS, email, phone calls, and meetings all update the same identity, memory, and task state.</td></tr>
+</table>
 
 ## For technical reviewers
 
-If you're evaluating the system before installing it, start here:
+If you're evaluating the architecture before installing anything, start here:
 
-- [Launch video](https://youtu.be/qjSWiCd8Bq8?si=8eM0XnHH842_pbgo)
-- [Longer-form screenshares playlist](https://youtube.com/playlist?list=PLwNuX3xB_tv-AsywAKYnGVv8X5AaEUc2Z&si=ifIIA0CEsDmqIEbf)
-- [Architecture walkthrough](ARCHITECTURE.md)
-- [`unity/common/async_tool_loop.py`](unity/common/async_tool_loop.py) — steerable handles and the public loop API
+- [Architecture walkthrough](ARCHITECTURE.md) — the most detailed explanation of how everything fits together
+- [`unity/common/async_tool_loop.py`](unity/common/async_tool_loop.py) — `SteerableToolHandle` and the public loop API
 - [`unity/actor/code_act_actor.py`](unity/actor/code_act_actor.py) — CodeAct planning and execution
 - [`unity/conversation_manager/conversation_manager.py`](unity/conversation_manager/conversation_manager.py) — live orchestration, in-flight actions, voice coordination
-- [`sandboxes/conversation_manager/README.md`](sandboxes/conversation_manager/README.md) — modes, channels, voice, and local/hosted setup
+- [Launch video](https://youtu.be/qjSWiCd8Bq8?si=8eM0XnHH842_pbgo) and [longer-form screenshares](https://youtube.com/playlist?list=PLwNuX3xB_tv-AsywAKYnGVv8X5AaEUc2Z&si=ifIIA0CEsDmqIEbf)
 
 ## Quick Start
 
@@ -97,7 +107,9 @@ source .venv/bin/activate
 python -m sandboxes.conversation_manager.sandbox --project_name Sandbox --overwrite
 ```
 
-You'll see a configuration prompt — select **Mode 1** (`SandboxSimulatedActor`). This runs the full ConversationManager brain with simulated backends. No external infrastructure required.
+You'll see a configuration prompt — **select option 2** (CodeAct + Simulated Managers). This runs the full architecture: the ConversationManager orchestrates the CodeActActor, which writes and executes Python plans against the manager APIs, all with simulated backends. No external infrastructure required beyond the Unify account.
+
+Option 1 (SandboxSimulatedActor) is a simpler view that shows the ConversationManager's orchestration without CodeAct — useful if you want to focus on the brain and steering layer in isolation.
 
 ### Interact
 
@@ -117,9 +129,7 @@ Commands: `msg` (Unify message), `sms` (SMS), `email` (email), `call` (phone cal
 
 ### Going deeper
 
-Mode 1 simulates everything to show the ConversationManager's orchestration. For the real CodeAct architecture (where the Actor writes and executes Python plans against the manager APIs), select **Mode 2** at the configuration prompt.
-
-See the full sandbox docs at [`sandboxes/conversation_manager/README.md`](sandboxes/conversation_manager/README.md) — it covers Mode 3 (real computer interface), voice mode, live voice calls, local comms, hosted comms, GUI mode, and more.
+Option 3 at the configuration prompt adds a real computer interface (virtual desktop + browser via agent-service) on top of the CodeAct architecture. See [`sandboxes/conversation_manager/README.md`](sandboxes/conversation_manager/README.md) for the full matrix — voice mode, live voice calls, local comms, hosted comms, GUI mode, and more.
 
 ### Real Channels Locally
 
@@ -175,9 +185,10 @@ Notes:
 
 ## Quick answers
 
-- **Is Unity fully local today?** Not end-to-end. The supported quickstart runs the brain locally but uses Unify's hosted backend for persistence and state.
+- **Is Unity fully self-hosted today?** No. The brain runs locally, but persistence goes through Unify's hosted backend. Replacing it with a local store is possible (the interfaces are well-defined) but not turnkey yet. See [What's open and what's not](#whats-open-and-whats-not).
+- **How is this different from OpenClaw / Hermes Agent?** Those are self-contained personal AI agent platforms — install them and you have a working assistant. Unity is the internal cognitive architecture of a production system, open-sourced for the patterns: steerable nested handles, CodeAct, dual-brain voice, distributed state managers. Different goals, different trade-offs.
 - **Do I have to use OpenAI or Anthropic?** No. Those are the simplest documented paths here. `unillm` can be pointed at other supported providers and compatible local endpoints.
-- **Do I have to use the hosted backend?** The default quickstart does for persistence. Local channel ingress for Twilio/WhatsApp/LiveKit/email is also available if you bring your own provider credentials.
+- **Do I have to use the hosted backend?** For the default quickstart, yes. Communication channels (Twilio/WhatsApp/LiveKit/email) can run locally via the built-in local comms ingress.
 
 ---
 
@@ -322,10 +333,10 @@ State Managers (each runs its own async LLM tool loop)
 | Repo | What it does |
 |------|-------------|
 | **unity** (this) | The agent runtime — managers, tool loops, CodeAct, voice, orchestration |
-| **[unify](https://github.com/unifyai/unify)** | Python SDK for persistence and logging (connects to Unify's hosted backend) |
+| **[unify](https://github.com/unifyai/unify)** | Python SDK for persistence and logging (wraps Unify's hosted REST API) |
 | **[unillm](https://github.com/unifyai/unillm)** | LLM access layer — routes to OpenAI, Anthropic, or any compatible endpoint |
 
-All three are MIT-licensed. The managed product layer — including voice calls, messaging channels, and the management dashboard — runs on [Unify's platform](https://unify.ai).
+All three are MIT-licensed. The `unify` SDK currently targets Unify's hosted backend for storage — this is the primary external dependency. The managed product layer (voice calls, messaging channels, management dashboard) runs on [Unify's platform](https://unify.ai).
 
 ---
 
@@ -401,28 +412,6 @@ We don't do defensive coding. No try/except around things that shouldn't fail. N
 We think of English as an API. Managers communicate through natural-language interfaces. The Actor orchestrates through English-language primitives. This makes the whole system inspectable without reading implementation code.
 
 ---
-
-## Roadmap
-
-Current priorities:
-
-- [ ] **Local deployment** — `docker compose up` for the full system (brain + persistence + communication) on your machine. This is the top priority.
-- [ ] **Managed/local convergence** — narrow the remaining gap between the managed Pub/Sub path and the local ingress path
-- [ ] **Broader local provider coverage** — expand turnkey local channel setup beyond the current Twilio/LiveKit/IMAP/SMTP path
-- [ ] **Local storage** — filesystem or S3-compatible alternative to GCS signed URLs
-- [ ] **Simplified Orchestra** — lightweight local mode for the persistence layer, reducing external dependencies
-- [ ] **One-command onboarding** — guided setup that provisions API keys, configures channels, and starts the assistant
-
-Follow [GitHub Issues](https://github.com/unifyai/unity/issues) for detailed progress.
-
----
-
-## Community
-
-- [Documentation](https://docs.unify.ai) — architecture deep-dives, quickstart, guides
-- [Discord](https://discord.com/invite/sXyFF8tDtm)
-- [Issues](https://github.com/unifyai/unity/issues)
-- [Discussions](https://github.com/unifyai/unity/discussions)
 
 ## License
 

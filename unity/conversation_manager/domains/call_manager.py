@@ -336,8 +336,8 @@ class LivekitCallManager:
 
     async def start_unify_meet(
         self,
-        contact: dict,
-        boss: dict,
+        contact: dict | None,
+        boss: dict | None,
         room_name: str | None,
     ):
         if self.has_active_call:
@@ -355,7 +355,7 @@ class LivekitCallManager:
         if self._socket_server:
             await self._socket_server.set_forward_channels(list(_BASE_FORWARD_CHANNELS))
 
-        if contact.get("is_system", False):
+        if contact and contact.get("is_system", False):
             self._start_boss_notification_rendering()
 
         room_name = room_name or make_room_name(self.assistant_id, "meet")
