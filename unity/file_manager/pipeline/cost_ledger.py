@@ -1,26 +1,17 @@
 from __future__ import annotations
 
-import json
 import threading
-from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Iterable, Literal, Protocol
 from urllib.parse import unquote, urlparse
 
 from pydantic import BaseModel, Field
 
-from unity.file_manager.file_parsers.types.contracts import (
-    FileParseRequest,
-    FileParseResult,
-)
-from unity.file_manager.file_parsers.utils.memory_scheduler import (
-    estimate_peak_memory_bytes,
-)
-
+from ._utils import JsonlWriter, utc_now, utc_now_iso
 from .types import ObjectStoreArtifactHandle, ParsedFileBundle
 
 if TYPE_CHECKING:
-    from unity.file_manager.types.config import CostLedgerConfig, ParseConfig
+    from unity.file_manager.types.config import CostLedgerConfig, CostRateCardConfig
 
 
 CostConfidence = Literal["high", "medium", "low"]
@@ -42,73 +33,10 @@ class PipelineCostRateCard(BaseModel):
 
     @classmethod
     def from_config(cls, cost_config: "CostLedgerConfig") -> "PipelineCostRateCard":
-        rate_card = getattr(cost_config, "rate_card", None)
+        rate_card: CostRateCardConfig | None = getattr(cost_config, "rate_card", None)
         if rate_card is None:
             return cls()
-        return cls(
-            version=str(
-                getattr(rate_card, "version", cls.model_fields["version"].default),
-            ),
-            currency=str(
-                getattr(rate_card, "currency", cls.model_fields["currency"].default),
-            ),
-            parse_cpu_per_second=float(
-                getattr(
-                    rate_card,
-                    "parse_cpu_per_second",
-                    cls.model_fields["parse_cpu_per_second"].default,
-                ),
-            ),
-            parse_memory_gb_second=float(
-                getattr(
-                    rate_card,
-                    "parse_memory_gb_second",
-                    cls.model_fields["parse_memory_gb_second"].default,
-                ),
-            ),
-            artifact_storage_gb_month=float(
-                getattr(
-                    rate_card,
-                    "artifact_storage_gb_month",
-                    cls.model_fields["artifact_storage_gb_month"].default,
-                ),
-            ),
-            row_ingest_request=float(
-                getattr(
-                    rate_card,
-                    "row_ingest_request",
-                    cls.model_fields["row_ingest_request"].default,
-                ),
-            ),
-            row_ingest_row=float(
-                getattr(
-                    rate_card,
-                    "row_ingest_row",
-                    cls.model_fields["row_ingest_row"].default,
-                ),
-            ),
-            embedding_row=float(
-                getattr(
-                    rate_card,
-                    "embedding_row",
-                    cls.model_fields["embedding_row"].default,
-                ),
-            ),
-            llm_enrichment_call=float(
-                getattr(
-                    rate_card,
-                    "llm_enrichment_call",
-                    cls.model_fields["llm_enrichment_call"].default,
-                ),
-            ),
-            observability_event=float(
-                getattr(
-                    rate_card,
-                    "observability_event",
-                    cls.model_fields["observability_event"].default,
-                ),
-            ),
-        )
+        return cls.model_validate(rate_card.model_dump())
 
 
 class PipelineCostLineItem(BaseModel):
@@ -146,7 +74,7 @@ class PipelineCostLedger(BaseModel):
     line_items: list[PipelineCostLineItem] = Field(default_factory=list)
     estimated_total: float = 0.0
     reconciled_total: float | None = None
-    recorded_at: str = Field(default_factory=lambda: _utc_now().isoformat())
+    recorded_at: str = Field(default_factory=utc_now_iso)
 
 
 class CostLedger(Protocol):
@@ -163,27 +91,17 @@ class JsonlCostLedger:
     """Thread-safe JSONL writer for pipeline cost ledgers."""
 
     def __init__(self, *, path: str | Path):
-        self.path = Path(path).expanduser().resolve()
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        self._fh = self.path.open("a", encoding="utf-8", newline="\n")
-        self._lock = threading.Lock()
+        self._writer = JsonlWriter(path=path)
+        self.path = self._writer.path
 
     def write(self, ledger: PipelineCostLedger) -> None:
-        payload = ledger.model_dump(mode="json", exclude_none=True)
-        with self._lock:
-            self._fh.write(json.dumps(payload, ensure_ascii=False))
-            self._fh.write("\n")
+        self._writer.write_model(ledger)
 
     def flush(self) -> None:
-        with self._lock:
-            self._fh.flush()
+        self._writer.flush()
 
     def close(self) -> None:
-        with self._lock:
-            try:
-                self._fh.flush()
-            finally:
-                self._fh.close()
+        self._writer.close()
 
 
 class PipelineCostAccumulator:
@@ -235,17 +153,22 @@ def build_parse_cost_line_items(
     *,
     run_id: str,
     file_path: str,
-    parse_result: FileParseResult,
-    parse_config: "ParseConfig",
+    parse_duration_seconds: float,
+    estimated_peak_memory_bytes: int = 0,
+    llm_enrichment_calls: int = 0,
+    parse_backend: str | None = None,
+    trace_status: str | None = None,
     rate_card: PipelineCostRateCard,
 ) -> list[PipelineCostLineItem]:
-    """Estimate parse-stage cost from measured duration and bounded memory heuristics."""
+    """Estimate parse-stage cost from pre-computed metrics.
+
+    Callers are responsible for extracting duration, memory estimates, and
+    LLM call counts from the ``FileParseResult`` trace *before* calling this
+    function.  This keeps the cost ledger module free of parser-specific
+    imports and filesystem I/O.
+    """
 
     items: list[PipelineCostLineItem] = []
-    trace = getattr(parse_result, "trace", None)
-    parse_duration_seconds = float(getattr(trace, "duration_ms", 0.0) or 0.0) / 1000.0
-    trace_status = getattr(getattr(trace, "status", None), "value", None)
-    backend = getattr(trace, "backend", None)
 
     if parse_duration_seconds > 0:
         items.append(
@@ -260,20 +183,15 @@ def build_parse_cost_line_items(
                 file_path=file_path,
                 stage_name="parse",
                 meta={
-                    "parse_backend": backend,
+                    "parse_backend": parse_backend,
                     "trace_status": trace_status,
                 },
             ),
         )
 
-    estimated_peak_bytes = _estimate_peak_memory_bytes_for_result(
-        file_path=file_path,
-        parse_result=parse_result,
-        parse_config=parse_config,
-    )
     estimated_memory_gb_seconds = (
-        (estimated_peak_bytes / (1024.0**3)) * parse_duration_seconds
-        if estimated_peak_bytes > 0 and parse_duration_seconds > 0
+        (estimated_peak_memory_bytes / (1024.0**3)) * parse_duration_seconds
+        if estimated_peak_memory_bytes > 0 and parse_duration_seconds > 0
         else 0.0
     )
     if estimated_memory_gb_seconds > 0:
@@ -289,26 +207,25 @@ def build_parse_cost_line_items(
                 file_path=file_path,
                 stage_name="parse",
                 meta={
-                    "estimated_peak_bytes": estimated_peak_bytes,
-                    "parse_backend": backend,
+                    "estimated_peak_bytes": estimated_peak_memory_bytes,
+                    "parse_backend": parse_backend,
                 },
             ),
         )
 
-    llm_calls = _estimate_llm_enrichment_calls(parse_result)
-    if llm_calls > 0:
+    if llm_enrichment_calls > 0:
         items.append(
             _line_item(
                 run_id=run_id,
                 component="llm_enrichment",
                 usage_unit="calls",
-                quantity=float(llm_calls),
+                quantity=float(llm_enrichment_calls),
                 unit_rate=rate_card.llm_enrichment_call,
                 currency=rate_card.currency,
                 confidence="low",
                 file_path=file_path,
                 stage_name="parse",
-                meta={"parse_backend": backend},
+                meta={"parse_backend": parse_backend},
             ),
         )
 
@@ -494,7 +411,7 @@ def build_observability_cost_line_items(
 def generate_cost_ledger_path() -> str:
     """Return a timestamped local path for pipeline cost-ledger output."""
 
-    stamp = _utc_now().strftime("%Y%m%d_%H%M%S")
+    stamp = utc_now().strftime("%Y%m%d_%H%M%S")
     path = Path("logs/file_manager_runs") / f"cost_ledger_{stamp}.jsonl"
     return str(path.resolve())
 
@@ -541,34 +458,6 @@ def _line_item(
     )
 
 
-def _estimate_peak_memory_bytes_for_result(
-    *,
-    file_path: str,
-    parse_result: FileParseResult,
-    parse_config: "ParseConfig",
-) -> int:
-    source_candidates = [
-        getattr(getattr(parse_result, "trace", None), "source_local_path", None),
-        getattr(getattr(parse_result, "trace", None), "parsed_local_path", None),
-        file_path,
-    ]
-    for candidate in source_candidates:
-        if not candidate:
-            continue
-        try:
-            path = Path(str(candidate)).expanduser()
-        except Exception:
-            continue
-        if not path.exists():
-            continue
-        request = FileParseRequest(
-            logical_path=file_path,
-            source_local_path=str(path),
-        )
-        return estimate_peak_memory_bytes(request, config=parse_config)
-    return 0
-
-
 def _estimate_artifact_bytes(bundle: ParsedFileBundle) -> int:
     total = 0
     for handle in bundle.table_inputs.values():
@@ -593,21 +482,3 @@ def _resolve_local_size_bytes(storage_uri: str) -> int:
         except OSError:
             return 0
     return 0
-
-
-def _estimate_llm_enrichment_calls(parse_result: FileParseResult) -> int:
-    trace = getattr(parse_result, "trace", None)
-    if trace is None:
-        return 0
-    total = 0
-    for step in list(getattr(trace, "steps", []) or []):
-        counters = getattr(step, "counters", {}) or {}
-        for key in ("llm_calls", "summary_calls", "metadata_calls"):
-            value = counters.get(key)
-            if value:
-                total += int(value)
-    return total
-
-
-def _utc_now() -> datetime:
-    return datetime.now(UTC)
