@@ -759,6 +759,10 @@ async def add_email_attachments(
         return
 
     LOGGER.debug(f"{ICONS['comms_outbound']} Saving email attachments...")
+    from unity.manager_registry import ManagerRegistry
+
+    file_manager = ManagerRegistry.get_file_manager()
+    saved_display_names: list[str] = []
     async with aiohttp.ClientSession() as session:
         for att in attachments:
             try:
@@ -778,15 +782,14 @@ async def add_email_attachments(
                     async with session.get(url, headers=headers, params=params) as resp:
                         data = await resp.read()
 
-                from unity.manager_registry import ManagerRegistry
-
-                file_manager = ManagerRegistry.get_file_manager()
-                await asyncio.to_thread(
+                display_name = await asyncio.to_thread(
                     file_manager.save_attachment,
                     att_id,
                     safe_filename,
                     data,
+                    auto_ingest=False,
                 )
+                saved_display_names.append(display_name)
 
                 LOGGER.debug(
                     f"{ICONS['comms_outbound']} Downloaded email attachment {safe_filename} (size={len(data)} bytes)",
@@ -795,6 +798,22 @@ async def add_email_attachments(
                 LOGGER.error(
                     f"{ICONS['comms_outbound']} Failed to fetch/write attachment '{att}': {e}",
                 )
+
+    if saved_display_names and SETTINGS.file.IMPLICIT_INGESTION:
+        try:
+            from unity.file_manager.managers.utils.attachment_ingestion import (
+                enqueue_attachment_ingestion,
+            )
+
+            await asyncio.to_thread(
+                enqueue_attachment_ingestion,
+                file_manager,
+                saved_display_names,
+            )
+        except Exception as e:
+            LOGGER.error(
+                f"{ICONS['comms_outbound']} Failed to queue email attachments for ingestion: {e}",
+            )
 
 
 async def _get_signed_url_from_gs_url(
@@ -828,19 +847,31 @@ async def _get_signed_url_from_gs_url(
 async def _download_single_attachment(
     session: aiohttp.ClientSession,
     att: dict[str, str],
-    adapter,
+    file_manager,
 ) -> str | None:
     """Download one attachment and write it to disk. Returns the display name, or None on failure."""
     att_id = att.get("id", "")
     raw_filename = att.get("filename") or f"attachment_{att_id}"
     safe_filename = os.path.basename(raw_filename)
 
-    target_path = Path(adapter._root) / "Attachments" / f"{att_id}_{safe_filename}"
-    if target_path.exists() and target_path.stat().st_size > 0:
+    display_name = f"Attachments/{att_id}_{safe_filename}"
+    target_path = None
+    try:
+        adapter = getattr(file_manager, "_adapter", None)
+        root = getattr(adapter, "_root", None)
+        if root:
+            target_path = Path(root) / "Attachments" / f"{att_id}_{safe_filename}"
+    except Exception:
+        target_path = None
+    if (
+        target_path is not None
+        and target_path.exists()
+        and target_path.stat().st_size > 0
+    ):
         LOGGER.debug(
             f"{ICONS['comms_outbound']} Attachment {safe_filename} already on disk, skipping download",
         )
-        return f"Attachments/{att_id}_{safe_filename}"
+        return display_name
 
     url = att.get("url")
     gs_url = att.get("gs_url")
@@ -866,10 +897,11 @@ async def _download_single_attachment(
         data = b""
 
     display_name = await asyncio.to_thread(
-        adapter.save_attachment,
+        file_manager.save_attachment,
         att_id,
         safe_filename,
         data,
+        auto_ingest=False,
     )
 
     LOGGER.debug(
@@ -904,13 +936,12 @@ async def add_unify_message_attachments(
     LOGGER.debug(f"{ICONS['comms_outbound']} Saving unify message attachments...")
 
     file_manager = ManagerRegistry.get_file_manager()
-    adapter = file_manager._adapter
 
     # Phase 1: Download all files to disk in parallel.
     async with aiohttp.ClientSession() as session:
         results = await asyncio.gather(
             *(
-                _download_single_attachment(session, att, adapter)
+                _download_single_attachment(session, att, file_manager)
                 for att in attachments
             ),
             return_exceptions=True,
@@ -925,23 +956,19 @@ async def add_unify_message_attachments(
         elif result is not None:
             saved_display_names.append(result)
 
-    # Phase 2: Ingest all saved files (parse, index, embed) in parallel.
-    # Files are already on disk and accessible to the assistant.
-    # Gated behind IMPLICIT_INGESTION because the Docling pipeline can
-    # consume multiple GB of memory per file and OOM the container before
-    # the CodeActActor gets a chance to process the user's request.
+    # Phase 2: Queue background ingestion for any saved files.
     if saved_display_names and SETTINGS.file.IMPLICIT_INGESTION:
         try:
-            from unity.file_manager.types.config import FilePipelineConfig
+            from unity.file_manager.managers.utils.attachment_ingestion import (
+                enqueue_attachment_ingestion,
+            )
 
-            cfg = FilePipelineConfig()
-            cfg.execution.parallel_files = True
             await asyncio.to_thread(
-                file_manager.ingest_files,
+                enqueue_attachment_ingestion,
+                file_manager,
                 saved_display_names,
-                config=cfg,
             )
         except Exception as e:
             LOGGER.error(
-                f"{ICONS['comms_outbound']} Failed to ingest downloaded attachments: {e}",
+                f"{ICONS['comms_outbound']} Failed to queue downloaded attachments for ingestion: {e}",
             )
