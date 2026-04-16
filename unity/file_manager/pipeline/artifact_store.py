@@ -5,7 +5,6 @@ import json
 from pathlib import Path
 from typing import Protocol
 
-from .row_streaming import iter_table_input_rows
 from .types import ObjectStoreArtifactHandle, TableInputHandle
 
 
@@ -52,6 +51,8 @@ class LocalArtifactStore:
 
         columns = list(getattr(handle, "columns", []) or [])
         actual_row_count = 0
+        from unity.file_manager.parse_adapter.row_streaming import iter_table_input_rows
+
         with target_path.open("w", encoding="utf-8", newline="\n") as fh:
             for row in iter_table_input_rows(handle):
                 payload = {str(key): value for key, value in dict(row).items()}

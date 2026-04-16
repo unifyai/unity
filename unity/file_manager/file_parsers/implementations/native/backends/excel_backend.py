@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import time
+from collections.abc import Iterator
 from pathlib import Path
 from typing import Optional, Sequence
 
@@ -36,6 +37,52 @@ class NativeExcelBackend(BaseFileParserBackend):
 
     def can_handle(self, fmt: Optional[FileFormat]) -> bool:
         return fmt in self.supported_formats
+
+    @staticmethod
+    def iter_rows(
+        path: str | Path,
+        *,
+        sheet_name: str | None = None,
+        has_header: bool = True,
+        columns: Sequence[str] | None = None,
+    ) -> "Iterator[dict[str, object]]":
+        """Stream rows from an XLSX sheet via openpyxl read-only mode.
+
+        This is the single row-iteration entry point for Excel files.
+        Callers that hold an ``XlsxSheetHandle`` should unpack it into
+        keyword arguments and call this directly.
+        """
+        workbook = load_workbook(str(path), read_only=True, data_only=True)
+        try:
+            ws = workbook[sheet_name] if sheet_name else workbook.active
+            rows_iter = ws.iter_rows(values_only=True)
+
+            col_names = list(columns or [])
+            if has_header:
+                header = next(rows_iter, None)
+                if header is None:
+                    return
+                if not col_names:
+                    col_names = _coerce_header_row(
+                        tuple(normalize_tabular_value(v) for v in header),
+                    )
+            elif not col_names:
+                first = next(rows_iter, None)
+                if first is None:
+                    return
+                col_names = [f"column_{i}" for i in range(1, len(first) + 1)]
+                yield _row_from_values(
+                    col_names,
+                    [normalize_tabular_value(v) for v in first],
+                )
+
+            for row in rows_iter:
+                values = [normalize_tabular_value(v) for v in row]
+                if _is_blank_row(values):
+                    continue
+                yield _row_from_values(col_names, values)
+        finally:
+            workbook.close()
 
     def parse(self, ctx: FileParseRequest, /) -> FileParseResult:
         started = time.perf_counter()

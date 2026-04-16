@@ -4,6 +4,7 @@ import csv
 import io
 import logging
 import time
+from collections.abc import Iterator
 from pathlib import Path
 from typing import Optional, Sequence
 
@@ -37,6 +38,43 @@ class NativeCsvBackend(BaseFileParserBackend):
 
     def can_handle(self, fmt: Optional[FileFormat]) -> bool:
         return fmt in self.supported_formats
+
+    @staticmethod
+    def iter_rows(
+        path: str | Path,
+        *,
+        delimiter: str = ",",
+        quotechar: str = '"',
+        has_header: bool = True,
+        encoding: str = "utf8-lossy",
+        columns: Sequence[str] | None = None,
+        batch_size: int = 5_000,
+    ) -> "Iterator[dict[str, object]]":
+        """Stream rows from a CSV via Polars lazy scan.
+
+        This is the single row-iteration entry point for CSV files.
+        Callers that hold a ``CsvFileHandle`` should unpack it into
+        keyword arguments and call this directly rather than
+        reimplementing CSV reading.
+        """
+        polars_encoding = (
+            "utf8-lossy" if encoding not in ("utf8", "utf8-lossy") else encoding
+        )
+        lf = pl.scan_csv(
+            str(path),
+            separator=delimiter,
+            quote_char=quotechar,
+            has_header=has_header,
+            encoding=polars_encoding,
+            infer_schema_length=500,
+            try_parse_dates=True,
+        )
+        override = list(columns or [])
+        for batch_df in lf.collect(streaming=True).iter_slices(n_rows=batch_size):
+            if override and len(override) == len(batch_df.columns):
+                batch_df.columns = override
+            for row_dict in batch_df.iter_rows(named=True):
+                yield {str(k): normalize_tabular_value(v) for k, v in row_dict.items()}
 
     def parse(self, ctx: FileParseRequest, /) -> FileParseResult:
         started = time.perf_counter()
