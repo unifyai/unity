@@ -52,14 +52,19 @@ class XlsxSheetHandle(BaseModel):
 
 
 class ObjectStoreArtifactHandle(BaseModel):
-    """Reference to a materialized artifact such as Parquet or Arrow IPC."""
+    """Reference to a materialized artifact in a local or remote store.
+
+    Currently only ``"jsonl"`` is implemented.  ``"parquet"`` and
+    ``"arrow_ipc"`` are reserved for future backends and will raise
+    ``NotImplementedError`` in ``LocalArtifactStore`` if used today.
+    """
 
     model_config = ConfigDict(frozen=True)
 
     kind: Literal["object_store_artifact"] = "object_store_artifact"
     storage_uri: str
     logical_path: str
-    artifact_format: Literal["parquet", "arrow_ipc", "jsonl"]
+    artifact_format: Literal["jsonl", "parquet", "arrow_ipc"] = "jsonl"
     columns: list[str] = Field(default_factory=list)
     row_count: Optional[int] = None
 
