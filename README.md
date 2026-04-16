@@ -413,30 +413,6 @@ We think of English as an API. Managers communicate through natural-language int
 
 ---
 
-## Roadmap
-
-Current priorities (roughly in order):
-
-- [ ] **Local persistence layer** — lightweight local mode for the `unify` SDK backed by SQLite or Postgres, removing the hosted backend requirement for the core loop
-- [ ] **Local deployment** — `docker compose up` for the full system (brain + persistence + communication) on your machine
-- [ ] **Managed/local convergence** — narrow the remaining gap between the managed Pub/Sub path and the local ingress path
-- [ ] **Broader local provider coverage** — expand turnkey local channel setup beyond the current Twilio/LiveKit/IMAP/SMTP path
-- [ ] **Local storage** — filesystem or S3-compatible alternative to GCS signed URLs
-- [ ] **One-command onboarding** — guided setup that provisions API keys, configures channels, and starts the assistant
-
-The long-term goal is a fully self-hosted path with zero external dependencies. Contributions toward any of these are welcome — especially the local persistence layer, which would unlock everything else.
-
-Follow [GitHub Issues](https://github.com/unifyai/unity/issues) for detailed progress.
-
----
-
-## Community
-
-- [Documentation](https://docs.unify.ai) — architecture deep-dives, quickstart, guides
-- [Discord](https://discord.com/invite/sXyFF8tDtm)
-- [Issues](https://github.com/unifyai/unity/issues)
-- [Discussions](https://github.com/unifyai/unity/discussions)
-
 ## License
 
 MIT — see [LICENSE](LICENSE).
