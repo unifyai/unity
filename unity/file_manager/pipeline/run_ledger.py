@@ -1,12 +1,11 @@
 from __future__ import annotations
 
-import json
-import threading
-from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Literal, Protocol
 
 from pydantic import BaseModel, Field
+
+from ._utils import JsonlWriter, utc_now_iso, utc_now
 
 
 class PipelineStageManifest(BaseModel):
@@ -25,7 +24,7 @@ class PipelineStageManifest(BaseModel):
     retries_used: int = 0
     error: str | None = None
     meta: dict[str, Any] = Field(default_factory=dict)
-    recorded_at: str = Field(default_factory=lambda: _utc_now().isoformat())
+    recorded_at: str = Field(default_factory=utc_now_iso)
 
 
 class PipelineFileManifest(BaseModel):
@@ -40,7 +39,7 @@ class PipelineFileManifest(BaseModel):
     total_duration_ms: float = 0.0
     retries_used: int = 0
     meta: dict[str, Any] = Field(default_factory=dict)
-    recorded_at: str = Field(default_factory=lambda: _utc_now().isoformat())
+    recorded_at: str = Field(default_factory=utc_now_iso)
 
 
 class PipelineRunManifest(BaseModel):
@@ -55,7 +54,7 @@ class PipelineRunManifest(BaseModel):
     parallel_files: bool = False
     total_duration_ms: float = 0.0
     meta: dict[str, Any] = Field(default_factory=dict)
-    recorded_at: str = Field(default_factory=lambda: _utc_now().isoformat())
+    recorded_at: str = Field(default_factory=utc_now_iso)
 
 
 class RunLedger(Protocol):
@@ -72,36 +71,22 @@ class JsonlRunLedger:
     """Thread-safe JSONL ledger writer for local pipeline manifests."""
 
     def __init__(self, *, path: str | Path):
-        self.path = Path(path).expanduser().resolve()
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        self._fh = self.path.open("a", encoding="utf-8", newline="\n")
-        self._lock = threading.Lock()
+        self._writer = JsonlWriter(path=path)
+        self.path = self._writer.path
 
     def write(self, manifest: BaseModel) -> None:
-        payload = manifest.model_dump(mode="json", exclude_none=True)
-        with self._lock:
-            self._fh.write(json.dumps(payload, ensure_ascii=False))
-            self._fh.write("\n")
+        self._writer.write_model(manifest)
 
     def flush(self) -> None:
-        with self._lock:
-            self._fh.flush()
+        self._writer.flush()
 
     def close(self) -> None:
-        with self._lock:
-            try:
-                self._fh.flush()
-            finally:
-                self._fh.close()
+        self._writer.close()
 
 
 def generate_run_ledger_path() -> str:
     """Return a timestamped local path for run-manifest output."""
 
-    stamp = _utc_now().strftime("%Y%m%d_%H%M%S")
+    stamp = utc_now().strftime("%Y%m%d_%H%M%S")
     path = Path("logs/file_manager_runs") / f"run_ledger_{stamp}.jsonl"
     return str(path.resolve())
-
-
-def _utc_now() -> datetime:
-    return datetime.now(UTC)
