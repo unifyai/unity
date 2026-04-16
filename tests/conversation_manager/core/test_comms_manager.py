@@ -51,6 +51,7 @@ async def _wait_for_condition(
 
 from unity.conversation_manager.events import (
     Event,
+    BackupContactsEvent,
     SMSReceived,
     EmailReceived,
     UnifyMessageReceived,
@@ -830,6 +831,93 @@ class TestUnifyMeetHandling:
             event = Event.from_json(msg["data"])
             assert isinstance(event, UnifyMeetReceived)
             assert event.room_name == "room_123"
+
+    @pytest.mark.asyncio
+    @patch(
+        "unity.conversation_manager.comms_manager._get_local_contact",
+        return_value={
+            "contact_id": 0,
+            "first_name": "Assistant",
+            "surname": "Bot",
+            "phone_number": "",
+            "email_address": "",
+            "whatsapp_number": "",
+            "discord_id": None,
+            "bio": "Test",
+            "timezone": "UTC",
+            "is_system": True,
+            "should_respond": True,
+            "response_policy": "",
+            "rolling_summary": None,
+        },
+    )
+    async def test_backup_contacts_arrives_before_unify_meet(
+        self,
+        _mock_local_contact,
+        broker,
+        mock_session_details,
+        mock_settings,
+    ):
+        """BackupContactsEvent must arrive before UnifyMeetReceived.
+
+        dispatch_inbound_envelope publishes BackupContactsEvent (to populate
+        the fallback contact cache) before the call event.  If the call event
+        arrives first, the downstream handler crashes because contacts haven't
+        been cached yet.  This test goes through handle_message (the real
+        Pub/Sub callback path) to verify subscriber delivery order.
+        """
+        from unity.conversation_manager.comms_manager import CommsManager
+
+        cm = CommsManager(broker)
+        cm.loop = asyncio.get_event_loop()
+
+        async with broker.pubsub() as pubsub:
+            await pubsub.psubscribe("app:comms:*")
+
+            contacts = [
+                {
+                    "contact_id": 1,
+                    "first_name": "Boss",
+                    "surname": "User",
+                    "phone_number": "+15555551111",
+                    "email_address": "boss@test.com",
+                },
+            ]
+            message = create_pubsub_message(
+                "unify_meet",
+                {
+                    "livekit_agent_name": "TestAgent",
+                    "livekit_room": "room_123",
+                    "contacts": contacts,
+                },
+            )
+
+            await asyncio.to_thread(cm.handle_message, message)
+
+            received_types: list[type] = []
+            for _ in range(10):
+                msg = await pubsub.get_message(
+                    timeout=0.5,
+                    ignore_subscribe_messages=True,
+                )
+                if msg is None:
+                    continue
+                event = Event.from_json(msg["data"])
+                received_types.append(type(event))
+
+            assert (
+                BackupContactsEvent in received_types
+            ), "BackupContactsEvent was never delivered"
+            assert (
+                UnifyMeetReceived in received_types
+            ), "UnifyMeetReceived was never delivered"
+            backup_idx = received_types.index(BackupContactsEvent)
+            meet_idx = received_types.index(UnifyMeetReceived)
+            assert backup_idx < meet_idx, (
+                f"BackupContactsEvent arrived at index {backup_idx} but "
+                f"UnifyMeetReceived arrived at index {meet_idx}. "
+                "Contacts must be cached before the call handler runs."
+            )
 
 
 # =============================================================================

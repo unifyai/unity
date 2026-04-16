@@ -99,10 +99,7 @@ class LocalCommsIngress:
             self._site = None
 
     async def _dispatch_payload(self, payload: dict) -> None:
-        await self._comms_manager.dispatch_envelope_payload(
-            payload,
-            direct_publish=True,
-        )
+        await self._comms_manager.dispatch_envelope_payload(payload)
 
     async def _health(self, request: web.Request) -> web.Response:
         return web.json_response({"ok": True})
