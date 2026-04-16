@@ -934,13 +934,19 @@ class TestFastBrainGuidanceFlow:
         fake_session_details = SimpleNamespace(
             populate_from_env=lambda: None,
             voice=SimpleNamespace(provider="cartesia", id=""),
+            assistant=SimpleNamespace(
+                about="Assistant bio",
+                name="Ava",
+                first_name="Assistant",
+                surname="Example",
+                agent_id=None,
+            ),
             voice_call=SimpleNamespace(
                 outbound=False,
                 channel="unify_meet",
                 contact_json=json.dumps(contact),
                 boss_json=json.dumps(boss),
             ),
-            assistant=SimpleNamespace(about="Assistant bio", name="Ava"),
             unify_key="",
         )
 
@@ -1022,6 +1028,212 @@ class TestFastBrainGuidanceFlow:
         assert (
             len(session.say_calls) == 0
         ), "Notify-only guidance must NOT trigger session.say() directly."
+
+    async def test_buffered_notification_is_applied_before_opening_greeting(
+        self,
+        monkeypatch,
+    ):
+        """Notifications that arrive before session_ready should land in greeting context."""
+
+        from livekit.agents import llm
+
+        if not hasattr(llm, "Tool"):
+            llm.Tool = object  # type: ignore[attr-defined]
+        from unity.conversation_manager.medium_scripts import call as call_script
+
+        contact = {
+            "contact_id": 2,
+            "first_name": "Caller",
+            "surname": "Example",
+            "phone_number": "+15550100002",
+            "email_address": "caller@example.com",
+        }
+        boss = {
+            "contact_id": 1,
+            "first_name": "Manager",
+            "surname": "Example",
+            "phone_number": "+15550100001",
+            "email_address": "manager@example.com",
+        }
+        buffered_text = (
+            "Background context: scheduled Morning briefing is due now "
+            "(task_id=101, scheduled_for=2026-04-10T09:00:00+00:00)."
+        )
+
+        class _ImmediateAwaitable:
+            def __await__(self):
+                async def _done():
+                    return None
+
+                return _done().__await__()
+
+        class _FakeLocalParticipant:
+            async def publish_data(self, *args, **kwargs):
+                pass
+
+        class _FakeRoom:
+            name = "fake-room"
+            local_participant = _FakeLocalParticipant()
+
+            def on(self, *args, **kwargs):
+                return lambda fn: fn
+
+        class _FakeJobContext:
+            def __init__(self):
+                self.room = _FakeRoom()
+                self.job = SimpleNamespace()
+
+            async def connect(self):
+                return None
+
+            def add_shutdown_callback(self, cb):
+                pass
+
+            def shutdown(self, reason=""):
+                pass
+
+        class _FakeEventBroker:
+            def __init__(self):
+                self.callbacks = {}
+
+            def set_logger(self, fb_logger):
+                pass
+
+            def register_callback(self, channel, handler):
+                self.callbacks[channel] = handler
+                if channel == "app:call:notification":
+                    handler({"payload": {"content": buffered_text}})
+
+            async def publish(self, channel, message):
+                return 1
+
+        fake_session_holder = {}
+
+        class _FakeSession:
+            def __init__(self, *args, **kwargs):
+                self._chat_ctx = llm.ChatContext()
+                self.current_agent = None
+                self._events = {}
+                self.generate_reply_calls = 0
+                self.say_calls = []
+                self.agent_state = "listening"
+                self.current_speech = None
+                fake_session_holder["session"] = self
+
+            @property
+            def history(self):
+                return self._chat_ctx
+
+            def on(self, event_name):
+                def _decorator(fn):
+                    self._events[event_name] = fn
+                    return fn
+
+                return _decorator
+
+            async def start(self, room, agent, room_input_options=None):
+                self.current_agent = agent
+
+            def generate_reply(self, **kwargs):
+                self.generate_reply_calls += 1
+                return _ImmediateAwaitable()
+
+            def say(self, text, **kwargs):
+                self.say_calls.append(text)
+                return _ImmediateAwaitable()
+
+            def interrupt(self):
+                pass
+
+        class _FakeAssistant:
+            def __init__(self, *args, **kwargs):
+                self._chat_ctx = llm.ChatContext()
+                self.call_received = True
+                self.user_turn_generating = False
+
+            def set_call_received(self):
+                self.call_received = True
+
+        async def _noop_async(*args, **kwargs):
+            return None
+
+        async def _noop_end_call():
+            return None
+
+        fake_broker = _FakeEventBroker()
+        fake_session_details = SimpleNamespace(
+            populate_from_env=lambda: None,
+            voice=SimpleNamespace(provider="cartesia", id=""),
+            assistant=SimpleNamespace(
+                about="Assistant bio",
+                name="Ava",
+                first_name="Assistant",
+                surname="Example",
+                agent_id=None,
+            ),
+            user=SimpleNamespace(id="default"),
+            voice_call=SimpleNamespace(
+                outbound=False,
+                channel="unify_meet",
+                contact_json=json.dumps(contact),
+                boss_json=json.dumps(boss),
+            ),
+            unify_key="",
+        )
+
+        monkeypatch.setattr(call_script, "SESSION_DETAILS", fake_session_details)
+        monkeypatch.setattr(call_script, "event_broker", fake_broker)
+        monkeypatch.setattr(call_script, "Assistant", _FakeAssistant)
+        monkeypatch.setattr(call_script, "AgentSession", _FakeSession)
+        monkeypatch.setattr(call_script, "delete_livekit_room", _noop_async)
+        monkeypatch.setattr(call_script, "publish_call_started", _noop_async)
+        monkeypatch.setattr(call_script, "publish_call_ended", _noop_async)
+        monkeypatch.setattr(call_script, "start_event_broker_receive", _noop_async)
+        monkeypatch.setattr(
+            call_script,
+            "setup_inactivity_timeout",
+            lambda end_call: (lambda: None),
+        )
+        monkeypatch.setattr(
+            call_script,
+            "setup_participant_disconnect_handler",
+            _noop_async,
+        )
+        monkeypatch.setattr(call_script, "create_end_call", _noop_end_call)
+        monkeypatch.setattr(call_script, "dispatch_livekit_agent", _noop_async)
+        monkeypatch.setattr(call_script, "RoomInputOptions", lambda **kwargs: object())
+        monkeypatch.setattr(call_script, "EnglishModel", lambda: object())
+        monkeypatch.setattr(call_script.cartesia, "TTS", lambda **kwargs: object())
+        monkeypatch.setattr(call_script.elevenlabs, "TTS", lambda **kwargs: object())
+        if hasattr(call_script, "noise_cancellation"):
+            monkeypatch.setattr(
+                call_script.noise_cancellation,
+                "BVC",
+                lambda: object(),
+            )
+
+        monkeypatch.setattr(call_script, "STT", object())
+        monkeypatch.setattr(call_script, "VAD", object())
+
+        captured = {}
+
+        import unity.common.llm_client as _llm_mod
+
+        class _FakeGreetingClient:
+            async def generate(self, **kwargs):
+                captured["messages"] = kwargs["messages"]
+                return "Hello!"
+
+        monkeypatch.setattr(
+            _llm_mod,
+            "new_llm_client",
+            lambda *a, **kw: _FakeGreetingClient(),
+        )
+
+        await call_script.entrypoint(_FakeJobContext())
+
+        serialized_messages = json.dumps(captured["messages"], default=str)
+        assert buffered_text in serialized_messages
 
     async def test_outbound_message_to_caller_triggers_fast_brain_turn(
         self,

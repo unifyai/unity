@@ -644,7 +644,7 @@ class ActiveQueue(SteerableToolHandle, HandleWrapperMixin):  # type: ignore[abst
                     parent_chat_context=self._parent_ctx,
                     clarification_up_q=self._clar_up,
                     clarification_down_q=self._clar_down,
-                    activated_by=ActivatedBy.explicit,
+                    activated_by=ActivatedBy.queue,
                     # Do NOT detach followers from each other; keep queue links intact
                     detach=False,
                 )

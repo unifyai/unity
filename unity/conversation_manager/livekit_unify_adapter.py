@@ -42,7 +42,7 @@ class UnifyLLM(llm.LLM):
 
     def __init__(
         self,
-        model: str = "gpt-5-mini@openai",
+        model: str = "gpt-5.4-mini@openai",
         *,
         reasoning_effort: str | None = None,
         service_tier: str | None = None,

@@ -5,9 +5,10 @@ from JSON for storage and transport.
 
 from __future__ import annotations
 
+import calendar
 from enum import Enum
 from typing import List, Optional
-from datetime import datetime, time
+from datetime import datetime, time, timedelta
 from pydantic import BaseModel, Field, field_validator
 
 
@@ -87,3 +88,171 @@ class RepeatPattern(BaseModel):
                 "`time_of_day` must be a `datetime.time`, not a full datetime",
             )
         return v
+
+
+_WEEKDAY_TO_INDEX = {
+    Weekday.MO: 0,
+    Weekday.TU: 1,
+    Weekday.WE: 2,
+    Weekday.TH: 3,
+    Weekday.FR: 4,
+    Weekday.SA: 5,
+    Weekday.SU: 6,
+}
+
+
+def next_repeated_start_at(
+    *,
+    previous_start: datetime,
+    patterns: list[RepeatPattern] | None,
+    current_occurrence_index: int = 0,
+    now: datetime | None = None,
+) -> datetime | None:
+    """Return the earliest future occurrence across the supplied repeat patterns.
+
+    The scheduler stores only the currently due queue-head timestamp on each task
+    instance. After one occurrence fires, this helper advances the repeat rule
+    until it finds the next start that is still in the future relative to *now*.
+
+    Parameters
+    ----------
+    previous_start:
+        The timestamp of the occurrence that just fired.
+    patterns:
+        Repeat rules attached to the task. `None` or an empty list disables
+        re-arming.
+    current_occurrence_index:
+        Zero-based instance index for the occurrence that just fired. This is
+        used to respect `RepeatPattern.count`.
+    now:
+        Optional wall-clock reference. Defaults to the current time in the same
+        timezone as `previous_start`.
+    """
+
+    if not patterns:
+        return None
+    reference_now = now or datetime.now(previous_start.tzinfo)
+    candidates = [
+        candidate
+        for candidate in (
+            _next_pattern_occurrence(
+                previous_start=previous_start,
+                pattern=pattern,
+                current_occurrence_index=current_occurrence_index,
+                reference_now=reference_now,
+            )
+            for pattern in patterns
+        )
+        if candidate is not None
+    ]
+    if not candidates:
+        return None
+    return min(candidates)
+
+
+def _next_pattern_occurrence(
+    *,
+    previous_start: datetime,
+    pattern: RepeatPattern,
+    current_occurrence_index: int,
+    reference_now: datetime,
+) -> datetime | None:
+    """Advance one pattern until it yields a future occurrence or exhausts."""
+
+    occurrence_count = current_occurrence_index + 1
+    if pattern.count is not None and occurrence_count >= pattern.count:
+        return None
+    candidate = previous_start
+    for _ in range(2048):
+        candidate = _advance_one_occurrence(candidate, pattern)
+        if pattern.until is not None and candidate > _normalize_until(
+            pattern.until,
+            candidate,
+        ):
+            return None
+        if candidate > reference_now:
+            return candidate
+    raise ValueError("Could not compute the next repeated task occurrence.")
+
+
+def _advance_one_occurrence(current: datetime, pattern: RepeatPattern) -> datetime:
+    """Return the immediate next occurrence for one pattern."""
+
+    if pattern.frequency == Frequency.DAILY:
+        candidate = current + timedelta(days=pattern.interval)
+        return _apply_time_of_day(candidate, pattern.time_of_day, current)
+    if pattern.frequency == Frequency.WEEKLY:
+        if not pattern.weekdays:
+            candidate = current + timedelta(weeks=pattern.interval)
+            return _apply_time_of_day(candidate, pattern.time_of_day, current)
+        return _next_weekday_occurrence(current, pattern)
+    if pattern.frequency == Frequency.MONTHLY:
+        candidate = _add_months(current, pattern.interval)
+        return _apply_time_of_day(candidate, pattern.time_of_day, current)
+    if pattern.frequency == Frequency.YEARLY:
+        candidate = _add_years(current, pattern.interval)
+        return _apply_time_of_day(candidate, pattern.time_of_day, current)
+    raise ValueError(f"Unsupported repeat frequency: {pattern.frequency}")
+
+
+def _next_weekday_occurrence(current: datetime, pattern: RepeatPattern) -> datetime:
+    """Return the next matching weekday occurrence inside the weekly cadence."""
+
+    assert pattern.weekdays, "weekly weekday search requires explicit weekdays"
+    allowed_weekdays = sorted(
+        {_WEEKDAY_TO_INDEX[weekday] for weekday in pattern.weekdays},
+    )
+    base_week_start = current.date() - timedelta(days=current.weekday())
+    search_date = current.date()
+    while True:
+        search_date += timedelta(days=1)
+        weeks_since_base = (search_date - base_week_start).days // 7
+        if weeks_since_base % pattern.interval != 0:
+            continue
+        if search_date.weekday() in allowed_weekdays:
+            candidate = datetime.combine(search_date, current.timetz())
+            if current.tzinfo is not None:
+                candidate = candidate.replace(tzinfo=current.tzinfo)
+            return _apply_time_of_day(candidate, pattern.time_of_day, current)
+
+
+def _apply_time_of_day(
+    candidate: datetime,
+    override: time | None,
+    reference: datetime,
+) -> datetime:
+    """Apply `time_of_day` when present, otherwise preserve the reference time."""
+
+    target_time = override or reference.timetz().replace(tzinfo=None)
+    updated = datetime.combine(candidate.date(), target_time)
+    if candidate.tzinfo is not None:
+        updated = updated.replace(tzinfo=candidate.tzinfo)
+    return updated
+
+
+def _add_months(value: datetime, months: int) -> datetime:
+    """Advance a datetime by whole months, clamping the day when needed."""
+
+    month_index = (value.month - 1) + months
+    year = value.year + month_index // 12
+    month = (month_index % 12) + 1
+    day = min(value.day, calendar.monthrange(year, month)[1])
+    return value.replace(year=year, month=month, day=day)
+
+
+def _add_years(value: datetime, years: int) -> datetime:
+    """Advance a datetime by whole years, clamping leap-day overflow."""
+
+    year = value.year + years
+    day = min(value.day, calendar.monthrange(year, value.month)[1])
+    return value.replace(year=year, day=day)
+
+
+def _normalize_until(until: datetime, reference: datetime) -> datetime:
+    """Compare `until` in the same timezone shape as the candidate."""
+
+    if until.tzinfo is None and reference.tzinfo is not None:
+        return until.replace(tzinfo=reference.tzinfo)
+    if until.tzinfo is not None and reference.tzinfo is None:
+        return until.replace(tzinfo=None)
+    return until

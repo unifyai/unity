@@ -35,6 +35,7 @@ from unity.conversation_manager.events import (
     PhoneCallStarted,
     PhoneCallEnded,
     PhoneCallAnswered,
+    WhatsAppCallPermissionResponse,
     UnifyMeetReceived,
     UnifyMeetStarted,
     UnifyMeetEnded,
@@ -47,9 +48,11 @@ from unity.conversation_manager.events import (
     ActorHandleResponse,
     ActorResult,
     ActorClarificationRequest,
+    InitializationComplete,
     NotificationInjectedEvent,
     NotificationUnpinnedEvent,
     SyncContacts,
+    TaskDue,
     LogMessageResponse,
     DirectMessageEvent,
     AssistantUpdateEvent,
@@ -66,6 +69,7 @@ from unity.contact_manager.simulated import SimulatedContactManager
 from unity.conversation_manager.domains.contact_index import ContactIndex
 from unity.conversation_manager.domains.notifications import NotificationBar
 from unity.conversation_manager.cm_types import Medium, Mode
+from unity.task_scheduler.machine_state import TaskActivationSnapshot
 
 # =============================================================================
 # Test Fixtures
@@ -97,6 +101,13 @@ def mock_call_manager():
     manager.start_call = AsyncMock()
     manager.start_unify_meet = AsyncMock()
     manager.cleanup_call_proc = AsyncMock()
+    manager.has_active_call = False
+    manager.has_active_google_meet = False
+    manager._whatsapp_call_joining = False
+    manager._gmeet_joining = False
+    manager._socket_server = None
+    manager._disconnect_contact = None
+    manager.initial_notification = ""
     manager.conference_name = None
     manager.call_contact = None
     manager.call_exchange_id = -1
@@ -720,6 +731,45 @@ class TestPhoneCallHandlers:
             cancel_running=True,
             triggering_contact_id=2,
         )
+
+    @pytest.mark.asyncio
+    async def test_whatsapp_permission_keeps_legacy_room_name_when_agent_id_missing(
+        self,
+        mock_cm,
+    ):
+        """Accepted WhatsApp permission should preserve the pre-refactor room-name fallback."""
+
+        mock_cm._pending_whatsapp_call_contexts = {2: "pending call context"}
+        mock_cm._event_broker = mock_cm.event_broker
+        event = WhatsAppCallPermissionResponse(
+            contact={
+                "contact_id": 2,
+                "first_name": "Alice",
+                "surname": "Smith",
+                "whatsapp_number": "+15555552222",
+            },
+            accepted=True,
+        )
+
+        with (
+            patch(
+                "unity.conversation_manager.domains.comms_utils.start_whatsapp_call",
+                new_callable=AsyncMock,
+                return_value={"success": True},
+            ) as mock_start_whatsapp_call,
+            patch(
+                "unity.conversation_manager.domains.event_handlers.SESSION_DETAILS",
+            ) as mock_session_details,
+        ):
+            mock_session_details.assistant.agent_id = None
+            mock_session_details.assistant.name = "Test Assistant"
+
+            await EventHandler.handle_event(event, mock_cm)
+
+        assert mock_start_whatsapp_call.await_args.kwargs["room_name"] == (
+            "unity_None_whatsapp_call"
+        )
+        mock_cm.request_llm_run.assert_not_called()
 
 
 # =============================================================================
@@ -1729,6 +1779,376 @@ class TestNotificationEventHandlers:
 
         # Notification should be removed
         assert len(mock_cm.notifications_bar.notifications) == 0
+
+
+class TestTaskDueEventHandlers:
+    """Tests for scheduled task due notifications and startup replay."""
+
+    @pytest.mark.asyncio
+    async def test_task_due_pushes_notification_and_requests_llm(self, mock_cm):
+        """Current due activations should surface one execute-task directive."""
+
+        event = TaskDue(
+            task_id=101,
+            source_task_log_id=555,
+            activation_revision="rev-1",
+            scheduled_for="2026-04-10T09:00:00+00:00",
+            task_label="Morning briefing",
+            task_summary="Prepare the morning update before the user checks in.",
+            visibility_policy="silent_by_default",
+            recurrence_hint="recurring",
+        )
+
+        with (
+            patch(
+                "unity.conversation_manager.domains.task_activation.validate_task_due_activation",
+                return_value=(
+                    TaskActivationSnapshot(
+                        assistant_id="42",
+                        activation_key="42:101",
+                        task_id=101,
+                        source_task_log_id=555,
+                        activation_revision="rev-1",
+                    ),
+                    None,
+                ),
+            ),
+            patch(
+                "unity.conversation_manager.domains.task_activation.remember_live_task_run_provenance",
+            ) as mock_remember_provenance,
+        ):
+            await EventHandler.handle_event(event, mock_cm)
+
+        assert len(mock_cm.notifications_bar.notifications) == 1
+        notification = mock_cm.notifications_bar.notifications[0].content
+        assert "Morning briefing" in notification
+        assert "Prepare the morning update before the user checks in" in notification
+        assert "work silently unless you genuinely need the user" in notification
+        assert "primitives.tasks.execute(task_id=101)" in notification
+        remembered = mock_remember_provenance.call_args.args[0]
+        assert remembered.assistant_id == "42"
+        assert remembered.source_type == "scheduled"
+        assert remembered.scheduled_for == "2026-04-10T09:00:00+00:00"
+        mock_cm.request_llm_run.assert_called_once_with(delay=0)
+
+    @pytest.mark.asyncio
+    async def test_task_due_queues_fast_brain_context_during_voice_call(self, mock_cm):
+        """Validated task_due events should also reach the fast brain silently."""
+
+        event = TaskDue(
+            task_id=101,
+            source_task_log_id=555,
+            activation_revision="rev-1",
+            scheduled_for="2026-04-10T09:00:00+00:00",
+            task_label="Morning briefing",
+            task_summary="Prepare the morning update before the user checks in.",
+            visibility_policy="silent_by_default",
+            recurrence_hint="recurring",
+        )
+        mock_cm.mode = Mode.CALL
+        mock_socket = MagicMock()
+        mock_socket.queue_for_clients = AsyncMock()
+        mock_cm.call_manager._socket_server = mock_socket
+
+        with patch(
+            "unity.conversation_manager.domains.task_activation.validate_task_due_activation",
+            return_value=(
+                TaskActivationSnapshot(
+                    assistant_id="42",
+                    activation_key="42:101",
+                    task_id=101,
+                    activation_revision="rev-1",
+                    task_name="Morning briefing",
+                ),
+                None,
+            ),
+        ):
+            await EventHandler.handle_event(event, mock_cm)
+
+        mock_socket.queue_for_clients.assert_called_once()
+        channel, payload = mock_socket.queue_for_clients.call_args.args
+        assert channel == "app:call:notification"
+        guidance = FastBrainNotification.from_json(payload)
+        assert guidance.should_speak is False
+        assert "Morning briefing" in guidance.content
+        assert (
+            "Prepare the morning update before the user checks in" in guidance.content
+        )
+        assert "silent action unless the user is needed" in guidance.content
+
+    @pytest.mark.asyncio
+    async def test_task_due_ignores_stale_activation(self, mock_cm):
+        """Stale due deliveries should not notify or re-run the slow brain."""
+
+        event = TaskDue(
+            task_id=101,
+            source_task_log_id=555,
+            activation_revision="rev-1",
+            scheduled_for="2026-04-10T09:00:00+00:00",
+        )
+
+        with patch(
+            "unity.conversation_manager.domains.task_activation.validate_task_due_activation",
+            return_value=(None, "activation_revision_mismatch"),
+        ):
+            await EventHandler.handle_event(event, mock_cm)
+
+        assert mock_cm.notifications_bar.notifications == []
+        mock_cm.request_llm_run.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_initialization_complete_replays_startup_task_due_reasons(
+        self,
+        mock_cm,
+    ):
+        """Startup task_due wake reasons should surface on the first post-init run."""
+
+        mock_cm.call_manager._socket_server = None
+        mock_cm._startup_wake_reasons = [
+            {
+                "type": "task_due",
+                "task_id": 101,
+                "source_task_log_id": 555,
+                "activation_revision": "rev-1",
+                "scheduled_for": "2026-04-10T09:00:00+00:00",
+                "task_label": "Morning briefing",
+                "task_summary": "Prepare the morning update before the user checks in.",
+                "visibility_policy": "silent_by_default",
+                "recurrence_hint": "recurring",
+            },
+        ]
+
+        with patch(
+            "unity.conversation_manager.domains.task_activation.validate_task_due_activation",
+            return_value=(MagicMock(activation_revision="rev-1"), None),
+        ):
+            await EventHandler.handle_event(InitializationComplete(), mock_cm)
+
+        assert mock_cm._startup_wake_reasons == []
+        assert len(mock_cm.notifications_bar.notifications) == 2
+        assert any(
+            "primitives.tasks.execute(task_id=101)" in notif.content
+            for notif in mock_cm.notifications_bar.notifications
+        )
+        assert any(
+            "Morning briefing" in notif.content
+            for notif in mock_cm.notifications_bar.notifications
+        )
+        mock_cm.request_llm_run.assert_called_once_with(delay=0)
+
+
+class TestTriggeredTaskNotifications:
+    """Tests for mechanically matched trigger-task notifications."""
+
+    @pytest.mark.asyncio
+    async def test_inbound_message_surfaces_trigger_candidates(self, mock_cm):
+        """Inbound user messages should surface only live matching trigger tasks."""
+
+        event = SMSReceived(
+            contact={"contact_id": 2, "first_name": "Alice", "surname": "Smith"},
+            content="Can you review the invoice?",
+        )
+        candidates = [
+            TaskActivationSnapshot(
+                assistant_id="42",
+                activation_key="42:301",
+                task_id=301,
+                activation_kind="triggered",
+                execution_mode="live",
+                trigger_from_contact_ids=[2],
+                interrupt=True,
+                task_name="Invoice follow-up",
+                task_description="Help handle invoice-related requests from Alice.",
+            ),
+            TaskActivationSnapshot(
+                assistant_id="42",
+                activation_key="42:302",
+                task_id=302,
+                activation_kind="triggered",
+                execution_mode="offline",
+                trigger_from_contact_ids=[2],
+                task_name="Hidden offline task",
+            ),
+            TaskActivationSnapshot(
+                assistant_id="42",
+                activation_key="42:303",
+                task_id=303,
+                activation_kind="triggered",
+                execution_mode="live",
+                trigger_omit_contact_ids=[2],
+                task_name="Wrong sender task",
+            ),
+        ]
+
+        with (
+            patch(
+                "unity.conversation_manager.domains.task_activation.list_trigger_activations",
+                return_value=candidates,
+            ),
+            patch(
+                "unity.conversation_manager.domains.task_activation.remember_live_task_run_provenance",
+            ) as mock_remember_provenance,
+            patch(
+                "unity.conversation_manager.domains.task_activation._dispatch_offline_trigger_candidate",
+                return_value={"status": "launched"},
+            ) as mock_offline_dispatch,
+        ):
+            await EventHandler.handle_event(event, mock_cm)
+
+        assert len(mock_cm.notifications_bar.notifications) == 2
+        trigger_notification = mock_cm.notifications_bar.notifications[1].content
+        assert "Invoice follow-up" in trigger_notification
+        assert "Help handle invoice-related requests from Alice" in trigger_notification
+        assert "Semantic judgement is still pending" in trigger_notification
+        assert "Hidden offline task" not in trigger_notification
+        assert "Wrong sender task" not in trigger_notification
+        remembered = mock_remember_provenance.call_args.args[0]
+        assert remembered.task_id == 301
+        assert remembered.source_type == "triggered"
+        assert remembered.source_medium == "sms_message"
+        mock_offline_dispatch.assert_called_once()
+        mock_cm.request_llm_run.assert_called_once_with(triggering_contact_id=2)
+
+    @pytest.mark.asyncio
+    async def test_inbound_call_dispatches_offline_triggers_without_live_notification(
+        self,
+        mock_cm,
+    ):
+        """Offline trigger matches should stay invisible to the live call lane."""
+
+        event = PhoneCallReceived(
+            contact={
+                "contact_id": 2,
+                "first_name": "Alice",
+                "surname": "Smith",
+                "phone_number": "+15555552222",
+            },
+            conference_name="conf-123",
+        )
+        candidates = [
+            TaskActivationSnapshot(
+                assistant_id="42",
+                activation_key="42:402",
+                task_id=402,
+                activation_kind="triggered",
+                execution_mode="offline",
+                trigger_from_contact_ids=[2],
+            ),
+        ]
+
+        with (
+            patch(
+                "unity.conversation_manager.domains.task_activation.list_trigger_activations",
+                return_value=candidates,
+            ),
+            patch(
+                "unity.conversation_manager.domains.task_activation._dispatch_offline_trigger_candidate",
+                return_value={"status": "launched"},
+            ) as mock_offline_dispatch,
+        ):
+            await EventHandler.handle_event(event, mock_cm)
+
+        assert not any(
+            "402" in notif.content for notif in mock_cm.notifications_bar.notifications
+        )
+        mock_offline_dispatch.assert_called_once()
+        mock_cm.request_llm_run.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_inbound_call_requests_llm_when_trigger_candidates_match(
+        self,
+        mock_cm,
+    ):
+        """Inbound call triggers should wake the slow brain immediately."""
+
+        event = PhoneCallReceived(
+            contact={
+                "contact_id": 2,
+                "first_name": "Alice",
+                "surname": "Smith",
+                "phone_number": "+15555552222",
+            },
+            conference_name="conf-123",
+        )
+        candidates = [
+            TaskActivationSnapshot(
+                assistant_id="42",
+                activation_key="42:401",
+                task_id=401,
+                activation_kind="triggered",
+                execution_mode="live",
+                trigger_from_contact_ids=[2],
+                task_name="Handle VIP caller",
+                task_description="Prioritize urgent inbound calls from Alice.",
+            ),
+        ]
+
+        with patch(
+            "unity.conversation_manager.domains.task_activation.list_trigger_activations",
+            return_value=candidates,
+        ):
+            await EventHandler.handle_event(event, mock_cm)
+
+        assert any(
+            "Handle VIP caller" in notif.content
+            for notif in mock_cm.notifications_bar.notifications
+        )
+        assert any(
+            "Semantic judgement is still pending" in notif.content
+            for notif in mock_cm.notifications_bar.notifications
+        )
+        mock_cm.request_llm_run.assert_called_once_with(
+            delay=0,
+            triggering_contact_id=2,
+        )
+
+    @pytest.mark.asyncio
+    async def test_inbound_call_queues_fast_brain_trigger_context(self, mock_cm):
+        """Live trigger candidates should be mirrored to the fast brain silently."""
+
+        event = PhoneCallReceived(
+            contact={
+                "contact_id": 2,
+                "first_name": "Alice",
+                "surname": "Smith",
+                "phone_number": "+15555552222",
+            },
+            conference_name="conf-123",
+        )
+        # PhoneCallReceived is handled while the CM is still in text mode; the
+        # fast-brain socket may already exist before the started event flips mode.
+        mock_cm.mode = Mode.TEXT
+        mock_socket = MagicMock()
+        mock_socket.queue_for_clients = AsyncMock()
+        mock_cm.call_manager._socket_server = mock_socket
+        candidates = [
+            TaskActivationSnapshot(
+                assistant_id="42",
+                activation_key="42:401",
+                task_id=401,
+                activation_kind="triggered",
+                execution_mode="live",
+                trigger_from_contact_ids=[2],
+                task_name="Handle VIP caller",
+                task_description="Prioritize urgent inbound calls from Alice.",
+            ),
+        ]
+
+        with patch(
+            "unity.conversation_manager.domains.task_activation.list_trigger_activations",
+            return_value=candidates,
+        ):
+            await EventHandler.handle_event(event, mock_cm)
+
+        call_args = mock_socket.queue_for_clients.call_args_list
+        assert call_args
+        channel, payload = call_args[-1].args
+        assert channel == "app:call:notification"
+        guidance = FastBrainNotification.from_json(payload)
+        assert guidance.should_speak is False
+        assert "Handle VIP caller" in guidance.content
+        assert "Prioritize urgent inbound calls from Alice" in guidance.content
+        assert "Do not mention the task unless it naturally helps" in guidance.content
 
 
 # =============================================================================

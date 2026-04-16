@@ -149,6 +149,13 @@ if [ -d /opt/hf-cache ] && [ ! -d /tmp/huggingface ]; then
     cp -r /opt/hf-cache /tmp/huggingface &
 fi
 
+# Headless offline task jobs bypass the live conversation runtime entirely.
+if [ "${UNITY_OFFLINE_TASK_MODE:-}" = "function" ]; then
+    echo "⬥ Starting offline task runner..."
+    python3 -m unity.task_scheduler.offline_runner
+    exit $?
+fi
+
 # ── Desktop stack (virtual display + audio devices) ──────────────────────────
 # Reuses deploy/desktop/display.sh and deploy/desktop/device.sh to provide the
 # same TigerVNC + XFCE + PipeWire/PulseAudio environment as the desktop container.

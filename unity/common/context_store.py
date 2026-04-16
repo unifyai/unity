@@ -38,6 +38,7 @@ def _create_context_with_retry(
     auto_counting: Optional[Dict[str, Optional[str]]] = None,
     description: Optional[str] = None,
     foreign_keys: Optional[list[Dict[str, Any]]] = None,
+    project: Optional[str] = None,
 ) -> None:
     """Call ``unify.create_context`` with retry on transient failures.
 
@@ -55,6 +56,7 @@ def _create_context_with_retry(
                 auto_counting=auto_counting,
                 description=description,
                 foreign_keys=foreign_keys,
+                project=project,
             )
             return
         except _UnifyRequestError as exc:

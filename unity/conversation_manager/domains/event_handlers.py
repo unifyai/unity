@@ -1,11 +1,13 @@
 import asyncio
+import json
 import os
+import re
 import signal
 import subprocess
 import time
 import traceback
 from pathlib import Path
-from typing import TYPE_CHECKING, Union
+from typing import TYPE_CHECKING, Any, Union
 
 from unity.contact_manager.types.contact import UNASSIGNED
 from unity.common.hierarchical_logger import DEFAULT_ICON
@@ -13,6 +15,11 @@ from unity.conversation_manager import assistant_jobs
 from unity.conversation_manager.events import *
 from unity.conversation_manager.domains import managers_utils
 from unity.conversation_manager.domains.comms_utils import publish_system_error
+from unity.conversation_manager.domains.task_activation import (
+    _consume_startup_wake_reasons,
+    _handle_task_due_event,
+    _surface_trigger_task_candidates,
+)
 from unity.conversation_manager.cm_types import Medium, Mode
 from unity.logger import LOGGER
 from unity.session_details import SESSION_DETAILS
@@ -23,6 +30,12 @@ if TYPE_CHECKING:
 
 _AGENT_SERVICE_PID_FILE = Path("/tmp/agent-service.pid")
 _AGENT_SERVICE_LOG = Path("/var/log/unity/agent-service.log")
+_CALL_NOT_ANSWERED_REASON_DISPLAY = {
+    "no-answer": "did not answer",
+    "busy": "was busy",
+    "canceled": "call was canceled",
+    "failed": "call failed",
+}
 
 
 def _find_agent_service_dir() -> Path | None:
@@ -171,7 +184,6 @@ def _restart_agent_service_with_key(api_key: str) -> None:
 def _event_type_to_log_key(event_cls) -> str:
     """Convert an event class name to a log key for icon lookup."""
     name = event_cls.__name__
-    import re
 
     s1 = re.sub("(.)([A-Z][a-z]+)", r"\1_\2", name)
     return re.sub("([a-z0-9])([A-Z])", r"\1_\2", s1).lower()
@@ -187,11 +199,36 @@ def _get_sender_name(contact: dict | None, fallback: str = "Unknown") -> str:
     return name or fallback
 
 
+def _active_voice_thread_medium(cm: "ConversationManager") -> Medium:
+    """Return the active voice thread that should receive call-context messages."""
+
+    if cm.call_manager.has_active_google_meet:
+        return Medium.GOOGLE_MEET
+    if cm.mode == Mode.MEET:
+        return Medium.UNIFY_MEET
+    if cm.call_manager._call_channel == "whatsapp_call":
+        return Medium.WHATSAPP_CALL
+    return Medium.PHONE_CALL
+
+
+def _call_not_answered_reason_text(reason: str) -> str:
+    """Return the user-facing text for one telephony not-answered reason."""
+
+    return _CALL_NOT_ANSWERED_REASON_DISPLAY.get(
+        reason,
+        f"not answered ({reason})",
+    )
+
+
 class EventHandler:
-    _registry = {}
+    """Registry that maps event classes to their async handlers."""
+
+    _registry: dict[type[Event], Any] = {}
 
     @classmethod
     def register(cls, event_cls: list[Event] | Event):
+        """Register one handler for one or more event classes."""
+
         def wrapper(func):
             events_classes = (
                 [event_cls] if not isinstance(event_cls, (list, tuple)) else event_cls
@@ -204,6 +241,8 @@ class EventHandler:
 
     @classmethod
     def handle_event(cls, event: Event, cm: "ConversationManager", *args, **kwargs):
+        """Dispatch one event to its registered handler."""
+
         event_key = _event_type_to_log_key(event.__class__)
         if (
             hasattr(cm, "_session_logger")
@@ -370,6 +409,18 @@ async def _(event: CallInitEvents, cm: "ConversationManager", *args, **kwargs):
         role=role,
         timestamp=event.timestamp,
     )
+    if role == "user" and await _surface_trigger_task_candidates(
+        cm=cm,
+        event=event,
+        medium=medium,
+        contact_id=contact_id,
+        sender_name=sender_name,
+        timestamp=event.timestamp,
+    ):
+        await cm.request_llm_run(
+            delay=0,
+            triggering_contact_id=contact_id,
+        )
 
 
 @EventHandler.register(GoogleMeetReceived)
@@ -413,7 +464,27 @@ async def _(
             role="assistant",
             timestamp=event.timestamp,
         )
+        if await _surface_trigger_task_candidates(
+            cm=cm,
+            event=event,
+            medium=Medium.GOOGLE_MEET,
+            contact_id=contact_id,
+            sender_name=sender_name,
+            timestamp=event.timestamp,
+        ):
+            await cm.request_llm_run(
+                delay=0,
+                triggering_contact_id=contact_id,
+            )
     else:
+        await _surface_trigger_task_candidates(
+            cm=cm,
+            event=event,
+            medium=Medium.GOOGLE_MEET,
+            contact_id=contact_id,
+            sender_name=sender_name,
+            timestamp=event.timestamp,
+        )
         cm.notifications_bar.push_notif(
             "Comms",
             "Failed to join Google Meet. You may retry by calling join_google_meet again.",
@@ -602,12 +673,7 @@ async def _(
     cm.call_manager.google_meet_exchange_id = UNASSIGNED
 
     # Build display content
-    reason_display = {
-        "no-answer": "did not answer",
-        "busy": "was busy",
-        "canceled": "call was canceled",
-        "failed": "call failed",
-    }.get(reason, f"not answered ({reason})")
+    reason_display = _call_not_answered_reason_text(reason)
 
     notif_content = f"Outbound call to {sender_name} {reason_display}"
     cm.notifications_bar.push_notif("Comms", notif_content, event.timestamp)
@@ -665,12 +731,7 @@ async def _(
     cm.call_manager.call_exchange_id = UNASSIGNED
     cm.call_manager.unify_meet_exchange_id = UNASSIGNED
 
-    reason_display = {
-        "no-answer": "did not answer",
-        "busy": "was busy",
-        "canceled": "call was canceled",
-        "failed": "call failed",
-    }.get(reason, f"not answered ({reason})")
+    reason_display = _call_not_answered_reason_text(reason)
 
     notif_content = f"Outbound WhatsApp call to {sender_name} {reason_display}"
     cm.notifications_bar.push_notif("Comms", notif_content, event.timestamp)
@@ -897,18 +958,10 @@ async def _(
         contact = event.contact or {}
     sender_name = _get_sender_name(contact)
 
-    if cm.call_manager.has_active_google_meet:
-        medium = Medium.GOOGLE_MEET
-    elif cm.mode == Mode.MEET:
-        medium = Medium.UNIFY_MEET
-    elif cm.call_manager._call_channel == "whatsapp_call":
-        medium = Medium.WHATSAPP_CALL
-    else:
-        medium = Medium.PHONE_CALL
     cm.contact_index.push_message(
         contact_id=contact_id,
         sender_name=sender_name,
-        thread_name=medium,
+        thread_name=_active_voice_thread_medium(cm),
         message_content=event.content,
         role="guidance",
     )
@@ -1454,7 +1507,7 @@ async def _(event, cm: "ConversationManager", *args, **kwargs):
         case DiscordChannelMessageSent():
             medium = Medium.DISCORD_CHANNEL_MESSAGE
             message_content = event.content
-            notif_content = f"Discord channel message sent"
+            notif_content = "Discord channel message sent"
             role = "assistant"
             event_trace = getattr(cm, "_current_event_trace", None) or {}
             cm._session_logger.info(
@@ -1486,6 +1539,15 @@ async def _(event, cm: "ConversationManager", *args, **kwargs):
             tags=tags,
         )
     cm.notifications_bar.push_notif("comms", notif_content, event.timestamp)
+    if role == "user":
+        await _surface_trigger_task_candidates(
+            cm=cm,
+            event=event,
+            medium=medium,
+            contact_id=contact_id,
+            sender_name=sender_name,
+            timestamp=event.timestamp,
+        )
 
     if role == "user":
         await cm.cancel_proactive_speech()
@@ -1595,6 +1657,22 @@ async def _startup_sequence(cm: "ConversationManager", medium: str = ""):
 async def _(event: StartupEvent, cm: "ConversationManager", *args, **kwargs):
     try:
         cm._session_logger.info("startup", "Received startup event")
+        cm._startup_wake_reasons = list(event.wake_reasons or [])
+        if cm._startup_wake_reasons:
+            wake_reason_types = sorted(
+                {
+                    str(reason.get("type") or "unknown")
+                    for reason in cm._startup_wake_reasons
+                    if isinstance(reason, dict)
+                },
+            )
+            cm._session_logger.info(
+                "startup",
+                (
+                    f"Stored {len(cm._startup_wake_reasons)} startup wake reason(s) "
+                    f"of type(s): {', '.join(wake_reason_types) or 'unknown'}"
+                ),
+            )
 
         # Set demo mode from startup event before initializing managers
         # Demo mode is derived from the presence of a demo_id
@@ -1716,6 +1794,17 @@ async def _(
 
     await cm.schedule_proactive_speech()
     await cm.request_llm_run(delay=0, cancel_running=True)
+
+
+@EventHandler.register(TaskDue)
+async def _(
+    event: TaskDue,
+    cm: "ConversationManager",
+    *args,
+    **kwargs,
+):
+    if await _handle_task_due_event(event, cm):
+        await cm.request_llm_run(delay=0)
 
 
 @EventHandler.register(NotificationUnpinnedEvent)
@@ -2071,6 +2160,7 @@ async def _(
             fast_brain_notification.to_json(),
         )
 
+    await _consume_startup_wake_reasons(cm)
     await cm.request_llm_run(delay=0)
 
 
@@ -2297,18 +2387,10 @@ async def _(event: DirectMessageEvent, cm: "ConversationManager", *args, **kwarg
     contact_id = contact.get("contact_id") if contact else 1
     sender_name = _get_sender_name(contact)
 
-    if cm.call_manager.has_active_google_meet:
-        medium = Medium.GOOGLE_MEET
-    elif cm.mode == Mode.MEET:
-        medium = Medium.UNIFY_MEET
-    elif cm.call_manager._call_channel == "whatsapp_call":
-        medium = Medium.WHATSAPP_CALL
-    else:
-        medium = Medium.PHONE_CALL
     cm.contact_index.push_message(
         contact_id=contact_id,
         sender_name=sender_name,
-        thread_name=medium,
+        thread_name=_active_voice_thread_medium(cm),
         message_content=event.content,
         role="assistant",
         timestamp=event.timestamp,

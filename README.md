@@ -11,21 +11,41 @@
 
 # Unity
 
-**An AI agent you can steer while it works.** Interrupt it mid-task, ask what it's doing, give it new instructions, or run five things at once — without restarting anything. Voice-native, with memory that compounds over time.
+**Unity is the runtime behind persistent AI colleagues.** It gives them memory across messaging, voice, screenshare guidance, and meetings, plus a dedicated computer and filesystem for ongoing work.
+
+> **Demo:** [Launch video](https://youtu.be/qjSWiCd8Bq8?si=8eM0XnHH842_pbgo)
+>
+> **Longer-form screenshares:** [YouTube playlist](https://youtube.com/playlist?list=PLwNuX3xB_tv-AsywAKYnGVv8X5AaEUc2Z&si=ifIIA0CEsDmqIEbf)
+>
+> **Technical overview:** [ARCHITECTURE.md](ARCHITECTURE.md)
 
 <table>
-<tr><td><b>Steerable at every layer</b></td><td>Every operation returns a live handle you can pause, resume, interject into, or query — at any depth. Redirect a running task without losing progress.</td></tr>
-<tr><td><b>Talks while it thinks</b></td><td>A fast real-time voice agent keeps the conversation alive while a slower deliberation brain does the actual work in the background. No awkward silence.</td></tr>
-<tr><td><b>Programs, not tool calls</b></td><td>The agent writes Python plans over typed primitives — with variables, loops, and real control flow — instead of picking from a JSON tool menu one step at a time.</td></tr>
-<tr><td><b>Memory that compounds</b></td><td>Contacts, knowledge, tasks, and communication preferences are continuously extracted from conversations into structured, queryable tables. After a month, the agent knows your world.</td></tr>
-<tr><td><b>Concurrent by default</b></td><td>Run several tasks at once. Steer each one independently — ask for progress on one while redirecting another.</td></tr>
+<tr><td><b>Persistent identity across channels</b></td><td>Messages, SMS, email, phone calls, and meetings all update the same identity, memory, and task state.</td></tr>
+<tr><td><b>Dedicated computer and filesystem</b></td><td>Each colleague works from its own virtual desktop with a browser, terminal, and files rather than a shared chat sandbox.</td></tr>
+<tr><td><b>Steerable execution</b></td><td>Every operation returns a live handle you can pause, resume, interject into, or query at any depth without restarting the work.</td></tr>
+<tr><td><b>Live voice with background work</b></td><td>A real-time voice process keeps the conversation moving while a slower orchestration layer continues tool use and planning in the background.</td></tr>
+<tr><td><b>Code execution over typed primitives</b></td><td>The agent writes Python plans over typed primitives with variables, loops, and control flow instead of selecting one JSON tool call at a time.</td></tr>
+<tr><td><b>Memory from onboarding and work</b></td><td>Docs, screenshares, calls, tasks, and follow-up corrections are consolidated into structured memory and reusable guidance for later work.</td></tr>
+<tr><td><b>Concurrent actions</b></td><td>Multiple tasks can run at once, each with its own steering surface for inspection, interruption, and redirection.</td></tr>
 </table>
 
-Unity's continual learning happens at the agent layer: it updates durable structured state that later reasoning can query directly, rather than fine-tuning model weights during ordinary chats.
+Unity's continual learning happens at the agent layer: it updates durable structured state that later reasoning can query directly rather than fine-tuning model weights during ordinary chats.
+
+## For technical reviewers
+
+If you're evaluating the system before installing it, start here:
+
+- [Launch video](https://youtu.be/qjSWiCd8Bq8?si=8eM0XnHH842_pbgo)
+- [Longer-form screenshares playlist](https://youtube.com/playlist?list=PLwNuX3xB_tv-AsywAKYnGVv8X5AaEUc2Z&si=ifIIA0CEsDmqIEbf)
+- [Architecture walkthrough](ARCHITECTURE.md)
+- [`unity/common/async_tool_loop.py`](unity/common/async_tool_loop.py) — steerable handles and the public loop API
+- [`unity/actor/code_act_actor.py`](unity/actor/code_act_actor.py) — CodeAct planning and execution
+- [`unity/conversation_manager/conversation_manager.py`](unity/conversation_manager/conversation_manager.py) — live orchestration, in-flight actions, voice coordination
+- [`sandboxes/conversation_manager/README.md`](sandboxes/conversation_manager/README.md) — modes, channels, voice, and local/hosted setup
 
 ## Quick Start
 
-Get the agent running in your terminal in under 5 minutes. Unity runs locally, uses the model provider you choose, and connects to Unify's hosted persistence layer — no local database or Docker for the first run.
+Get a local sandbox running in under 5 minutes. Unity runs locally, uses the model provider you choose, and connects to Unify's hosted persistence layer — no local database or Docker for the first run.
 
 ### Prerequisites
 
@@ -91,7 +111,9 @@ Once the REPL starts, try:
 
 Commands: `msg` (Unify message), `sms` (SMS), `email` (email), `call` (phone call), `meet` (video meeting). Type `help` for the full list.
 
-**Video walkthrough**: https://www.loom.com/share/44171c4c1aa2475abd539d1251e1baab
+**Demo video**: [Launch video](https://youtu.be/qjSWiCd8Bq8?si=8eM0XnHH842_pbgo)
+
+**Longer-form screenshares**: [YouTube playlist](https://youtube.com/playlist?list=PLwNuX3xB_tv-AsywAKYnGVv8X5AaEUc2Z&si=ifIIA0CEsDmqIEbf)
 
 ### Going deeper
 
@@ -161,7 +183,7 @@ Notes:
 
 ## How it works
 
-Most agent frameworks give you one loop: the model picks a tool, calls it, reads the result, picks the next. If you want to change course, you cancel and start over.
+A common agent pattern is a single loop: the model picks a tool, calls it, reads the result, then picks the next step.
 
 Unity gives every operation its own loop and returns a **live handle** you can steer. These handles nest: the user steers the ConversationManager, the ConversationManager steers the Actor, the Actor steers the managers. Corrections, pauses, and queries propagate through the full depth.
 
@@ -187,9 +209,7 @@ await handle.pause()
 await handle.resume()
 ```
 
-When the Actor calls `primitives.contacts.ask(...)`, the ContactManager starts its own tool loop and returns its own handle — nested inside the Actor's handle, which is nested inside the ConversationManager's. You can steer at any level and it propagates correctly.
-
-The goal: you should be able to talk to your assistant while it's doing things for you, not wait in silence.
+When the Actor calls `primitives.contacts.ask(...)`, the ContactManager starts its own tool loop and returns its own handle — nested inside the Actor's handle, which is nested inside the ConversationManager's. Steering at any level propagates through the full stack.
 
 ## CodeAct — the Actor writes programs, not tool calls
 
@@ -208,7 +228,7 @@ for contact in contacts:
     )
 ```
 
-This runs in a sandboxed execution session with the full `primitives.*` API available — the same typed interfaces the rest of the system uses. One program per turn, with variables, loops, and real control flow. This matters because complex tasks that require composing several managers (look up contacts → query knowledge → send communications) can be expressed as a single coherent plan instead of 5+ round-trips where the model re-reads everything each time.
+This runs in a sandboxed execution session with the full `primitives.*` API available — the same typed interfaces the rest of the system uses. One program per turn, with variables, loops, and real control flow. Complex compositions such as contact lookup → knowledge retrieval → outbound communication can be expressed as one plan instead of several separate tool-selection turns.
 
 ## Dual-brain voice
 
@@ -221,11 +241,9 @@ They talk over IPC. When the slow brain finishes a task or wants to guide the co
 - **NOTIFY** — "here's some context, decide what to do with it"
 - **BLOCK** — nothing; the fast brain keeps going on its own
 
-So the assistant keeps talking to you while researching flights in the background. When the results come in, it naturally weaves them into whatever you're discussing. There's also a speech urgency evaluator that can preempt the slow brain if you say something that needs immediate attention.
+This lets the system continue a live conversation while background work is still running. A speech urgency evaluator can also preempt the slow brain if the user says something that needs immediate attention.
 
-Most agent frameworks go quiet while working. This architecture keeps the conversation alive.
-
-## Memory that actually consolidates
+## Memory consolidation
 
 Every 50 messages, the MemoryManager kicks in and runs a background extraction pass. It pulls out:
 
@@ -235,7 +253,7 @@ Every 50 messages, the MemoryManager kicks in and runs a background extraction p
 - Domain knowledge — project details, preferences, long-term facts
 - Tasks — things you committed to, deadlines, follow-ups
 
-This is structured, queryable, and continuous. After a month of use, the system has a working model of your world — who the people are, what matters, what's in progress — stored in typed tables, not freeform text.
+The result is structured, queryable state stored in typed tables rather than freeform transcript summaries.
 
 ## Concurrent actions
 
@@ -256,7 +274,7 @@ The ConversationManager tracks everything that's running:
 └─────────────────────────────────────────────────────┘
 ```
 
-Each action gets its own dynamically generated steering tools. You can ask "how's the flight search going?" or "stop the summary, I'll do that myself" or "for the restaurants, make sure one has a private room" — and only the targeted action is affected.
+Each action gets its own dynamically generated steering tools. You can inspect, interject into, pause, resume, or stop one action without affecting the others.
 
 ---
 
@@ -307,7 +325,7 @@ State Managers (each runs its own async LLM tool loop)
 | **[unify](https://github.com/unifyai/unify)** | Python SDK for persistence and logging (connects to Unify's hosted backend) |
 | **[unillm](https://github.com/unifyai/unillm)** | LLM access layer — routes to OpenAI, Anthropic, or any compatible endpoint |
 
-All three are MIT-licensed. The full product — with voice calls, messaging channels, and a management dashboard — runs on [Unify's platform](https://unify.ai).
+All three are MIT-licensed. The managed product layer — including voice calls, messaging channels, and the management dashboard — runs on [Unify's platform](https://unify.ai).
 
 ---
 
@@ -320,13 +338,13 @@ Tests exercise the real system (steerable handles, CodeAct, manager composition,
 uv sync --all-groups
 source .venv/bin/activate
 
-# Run tests (cached LLM responses — fast after first run)
+# Run tests (cached LLM responses)
 tests/parallel_run.sh tests/                    # everything
 tests/parallel_run.sh tests/actor/              # one module
 tests/parallel_run.sh tests/contact_manager/    # another
 ```
 
-See [tests/README.md](tests/README.md) for the full philosophy (we never mock the LLM — responses are cached, not faked).
+See [tests/README.md](tests/README.md) for the full philosophy: responses are cached, not mocked.
 
 ## Where to start reading
 
@@ -386,7 +404,7 @@ We think of English as an API. Managers communicate through natural-language int
 
 ## Roadmap
 
-Unity is under active development. Here's what we're working on:
+Current priorities:
 
 - [ ] **Local deployment** — `docker compose up` for the full system (brain + persistence + communication) on your machine. This is the top priority.
 - [ ] **Managed/local convergence** — narrow the remaining gap between the managed Pub/Sub path and the local ingress path
@@ -395,7 +413,7 @@ Unity is under active development. Here's what we're working on:
 - [ ] **Simplified Orchestra** — lightweight local mode for the persistence layer, reducing external dependencies
 - [ ] **One-command onboarding** — guided setup that provisions API keys, configures channels, and starts the assistant
 
-We'll update this list as milestones are completed. Follow [GitHub Issues](https://github.com/unifyai/unity/issues) for detailed progress.
+Follow [GitHub Issues](https://github.com/unifyai/unity/issues) for detailed progress.
 
 ---
 

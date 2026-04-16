@@ -61,6 +61,13 @@ class TaskBase(BaseModel):
             "When null, the task is executed by an Actor interpreting the free-form description on the fly."
         ),
     )
+    offline: bool = Field(
+        default=False,
+        description=(
+            "Whether this task should execute in the hidden offline lane instead of waking "
+            "the live assistant runtime. Offline tasks must provide a numeric entrypoint."
+        ),
+    )
     activated_by: Optional[ActivatedBy] = Field(
         default=None,
         description=(
@@ -75,31 +82,13 @@ class TaskBase(BaseModel):
 
     @model_validator(mode="after")
     def _mutually_exclusive_schedule_trigger(self):
-        """
-        - schedule XOR trigger: never both
-        - If trigger is set, status must be triggerable
-        - triggerable status requires a non-null trigger
-        """
+        """Enforce the invariants that must hold for every local task payload."""
+
         if self.schedule is not None and self.trigger is not None:
             raise ValueError("A task cannot have both *schedule* and *trigger*.")
 
-        # TODO: These rules are a bit constraining and hide information
-        # and not necessarily replicating the backend state.
-        # if self.trigger is not None and self.status != Status.triggerable:
-        #     raise ValueError(
-        #         "When *trigger* is set the status must be 'triggerable'.",
-        #     )
-
-        # if self.status == Status.triggerable and self.trigger is None:
-        #     raise ValueError(
-        #         "Status 'triggerable' requires a non-null *trigger* definition.",
-        #     )
-
-        # `activated_by` may only be present once the task is actually active
-        # if self.status != Status.active and self.activated_by is not None:
-        #     raise ValueError(
-        #         "`activated_by` may only be set when status is 'active'",
-        #     )
+        if self.offline and self.entrypoint is None:
+            raise ValueError("Offline tasks require a numeric entrypoint.")
 
         return self
 

@@ -59,6 +59,7 @@ from unity.conversation_manager.events import (
     UnifyMeetReceived,
     AssistantUpdateEvent,
     SyncContacts,
+    TaskDue,
     PreHireMessage,
     Ping,
     AssistantScreenShareStarted,
@@ -934,6 +935,61 @@ class TestSystemEvents:
             event = Event.from_json(msg["data"])
             assert isinstance(event, SyncContacts)
             assert event.reason == "Manual sync requested"
+
+    @pytest.mark.asyncio
+    async def test_handle_task_due_event(
+        self,
+        broker,
+        mock_session_details,
+        mock_settings,
+    ):
+        """Scheduled task system events should map onto the typed task_due channel."""
+
+        from unity.conversation_manager.comms_manager import CommsManager
+
+        cm = CommsManager(broker)
+        cm.loop = asyncio.get_event_loop()
+
+        async with broker.pubsub() as pubsub:
+            await pubsub.psubscribe("app:comms:*")
+
+            message = create_pubsub_message(
+                "unity_system_event",
+                {
+                    "event_type": "task_due",
+                    "message": "Scheduled task 'Morning briefing' became due.",
+                    "task_id": 101,
+                    "source_task_log_id": 555,
+                    "activation_revision": "rev-1",
+                    "scheduled_for": "2026-04-10T09:00:00+00:00",
+                    "execution_mode": "live",
+                    "source_type": "scheduled",
+                    "task_label": "Morning briefing",
+                    "task_summary": "Prepare the morning update before the user checks in.",
+                    "visibility_policy": "silent_by_default",
+                    "recurrence_hint": "recurring",
+                },
+            )
+
+            cm.handle_message(message)
+            await _wait_for_condition(lambda: message._acked)
+
+            msg = await get_message_on_channel(pubsub, "app:comms:task_due")
+            assert msg is not None
+
+            event = Event.from_json(msg["data"])
+            assert isinstance(event, TaskDue)
+            assert event.task_id == 101
+            assert event.source_task_log_id == 555
+            assert event.activation_revision == "rev-1"
+            assert event.scheduled_for == "2026-04-10T09:00:00+00:00"
+            assert event.task_label == "Morning briefing"
+            assert (
+                event.task_summary
+                == "Prepare the morning update before the user checks in."
+            )
+            assert event.visibility_policy == "silent_by_default"
+            assert event.recurrence_hint == "recurring"
 
 
 # =============================================================================

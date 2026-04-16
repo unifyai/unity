@@ -38,7 +38,12 @@ from .types.status import Status, to_status
 from .types.priority import Priority
 from .types.schedule import Schedule
 from .types.trigger import Trigger
-from .types.repetition import RepeatPattern, Frequency, Weekday
+from .types.repetition import (
+    RepeatPattern,
+    Frequency,
+    Weekday,
+    next_repeated_start_at,
+)
 from .types.task import TaskBase, Task
 from .types.activated_by import ActivatedBy
 from .types.queue_plan import QueuePlan
@@ -65,7 +70,6 @@ from ..actor.base import BaseActor
 from ..actor.simulated import SimulatedActor
 from .active_task import ActiveTask
 from .active_queue import ActiveQueue
-from dataclasses import dataclass
 
 from ..events.manager_event_logging import log_manager_call
 from ..common.search_utils import table_search_top_k
@@ -82,6 +86,12 @@ from ..common.llm_client import new_llm_client
 from ..common.read_only_ask_guard import ReadOnlyAskGuardHandle
 from ..common.sentinels import _UnsetSentinel
 from ..common.context_registry import ContextRegistry, TableContext
+from .machine_state import (
+    consume_live_task_run_provenance,
+    create_or_adopt_live_task_run,
+    source_type_from_activation_reason,
+)
+from ..session_details import SESSION_DETAILS
 
 # Sentinel for optional-argument presence detection
 _UNSET = _UnsetSentinel()
@@ -714,6 +724,31 @@ class TaskScheduler(BaseTaskScheduler):
         ):
             raise ValueError(f"Task {task_id} is already {task.status!r}.")
 
+        if activated_by is not None:
+            reason = activated_by
+        else:
+            if task.trigger is not None:
+                reason = ActivatedBy.trigger
+            elif (task.schedule_prev is None) and (task.schedule_start_at is not None):
+                reason = ActivatedBy.schedule
+            elif task.schedule_prev is not None:
+                reason = ActivatedBy.queue
+            else:
+                reason = ActivatedBy.explicit
+
+        source_task_log_id = self._task_id_to_log_id_map([task_id]).get(task_id)
+        task_run_provenance = consume_live_task_run_provenance(
+            assistant_id=SESSION_DETAILS.assistant.agent_id,
+            task_id=task_id,
+            source_type=source_type_from_activation_reason(reason.value),
+            source_task_log_id=source_task_log_id,
+        )
+        task_run_reference = (
+            create_or_adopt_live_task_run(task_run_provenance)
+            if task_run_provenance is not None
+            else None
+        )
+
         # Adjust queue linkages for activation (and record reintegration plan).
         # detach=True → isolation semantics; detach=False → chain semantics.
 
@@ -737,6 +772,7 @@ class TaskScheduler(BaseTaskScheduler):
             instance_id=task.instance_id,
             scheduler=self,
             entrypoint=task.entrypoint,
+            task_run_reference=task_run_reference,
         )
 
         self._active_task = TaskScheduler.ActivePointer(
@@ -746,24 +782,12 @@ class TaskScheduler(BaseTaskScheduler):
         )
 
         # Clone if this is a triggerable or recurring task
-        if task.status == Status.triggerable or task.repeat is not None:
+        if task.status == Status.triggerable or (
+            task.repeat is not None and task.schedule_start_at is not None
+        ):
             self._clone_task_instance(task)
 
         # Promote status to active (and record the activation reason) and clear the primed pointer if needed
-
-        # Infer activation reason based on provided cause or task configuration
-        reason: ActivatedBy
-        if activated_by is not None:
-            reason = activated_by
-        else:
-            if task.trigger is not None:
-                reason = ActivatedBy.trigger
-            elif (task.schedule_prev is None) and (task.schedule_start_at is not None):
-                reason = ActivatedBy.schedule
-            elif task.schedule_prev is not None:
-                reason = ActivatedBy.queue
-            else:
-                reason = ActivatedBy.explicit
 
         self._update_task_status_instance(
             task_id=task_id,
@@ -976,6 +1000,20 @@ class TaskScheduler(BaseTaskScheduler):
         # Do not carry over activation metadata to a fresh instance
         # Let the backend assign a new instance_id
         clone_payload = task.model_dump(exclude={"instance_id", "activated_by"})
+        if task.repeat is not None and task.schedule_start_at is not None:
+            next_start_at = next_repeated_start_at(
+                previous_start=task.schedule_start_at,
+                patterns=task.repeat,
+                current_occurrence_index=task.instance_id,
+            )
+            if next_start_at is None:
+                return
+            clone_payload["status"] = Status.scheduled
+            clone_payload["schedule"] = {
+                "prev_task": None,
+                "next_task": None,
+                "start_at": next_start_at.isoformat(),
+            }
         self._view.create_one(entries=clone_payload, new=True)
         # Maintain cached total count (+1 new instance row)
         if self._num_tasks_cached is not None:
@@ -1148,6 +1186,7 @@ class TaskScheduler(BaseTaskScheduler):
         priority: Priority = Priority.normal,
         response_policy: Optional[str] = None,
         entrypoint: Optional[int] = None,
+        offline: bool = False,
     ) -> ToolOutcome:
         """
         Create a **brand-new task** and, depending on its attributes, place it
@@ -1162,6 +1201,9 @@ class TaskScheduler(BaseTaskScheduler):
         entrypoint : int | None, default ``None``
             Optional function_id from the Functions table that should be invoked to perform this task. When null,
             the task is executed by an Actor interpreting the description on the fly.
+        offline : bool, default ``False``
+            When true, the task executes in the hidden offline lane and therefore
+            must provide a numeric ``entrypoint``.
         status : Status | None, default ``None``
             Desired initial lifecycle state.  When omitted the method infers
             one based on *schedule* and current queue status.
@@ -1254,6 +1296,9 @@ class TaskScheduler(BaseTaskScheduler):
 
         if repeat is not None:
             repeat = [RepeatPattern(**r) if isinstance(r, dict) else r for r in repeat]
+
+        if offline and entrypoint is None:
+            raise ValueError("Offline tasks require a numeric entrypoint.")
 
         #  Trigger / schedule exclusivity
         if schedule is not None and trigger is not None:
@@ -1355,6 +1400,7 @@ class TaskScheduler(BaseTaskScheduler):
             response_policy=response_policy,
             queue_id=derived_qid,
             entrypoint=entrypoint,
+            offline=offline,
         ).to_post_json()
 
         # ------------------  write log immediately  ------------------ #
@@ -3334,6 +3380,7 @@ class TaskScheduler(BaseTaskScheduler):
         priority: Optional[Union["Priority", str]] = None,
         trigger: Any = _UNSET,
         entrypoint: Any = _UNSET,
+        offline: Any = _UNSET,
     ) -> Dict[str, Any]:
         """
         Update one or more fields of an existing task.
@@ -3359,6 +3406,9 @@ class TaskScheduler(BaseTaskScheduler):
             Importance level.
         trigger : Trigger | dict | None
             Replacement trigger. Mutually exclusive with any schedule/start_at.
+        offline : bool | None
+            Toggle whether the task should execute in the hidden offline lane.
+            Offline tasks must retain a numeric ``entrypoint``.
 
         Returns
         -------
@@ -3371,6 +3421,7 @@ class TaskScheduler(BaseTaskScheduler):
 
         # Was 'trigger' explicitly provided (even if None)?
         _trigger_provided = trigger is not _UNSET
+        _offline_provided = offline is not _UNSET
 
         # Fetch current task for invariants/derivations
         task = self._get_task_or_raise(task_id)
@@ -3387,6 +3438,7 @@ class TaskScheduler(BaseTaskScheduler):
             and priority is None
             and not _trigger_provided
             and entrypoint is _UNSET
+            and not _offline_provided
         ):
             raise ValueError("At least one field must be provided for an update.")
 
@@ -3493,6 +3545,27 @@ class TaskScheduler(BaseTaskScheduler):
                     entries["entrypoint"] = int(entrypoint)
                 except Exception:
                     raise ValueError("entrypoint must be an integer or None")
+        if _offline_provided:
+            if isinstance(offline, str):
+                normalized_offline = offline.strip().lower()
+                if normalized_offline in {"true", "1"}:
+                    offline = True
+                elif normalized_offline in {"false", "0"}:
+                    offline = False
+                else:
+                    raise ValueError("offline must be a boolean value")
+            else:
+                offline = bool(offline)
+            entries["offline"] = offline
+
+        desired_entrypoint = task.entrypoint
+        if "entrypoint" in entries:
+            desired_entrypoint = entries["entrypoint"]
+        desired_offline = task.offline
+        if "offline" in entries:
+            desired_offline = bool(entries["offline"])
+        if desired_offline and desired_entrypoint is None:
+            raise ValueError("Offline tasks require a numeric entrypoint.")
 
         # If clearing a trigger (trigger explicitly None) and current status is triggerable
         if (
@@ -4249,6 +4322,8 @@ class TaskScheduler(BaseTaskScheduler):
             "deadline",
             "repeat",
             "response_policy",
+            "entrypoint",
+            "offline",
         ]
 
     @overload

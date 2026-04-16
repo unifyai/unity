@@ -28,15 +28,19 @@ from functools import partial
 import json
 import threading
 import time
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from dotenv import load_dotenv
-from google.cloud import pubsub_v1
+
+try:
+    from google.cloud import pubsub_v1
+except ImportError:  # pragma: no cover - exercised in local-only installs
+    pubsub_v1 = None
 
 from unity.logger import LOGGER
 from unity.common.hierarchical_logger import DEFAULT_ICON, ICONS
 from unity.settings import SETTINGS
-from unity.conversation_manager.assistant_session_k8s import (
+from unity.deploy_runtime import (
     mark_job_container_ready,
     read_assistant_session,
     read_job_assignment_record,
@@ -101,6 +105,53 @@ def _get_local_contact() -> dict:
         "email_address": SESSION_DETAILS.user.email,
         "whatsapp_number": SESSION_DETAILS.user.whatsapp_number,
     }
+
+
+def _coerce_int(value: Any) -> int | None:
+    """Best-effort integer coercion for webhook payloads."""
+
+    if value in (None, ""):
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _task_due_event_from_payload(
+    payload: dict[str, Any],
+    *,
+    reason: str = "",
+) -> TaskDue | None:
+    """Build a `TaskDue` event from a comms payload when complete."""
+
+    task_id = _coerce_int(payload.get("task_id"))
+    source_task_log_id = _coerce_int(payload.get("source_task_log_id"))
+    activation_revision = str(payload.get("activation_revision") or "")
+    scheduled_for = str(payload.get("scheduled_for") or "")
+    if task_id is None or source_task_log_id is None:
+        return None
+    if not activation_revision or not scheduled_for:
+        return None
+    task_label = str(payload.get("task_label") or "")
+    return TaskDue(
+        task_id=task_id,
+        source_task_log_id=source_task_log_id,
+        activation_revision=activation_revision,
+        scheduled_for=scheduled_for,
+        execution_mode=str(payload.get("execution_mode") or "live"),
+        source_type=str(payload.get("source_type") or "scheduled"),
+        task_label=task_label,
+        task_summary=str(payload.get("task_summary") or ""),
+        visibility_policy=str(payload.get("visibility_policy") or "silent_by_default"),
+        recurrence_hint=str(payload.get("recurrence_hint") or "one_off"),
+        reason=reason
+        or (
+            f"Scheduled task '{task_label}' became due."
+            if task_label
+            else f"Scheduled task {task_id} became due."
+        ),
+    )
 
 
 # Map subscription IDs to their corresponding event types
@@ -416,6 +467,10 @@ class CommsManager:
                     "sync_contacts": lambda r: SyncContacts(
                         reason=r or "Contact sync requested via system event.",
                     ),
+                    "task_due": lambda r: _task_due_event_from_payload(
+                        event,
+                        reason=r,
+                    ),
                     "assistant_screen_share_started": lambda r: AssistantScreenShareStarted(
                         reason=r or "User enabled assistant screen sharing.",
                     ),
@@ -449,10 +504,12 @@ class CommsManager:
 
                 factory = system_event_map.get(system_event_type)
                 if factory is not None:
-                    await publish(
-                        f"app:comms:{system_event_type}",
-                        factory(reason).to_json(),
-                    )
+                    mapped_event = factory(reason)
+                    if mapped_event is not None:
+                        await publish(
+                            f"app:comms:{system_event_type}",
+                            mapped_event.to_json(),
+                        )
                 ack_now()
                 return
 
@@ -1095,7 +1152,7 @@ class CommsManager:
 
     def handle_message(
         self,
-        message: pubsub_v1.types.PubsubMessage,
+        message: Any,
         subscription_id: str = "",
     ):
         """
@@ -1136,6 +1193,12 @@ class CommsManager:
 
     def subscribe_to_topic(self, subscription_id: str, max_messages: int | None = None):
         """Subscribe to a specific PubSub topic and process messages."""
+        if pubsub_v1 is None:
+            LOGGER.error(
+                f"{ICONS['subscription']} Google Pub/Sub client is unavailable; "
+                "hosted subscriptions are disabled in this environment.",
+            )
+            return
         if not SETTINGS.GCP_PROJECT_ID:
             LOGGER.error(
                 f"{ICONS['subscription']} GCP_PROJECT_ID is not set — "
@@ -1373,6 +1436,7 @@ class CommsManager:
                     "org_id": event.get("org_id"),
                     "org_name": event.get("org_name", ""),
                     "team_ids": event.get("team_ids") or [],
+                    "wake_reasons": event.get("wake_reasons") or [],
                     "demo_id": event.get("demo_id"),
                 }
 

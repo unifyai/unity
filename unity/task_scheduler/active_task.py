@@ -12,6 +12,7 @@ the scheduler.
 import functools
 import asyncio
 import textwrap
+from datetime import datetime, timezone
 from typing import Optional, Dict, TYPE_CHECKING, List, Any
 
 from .base import BaseActiveTask
@@ -19,12 +20,28 @@ from ..actor.base import BaseActor
 from unity.common.async_tool_loop import SteerableToolHandle
 from unity.common.task_execution_context import current_task_execution_delegate
 from unity.common._async_tool.messages import forward_handle_call
+from .machine_state import TaskRunReference, update_task_run_record
 from .types.status import Status
 from ..common.llm_client import new_llm_client
 import logging
 from ..common.handle_wrappers import HandleWrapperMixin
 
 logger = logging.getLogger(__name__)
+_TASK_RUN_SUMMARY_LIMIT = 4000
+
+
+def _now_iso() -> str:
+    """Return the current UTC timestamp in ISO-8601 format."""
+
+    return datetime.now(timezone.utc).isoformat()
+
+
+def _truncate_task_run_text(value: str, limit: int = _TASK_RUN_SUMMARY_LIMIT) -> str:
+    """Keep persisted run diagnostics compact for observability rows."""
+
+    if len(value) <= limit:
+        return value
+    return f"{value[: limit - 3]}..."
 
 
 async def classify_steering_intent(
@@ -109,6 +126,7 @@ class ActiveTask(BaseActiveTask, HandleWrapperMixin):
         task_id: Optional[int] = None,
         instance_id: Optional[int] = None,
         scheduler: Optional["TaskScheduler"] = None,
+        task_run_reference: Optional[TaskRunReference] = None,
     ):
         """
         Thin wrapper around an actor-backed active plan handle, keeping the
@@ -121,6 +139,7 @@ class ActiveTask(BaseActiveTask, HandleWrapperMixin):
         self._scheduler: Optional["TaskScheduler"] = scheduler
         self._task_id: Optional[int] = task_id
         self._instance_id: Optional[int] = instance_id
+        self._task_run_reference: Optional[TaskRunReference] = task_run_reference
         self._was_stopped: bool = False
         self._last_intent: Optional[str] = None
         self._last_intent_reason: Optional[str] = None
@@ -141,6 +160,7 @@ class ActiveTask(BaseActiveTask, HandleWrapperMixin):
         instance_id: Optional[int] = None,
         scheduler: Optional["TaskScheduler"] = None,
         entrypoint: Optional[int] = None,
+        task_run_reference: Optional[TaskRunReference] = None,
     ) -> "ActiveTask":
         """
         Create an ActiveTask by starting work on the provided ``actor``.
@@ -149,29 +169,46 @@ class ActiveTask(BaseActiveTask, HandleWrapperMixin):
         handle is running before returning an instance.
         """
         delegate = current_task_execution_delegate.get()
-        if delegate is not None:
-            actor_steerable_handle = await delegate.start_task_run(
-                task_description=task_description,
-                entrypoint=entrypoint,
-                parent_chat_context=_parent_chat_context,
-                clarification_up_q=_clarification_up_q,
-                clarification_down_q=_clarification_down_q,
-            )
-        else:
-            actor_steerable_handle = await actor.act(
-                task_description,
-                _parent_chat_context=_parent_chat_context,
-                _clarification_up_q=_clarification_up_q,
-                _clarification_down_q=_clarification_down_q,
-                # Always pass entrypoint to the actor so it can immediately run the function
-                entrypoint=entrypoint,
-                persist=False,  # Scheduler-run plans should complete instead of pausing for interjection
-            )
+        try:
+            if delegate is not None:
+                actor_steerable_handle = await delegate.start_task_run(
+                    task_description=task_description,
+                    entrypoint=entrypoint,
+                    parent_chat_context=_parent_chat_context,
+                    clarification_up_q=_clarification_up_q,
+                    clarification_down_q=_clarification_down_q,
+                )
+            else:
+                actor_steerable_handle = await actor.act(
+                    task_description,
+                    _parent_chat_context=_parent_chat_context,
+                    _clarification_up_q=_clarification_up_q,
+                    _clarification_down_q=_clarification_down_q,
+                    # Always pass entrypoint to the actor so it can immediately run the function
+                    entrypoint=entrypoint,
+                    persist=False,  # Scheduler-run plans should complete instead of pausing for interjection
+                )
+        except Exception as exc:
+            if task_run_reference is not None:
+                await asyncio.to_thread(
+                    update_task_run_record,
+                    task_run_reference,
+                    {
+                        "state": "failed",
+                        "completed_at": _now_iso(),
+                        "error": _truncate_task_run_text(str(exc)),
+                        "result_summary": _truncate_task_run_text(
+                            f"Task failed before execution fully started: {type(exc).__name__}({exc})",
+                        ),
+                    },
+                )
+            raise
         return cls(
             actor_steerable_handle,  # type: ignore[arg-type]
             task_id=task_id,
             instance_id=instance_id,
             scheduler=scheduler,
+            task_run_reference=task_run_reference,
         )
 
     @functools.wraps(BaseActiveTask.ask, updated=())
@@ -286,6 +323,16 @@ class ActiveTask(BaseActiveTask, HandleWrapperMixin):
                 # Best-effort: failure to reinstate or fallback must not break stop semantics
                 pass
 
+            asyncio.create_task(
+                self._persist_task_run_terminal_state(
+                    state="cancelled",
+                    result_summary=(
+                        f"Task {intent or 'stop'} requested: {stop_reason}"
+                        if stop_reason
+                        else "Task execution cancelled."
+                    ),
+                ),
+            )
             self._clear_active_pointer()
             return
 
@@ -333,6 +380,12 @@ class ActiveTask(BaseActiveTask, HandleWrapperMixin):
                 # Best-effort – failure to reinstate must not break stop semantics
                 pass
 
+        asyncio.create_task(
+            self._persist_task_run_terminal_state(
+                state="cancelled",
+                result_summary=reason or f"Task {final_status}.",
+            ),
+        )
         asyncio.create_task(self._save_final_summary(final_status))
 
         self._clear_active_pointer()
@@ -423,6 +476,30 @@ class ActiveTask(BaseActiveTask, HandleWrapperMixin):
                     e,
                 )
 
+    async def _persist_task_run_terminal_state(
+        self,
+        *,
+        state: str,
+        result_summary: str | None = None,
+        error: str | None = None,
+    ) -> None:
+        """Patch the durable run row when the live execution reaches a terminal state."""
+
+        if self._task_run_reference is None:
+            return
+        await asyncio.to_thread(
+            update_task_run_record,
+            self._task_run_reference,
+            {
+                "state": state,
+                "completed_at": _now_iso(),
+                "result_summary": (
+                    _truncate_task_run_text(result_summary) if result_summary else None
+                ),
+                "error": _truncate_task_run_text(error) if error else None,
+            },
+        )
+
     @functools.wraps(BaseActiveTask.result, updated=())
     async def result(self) -> str:
         final_status: Optional[str] = None
@@ -466,6 +543,11 @@ class ActiveTask(BaseActiveTask, HandleWrapperMixin):
                     task_id=self._task_id,
                     instance_id=self._instance_id,
                     new_status=final_status,
+                )
+                await self._persist_task_run_terminal_state(
+                    state=final_status,
+                    result_summary=ret,
+                    error=str(error) if error is not None else None,
                 )
 
                 # Idempotently schedule generation of the human-readable summary
