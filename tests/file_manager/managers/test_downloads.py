@@ -88,3 +88,24 @@ async def test_save_attachment_unparseable_file_still_indexed(
         "CodeActActor can see them via primitives.files.describe(). "
         "Currently ingest_files silently drops files that fail to parse."
     )
+
+
+@pytest.mark.asyncio
+@_handle_project
+async def test_save_attachment_can_skip_auto_ingest_even_when_enabled(
+    file_manager,
+):
+    fm = file_manager
+
+    with patch.object(SETTINGS.file, "IMPLICIT_INGESTION", True):
+        display_name = fm.save_attachment(
+            "att-manual",
+            "notes.txt",
+            b"queued later",
+            auto_ingest=False,
+        )
+
+    assert fm.exists(display_name)
+    storage = fm.describe(file_path=display_name)
+    assert storage.indexed_exists is False
+    assert storage.parsed_status is None
