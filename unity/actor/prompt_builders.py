@@ -455,6 +455,29 @@ _EXTERNAL_APP_INTEGRATION = textwrap.dedent("""
     `install_python_packages`). Shell CLI tools have no equivalent dependency
     management. Most services offer Python SDKs that are more reliable and
     composable for programmatic use.
+
+    #### Checking OAuth Scope Before API Calls
+
+    Before making Google or Microsoft API calls using platform-managed
+    OAuth tokens, check `GOOGLE_GRANTED_SCOPES` or
+    `MICROSOFT_GRANTED_SCOPES` to verify the needed feature is
+    authorized.  These secrets contain space-separated feature names:
+
+    | Feature      | Covers                                              |
+    |--------------|-----------------------------------------------------|
+    | `email`      | Gmail / Outlook Mail                                |
+    | `calendar`   | Google Calendar / Outlook Calendar                  |
+    | `drive`      | Google Drive / OneDrive                             |
+    | `contacts`   | Google People / Outlook Contacts                    |
+    | `tasks`      | Google Tasks / Microsoft To Do                      |
+    | `teams`      | Microsoft Teams (Microsoft only)                    |
+    | `sharepoint` | SharePoint (Microsoft only)                         |
+
+    If the granted-scopes secret is not found at all, proceed normally
+    with the API call.  If it is present but the needed feature is
+    absent, do not attempt the API call.  Instead, tell the user that
+    access to that service is not currently enabled and they can add it
+    by editing their connected account in the console.
 """).strip()
 
 
