@@ -159,7 +159,8 @@ class FileStorageMap(BaseModel):
     Status Interpretation
     ---------------------
     - filesystem_exists=True, indexed_exists=False: File exists but not ingested
-    - indexed_exists=True, parsed_status='failed': Ingested but parsing failed
+    - indexed_exists=True, parsed_status='queued'/'ingesting': Background ingestion is still running
+    - indexed_exists=True, parsed_status='error': Ingested but parsing failed
     - indexed_exists=True, parsed_status='success': Full storage info available
 
     Example
@@ -195,7 +196,8 @@ class FileStorageMap(BaseModel):
     parsed_status: Optional[str] = Field(
         default=None,
         description=(
-            "Parse outcome: 'success', 'failed', 'partial', or None if not parsed. "
+            "Current ingestion status: 'queued', 'ingesting', 'success', 'error', "
+            "'partial', or None if not parsed. "
             "Check this before accessing document/tables storage info."
         ),
     )
