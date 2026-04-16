@@ -1749,6 +1749,9 @@ async def _(event: AssistantUpdateEvent, cm: "ConversationManager", *args, **kwa
 
     cm.call_manager.set_config(cm.get_call_config())
 
+    # Sync OAuth tokens that may have changed after a re-authorization
+    await managers_utils.queue_operation(managers_utils.sync_assistant_secrets)
+
     # Update contact manager with new assistant/user details
     await managers_utils.queue_operation(
         managers_utils.update_session_contacts,

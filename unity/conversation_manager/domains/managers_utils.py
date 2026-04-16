@@ -1025,6 +1025,17 @@ async def log_message(
     )
 
 
+# OAuth secret sync
+
+
+async def sync_assistant_secrets() -> None:
+    """Pull OAuth tokens from Orchestra into the SecretManager's Secrets context."""
+    from unity.manager_registry import ManagerRegistry
+
+    sm = ManagerRegistry.get_secret_manager()
+    sm._sync_assistant_secrets()
+
+
 # Contact updates
 
 
