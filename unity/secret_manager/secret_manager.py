@@ -268,6 +268,20 @@ class SecretManager(BaseSecretManager):
             except Exception:
                 continue
 
+        for stale_name in self.OAUTH_SECRET_ALLOWLIST - secrets_dict.keys():
+            try:
+                ids = unify.get_logs(
+                    context=self._ctx,
+                    filter=f"name == {stale_name!r}",
+                    limit=1,
+                    return_ids_only=True,
+                )
+                if ids:
+                    unify.delete_logs(context=self._ctx, logs=ids[0])
+                    self._env_remove(stale_name)
+            except Exception:
+                continue
+
     # --------------------- Internal helpers (.env sync) --------------------- #
     def _dotenv_path(self) -> str:
         """Return the path to the .env file used for local sync.
