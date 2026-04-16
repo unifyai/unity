@@ -31,16 +31,21 @@ _FUNCTION_AND_GUIDANCE_LIBRARY = textwrap.dedent("""
       together. Search results include `function_ids` pointing back to
       concrete implementations.
 
-    Always search **both** before writing new code with raw `primitives.*`
-    calls:
+    Always search **both** before deciding how to execute:
 
     1. `FunctionManager_search_functions` — find existing implementations
     2. `GuidanceManager_search` — find procedural instructions and
        compositional strategies
-    3. If a function exists, call it via `execute_function`; if guidance exists,
-       follow its procedure
-    4. Only fall back to raw `primitives.*` if neither library has relevant
-       entries
+    3. If a relevant function exists, call it via `execute_function`; if
+       relevant guidance exists, follow its procedure
+    4. If neither library has a relevant entry, do **not** treat that as
+       permission to immediately write new code. Search is a discovery step,
+       not an execution decision.
+    5. After discovery, choose the minimal correct execution path:
+       - if the request or discovery step already identifies one exact function
+         or primitive call, use `execute_function`
+       - use `execute_code` only when the task genuinely requires multi-step
+         composition, branching, iteration, or combining intermediate results
 
     #### Writing Guidance
 
