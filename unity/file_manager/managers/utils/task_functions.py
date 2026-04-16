@@ -23,7 +23,7 @@ from typing import Any, Dict, List, Optional
 
 from unity.file_manager.file_parsers.types.contracts import FileParseResult
 from unity.file_manager.pipeline import InlineRowsHandle, TableInputHandle
-from unity.file_manager.pipeline.row_streaming import iter_table_input_row_batches
+from unity.file_manager.parse_adapter.row_streaming import iter_table_input_row_batches
 from unity.file_manager.types.config import (
     FilePipelineConfig,
     TableBusinessContextSpec,

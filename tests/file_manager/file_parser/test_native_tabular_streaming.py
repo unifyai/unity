@@ -11,7 +11,7 @@ from unity.file_manager.pipeline import (
     ObjectStoreArtifactHandle,
     XlsxSheetHandle,
 )
-from unity.file_manager.pipeline.row_streaming import iter_table_input_row_batches
+from unity.file_manager.parse_adapter.row_streaming import iter_table_input_row_batches
 from unity.file_manager.types.config import FilePipelineConfig
 
 
