@@ -172,7 +172,7 @@ class InMemoryWorkQueue:
         async with self._lock:
             message = self._leased.pop(receipt_id)
             dead_letter = DeadLetterWorkItem(
-                **message.model_dump(exclude={"last_error"}),
+                **message.model_dump(exclude={"last_error", "state"}),
                 last_error=error,
             )
             self._dead_letters.append(dead_letter)
