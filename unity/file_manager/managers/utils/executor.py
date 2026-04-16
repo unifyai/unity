@@ -49,8 +49,87 @@ logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
+# Parse-cost metric extraction (keeps parser imports out of cost_ledger.py)
+# ---------------------------------------------------------------------------
+
+
+def _extract_parse_cost_metrics(
+    parse_result,
+    file_path: str,
+    parse_config,
+) -> dict:
+    """Extract pre-computed metrics from a FileParseResult for cost estimation.
+
+    Returns kwargs suitable for ``build_parse_cost_line_items``.
+    """
+    from pathlib import Path as _Path
+
+    from unity.file_manager.file_parsers.types.contracts import FileParseRequest
+    from unity.file_manager.file_parsers.utils.memory_scheduler import (
+        estimate_peak_memory_bytes,
+    )
+
+    trace = getattr(parse_result, "trace", None)
+    duration_ms = float(getattr(trace, "duration_ms", 0.0) or 0.0)
+    trace_status = getattr(getattr(trace, "status", None), "value", None)
+    backend = getattr(trace, "backend", None)
+
+    estimated_peak_bytes = 0
+    source_candidates = [
+        getattr(trace, "source_local_path", None),
+        getattr(trace, "parsed_local_path", None),
+        file_path,
+    ]
+    for candidate in source_candidates:
+        if not candidate:
+            continue
+        try:
+            path = _Path(str(candidate)).expanduser()
+        except Exception:
+            continue
+        if not path.exists():
+            continue
+        request = FileParseRequest(
+            logical_path=file_path,
+            source_local_path=str(path),
+        )
+        estimated_peak_bytes = estimate_peak_memory_bytes(request, config=parse_config)
+        break
+
+    llm_calls = 0
+    for step in list(getattr(trace, "steps", []) or []):
+        counters = getattr(step, "counters", {}) or {}
+        for key in ("llm_calls", "summary_calls", "metadata_calls"):
+            value = counters.get(key)
+            if value:
+                llm_calls += int(value)
+
+    return {
+        "parse_duration_seconds": duration_ms / 1000.0,
+        "estimated_peak_memory_bytes": estimated_peak_bytes,
+        "llm_enrichment_calls": llm_calls,
+        "parse_backend": backend,
+        "trace_status": trace_status,
+    }
+
+
+# ---------------------------------------------------------------------------
 # Retry helper
 # ---------------------------------------------------------------------------
+
+
+@dataclass
+class _IngestWorkItem:
+    """Typed descriptor for one content or table ingest unit of work."""
+
+    kind: str
+    fn: Callable[..., Any]
+    kwargs: Dict[str, Any]
+    label: str
+    stage_name: str
+    stage_id: Optional[str] = None
+    table_id: Optional[str] = None
+    meta: Optional[Dict[str, Any]] = None
 
 
 @dataclass
@@ -641,36 +720,36 @@ def process_single_file(
 
         # 2. Build work items for content + tables
         content_result = None
-        table_results = []
+        table_results: List[_PipelineStepOutcome] = []
 
         tables = list(getattr(parse_result, "tables", []) or [])
         do_tables = bool(config.ingest.table_ingest and tables)
 
-        work_items = []
+        work_items: List[_IngestWorkItem] = []
 
         if content_rows:
             work_items.append(
-                {
-                    "kind": "content",
-                    "fn": execute_ingest_content,
-                    "kwargs": {
+                _IngestWorkItem(
+                    kind="content",
+                    fn=execute_ingest_content,
+                    kwargs={
                         "file_manager": file_manager,
                         "file_path": file_path,
                         "content_rows": content_rows,
                         "config": config,
                     },
-                    "label": f"content({file_path})",
-                    "stage_name": "ingest_content",
-                    "stage_id": _make_stage_id(
+                    label=f"content({file_path})",
+                    stage_name="ingest_content",
+                    stage_id=_make_stage_id(
                         run_id=run_id,
                         file_path=file_path,
                         stage_name="ingest_content",
                     ),
-                    "meta": {
+                    meta={
                         "row_count": len(content_rows),
                         "context": "content",
                     },
-                },
+                ),
             )
 
         if do_tables:
@@ -692,11 +771,11 @@ def process_single_file(
                 if table_input is None and not rows:
                     continue
                 work_items.append(
-                    {
-                        "kind": "table",
-                        "stage_name": "ingest_table",
-                        "fn": execute_ingest_table,
-                        "kwargs": {
+                    _IngestWorkItem(
+                        kind="table",
+                        stage_name="ingest_table",
+                        fn=execute_ingest_table,
+                        kwargs={
                             "file_manager": file_manager,
                             "file_path": file_path,
                             "table_label": table_label,
@@ -705,9 +784,9 @@ def process_single_file(
                             "columns": columns,
                             "config": config,
                         },
-                        "label": f"table({file_path}/{table_label})",
-                        "table_id": str(getattr(tbl, "table_id", "") or "") or None,
-                        "stage_id": _make_stage_id(
+                        label=f"table({file_path}/{table_label})",
+                        table_id=str(getattr(tbl, "table_id", "") or "") or None,
+                        stage_id=_make_stage_id(
                             run_id=run_id,
                             file_path=file_path,
                             stage_name="ingest_table",
@@ -715,8 +794,7 @@ def process_single_file(
                                 getattr(tbl, "table_id", "") or table_label,
                             ),
                         ),
-                        "row_count": row_count,
-                        "meta": {
+                        meta={
                             "row_count": row_count,
                             "table_label": table_label,
                             "column_count": len(columns),
@@ -726,79 +804,78 @@ def process_single_file(
                                 else "InlineRowsHandle"
                             ),
                         },
-                    },
+                    ),
                 )
 
         # 3. Execute work items (concurrent when multiple)
+        def _handle_completed(item: _IngestWorkItem, res: _PipelineStepOutcome) -> None:
+            nonlocal content_result
+            if item.kind == "content":
+                content_result = res
+            else:
+                table_results.append(res)
+            item_meta = {"label": item.label, **dict(item.meta or {})}
+            _record_stage_manifest(
+                ledger,
+                run_id=run_id,
+                file_path=file_path,
+                stage_name=item.stage_name,
+                result=res,
+                stage_id=item.stage_id,
+                file_id=file_id,
+                storage_id=storage_id,
+                table_id=item.table_id,
+                meta=item_meta,
+            )
+            _report_stage_progress(
+                reporter if enable_progress else None,
+                run_id=run_id,
+                file_path=file_path,
+                stage_name=item.stage_name,
+                result=res,
+                file_start_time=file_start_time,
+                verbosity=verbosity,
+                stage_id=item.stage_id,
+                file_id=file_id,
+                storage_id=storage_id,
+                table_id=item.table_id,
+                trace_id=trace_id,
+                meta=item_meta,
+            )
+            if cost_accumulator is not None and run_id:
+                cost_accumulator.add_line_items(
+                    build_ingest_cost_line_items(
+                        run_id=run_id,
+                        file_path=file_path,
+                        file_id=file_id,
+                        storage_id=storage_id,
+                        stage_name=item.stage_name,
+                        stage_id=item.stage_id,
+                        table_id=item.table_id,
+                        stage_value=res.value,
+                        rate_card=cost_accumulator.rate_card,
+                    ),
+                )
+
         if len(work_items) <= 1:
             for item in work_items:
                 res = _run_with_retry(
-                    item["fn"],
-                    item["kwargs"],
+                    item.fn,
+                    item.kwargs,
                     retry_config=config.retry,
-                    label=item["label"],
+                    label=item.label,
                 )
-                if item["kind"] == "content":
-                    content_result = res
-                else:
-                    table_results.append(res)
-                _record_stage_manifest(
-                    ledger,
-                    run_id=run_id,
-                    file_path=file_path,
-                    stage_name=item["stage_name"],
-                    result=res,
-                    stage_id=item.get("stage_id"),
-                    file_id=file_id,
-                    storage_id=storage_id,
-                    table_id=item.get("table_id"),
-                    meta={
-                        "label": item["label"],
-                        **dict(item.get("meta") or {}),
-                    },
-                )
-                _report_stage_progress(
-                    reporter if enable_progress else None,
-                    run_id=run_id,
-                    file_path=file_path,
-                    stage_name=item["stage_name"],
-                    result=res,
-                    file_start_time=file_start_time,
-                    verbosity=verbosity,
-                    stage_id=item.get("stage_id"),
-                    file_id=file_id,
-                    storage_id=storage_id,
-                    table_id=item.get("table_id"),
-                    trace_id=trace_id,
-                    meta={
-                        "label": item["label"],
-                        **dict(item.get("meta") or {}),
-                    },
-                )
-                if cost_accumulator is not None and run_id:
-                    cost_accumulator.add_line_items(
-                        build_ingest_cost_line_items(
-                            run_id=run_id,
-                            file_path=file_path,
-                            file_id=file_id,
-                            storage_id=storage_id,
-                            stage_name=item["stage_name"],
-                            stage_id=item.get("stage_id"),
-                            table_id=item.get("table_id"),
-                            stage_value=res.value,
-                            rate_card=cost_accumulator.rate_card,
-                        ),
-                    )
+                _handle_completed(item, res)
         elif work_items:
             max_workers = getattr(config.execution, "max_embed_workers", 8)
             with _TPE(max_workers=min(len(work_items), max_workers)) as pool:
                 futures = {
                     pool.submit(
                         _run_with_retry,
-                        item["fn"],
-                        item["kwargs"],
+                        item.fn,
+                        item.kwargs,
                         retry_config=config.retry,
-                        label=item["label"],
+                        label=item.label,
                     ): item
                     for item in work_items
                 }
@@ -808,57 +885,7 @@ def process_single_file(
                         res = future.result()
                     except Exception as exc:
                         res = _PipelineStepOutcome(success=False, error=str(exc))
-                    if item["kind"] == "content":
-                        content_result = res
-                    else:
-                        table_results.append(res)
-                    _record_stage_manifest(
-                        ledger,
-                        run_id=run_id,
-                        file_path=file_path,
-                        stage_name=item["stage_name"],
-                        result=res,
-                        stage_id=item.get("stage_id"),
-                        file_id=file_id,
-                        storage_id=storage_id,
-                        table_id=item.get("table_id"),
-                        meta={
-                            "label": item["label"],
-                            **dict(item.get("meta") or {}),
-                        },
-                    )
-                    _report_stage_progress(
-                        reporter if enable_progress else None,
-                        run_id=run_id,
-                        file_path=file_path,
-                        stage_name=item["stage_name"],
-                        result=res,
-                        file_start_time=file_start_time,
-                        verbosity=verbosity,
-                        stage_id=item.get("stage_id"),
-                        file_id=file_id,
-                        storage_id=storage_id,
-                        table_id=item.get("table_id"),
-                        trace_id=trace_id,
-                        meta={
-                            "label": item["label"],
-                            **dict(item.get("meta") or {}),
-                        },
-                    )
-                    if cost_accumulator is not None and run_id:
-                        cost_accumulator.add_line_items(
-                            build_ingest_cost_line_items(
-                                run_id=run_id,
-                                file_path=file_path,
-                                file_id=file_id,
-                                storage_id=storage_id,
-                                stage_name=item["stage_name"],
-                                stage_id=item.get("stage_id"),
-                                table_id=item.get("table_id"),
-                                stage_value=res.value,
-                                rate_card=cost_accumulator.rate_card,
-                            ),
-                        )
+                    _handle_completed(item, res)
 
         if cost_accumulator is not None and run_id:
             cost_accumulator.add_line_items(
@@ -1072,9 +1099,12 @@ def run_pipeline(
                 build_parse_cost_line_items(
                     run_id=run_id,
                     file_path=logical_path,
-                    parse_result=parse_result,
-                    parse_config=config.parse,
                     rate_card=rate_card,
+                    **_extract_parse_cost_metrics(
+                        parse_result,
+                        logical_path,
+                        config.parse,
+                    ),
                 ),
             )
 
