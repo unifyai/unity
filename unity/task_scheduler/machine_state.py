@@ -102,6 +102,9 @@ class TaskRunProvenance:
     source_medium: str | None = None
     source_ref: str | None = None
     source_contact_id: str | None = None
+    source_contact_display_name: str | None = None
+    task_name: str | None = None
+    task_description: str | None = None
     attempt_token: str | None = None
 
 
@@ -227,6 +230,10 @@ def consume_live_task_run_provenance(
             if source_type == "triggered" and activation
             else None
         ),
+        task_name=(activation.task_name if activation is not None else None),
+        task_description=(
+            activation.task_description if activation is not None else None
+        ),
     )
 
 
@@ -314,6 +321,9 @@ def create_or_adopt_live_task_run(
                 "source_medium": provenance.source_medium,
                 "source_ref": provenance.source_ref,
                 "source_contact_id": provenance.source_contact_id,
+                "source_contact_display_name": provenance.source_contact_display_name,
+                "task_name": provenance.task_name,
+                "task_description": provenance.task_description,
                 "started_at": started_at or _now_iso(),
                 "state": "running",
             },
@@ -351,7 +361,13 @@ def update_task_run_record(
 
 
 def build_task_run_key(provenance: TaskRunProvenance) -> str:
-    """Build the canonical run-key shape shared across live and offline lanes."""
+    """Build the canonical run-key shape shared across live and offline lanes.
+
+    The trigger-attempt token is intentionally excluded from the persisted key.
+    It only disambiguates pending live trigger provenance before execution
+    starts; once a run is materialized, live and offline lanes share the same
+    provenance-based identity contract.
+    """
 
     revision_digest = hashlib.sha256(
         str(provenance.activation_revision or "").encode("utf-8"),
@@ -371,9 +387,6 @@ def build_task_run_key(provenance: TaskRunProvenance) -> str:
         tail_parts.append(
             hashlib.sha256(provenance.source_ref.encode("utf-8")).hexdigest()[:12],
         )
-    normalized_attempt_token = _normalize_run_key_component(provenance.attempt_token)
-    if normalized_attempt_token:
-        tail_parts.append(f"attempt-{normalized_attempt_token[:24]}")
     tail = "-".join(tail_parts) or "once"
     return (
         f"{provenance.execution_mode}:{provenance.source_type}:"

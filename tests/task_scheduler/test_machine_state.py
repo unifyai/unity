@@ -1,9 +1,13 @@
+import hashlib
+
 from unity.task_scheduler import machine_state
 from unity.task_scheduler.machine_state import (
     TASK_MACHINE_STATE_PROJECT,
     TaskActivationSnapshot,
     TaskRunProvenance,
     build_task_activation_context_name,
+    build_task_run_key,
+    create_or_adopt_live_task_run,
     consume_live_task_run_provenance,
     get_task_activation,
     remember_live_task_run_provenance,
@@ -170,3 +174,74 @@ def test_trigger_provenance_keeps_attempts_separate(monkeypatch):
     assert fallback.source_ref is None
     assert fallback.source_contact_id is None
     assert fallback.source_medium == "sms_message"
+
+
+def test_build_task_run_key_ignores_trigger_attempt_token():
+    revision_digest = hashlib.sha256(b"rev-1").hexdigest()[:12]
+    source_ref_digest = hashlib.sha256(b"message-1").hexdigest()[:12]
+    with_attempt = TaskRunProvenance(
+        assistant_id="42",
+        task_id=301,
+        source_type="triggered",
+        execution_mode="live",
+        activation_revision="rev-1",
+        source_medium="sms_message",
+        source_ref="message-1",
+        source_contact_id="2",
+        attempt_token="attempt-a",
+    )
+    without_attempt = TaskRunProvenance(
+        assistant_id="42",
+        task_id=301,
+        source_type="triggered",
+        execution_mode="live",
+        activation_revision="rev-1",
+        source_medium="sms_message",
+        source_ref="message-1",
+        source_contact_id="2",
+    )
+
+    expected = (
+        f"live:triggered:42:301:{revision_digest}:"
+        f"contact-2-sms-message-{source_ref_digest}"
+    )
+
+    assert build_task_run_key(with_attempt) == expected
+    assert build_task_run_key(without_attempt) == expected
+
+
+def test_create_or_adopt_live_task_run_persists_display_fields(monkeypatch):
+    captured: dict[str, object] = {}
+    provenance = TaskRunProvenance(
+        assistant_id="42",
+        task_id=301,
+        source_type="triggered",
+        execution_mode="live",
+        activation_revision="rev-1",
+        source_medium="sms_message",
+        source_ref="message-1",
+        source_contact_id="2",
+        source_contact_display_name="Alice Owner",
+        task_name="Follow up on invoice",
+        task_description="Ask Alice for the missing invoice details.",
+    )
+
+    def _fake_post(path: str, payload: dict[str, object]):
+        captured["path"] = path
+        captured["payload"] = payload
+        return {"run": {"run_key": "live:triggered:42:301:rev-1:once"}}
+
+    monkeypatch.setattr(machine_state, "_orchestra_admin_post", _fake_post)
+
+    reference = create_or_adopt_live_task_run(
+        provenance,
+        started_at="2026-04-16T10:15:00+00:00",
+    )
+
+    assert reference is not None
+    payload = captured["payload"]
+    assert isinstance(payload, dict)
+    assert payload["source_contact_display_name"] == "Alice Owner"
+    assert payload["task_name"] == "Follow up on invoice"
+    assert payload["task_description"] == "Ask Alice for the missing invoice details."
+    assert payload["started_at"] == "2026-04-16T10:15:00+00:00"

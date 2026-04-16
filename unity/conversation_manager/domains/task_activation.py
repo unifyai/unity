@@ -45,6 +45,17 @@ def _compact_task_text(text: str | None, *, fallback: str) -> str:
     return f"{truncated}..."
 
 
+def _sender_display_name(sender_name: str, *, contact_id: int | None) -> str | None:
+    """Return a human-readable sender label when the trigger has a known contact."""
+
+    if contact_id is None:
+        return None
+    candidate = " ".join(str(sender_name or "").split())
+    if not candidate or candidate.lower() == "unknown":
+        return None
+    return candidate
+
+
 def _task_due_label(
     event: TaskDue,
     activation: TaskActivationSnapshot | None,
@@ -312,6 +323,10 @@ async def _handle_task_due_event(event: TaskDue, cm: "ConversationManager") -> b
                 source_task_log_id=event.source_task_log_id,
                 activation_revision=event.activation_revision,
                 scheduled_for=event.scheduled_for,
+                task_name=(activation.task_name if activation is not None else None),
+                task_description=(
+                    activation.task_description if activation is not None else None
+                ),
             ),
         )
     cm.notifications_bar.push_notif(
@@ -456,6 +471,7 @@ def _dispatch_offline_trigger_candidate(
     event: Any,
     medium: Medium,
     contact_id: int | None,
+    sender_name: str,
 ) -> dict[str, Any]:
     """Ask Communication to execute one offline trigger candidate headlessly."""
 
@@ -484,6 +500,10 @@ def _dispatch_offline_trigger_candidate(
             ),
             "source_medium": medium.value,
             "source_contact_id": contact_id,
+            "source_contact_display_name": _sender_display_name(
+                sender_name,
+                contact_id=contact_id,
+            ),
         },
         headers={"Authorization": f"Bearer {admin_key}"},
         timeout=15,
@@ -517,6 +537,7 @@ async def _surface_trigger_task_candidates(
                     event=event,
                     medium=medium,
                     contact_id=contact_id,
+                    sender_name=sender_name,
                 )
                 offline_statuses.append(
                     f"{candidate.task_id}:{result.get('status', 'unknown')}",
@@ -562,6 +583,12 @@ async def _surface_trigger_task_candidates(
                 source_medium=medium.value,
                 source_ref=source_ref,
                 source_contact_id=(str(contact_id) if contact_id is not None else None),
+                source_contact_display_name=_sender_display_name(
+                    sender_name,
+                    contact_id=contact_id,
+                ),
+                task_name=candidate.task_name,
+                task_description=candidate.task_description,
                 attempt_token=attempt_token,
             ),
         )
