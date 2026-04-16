@@ -133,7 +133,7 @@ class _IngestWorkItem:
 
 
 @dataclass
-class _PipelineStepOutcome:
+class PipelineStepOutcome:
     """Outcome of a single pipeline step."""
 
     success: bool
@@ -150,7 +150,7 @@ def _run_with_retry(
     *,
     retry_config=None,
     label: str = "",
-) -> _PipelineStepOutcome:
+) -> PipelineStepOutcome:
     """Call *fn* with typed retry policy, backoff, jitter, and deadline."""
     from unity.file_manager.pipeline import ResilientRequestPolicy
 
@@ -161,7 +161,7 @@ def _run_with_retry(
         t0 = time.perf_counter()
         try:
             value = fn(**kwargs)
-            return _PipelineStepOutcome(
+            return PipelineStepOutcome(
                 success=True,
                 value=value,
                 duration_ms=(time.perf_counter() - t0) * 1000,
@@ -188,14 +188,14 @@ def _run_with_retry(
                     f"[Pipeline] {label} failed after {attempt + 1} attempts "
                     f"({elapsed:.0f}ms): {exc}",
                 )
-                return _PipelineStepOutcome(
+                return PipelineStepOutcome(
                     success=False,
                     error=last_error,
                     failure_kind=decision.failure_kind,
                     duration_ms=elapsed,
                     retries=attempt,
                 )
-    return _PipelineStepOutcome(success=False, error=last_error)
+    return PipelineStepOutcome(success=False, error=last_error)
 
 
 # ---------------------------------------------------------------------------
@@ -206,9 +206,9 @@ def _run_with_retry(
 def _aggregate_results(
     file_path: str,
     *,
-    file_record_result: _PipelineStepOutcome,
-    content_result: Optional[_PipelineStepOutcome],
-    table_results: List[_PipelineStepOutcome],
+    file_record_result: PipelineStepOutcome,
+    content_result: Optional[PipelineStepOutcome],
+    table_results: List[PipelineStepOutcome],
     file_start_time: float,
     parse_result: FileParseResult,
 ) -> Dict[str, Any]:
@@ -347,7 +347,7 @@ def _report_stage_progress(
     run_id: str | None,
     file_path: str,
     stage_name: str,
-    result: _PipelineStepOutcome,
+    result: PipelineStepOutcome,
     file_start_time: float,
     verbosity: str,
     stage_id: str | None = None,
@@ -397,7 +397,7 @@ def _record_stage_manifest(
     run_id: str | None,
     file_path: str,
     stage_name: str,
-    result: _PipelineStepOutcome,
+    result: PipelineStepOutcome,
     stage_id: str | None = None,
     file_id: int | None = None,
     storage_id: str | None = None,
@@ -720,7 +720,7 @@ def process_single_file(
 
         # 2. Build work items for content + tables
         content_result = None
-        table_results: List[_PipelineStepOutcome] = []
+        table_results: List[PipelineStepOutcome] = []
 
         tables = list(getattr(parse_result, "tables", []) or [])
         do_tables = bool(config.ingest.table_ingest and tables)
@@ -808,7 +808,7 @@ def process_single_file(
                 )
 
         # 3. Execute work items (concurrent when multiple)
-        def _handle_completed(item: _IngestWorkItem, res: _PipelineStepOutcome) -> None:
+        def _handle_completed(item: _IngestWorkItem, res: PipelineStepOutcome) -> None:
             nonlocal content_result
             if item.kind == "content":
                 content_result = res
@@ -884,7 +884,7 @@ def process_single_file(
                     try:
                         res = future.result()
                     except Exception as exc:
-                        res = _PipelineStepOutcome(success=False, error=str(exc))
+                        res = PipelineStepOutcome(success=False, error=str(exc))
                     _handle_completed(item, res)
 
         if cost_accumulator is not None and run_id:
