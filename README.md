@@ -13,7 +13,7 @@
 
 **Unity is the cognitive architecture behind [Unify's](https://unify.ai) persistent AI colleagues.** It handles steerable multi-agent orchestration, code-based planning, dual-brain voice, and structured memory across messaging, calls, and meetings.
 
-This is a **production system**, open-sourced primarily because we think the architecture is useful. It is not a fully self-contained, install-and-forget alternative to projects like [OpenClaw](https://github.com/openclaw/openclaw) or [Hermes Agent](https://github.com/nousresearch/hermes-agent) — those are excellent if you want a fully self-hosted personal AI agent today. Unity's contribution is different: it's how we solved steerable execution, nested tool-loop composition, and runtime orchestration at depth in a system that actually runs in production.
+This is a **production system**, open-sourced primarily because we think the architecture could be useful to others. It is not a fully self-contained, install-and-forget alternative to projects like [OpenClaw](https://github.com/openclaw/openclaw) or [Hermes Agent](https://github.com/nousresearch/hermes-agent) — those are excellent if you want a fully self-hosted personal AI agent today. Unity's contribution is different: it's how we solved steerable execution, nested tool-loop composition, and runtime orchestration at depth in a system that actually runs in production.
 
 > **Demo:** [Launch video](https://youtu.be/qjSWiCd8Bq8?si=8eM0XnHH842_pbgo)
 >
@@ -107,7 +107,9 @@ source .venv/bin/activate
 python -m sandboxes.conversation_manager.sandbox --project_name Sandbox --overwrite
 ```
 
-You'll see a configuration prompt — select **Mode 1** (`SandboxSimulatedActor`). This runs the full ConversationManager brain with simulated backends. No external infrastructure required.
+You'll see a configuration prompt — **select option 2** (CodeAct + Simulated Managers). This runs the full architecture: the ConversationManager orchestrates the CodeActActor, which writes and executes Python plans against the manager APIs, all with simulated backends. No external infrastructure required beyond the Unify account.
+
+Option 1 (SandboxSimulatedActor) is a simpler view that shows the ConversationManager's orchestration without CodeAct — useful if you want to focus on the brain and steering layer in isolation.
 
 ### Interact
 
@@ -127,9 +129,7 @@ Commands: `msg` (Unify message), `sms` (SMS), `email` (email), `call` (phone cal
 
 ### Going deeper
 
-Mode 1 simulates everything to show the ConversationManager's orchestration. For the real CodeAct architecture (where the Actor writes and executes Python plans against the manager APIs), select **Mode 2** at the configuration prompt.
-
-See the full sandbox docs at [`sandboxes/conversation_manager/README.md`](sandboxes/conversation_manager/README.md) — it covers Mode 3 (real computer interface), voice mode, live voice calls, local comms, hosted comms, GUI mode, and more.
+Option 3 at the configuration prompt adds a real computer interface (virtual desktop + browser via agent-service) on top of the CodeAct architecture. See [`sandboxes/conversation_manager/README.md`](sandboxes/conversation_manager/README.md) for the full matrix — voice mode, live voice calls, local comms, hosted comms, GUI mode, and more.
 
 ### Real Channels Locally
 
