@@ -426,6 +426,27 @@ class FileManager(BaseFileManager):
     def sync(self, *, file_path: str) -> Dict[str, Any]:
         return self._sync(file_path=file_path)
 
+    # ------ Public accessors for cross-module use (attachment ingestion) ----- #
+
+    def resolve_source_uri(self, file_path: str) -> str | None:
+        """Best-effort source URI resolution for a file path.
+
+        Returns ``None`` when the URI cannot be determined rather than
+        raising.  Used by background attachment ingestion to populate
+        ``FileRecords`` entries.
+        """
+        try:
+            return self._resolve_to_uri(file_path)
+        except Exception:
+            return None
+
+    @property
+    def source_provider_name(self) -> str | None:
+        """Short identifier for the filesystem adapter (e.g. ``"Local"``)."""
+        return getattr(self._adapter, "name", None) or self._fs_type
+
+    # ------ Private URI resolution ----------------------------------------- #
+
     def _resolve_to_uri(self, identifier: str | int) -> str | None:
         """Resolve user-provided identifier (uri | absolute path | file_id) to canonical source_uri.
 
@@ -1565,6 +1586,7 @@ class FileManager(BaseFileManager):
         attachment_id: str,
         filename: str,
         contents: bytes,
+        auto_ingest: Optional[bool] = None,
     ) -> str:
         """
         Save bytes into the Attachments directory and return the saved path.
@@ -1577,6 +1599,9 @@ class FileManager(BaseFileManager):
             Original filename for the attachment.
         contents : bytes
             Raw bytes to persist.
+        auto_ingest : bool | None, default None
+            Whether to run immediate inline ingestion after saving.
+            ``None`` follows ``SETTINGS.file.IMPLICIT_INGESTION``.
 
         Returns
         -------
@@ -1591,7 +1616,13 @@ class FileManager(BaseFileManager):
 
         from unity.settings import SETTINGS
 
-        if SETTINGS.file.IMPLICIT_INGESTION:
+        should_auto_ingest = (
+            SETTINGS.file.IMPLICIT_INGESTION
+            if auto_ingest is None
+            else bool(auto_ingest)
+        )
+
+        if should_auto_ingest:
             result = self.ingest_files(display_name)
 
             # ingest_files only creates FileRecords entries for successfully

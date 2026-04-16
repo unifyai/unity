@@ -11,6 +11,7 @@ separate to keep parsing concerns modular.
 
 from pathlib import Path
 
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -48,6 +49,7 @@ class FileSettings(BaseSettings):
     ENABLED: bool = False
     IMPL: str = "real"
     IMPLICIT_INGESTION: bool = False
+    ATTACHMENT_INGESTION_MAX_WORKERS: int = Field(default=2, ge=1)
 
     # Plot API settings
     PLOT_API_ENDPOINT: str = "/logs/plot"
