@@ -940,6 +940,8 @@ class TestRealLiveKitUnifyMeet:
                 json.dumps(sample_contact),
                 json.dumps(boss_contact),
                 "A test assistant for Unify Meet",
+                "0",
+                "test-user-001",
             ]
 
             print(f"[TEST] Spawning Unify Meet voice agent...")
