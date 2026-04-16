@@ -12,6 +12,7 @@ if TYPE_CHECKING:
     from unity.file_manager.file_parsers.types.contracts import FileParseResult
 
 UNASSIGNED = -1
+FileIngestionStatus = Literal["queued", "ingesting", "success", "error"]
 
 
 class FileRecordFields(BaseModel):
@@ -32,9 +33,17 @@ class FileRecordFields(BaseModel):
     )
 
     # Processing status
-    status: Literal["success", "error"] = Field(
-        default="success",
-        description="Processing status.",
+    status: Optional[Literal["success", "error"]] = Field(
+        default=None,
+        description="Terminal parse outcome once ingestion completes.",
+    )
+    ingestion_status: Optional[FileIngestionStatus] = Field(
+        default=None,
+        description=(
+            "Background ingest lifecycle state. "
+            "`queued`/`ingesting` mean a background attachment job is still running; "
+            "`success`/`error` mean the queued job has reached a terminal state."
+        ),
     )
     error: Optional[str] = Field(
         default=None,

@@ -381,6 +381,7 @@ def describe_file(
         "source_uri",
         "source_provider",
         "status",
+        "ingestion_status",
         "storage_id",
         "table_ingest",
         "file_format",
@@ -402,7 +403,7 @@ def describe_file(
         resolved_file_path = entry.get("file_path", file_path)
         source_uri = entry.get("source_uri")
         source_provider = entry.get("source_provider")
-        parsed_status = entry.get("status")
+        parsed_status = entry.get("ingestion_status") or entry.get("status")
         storage_id = entry.get("storage_id", "")
         table_ingest = bool(entry.get("table_ingest", True))
         file_format = entry.get("file_format")
