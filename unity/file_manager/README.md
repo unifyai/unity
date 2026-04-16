@@ -39,11 +39,14 @@ Important invariant: `/Content/` is the *navigation + retrieval* surface. Raw ta
 
 - `filesystem_adapters/`: thin synchronous adapters around concrete file stores (local FS)
 - `file_parsers/`: format-aware parsing subsystem. Input is `FileParseRequest`, output is `FileParseResult`.
-- `parse_adapter/`: FileManager-owned transformation of parse artifacts into ingestion payloads (lowering).
-- `managers/`: orchestration (export files, parse, ingest rows, embed).
+- `parse_adapter/`: FileManager-owned transformation of parse artifacts into ingestion payloads (lowering) and row streaming dispatch.
+- `managers/`: orchestration (export files, parse, ingest rows, embed) and background attachment ingestion.
+- `pipeline/`: shared pipeline infrastructure — typed transport models, artifact store, work queues, resilience, observability/cost ledgers, and deployment bundle ingestion.
 - `types/`: pipeline config + typed row models used at the ingestion boundary.
 
 ## End-to-end flow
+
+### Direct ingestion (FileManager.ingest_files)
 
 ```mermaid
 flowchart LR
@@ -52,10 +55,32 @@ flowchart LR
   FS-->Export[export_file/export_directory]
   FM-->FP[file_parsers.FileParser]
   FP-->PR[FileParseResult]
-  PR-->PA[parse_adapter.adapt_parse_result_for_file_manager]
+  PR-->PFB[ParsedFileBundle + TableInputHandles]
+  PFB-->PA[parse_adapter.adapt_parse_result_for_file_manager]
   PA-->Rows[/Content rows/]
   PA-->Tables[/Tables/<label> rows/]
   FM-->Ingest[unify.create_logs]
+```
+
+### Background attachment ingestion (conversation attachments)
+
+When a comms adapter delivers an attachment, it is saved to disk and ingestion is dispatched to a background `AttachmentIngestionPool`:
+
+```
+comms adapter event → save_attachment(auto_ingest=False)
+  → enqueue_attachment_ingestion(file_manager, paths)
+    → AttachmentIngestionPool (ThreadPoolExecutor)
+      → FileRecords status: queued → ingesting → success/error
+```
+
+The conversation pod continues immediately. Ingestion status is tracked on `FileRecordFields.ingestion_status` and surfaced through the `describe()` method.
+
+### Offline deployment bundle ingestion
+
+For client data dumps, see [`pipeline/deployment/README.md`](pipeline/deployment/README.md). The flow is:
+
+```
+DeploymentBundle → prepare_bundle() → submit() → execute callback → job status
 ```
 
 ## Extensibility & guidelines
@@ -87,10 +112,14 @@ The parser must stay ingestion-agnostic. If you need to change `/Content/` row s
 
 File-manager parsing tests live under:
 
-- `tests/file_manager/file_parser/`
+- `tests/file_manager/file_parser/` — parser backend and streaming tests
+- `tests/file_manager/managers/` — FileManager integration tests
+- `tests/file_manager/test_deployment_bundle.py` — deployment bundle stores, runner, and queue coordinator
+- `tests/file_manager/test_work_queue.py` — work queue protocol and local implementation
+- `tests/conversation_manager/core/test_attachment_ingestion.py` — background attachment ingestion lifecycle
 
 Use the sample fixtures under:
 
 - `tests/file_manager/sample/`
 
-Avoid writing tests against deprecated legacy parser modules; new work should target the `FileParseRequest → FileParseResult` boundary and the `parse_adapter` lowering rules.
+Avoid writing tests against deprecated legacy parser modules; new work should target the `FileParseRequest → FileParseResult` boundary, the `parse_adapter` lowering rules, and the `pipeline/` infrastructure.
