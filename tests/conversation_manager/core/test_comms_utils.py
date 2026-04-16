@@ -657,6 +657,7 @@ class TestLocalCommsBackends:
                 "att-1",
                 "note.txt",
                 b"hello",
+                auto_ingest=False,
             )
 
 
