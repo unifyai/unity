@@ -1,40 +1,43 @@
 """Subprocess-isolation infrastructure for the file parser.
 
-This module manages the warm ``ProcessPoolExecutor`` that FileParser uses
-when ``subprocess_isolation`` is enabled.  Key design decisions:
+Each file is parsed in a **fully isolated** ``multiprocessing.Process``
+(one process per file, one private ``Queue`` per process).  A
+``ThreadPoolExecutor`` in the parent controls concurrency so that at most
+*N* files parse simultaneously.
+
+This design gives true per-file crash isolation: if one child is
+OOM-killed, only that file's result is an error — all other concurrent
+files continue unaffected.  The previous ``ProcessPoolExecutor`` approach
+shared an internal IPC channel between all workers; a single worker crash
+(``SIGKILL`` from the OOM killer) broke that channel, cascading
+``BrokenProcessPool`` to every pending future in the same batch.
 
 Forkserver context
-    On Linux, ``forkserver`` is used so that the server process pre-imports
-    heavy Docling dependencies via ``set_forkserver_preload``.  Workers
-    forked from it inherit those imports through copy-on-write, making
-    worker startup nearly instant even though each worker is short-lived.
+    On Linux, ``forkserver`` is used so that child processes inherit
+    pre-imported Docling modules through copy-on-write, making startup
+    nearly instant even though each child handles exactly one file.
 
-max_tasks_per_child = 1
-    Every worker handles exactly **one** file then exits.  This guarantees
-    that all memory — including Python arena fragments that ``gc.collect()``
-    cannot reclaim — is returned to the OS.  New workers are forked cheaply
-    from the warm forkserver.
+Memory limits
+    ``RLIMIT_AS`` is intentionally **not** applied.  Docling loads ONNX
+    model weights via ``mmap(2)`` which inflates virtual address space
+    well beyond actual physical usage; a VAS cap causes spurious
+    ``ENOMEM`` failures on files that would parse successfully with the
+    available physical RAM.  Per-file process isolation already contains
+    genuine OOM events — if a child is killed by the kernel OOM reaper,
+    only that file's result is an error.
 
-RLIMIT_AS (belt-and-suspenders)
-    An optional per-process virtual-address-space cap (expressed as a
-    percentage of total system RAM) is applied in each child.  If a parse
-    exceeds the cap the child dies with ``MemoryError`` instead of
-    triggering the system OOM killer.
-
-All functions in this module are **top-level** (not methods) because
-``ProcessPoolExecutor`` requires submitted callables to be picklable.
+All worker-side functions are **top-level** (not methods) so they remain
+picklable for ``multiprocessing.Process(target=...)``.
 """
 
 from __future__ import annotations
 
 import logging
 import multiprocessing
-import platform
+import os
+import signal
 import sys
-from concurrent.futures import ProcessPoolExecutor
 from typing import TYPE_CHECKING, Optional
-
-import psutil
 
 if TYPE_CHECKING:
     from unity.file_manager.file_parsers.types.contracts import (
@@ -44,16 +47,6 @@ if TYPE_CHECKING:
     from unity.file_manager.types.config import ParseConfig
 
 logger = logging.getLogger(__name__)
-
-# ``resource`` is a Unix-only stdlib module (Linux + macOS).  On Windows it
-# does not exist and importing it raises ``ModuleNotFoundError``.  We guard
-# the import so that the rest of the module (pool management, subprocess
-# entry point, warm imports) remains fully usable on all platforms.
-_resource = None
-try:
-    import resource as _resource  # type: ignore[no-redef]
-except ModuleNotFoundError:
-    pass
 
 _IS_WINDOWS = sys.platform == "win32"
 
@@ -92,52 +85,6 @@ def ensure_forkserver_preload() -> None:
     _FORKSERVER_PRELOADED = True
 
 
-def warm_imports() -> None:
-    """Pool-worker initializer that ensures Docling is imported.
-
-    When the forkserver has already pre-loaded these modules, the
-    ``import`` statements below are no-ops (the modules are already in
-    ``sys.modules``).  This function acts as a safety net for platforms
-    where ``forkserver`` is unavailable and ``spawn`` is used instead.
-    """
-    import docling  # noqa: F401
-    import docling.document_converter  # noqa: F401
-    import docling.datamodel.pipeline_options  # noqa: F401
-    import docling.datamodel.base_models  # noqa: F401
-    import polars  # noqa: F401
-
-
-# ---------------------------------------------------------------------------
-# Per-subprocess memory limit
-# ---------------------------------------------------------------------------
-
-
-def apply_memory_limit(parse_config: Optional["ParseConfig"]) -> None:
-    """Set ``RLIMIT_AS`` in the current (child) process.
-
-    The limit is computed as ``max_subprocess_memory_pct * total_system_RAM``.
-    Only applied on Linux (where ``RLIMIT_AS`` is available); silently
-    skipped on Windows and macOS.
-    """
-    if parse_config is None:
-        return
-    pct = getattr(parse_config, "max_subprocess_memory_pct", None)
-    if pct is None:
-        return
-    if platform.system() != "Linux" or _resource is None:
-        return
-    try:
-        total_memory = psutil.virtual_memory().total
-        limit = max(int(total_memory * pct), 1 << 30)
-        current_soft, current_hard = _resource.getrlimit(_resource.RLIMIT_AS)
-        hard_limit = current_hard
-        if hard_limit not in (-1, _resource.RLIM_INFINITY):
-            limit = min(limit, int(hard_limit))
-        _resource.setrlimit(_resource.RLIMIT_AS, (limit, limit))
-    except Exception as exc:
-        logger.debug("Could not set RLIMIT_AS: %s", exc)
-
-
 # ---------------------------------------------------------------------------
 # Top-level subprocess entry point (must be picklable)
 # ---------------------------------------------------------------------------
@@ -150,12 +97,7 @@ def subprocess_parse_single(
     """Parse a single file inside an isolated child process.
 
     Creates a fresh ``FileParser`` so that all Docling / openpyxl memory
-    is fully reclaimed when the child exits.  Also applies RLIMIT_AS and
-    saves results to disk when ``SAVE_PARSED_RESULTS`` is enabled.
-
-    RLIMIT_AS is applied **after** the ``FileParser`` is constructed so
-    that all heavy imports (Docling, openpyxl, ONNX, etc.) are complete
-    before the virtual-address-space cap takes effect.
+    is fully reclaimed when the child exits.
 
     ``flush_writer()`` is called explicitly before returning because
     ``ProcessPoolExecutor`` workers may not run ``atexit`` handlers
@@ -189,124 +131,146 @@ def subprocess_parse_single(
     if fmt == FileFormat.UNKNOWN:
         fmt = FileFormat.TXT
 
-    # Warm the selected backend import before RLIMIT_AS is installed. Backends
-    # are loaded lazily, so applying the memory cap first can make even the
-    # import itself fail (for example when importing polars or Docling).
     parser._pick_backend(fmt, registry=registry)
-    apply_memory_limit(parse_config)
-    # _parse_single() already calls save_result_to_disk() internally.
     result = parser._parse_single(request, registry=registry)
     flush_writer()
     return result
 
 
 # ---------------------------------------------------------------------------
-# Warm pool lifecycle
+# Isolated per-file process runner
 # ---------------------------------------------------------------------------
 
-_pool: Optional[ProcessPoolExecutor] = None
-_pool_max_workers: int = 0
 
-
-def get_or_create_pool(workers: int) -> ProcessPoolExecutor:
-    """Return (or lazily create) a persistent warm ``ProcessPoolExecutor``.
-
-    On Unix (Linux / macOS) the pool uses the ``forkserver`` context so
-    that workers inherit pre-imported Docling modules via CoW.  On
-    Windows, ``forkserver`` is unavailable; the pool falls back to the
-    default ``spawn`` context (``warm_imports`` still runs as the
-    initializer so each child imports Docling once before accepting
-    work).
-
-    ``max_tasks_per_child=1`` ensures every worker handles exactly one
-    file then exits, returning all memory to the OS.  See the module
-    docstring for the full rationale.
-    """
-    global _pool, _pool_max_workers
-
-    if _pool is not None and not getattr(_pool, "_broken", False):
-        if _pool_max_workers >= workers:
-            return _pool
-        _pool.shutdown(wait=False)
-
+def _mp_context() -> multiprocessing.context.BaseContext:
+    """Return the multiprocessing context (forkserver on Unix, spawn on Windows)."""
     if _IS_WINDOWS:
-        # forkserver is not available on Windows; use the default (spawn).
-        ctx = None
-    else:
-        ensure_forkserver_preload()
-        ctx = multiprocessing.get_context("forkserver")
-
-    _pool = ProcessPoolExecutor(
-        max_workers=workers,
-        **({"mp_context": ctx} if ctx is not None else {}),
-        initializer=warm_imports,
-        max_tasks_per_child=1,
-    )
-    _pool_max_workers = workers
-    return _pool
+        return multiprocessing.get_context("spawn")
+    ensure_forkserver_preload()
+    return multiprocessing.get_context("forkserver")
 
 
-def shutdown_pool() -> None:
-    """Shut down the persistent subprocess pool (if any)."""
-    global _pool, _pool_max_workers
-    if _pool is not None:
-        try:
-            _pool.shutdown(wait=False, cancel_futures=True)
-        except Exception:
-            pass
-        _pool = None
-        _pool_max_workers = 0
+def _child_worker(
+    request: "FileParseRequest",
+    parse_config: Optional["ParseConfig"],
+    result_queue: multiprocessing.Queue,  # type: ignore[type-arg]
+) -> None:
+    """Entry point for an isolated child process.
 
+    Runs ``subprocess_parse_single`` and puts the result (or an error
+    sentinel) into *result_queue*.  This function **must** be top-level
+    (not a closure or lambda) so it is picklable by the forkserver.
 
-def force_reset_pool(workers: int) -> "ProcessPoolExecutor":
-    """Kill stuck child processes and create a fresh pool.
+    Each child handles exactly one file.  ``subprocess_parse_single``
+    lazily imports only the backend required for the file's format via
+    ``_pick_backend``.  On Linux the forkserver preload gives CoW
+    copies of heavy modules (Docling, Polars) to every child.
 
-    Called when a subprocess hangs (e.g., ``MemoryError`` leaves it wedged)
-    or the pool is broken (e.g., OOM killer terminated a child).  The
-    function:
-
-    1. Extracts PIDs of any live child workers from the pool's internals.
-    2. Shuts down the pool (non-blocking, cancels pending futures).
-    3. Force-kills any children still alive (``SIGKILL`` on Unix,
-       ``SIGTERM`` on Windows).
-    4. Creates and returns a fresh pool via ``get_or_create_pool``.
-
-    This is intentionally aggressive: the goal is to guarantee forward
-    progress in the parent process, even if individual files fail.
+    If ``Queue.put()`` itself fails (e.g. ``RuntimeError: can't start
+    new thread`` under resource exhaustion), the child exits with code 2
+    so the parent can detect the crash via ``proc.exitcode``.
     """
-    import os
-    import signal
-
-    global _pool, _pool_max_workers
-
-    if _pool is not None:
-        child_pids: list[int] = []
+    try:
+        result = subprocess_parse_single(request, parse_config)
+        result_queue.put(result)
+    except Exception as exc:
         try:
-            processes = getattr(_pool, "_processes", None)
-            if processes:
-                child_pids = list(processes.keys())
+            result_queue.put(exc)
         except Exception:
-            pass
+            sys.exit(2)
 
-        try:
-            _pool.shutdown(wait=False, cancel_futures=True)
-        except Exception:
-            pass
 
-        kill_sig = getattr(signal, "SIGKILL", signal.SIGTERM)
-        for pid in child_pids:
-            try:
-                os.kill(pid, kill_sig)
-            except (OSError, ProcessLookupError):
-                pass
+def run_isolated(
+    request: "FileParseRequest",
+    parse_config: Optional["ParseConfig"],
+    timeout: float,
+) -> "FileParseResult":
+    """Parse a single file in a fully isolated process.
 
-        _pool = None
-        _pool_max_workers = 0
-        logger.warning(
-            "Force-reset subprocess pool (killed %d children); "
-            "creating fresh pool with %d workers",
-            len(child_pids),
-            workers,
+    Spawns one ``multiprocessing.Process`` with its own ``Queue``.  If the
+    child crashes (OOM, segfault) or exceeds *timeout*, only this file is
+    affected — no shared pool state is corrupted.
+
+    Returns a ``FileParseResult`` in all cases (success, crash, or timeout).
+
+    Implementation note: the queue **must** be drained before calling
+    ``proc.join()``.  ``Queue.put()`` writes to an OS pipe; if the
+    serialized result exceeds the pipe buffer (~64 KB on Linux), ``put``
+    blocks until the reader drains the pipe.  Calling ``join`` first
+    would deadlock: the parent waits for the child to exit while the
+    child waits for the parent to read.
+    """
+    from queue import Empty
+
+    from unity.file_manager.file_parsers.types.contracts import FileParseResult
+
+    ctx = _mp_context()
+    result_queue: multiprocessing.Queue = ctx.Queue()  # type: ignore[type-arg]
+    proc = ctx.Process(
+        target=_child_worker,
+        args=(request, parse_config, result_queue),
+    )
+    proc.start()
+
+    # Drain the queue FIRST (with timeout), then join the process.
+    result = None
+    try:
+        result = result_queue.get(timeout=timeout)
+    except Empty:
+        pass
+
+    # Give the child a few seconds to exit after producing its result.
+    proc.join(timeout=5)
+
+    if proc.is_alive():
+        logger.error(
+            "Subprocess parse timed out after %.0fs for %s — killing child",
+            timeout,
+            request.logical_path,
+        )
+        _kill_process(proc)
+        return FileParseResult(
+            logical_path=request.logical_path,
+            status="error",
+            error=f"subprocess_parse_timeout: exceeded {timeout}s",
         )
 
-    return get_or_create_pool(workers)
+    if result is None:
+        if proc.exitcode != 0:
+            logger.error(
+                "Subprocess crashed (exit %s) while parsing %s",
+                proc.exitcode,
+                request.logical_path,
+            )
+            return FileParseResult(
+                logical_path=request.logical_path,
+                status="error",
+                error=(f"subprocess_crash: child exited with code {proc.exitcode}"),
+            )
+        return FileParseResult(
+            logical_path=request.logical_path,
+            status="error",
+            error="subprocess_no_result: child exited cleanly but produced no result",
+        )
+
+    if isinstance(result, Exception):
+        proc.join(timeout=5)
+        return FileParseResult(
+            logical_path=request.logical_path,
+            status="error",
+            error=f"subprocess_parse_exception: {result}",
+        )
+
+    proc.join(timeout=5)
+    return result
+
+
+def _kill_process(proc: multiprocessing.Process) -> None:
+    """Force-kill a process and wait for it to exit."""
+    kill_sig = getattr(signal, "SIGKILL", signal.SIGTERM)
+    try:
+        if proc.pid is not None:
+            os.kill(proc.pid, kill_sig)
+    except (OSError, ProcessLookupError):
+        pass
+    proc.join(timeout=5)
