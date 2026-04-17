@@ -38,6 +38,8 @@ def filter_contacts(
             unique_eq_patterns = (
                 r"\s*email_address\s*==\s*(['\"])\S.*?\1\s*",
                 r"\s*phone_number\s*==\s*(['\"])\S.*?\1\s*",
+                r"\s*whatsapp_number\s*==\s*(['\"])\S.*?\1\s*",
+                r"\s*discord_id\s*==\s*(['\"])\S.*?\1\s*",
             )
             if any(re.fullmatch(p, filter) for p in unique_eq_patterns):
                 eff_limit = min(eff_limit, 1)

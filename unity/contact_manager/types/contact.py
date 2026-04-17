@@ -127,11 +127,13 @@ class Contact(BaseModel):
         default=None,
         description="WhatsApp number — optional leading +, then digits only",
         pattern=r"^\+?[0-9]+$",
+        json_schema_extra={"unique": True},
     )
     discord_id: Optional[str] = Field(
         default=None,
         description="Discord user snowflake ID (digits only)",
         pattern=r"^[0-9]+$",
+        json_schema_extra={"unique": True},
     )
     bio: Optional[str] = Field(
         default=None,
