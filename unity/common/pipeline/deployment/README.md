@@ -67,14 +67,14 @@ All Pydantic models, Literal types, and Protocol definitions:
 
 ### `__init__.py` — barrel re-exports
 
-All public types and implementations are re-exported for convenient import from `unity.file_manager.pipeline.deployment`.
+All public types and implementations are re-exported for convenient import from `unity.common.pipeline.deployment`.
 
 ## Operator workflow
 
 ### 1. Prepare a bundle
 
 ```python
-from unity.file_manager.pipeline import (
+from unity.common.pipeline import (
     DeploymentBundle,
     DeploymentBundleArtifact,
     DeploymentIdentity,
@@ -105,7 +105,7 @@ bundle = DeploymentBundle(
 ### 2. Build a local runtime
 
 ```python
-from unity.file_manager.pipeline import (
+from unity.common.pipeline import (
     DeploymentBundleRuntimeConfig,
     build_local_deployment_runtime,
 )
