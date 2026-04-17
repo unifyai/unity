@@ -11,7 +11,6 @@ from openpyxl import load_workbook
 from unity.file_manager.file_parsers.implementations.native.spreadsheet_support import (
     finalize_spreadsheet_result,
     normalize_tabular_value,
-    should_inline_tabular_rows,
 )
 from unity.file_manager.file_parsers.settings import FILE_PARSER_SETTINGS
 from unity.file_manager.file_parsers.types.backend import BaseFileParserBackend
@@ -169,29 +168,31 @@ def _parse_worksheet(*, worksheet, sheet_index: int) -> ExtractedTable | None:
         return None
 
     columns = _coerce_header_row(header)
+    inline_limit = max(int(FILE_PARSER_SETTINGS.TABULAR_INLINE_ROW_LIMIT), 0)
+    sample_limit = max(int(FILE_PARSER_SETTINGS.TABULAR_SAMPLE_ROWS), 0)
+
     row_count = 0
     sample_rows: list[JsonObject] = []
     inline_rows: list[JsonObject] = []
+    collecting = True
 
     for row in rows_iter:
-        values = [normalize_tabular_value(value) for value in row]
-        if _is_blank_row(values):
-            continue
-        record = _row_from_values(columns, values)
-        row_count += 1
-        if len(sample_rows) < int(FILE_PARSER_SETTINGS.TABULAR_SAMPLE_ROWS):
-            sample_rows.append(record)
-        if should_inline_tabular_rows(
-            row_count=row_count,
-            settings=FILE_PARSER_SETTINGS,
-        ):
-            inline_rows.append(record)
-
-    if not should_inline_tabular_rows(
-        row_count=row_count,
-        settings=FILE_PARSER_SETTINGS,
-    ):
-        inline_rows = []
+        if collecting:
+            values = [normalize_tabular_value(value) for value in row]
+            if _is_blank_row(values):
+                continue
+            record = _row_from_values(columns, values)
+            row_count += 1
+            if len(sample_rows) < sample_limit:
+                sample_rows.append(record)
+            if row_count <= inline_limit:
+                inline_rows.append(record)
+            else:
+                inline_rows = []
+                collecting = False
+        else:
+            if not _is_blank_row_raw(row):
+                row_count += 1
 
     sheet_name = (
         str(worksheet.title or f"Sheet {sheet_index}").strip() or f"Sheet {sheet_index}"
@@ -234,6 +235,21 @@ def _row_from_values(columns: list[str], values: list[object]) -> JsonObject:
 
 def _is_blank_row(values: list[object]) -> bool:
     for value in values:
+        if value is None:
+            continue
+        if isinstance(value, str) and not value.strip():
+            continue
+        return False
+    return True
+
+
+def _is_blank_row_raw(row: tuple[object, ...] | list[object]) -> bool:
+    """Lightweight blank-row check on raw openpyxl cell values.
+
+    Skips ``normalize_tabular_value`` and dict construction -- used in the
+    count-only tail of large-sheet parsing where we only need row counts.
+    """
+    for value in row:
         if value is None:
             continue
         if isinstance(value, str) and not value.strip():

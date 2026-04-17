@@ -9,9 +9,24 @@ from __future__ import annotations
 
 from typing import List, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from .json_types import JsonObject
+
+
+class CsvDialect(BaseModel):
+    """CSV dialect discovered during parsing.
+
+    Stored on ``ExtractedTable`` so downstream consumers (transport layer,
+    ingest workers) can reuse it without re-sniffing the source file.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    delimiter: str = ","
+    quotechar: str = '"'
+    encoding: str = "utf-8"
+    has_header: bool = True
 
 
 class ExtractedTable(BaseModel):
@@ -47,3 +62,8 @@ class ExtractedTable(BaseModel):
 
     # RAG-friendly description (optional; can be filled by summarization steps)
     table_summary: Optional[str] = None
+
+    csv_dialect: Optional[CsvDialect] = Field(
+        default=None,
+        description="CSV dialect detected during parse; avoids re-sniffing at ingest time",
+    )
