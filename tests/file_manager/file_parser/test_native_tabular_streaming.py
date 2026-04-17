@@ -6,7 +6,7 @@ from tests.helpers import _handle_project
 from unity.file_manager.file_parsers import FileParseRequest, FileParser, FileFormat
 from unity.file_manager.file_parsers.settings import FILE_PARSER_SETTINGS
 from unity.file_manager.parse_adapter import adapt_parse_result_for_file_manager
-from unity.file_manager.pipeline import (
+from unity.common.pipeline import (
     CsvFileHandle,
     ObjectStoreArtifactHandle,
     XlsxSheetHandle,

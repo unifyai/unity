@@ -387,7 +387,7 @@ def test_config_from_file_partial(tmp_path: Path):
     import json
 
     config_data = {
-        "parse": {"batch_size": 10},
+        "parse": {"max_concurrent_parses": 10},
         "output": {"return_mode": "full"},
     }
     config_file = tmp_path / "partial_config.json"
@@ -600,9 +600,8 @@ def test_config_from_file_full(tmp_path: Path):
     import json
 
     config_data = {
-        # batch_size is supported as a back-compat alias for max_concurrent_parses.
         # parser_kwargs/plugins are ignored (legacy/removed); this test ensures unknown keys don't break loading.
-        "parse": {"batch_size": 5, "parser_kwargs": {"key": "value"}},
+        "parse": {"max_concurrent_parses": 5, "parser_kwargs": {"key": "value"}},
         "ingest": {
             "storage_id": "FullTest",
             "table_rows_batch_size": 3000,
@@ -850,7 +849,7 @@ def test_config_all_sections_populated(tmp_path: Path):
 
     config_data = {
         "parse": {
-            "batch_size": 10,
+            "max_concurrent_parses": 10,
             "parser_kwargs": {"custom_option": "value", "another": 123},
         },
         "ingest": {

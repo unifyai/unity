@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from unity.file_manager.pipeline import (
+from unity.common.pipeline import (
     InMemoryWorkQueue,
     LocalQueueWorker,
     RetryWorkItem,
