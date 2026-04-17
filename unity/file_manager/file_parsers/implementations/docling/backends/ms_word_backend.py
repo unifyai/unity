@@ -22,9 +22,6 @@ from unity.file_manager.file_parsers.implementations.docling.steps.document_grap
     build_document_graph_hybrid,
     build_document_graph_from_text,
 )
-from unity.file_manager.file_parsers.implementations.docling.steps.document_enrichment import (
-    generate_hierarchical_summaries,
-)
 from unity.file_manager.file_parsers.utils.tracing import traced_step
 from unity.file_manager.file_parsers.settings import FILE_PARSER_SETTINGS
 from unity.file_manager.file_parsers.types.contracts import FileParseRequest
@@ -34,9 +31,6 @@ from unity.file_manager.file_parsers.types.contracts import (
     FileParseResult,
     FileParseTrace,
     StepStatus,
-)
-from unity.file_manager.file_parsers.utils.format_policy import (
-    extract_metadata_from_text_best_effort,
 )
 
 logger = logging.getLogger(__name__)
@@ -223,61 +217,6 @@ class MsWordBackend(BaseFileParserBackend):
                         raise
 
             if built is not None and built.graph is not None:
-                with traced_step(trace, name="generate_hierarchical_summaries") as step:
-                    try:
-                        generate_hierarchical_summaries(
-                            built.graph,
-                            settings=FILE_PARSER_SETTINGS,
-                        )
-                    except Exception as e:
-                        step.status = StepStatus.DEGRADED
-                        step.warnings.append(str(e))
-
-                with traced_step(trace, name="extract_metadata") as step:
-                    try:
-                        meta = extract_metadata_from_text_best_effort(
-                            text=full_text,
-                            settings=FILE_PARSER_SETTINGS,
-                        )
-                    except Exception as e:
-                        step.status = StepStatus.DEGRADED
-                        step.warnings.append(str(e))
-                        meta = extract_metadata_from_text_best_effort(
-                            text=full_text,
-                            settings=FILE_PARSER_SETTINGS,
-                        )
-            else:
-                meta = extract_metadata_from_text_best_effort(
-                    text=full_text,
-                    settings=FILE_PARSER_SETTINGS,
-                )
-
-            summary = ""
-            try:
-                if built is not None and built.graph is not None:
-                    root = built.graph.nodes.get(built.graph.root_id)
-                    summary = (
-                        str(getattr(root, "summary", "") or "").strip()
-                        if root is not None
-                        else ""
-                    )
-            except Exception:
-                summary = ""
-            if not summary:
-                try:
-                    from unity.common.token_utils import (
-                        clip_text_to_token_limit_conservative,
-                    )
-
-                    summary = clip_text_to_token_limit_conservative(
-                        full_text,
-                        FILE_PARSER_SETTINGS.EMBEDDING_MAX_INPUT_TOKENS,
-                        FILE_PARSER_SETTINGS.EMBEDDING_ENCODING,
-                    )
-                except Exception:
-                    summary = (full_text or "")[:2000].strip()
-
-            if built is not None and built.graph is not None:
                 trace.counters["nodes"] = len(built.graph.nodes)
             if built is not None:
                 trace.counters["tables"] = len(built.tables)
@@ -289,9 +228,7 @@ class MsWordBackend(BaseFileParserBackend):
                 file_format=ctx.file_format,
                 mime_type=ctx.mime_type,
                 tables=(built.tables if built is not None else []),
-                summary=summary,
                 full_text=full_text,
-                metadata=meta,
                 trace=trace,
                 graph=(built.graph if built is not None else None),
             )

@@ -25,9 +25,7 @@ from unity.file_manager.file_parsers.types.table import ExtractedTable
 from unity.file_manager.file_parsers.utils.format_policy import (
     bound_spreadsheet_full_text,
     build_spreadsheet_profile_text,
-    extract_metadata_from_text_best_effort,
     fallback_spreadsheet_summary,
-    summarize_spreadsheet_profile_best_effort,
 )
 
 
@@ -140,7 +138,6 @@ def finalize_spreadsheet_result(
     settings: FileParserSettings,
     tables: Sequence[ExtractedTable],
     sheet_names: Sequence[str],
-    metadata_text: str | None = None,
 ) -> FileParseResult:
     """Build the common success result for spreadsheet-style backends."""
 
@@ -160,20 +157,10 @@ def finalize_spreadsheet_result(
         profile_text=profile_text,
         settings=settings,
     )
-    fallback_summary = fallback_spreadsheet_summary(
+    summary = fallback_spreadsheet_summary(
         logical_path=logical_path,
         tables=list(tables or []),
         sheet_names=list(sheet_names or []),
-    )
-    summary = summarize_spreadsheet_profile_best_effort(
-        profile_text=profile_text,
-        settings=settings,
-        fallback=fallback_summary,
-    )
-    metadata_source = metadata_text or full_text
-    metadata = extract_metadata_from_text_best_effort(
-        text=metadata_source,
-        settings=settings,
     )
 
     trace.counters["nodes"] = len(graph.nodes)
@@ -188,7 +175,6 @@ def finalize_spreadsheet_result(
         tables=list(tables or []),
         summary=summary,
         full_text=full_text,
-        metadata=_coerce_metadata(metadata),
         trace=trace,
         graph=graph,
     )
