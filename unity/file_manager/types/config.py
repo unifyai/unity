@@ -301,11 +301,11 @@ class DiagnosticsConfig(BaseModel):
       an auto-generated file is created under `logs/file_manager_runs/`.
     """
 
-    enable_progress: bool = False
+    enable_progress: bool = True
     progress_mode: Literal["json_file", "callback", "off"] = "json_file"
     progress_file: Optional[str] = None
     verbosity: Literal["low", "medium", "high"] = "low"
-    enable_run_ledger: bool = False
+    enable_run_ledger: bool = True
     run_ledger_file: Optional[str] = None
 
 
@@ -336,7 +336,7 @@ class CostLedgerConfig(BaseModel):
     - rate_card: local versioned unit-cost rates used for immediate estimates.
     """
 
-    enable_cost_ledger: bool = False
+    enable_cost_ledger: bool = True
     cost_ledger_file: Optional[str] = None
     environment: str = "local"
     tenant_id: Optional[str] = None

@@ -1143,12 +1143,16 @@ class FileManager(BaseFileManager):
                         tenant_id=getattr(cfg.cost, "tenant_id", None),
                     )
                     for pr in parse_results:
+                        _trace = getattr(pr, "trace", None)
                         accumulator.add_line_items(
                             build_parse_cost_line_items(
                                 run_id=run_id,
                                 file_path=str(getattr(pr, "logical_path", "") or ""),
-                                parse_result=pr,
-                                parse_config=cfg.parse,
+                                parse_duration_seconds=(
+                                    getattr(_trace, "duration_seconds", 0.0) or 0.0
+                                ),
+                                parse_backend=getattr(_trace, "backend", None),
+                                trace_status=getattr(_trace, "status", None),
                                 rate_card=rate_card,
                             ),
                         )
