@@ -43,16 +43,10 @@ def with_infer_untyped_fields(
 ) -> List[Dict[str, Any]]:
     """Conditionally add ``infer_untyped_fields=True`` to each row dict.
 
-    Parameters
-    ----------
-    rows : list[dict]
-        Rows to augment.
-    enabled : bool
-        When ``False``, returns *rows* unchanged.
-
-    Returns
-    -------
-    list[dict]
+    .. deprecated::
+        ``dm.ingest`` now accepts ``infer_untyped_fields`` as a top-level
+        parameter.  Callers should pass it directly instead of stamping
+        each row.
     """
     if not enabled:
         return rows
@@ -306,44 +300,11 @@ def ingest_table_batch(
 ) -> IngestResult:
     """Ingest table rows into a context via ``DataManager.ingest()``.
 
-    Delegates chunking, insertion, and optional embedding entirely to
-    ``DataManager.ingest()``.
-
-    Parameters
-    ----------
-    data_manager : DataManager
-        The DataManager instance.
-    context : str
-        Target Unify context (e.g. ``Files/<alias>/<sid>/Tables/<label>``).
-    rows : list[dict]
-        Table rows to ingest.
-    description : str | None
-        Table description from business context.
-    fields : dict[str, str] | None
-        Column type schema.
-    unique_keys : dict[str, str] | None
-        Unique-key column definitions for table creation
-        (e.g. ``{"row_id": "int"}``).
-    auto_counting : dict[str, str | None] | None
-        Auto-incrementing column configuration
-        (e.g. ``{"row_id": None}``).
-    embed_columns : list[str] | None
-        Source columns to embed.
-    embed_strategy : str
-        ``"off"``, ``"along"``, or ``"after"``.
-    chunk_size : int
-        Maximum rows per internal DM chunk.
-    infer_untyped_fields : bool
-        Instruct backend to infer types for undeclared fields.
-    add_to_all_context : bool
-        Whether to add rows to cross-assistant aggregation contexts.
-    execution : IngestExecutionConfig | None
-        Pipeline execution settings.
-
-    Returns
-    -------
-    IngestResult
-        Aggregated ingest outcome from DM.
+    .. deprecated::
+        Callers should use ``dm.ingest(context, rows=..., table_input_handle=...)``
+        directly.  ``dm.ingest`` now handles streaming handles, chunking, and
+        type coercion natively.  This thin wrapper remains only for any
+        third-party or deploy scripts that have not yet migrated.
     """
     if not rows:
         return IngestResult(context=context)

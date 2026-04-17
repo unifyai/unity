@@ -23,7 +23,6 @@ from typing import Any, Dict, List, Optional
 
 from unity.file_manager.file_parsers.types.contracts import FileParseResult
 from unity.common.pipeline import InlineRowsHandle, TableInputHandle
-from unity.file_manager.parse_adapter.row_streaming import iter_table_input_row_batches
 from unity.file_manager.types.config import (
     FilePipelineConfig,
     TableBusinessContextSpec,
@@ -367,7 +366,7 @@ def execute_ingest_content(
 
 
 # =============================================================================
-# TABLE INGEST TASK  (delegates to dm.ingest via ingest_table_batch)
+# TABLE INGEST TASK  (delegates to dm.ingest)
 # =============================================================================
 
 
@@ -404,11 +403,9 @@ def execute_ingest_table(
     from .ingest_ops import (
         get_file_id_from_path,
         get_storage_id_from_path,
-        ingest_table_batch,
         resolve_embed_columns_for_table,
         resolve_embed_strategy,
         build_dm_execution_config,
-        with_infer_untyped_fields,
     )
 
     dm = file_manager._data_manager
@@ -469,39 +466,30 @@ def execute_ingest_table(
     )
     embed_strategy = resolve_embed_strategy(config)
     execution = build_dm_execution_config(config)
-
-    from unity.data_manager.types.ingest import IngestResult
-
-    result = IngestResult(context=context)
     batch_size = config.ingest.table_rows_batch_size
-    for batch in iter_table_input_row_batches(table_input, batch_size):
-        prepared_rows = with_infer_untyped_fields(
-            batch,
-            enabled=config.ingest.infer_untyped_fields,
-        )
-        batch_result = ingest_table_batch(
-            data_manager=dm,
-            context=context,
-            rows=prepared_rows,
-            description=description,
-            fields=fields,
-            unique_keys={"row_id": "int"},
-            auto_counting={"row_id": None},
-            embed_columns=embed_columns or None,
-            embed_strategy=embed_strategy,
-            chunk_size=batch_size,
-            infer_untyped_fields=config.ingest.infer_untyped_fields,
-            add_to_all_context=file_manager.include_in_multi_assistant_table,
-            execution=execution,
-        )
-        result.rows_inserted += batch_result.rows_inserted
-        result.rows_embedded += batch_result.rows_embedded
-        result.log_ids.extend(batch_result.log_ids)
-        result.duration_ms += batch_result.duration_ms
-        result.chunks_processed += batch_result.chunks_processed
-        result.derived_columns_created.extend(batch_result.derived_columns_created)
-        if batch_result.coercion_stats:
-            result.coercion_stats = batch_result.coercion_stats
+
+    rows: Optional[List[Dict[str, Any]]] = None
+    handle: Optional[TableInputHandle] = None
+    if isinstance(table_input, InlineRowsHandle):
+        rows = list(table_input.rows)
+    else:
+        handle = table_input
+
+    result = dm.ingest(
+        context,
+        rows,
+        table_input_handle=handle,
+        description=description,
+        fields=fields,
+        unique_keys={"row_id": "int"},
+        auto_counting={"row_id": None},
+        embed_columns=embed_columns or None,
+        embed_strategy=embed_strategy,
+        chunk_size=batch_size,
+        infer_untyped_fields=config.ingest.infer_untyped_fields,
+        add_to_all_context=file_manager.include_in_multi_assistant_table,
+        execution=execution,
+    )
 
     logger.debug(
         f"[TaskFn] Table '{table_label}' ingest complete for {file_path}: "
