@@ -24,7 +24,7 @@ from unity.file_manager.file_parsers.types.contracts import (
     StepStatus,
 )
 from unity.file_manager.file_parsers.types.formats import FileFormat
-from unity.file_manager.file_parsers.types.table import ExtractedTable
+from unity.file_manager.file_parsers.types.table import CsvDialect, ExtractedTable
 from unity.file_manager.file_parsers.utils.tracing import traced_step
 
 logger = logging.getLogger(__name__)
@@ -151,6 +151,12 @@ class NativeCsvBackend(BaseFileParserBackend):
                 sample_rows=sample_rows,
                 num_rows=row_count,
                 num_cols=len(columns),
+                csv_dialect=CsvDialect(
+                    delimiter=str(dialect_info["delimiter"]),
+                    quotechar=str(dialect_info["quotechar"]),
+                    encoding=str(dialect_info["encoding"]),
+                    has_header=bool(dialect_info["has_header"]),
+                ),
             )
 
             result = finalize_spreadsheet_result(
