@@ -10,6 +10,7 @@ full user task table.
 from __future__ import annotations
 
 import hashlib
+import json
 import logging
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -25,11 +26,17 @@ from .storage import TasksStore
 TASKS_CONTEXT_NAME = "Tasks"
 TASK_ACTIVATIONS_CONTEXT_NAME = "Tasks/Activations"
 TASK_RUNS_CONTEXT_NAME = "Tasks/Runs"
+TASK_OUTBOUND_OPERATIONS_CONTEXT_NAME = "Tasks/OutboundOperations"
 _TASK_ACTIVATIONS_CONTEXT_LEAF = "Activations"
 _TASK_RUNS_CONTEXT_LEAF = "Runs"
+_TASK_OUTBOUND_OPERATIONS_CONTEXT_LEAF = "OutboundOperations"
 TASK_MACHINE_STATE_PROJECT = "Assistants"
 _TASK_RUN_CREATE_OR_ADOPT_PATH = "/admin/task-run/create-or-adopt"
 _TASK_RUN_UPDATE_PATH = "/admin/task-run/update"
+_TASK_OUTBOUND_OPERATION_CREATE_OR_ADOPT_PATH = (
+    "/admin/task-outbound-operation/create-or-adopt"
+)
+_TASK_OUTBOUND_OPERATION_UPDATE_PATH = "/admin/task-outbound-operation/update"
 _TASK_RUN_HTTP_TIMEOUT_SECONDS = 15
 _ACTIVATION_QUERY_FIELDS = [
     "assistant_id",
@@ -116,6 +123,39 @@ class TaskRunReference:
     run_key: str
 
 
+@dataclass(frozen=True)
+class TaskOutboundOperationProvenance:
+    """Durable provenance facts for one assistant-owned outbound operation."""
+
+    assistant_id: str
+    task_run_key: str
+    operation_index: int
+    method_name: str
+    medium: str
+    target_kind: str
+    target_metadata: Mapping[str, Any] = field(default_factory=dict)
+    task_id: int | None = None
+    source_task_log_id: int | None = None
+    contact_id: int | None = None
+
+
+@dataclass(frozen=True)
+class TaskOutboundOperationReference:
+    """Stable identifiers needed to patch one outbound ledger row later."""
+
+    assistant_id: str
+    operation_key: str
+
+
+@dataclass(frozen=True)
+class TaskOutboundOperationRecord:
+    """Materialized outbound operation row returned by Orchestra admin APIs."""
+
+    reference: TaskOutboundOperationReference
+    payload: dict[str, Any]
+    created: bool
+
+
 def build_activation_key(*, assistant_id: str | int | None, task_id: int) -> str:
     """Return the assistant-scoped activation key used by Orchestra."""
 
@@ -148,6 +188,20 @@ def build_task_runs_context_name(
 
     return _build_task_machine_context_name(
         leaf_name=_TASK_RUNS_CONTEXT_LEAF,
+        user_context=user_context,
+        assistant_context=assistant_context,
+    )
+
+
+def build_task_outbound_operations_context_name(
+    *,
+    user_context: str | None = None,
+    assistant_context: str | None = None,
+) -> str:
+    """Return the assistant-scoped Orchestra context for outbound operation rows."""
+
+    return _build_task_machine_context_name(
+        leaf_name=_TASK_OUTBOUND_OPERATIONS_CONTEXT_LEAF,
         user_context=user_context,
         assistant_context=assistant_context,
     )
@@ -360,6 +414,72 @@ def update_task_run_record(
     )
 
 
+def create_or_adopt_task_outbound_operation(
+    provenance: TaskOutboundOperationProvenance,
+    *,
+    created_at: str | None = None,
+) -> TaskOutboundOperationRecord | None:
+    """Create or adopt one outbound operation row for offline send idempotency."""
+
+    operation_key = build_task_outbound_operation_key(provenance)
+    response_body = _orchestra_admin_post(
+        _TASK_OUTBOUND_OPERATION_CREATE_OR_ADOPT_PATH,
+        _drop_none_values(
+            {
+                "project_name": TASK_MACHINE_STATE_PROJECT,
+                "operation_key": operation_key,
+                "assistant_id": provenance.assistant_id,
+                "task_run_key": provenance.task_run_key,
+                "task_id": provenance.task_id,
+                "source_task_log_id": provenance.source_task_log_id,
+                "operation_index": provenance.operation_index,
+                "method_name": provenance.method_name,
+                "medium": provenance.medium,
+                "target_kind": provenance.target_kind,
+                "contact_id": provenance.contact_id,
+                "target_metadata": dict(provenance.target_metadata),
+                "created_at": created_at or _now_iso(),
+                "status": "pending",
+            },
+        ),
+    )
+    if not isinstance(response_body, Mapping):
+        return None
+    operation_payload = response_body.get("operation")
+    if not isinstance(operation_payload, Mapping):
+        return None
+    persisted_operation_key = (
+        _coerce_str(operation_payload.get("operation_key")) or operation_key
+    )
+    return TaskOutboundOperationRecord(
+        reference=TaskOutboundOperationReference(
+            assistant_id=provenance.assistant_id,
+            operation_key=persisted_operation_key,
+        ),
+        payload=dict(operation_payload),
+        created=bool(response_body.get("created")),
+    )
+
+
+def update_task_outbound_operation_record(
+    operation_reference: TaskOutboundOperationReference | None,
+    updates: Mapping[str, Any],
+) -> None:
+    """Patch one previously materialized outbound operation row in Orchestra."""
+
+    if operation_reference is None:
+        return
+    _orchestra_admin_post(
+        _TASK_OUTBOUND_OPERATION_UPDATE_PATH,
+        {
+            "project_name": TASK_MACHINE_STATE_PROJECT,
+            "assistant_id": operation_reference.assistant_id,
+            "operation_key": operation_reference.operation_key,
+            "updates": _drop_none_values(dict(updates)),
+        },
+    )
+
+
 def build_task_run_key(provenance: TaskRunProvenance) -> str:
     """Build the canonical run-key shape shared across live and offline lanes.
 
@@ -391,6 +511,30 @@ def build_task_run_key(provenance: TaskRunProvenance) -> str:
     return (
         f"{provenance.execution_mode}:{provenance.source_type}:"
         f"{provenance.assistant_id}:{provenance.task_id}:{revision_digest}:{tail}"
+    )
+
+
+def build_task_outbound_operation_key(
+    provenance: TaskOutboundOperationProvenance,
+) -> str:
+    """Build the canonical outbound-operation key shared across retry attempts."""
+
+    target_identity = _drop_none_values(
+        {
+            "contact_id": provenance.contact_id,
+            "target_kind": provenance.target_kind,
+            "target_metadata": dict(provenance.target_metadata),
+        },
+    )
+    target_digest = hashlib.sha256(
+        json.dumps(target_identity, sort_keys=True, default=str).encode("utf-8"),
+    ).hexdigest()[:12]
+    method_fragment = (
+        _normalize_run_key_component(provenance.method_name) or "operation"
+    )
+    return (
+        f"{provenance.task_run_key}:op-{provenance.operation_index}:"
+        f"{method_fragment[:24]}:{target_digest}"
     )
 
 

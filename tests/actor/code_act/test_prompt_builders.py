@@ -112,6 +112,29 @@ def test_code_act_prompt_includes_diverse_examples_sessions_computer_primitives_
 
 
 @pytest.mark.timeout(30)
+def test_code_act_prompt_includes_comms_namespace_and_docstrings():
+    from unity.actor.environments.state_managers import StateManagerEnvironment
+    from unity.function_manager.primitives import PrimitiveScope, Primitives
+
+    actor = CodeActActor()
+    env = StateManagerEnvironment(
+        Primitives(primitive_scope=PrimitiveScope.single("comms")),
+    )
+    prompt = build_code_act_prompt(
+        environments={"primitives": env},
+        tools=dict(actor.get_tools("act")),
+    )
+
+    assert "primitives.comms" in prompt
+    assert ".send_whatsapp" in prompt
+    assert ".send_discord_message" in prompt
+    assert ".send_discord_channel_message" in prompt
+    assert "assistant-owned WhatsApp message" in prompt
+    assert "assistant-owned Discord direct message" in prompt
+    assert "Discord guild channel" in prompt
+
+
+@pytest.mark.timeout(30)
 def test_incremental_execution_present_and_execution_rules_not_duplicated():
     """Incremental Execution section is present; _EXECUTION_RULES appears exactly once."""
     actor = CodeActActor()

@@ -4,9 +4,12 @@ from unity.task_scheduler import machine_state
 from unity.task_scheduler.machine_state import (
     TASK_MACHINE_STATE_PROJECT,
     TaskActivationSnapshot,
+    TaskOutboundOperationProvenance,
     TaskRunProvenance,
     build_task_activation_context_name,
+    build_task_outbound_operation_key,
     build_task_run_key,
+    create_or_adopt_task_outbound_operation,
     create_or_adopt_live_task_run,
     consume_live_task_run_provenance,
     get_task_activation,
@@ -245,3 +248,113 @@ def test_create_or_adopt_live_task_run_persists_display_fields(monkeypatch):
     assert payload["task_name"] == "Follow up on invoice"
     assert payload["task_description"] == "Ask Alice for the missing invoice details."
     assert payload["started_at"] == "2026-04-16T10:15:00+00:00"
+
+
+def test_build_task_outbound_operation_key_is_stable_for_same_target():
+    provenance = TaskOutboundOperationProvenance(
+        assistant_id="42",
+        task_run_key="offline:scheduled:42:301:rev:once",
+        operation_index=2,
+        method_name="send_sms",
+        medium="sms_message",
+        target_kind="contact",
+        contact_id=7,
+        target_metadata={"phone_number": "+15555550123"},
+    )
+    equivalent = TaskOutboundOperationProvenance(
+        assistant_id="42",
+        task_run_key="offline:scheduled:42:301:rev:once",
+        operation_index=2,
+        method_name="send_sms",
+        medium="sms_message",
+        target_kind="contact",
+        contact_id=7,
+        target_metadata={"phone_number": "+15555550123"},
+    )
+
+    assert build_task_outbound_operation_key(
+        provenance,
+    ) == build_task_outbound_operation_key(
+        equivalent,
+    )
+
+
+def test_create_or_adopt_task_outbound_operation_persists_target_metadata(monkeypatch):
+    captured: dict[str, object] = {}
+    provenance = TaskOutboundOperationProvenance(
+        assistant_id="42",
+        task_run_key="offline:scheduled:42:301:rev:once",
+        operation_index=1,
+        method_name="send_email",
+        medium="email",
+        target_kind="contact",
+        contact_id=17,
+        task_id=301,
+        source_task_log_id=555,
+        target_metadata={
+            "email_address": "alice@example.com",
+            "display_name": "Alice Owner",
+        },
+    )
+
+    def _fake_post(path: str, payload: dict[str, object]):
+        captured["path"] = path
+        captured["payload"] = payload
+        return {
+            "created": True,
+            "operation": {
+                "operation_key": payload["operation_key"],
+                "status": "pending",
+            },
+        }
+
+    monkeypatch.setattr(machine_state, "_orchestra_admin_post", _fake_post)
+
+    record = create_or_adopt_task_outbound_operation(
+        provenance,
+        created_at="2026-04-16T10:15:00+00:00",
+    )
+
+    assert record is not None
+    payload = captured["payload"]
+    assert isinstance(payload, dict)
+    assert payload["task_run_key"] == provenance.task_run_key
+    assert payload["contact_id"] == 17
+    assert payload["target_metadata"] == {
+        "email_address": "alice@example.com",
+        "display_name": "Alice Owner",
+    }
+    assert payload["created_at"] == "2026-04-16T10:15:00+00:00"
+
+
+def test_update_task_outbound_operation_record_posts_partial_updates(monkeypatch):
+    captured: dict[str, object] = {}
+
+    def _fake_post(path: str, payload: dict[str, object]):
+        captured["path"] = path
+        captured["payload"] = payload
+        return {"operation": {"operation_key": "offline:op:1"}}
+
+    monkeypatch.setattr(machine_state, "_orchestra_admin_post", _fake_post)
+
+    machine_state.update_task_outbound_operation_record(
+        machine_state.TaskOutboundOperationReference(
+            assistant_id="42",
+            operation_key="offline:op:1",
+        ),
+        {
+            "status": "completed",
+            "provider_message_id": "msg-123",
+            "history_message_id": 9,
+        },
+    )
+
+    payload = captured["payload"]
+    assert isinstance(payload, dict)
+    assert payload["assistant_id"] == "42"
+    assert payload["operation_key"] == "offline:op:1"
+    assert payload["updates"] == {
+        "status": "completed",
+        "provider_message_id": "msg-123",
+        "history_message_id": 9,
+    }

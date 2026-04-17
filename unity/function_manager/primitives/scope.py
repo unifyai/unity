@@ -12,6 +12,7 @@ if TYPE_CHECKING:
 # This is the authoritative list; ToolSurfaceRegistry.MANAGERS must match.
 VALID_MANAGER_ALIASES: frozenset[str] = frozenset(
     {
+        "comms",
         "contacts",
         "dashboards",
         "tasks",

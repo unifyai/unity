@@ -121,6 +121,28 @@ def test_state_manager_env_get_tools_respects_scope():
         ), f"Tool '{tool_name}' should not be exposed for files-only scope"
 
 
+def test_state_manager_env_exposes_comms_namespace_when_scoped():
+    """Comms-only scope should expose assistant-owned comms under `primitives.comms`."""
+    scope = PrimitiveScope.single("comms")
+    env = StateManagerEnvironment(Primitives(primitive_scope=scope))
+    tools = env.get_tools()
+
+    expected = {
+        "primitives.comms.send_sms",
+        "primitives.comms.send_whatsapp",
+        "primitives.comms.send_discord_message",
+        "primitives.comms.send_discord_channel_message",
+        "primitives.comms.send_unify_message",
+        "primitives.comms.send_api_response",
+        "primitives.comms.send_email",
+        "primitives.comms.make_call",
+        "primitives.comms.make_whatsapp_call",
+    }
+
+    assert expected.issubset(set(tools))
+    assert all(name.startswith("primitives.comms.") for name in tools)
+
+
 def test_state_manager_env_excludes_computer_primitives():
     """StateManagerEnvironment respects the scope it is given.
 

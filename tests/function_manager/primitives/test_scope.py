@@ -136,6 +136,7 @@ def test_scope_hashable():
 def test_valid_manager_aliases_contains_expected():
     """VALID_MANAGER_ALIASES contains expected managers."""
     expected = {
+        "comms",
         "contacts",
         "dashboards",
         "tasks",
