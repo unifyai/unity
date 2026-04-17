@@ -38,17 +38,13 @@ class ParseConfig(BaseModel):
     This enables swapping an entire implementation set OR a single format backend
     (e.g., swap XLSX only) without changing FileParser code.
 
-    Memory-bounded scheduling
-    -------------------------
-    When ``subprocess_isolation`` is enabled, files are classified as "heavy" or
-    "light" based on their on-disk size and a configurable expansion factor.
-    Heavy files are parsed one at a time (serialised) while light files are
-    parsed concurrently — all within isolated subprocesses so arena-fragmented
-    memory is reclaimed by the OS when each child exits.
-
-    Thresholds are expressed as **fractions of total system RAM** (via
-    ``psutil.virtual_memory().total``) so they adapt automatically across local
-    machines, CI runners, and cloud containers with varying memory.
+    Scheduling
+    ----------
+    When ``subprocess_isolation`` is enabled, files are classified as
+    "heavy" (Docling formats OR files ≥ 100 MB) or "light" (everything
+    else).  Heavy files are serialised (one at a time); light files run
+    concurrently up to ``max_concurrent_parses``.  Each file gets its
+    own isolated subprocess so memory is fully reclaimed on exit.
     """
 
     # Controls parse-stage parallelism (number of files processed concurrently).
@@ -61,32 +57,11 @@ class ParseConfig(BaseModel):
     # exits, preventing unbounded RSS growth across large batches.
     subprocess_isolation: bool = True
 
-    # A file is "heavy" when  file_size * expansion_factor  exceeds
-    # heavy_file_memory_pct * total_system_ram.  Heavy files are serialised
-    # (one subprocess at a time) to prevent concurrent OOM.
-    heavy_file_memory_pct: float = 0.25
-    expansion_factor: float = 300.0
-
-    # Per-subprocess virtual-address-space cap expressed as a fraction of total
-    # system RAM.  Applied via resource.setrlimit(RLIMIT_AS, ...) on Linux.
-    # Defaulted on for Linux subprocess workers so oversized parses fail inside
-    # the child process instead of letting the kernel OOM killer destabilize the
-    # entire host.  Unsupported platforms remain best-effort no-ops.
-    max_subprocess_memory_pct: Optional[float] = 0.70
-
-    # Total memory budget for concurrently submitted "light" files.  The batch
-    # scheduler groups light files into waves whose combined estimated peak
-    # memory stays under this fraction of system RAM.
-    light_file_memory_pct: float = 0.60
-
-    # Maximum wall-clock seconds to wait for a single subprocess parse to
-    # finish.  If a child process hangs (e.g., MemoryError leaves it wedged),
-    # the parent will time out, kill the stuck worker, reset the pool, and
-    # continue processing remaining files instead of hanging indefinitely.
-    # This is the *base* timeout; the effective per-file timeout is:
-    #   max(parse_timeout_seconds, file_size_mb * timeout_seconds_per_mb)
-    # so large files automatically get proportionally more time.
-    parse_timeout_seconds: float = 600.0
+    # Base timeout (seconds) for a single subprocess parse.  The effective
+    # per-file timeout is:  max(parse_timeout_seconds, file_size_mb * timeout_seconds_per_mb)
+    # so large files automatically get proportionally more time while small
+    # files fail fast instead of blocking the batch for 10 minutes.
+    parse_timeout_seconds: float = 120.0
 
     # Scaling factor for adaptive per-file timeout.  Large files legitimately
     # need more wall-clock time (e.g., a 50 MB XLSX might need 25 minutes).
@@ -491,20 +466,8 @@ class FilePipelineConfig(BaseModel):
             p = config_file.parse
             if "max_concurrent_parses" in p:
                 cfg.parse.max_concurrent_parses = int(p["max_concurrent_parses"])
-            elif "batch_size" in p:
-                # Back-compat alias: batch_size historically controlled parse concurrency.
-                cfg.parse.max_concurrent_parses = int(p["batch_size"])
             if "subprocess_isolation" in p:
                 cfg.parse.subprocess_isolation = bool(p["subprocess_isolation"])
-            if "heavy_file_memory_pct" in p:
-                cfg.parse.heavy_file_memory_pct = float(p["heavy_file_memory_pct"])
-            if "expansion_factor" in p:
-                cfg.parse.expansion_factor = float(p["expansion_factor"])
-            if "max_subprocess_memory_pct" in p:
-                val = p["max_subprocess_memory_pct"]
-                cfg.parse.max_subprocess_memory_pct = (
-                    float(val) if val is not None else None
-                )
             if "parse_timeout_seconds" in p:
                 cfg.parse.parse_timeout_seconds = float(
                     p["parse_timeout_seconds"],
