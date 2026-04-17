@@ -1,8 +1,8 @@
-## `pipeline/` — shared pipeline infrastructure
+## `unity/common/pipeline/` — shared pipeline infrastructure
 
-This package owns the reusable infrastructure for file parsing and ingestion pipelines: typed transport models, artifact storage, observability ledgers, resilience policies, work queues, and deployment bundle orchestration.
+This package owns the reusable infrastructure for ingestion pipelines: typed transport models, artifact storage, observability ledgers, resilience policies, work queues, and deployment bundle orchestration.
 
-It sits below `managers/` and `parse_adapter/` in the dependency graph and above no other `file_manager` subpackage. All of the types and protocols defined here are designed to be consumed by the FileManager executor, by deployment bundle workflows, and eventually by dedicated parse/ingest workers on GCP.
+It is a cross-cutting shared module with zero imports from `FileManager`, `DataManager`, or any state manager. Both the FM executor and the DM ingestion path (as well as future parse/ingest workers on GCP) consume these protocols and types identically.
 
 ## Design principles
 

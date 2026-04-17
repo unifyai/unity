@@ -1,6 +1,19 @@
 from __future__ import annotations
 
 from .artifact_store import ArtifactStore, LocalArtifactStore
+from .instrumentation import PipelineInstrumentation
+from .orchestration import (
+    ArtifactIngestFn,
+    ArtifactWorkItem,
+    ArtifactWorkResult,
+    FileProcessingContext,
+    FileWorkResult,
+    PipelineRunResult,
+    ProcessFileFn,
+    ingest_artifacts,
+    run_ingestion_pipeline,
+    run_with_retry,
+)
 from .cost_ledger import (
     CostLedger,
     JsonlCostLedger,
@@ -72,6 +85,19 @@ __all__ = sorted(
         # Artifact store
         "ArtifactStore",
         "LocalArtifactStore",
+        # Instrumentation
+        "PipelineInstrumentation",
+        # Orchestration
+        "ArtifactIngestFn",
+        "ArtifactWorkItem",
+        "ArtifactWorkResult",
+        "FileProcessingContext",
+        "FileWorkResult",
+        "PipelineRunResult",
+        "ProcessFileFn",
+        "ingest_artifacts",
+        "run_ingestion_pipeline",
+        "run_with_retry",
         # Cost ledger
         "CostLedger",
         "JsonlCostLedger",
