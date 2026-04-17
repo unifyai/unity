@@ -246,7 +246,7 @@ def test_file_pipeline_config_defaults():
     assert cfg.ingest.storage_id is None  # default per-file mode
     assert cfg.embed.strategy == "after"
     assert cfg.output.return_mode == "compact"
-    assert cfg.diagnostics.enable_progress is False
+    assert cfg.diagnostics.enable_progress is True
 
 
 def test_table_embedding_spec():

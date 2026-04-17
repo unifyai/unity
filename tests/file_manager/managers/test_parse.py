@@ -365,7 +365,7 @@ async def test_parse_supported(file_manager, supported_file_examples: dict):
             step_names = {s.name for s in (item.trace.steps or [])}
             assert "docling_convert" in step_names
             assert "docling_index_structure" in step_names
-            assert "generate_hierarchical_summaries" in step_names
+            assert "llm_enrichment" in step_names
             assert any(
                 s in step_names
                 for s in (
