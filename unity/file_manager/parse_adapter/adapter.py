@@ -27,7 +27,7 @@ from unity.file_manager.file_parsers.types.contracts import (
 )
 from unity.file_manager.file_parsers.types.formats import FileFormat
 from unity.file_manager.file_parsers.types.table import ExtractedTable
-from unity.file_manager.pipeline import (
+from unity.common.pipeline import (
     CsvFileHandle,
     InlineRowsHandle,
     LocalArtifactStore,

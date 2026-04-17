@@ -1126,7 +1126,7 @@ class FileManager(BaseFileManager):
 
             if not successful_parse_results:
                 if getattr(getattr(cfg, "cost", None), "enable_cost_ledger", False):
-                    from unity.file_manager.pipeline import (
+                    from unity.common.pipeline import (
                         JsonlCostLedger,
                         PipelineCostAccumulator,
                         PipelineCostRateCard,
