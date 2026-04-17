@@ -26,9 +26,7 @@ from unity.file_manager.file_parsers.types.contracts import (
 from unity.file_manager.file_parsers.utils.format_policy import (
     bound_spreadsheet_full_text,
     build_spreadsheet_profile_text,
-    extract_metadata_from_text_best_effort,
     fallback_spreadsheet_summary,
-    summarize_spreadsheet_profile_best_effort,
 )
 
 logger = logging.getLogger(__name__)
@@ -107,19 +105,10 @@ class MsExcelBackend(BaseFileParserBackend):
                 profile_text=profile_text,
                 settings=FILE_PARSER_SETTINGS,
             )
-            fallback_summary = fallback_spreadsheet_summary(
+            summary = fallback_spreadsheet_summary(
                 logical_path=str(ctx.logical_path),
                 tables=list(built.tables or []),
                 sheet_names=list(built.sheet_names or []),
-            )
-            summary = summarize_spreadsheet_profile_best_effort(
-                profile_text=profile_text,
-                settings=FILE_PARSER_SETTINGS,
-                fallback=fallback_summary,
-            )
-            meta = extract_metadata_from_text_best_effort(
-                text=full_text,
-                settings=FILE_PARSER_SETTINGS,
             )
 
             # Counters
@@ -136,7 +125,6 @@ class MsExcelBackend(BaseFileParserBackend):
                 tables=built.tables,
                 summary=summary,
                 full_text=full_text,
-                metadata=meta,
                 trace=trace,
                 graph=built.graph,
             )

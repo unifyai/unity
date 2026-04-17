@@ -18,9 +18,6 @@ from unity.file_manager.file_parsers.implementations.docling.steps.document_grap
     build_document_graph_hybrid,
     build_document_graph_from_text,
 )
-from unity.file_manager.file_parsers.implementations.docling.steps.document_enrichment import (
-    generate_hierarchical_summaries,
-)
 from unity.file_manager.file_parsers.settings import FILE_PARSER_SETTINGS
 from unity.file_manager.file_parsers.types.contracts import (
     FileParseRequest,
@@ -29,9 +26,6 @@ from unity.file_manager.file_parsers.types.contracts import (
     StepStatus,
 )
 from unity.file_manager.file_parsers.types.formats import FileFormat
-from unity.file_manager.file_parsers.utils.format_policy import (
-    extract_metadata_from_text_best_effort,
-)
 from unity.file_manager.file_parsers.utils.tracing import traced_step
 
 logger = logging.getLogger(__name__)
@@ -45,7 +39,9 @@ class BaseDocumentBackend(BaseFileParserBackend):
     - convert input file to a DoclingDocument
     - build a ContentGraph (hybrid with fallbacks)
     - export full_text
-    - best-effort enrichment (summaries + metadata)
+
+    LLM enrichment (summaries, metadata) is handled post-parse by
+    ``enrich_parse_result`` — backends return raw artifacts only.
 
     Format-specific backends (PDF/HTML/XML/JSON) should subclass this and only
     override:
@@ -145,26 +141,6 @@ class BaseDocumentBackend(BaseFileParserBackend):
                     )
 
                 full_text = str(text or "")
-                meta = extract_metadata_from_text_best_effort(
-                    text=full_text,
-                    settings=FILE_PARSER_SETTINGS,
-                )
-                summary = ""
-                try:
-                    root = built.graph.nodes.get(built.graph.root_id)
-                    summary = (
-                        str(getattr(root, "summary", "") or "").strip()
-                        if root is not None
-                        else ""
-                    )
-                except Exception:
-                    summary = ""
-                if not summary:
-                    summary = (
-                        (full_text or "")[:2000].strip()
-                        or str(ctx.logical_path or "").strip()
-                        or "Empty document"
-                    )
 
                 trace.counters["nodes"] = len(built.graph.nodes)
                 trace.counters["tables"] = len(built.tables)
@@ -175,9 +151,7 @@ class BaseDocumentBackend(BaseFileParserBackend):
                     file_format=ctx.file_format,
                     mime_type=ctx.mime_type,
                     tables=list(built.tables or []),
-                    summary=summary,
                     full_text=full_text,
-                    metadata=meta,
                     trace=trace,
                     graph=built.graph,
                 )
@@ -276,42 +250,6 @@ class BaseDocumentBackend(BaseFileParserBackend):
                         step.warnings.append(str(e))
                         raise
 
-            # Enrichment (best-effort): hierarchical summaries + metadata
-            if built is not None and built.graph is not None:
-                with traced_step(trace, name="generate_hierarchical_summaries") as step:
-                    try:
-                        generate_hierarchical_summaries(
-                            built.graph,
-                            settings=FILE_PARSER_SETTINGS,
-                        )
-                    except Exception as e:
-                        step.status = StepStatus.DEGRADED
-                        step.warnings.append(str(e))
-
-            meta = extract_metadata_from_text_best_effort(
-                text=full_text,
-                settings=FILE_PARSER_SETTINGS,
-            )
-
-            summary = ""
-            try:
-                if built is not None and built.graph is not None:
-                    root = built.graph.nodes.get(built.graph.root_id)
-                    summary = (
-                        str(getattr(root, "summary", "") or "").strip()
-                        if root is not None
-                        else ""
-                    )
-            except Exception:
-                summary = ""
-            if not summary:
-                summary = (
-                    (full_text or "")[:2000].strip()
-                    or str(ctx.logical_path or "").strip()
-                    or "Empty document"
-                )
-
-            # Counters
             if built is not None and built.graph is not None:
                 trace.counters["nodes"] = len(built.graph.nodes)
             if built is not None:
@@ -324,9 +262,7 @@ class BaseDocumentBackend(BaseFileParserBackend):
                 file_format=ctx.file_format,
                 mime_type=ctx.mime_type,
                 tables=(built.tables if built is not None else []),
-                summary=summary,
                 full_text=full_text,
-                metadata=meta,
                 trace=trace,
                 graph=(built.graph if built is not None else None),
             )

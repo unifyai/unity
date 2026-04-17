@@ -6,7 +6,6 @@ from pathlib import Path
 from typing import Optional, Sequence
 
 from unity.file_manager.file_parsers.types.backend import BaseFileParserBackend
-from unity.file_manager.file_parsers.settings import FILE_PARSER_SETTINGS
 from unity.file_manager.file_parsers.utils.tracing import traced_step
 from unity.file_manager.file_parsers.types.contracts import FileParseRequest
 from unity.file_manager.file_parsers.types.enums import NodeKind
@@ -23,9 +22,6 @@ from unity.file_manager.file_parsers.types.contracts import (
     FileParseResult,
     FileParseTrace,
     StepStatus,
-)
-from unity.file_manager.file_parsers.utils.format_policy import (
-    extract_metadata_from_text_best_effort,
 )
 
 logger = logging.getLogger(__name__)
@@ -239,60 +235,6 @@ class TextBackend(BaseFileParserBackend):
 
                 graph = ContentGraph(root_id=doc_id, nodes=nodes)
 
-            # Enrichment (best-effort): hierarchical summaries + metadata
-            with traced_step(trace, name="generate_hierarchical_summaries") as step:
-                try:
-                    from unity.file_manager.file_parsers.implementations.docling.steps.document_enrichment import (
-                        generate_hierarchical_summaries,
-                    )
-
-                    generate_hierarchical_summaries(
-                        graph,
-                        settings=FILE_PARSER_SETTINGS,
-                    )
-                except Exception as e:
-                    step.status = StepStatus.DEGRADED
-                    step.warnings.append(str(e))
-
-            summary = ""
-            try:
-                root = graph.nodes.get(graph.root_id)
-                summary = (
-                    str(getattr(root, "summary", "") or "").strip()
-                    if root is not None
-                    else ""
-                )
-            except Exception:
-                summary = ""
-            if not summary:
-                # Fallback: clipped head of raw text
-                try:
-                    from unity.common.token_utils import (
-                        clip_text_to_token_limit_conservative,
-                    )
-
-                    summary = clip_text_to_token_limit_conservative(
-                        text,
-                        FILE_PARSER_SETTINGS.EMBEDDING_MAX_INPUT_TOKENS,
-                        FILE_PARSER_SETTINGS.EMBEDDING_ENCODING,
-                    )
-                except Exception:
-                    summary = (text or "")[:2000].strip()
-
-            with traced_step(trace, name="extract_metadata") as step:
-                try:
-                    meta = extract_metadata_from_text_best_effort(
-                        text=text,
-                        settings=FILE_PARSER_SETTINGS,
-                    )
-                except Exception as e:
-                    step.status = StepStatus.DEGRADED
-                    step.warnings.append(str(e))
-                    meta = extract_metadata_from_text_best_effort(
-                        text=text,
-                        settings=FILE_PARSER_SETTINGS,
-                    )
-
             trace.counters["nodes"] = len(graph.nodes)
             trace.duration_ms = (time.perf_counter() - started) * 1000.0
             return FileParseResult(
@@ -301,9 +243,7 @@ class TextBackend(BaseFileParserBackend):
                 file_format=ctx.file_format,
                 mime_type=ctx.mime_type,
                 tables=[],
-                summary=summary,
                 full_text=text if isinstance(text, str) else "",
-                metadata=meta,
                 trace=trace,
                 graph=graph,
             )

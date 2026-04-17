@@ -91,6 +91,9 @@ def generate_hierarchical_summaries(
     - paragraph.summary
     - section.summary (from paragraph summaries)
     - document.summary (from section summaries)
+
+    Called post-parse by ``enrich_parse_result`` — never inside
+    subprocess workers.
     """
     from unity.file_manager.file_parsers.prompts.document_prompts import (
         build_chunked_text_summary_prompt,
