@@ -12,11 +12,14 @@ from __future__ import annotations
 import pytest
 
 from unity.data_manager.ops.type_prescan import (
+    TypeMap,
     _stratified_indices,
+    coerce_batch,
     coerce_empty_strings,
     coerce_rows,
     coerce_value,
     prescan_column_types,
+    prescan_from_rows,
 )
 
 # =========================================================================
@@ -237,3 +240,127 @@ class TestCoerceEmptyStrings:
         rows = [{"a": 1, "b": "hello"}]
         _, count = coerce_empty_strings(rows)
         assert count == 0
+
+
+# =========================================================================
+# TypeMap / prescan_from_rows
+# =========================================================================
+
+
+class TestPrescanFromRows:
+
+    def test_basic_inference(self):
+        rows = [
+            {"name": "Alice", "age": 30, "joined": "2025-01-15 09:00:00"},
+            {"name": "Bob", "age": 25, "joined": "2025-02-20 10:00:00"},
+        ]
+        tm = prescan_from_rows(rows)
+        assert isinstance(tm, TypeMap)
+        assert tm.column_types["name"] == "str"
+        assert tm.column_types["age"] == "int"
+        assert tm.column_types["joined"] == "datetime"
+        assert tm.columns == frozenset({"name", "age", "joined"})
+        assert tm.sample_size == 2
+
+    def test_empty_input(self):
+        tm = prescan_from_rows([])
+        assert tm.column_types == {}
+        assert tm.columns == frozenset()
+        assert tm.sample_size == 0
+
+    def test_respects_sample_size(self):
+        rows = [{"val": i} for i in range(100)]
+        tm = prescan_from_rows(rows, sample_size=10)
+        assert tm.sample_size == 10
+
+    def test_all_none_fallback_to_str(self):
+        rows = [{"col": None} for _ in range(20)]
+        tm = prescan_from_rows(rows)
+        assert tm.column_types["col"] == "str"
+
+    def test_all_empty_string_fallback_to_str(self):
+        rows = [{"col": ""} for _ in range(20)]
+        tm = prescan_from_rows(rows)
+        assert tm.column_types["col"] == "str"
+
+    def test_majority_wins(self):
+        rows = [{"col": 42}] * 8 + [{"col": "text"}] * 2
+        tm = prescan_from_rows(rows)
+        assert tm.column_types["col"] == "int"
+
+    def test_frozen(self):
+        tm = prescan_from_rows([{"a": 1}])
+        with pytest.raises(AttributeError):
+            tm.sample_size = 999  # type: ignore[misc]
+
+    def test_works_with_iterator(self):
+        """Accepts any iterable, not just lists."""
+
+        def _gen():
+            for i in range(5):
+                yield {"x": float(i)}
+
+        tm = prescan_from_rows(_gen())
+        assert tm.column_types["x"] == "float"
+        assert tm.sample_size == 5
+
+
+# =========================================================================
+# coerce_batch
+# =========================================================================
+
+
+class TestCoerceBatch:
+
+    def _make_type_map(self, types: dict) -> TypeMap:
+        return TypeMap(
+            column_types=types,
+            columns=frozenset(types.keys()),
+            sample_size=0,
+        )
+
+    def test_basic_coercion(self):
+        tm = self._make_type_map({"age": "int", "name": "str"})
+        batch = [{"age": 25, "name": "Alice"}, {"age": "not_int", "name": "Bob"}]
+        coerced, stats = coerce_batch(batch, tm)
+        assert coerced[0]["age"] == 25
+        assert coerced[1]["age"] is None
+        assert stats.type_coerced == 1
+
+    def test_empty_string_coercion(self):
+        tm = self._make_type_map({"col": "str"})
+        batch = [{"col": ""}, {"col": "ok"}]
+        coerced, stats = coerce_batch(batch, tm)
+        assert coerced[0]["col"] is None
+        assert coerced[1]["col"] == "ok"
+        assert stats.empty_strings_coerced == 1
+
+    def test_empty_batch(self):
+        tm = self._make_type_map({"x": "int"})
+        coerced, stats = coerce_batch([], tm)
+        assert coerced == []
+        assert stats.total_cells == 0
+
+    def test_preserves_none(self):
+        tm = self._make_type_map({"val": "datetime"})
+        batch = [{"val": None}]
+        coerced, stats = coerce_batch(batch, tm)
+        assert coerced[0]["val"] is None
+        assert stats.type_coerced == 0
+
+    def test_coerced_by_column_tracking(self):
+        tm = self._make_type_map({"a": "int", "b": "int"})
+        batch = [{"a": "bad", "b": 1}, {"a": 2, "b": "worse"}]
+        _, stats = coerce_batch(batch, tm)
+        assert stats.coerced_by_column.get("a", 0) >= 1
+        assert stats.coerced_by_column.get("b", 0) >= 1
+
+    def test_consistent_with_prescan(self):
+        """TypeMap from prescan_from_rows can feed coerce_batch."""
+        rows = [{"x": 1}, {"x": 2}, {"x": 3}]
+        tm = prescan_from_rows(rows)
+        batch = [{"x": 10}, {"x": "garbage"}]
+        coerced, stats = coerce_batch(batch, tm)
+        assert coerced[0]["x"] == 10
+        assert coerced[1]["x"] is None
+        assert stats.type_coerced == 1

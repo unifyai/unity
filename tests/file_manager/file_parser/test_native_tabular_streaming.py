@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 from pathlib import Path
+from unittest.mock import patch
 
 from tests.helpers import _handle_project
 from unity.file_manager.file_parsers import FileParseRequest, FileParser, FileFormat
 from unity.file_manager.file_parsers.settings import FILE_PARSER_SETTINGS
+from unity.file_manager.file_parsers.types.table import CsvDialect
 from unity.file_manager.parse_adapter import adapt_parse_result_for_file_manager
 from unity.common.pipeline import (
     CsvFileHandle,
@@ -129,3 +131,63 @@ def test_large_csv_can_materialize_to_artifact_handle(tmp_path: Path):
     assert len(first_batch) == 128
     assert first_batch[0]["Name"] == "Person 0"
     assert first_batch[0]["City"] == "City 0"
+
+
+@_handle_project
+def test_csv_dialect_populated_on_extracted_table_and_reused(tmp_path: Path):
+    """CsvDialect should be set during parsing and reused by build_table_handles
+    without a redundant detect_csv_dialect call."""
+    row_count = int(FILE_PARSER_SETTINGS.TABULAR_INLINE_ROW_LIMIT) + 10
+    csv_path = tmp_path / "dialect_check.csv"
+    with csv_path.open("w", encoding="utf-8", newline="") as fh:
+        fh.write("Col_A;Col_B;Col_C\n")
+        for index in range(row_count):
+            fh.write(f"val_{index};{index};extra_{index}\n")
+
+    result = FileParser().parse(
+        FileParseRequest(logical_path=str(csv_path), source_local_path=str(csv_path)),
+    )
+
+    assert result.status == "success"
+    table = result.tables[0]
+    assert table.csv_dialect is not None
+    assert isinstance(table.csv_dialect, CsvDialect)
+    assert table.csv_dialect.delimiter == ";"
+
+    with patch(
+        "unity.common.pipeline.transport.detect_csv_dialect",
+        side_effect=AssertionError("detect_csv_dialect should not be called"),
+    ):
+        adapted = adapt_parse_result_for_file_manager(
+            result,
+            config=FilePipelineConfig(),
+        )
+        handle = adapted.bundle.table_inputs[table.table_id]
+        assert isinstance(handle, CsvFileHandle)
+        assert handle.delimiter == ";"
+
+
+@_handle_project
+def test_large_xlsx_count_only_tail_produces_correct_num_rows(
+    tmp_path: Path,
+    write_minimal_xlsx,
+):
+    """For XLSX files exceeding the inline limit, the count-only tail path
+    must still produce an accurate num_rows count."""
+    inline_limit = int(FILE_PARSER_SETTINGS.TABULAR_INLINE_ROW_LIMIT)
+    row_count = inline_limit + 200
+    rows = [["ID", "Value"]]
+    rows.extend([[str(i), f"v{i}"] for i in range(row_count)])
+
+    xlsx_path = tmp_path / "count_check.xlsx"
+    write_minimal_xlsx(xlsx_path, sheets=[("Data", rows)])
+
+    result = FileParser().parse(
+        FileParseRequest(logical_path=str(xlsx_path), source_local_path=str(xlsx_path)),
+    )
+
+    assert result.status == "success"
+    table = result.tables[0]
+    assert table.num_rows == row_count
+    assert table.rows == []
+    assert len(table.sample_rows) <= int(FILE_PARSER_SETTINGS.TABULAR_SAMPLE_ROWS)

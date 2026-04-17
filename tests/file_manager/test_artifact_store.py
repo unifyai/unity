@@ -159,7 +159,7 @@ class TestJSONLRoundTrip:
     """Verify that materialized JSONL artifacts can be read back through ObjectStoreArtifactHandle."""
 
     def test_jsonl_round_trip_through_row_streaming(self, tmp_path):
-        from unity.file_manager.parse_adapter.row_streaming import (
+        from unity.common.pipeline.row_streaming import (
             iter_table_input_rows,
         )
 
