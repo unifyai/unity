@@ -26,6 +26,16 @@ from .graph import ContentGraph
 from .json_types import JsonObject
 from .table import ExtractedTable
 
+SUMMARY_UNSET: str = "__UNSET__"
+"""Sentinel value for ``FileParseResult.summary`` before enrichment runs."""
+
+METADATA_UNSET: None = None
+"""Sentinel for ``FileParseResult.metadata`` before enrichment runs.
+
+``None`` is safe here because downstream code already guards with
+``if result.metadata is not None``.
+"""
+
 
 class FileParseRequest(BaseModel):
     """
@@ -166,8 +176,18 @@ class FileParseResult(BaseModel):
     # High-level artifacts produced by the parser backend
     tables: List[ExtractedTable] = Field(default_factory=list)
 
-    # Lightweight document-level summary (safe for FileRecords)
-    summary: str = ""
+    # Lightweight document-level summary (safe for FileRecords).
+    # Starts as ``SUMMARY_UNSET`` — enrichment replaces it with a real
+    # string (possibly ``""`` for truly empty documents).  Using a
+    # non-null string sentinel avoids None-propagation issues through
+    # Pydantic contexts and embedding pipelines.
+    summary: str = Field(
+        default=SUMMARY_UNSET,
+        description=(
+            "SUMMARY_UNSET means enrichment has not run yet.  "
+            "Empty string means enrichment ran but produced nothing."
+        ),
+    )
 
     # Optional text.
     # - For documents (PDF/DOCX/TXT): extracted text is useful for debugging and enrichment.
@@ -175,7 +195,7 @@ class FileParseResult(BaseModel):
     #   not a full dump of the dataset.
     full_text: str = ""
 
-    # Optional parsed metadata (stored on FileRecords)
+    # ``None`` = enrichment has not run.  Populated model = enrichment ran.
     metadata: Optional[FileParseMetadata] = None
 
     # Observability + debug
