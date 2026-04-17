@@ -14,7 +14,7 @@ from pathlib import Path
 from urllib.parse import unquote, urlparse
 
 from unity.file_manager.file_parsers.types.json_types import JsonObject
-from unity.file_manager.pipeline.types import (
+from unity.common.pipeline.types import (
     CsvFileHandle,
     InlineRowsHandle,
     ObjectStoreArtifactHandle,
