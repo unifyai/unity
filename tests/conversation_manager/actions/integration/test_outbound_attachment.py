@@ -98,7 +98,7 @@ async def test_generate_image_and_send_as_attachment(initialized_cm_codeact):
     )
 
     with patch(
-        "unity.conversation_manager.domains.brain_action_tools.comms_utils.upload_unify_attachment",
+        "unity.comms.primitives.comms_utils.upload_unify_attachment",
         fake_upload,
     ):
         await inject_actor_result(

@@ -13,6 +13,7 @@ Context Propagation:
 from __future__ import annotations
 
 import asyncio
+from functools import wraps
 import inspect
 import re
 from typing import TYPE_CHECKING, Any, Optional
@@ -22,22 +23,12 @@ from pydantic import create_model as _create_model
 
 from unity.common.prompt_helpers import now as prompt_now
 from unity.logger import LOGGER
-from unity.common.hierarchical_logger import DEFAULT_ICON, ICONS
+from unity.common.hierarchical_logger import ICONS
+from unity.comms import CommsPrimitives
 
-from unity.conversation_manager.domains import comms_utils
 from unity.conversation_manager.domains import managers_utils
 from unity.conversation_manager.event_broker import get_event_broker
 from unity.conversation_manager.events import (
-    ApiMessageSent,
-    SMSSent,
-    WhatsAppSent,
-    UnifyMessageSent,
-    EmailSent,
-    PhoneCallSent,
-    WhatsAppCallSent,
-    WhatsAppCallInviteSent,
-    DiscordMessageSent,
-    DiscordChannelMessageSent,
     ActorHandleStarted,
     ActorHandleResponse,
     FastBrainNotification,
@@ -45,7 +36,6 @@ from unity.conversation_manager.events import (
 )
 from unity.common._async_tool.dynamic_tools_factory import DynamicToolFactory
 from unity.common._async_tool.utils import get_handle_paused_state
-from unity.conversation_manager.cm_types import Medium
 from unity.conversation_manager.task_actions import (
     STEERING_OPERATIONS,
     OPERATION_MAP,
@@ -226,96 +216,6 @@ def _filter_cm_state_for_actor(state_snapshot: dict) -> dict:
     return {**state_snapshot, "content": filtered_content}
 
 
-def _check_contact_has_address(
-    contact: dict | None,
-    address_field: str,
-    communication_type: str,
-) -> str | None:
-    """Check if a contact has the required address for a communication type."""
-    if not contact:
-        return f"Contact not found for {communication_type}"
-    address = contact.get(address_field)
-    if not address:
-        contact_name = _get_contact_display_name(contact)
-        field_display = address_field.replace("_", " ")
-        return (
-            f"Cannot send {communication_type} to {contact_name}: "
-            f"this contact does not have an {field_display} on file."
-        )
-    return None
-
-
-def _resolve_or_attach_detail(
-    contact: dict | None,
-    contact_id: int,
-    address_field: str,
-    inline_value: str | None,
-    communication_type: str,
-    contact_index: Any,
-) -> tuple[str | None, dict | None]:
-    """Resolve a contact's address field, optionally attaching an inline value.
-
-    Supports implicit contact-detail creation for contacts that are already in
-    the active conversation.  The rules are:
-
-    1. Contact has the field (no inline, or inline matches) -> happy path.
-    2. Contact has the field but inline is *different* -> error (use ``act``).
-    3. Contact missing the field, no inline provided -> error (missing detail).
-    4. Contact missing the field, inline provided -> attach, re-fetch, proceed.
-
-    Args:
-        contact: The contact dict (or ``None`` if not found).
-        contact_id: The contact's ID.
-        address_field: Field to check (e.g. ``"phone_number"``, ``"email_address"``).
-        inline_value: Optional inline value provided by the caller.
-        communication_type: Human-readable type for error messages (e.g. ``"SMS"``).
-        contact_index: :class:`ContactIndex` used for the update + re-fetch.
-
-    Returns:
-        ``(error_message, updated_contact)`` -- if *error_message* is not
-        ``None`` the operation should be aborted.
-    """
-    if not contact:
-        return (f"Contact not found for {communication_type}", None)
-
-    existing_value = contact.get(address_field)
-    field_display = address_field.replace("_", " ")
-    contact_name = _get_contact_display_name(contact)
-
-    if existing_value:
-        # Contact already has this field
-        if inline_value and inline_value != existing_value:
-            return (
-                f"Cannot send {communication_type} to {contact_name}: "
-                f"this contact already has {field_display} '{existing_value}' on file, "
-                f"but you provided '{inline_value}'. "
-                f"Use `act` to update the contact's {field_display} if needed, "
-                f"then retry the {communication_type}.",
-                None,
-            )
-        # No inline value, or same value -- proceed with existing
-        return (None, contact)
-
-    # Contact is missing this field
-    if not inline_value:
-        return (
-            f"Cannot send {communication_type} to {contact_name}: "
-            f"this contact does not have a {field_display} on file. "
-            f"Provide the {field_display} inline or use `act` to update "
-            f"the contact first.",
-            None,
-        )
-
-    # Attach the inline value to the existing contact
-    contact_index.contact_manager.update_contact(
-        contact_id=contact_id,
-        **{address_field: inline_value},
-    )
-    # Re-fetch to get fresh data after the update
-    updated_contact = contact_index.get_contact(contact_id)
-    return (None, updated_contact)
-
-
 class _DesktopActionHandle:
     """Lightweight handle wrapping a single desktop primitive call.
 
@@ -376,6 +276,10 @@ class ConversationManagerBrainActionTools:
     def __init__(self, cm: "ConversationManager"):
         self._cm = cm
         self._event_broker = get_event_broker()
+        self._comms = CommsPrimitives(
+            conversation_manager=cm,
+            event_broker=self._event_broker,
+        )
 
     async def _surface_comms_error(
         self,
@@ -415,6 +319,7 @@ class ConversationManagerBrainActionTools:
         await self._event_broker.publish(topic, event.to_json())
         return {"status": "error", "error": error_msg}
 
+    @wraps(CommsPrimitives.send_sms)
     async def send_sms(
         self,
         *,
@@ -422,84 +327,13 @@ class ConversationManagerBrainActionTools:
         content: str,
         phone_number: str | None = None,
     ) -> dict[str, Any]:
-        """
-        Send an SMS message to an existing contact.
-
-        The contact must already exist in the system.
-
-        - If the contact **already has** a phone number on file (visible in
-          active_conversations), omit ``phone_number`` -- it is not needed.
-        - If the contact **does not have** a phone number on file but you
-          know it (e.g. the boss provided it), pass it via ``phone_number``.
-          It will be saved to the contact record automatically and the SMS
-          will be sent in one step.
-        - **Do not** pass a ``phone_number`` that differs from the one
-          already on file -- this will be rejected.  Use ``act`` to update
-          the contact's phone number first, then retry.
-
-        Args:
-            contact_id: The contact_id of the recipient (from
-                active_conversations or returned by ``find_contacts`` /
-                ``create_contact``).
-            content: The text content of the SMS message to send.
-            phone_number: The recipient's phone number.  Required when the
-                contact does not yet have a phone number on file; omit when
-                the contact already has one.
-        """
-        contact_id = _coerce_contact_id(contact_id)
-        contact = self._cm.contact_index.get_contact(contact_id)
-
-        outbound_error = _check_outbound_allowed(contact)
-        if outbound_error:
-            return await self._surface_comms_error(
-                outbound_error,
-                "app:comms:sms_sent",
-                contact_id=contact_id,
-                medium=Medium.SMS_MESSAGE,
-            )
-
-        detail_error, contact = _resolve_or_attach_detail(
-            contact,
-            contact_id,
-            "phone_number",
-            phone_number,
-            "SMS",
-            self._cm.contact_index,
-        )
-        if detail_error:
-            return await self._surface_comms_error(
-                detail_error,
-                "app:comms:sms_sent",
-                contact_id=contact_id,
-                medium=Medium.SMS_MESSAGE,
-            )
-
-        to_number = contact.get("phone_number")
-        response = await comms_utils.send_sms_message_via_number(
-            to_number=to_number,
-            content=content,
-        )
-
-        if response["success"]:
-            # Re-fetch contact from ContactManager to ensure fresh data
-            fresh_contact = (
-                self._cm.contact_index.get_contact(phone_number=to_number) or contact
-            )
-            event = SMSSent(contact=fresh_contact, content=content)
-            await self._event_broker.publish("app:comms:sms_sent", event.to_json())
-            return {"status": "ok"}
-
-        if not self._cm.assistant_number:
-            error_msg = "You don't have a number, please provision one."
-        else:
-            error_msg = f"Failed to send sms to {to_number}"
-        return await self._surface_comms_error(
-            error_msg,
-            "app:comms:sms_sent",
+        return await self._comms.send_sms(
             contact_id=contact_id,
-            medium=Medium.SMS_MESSAGE,
+            content=content,
+            phone_number=phone_number,
         )
 
+    @wraps(CommsPrimitives.send_whatsapp)
     async def send_whatsapp(
         self,
         *,
@@ -508,293 +342,44 @@ class ConversationManagerBrainActionTools:
         whatsapp_number: str | None = None,
         attachment_filepath: str | None = None,
     ) -> dict[str, Any]:
-        """
-        Send a WhatsApp message to an existing contact.
-
-        The contact must already exist in the system.
-
-        - If the contact **already has** a WhatsApp number on file (visible in
-          active_conversations), omit ``whatsapp_number`` -- it is not needed.
-        - If the contact **does not have** a WhatsApp number on file but you
-          know it (e.g. the boss provided it), pass it via ``whatsapp_number``.
-          It will be saved to the contact record automatically and the
-          WhatsApp message will be sent in one step.
-        - **Do not** pass a ``whatsapp_number`` that differs from the one
-          already on file -- this will be rejected.  Use ``act`` to update
-          the contact's WhatsApp number first, then retry.
-
-        **Attachments**: WhatsApp allows **one** attachment per message.  To
-        send multiple files, call this tool once per file.  Supported types
-        inside the 24h window: images, audio, video, PDF, DOC, XLSX.
-        Outside the 24h window (template fallback), only PDF/image/video
-        are supported by WhatsApp — other types will be dropped.
-
-        Args:
-            contact_id: The contact_id of the recipient (from
-                active_conversations or returned by ``find_contacts`` /
-                ``create_contact``).
-            content: The text content of the WhatsApp message to send.
-            whatsapp_number: The recipient's WhatsApp number.  Required when
-                the contact does not yet have a WhatsApp number on file;
-                omit when the contact already has one.
-            attachment_filepath: Optional workspace-relative filepath of a
-                file to attach (e.g. ``Attachments/report.pdf``).  The file
-                is uploaded and sent as media alongside the text message.
-        """
-        contact_id = _coerce_contact_id(contact_id)
-        contact = self._cm.contact_index.get_contact(contact_id)
-
-        _wa_topic = "app:comms:whatsapp_sent"
-        _wa_err = dict(contact_id=contact_id, medium=Medium.WHATSAPP_MESSAGE)
-
-        outbound_error = _check_outbound_allowed(contact)
-        if outbound_error:
-            return await self._surface_comms_error(
-                outbound_error,
-                _wa_topic,
-                **_wa_err,
-            )
-
-        detail_error, contact = _resolve_or_attach_detail(
-            contact,
-            contact_id,
-            "whatsapp_number",
-            whatsapp_number,
-            "WhatsApp",
-            self._cm.contact_index,
-        )
-        if detail_error:
-            return await self._surface_comms_error(
-                detail_error,
-                _wa_topic,
-                **_wa_err,
-            )
-
-        from unity.session_details import SESSION_DETAILS
-
-        attachment = None
-        media_url = None
-        if attachment_filepath:
-            import os
-            from unity.file_manager.filesystem_adapters.local_adapter import (
-                LocalFileSystemAdapter,
-            )
-
-            adapter = LocalFileSystemAdapter()
-            try:
-                abs_path = adapter._abspath(attachment_filepath)
-                with open(abs_path, "rb") as f:
-                    file_contents = f.read()
-            except FileNotFoundError:
-                return await self._surface_comms_error(
-                    f"File not found: {attachment_filepath}",
-                    _wa_topic,
-                    **_wa_err,
-                )
-            except Exception as e:
-                return await self._surface_comms_error(
-                    f"Failed to read file: {e}",
-                    _wa_topic,
-                    **_wa_err,
-                )
-
-            attachment_filename = os.path.basename(attachment_filepath)
-            upload_result = await comms_utils.upload_unify_attachment(
-                file_content=file_contents,
-                filename=attachment_filename,
-            )
-            if "error" in upload_result:
-                return await self._surface_comms_error(
-                    f"Failed to upload attachment: {upload_result['error']}",
-                    _wa_topic,
-                    **_wa_err,
-                )
-
-            attachment = upload_result
-            att_id = attachment.get("id", "")
-            att_target = f"Attachments/{att_id}_{attachment_filename}"
-            try:
-                import shutil
-
-                att_dir = adapter._abspath("Attachments")
-                os.makedirs(att_dir, exist_ok=True)
-                shutil.copy2(
-                    abs_path,
-                    os.path.join(att_dir, f"{att_id}_{attachment_filename}"),
-                )
-            except Exception:
-                pass
-            attachment["filepath"] = att_target
-
-            media_url = attachment.get("url") or attachment.get("gs_url")
-            if media_url and media_url.startswith("gs://"):
-                import aiohttp as _aiohttp
-                from unity.conversation_manager.domains.comms_utils import (
-                    _get_signed_url_from_gs_url,
-                )
-
-                async with _aiohttp.ClientSession() as _sess:
-                    media_url = await _get_signed_url_from_gs_url(_sess, media_url)
-
-        to_number = contact.get("whatsapp_number")
-        response = await comms_utils.send_whatsapp_message(
-            to_number=to_number,
+        return await self._comms.send_whatsapp(
+            contact_id=contact_id,
             content=content,
-            user_name=contact.get("first_name", ""),
-            agent_name=SESSION_DETAILS.assistant.first_name,
-            media_url=media_url,
+            whatsapp_number=whatsapp_number,
+            attachment_filepath=attachment_filepath,
         )
 
-        if response.get("success"):
-            via_template = response.get("method") == "template"
-            fresh_contact = (
-                self._cm.contact_index.get_contact(whatsapp_number=to_number) or contact
-            )
-            attachments_for_event = [attachment] if attachment else []
-            event = WhatsAppSent(
-                contact=fresh_contact,
-                content=content,
-                via_template=via_template,
-                attachments=attachments_for_event or None,
-            )
-            await self._event_broker.publish(
-                _wa_topic,
-                event.to_json(),
-            )
-            if via_template:
-                self._cm._pending_whatsapp_resends[contact_id] = content
-                return {
-                    "status": "ok",
-                    "pending_resend": True,
-                    "note": (
-                        "The message could not be delivered verbatim. "
-                        "A notification was sent to the contact instead. "
-                        "When they reply, you will be prompted to resend "
-                        "your message."
-                    ),
-                }
-            return {"status": "ok"}
-
-        if not self._cm.assistant_whatsapp_number:
-            error_msg = "WhatsApp is not enabled for this assistant."
-        else:
-            error_msg = f"Failed to send WhatsApp message to {to_number}"
-        return await self._surface_comms_error(
-            error_msg,
-            _wa_topic,
-            **_wa_err,
-        )
-
+    @wraps(CommsPrimitives.send_discord_message)
     async def send_discord_message(
         self,
         *,
         contact_id: int | str,
         content: str,
         discord_id: str | None = None,
-        channel_id: str | None = None,
-        guild_id: str | None = None,
     ) -> dict[str, Any]:
-        """Send a Discord message to an existing contact.
-
-        Use this to reply when the inbound message arrived via Discord
-        (thread ``discord_message`` or ``discord_channel_message``).
-
-        Supports two modes determined by the context:
-
-        - **DM** (direct message): The default when the inbound message was a
-          DM. Omit ``channel_id``; the system resolves the contact's Discord
-          user ID and opens a DM channel automatically.
-        - **Channel reply**: Pass ``channel_id`` (and optionally ``guild_id``)
-          to reply in the same guild channel where the @mention arrived.
-
-        If the contact **already has** a Discord ID on file, omit
-        ``discord_id``. If you know the Discord ID but it is not yet on file,
-        pass it via ``discord_id`` to save it and send in one step.
-
-        Args:
-            contact_id: The contact_id of the recipient.
-            content: The text content to send.
-            discord_id: The recipient's Discord user snowflake ID. Only needed
-                when the contact does not yet have one on file.
-            channel_id: Discord channel ID for channel replies. Omit for DMs.
-            guild_id: Discord guild ID (for channel context only).
-        """
-        contact_id = _coerce_contact_id(contact_id)
-        contact = self._cm.contact_index.get_contact(contact_id)
-
-        is_channel = bool(channel_id)
-        medium = (
-            Medium.DISCORD_CHANNEL_MESSAGE if is_channel else Medium.DISCORD_MESSAGE
+        return await self._comms.send_discord_message(
+            contact_id=contact_id,
+            content=content,
+            discord_id=discord_id,
         )
-        _topic = (
-            "app:comms:discord_channel_message_sent"
-            if is_channel
-            else "app:comms:discord_message_sent"
+
+    @wraps(CommsPrimitives.send_discord_channel_message)
+    async def send_discord_channel_message(
+        self,
+        *,
+        channel_id: str,
+        content: str,
+        guild_id: str = "",
+        contact_id: int | str | None = None,
+    ) -> dict[str, Any]:
+        return await self._comms.send_discord_channel_message(
+            channel_id=channel_id,
+            content=content,
+            guild_id=guild_id,
+            contact_id=contact_id,
         )
-        _err = dict(contact_id=contact_id, medium=medium)
 
-        outbound_error = _check_outbound_allowed(contact)
-        if outbound_error:
-            return await self._surface_comms_error(outbound_error, _topic, **_err)
-
-        if not is_channel:
-            detail_error, contact = _resolve_or_attach_detail(
-                contact,
-                contact_id,
-                "discord_id",
-                discord_id,
-                "Discord",
-                self._cm.contact_index,
-            )
-            if detail_error:
-                return await self._surface_comms_error(detail_error, _topic, **_err)
-
-        from unity.session_details import SESSION_DETAILS
-
-        bot_id = getattr(SESSION_DETAILS.assistant, "discord_bot_id", "")
-
-        if is_channel:
-            response = await comms_utils.send_discord_message(
-                channel_id=channel_id,
-                body=content,
-                bot_id=bot_id,
-            )
-        else:
-            to_discord_id = contact.get("discord_id")
-            response = await comms_utils.send_discord_message(
-                to=to_discord_id,
-                body=content,
-                bot_id=bot_id,
-            )
-
-        if response.get("success"):
-            fresh_contact = (
-                self._cm.contact_index.get_contact(
-                    discord_id=contact.get("discord_id"),
-                )
-                or contact
-            )
-            if is_channel:
-                event = DiscordChannelMessageSent(
-                    contact=fresh_contact,
-                    content=content,
-                    channel_id=channel_id or "",
-                    guild_id=guild_id or "",
-                )
-            else:
-                event = DiscordMessageSent(
-                    contact=fresh_contact,
-                    content=content,
-                )
-            await self._event_broker.publish(_topic, event.to_json())
-            return {"status": "ok"}
-
-        if not bot_id:
-            error_msg = "Discord is not enabled for this assistant."
-        else:
-            error_msg = "Failed to send Discord message"
-        return await self._surface_comms_error(error_msg, _topic, **_err)
-
+    @wraps(CommsPrimitives.send_unify_message)
     async def send_unify_message(
         self,
         *,
@@ -802,124 +387,13 @@ class ConversationManagerBrainActionTools:
         contact_id: int | str,
         attachment_filepath: str | None = None,
     ) -> dict[str, Any]:
-        """
-        Send a Unify message to a contact via the Unify platform.
-
-        Args:
-            content: Message content to send.
-            contact_id: Target contact_id (integer) from active conversations.
-            attachment_filepath: Optional filepath to attach.
-        """
-        contact_id = _coerce_contact_id(contact_id)
-        import os
-
-        contact = self._cm.contact_index.get_contact(contact_id=contact_id)
-
-        _unify_topic = "app:comms:unify_message_sent"
-        _unify_err = dict(contact_id=contact_id, medium=Medium.UNIFY_MESSAGE)
-
-        if contact:
-            outbound_error = _check_outbound_allowed(contact)
-            if outbound_error:
-                return await self._surface_comms_error(
-                    outbound_error,
-                    _unify_topic,
-                    **_unify_err,
-                )
-
-        # Handle attachment
-        attachment = None
-        attachment_filename = None
-        if attachment_filepath:
-            try:
-                from unity.file_manager.filesystem_adapters.local_adapter import (
-                    LocalFileSystemAdapter,
-                )
-
-                adapter = LocalFileSystemAdapter()
-                file_ref = adapter.get_file(attachment_filepath)
-                abs_path = adapter._abspath(attachment_filepath)
-                with open(abs_path, "rb") as f:
-                    file_contents = f.read()
-
-                file_size_mb = len(file_contents) / (1024 * 1024)
-                if file_size_mb > 25:
-                    return await self._surface_comms_error(
-                        f"File too large: {file_size_mb:.1f}MB exceeds "
-                        f"25MB attachment limit.",
-                        _unify_topic,
-                        **_unify_err,
-                    )
-
-                attachment_filename = os.path.basename(attachment_filepath)
-                upload_result = await comms_utils.upload_unify_attachment(
-                    file_content=file_contents,
-                    filename=attachment_filename,
-                )
-
-                if "error" in upload_result:
-                    return await self._surface_comms_error(
-                        f"Failed to upload attachment: {upload_result['error']}",
-                        _unify_topic,
-                        **_unify_err,
-                    )
-
-                attachment = upload_result
-                att_id = attachment.get("id", "")
-                att_target = f"Attachments/{att_id}_{attachment_filename}"
-                try:
-                    import shutil
-
-                    att_dir = adapter._abspath("Attachments")
-                    os.makedirs(att_dir, exist_ok=True)
-                    shutil.copy2(
-                        abs_path,
-                        os.path.join(att_dir, f"{att_id}_{attachment_filename}"),
-                    )
-                except Exception:
-                    pass
-                attachment["filepath"] = att_target
-
-            except FileNotFoundError:
-                return await self._surface_comms_error(
-                    f"File not found: {attachment_filepath}",
-                    _unify_topic,
-                    **_unify_err,
-                )
-            except Exception as e:
-                return await self._surface_comms_error(
-                    f"Failed to read file: {e}",
-                    _unify_topic,
-                    **_unify_err,
-                )
-
-        response = await comms_utils.send_unify_message(
+        return await self._comms.send_unify_message(
             content=content,
             contact_id=contact_id,
-            attachment=attachment,
-        )
-        if response["success"]:
-            fresh_contact = (
-                self._cm.contact_index.get_contact(contact_id=contact_id)
-                or contact
-                or {}
-            )
-            # Use full attachment metadata if available, otherwise empty list
-            attachments_for_event = [attachment] if attachment else []
-            event = UnifyMessageSent(
-                contact=fresh_contact,
-                content=content,
-                attachments=attachments_for_event,
-            )
-            await self._event_broker.publish(_unify_topic, event.to_json())
-            return {"status": "ok"}
-
-        return await self._surface_comms_error(
-            "Failed to send unify message",
-            _unify_topic,
-            **_unify_err,
+            attachment_filepath=attachment_filepath,
         )
 
+    @wraps(CommsPrimitives.send_api_response)
     async def send_api_response(
         self,
         *,
@@ -928,121 +402,14 @@ class ConversationManagerBrainActionTools:
         attachment_filepaths: list[str] | None = None,
         tags: list[str] | None = None,
     ) -> dict[str, Any]:
-        """
-        Send a response back to the developer who sent a programmatic API message.
-
-        Use this when the most recent inbound message arrived via the REST API
-        (medium ``api_message``) and you want the developer to receive your
-        reply through the same polling endpoint they are waiting on.
-
-        If no API message is pending, this call is a no-op (the developer is
-        not waiting for a response on this channel).
-
-        Args:
-            content: The response text to send back to the developer.
-            contact_id: The contact_id of the recipient.
-            attachment_filepaths: Optional list of workspace-relative file
-                paths to upload and attach to the response.
-            tags: Tags for the response. When omitted, the tags from the
-                inbound API message are echoed back automatically so the
-                sender's tag-based routing receives the reply.
-        """
-        contact_id = _coerce_contact_id(contact_id)
-        api_message_id = getattr(self._cm, "_pending_api_message_id", None)
-        if not api_message_id:
-            return {"status": "ok", "note": "no pending api message"}
-
-        contact = self._cm.contact_index.get_contact(contact_id) or {
-            "contact_id": contact_id,
-        }
-        _api_topic = "app:comms:api_message_sent"
-        _api_err = dict(contact_id=contact_id, medium=Medium.API_MESSAGE)
-
-        # Default to echoing inbound tags when the caller doesn't specify.
-        if tags is None:
-            tags = getattr(self._cm, "_pending_api_message_tags", None) or []
-
-        # Upload attachments (same pattern as send_unify_message).
-        import os
-
-        uploaded_attachments: list[dict] = []
-        if attachment_filepaths:
-            for filepath in attachment_filepaths:
-                try:
-                    from unity.file_manager.filesystem_adapters.local_adapter import (
-                        LocalFileSystemAdapter,
-                    )
-
-                    adapter = LocalFileSystemAdapter()
-                    adapter.get_file(filepath)
-                    abs_path = adapter._abspath(filepath)
-                    with open(abs_path, "rb") as f:
-                        file_contents = f.read()
-
-                    upload_result = await comms_utils.upload_unify_attachment(
-                        file_content=file_contents,
-                        filename=os.path.basename(filepath),
-                    )
-                    if "error" in upload_result:
-                        return await self._surface_comms_error(
-                            f"Failed to upload attachment: {upload_result['error']}",
-                            _api_topic,
-                            **_api_err,
-                        )
-                    att_id = upload_result.get("id", "")
-                    att_fname = os.path.basename(filepath)
-                    att_target = f"Attachments/{att_id}_{att_fname}"
-                    try:
-                        import shutil
-
-                        att_dir = adapter._abspath("Attachments")
-                        os.makedirs(att_dir, exist_ok=True)
-                        shutil.copy2(
-                            abs_path,
-                            os.path.join(att_dir, f"{att_id}_{att_fname}"),
-                        )
-                    except Exception:
-                        pass
-                    upload_result["filepath"] = att_target
-                    uploaded_attachments.append(upload_result)
-                except FileNotFoundError:
-                    return await self._surface_comms_error(
-                        f"File not found: {filepath}",
-                        _api_topic,
-                        **_api_err,
-                    )
-                except Exception as e:
-                    return await self._surface_comms_error(
-                        f"Failed to read file: {e}",
-                        _api_topic,
-                        **_api_err,
-                    )
-
-        result = await comms_utils.complete_api_message(
-            api_message_id=api_message_id,
-            response=content,
-            attachments=uploaded_attachments or None,
-            tags=tags or None,
-        )
-        if result["success"]:
-            event = ApiMessageSent(
-                contact=contact,
-                content=content,
-                api_message_id=api_message_id,
-                attachments=uploaded_attachments,
-                tags=tags,
-            )
-            await self._event_broker.publish(_api_topic, event.to_json())
-            self._cm._pending_api_message_id = None
-            self._cm._pending_api_message_tags = None
-            return {"status": "ok"}
-
-        return await self._surface_comms_error(
-            "Failed to send API response",
-            _api_topic,
-            **_api_err,
+        return await self._comms.send_api_response(
+            content=content,
+            contact_id=contact_id,
+            attachment_filepaths=attachment_filepaths,
+            tags=tags,
         )
 
+    @wraps(CommsPrimitives.send_email)
     async def send_email(
         self,
         *,
@@ -1055,384 +422,18 @@ class ConversationManagerBrainActionTools:
         email_id_to_reply_to: str | None = None,
         attachment_filepath: str | None = None,
     ) -> dict[str, Any]:
-        """
-        Send an email to existing contacts.
-
-        Each contact must already exist in the system.  Each recipient in
-        ``to``, ``cc``, and ``bcc`` is specified in one of two ways:
-
-        - **Contact already has an email on file** -- pass the bare
-          ``contact_id`` (integer).  Example: ``to=[5]``.
-        - **Contact does NOT have an email on file** but you know it
-          (e.g. the boss provided it) -- pass a dict with both fields:
-          ``{"contact_id": 5, "email_address": "alice@example.com"}``.
-          The email will be saved to the contact record automatically and
-          the email will be sent in one step.
-
-        You can mix both forms in the same list.
-
-        **Do not** use the dict form to supply an email that differs from
-        the one already on file -- this will be rejected.  Use ``act`` to
-        update the contact's email address first, then retry.
-
-        Duplicates are automatically collapsed.
-
-        Args:
-            to: Primary recipients.  Each element is either a
-                ``contact_id`` (int) when the contact already has an email
-                on file, or ``{"contact_id": int, "email_address": str}``
-                when you need to provide the email address.
-            cc: CC recipients (same format as ``to``).
-            bcc: BCC recipients (same format as ``to``).
-            subject: Email subject.
-            body: Email body.
-            reply_all: If True, automatically populate to/cc from the email being
-                replied to. Mutually exclusive with to/cc/bcc - fails if both are set.
-            email_id_to_reply_to: Email ID (RFC Message-ID) to reply to for threading.
-                Required for reply_all, or auto-inferred from most recent inbound email.
-            attachment_filepath: Optional filepath to attach.
-        """
-        import base64
-        import os
-
-        from unity.session_details import SESSION_DETAILS
-
-        # Coerce each recipient item to (contact_id, optional_inline_email).
-        # Accepts: int, str (string-encoded int), or dict with contact_id + email_address.
-        def _coerce_recipients(
-            items: list | None,
-        ) -> list[tuple[int, str | None]] | None:
-            if items is None:
-                return None
-            result: list[tuple[int, str | None]] = []
-            for item in items:
-                if isinstance(item, dict):
-                    cid = item.get("contact_id")
-                    if cid is None:
-                        raise TypeError(
-                            f"Email recipient dict must include 'contact_id', got: {item!r}",
-                        )
-                    result.append((_coerce_contact_id(cid), item.get("email_address")))
-                else:
-                    result.append((_coerce_contact_id(item), None))
-            return result
-
-        to = _coerce_recipients(to)
-        cc = _coerce_recipients(cc)
-        bcc = _coerce_recipients(bcc)
-
-        _email_topic = "app:comms:email_sent"
-        # Best-effort contact_id for thread placement of email errors.
-        _email_cid = (
-            (to[0][0] if to else None)
-            or (cc[0][0] if cc else None)
-            or (bcc[0][0] if bcc else None)
-        )
-        _email_err = dict(contact_id=_email_cid, medium=Medium.EMAIL)
-
-        # --- Validation: reply_all is mutually exclusive with to/cc/bcc ---
-        if reply_all and (to or cc or bcc):
-            error_msg = (
-                "reply_all=True is mutually exclusive with to/cc/bcc. "
-                "Either use reply_all to auto-populate recipients from the thread, "
-                "or specify recipients explicitly."
-            )
-            return await self._surface_comms_error(
-                error_msg,
-                _email_topic,
-                **_email_err,
-            )
-
-        # --- Helper: resolve recipients to unique (email, contact) pairs ---
-        def _resolve_recipients(
-            recipients: list[tuple[int, str | None]] | None,
-        ) -> tuple[str | None, list[tuple[str, dict]]]:
-            """Resolve recipients to (email_address, contact_dict) pairs.
-
-            Each item is ``(contact_id, optional_inline_email)``.  Uses
-            :func:`_resolve_or_attach_detail` for implicit detail creation.
-
-            Returns ``(error, resolved)`` -- if *error* is not ``None`` the
-            whole send should be aborted.
-            """
-            if not recipients:
-                return (None, [])
-            results: dict[str, dict] = {}  # email -> contact, for deduplication
-            for cid, inline_email in recipients:
-                contact = self._cm.contact_index.get_contact(cid)
-                err, resolved = _resolve_or_attach_detail(
-                    contact,
-                    cid,
-                    "email_address",
-                    inline_email,
-                    "email",
-                    self._cm.contact_index,
-                )
-                if err:
-                    return (err, [])
-                if resolved:
-                    email = resolved.get("email_address")
-                    if email and email not in results:
-                        results[email] = resolved
-            return (None, [(e, c) for e, c in results.items()])
-
-        # --- Handle reply_all: populate to/cc from the email being replied to ---
-        final_to: list[str] = []
-        final_cc: list[str] = []
-        final_bcc: list[str] = []
-        reply_email_id = email_id_to_reply_to
-        primary_contact: dict | None = None  # For EmailSent event
-
-        if reply_all:
-            # Find the email to reply to
-            original_email = None
-            # Search the global thread for the email with this ID
-            all_emails = [
-                e.message
-                for e in self._cm.contact_index.global_thread
-                if e.medium == Medium.EMAIL
-            ]
-            if reply_email_id:
-                for m in all_emails:
-                    if getattr(m, "email_id", None) == reply_email_id:
-                        original_email = m
-                        break
-            else:
-                # Auto-infer: find the most recent inbound email with matching subject
-                for m in reversed(all_emails):
-                    if getattr(m, "name", None) != "You" and getattr(
-                        m,
-                        "email_id",
-                        None,
-                    ):
-                        # Check subject match (strip "Re: " prefix for comparison)
-                        m_subject = getattr(m, "subject", "") or ""
-                        clean_subject = subject.removeprefix("Re: ").strip()
-                        clean_m_subject = m_subject.removeprefix("Re: ").strip()
-                        if clean_subject == clean_m_subject or not clean_subject:
-                            original_email = m
-                            reply_email_id = m.email_id
-                            break
-
-            if not original_email:
-                return await self._surface_comms_error(
-                    "reply_all=True but no email found to reply to. "
-                    "Either provide email_id_to_reply_to or ensure there's a matching "
-                    "inbound email in the thread.",
-                    _email_topic,
-                    **_email_err,
-                )
-
-            # Standard reply-all behavior:
-            # - Original sender -> to
-            # - Original to + cc (minus self) -> cc
-            assistant_email = SESSION_DETAILS.assistant.email
-            original_to = getattr(original_email, "to", []) or []
-            original_cc = getattr(original_email, "cc", []) or []
-
-            # The sender goes to "to" - we need to find the sender email
-            # For inbound emails, the sender is in the contact associated with the email
-            # We can find it from the conversation state's contact
-            sender_email = None
-            for entry in self._cm.contact_index.global_thread:
-                if entry.message is original_email:
-                    # Find the contact who was the sender
-                    for cid, role in entry.contact_roles.items():
-                        if role == "sender":
-                            contact = self._cm.contact_index.get_contact(cid)
-                            if contact:
-                                sender_email = contact.get("email_address")
-                                primary_contact = contact
-                            break
-                    break
-
-            if sender_email:
-                final_to = [sender_email]
-
-            # Original to + cc (minus self) go to cc
-            all_original_recipients = set(original_to) | set(original_cc)
-            if assistant_email:
-                all_original_recipients.discard(assistant_email)
-            if sender_email:
-                all_original_recipients.discard(sender_email)
-            final_cc = list(all_original_recipients)
-
-        else:
-            # --- Resolve explicit recipients to email addresses ---
-            to_err, to_resolved = _resolve_recipients(to)
-            if to_err:
-                return await self._surface_comms_error(
-                    to_err,
-                    _email_topic,
-                    **_email_err,
-                )
-
-            cc_err, cc_resolved = _resolve_recipients(cc)
-            if cc_err:
-                return await self._surface_comms_error(
-                    cc_err,
-                    _email_topic,
-                    **_email_err,
-                )
-
-            bcc_err, bcc_resolved = _resolve_recipients(bcc)
-            if bcc_err:
-                return await self._surface_comms_error(
-                    bcc_err,
-                    _email_topic,
-                    **_email_err,
-                )
-
-            # Extract just the email addresses for sending
-            final_to = [email for email, _ in to_resolved]
-            final_cc = [email for email, _ in cc_resolved]
-            final_bcc = [email for email, _ in bcc_resolved]
-
-            # Keep track of primary contact for the event
-            primary_contact = None
-            if to_resolved:
-                primary_contact = to_resolved[0][1]
-            elif cc_resolved:
-                primary_contact = cc_resolved[0][1]
-            elif bcc_resolved:
-                primary_contact = bcc_resolved[0][1]
-
-            # --- Validation: at least one recipient required ---
-            if not final_to and not final_cc and not final_bcc:
-                return await self._surface_comms_error(
-                    "At least one recipient is required. "
-                    "Provide to, cc, or bcc, or use reply_all=True.",
-                    _email_topic,
-                    **_email_err,
-                )
-
-            # --- Infer reply ID from email thread if not provided ---
-            if not reply_email_id:
-                try:
-                    all_emails = [
-                        e.message
-                        for e in self._cm.contact_index.global_thread
-                        if e.medium == Medium.EMAIL
-                    ]
-                    for m in reversed(all_emails):
-                        if (
-                            getattr(m, "name", None) != "You"
-                            and getattr(m, "subject", None) == subject
-                            and getattr(m, "email_id", None)
-                        ):
-                            reply_email_id = m.email_id
-                            break
-                except Exception:
-                    pass
-
-        # --- Handle subject prefix for replies ---
-        final_subject = subject
-        if reply_email_id and not subject.startswith("Re: "):
-            final_subject = f"Re: {subject}"
-
-        # --- Handle attachment ---
-        attachment = None
-        attachment_meta = None
-        if attachment_filepath:
-            try:
-                from unity.file_manager.filesystem_adapters.local_adapter import (
-                    LocalFileSystemAdapter,
-                )
-
-                adapter = LocalFileSystemAdapter()
-                file_ref = adapter.get_file(attachment_filepath)
-                abs_path = adapter._abspath(attachment_filepath)
-                with open(abs_path, "rb") as f:
-                    file_contents = f.read()
-
-                file_size_mb = len(file_contents) / (1024 * 1024)
-                if file_size_mb > 25:
-                    return await self._surface_comms_error(
-                        f"File too large for email: {file_size_mb:.1f}MB exceeds "
-                        f"Gmail's 25MB attachment limit. Consider sharing via "
-                        f"Unify message instead.",
-                        _email_topic,
-                        **_email_err,
-                    )
-
-                import uuid
-
-                att_filename = os.path.basename(attachment_filepath)
-                att_id = str(uuid.uuid4())
-                attachment = {
-                    "filename": att_filename,
-                    "content_base64": base64.b64encode(file_contents).decode("utf-8"),
-                }
-                att_target = f"Attachments/{att_id}_{att_filename}"
-                try:
-                    import shutil
-
-                    att_dir = adapter._abspath("Attachments")
-                    os.makedirs(att_dir, exist_ok=True)
-                    shutil.copy2(
-                        abs_path,
-                        os.path.join(att_dir, f"{att_id}_{att_filename}"),
-                    )
-                except Exception:
-                    pass
-                attachment_meta = {
-                    "id": att_id,
-                    "filename": att_filename,
-                    "filepath": att_target,
-                }
-            except FileNotFoundError:
-                return await self._surface_comms_error(
-                    f"File not found: {attachment_filepath}",
-                    _email_topic,
-                    **_email_err,
-                )
-            except Exception as e:
-                return await self._surface_comms_error(
-                    f"Failed to read file: {e}",
-                    _email_topic,
-                    **_email_err,
-                )
-
-        # --- Send the email ---
-        response = await comms_utils.send_email_via_address(
-            to=final_to,
-            subject=final_subject,
+        return await self._comms.send_email(
+            to=to,
+            cc=cc,
+            bcc=bcc,
+            subject=subject,
             body=body,
-            cc=final_cc if final_cc else None,
-            bcc=final_bcc if final_bcc else None,
-            email_id=reply_email_id,
-            attachment=attachment,
+            reply_all=reply_all,
+            email_id_to_reply_to=email_id_to_reply_to,
+            attachment_filepath=attachment_filepath,
         )
 
-        if response["success"]:
-            # Use the primary contact we resolved earlier (or empty dict for reply_all fallback)
-            event = EmailSent(
-                contact=primary_contact or {},
-                body=body,
-                subject=final_subject,
-                email_id_replied_to=reply_email_id,
-                attachments=[attachment_meta] if attachment_meta else [],
-                to=final_to,
-                cc=final_cc,
-                bcc=final_bcc,
-            )
-            await self._event_broker.publish(_email_topic, event.to_json())
-            return {"status": "ok"}
-
-        if not self._cm.assistant_email:
-            error_msg = "You don't have an email address, please provision one."
-        else:
-            recipients = final_to + final_cc + final_bcc
-            error_msg = response.get(
-                "error",
-                f"Failed to send email to {recipients}",
-            )
-        return await self._surface_comms_error(
-            error_msg,
-            _email_topic,
-            **_email_err,
-        )
-
+    @wraps(CommsPrimitives.make_call)
     async def make_call(
         self,
         *,
@@ -1440,119 +441,13 @@ class ConversationManagerBrainActionTools:
         context: str,
         phone_number: str | None = None,
     ) -> dict[str, Any]:
-        """
-        Start an outbound phone call to an existing contact.
-
-        The contact must already exist in the system.
-
-        - If the contact **already has** a phone number on file (visible in
-          active_conversations), omit ``phone_number`` -- it is not needed.
-        - If the contact **does not have** a phone number on file but you
-          know it (e.g. the boss provided it), pass it via ``phone_number``.
-          It will be saved to the contact record automatically and the call
-          will be placed in one step.
-        - **Do not** pass a ``phone_number`` that differs from the one
-          already on file -- this will be rejected.  Use ``act`` to update
-          the contact's phone number first, then retry.
-
-        Args:
-            contact_id: The contact_id of the person to call (from
-                active_conversations or returned by ``find_contacts`` /
-                ``create_contact``).
-            context: **Mission briefing for the voice agent.** This is the
-                voice agent's sole source of context about what to do on the
-                call. Once the call connects, the voice agent speaks first
-                and will not receive any further guidance from you until the
-                other person responds or an external event arrives. Everything
-                the voice agent needs to open and conduct the conversation
-                must be in this string.
-
-                Include:
-                - **Purpose**: Why are we calling? What is the goal?
-                - **Key information**: Specific facts, names, dates, or
-                  details the voice agent needs (e.g. "the meeting is
-                  Thursday at 3pm at the downtown office").
-                - **Questions to ask**: What specific information do we need
-                  from the other person?
-                - **Tone / relationship**: How does the boss know this person?
-                  Any relevant social context (e.g. "this is a close friend"
-                  vs "this is a new business contact").
-                - **Constraints**: Anything to avoid saying, sensitive topics,
-                  or fallback behavior if the person is unavailable or
-                  confused.
-
-                Be thorough — a well-briefed voice agent produces a natural,
-                purposeful conversation. A vague context produces an awkward
-                opening.
-
-                Example: "Call to confirm the Thursday 3pm meeting with the
-                design team at the downtown office. Ask if Sarah has any
-                dietary preferences for the team lunch we're ordering. She's
-                a senior designer and long-time colleague — friendly and
-                informal tone is fine. If she can't make Thursday, ask what
-                times work Friday instead."
-            phone_number: The recipient's phone number.  Required when the
-                contact does not yet have a phone number on file; omit when
-                the contact already has one.
-        """
-        contact_id = _coerce_contact_id(contact_id)
-        contact = self._cm.contact_index.get_contact(contact_id)
-
-        outbound_error = _check_outbound_allowed(contact)
-        if outbound_error:
-            return await self._surface_comms_error(
-                outbound_error,
-                "app:comms:make_call",
-                contact_id=contact_id,
-                medium=Medium.PHONE_CALL,
-            )
-
-        detail_error, contact = _resolve_or_attach_detail(
-            contact,
-            contact_id,
-            "phone_number",
-            phone_number,
-            "phone call",
-            self._cm.contact_index,
-        )
-        if detail_error:
-            return await self._surface_comms_error(
-                detail_error,
-                "app:comms:make_call",
-                contact_id=contact_id,
-                medium=Medium.PHONE_CALL,
-            )
-
-        to_number = contact.get("phone_number")
-        LOGGER.debug(
-            f"{DEFAULT_ICON} [make_call] context: {context}, to_number: {to_number}",
-        )
-        # Store initial notification so CallManager can publish it to the fast
-        # brain after the subprocess spawns (before the recipient picks up).
-        if context:
-            self._cm.call_manager.initial_notification = context
-        response = await comms_utils.start_call(to_number=to_number)
-        if response["success"]:
-            fresh_contact = (
-                self._cm.contact_index.get_contact(phone_number=to_number)
-                or contact
-                or {}
-            )
-            event = PhoneCallSent(contact=fresh_contact)
-            await self._event_broker.publish("app:comms:make_call", event.to_json())
-            return {"status": "ok"}
-
-        if not self._cm.assistant_number:
-            error_msg = "You don't have a number, please provision one."
-        else:
-            error_msg = f"Failed to send call to {to_number}"
-        return await self._surface_comms_error(
-            error_msg,
-            "app:comms:make_call",
+        return await self._comms.make_call(
             contact_id=contact_id,
-            medium=Medium.PHONE_CALL,
+            context=context,
+            phone_number=phone_number,
         )
 
+    @wraps(CommsPrimitives.make_whatsapp_call)
     async def make_whatsapp_call(
         self,
         *,
@@ -1560,166 +455,11 @@ class ConversationManagerBrainActionTools:
         context: str,
         whatsapp_number: str | None = None,
     ) -> dict[str, Any]:
-        """
-        Start an outbound WhatsApp voice call to an existing contact.
-
-        The contact must already exist in the system.
-
-        - If the contact **already has** a WhatsApp number on file (visible in
-          active_conversations), omit ``whatsapp_number`` -- it is not needed.
-        - If the contact **does not have** a WhatsApp number on file but you
-          know it (e.g. the boss provided it), pass it via ``whatsapp_number``.
-          It will be saved to the contact record automatically and the call
-          will be placed in one step.
-        - **Do not** pass a ``whatsapp_number`` that differs from the one
-          already on file -- this will be rejected.  Use ``act`` to update
-          the contact's WhatsApp number first, then retry.
-
-        If WhatsApp call permission has not yet been granted by the contact,
-        a call invite template is sent instead — the contact sees a "Call now"
-        button. When they tap it, the call connects automatically and you will
-        be briefed with the context you provided.
-
-        Args:
-            contact_id: The contact_id of the person to call (from
-                active_conversations or returned by ``find_contacts`` /
-                ``create_contact``).
-            context: **Mission briefing for the voice agent.** This is the
-                voice agent's sole source of context about what to do on the
-                call. Once the call connects, the voice agent speaks first
-                and will not receive any further guidance from you until the
-                other person responds or an external event arrives. Everything
-                the voice agent needs to open and conduct the conversation
-                must be in this string.
-
-                Include:
-                - **Purpose**: Why are we calling? What is the goal?
-                - **Key information**: Specific facts, names, dates, or
-                  details the voice agent needs (e.g. "the meeting is
-                  Thursday at 3pm at the downtown office").
-                - **Questions to ask**: What specific information do we need
-                  from the other person?
-                - **Tone / relationship**: How does the boss know this person?
-                  Any relevant social context (e.g. "this is a close friend"
-                  vs "this is a new business contact").
-                - **Constraints**: Anything to avoid saying, sensitive topics,
-                  or fallback behavior if the person is unavailable or
-                  confused.
-
-                Be thorough — a well-briefed voice agent produces a natural,
-                purposeful conversation. A vague context produces an awkward
-                opening.
-            whatsapp_number: The recipient's WhatsApp number (E.164).
-                Required when the contact does not yet have a WhatsApp
-                number on file; omit when the contact already has one.
-        """
-        from unity.conversation_manager.domains.call_manager import make_room_name
-
-        contact_id = _coerce_contact_id(contact_id)
-
-        if (
-            self._cm.call_manager.has_active_call
-            or self._cm.call_manager.has_active_google_meet
-            or self._cm.call_manager._whatsapp_call_joining
-        ):
-            return {
-                "status": "error",
-                "message": "A call or meeting is already active.",
-            }
-
-        contact = self._cm.contact_index.get_contact(contact_id)
-
-        outbound_error = _check_outbound_allowed(contact)
-        if outbound_error:
-            return await self._surface_comms_error(
-                outbound_error,
-                "app:comms:whatsapp_call_sent",
-                contact_id=contact_id,
-                medium=Medium.WHATSAPP_CALL,
-            )
-
-        detail_error, contact = _resolve_or_attach_detail(
-            contact,
-            contact_id,
-            "whatsapp_number",
-            whatsapp_number,
-            "WhatsApp call",
-            self._cm.contact_index,
+        return await self._comms.make_whatsapp_call(
+            contact_id=contact_id,
+            context=context,
+            whatsapp_number=whatsapp_number,
         )
-        if detail_error:
-            return await self._surface_comms_error(
-                detail_error,
-                "app:comms:whatsapp_call_sent",
-                contact_id=contact_id,
-                medium=Medium.WHATSAPP_CALL,
-            )
-
-        from unity.session_details import SESSION_DETAILS
-
-        to_number = contact.get("whatsapp_number")
-        assistant_id = str(SESSION_DETAILS.assistant.agent_id)
-        agent_name = SESSION_DETAILS.assistant.name or ""
-        room_name = make_room_name(assistant_id, "whatsapp_call")
-
-        LOGGER.debug(
-            f"{DEFAULT_ICON} [make_whatsapp_call] context: {context}, to_number: {to_number}",
-        )
-
-        self._cm.call_manager._whatsapp_call_joining = True
-
-        response = await comms_utils.start_whatsapp_call(
-            to_number=to_number,
-            agent_name=agent_name,
-            room_name=room_name,
-        )
-        if not response.get("success"):
-            self._cm.call_manager._whatsapp_call_joining = False
-            if not self._cm.assistant_whatsapp_number:
-                error_msg = "You don't have a WhatsApp number configured."
-            else:
-                error_msg = f"Failed to initiate WhatsApp call to {to_number}"
-            return await self._surface_comms_error(
-                error_msg,
-                "app:comms:whatsapp_call_sent",
-                contact_id=contact_id,
-                medium=Medium.WHATSAPP_CALL,
-            )
-
-        fresh_contact = (
-            self._cm.contact_index.get_contact(whatsapp_number=to_number)
-            or contact
-            or {}
-        )
-        method = response.get("method")
-
-        if method == "direct":
-            if context:
-                self._cm.call_manager.initial_notification = context
-            event = WhatsAppCallSent(contact=fresh_contact)
-            await self._event_broker.publish(
-                "app:comms:whatsapp_call_sent",
-                event.to_json(),
-            )
-            return {"status": "ok"}
-
-        # method == "invite" — no actual call yet, release the joining flag
-        self._cm.call_manager._whatsapp_call_joining = False
-        if context:
-            self._cm._pending_whatsapp_call_contexts[contact_id] = context
-        event = WhatsAppCallInviteSent(contact=fresh_contact)
-        await self._event_broker.publish(
-            "app:comms:whatsapp_call_invite_sent",
-            event.to_json(),
-        )
-        return {
-            "status": "ok",
-            "pending_callback": True,
-            "note": (
-                "Call permission not yet granted. A call invite was sent instead. "
-                "When the contact taps 'Call now', the call will connect and "
-                "you will be briefed with the context you provided."
-            ),
-        }
 
     async def join_google_meet(
         self,
@@ -2667,6 +1407,7 @@ class ConversationManagerBrainActionTools:
             tools["send_email"] = self.send_email
         if self._cm.assistant_discord_bot_id:
             tools["send_discord_message"] = self.send_discord_message
+            tools["send_discord_channel_message"] = self.send_discord_channel_message
         if getattr(self._cm.mode, "is_voice", False):
             tools["guide_voice_agent"] = self.guide_voice_agent
         if SETTINGS.DEMO_MODE:
