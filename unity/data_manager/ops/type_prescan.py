@@ -9,6 +9,11 @@ sent to Orchestra. The goal is to:
 2. Coerce non-conforming cell values to ``None`` so that Orchestra's
    strict type enforcement never rejects individual rows.
 3. Always coerce empty strings ``""`` to ``None`` (universal rule).
+
+For streaming ingestion, :class:`TypeMap` and :func:`prescan_from_rows`
+provide a forward-only variant that works on any row iterable (no random
+access). :func:`coerce_batch` applies a pre-computed :class:`TypeMap` to
+a single chunk of rows.
 """
 
 from __future__ import annotations
@@ -17,7 +22,7 @@ import logging
 import random
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, FrozenSet, Iterable, List, Tuple
 
 from unity.common.type_utils import (
     _is_date_string,
@@ -317,3 +322,129 @@ def coerce_empty_strings(
                 row[col] = None
                 count += 1
     return rows, count
+
+
+# =========================================================================
+# Streaming-compatible prescan (forward-only, no random access)
+# =========================================================================
+
+
+@dataclass(frozen=True)
+class TypeMap:
+    """Immutable result of a type prescan.
+
+    Produced once from a row sample and reused across all subsequent
+    chunks during streaming ingestion so every chunk is coerced with
+    the same consistent type decisions.
+    """
+
+    column_types: Dict[str, str]
+    columns: FrozenSet[str]
+    sample_size: int
+
+
+def prescan_from_rows(
+    rows: Iterable[Dict[str, Any]],
+    *,
+    sample_size: int = _DEFAULT_SAMPLE_SIZE,
+) -> TypeMap:
+    """Forward-only prescan that works on any row iterable.
+
+    Unlike :func:`prescan_column_types`, this does **not** require
+    random access.  It reads up to *sample_size* rows sequentially,
+    accumulates type votes, and returns a frozen :class:`TypeMap`.
+
+    For the materialised-list path the caller can pass the full list;
+    for streaming the caller passes the first N rows drained from the
+    handle.
+    """
+    col_votes: Dict[str, Dict[str, int]] = {}
+    all_cols: set[str] = set()
+    count = 0
+
+    for row in rows:
+        if count >= sample_size:
+            break
+        all_cols.update(row.keys())
+        for col, value in row.items():
+            if value is None or value == "":
+                continue
+            inferred = infer_type_from_value(value)
+            if inferred == "NoneType":
+                continue
+            votes = col_votes.setdefault(col, {})
+            votes[inferred] = votes.get(inferred, 0) + 1
+        count += 1
+
+    column_types: Dict[str, str] = {}
+    for col in sorted(all_cols):
+        votes = col_votes.get(col, {})
+        if not votes:
+            column_types[col] = "str"
+            continue
+        max_count = max(votes.values())
+        winners = [t for t, c in votes.items() if c == max_count]
+        column_types[col] = winners[0] if len(winners) == 1 else "str"
+
+    return TypeMap(
+        column_types=column_types,
+        columns=frozenset(all_cols),
+        sample_size=count,
+    )
+
+
+def coerce_batch(
+    batch: List[Dict[str, Any]],
+    type_map: TypeMap,
+) -> Tuple[List[Dict[str, Any]], CoercionStats]:
+    """Apply coercion to a single chunk using a pre-computed :class:`TypeMap`.
+
+    Semantics are identical to :func:`coerce_rows` but the type map is
+    passed in rather than computed on the fly, enabling consistent
+    coercion across multiple streaming chunks.
+    """
+    global _VALIDATORS
+    if not _VALIDATORS:
+        _VALIDATORS = _build_validators()
+
+    total_cells = 0
+    empty_coerced = 0
+    type_coerced = 0
+    coerced_by_col: Dict[str, int] = {}
+
+    batch_cols = {col for row in batch for col in row}
+    for col in batch_cols:
+        target = type_map.column_types.get(col)
+        validator = _VALIDATORS.get(target) if target else None
+        col_coerced = 0
+
+        for row in batch:
+            if col not in row:
+                continue
+            total_cells += 1
+            value = row[col]
+
+            if value == "":
+                row[col] = None
+                empty_coerced += 1
+                col_coerced += 1
+                continue
+
+            if value is None or validator is None:
+                continue
+
+            if validator(value) is None:
+                row[col] = None
+                type_coerced += 1
+                col_coerced += 1
+
+        if col_coerced:
+            coerced_by_col[col] = col_coerced
+
+    stats = CoercionStats(
+        total_cells=total_cells,
+        empty_strings_coerced=empty_coerced,
+        type_coerced=type_coerced,
+        coerced_by_column=coerced_by_col,
+    )
+    return batch, stats

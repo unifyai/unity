@@ -619,8 +619,9 @@ class DataManager(BaseDataManager):
     def ingest(
         self,
         context: str,
-        rows: List[Dict[str, Any]],
+        rows: Optional[List[Dict[str, Any]]] = None,
         *,
+        table_input_handle=None,
         description: Optional[str] = None,
         fields: Optional[Dict[str, Any]] = None,
         unique_keys: Optional[Dict[str, str]] = None,
@@ -645,6 +646,7 @@ class DataManager(BaseDataManager):
             self,
             resolved,
             rows,
+            table_input_handle=table_input_handle,
             description=description,
             fields=fields,
             unique_keys=unique_keys,

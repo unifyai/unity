@@ -2252,8 +2252,9 @@ class BaseDataManager(BaseStateManager):
     def ingest(
         self,
         context: str,
-        rows: List[Dict[str, Any]],
+        rows: Optional[List[Dict[str, Any]]] = None,
         *,
+        table_input_handle: Optional[Any] = None,
         description: Optional[str] = None,
         fields: Optional[Dict[str, Any]] = None,
         unique_keys: Optional[Dict[str, str]] = None,
@@ -2289,14 +2290,27 @@ class BaseDataManager(BaseStateManager):
         the data storage step to this method.  For API / warehouse data or
         programmatic row insertion, use ``ingest`` directly.
 
+        Accepts **either** a materialised row list (*rows*) **or** a typed
+        streaming handle (*table_input_handle*).  When a handle is provided,
+        rows are streamed from source in bounded-memory chunks with a single
+        consistent type prescan.
+
         Parameters
         ----------
         context : str
             Target context path.  Accepts relative, absolute owned, or
             foreign paths (same resolution rules as ``create_table``).
 
-        rows : list[dict[str, Any]]
+        rows : list[dict[str, Any]] | None
             Row data to insert.  Each dict maps column names to values.
+            Mutually exclusive with *table_input_handle*.
+
+        table_input_handle : TableInputHandle | None
+            A typed streaming handle (``InlineRowsHandle``,
+            ``CsvFileHandle``, ``XlsxSheetHandle``, or
+            ``ObjectStoreArtifactHandle``).  When provided, rows are
+            streamed from the source in bounded-memory chunks.
+            Mutually exclusive with *rows*.
 
         description : str | None, default ``None``
             Human-readable description stored on the table.  Strongly
