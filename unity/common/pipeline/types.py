@@ -79,3 +79,45 @@ class ParsedFileBundle(BaseModel):
 
     result: FileParseResult
     table_inputs: Dict[str, TableInputHandle] = Field(default_factory=dict)
+
+
+# ---------------------------------------------------------------------------
+# Queue message models (for GKE workers and local queue)
+# ---------------------------------------------------------------------------
+
+
+class ParseRequested(BaseModel):
+    """Message placed on the parse queue by the coordinator.
+
+    A parse worker picks this up, runs ``FileParser.parse_batch``,
+    writes the resulting ``ParsedFileBundle`` manifest to the artifact
+    store, and acks the message.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    kind: Literal["parse_requested"] = "parse_requested"
+    job_id: str
+    deployment_id: str = ""
+    file_paths: list[str] = Field(default_factory=list)
+    manifest_key: str = ""
+    transport_mode: str = "source_reference"
+    artifact_format: str = "jsonl"
+
+
+class IngestRequested(BaseModel):
+    """Message placed on the ingest queue after parsing completes.
+
+    An ingest worker picks this up, reads the ``ParsedFileBundle``
+    manifest from the artifact store, and streams rows into the target
+    context via ``iter_table_input_row_batches``.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    kind: Literal["ingest_requested"] = "ingest_requested"
+    job_id: str
+    deployment_id: str = ""
+    manifest_key: str = ""
+    target_context: str = ""
+    batch_size: int = 500

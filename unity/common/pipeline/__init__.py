@@ -62,11 +62,15 @@ from .run_ledger import (
     RunLedger,
     generate_run_ledger_path,
 )
+from .row_streaming import iter_table_input_row_batches, iter_table_input_rows
+from .transport import build_table_handles, detect_csv_dialect
 from .types import (
     CsvFileHandle,
+    IngestRequested,
     InlineRowsHandle,
     ObjectStoreArtifactHandle,
     ParsedFileBundle,
+    ParseRequested,
     TableInputHandle,
     XlsxSheetHandle,
 )
@@ -142,11 +146,19 @@ __all__ = sorted(
         "PipelineStageManifest",
         "RunLedger",
         "generate_run_ledger_path",
+        # Row streaming
+        "iter_table_input_row_batches",
+        "iter_table_input_rows",
+        # Transport
+        "build_table_handles",
+        "detect_csv_dialect",
         # Types
         "CsvFileHandle",
+        "IngestRequested",
         "InlineRowsHandle",
         "ObjectStoreArtifactHandle",
         "ParsedFileBundle",
+        "ParseRequested",
         "TableInputHandle",
         "XlsxSheetHandle",
         # Work queue
