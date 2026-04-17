@@ -251,7 +251,7 @@ async def test_parse_can_emit_estimated_cost_ledger(file_manager, tmp_path: Path
 
 
 def test_executor_retry_policy_retries_transient_errors_and_stops_on_non_retryable():
-    from unity.file_manager.managers.utils.executor import _run_with_retry
+    from unity.common.pipeline import run_with_retry as _run_with_retry
     from unity.file_manager.types import RetryConfig
 
     retry_cfg = RetryConfig(
