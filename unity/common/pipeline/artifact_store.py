@@ -3,9 +3,15 @@ from __future__ import annotations
 import hashlib
 import json
 from pathlib import Path
-from typing import Any, Protocol
+from typing import Any, Iterable, Protocol
 
-from .types import ObjectStoreArtifactHandle, TableInputHandle
+from .types import InlineRowsHandle, ObjectStoreArtifactHandle, TableInputHandle
+
+#: Conventional ``table_id`` used when materialising lowered content rows
+#: (``/Content/`` rows derived from the document graph) as an
+#: ``ObjectStoreArtifactHandle``.  Keeping this constant here means callers
+#: never have to coin a synthetic id for the content artifact.
+CONTENT_ROWS_TABLE_ID: str = "__content__"
 
 
 class ArtifactStore(Protocol):
@@ -31,6 +37,23 @@ class ArtifactStore(Protocol):
         table_id: str,
         artifact_format: str,
     ) -> ObjectStoreArtifactHandle: ...
+
+    def materialize_content_rows(
+        self,
+        rows: Iterable[Any],
+        *,
+        logical_path: str,
+        artifact_format: str = "jsonl",
+    ) -> ObjectStoreArtifactHandle:
+        """Serialise lowered content rows into a JSONL artifact handle.
+
+        ``rows`` may be Pydantic models (e.g. ``FileContentRow``) or plain
+        ``dict`` payloads; each is normalised to a JSON object before being
+        written.  The resulting handle uses the conventional
+        ``CONTENT_ROWS_TABLE_ID`` so manifests/handles for derived content
+        stay consistent across implementations.
+        """
+        ...
 
     def put_json(self, key: str, data: Any) -> str:
         """Serialise *data* as JSON and persist under *key*.
@@ -99,6 +122,48 @@ class LocalArtifactStore:
             artifact_format="jsonl",
             columns=columns,
             row_count=actual_row_count,
+        )
+
+    def materialize_content_rows(
+        self,
+        rows: Iterable[Any],
+        *,
+        logical_path: str,
+        artifact_format: str = "jsonl",
+    ) -> ObjectStoreArtifactHandle:
+        """Serialise content rows as JSONL via ``materialize_table_input``.
+
+        Mirrors the table materialisation flow but fixes the ``table_id`` to
+        :data:`CONTENT_ROWS_TABLE_ID`.  Rows may be Pydantic models or
+        dicts; non-dict inputs are coerced via ``model_dump(mode="json")``
+        when available and otherwise wrapped into a single-field dict as a
+        last resort.
+        """
+        serialised: list[dict[str, Any]] = []
+        columns: list[str] = []
+        for row in rows:
+            payload: dict[str, Any]
+            dump = getattr(row, "model_dump", None)
+            if callable(dump):
+                payload = dict(dump(mode="json", exclude_none=True))
+            elif isinstance(row, dict):
+                payload = {str(k): v for k, v in row.items()}
+            else:
+                payload = {"value": row}
+            serialised.append(payload)
+            if not columns:
+                columns = [str(k) for k in payload.keys()]
+
+        inline = InlineRowsHandle(
+            rows=serialised,
+            columns=columns,
+            row_count=len(serialised),
+        )
+        return self.materialize_table_input(
+            inline,
+            logical_path=logical_path,
+            table_id=CONTENT_ROWS_TABLE_ID,
+            artifact_format=artifact_format,
         )
 
     # -- manifest CRUD -----------------------------------------------------
