@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from .artifact_store import ArtifactStore, LocalArtifactStore
+from .dispatch import DispatchTarget, PublishResult, publish_parse_request
 from .instrumentation import PipelineInstrumentation
 from .orchestration import (
     ArtifactIngestFn,
@@ -52,6 +53,7 @@ from .retry_policy import (
 from .run_ledger import (
     JsonlRunLedger,
     PipelineFileManifest,
+    PipelineHeartbeatManifest,
     PipelineRunManifest,
     PipelineStageManifest,
     RunLedger,
@@ -62,12 +64,16 @@ from .transport import build_table_handles, detect_csv_dialect
 from .types import (
     AttachmentCallback,
     CsvFileHandle,
+    DmBinding,
+    FmBinding,
+    IngestPlan,
     IngestRequested,
     InlineRowsHandle,
     ObjectStoreArtifactHandle,
     ParsedFileBundle,
     ParseRequested,
     TableInputHandle,
+    TableMeta,
     XlsxSheetHandle,
 )
 from .work_queue import (
@@ -85,6 +91,10 @@ __all__ = sorted(
         # Artifact store
         "ArtifactStore",
         "LocalArtifactStore",
+        # Dispatch (publish ParseRequested)
+        "DispatchTarget",
+        "PublishResult",
+        "publish_parse_request",
         # Instrumentation
         "PipelineInstrumentation",
         # Orchestration
@@ -133,6 +143,7 @@ __all__ = sorted(
         # Run ledger
         "JsonlRunLedger",
         "PipelineFileManifest",
+        "PipelineHeartbeatManifest",
         "PipelineRunManifest",
         "PipelineStageManifest",
         "RunLedger",
@@ -146,12 +157,16 @@ __all__ = sorted(
         # Types
         "AttachmentCallback",
         "CsvFileHandle",
+        "DmBinding",
+        "FmBinding",
+        "IngestPlan",
         "IngestRequested",
         "InlineRowsHandle",
         "ObjectStoreArtifactHandle",
         "ParsedFileBundle",
         "ParseRequested",
         "TableInputHandle",
+        "TableMeta",
         "XlsxSheetHandle",
         # Work queue
         "DeadLetterWorkItem",

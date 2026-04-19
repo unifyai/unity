@@ -82,6 +82,85 @@ class ParsedFileBundle(BaseModel):
 
 
 # ---------------------------------------------------------------------------
+# IngestPlan: the parse -> ingest queue contract
+# ---------------------------------------------------------------------------
+#
+# ``IngestPlan`` is the *manifest* the parse worker publishes to GCS after a
+# file has been parsed AND lowered.  It is intentionally pointer-only:
+# content rows and table rows NEVER appear inline. Every heavy artifact is
+# materialised to object storage by the parse worker and referenced here via
+# a ``TableInputHandle`` (``ObjectStoreArtifactHandle`` for content /
+# in-memory table bodies, ``CsvFileHandle``/``XlsxSheetHandle`` for
+# streamable source files).
+#
+# This keeps manifests KB-scale for any input size (1000-page PDFs, 1M-row
+# spreadsheets) and preserves true streaming end-to-end: the ingest worker
+# only touches bulk data when ``DataManager.ingest`` pulls a batch from the
+# handle.
+#
+# The ``parse_summary`` field is a stripped ``FileParseResult`` with
+# ``graph=None``, ``full_text=""``, and ``tables=[]``.  It retains only the
+# fields ``FileRecord.to_file_record_entry`` needs (logical_path, status,
+# error, file_format, mime_type, summary, metadata, trace) so the ingest
+# worker can create a ``FileRecords`` entry without shipping the document
+# graph across the wire.
+
+
+class TableMeta(BaseModel):
+    """Lightweight per-table metadata carried in an ``IngestPlan``.
+
+    The table's *rows* live out-of-band behind a handle in
+    ``IngestPlan.table_inputs[table_id]``.  ``TableMeta`` is only the
+    structural + contextual info the ingest worker needs to provision the
+    destination context and resolve embed columns / descriptions.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    table_id: str
+    label: str
+    columns: list[str] = Field(default_factory=list)
+    row_count: Optional[int] = None
+    sheet_name: Optional[str] = None
+    table_summary: Optional[str] = None
+
+
+class IngestPlan(BaseModel):
+    """Pointer-only plan handed from the parse worker to the ingest worker.
+
+    The manifest is always KB-scale regardless of input size.  Heavy data
+    (content rows, table rows) is materialised to GCS by the parse worker
+    and referenced via handles.
+
+    Notes
+    -----
+    - ``parse_summary`` is a stripped ``FileParseResult`` with
+      ``graph=None``, ``full_text=""``, and ``tables=[]``.  It exists so the
+      ingest worker can create a ``FileRecords`` row via
+      ``FileRecord.to_file_record_entry`` without having to ship the
+      document graph.
+    - ``content_rows_handle`` points at a JSONL artifact of
+      ``FileContentRow`` payloads lowered from the document graph by the
+      parse worker.  ``None`` means the parse produced no content rows
+      (e.g. pure tabular file with ``table_ingest=False``).
+    - ``table_inputs[table_id]`` must be a ``TableInputHandle`` that
+      streams rows on demand.  Inline handles are permitted but only for
+      small fallback tables.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    run_id: str
+    file_path: str
+    parse_status: Literal["success", "error"] = "success"
+    parse_summary: FileParseResult
+    document_summary: str = ""
+    content_rows_handle: Optional[TableInputHandle] = None
+    tables_meta: list[TableMeta] = Field(default_factory=list)
+    table_inputs: Dict[str, TableInputHandle] = Field(default_factory=dict)
+
+
+# ---------------------------------------------------------------------------
 # Queue message models (for GKE workers and local queue)
 # ---------------------------------------------------------------------------
 
@@ -103,12 +182,49 @@ class AttachmentCallback(BaseModel):
     display_name: str
 
 
+class FmBinding(BaseModel):
+    """Routing info the ingest worker needs to run FM-mode ingest.
+
+    With these fields the worker can activate the right Unify context,
+    instantiate a ``FileManager(alias=fm_alias)``, and hand the parsed
+    result to ``fm_process_file`` so the data lands under
+    ``Files/{alias}/{storage_id}/...`` with a proper ``FileRecords``
+    entry (rather than a bare ``DataManager`` context).
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    user_id: str
+    assistant_id: str
+    fm_alias: str = "Local"
+    logical_path: str
+
+
+class DmBinding(BaseModel):
+    """Routing info the ingest worker needs to run DM-mode ingest.
+
+    Used when the caller wants raw ``DataManager`` ingestion into a
+    specific context (e.g. operator-driven bulk ingests of a
+    ``PipelineConfig``). No ``FileRecords`` entry is created in this mode.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    target_context: str
+    create_table_prefix: str = ""
+
+
 class ParseRequested(BaseModel):
     """Message placed on the parse queue by the coordinator.
 
     A parse worker picks this up, runs ``FileParser.parse_batch``,
     writes the resulting ``ParsedFileBundle`` manifest to the artifact
     store, and acks the message.
+
+    Message granularity contract: ``file_paths`` SHOULD contain exactly one
+    entry per message so that parse work distributes evenly across worker
+    pods via Pub/Sub fan-out. The list type is retained for back-compat but
+    new dispatch paths enforce a single file per message.
     """
 
     model_config = ConfigDict(frozen=True)
@@ -121,14 +237,18 @@ class ParseRequested(BaseModel):
     transport_mode: str = "source_reference"
     artifact_format: str = "jsonl"
     attachment_callback: Optional[AttachmentCallback] = None
+    ingestion_mode: Literal["dm", "fm"] = "dm"
+    fm_binding: Optional[FmBinding] = None
+    dm_binding: Optional[DmBinding] = None
 
 
 class IngestRequested(BaseModel):
     """Message placed on the ingest queue after parsing completes.
 
     An ingest worker picks this up, reads the ``ParsedFileBundle``
-    manifest from the artifact store, and streams rows into the target
-    context via ``iter_table_input_row_batches``.
+    manifest from the artifact store, rehydrates a ``FileParseResult``,
+    activates the right Unify context, and dispatches via
+    ``fm_process_file`` (FM mode) or ``ingest_artifacts`` (DM mode).
     """
 
     model_config = ConfigDict(frozen=True)
@@ -140,3 +260,6 @@ class IngestRequested(BaseModel):
     target_context: str = ""
     batch_size: int = 500
     attachment_callback: Optional[AttachmentCallback] = None
+    ingestion_mode: Literal["dm", "fm"] = "dm"
+    fm_binding: Optional[FmBinding] = None
+    dm_binding: Optional[DmBinding] = None
