@@ -75,6 +75,15 @@ class WorkQueue(Protocol):
 
     async def dead_letter(self, receipt_id: str, *, error: str) -> None: ...
 
+    async def is_cancelled(self, run_id: str) -> bool:
+        """Check whether the job identified by *run_id* has been cancelled.
+
+        Workers call this between stages to detect operator-initiated
+        cancellation.  The default implementation returns ``False`` so
+        that callers not using cancellation are unaffected.
+        """
+        ...
+
 
 class RetryWorkItem(Exception):
     """Signal that a queue item should be retried instead of dead-lettered."""
@@ -91,6 +100,7 @@ class InMemoryWorkQueue:
         self._topic_queues: dict[str, asyncio.Queue[WorkQueueMessage]] = {}
         self._leased: dict[str, WorkQueueMessage] = {}
         self._dead_letters: list[DeadLetterWorkItem] = []
+        self._cancelled: set[str] = set()
         self._lock = asyncio.Lock()
         self._background_tasks: set[asyncio.Task[None]] = set()
 
@@ -177,6 +187,13 @@ class InMemoryWorkQueue:
             )
             self._dead_letters.append(dead_letter)
             self._queue_for_topic(message.topic).task_done()
+
+    async def cancel(self, run_id: str) -> None:
+        """Mark *run_id* as cancelled so workers can detect it."""
+        self._cancelled.add(run_id)
+
+    async def is_cancelled(self, run_id: str) -> bool:
+        return run_id in self._cancelled
 
     def _queue_for_topic(self, topic: str) -> asyncio.Queue[WorkQueueMessage]:
         queue = self._topic_queues.get(topic)
