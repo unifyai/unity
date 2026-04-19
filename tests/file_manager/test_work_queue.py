@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import asyncio
+import time
+
 import pytest
 
 from unity.common.pipeline import (
@@ -63,3 +66,31 @@ async def test_local_queue_worker_acks_retries_and_dead_letters():
     assert len(queue.dead_letters) == 1
     assert queue.dead_letters[0].payload["id"] == "dead"
     assert queue.dead_letters[0].last_error == "fatal"
+
+
+@pytest.mark.asyncio
+async def test_in_memory_work_queue_close_cancels_pending_requeues():
+    """close() must cancel delayed-requeue tasks so a worker can exit cleanly.
+
+    When a message is retried with a non-zero ``delay_seconds``, the
+    queue schedules a background task to re-enqueue it after the delay.
+    A graceful worker shutdown must be able to cancel those pending
+    tasks without waiting for the full delay to elapse; otherwise the
+    worker process would block on stray background tasks during exit.
+    """
+    queue = InMemoryWorkQueue()
+    await queue.publish(topic="parse", payload={"id": "slow-retry"})
+    item = (await queue.receive(topics=["parse"]))[0]
+
+    await queue.retry(item.receipt_id, error="transient", delay_seconds=60.0)
+    await asyncio.sleep(0)  # let the requeue task register
+    pending = [t for t in queue._background_tasks if not t.done()]
+    assert len(pending) == 1, "expected one scheduled requeue task"
+
+    started = time.monotonic()
+    await queue.close()
+    elapsed = time.monotonic() - started
+
+    assert elapsed < 1.0, f"close() should be near-instant, took {elapsed}s"
+    assert len(queue._background_tasks) == 0, "background tasks should be cleared"
+    assert all(t.done() for t in pending), "pending tasks should be done/cancelled"
