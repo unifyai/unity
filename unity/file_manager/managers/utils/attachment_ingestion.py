@@ -1,11 +1,9 @@
 from __future__ import annotations
 
-import json
 import logging
 import threading
 import uuid
 from concurrent.futures import Future, ThreadPoolExecutor
-from pathlib import Path
 from typing import TYPE_CHECKING, Sequence
 
 from unity.file_manager.types.config import FilePipelineConfig
@@ -262,12 +260,24 @@ def _dispatch_attachment_to_workers(
 ) -> None:
     """Upload attachment bytes to GCS and publish a ParseRequested envelope.
 
-    The ingest worker will publish an ``attachment_ingestion_complete`` event
-    back to the per-assistant topic, which ``CommsManager`` dispatches into
-    the existing event broker.
+    Uses :func:`unity.common.pipeline.publish_parse_request` so the GCS
+    upload + Pub/Sub publish logic (and the ``one file per
+    ParseRequested`` invariant) stays in one place shared with operator
+    dispatch scripts. The attachment path sets ``ingestion_mode="fm"``
+    and an ``FmBinding`` so the ingest worker lands the file under
+    ``Files/{alias}/{storage_id}/...`` via ``fm_process_plan``, not a
+    bare ``DataManager`` context.
+
+    The ingest worker publishes an ``attachment_ingestion_complete``
+    event back to the per-assistant topic, which ``CommsManager``
+    dispatches into the existing event broker.
     """
-    from unity.common.pipeline.types import AttachmentCallback, ParseRequested
-    from unity.session_details import SESSION_DETAILS
+    from unity.common.pipeline import (
+        DispatchTarget,
+        publish_parse_request,
+    )
+    from unity.common.pipeline.types import AttachmentCallback, FmBinding
+    from unity.session_details import SESSION_DETAILS, UNASSIGNED_USER_CONTEXT
     from unity.settings import SETTINGS
 
     bucket_name = SETTINGS.file.PIPELINE_ARTIFACT_BUCKET
@@ -283,39 +293,46 @@ def _dispatch_attachment_to_workers(
         raise RuntimeError(
             "PIPELINE_DISPATCH_ENABLED requires SESSION_DETAILS.assistant.agent_id",
         )
+    user_id = (
+        getattr(getattr(SESSION_DETAILS, "user", None), "id", None)
+        or UNASSIGNED_USER_CONTEXT
+    )
 
     data = file_manager._open_bytes_by_filepath(file_path)
-    filename = Path(file_path).name
     attachment_id = uuid.uuid4().hex
     job_id = f"attachment-{assistant_id}-{attachment_id}"
-    blob_key = f"attachments/{assistant_id}/{attachment_id}/{filename}"
-    gs_uri = f"gs://{bucket_name}/{blob_key}"
-
-    _upload_bytes_to_gcs(
-        project_id=project_id,
-        bucket_name=bucket_name,
-        blob_key=blob_key,
-        data=data,
-    )
 
     callback = AttachmentCallback(
         assistant_id=str(assistant_id),
         env_suffix=env_suffix,
         display_name=file_path,
     )
-    parse_msg = ParseRequested(
-        job_id=job_id,
-        deployment_id="",
-        file_paths=[gs_uri],
-        attachment_callback=callback,
+    # Attachments always land under the "Local" alias -- this is the
+    # alias exposed by ``LocalFileSystemAdapter`` and mirrors what the
+    # ingest worker reconstructs via ``LocalFileSystemAdapter(root=None,
+    # enable_sync=False)`` in :func:`_run_fm_mode`.
+    fm_binding = FmBinding(
+        user_id=str(user_id),
+        assistant_id=str(assistant_id),
+        fm_alias="Local",
+        logical_path=file_path,
+    )
+    target = DispatchTarget(
+        project_id=project_id,
+        bucket_name=bucket_name,
+        env_suffix=env_suffix,
+        upload_prefix=f"attachments/{assistant_id}/{attachment_id}",
     )
 
-    parse_topic = f"unity-parse{env_suffix}"
-    _publish_to_topic(
-        project_id=project_id,
-        topic_name=parse_topic,
-        payload=parse_msg.model_dump(mode="json"),
-        attributes={"thread": "attachment_parse"},
+    result = publish_parse_request(
+        target=target,
+        logical_path=file_path,
+        ingestion_mode="fm",
+        fm_binding=fm_binding,
+        source_bytes=data,
+        attachment_callback=callback,
+        job_id=job_id,
+        pubsub_attributes={"thread": "attachment_parse"},
     )
 
     _upsert_attachment_status(
@@ -324,47 +341,11 @@ def _dispatch_attachment_to_workers(
         ingestion_status="dispatched",
     )
     logger.info(
-        "Dispatched attachment to parse worker: job=%s uri=%s",
-        job_id,
-        gs_uri,
+        "Dispatched attachment to parse worker: job=%s uri=%s message_id=%s",
+        result.job_id,
+        result.gs_uri,
+        result.message_id,
     )
-
-
-def _upload_bytes_to_gcs(
-    *,
-    project_id: str,
-    bucket_name: str,
-    blob_key: str,
-    data: bytes,
-) -> None:
-    """Upload raw bytes to ``gs://{bucket_name}/{blob_key}``."""
-    from google.cloud import storage
-
-    client = storage.Client(project=project_id)
-    bucket = client.bucket(bucket_name)
-    blob = bucket.blob(blob_key)
-    blob.upload_from_string(data)
-
-
-def _publish_to_topic(
-    *,
-    project_id: str,
-    topic_name: str,
-    payload: dict,
-    attributes: dict[str, str] | None = None,
-) -> str:
-    """Publish ``payload`` as JSON to ``projects/{project}/topics/{topic}``."""
-    from google.cloud import pubsub_v1
-
-    publisher = pubsub_v1.PublisherClient()
-    topic_path = publisher.topic_path(project_id, topic_name)
-    future = publisher.publish(
-        topic_path,
-        json.dumps(payload, default=str).encode("utf-8"),
-        **(attributes or {}),
-    )
-    message_id: str = future.result(timeout=30)
-    return message_id
 
 
 # ---------------------------------------------------------------------------
