@@ -243,10 +243,20 @@ def execute_ingest_content(
     *,
     file_manager: Any,
     file_path: str,
-    content_rows: List[FileContentRow],
+    content_rows: Optional[List[FileContentRow]] = None,
+    content_rows_handle: Optional[TableInputHandle] = None,
     config: FilePipelineConfig,
 ) -> Dict[str, Any]:
     """Ingest ALL content rows for a file via ``dm.ingest()``.
+
+    Either ``content_rows`` (in-process path, inline Pydantic models) or
+    ``content_rows_handle`` (worker path, handle backed by an object
+    store) must be supplied.  When a handle is provided the rows are
+    streamed in batches via
+    :func:`unity.common.pipeline.row_streaming.iter_table_input_row_batches`
+    and rebuilt into ``FileContentRow`` models before being passed to
+    ``ingest_content_batch``; the manifest never materialises the full
+    document content in memory.
 
     Chunking, retry, and embedding are handled internally by DM's ingest
     pipeline.  This function:
@@ -276,9 +286,31 @@ def execute_ingest_content(
         build_dm_execution_config,
     )
     from unity.common.model_to_fields import model_to_fields
+    from unity.common.pipeline.row_streaming import iter_table_input_row_batches
     from unity.file_manager.types.file import FileContent
 
     dm = file_manager._data_manager
+
+    # Materialise the content rows from whichever input channel the caller
+    # provided.  Handles are drained in batches so memory stays bounded
+    # even for very large lowered documents.
+    if content_rows_handle is not None and content_rows is not None:
+        raise ValueError(
+            "execute_ingest_content received both content_rows and content_rows_handle; "
+            "supply exactly one.",
+        )
+    if content_rows_handle is not None:
+        streamed: List[FileContentRow] = []
+        for batch in iter_table_input_row_batches(
+            content_rows_handle,
+            batch_size=max(int(config.ingest.content_rows_batch_size or 1000), 1),
+        ):
+            for row in batch:
+                streamed.append(FileContentRow.model_validate(row))
+        content_rows = streamed
+    elif content_rows is None:
+        content_rows = []
+
     logger.debug(
         f"[TaskFn] Ingesting content for {file_path} ({len(content_rows)} rows)",
     )

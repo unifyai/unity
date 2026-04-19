@@ -21,19 +21,24 @@ same logic is available to both the FM adapter and the DM ingest script.
 """
 
 from dataclasses import dataclass
-from typing import List
+from typing import TYPE_CHECKING, List
 
 from unity.file_manager.file_parsers.types.contracts import FileParseResult
 from unity.file_manager.file_parsers.types.table import ExtractedTable
 from unity.common.pipeline import (
+    IngestPlan,
     LocalArtifactStore,
     ParsedFileBundle,
+    TableMeta,
     build_table_handles,
 )
 from unity.file_manager.types.config import FilePipelineConfig
 from unity.file_manager.types.file import FileContentRow
 
 from .lowering.content_rows import lower_graph_to_content_rows
+
+if TYPE_CHECKING:
+    from unity.common.pipeline.artifact_store import ArtifactStore
 
 
 @dataclass(frozen=True)
@@ -138,3 +143,131 @@ def _build_artifact_store(config: FilePipelineConfig) -> LocalArtifactStore | No
     ):
         return None
     return LocalArtifactStore(root_dir=config.transport.artifact_root_dir)
+
+
+# ---------------------------------------------------------------------------
+# Parse -> ingest plan lowering
+# ---------------------------------------------------------------------------
+
+
+def lower_to_ingest_plan(
+    parse_result: FileParseResult,
+    *,
+    run_id: str,
+    config: FilePipelineConfig,
+    artifact_store: "ArtifactStore",
+    artifact_format: str = "jsonl",
+) -> IngestPlan:
+    """Lower a ``FileParseResult`` into a pointer-only ``IngestPlan``.
+
+    This is the canonical parse-to-ingest boundary used by the production
+    parse worker to hand work to the ingest worker without ever shipping
+    heavy payloads (document graphs, full table rows) through the queue
+    manifest.
+
+    Steps
+    -----
+    1. Build per-table ``TableInputHandle`` objects via the shared
+       :func:`unity.common.pipeline.transport.build_table_handles` helper.
+       When the store is provided, inline rows are materialised into
+       GCS-backed ``ObjectStoreArtifactHandle`` so the ingest worker
+       streams rows out-of-band.
+    2. Run ``lower_graph_to_content_rows`` against the document graph and
+       materialise the resulting ``FileContentRow`` stream via
+       :meth:`ArtifactStore.materialize_content_rows`.  This keeps the
+       ``DocumentGraph`` (potentially tens of MB for long PDFs) out of the
+       manifest entirely.
+    3. Build a stripped ``parse_summary`` (``graph=None``, ``full_text=""``,
+       ``tables=[]``) that still contains every field
+       ``FileRecord.to_file_record_entry`` needs -- status, error,
+       file_format, mime_type, summary, metadata, trace.
+    4. Attach per-table ``TableMeta`` rows so the ingest worker can
+       provision contexts and resolve embed columns without rehydrating
+       the full ``ExtractedTable`` list.
+
+    The function is intentionally total (never raises on lowering failure)
+    -- a partially empty plan is still a valid plan; the ingest worker
+    will record per-table failures in the run ledger.
+    """
+    logical_path = str(getattr(parse_result, "logical_path", "") or "")
+    parse_status = str(getattr(parse_result, "status", "error") or "error")
+
+    table_inputs = build_table_handles(
+        parse_result,
+        artifact_store=artifact_store,
+        artifact_format=artifact_format,
+    )
+    tables_meta = _build_tables_meta(parse_result)
+
+    content_rows_handle = None
+    document_summary = ""
+    if parse_status == "success":
+        graph = getattr(parse_result, "graph", None)
+        if graph is not None:
+            try:
+                lowered = lower_graph_to_content_rows(
+                    graph=graph,
+                    file_path=logical_path,
+                    file_format=getattr(parse_result, "file_format", None),
+                    tables=list(getattr(parse_result, "tables", []) or []),
+                    business_contexts=getattr(
+                        getattr(config, "ingest", None),
+                        "business_contexts",
+                        None,
+                    ),
+                )
+                document_summary = str(lowered.document_summary or "")
+                content_rows = list(lowered.rows or [])
+                if content_rows:
+                    content_rows_handle = artifact_store.materialize_content_rows(
+                        content_rows,
+                        logical_path=logical_path,
+                        artifact_format=artifact_format,
+                    )
+            except Exception:
+                content_rows_handle = None
+                document_summary = ""
+
+    parse_summary = _make_parse_summary(parse_result)
+
+    return IngestPlan(
+        run_id=run_id,
+        file_path=logical_path,
+        parse_status="success" if parse_status == "success" else "error",
+        parse_summary=parse_summary,
+        document_summary=document_summary,
+        content_rows_handle=content_rows_handle,
+        tables_meta=tables_meta,
+        table_inputs=table_inputs,
+    )
+
+
+def _build_tables_meta(parse_result: FileParseResult) -> List[TableMeta]:
+    out: List[TableMeta] = []
+    for table in list(getattr(parse_result, "tables", []) or []):
+        out.append(
+            TableMeta(
+                table_id=str(getattr(table, "table_id", "") or ""),
+                label=str(getattr(table, "label", "") or ""),
+                columns=list(getattr(table, "columns", []) or []),
+                row_count=getattr(table, "num_rows", None),
+                sheet_name=getattr(table, "sheet_name", None),
+                table_summary=getattr(table, "table_summary", None),
+            ),
+        )
+    return out
+
+
+def _make_parse_summary(pr: FileParseResult) -> FileParseResult:
+    """Return a ``FileParseResult`` stripped of all heavy fields.
+
+    Drops:
+      - ``graph`` (potentially tens of MB for long documents)
+      - ``full_text`` (can mirror the full body of a PDF/DOCX)
+      - ``tables`` (row payloads already referenced via handles)
+
+    Keeps: ``logical_path``, ``status``, ``error``, ``file_format``,
+    ``mime_type``, ``summary``, ``metadata``, ``trace`` so the ingest
+    worker can call ``FileRecord.to_file_record_entry`` unchanged.
+    """
+    return pr.model_copy(update={"graph": None, "full_text": "", "tables": []})
