@@ -84,6 +84,33 @@ class WorkQueue(Protocol):
         """
         ...
 
+    async def extend_lease(self, receipt_id: str, seconds: int) -> None:
+        """Extend the lease on *receipt_id* by ``seconds`` more seconds.
+
+        Workers invoke this periodically (via a lease-extender task)
+        while processing long-running messages, so the queue backend
+        does not redeliver the message to a second pod mid-work.
+
+        The extension is measured from *now*, not from the existing
+        deadline: calling ``extend_lease(receipt_id, 600)`` tells the
+        backend "give me 600 more seconds starting now".
+
+        Implementations backed by queues without explicit leases (e.g.
+        :class:`InMemoryWorkQueue`) may implement this as a no-op.
+        """
+        ...
+
+    async def close(self) -> None:
+        """Release any external connections / background tasks.
+
+        Workers call this during graceful shutdown (after the main
+        consumer loop has stopped) so that Pub/Sub gRPC channels,
+        thread pools, and scheduled re-queues exit cleanly before the
+        process terminates.  Implementations that hold no external
+        resources may implement this as a no-op.
+        """
+        ...
+
 
 class RetryWorkItem(Exception):
     """Signal that a queue item should be retried instead of dead-lettered."""
@@ -194,6 +221,19 @@ class InMemoryWorkQueue:
 
     async def is_cancelled(self, run_id: str) -> bool:
         return run_id in self._cancelled
+
+    async def extend_lease(self, receipt_id: str, seconds: int) -> None:
+        """In-memory leases do not expire; lease extension is a no-op."""
+        return None
+
+    async def close(self) -> None:
+        """Cancel any scheduled requeue tasks and wait for them to settle."""
+        pending = list(self._background_tasks)
+        for task in pending:
+            task.cancel()
+        if pending:
+            await asyncio.gather(*pending, return_exceptions=True)
+        self._background_tasks.clear()
 
     def _queue_for_topic(self, topic: str) -> asyncio.Queue[WorkQueueMessage]:
         queue = self._topic_queues.get(topic)
