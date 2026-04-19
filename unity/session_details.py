@@ -69,6 +69,7 @@ class AssistantDetails:
     nationality: str = ""
     timezone: str = ""  # IANA timezone identifier (e.g., "America/New_York")
     about: str = ""
+    job_title: str = ""
     number: str = ""
     email: str = ""
     email_provider: str = "google_workspace"
@@ -274,6 +275,7 @@ class SessionDetails:
         assistant_nationality: str = "",
         assistant_timezone: str = "",
         assistant_about: str = "",
+        assistant_job_title: str = "",
         assistant_number: str = "",
         assistant_email: str = "",
         assistant_email_provider: str = "google_workspace",
@@ -308,6 +310,7 @@ class SessionDetails:
         self.assistant.nationality = assistant_nationality
         self.assistant.timezone = assistant_timezone
         self.assistant.about = assistant_about
+        self.assistant.job_title = assistant_job_title
         self.assistant.number = assistant_number
         self.assistant.email = assistant_email
         self.assistant.email_provider = assistant_email_provider
@@ -359,6 +362,7 @@ class SessionDetails:
         os.environ["ASSISTANT_NATIONALITY"] = self.assistant.nationality
         os.environ["ASSISTANT_TIMEZONE"] = self.assistant.timezone
         os.environ["ASSISTANT_ABOUT"] = self.assistant.about
+        os.environ["ASSISTANT_JOB_TITLE"] = self.assistant.job_title
         os.environ["ASSISTANT_NUMBER"] = self.assistant.number
         os.environ["ASSISTANT_EMAIL"] = self.assistant.email
         os.environ["ASSISTANT_EMAIL_PROVIDER"] = self.assistant.email_provider
@@ -417,6 +421,8 @@ class SessionDetails:
             self.assistant.timezone = val
         if val := os.environ.get("ASSISTANT_ABOUT"):
             self.assistant.about = val
+        if val := os.environ.get("ASSISTANT_JOB_TITLE"):
+            self.assistant.job_title = val
         if val := os.environ.get("ASSISTANT_NUMBER"):
             self.assistant.number = val
         if val := os.environ.get("ASSISTANT_EMAIL"):

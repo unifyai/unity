@@ -1766,6 +1766,7 @@ async def _(event: AssistantUpdateEvent, cm: "ConversationManager", *args, **kwa
         event.user_email,
         event.assistant_whatsapp_number,
         event.user_whatsapp_number,
+        getattr(event, "assistant_job_title", "") or "",
     )
 
 

@@ -165,3 +165,40 @@ def sync_assistant_about(assistant_id: int, about: str) -> bool:
     except Exception as e:
         _log.warning(f"Error syncing assistant about: {e}")
         return False
+
+
+def sync_assistant_job_title(assistant_id: int, job_title: str) -> bool:
+    """
+    Fire-and-forget sync of ``job_title`` to the assistant profile.
+
+    Uses ``PATCH /admin/assistant/{assistant_id}``. Treats empty/whitespace
+    strings as ``None`` so that clearing the field on the contact also clears
+    it server-side (the backend additionally normalizes/trims).
+    """
+    base_url = _get_base_url()
+    admin_key = _get_admin_key()
+    if not base_url or not admin_key or not assistant_id:
+        _log.debug("Skipping assistant job_title sync: missing required params")
+        return False
+
+    normalized: str | None = job_title.strip() if isinstance(job_title, str) else None
+    if normalized == "":
+        normalized = None
+
+    try:
+        from unify.utils import http
+
+        url = f"{base_url}/admin/assistant/{int(assistant_id)}"
+        headers = {"Authorization": f"Bearer {admin_key}"}
+        payload = {"job_title": normalized}
+        resp = http.patch(url, headers=headers, json=payload, timeout=30)
+        if 200 <= resp.status_code < 300:
+            _log.info("Synced assistant job_title to backend")
+            return True
+        _log.warning(
+            f"Failed to sync assistant job_title: {resp.status_code} {resp.text}",
+        )
+        return False
+    except Exception as e:
+        _log.warning(f"Error syncing assistant job_title: {e}")
+        return False

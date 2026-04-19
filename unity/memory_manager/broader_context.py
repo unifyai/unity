@@ -77,6 +77,7 @@ def get_broader_context(
             p for p in [assist.first_name, assist.surname] if p
         ).strip()
         assistant_bio = assist.bio if assist.bio else ""
+        assistant_job_title = (getattr(assist, "job_title", "") or "").strip()
 
         # user -----------------------------------------------------
         user = cm.filter_contacts(filter="contact_id == 1", limit=1).get("contacts", [])
@@ -93,6 +94,8 @@ def get_broader_context(
         parts: list[str] = []
 
         parts.append(f"You are a personal assistant named {assistant_name}.")
+        if assistant_job_title:
+            parts.append(f"Your main role / specialization is: {assistant_job_title}.")
         parts.append(f"You work directly for {user_name}.")
         if assistant_bio:
             parts.append("\nA bit about yourself:")

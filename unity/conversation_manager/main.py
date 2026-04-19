@@ -138,6 +138,7 @@ def create_conversation_manager(
         SESSION_DETAILS.voice.mode,
         SESSION_DETAILS.assistant.whatsapp_number,
         SESSION_DETAILS.assistant.discord_bot_id,
+        assistant_job_title=SESSION_DETAILS.assistant.job_title,
         project_name=project_name,
         stop=stop_event,
     )

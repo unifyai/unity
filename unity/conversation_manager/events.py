@@ -728,6 +728,7 @@ class _SessionConfigBase(Event):
     assistant_timezone: str = (
         ""  # IANA timezone identifier; default empty for backward compat
     )
+    assistant_job_title: str = ""
     assistant_email_provider: str = "google_workspace"
     desktop_mode: str = "ubuntu"
     desktop_url: str | None = None

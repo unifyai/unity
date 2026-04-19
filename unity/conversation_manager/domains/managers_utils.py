@@ -1051,6 +1051,7 @@ async def update_session_contacts(
     user_email: str,
     assistant_whatsapp_number: str | None = None,
     user_whatsapp_number: str | None = None,
+    assistant_job_title: str | None = None,
 ) -> None:
     """
     Update the assistant (contact_id=0) and boss (contact_id=1) contacts
@@ -1077,6 +1078,7 @@ async def update_session_contacts(
         phone_number: str,
         email_address: str,
         whatsapp_number: str | None = None,
+        job_title: str | None = None,
     ):
         try:
             kwargs: dict = dict(
@@ -1088,6 +1090,8 @@ async def update_session_contacts(
             )
             if whatsapp_number is not None:
                 kwargs["whatsapp_number"] = whatsapp_number
+            if job_title is not None and contact_id == 0:
+                kwargs["job_title"] = job_title
             await asyncio.to_thread(
                 cm.contact_manager.update_contact,
                 **kwargs,
@@ -1107,6 +1111,10 @@ async def update_session_contacts(
         assistant_number,
         assistant_email,
         assistant_whatsapp_number,
+        # Pass through assistant_job_title so the AssistantUpdateEvent flow
+        # keeps contact 0 in sync with the backend's value (and triggers the
+        # backend sync helper, which is a no-op when the value matches).
+        assistant_job_title,
     )
 
     # In demo mode:

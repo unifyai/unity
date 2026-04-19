@@ -84,6 +84,7 @@ class Contact(BaseModel):
         "whatsapp_number": "wa",
         "discord_id": "disc",
         "bio": "bio",
+        "job_title": "jt",
         "rolling_summary": "rs",
         "should_respond": "resp",
         "response_policy": "policy",
@@ -138,6 +139,10 @@ class Contact(BaseModel):
     bio: Optional[str] = Field(
         default=None,
         description="Concise biographic profile of the contact (role, background, why they matter).",
+    )
+    job_title: Optional[str] = Field(
+        default=None,
+        description="Free-text job title / specialization (e.g. 'Growth marketing').",
     )
     rolling_summary: Optional[str] = Field(
         default=None,
@@ -199,6 +204,7 @@ class Contact(BaseModel):
         "whatsapp_number",
         "discord_id",
         "bio",
+        "job_title",
         "rolling_summary",
         "timezone",
         mode="before",

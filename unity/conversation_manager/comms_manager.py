@@ -394,6 +394,7 @@ class CommsManager:
                     "assistant_nationality": event["assistant_nationality"],
                     "assistant_timezone": event.get("assistant_timezone", ""),
                     "assistant_about": event["assistant_about"],
+                    "assistant_job_title": event.get("assistant_job_title", ""),
                     "assistant_number": event["assistant_number"],
                     "assistant_email": event["assistant_email"],
                     "assistant_email_provider": event.get(
@@ -1412,6 +1413,7 @@ class CommsManager:
                     "assistant_nationality": event["assistant_nationality"],
                     "assistant_timezone": event.get("assistant_timezone", ""),
                     "assistant_about": event["assistant_about"],
+                    "assistant_job_title": event.get("assistant_job_title", ""),
                     "assistant_number": event["assistant_number"],
                     "assistant_email": event["assistant_email"],
                     "assistant_email_provider": event.get(

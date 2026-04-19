@@ -106,6 +106,29 @@ def _maybe_sync_bio_to_backend(
         sync_user_bio(assistant_id, row["email_address"], bio)
 
 
+def _maybe_sync_job_title_to_backend(
+    self,
+    contact_id: int,
+    job_title: str,
+) -> None:
+    """
+    Fire-and-forget sync of ``job_title`` to backend for the assistant contact.
+
+    Mirrors :func:`_maybe_sync_bio_to_backend` but for the free-text job title
+    / specialization. Only contact_id == 0 (the assistant itself) flows back
+    to the Assistant table; for any other contact the value is purely local
+    metadata.
+    """
+    from .backend_sync import sync_assistant_job_title
+
+    if contact_id != 0:
+        return
+    assistant_id = _get_assistant_id()
+    if assistant_id is None:
+        return
+    sync_assistant_job_title(assistant_id, job_title)
+
+
 def create_contact(
     self,
     *,
@@ -114,6 +137,7 @@ def create_contact(
     email_address: Optional[str] = None,
     phone_number: Optional[str] = None,
     bio: Optional[str] = None,
+    job_title: Optional[str] = None,
     timezone: Optional[str] = None,
     rolling_summary: Optional[str] = None,
     should_respond: bool = True,
@@ -129,6 +153,7 @@ def create_contact(
         "email_address": email_address,
         "phone_number": phone_number,
         "bio": bio,
+        "job_title": job_title,
         "timezone": timezone,
         "rolling_summary": rolling_summary,
         "should_respond": should_respond,
@@ -195,6 +220,7 @@ def update_contact(
     phone_number: Optional[str] = None,
     whatsapp_number: Optional[str] = None,
     bio: Optional[str] = None,
+    job_title: Optional[str] = None,
     timezone: Optional[str] = None,
     rolling_summary: Optional[str] = None,
     should_respond: Optional[bool] = None,
@@ -212,6 +238,7 @@ def update_contact(
         "phone_number": phone_number,
         "whatsapp_number": whatsapp_number,
         "bio": bio,
+        "job_title": job_title,
         "timezone": timezone,
         "rolling_summary": rolling_summary,
         "should_respond": should_respond,
@@ -300,6 +327,11 @@ def update_contact(
     if bio is not None:
         try:
             _maybe_sync_bio_to_backend(self, contact_id, bio)
+        except Exception:
+            pass
+    if job_title is not None:
+        try:
+            _maybe_sync_job_title_to_backend(self, contact_id, job_title)
         except Exception:
             pass
 

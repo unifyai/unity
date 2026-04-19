@@ -202,8 +202,18 @@ def build_brain_spec(
     is_internal_call = cm.mode.is_voice and bool(
         (cm.get_active_contact() or {}).get("is_system", False),
     )
+    # Prepend the assistant's job title / specialization (if set) to the bio
+    # so the voice-call system prompt also reflects what the assistant is
+    # specialized for. Keeping this here (rather than threading a new param
+    # through build_system_prompt) keeps the prompt builder API stable.
+    _bio_parts: list[str] = []
+    _job_title = (cm.assistant_job_title or "").strip()
+    if _job_title:
+        _bio_parts.append(f"Role / specialization: {_job_title}.")
+    if cm.assistant_about:
+        _bio_parts.append(cm.assistant_about)
     system_prompt = build_system_prompt(
-        bio=cm.assistant_about,
+        bio="\n".join(_bio_parts),
         contact_id=1,
         first_name=boss_contact.get("first_name") or "",
         surname=boss_contact.get("surname") or "",
