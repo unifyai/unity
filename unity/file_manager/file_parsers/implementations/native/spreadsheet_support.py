@@ -1,7 +1,9 @@
 from __future__ import annotations
 
-from datetime import date, datetime, time
+from datetime import date, datetime, time, timedelta
 from decimal import Decimal
+
+_JSON_SAFE_TYPES = (str, int, float, bool)
 from pathlib import Path
 from typing import Iterable, Sequence
 
@@ -30,17 +32,29 @@ from unity.file_manager.file_parsers.utils.format_policy import (
 
 
 def normalize_tabular_value(value: object) -> object:
+    """Coerce a single cell value to a JSON-safe Python primitive.
+
+    Backends (openpyxl, polars, etc.) can return arbitrary Python types
+    for cell values.  This function guarantees the output is one of:
+    ``None | str | int | float | bool``.
+    """
     if value is None:
         return None
+    if isinstance(value, _JSON_SAFE_TYPES):
+        return value
     if isinstance(value, datetime):
         return value.isoformat()
     if isinstance(value, date):
         return value.isoformat()
     if isinstance(value, time):
         return value.isoformat()
+    if isinstance(value, timedelta):
+        return str(value)
     if isinstance(value, Decimal):
         return float(value)
-    return value
+    if isinstance(value, bytes):
+        return value.decode("utf-8", errors="replace")
+    return str(value)
 
 
 def build_spreadsheet_graph(

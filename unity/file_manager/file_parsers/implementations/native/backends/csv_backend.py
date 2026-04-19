@@ -29,6 +29,20 @@ from unity.file_manager.file_parsers.utils.tracing import traced_step
 
 logger = logging.getLogger(__name__)
 
+_COMMON_NULL_SENTINELS: list[str] = [
+    "NULL",
+    "null",
+    "Null",
+    "NA",
+    "N/A",
+    "n/a",
+    "NaN",
+    "nan",
+    "#N/A",
+    "#NA",
+    "",
+]
+
 
 class NativeCsvBackend(BaseFileParserBackend):
     """Streaming CSV backend backed by polars lazy scans."""
@@ -66,8 +80,11 @@ class NativeCsvBackend(BaseFileParserBackend):
             quote_char=quotechar,
             has_header=has_header,
             encoding=polars_encoding,
-            infer_schema_length=500,
+            infer_schema_length=10_000,
             try_parse_dates=True,
+            null_values=_COMMON_NULL_SENTINELS,
+            truncate_ragged_lines=True,
+            ignore_errors=True,
         )
         override = list(columns or [])
         for batch_df in lf.collect(streaming=True).iter_slices(n_rows=batch_size):
@@ -114,8 +131,11 @@ class NativeCsvBackend(BaseFileParserBackend):
                     quote_char=dialect_info["quotechar"],
                     has_header=bool(dialect_info["has_header"]),
                     encoding="utf8-lossy",
-                    infer_schema_length=500,
+                    infer_schema_length=10_000,
                     try_parse_dates=True,
+                    null_values=_COMMON_NULL_SENTINELS,
+                    truncate_ragged_lines=True,
+                    ignore_errors=True,
                 )
                 schema = lazy_frame.collect_schema()
                 columns = [str(name) for name in schema.names()]
