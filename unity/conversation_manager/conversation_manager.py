@@ -847,7 +847,7 @@ class ConversationManager(metaclass=SingletonABCMeta):
         is_user_origin: bool = False,
     ):
         await self.debouncer.submit(
-            self._run_llm,
+            self._run_llm_with_failure_notification,
             kwargs={"trace_meta": trace_meta or {}},
             delay=delay,
             cancel_running=cancel_running,
@@ -855,6 +855,98 @@ class ConversationManager(metaclass=SingletonABCMeta):
             trace_meta=trace_meta,
             is_user_origin=is_user_origin,
         )
+
+    @staticmethod
+    def _is_transient_llm_error(exc: BaseException) -> bool:
+        """True if ``exc`` is a provider-side transient error after unillm retries.
+
+        unillm (``retry_transient_400_async``) already retries these internally
+        with exponential backoff. If one escapes, it means the provider stayed
+        unhealthy for the whole retry budget — e.g. Anthropic HTTP 529
+        ``overloaded_error`` surfaces as ``litellm.InternalServerError``.
+        """
+        import litellm
+
+        return isinstance(
+            exc,
+            (
+                litellm.InternalServerError,
+                litellm.ServiceUnavailableError,
+                litellm.RateLimitError,
+            ),
+        )
+
+    async def _notify_fast_brain_of_slow_brain_failure(
+        self,
+        exc: BaseException,
+    ) -> None:
+        """Surface a slow-brain exhaustion failure to the fast brain.
+
+        Publishes a ``FastBrainNotification`` with ``should_speak=True`` and
+        an explicit ``response_text`` so the fast brain utters the error via
+        TTS directly (bypassing its own LLM, which may be hitting the same
+        provider outage). Also cancels any pending proactive-speech loop so
+        it stops emitting "still looking" filler for a request the slow brain
+        has given up on.
+        """
+        response_text = (
+            "Sorry, I'm having trouble thinking right now — "
+            "could you say that again in a moment?"
+        )
+        notification_content = (
+            f"Slow-brain turn failed after retries were exhausted "
+            f"({type(exc).__name__}). The user's last request was not processed. "
+            "Acknowledge the error and ask them to try again; do NOT claim you "
+            "are still working on the prior request."
+        )
+        contact = self.get_active_contact()
+        event = FastBrainNotification(
+            contact=contact or {},
+            content=notification_content,
+            response_text=response_text,
+            should_speak=True,
+            source="slow_brain_failure",
+        )
+        self._session_logger.info(
+            "slow_brain_failure",
+            (
+                f"Notifying fast brain of slow-brain failure: "
+                f"{type(exc).__name__}: {exc}"
+            ),
+        )
+        event_json = event.to_json()
+        await self.event_broker.publish("app:call:notification", event_json)
+        await self.event_broker.publish(
+            "app:comms:assistant_notification",
+            event_json,
+        )
+
+        with contextlib.suppress(Exception):
+            await self.cancel_proactive_speech()
+
+    async def _run_llm_with_failure_notification(
+        self,
+        trace_meta: dict[str, str] | None = None,
+    ) -> list[str] | None:
+        """Wrap ``_run_llm`` so transient provider failures reach the user.
+
+        Previously, a failed slow-brain turn only produced a ``log_task_exc``
+        line in the logs — the user was left in silence while
+        ``ProactiveSpeech`` continued to emit "still looking…" filler. This
+        wrapper catches transient LLM errors, publishes a
+        ``FastBrainNotification`` so the fast brain explicitly apologises and
+        asks the user to retry, then re-raises so the existing failure log is
+        preserved.
+        """
+        try:
+            return await self._run_llm(trace_meta=trace_meta)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            if self.mode.is_voice and self._is_transient_llm_error(exc):
+                with contextlib.suppress(Exception):
+                    await self._notify_fast_brain_of_slow_brain_failure(exc)
+            raise
 
     async def request_llm_run(
         self,
