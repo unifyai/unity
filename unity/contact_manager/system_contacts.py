@@ -178,8 +178,7 @@ def provision_assistant_contact(self, assistant_log) -> None:
             needs_timezone = fetched_tz and entries.get("timezone") != fetched_tz
             needs_bio = fetched_bio and entries.get("bio") != fetched_bio
             needs_job_title = (
-                populated
-                and (entries.get("job_title") or None) != fetched_job_title
+                populated and (entries.get("job_title") or None) != fetched_job_title
             )
             needs_phone = fetched_phone and entries.get("phone_number") != fetched_phone
             needs_whatsapp = (
