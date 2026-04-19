@@ -43,7 +43,7 @@ DeploymentExecutorBackend = Literal["local", "cloud_tasks"]
 DeploymentQueueBackend = Literal["in_memory", "pubsub", "cloud_tasks"]
 DeploymentRunMode = Literal["file_manager", "data_manager", "hybrid"]
 DeploymentExecutionTarget = Literal["local", "local_with_gcp", "staging", "production"]
-DeploymentJobState = Literal["queued", "running", "success", "error"]
+DeploymentJobState = Literal["queued", "running", "success", "error", "cancelled"]
 
 
 class DeploymentBundleArtifact(BaseModel):
@@ -140,6 +140,8 @@ class DeploymentIngestionJob(BaseModel):
     started_at: str | None = None
     finished_at: str | None = None
     error: str | None = None
+    cancelled_at: str | None = None
+    cancel_reason: str | None = None
     cost_ledger_path: str | None = None
     observability_refs: DeploymentObservabilityRefs = Field(
         default_factory=DeploymentObservabilityRefs,
