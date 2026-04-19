@@ -33,6 +33,8 @@ from typing import (
 
 from unity.common.pipeline import (
     ArtifactWorkItem,
+    IngestPlan,
+    ParsedFileBundle,
     PipelineInstrumentation,
     ingest_artifacts,
     run_with_retry,
@@ -743,6 +745,434 @@ def fm_process_file(
 
 # Backward compat alias
 process_single_file = fm_process_file
+
+
+# ---------------------------------------------------------------------------
+# IngestPlan entrypoint (deployed worker path)
+# ---------------------------------------------------------------------------
+
+
+def fm_process_plan(
+    file_manager,
+    *,
+    plan: IngestPlan,
+    file_path: str,
+    config,
+    instrumentation: PipelineInstrumentation,
+    reporter=None,
+    enable_progress: bool = False,
+    verbosity: str = "low",
+):
+    """Process a pointer-only ``IngestPlan`` through the FM ingest pipeline.
+
+    This is the worker-side sibling of :func:`fm_process_file`.  While the
+    in-process path still calls ``adapt_parse_result_for_file_manager``
+    against a live ``FileParseResult``, the deployed parse worker has
+    already done all semantic derivation and materialised the heavy
+    artifacts to GCS.  The ingest worker therefore receives an
+    ``IngestPlan`` whose content and table rows live behind handles, and
+    drives the same shared ``ingest_artifacts`` fanout used in-process.
+
+    The flow mirrors :func:`fm_process_file`:
+
+      1. Create ``FileRecord`` from ``plan.parse_summary`` (a stripped
+         ``FileParseResult`` preserving only the fields
+         ``FileRecord.to_file_record_entry`` reads) + the pre-lowered
+         ``plan.document_summary``.
+      2. Build ``ArtifactWorkItem``s for content (if
+         ``plan.content_rows_handle``) and per-table ingestion (over
+         ``plan.table_inputs``/``plan.tables_meta``).
+      3. Fan out via shared ``ingest_artifacts`` (Tier-1 within-message
+         concurrency).
+      4. Aggregate and return the same ``FileResultType`` as the
+         in-process path so attachment callbacks / observability
+         downstream don't need a second schema.
+    """
+    import traceback as _tb
+
+    file_start_time = time.perf_counter()
+    return_mode = getattr(getattr(config, "output", None), "return_mode", "compact")
+    parse_summary = plan.parse_summary
+
+    try:
+        from .task_functions import (
+            execute_create_file_record,
+            execute_ingest_content,
+            execute_ingest_table,
+        )
+
+        parse_trace = getattr(parse_summary, "trace", None)
+        trace_id = str(getattr(parse_trace, "trace_id", "") or "") or None
+        parse_backend = getattr(parse_trace, "backend", None)
+
+        content_row_count = 0
+        if plan.content_rows_handle is not None:
+            handle_count = getattr(plan.content_rows_handle, "row_count", None)
+            if handle_count is not None:
+                content_row_count = int(handle_count)
+
+        # 1. File record (sequential -- everything else depends on this)
+        file_record_stage_id = instrumentation.make_stage_id(
+            file_path=file_path,
+            stage_name="file_record",
+        )
+        fr_outcome = run_with_retry(
+            execute_create_file_record,
+            kwargs={
+                "file_manager": file_manager,
+                "file_path": file_path,
+                "parse_result": parse_summary,
+                "config": config,
+                "document_summary": plan.document_summary,
+                "total_records": content_row_count,
+            },
+            retry_config=config.retry,
+            label=f"file_record({file_path})",
+        )
+        file_record_value = (
+            fr_outcome.value if isinstance(fr_outcome.value, dict) else {}
+        )
+        file_id = file_record_value.get("file_id")
+        storage_id = file_record_value.get("storage_id")
+
+        instrumentation.record_stage(
+            file_path=file_path,
+            stage_name="file_record",
+            status="success" if fr_outcome.success else "error",
+            duration_ms=fr_outcome.duration_ms,
+            retries_used=fr_outcome.retries,
+            error=fr_outcome.error,
+            stage_id=file_record_stage_id,
+            file_id=file_id,
+            storage_id=storage_id,
+            meta={
+                "content_row_count": content_row_count,
+                "parse_backend": parse_backend,
+            },
+        )
+        _report_stage_progress(
+            reporter if enable_progress else None,
+            run_id=instrumentation.run_id,
+            file_path=file_path,
+            stage_name="file_record",
+            success=fr_outcome.success,
+            duration_ms=fr_outcome.duration_ms,
+            retries=fr_outcome.retries,
+            error=fr_outcome.error,
+            failure_kind=fr_outcome.failure_kind,
+            file_start_time=file_start_time,
+            verbosity=verbosity,
+            stage_id=file_record_stage_id,
+            file_id=file_id,
+            storage_id=storage_id,
+            trace_id=trace_id,
+            meta={
+                "content_row_count": content_row_count,
+                "parse_backend": parse_backend,
+            },
+        )
+        if not fr_outcome.success:
+            raise RuntimeError(f"File record creation failed: {fr_outcome.error}")
+
+        # Transport cost accounting still needs a ParsedFileBundle view of
+        # the per-table handles; reconstruct a lightweight one from the plan.
+        transport_bundle = ParsedFileBundle(
+            result=parse_summary,
+            table_inputs=dict(plan.table_inputs or {}),
+        )
+        instrumentation.add_transport_costs(
+            file_path=file_path,
+            file_id=file_id,
+            storage_id=storage_id,
+            bundle=transport_bundle,
+            retention_days=getattr(config.cost, "artifact_retention_days", 30),
+        )
+
+        # 2. Build ArtifactWorkItems for content + tables
+        work_items: List[ArtifactWorkItem] = []
+        do_tables = bool(config.ingest.table_ingest and plan.tables_meta)
+
+        if plan.content_rows_handle is not None:
+            work_items.append(
+                ArtifactWorkItem(
+                    kind="content",
+                    label="content",
+                    stage_name="ingest_content",
+                    payload={
+                        "file_manager": file_manager,
+                        "file_path": file_path,
+                        "content_rows": None,
+                        "content_rows_handle": plan.content_rows_handle,
+                        "config": config,
+                    },
+                    row_count=content_row_count,
+                    stage_id=instrumentation.make_stage_id(
+                        file_path=file_path,
+                        stage_name="ingest_content",
+                    ),
+                    meta={
+                        "row_count": content_row_count,
+                        "context": "content",
+                        "file_id": file_id,
+                        "storage_id": storage_id,
+                        "source_handle_type": type(plan.content_rows_handle).__name__,
+                    },
+                ),
+            )
+
+        if do_tables:
+            for meta in plan.tables_meta:
+                table_id = str(meta.table_id or "")
+                table_input = (plan.table_inputs or {}).get(table_id)
+                if table_input is None:
+                    continue
+                columns = list(meta.columns or []) or list(
+                    getattr(table_input, "columns", []) or [],
+                )
+                row_count = meta.row_count
+                if row_count is None:
+                    row_count = getattr(table_input, "row_count", None) or 0
+                table_label = str(meta.label or table_id or "table")
+                work_items.append(
+                    ArtifactWorkItem(
+                        kind="table",
+                        label=table_label,
+                        stage_name="ingest_table",
+                        payload={
+                            "file_manager": file_manager,
+                            "file_path": file_path,
+                            "table_label": table_label,
+                            "table_rows": None,
+                            "table_input": table_input,
+                            "columns": columns,
+                            "config": config,
+                        },
+                        columns=columns,
+                        row_count=int(row_count or 0),
+                        table_id=table_id or None,
+                        stage_id=instrumentation.make_stage_id(
+                            file_path=file_path,
+                            stage_name="ingest_table",
+                            discriminator=table_id or table_label,
+                        ),
+                        meta={
+                            "row_count": int(row_count or 0),
+                            "table_label": table_label,
+                            "column_count": len(columns),
+                            "source_handle_type": type(table_input).__name__,
+                            "file_id": file_id,
+                            "storage_id": storage_id,
+                        },
+                    ),
+                )
+
+        def _fm_ingest_fn(item: ArtifactWorkItem) -> dict:
+            if item.kind == "content":
+                return execute_ingest_content(**item.payload)
+            return execute_ingest_table(**item.payload)
+
+        max_workers = getattr(config.execution, "max_embed_workers", 8)
+        artifact_results = ingest_artifacts(
+            work_items=work_items,
+            ingest_fn=_fm_ingest_fn,
+            instrumentation=instrumentation,
+            source_path=file_path,
+            max_workers=max_workers,
+            retry_config=config.retry,
+        )
+
+        if enable_progress and reporter:
+            item_by_label = {item.label: item for item in work_items}
+            for ar in artifact_results:
+                src_item = item_by_label.get(ar.label)
+                _report_stage_progress(
+                    reporter,
+                    run_id=instrumentation.run_id,
+                    file_path=file_path,
+                    stage_name=f"ingest_{ar.kind}",
+                    success=ar.success,
+                    duration_ms=ar.duration_ms,
+                    retries=ar.retries,
+                    error=ar.error,
+                    failure_kind=ar.failure_kind,
+                    file_start_time=file_start_time,
+                    verbosity=verbosity,
+                    stage_id=src_item.stage_id if src_item else None,
+                    file_id=file_id,
+                    storage_id=storage_id,
+                    table_id=src_item.table_id if src_item else None,
+                    trace_id=trace_id,
+                    meta={
+                        "label": ar.label,
+                        **(src_item.meta if src_item else {}),
+                    },
+                )
+
+        instrumentation.add_observability_costs(
+            progress_event_count=(
+                1 + len(work_items) + 1 if enable_progress and reporter else 0
+            ),
+            file_path=file_path,
+            file_id=file_id,
+            storage_id=storage_id,
+        )
+
+        content_ar = next((r for r in artifact_results if r.kind == "content"), None)
+        table_ars = [r for r in artifact_results if r.kind == "table"]
+
+        result_dict = _aggregate_results(
+            file_path,
+            file_record_success=fr_outcome.success,
+            file_record_duration_ms=fr_outcome.duration_ms,
+            file_record_retries=fr_outcome.retries,
+            content_result=content_ar,
+            table_results=table_ars,
+            file_start_time=file_start_time,
+            parse_result=parse_summary,
+        )
+
+        if enable_progress and reporter:
+            report_file_complete(
+                reporter,
+                file_path,
+                file_start_time,
+                result_dict,
+                verbosity,
+                run_id=instrumentation.run_id,
+                file_id=file_id,
+                storage_id=storage_id,
+                trace_id=trace_id,
+            )
+
+        instrumentation.record_file(
+            file_path=file_path,
+            status=result_dict["status"],
+            total_duration_ms=result_dict["total_duration_ms"],
+            retries_used=result_dict["retries_used"],
+            file_id=file_id,
+            storage_id=storage_id,
+            meta={
+                "ingest_failures": result_dict["failures"]["ingest_failures"],
+                **result_dict["timing_breakdown"],
+                **result_dict["chunks"],
+                "parse_backend": parse_backend,
+            },
+        )
+
+        return _build_return_model_from_plan(
+            file_manager,
+            file_path,
+            parse_summary,
+            config,
+            return_mode,
+            plan,
+        )
+
+    except Exception as e:
+        tb_str = _tb.format_exc()
+        logger.error(f"Fatal error processing plan for {file_path}: {e}\n{tb_str}")
+        elapsed_ms = (time.perf_counter() - file_start_time) * 1000
+
+        if enable_progress and reporter:
+            from .progress import create_progress_event
+
+            event = create_progress_event(
+                file_path,
+                "file_complete",
+                "failed",
+                run_id=instrumentation.run_id,
+                duration_ms=elapsed_ms,
+                elapsed_ms=elapsed_ms,
+                error=str(e),
+                traceback_str=tb_str,
+                verbosity=verbosity,
+            )
+            reporter.report(event)
+
+        instrumentation.record_file(
+            file_path=file_path,
+            status="error",
+            total_duration_ms=elapsed_ms,
+            retries_used=0,
+            meta={"fatal_error": str(e)},
+        )
+
+        return _build_error_model(file_path, str(e), elapsed_ms, return_mode)
+
+
+def _build_return_model_from_plan(
+    file_manager: Any,
+    file_path: str,
+    parse_summary: FileParseResult,
+    config: Any,
+    return_mode: str,
+    plan: IngestPlan,
+) -> FileResultType:
+    """Return-model builder for the ``fm_process_plan`` path.
+
+    Unlike the in-process variant we do NOT have inline content rows
+    available (they were streamed through ``dm.ingest`` from a handle).
+    ``IngestedFullFile.content_rows`` therefore reports an empty list
+    here -- callers that need the raw rows should re-read them from the
+    artifact handle instead of shipping them through the pipeline result.
+    """
+    if return_mode == "full":
+        from unity.file_manager.types.ingest import IngestedFullFile
+        from .file_ops import build_compact_ingest_model
+
+        compact = build_compact_ingest_model(
+            file_manager,
+            file_path=file_path,
+            parse_result=parse_summary,
+            config=config,
+        )
+
+        return IngestedFullFile(
+            file_path=file_path,
+            status=parse_summary.status,
+            error=parse_summary.error,
+            file_format=parse_summary.file_format,
+            mime_type=parse_summary.mime_type,
+            summary=getattr(parse_summary, "summary", "") or "",
+            full_text="",
+            trace=getattr(parse_summary, "trace", None),
+            metadata=(
+                parse_summary.metadata.model_dump(mode="json", exclude_none=True)
+                if getattr(parse_summary, "metadata", None) is not None
+                else None
+            ),
+            graph=None,
+            tables=[],
+            content_rows=[],
+            content_ref=getattr(compact, "content_ref", None),
+            tables_ref=list(getattr(compact, "tables_ref", []) or []),
+            metrics=getattr(compact, "metrics", None),
+        )
+
+    if return_mode == "none":
+        total_records = 0
+        if plan.content_rows_handle is not None:
+            total_records = int(
+                getattr(plan.content_rows_handle, "row_count", None) or 0,
+            )
+        return IngestedMinimal(
+            file_path=file_path,
+            status=parse_summary.status,
+            error=parse_summary.error,
+            total_records=total_records,
+            file_format=(
+                str(parse_summary.file_format) if parse_summary.file_format else None
+            ),
+        )
+
+    from .file_ops import build_compact_ingest_model
+
+    return build_compact_ingest_model(
+        file_manager,
+        file_path=file_path,
+        parse_result=parse_summary,
+        config=config,
+    )
 
 
 # ---------------------------------------------------------------------------
