@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import json
 import logging
 import threading
+import uuid
 from concurrent.futures import Future, ThreadPoolExecutor
+from pathlib import Path
 from typing import TYPE_CHECKING, Sequence
 
 from unity.file_manager.types.config import FilePipelineConfig
@@ -42,6 +45,33 @@ class AttachmentIngestionPool:
     ) -> list[str]:
         queued: list[str] = []
         ingest_config = config or _default_attachment_ingest_config()
+
+        if _pipeline_dispatch_enabled():
+            for file_path in _normalize_paths(file_paths):
+                _upsert_attachment_status(
+                    file_manager,
+                    file_path=file_path,
+                    ingestion_status="queued",
+                )
+                try:
+                    _dispatch_attachment_to_workers(
+                        file_manager,
+                        file_path=file_path,
+                    )
+                    queued.append(file_path)
+                except Exception as exc:
+                    logger.exception(
+                        "Failed to dispatch attachment to workers",
+                        extra={"file_path": file_path},
+                    )
+                    _upsert_attachment_status(
+                        file_manager,
+                        file_path=file_path,
+                        ingestion_status="error",
+                        error=str(exc) or "dispatch failed",
+                        parse_status="error",
+                    )
+            return queued
 
         for file_path in _normalize_paths(file_paths):
             with self._lock:
@@ -196,5 +226,175 @@ def _run_attachment_ingest_job(
             file_path=file_path,
             ingestion_status="error",
             error=str(exc) or "attachment ingestion failed",
+            parse_status="error",
+        )
+
+
+# ---------------------------------------------------------------------------
+# Worker dispatch (attachment -> GKE parse/ingest workers)
+# ---------------------------------------------------------------------------
+
+
+def _pipeline_dispatch_enabled() -> bool:
+    """Return True when attachment ingestion should dispatch to GKE workers.
+
+    Checks ``SETTINGS.file.PIPELINE_DISPATCH_ENABLED`` and verifies that a
+    bucket and GCP project are configured; otherwise falls back to the
+    in-process ``AttachmentIngestionPool``.
+    """
+    try:
+        from unity.settings import SETTINGS
+    except Exception:
+        return False
+    if not SETTINGS.file.PIPELINE_DISPATCH_ENABLED:
+        return False
+    if not SETTINGS.file.PIPELINE_ARTIFACT_BUCKET:
+        return False
+    if not SETTINGS.GCP_PROJECT_ID:
+        return False
+    return True
+
+
+def _dispatch_attachment_to_workers(
+    file_manager: "FileManager",
+    *,
+    file_path: str,
+) -> None:
+    """Upload attachment bytes to GCS and publish a ParseRequested envelope.
+
+    The ingest worker will publish an ``attachment_ingestion_complete`` event
+    back to the per-assistant topic, which ``CommsManager`` dispatches into
+    the existing event broker.
+    """
+    from unity.common.pipeline.types import AttachmentCallback, ParseRequested
+    from unity.session_details import SESSION_DETAILS
+    from unity.settings import SETTINGS
+
+    bucket_name = SETTINGS.file.PIPELINE_ARTIFACT_BUCKET
+    project_id = SETTINGS.GCP_PROJECT_ID
+    env_suffix = SETTINGS.ENV_SUFFIX
+
+    assistant_id = getattr(
+        getattr(SESSION_DETAILS, "assistant", None),
+        "agent_id",
+        None,
+    )
+    if not assistant_id:
+        raise RuntimeError(
+            "PIPELINE_DISPATCH_ENABLED requires SESSION_DETAILS.assistant.agent_id",
+        )
+
+    data = file_manager._open_bytes_by_filepath(file_path)
+    filename = Path(file_path).name
+    attachment_id = uuid.uuid4().hex
+    job_id = f"attachment-{assistant_id}-{attachment_id}"
+    blob_key = f"attachments/{assistant_id}/{attachment_id}/{filename}"
+    gs_uri = f"gs://{bucket_name}/{blob_key}"
+
+    _upload_bytes_to_gcs(
+        project_id=project_id,
+        bucket_name=bucket_name,
+        blob_key=blob_key,
+        data=data,
+    )
+
+    callback = AttachmentCallback(
+        assistant_id=str(assistant_id),
+        env_suffix=env_suffix,
+        display_name=file_path,
+    )
+    parse_msg = ParseRequested(
+        job_id=job_id,
+        deployment_id="",
+        file_paths=[gs_uri],
+        attachment_callback=callback,
+    )
+
+    parse_topic = f"unity-parse{env_suffix}"
+    _publish_to_topic(
+        project_id=project_id,
+        topic_name=parse_topic,
+        payload=parse_msg.model_dump(mode="json"),
+        attributes={"thread": "attachment_parse"},
+    )
+
+    _upsert_attachment_status(
+        file_manager,
+        file_path=file_path,
+        ingestion_status="dispatched",
+    )
+    logger.info(
+        "Dispatched attachment to parse worker: job=%s uri=%s",
+        job_id,
+        gs_uri,
+    )
+
+
+def _upload_bytes_to_gcs(
+    *,
+    project_id: str,
+    bucket_name: str,
+    blob_key: str,
+    data: bytes,
+) -> None:
+    """Upload raw bytes to ``gs://{bucket_name}/{blob_key}``."""
+    from google.cloud import storage
+
+    client = storage.Client(project=project_id)
+    bucket = client.bucket(bucket_name)
+    blob = bucket.blob(blob_key)
+    blob.upload_from_string(data)
+
+
+def _publish_to_topic(
+    *,
+    project_id: str,
+    topic_name: str,
+    payload: dict,
+    attributes: dict[str, str] | None = None,
+) -> str:
+    """Publish ``payload`` as JSON to ``projects/{project}/topics/{topic}``."""
+    from google.cloud import pubsub_v1
+
+    publisher = pubsub_v1.PublisherClient()
+    topic_path = publisher.topic_path(project_id, topic_name)
+    future = publisher.publish(
+        topic_path,
+        json.dumps(payload, default=str).encode("utf-8"),
+        **(attributes or {}),
+    )
+    message_id: str = future.result(timeout=30)
+    return message_id
+
+
+# ---------------------------------------------------------------------------
+# Completion callback (invoked by CommsManager when the worker reports back)
+# ---------------------------------------------------------------------------
+
+
+def apply_attachment_completion(
+    file_manager: "FileManager",
+    *,
+    display_name: str,
+    status: str,
+    error: str | None = None,
+) -> None:
+    """Update ``FileRecords`` for a completed worker-dispatched attachment.
+
+    Called from ``CommsManager`` when a ``thread="attachment_ingestion_complete"``
+    message arrives on the per-assistant Pub/Sub topic.
+    """
+    if status == "success":
+        _upsert_attachment_status(
+            file_manager,
+            file_path=display_name,
+            ingestion_status="success",
+        )
+    else:
+        _upsert_attachment_status(
+            file_manager,
+            file_path=display_name,
+            ingestion_status="error",
+            error=error or "attachment ingestion failed",
             parse_status="error",
         )

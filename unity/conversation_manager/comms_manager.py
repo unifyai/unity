@@ -333,6 +333,49 @@ class CommsManager:
         if exc is not None:
             LOGGER.error(f"{DEFAULT_ICON} Error processing message: {exc}")
 
+    async def _handle_attachment_ingestion_complete(self, event: dict) -> None:
+        """Apply a worker-reported attachment ingestion outcome to FileRecords.
+
+        Invoked when a ``thread="attachment_ingestion_complete"`` envelope
+        arrives on the per-assistant Pub/Sub topic.  The event payload must
+        include ``display_name`` and ``status`` (``"success"`` or ``"error"``);
+        optional ``error`` carries a failure message.
+        """
+        display_name = event.get("display_name")
+        status = event.get("status", "success")
+        error = event.get("error")
+        if not display_name:
+            LOGGER.warning(
+                f"{DEFAULT_ICON} attachment_ingestion_complete missing display_name; "
+                "ignoring event.",
+            )
+            return
+        try:
+            from unity.conversation_manager.domains.managers_utils import (
+                ManagerRegistry,
+            )
+
+            file_manager = ManagerRegistry.get_file_manager()
+        except Exception:
+            file_manager = None
+        if file_manager is None:
+            LOGGER.warning(
+                f"{DEFAULT_ICON} attachment_ingestion_complete received but "
+                "FileManager is unavailable; cannot update FileRecords.",
+            )
+            return
+        from unity.file_manager.managers.utils.attachment_ingestion import (
+            apply_attachment_completion,
+        )
+
+        await asyncio.to_thread(
+            apply_attachment_completion,
+            file_manager,
+            display_name=display_name,
+            status=status,
+            error=error,
+        )
+
     async def dispatch_envelope_payload(
         self,
         payload: dict,
@@ -439,6 +482,11 @@ class CommsManager:
                     "app:comms:ping",
                     Ping(kind="keepalive").to_json(),
                 )
+                ack_now()
+                return
+
+            if thread == "attachment_ingestion_complete":
+                await self._handle_attachment_ingestion_complete(event)
                 ack_now()
                 return
 

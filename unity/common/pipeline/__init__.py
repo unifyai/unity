@@ -60,6 +60,7 @@ from .run_ledger import (
 from .row_streaming import iter_table_input_row_batches, iter_table_input_rows
 from .transport import build_table_handles, detect_csv_dialect
 from .types import (
+    AttachmentCallback,
     CsvFileHandle,
     IngestRequested,
     InlineRowsHandle,
@@ -143,6 +144,7 @@ __all__ = sorted(
         "build_table_handles",
         "detect_csv_dialect",
         # Types
+        "AttachmentCallback",
         "CsvFileHandle",
         "IngestRequested",
         "InlineRowsHandle",
