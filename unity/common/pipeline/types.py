@@ -86,6 +86,23 @@ class ParsedFileBundle(BaseModel):
 # ---------------------------------------------------------------------------
 
 
+class AttachmentCallback(BaseModel):
+    """Routing metadata for attachment-ingestion dispatch.
+
+    When a ``ParseRequested`` or ``IngestRequested`` message carries this
+    callback, the ingest worker publishes a
+    ``thread="attachment_ingestion_complete"`` envelope to the
+    ``unity-{assistant_id}{env_suffix}`` Pub/Sub topic after ingest finishes
+    so the originating ``ConversationManager`` can update ``FileRecords``.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    assistant_id: str
+    env_suffix: str = ""
+    display_name: str
+
+
 class ParseRequested(BaseModel):
     """Message placed on the parse queue by the coordinator.
 
@@ -103,6 +120,7 @@ class ParseRequested(BaseModel):
     manifest_key: str = ""
     transport_mode: str = "source_reference"
     artifact_format: str = "jsonl"
+    attachment_callback: Optional[AttachmentCallback] = None
 
 
 class IngestRequested(BaseModel):
@@ -121,3 +139,4 @@ class IngestRequested(BaseModel):
     manifest_key: str = ""
     target_context: str = ""
     batch_size: int = 500
+    attachment_callback: Optional[AttachmentCallback] = None

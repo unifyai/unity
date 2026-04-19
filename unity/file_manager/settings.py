@@ -51,6 +51,17 @@ class FileSettings(BaseSettings):
     IMPLICIT_INGESTION: bool = False
     ATTACHMENT_INGESTION_MAX_WORKERS: int = Field(default=2, ge=1)
 
+    # -- Pipeline worker dispatch (GKE parse/ingest workers) ---
+    # When PIPELINE_DISPATCH_ENABLED is true, attachment ingestion uploads the
+    # source file to ``PIPELINE_ARTIFACT_BUCKET`` and publishes a
+    # ``thread="attachment_parse"`` envelope to the
+    # ``unity-parse{ENV_SUFFIX}`` Pub/Sub topic (resolved from
+    # ``SETTINGS.GCP_PROJECT_ID`` + ``SETTINGS.ENV_SUFFIX``) instead of running
+    # the in-process ``AttachmentIngestionPool``.  Completion events arrive
+    # back on the per-assistant topic and are handled by ``CommsManager``.
+    PIPELINE_DISPATCH_ENABLED: bool = False
+    PIPELINE_ARTIFACT_BUCKET: str = ""
+
     # Plot API settings
     PLOT_API_ENDPOINT: str = "/logs/plot"
     PLOT_API_TIMEOUT: float = 30.0
