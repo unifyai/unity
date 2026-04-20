@@ -313,6 +313,7 @@ async def hydrate_global_thread(cm: "ConversationManager") -> None:
                     message_content=cm_event.content,
                     role="assistant",
                     timestamp=ts,
+                    attachments=getattr(cm_event, "attachments", None),
                 )
             case "TeamsChannelMessageReceived":
                 entry = cm.contact_index.build_message(
@@ -332,6 +333,7 @@ async def hydrate_global_thread(cm: "ConversationManager") -> None:
                     message_content=cm_event.content,
                     role="assistant",
                     timestamp=ts,
+                    attachments=getattr(cm_event, "attachments", None),
                 )
 
             # --- Email ---
