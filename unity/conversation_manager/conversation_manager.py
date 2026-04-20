@@ -108,6 +108,7 @@ class ConversationManager(metaclass=SingletonABCMeta):
         assistant_timezone: str = "",
         assistant_whatsapp_number: str = "",
         assistant_discord_bot_id: str = "",
+        assistant_email_provider: str = "",
         assistant_job_title: str = "",
         past_events: list | None = None,
         conv_context_length: int = 50,
@@ -133,6 +134,7 @@ class ConversationManager(metaclass=SingletonABCMeta):
         self.assistant_email = assistant_email
         self.assistant_whatsapp_number = assistant_whatsapp_number
         self.assistant_discord_bot_id = assistant_discord_bot_id
+        self.assistant_email_provider = assistant_email_provider
         self.user_first_name = user_first_name
         self.user_surname = user_surname
         self.user_number = user_number
@@ -281,7 +283,7 @@ class ConversationManager(metaclass=SingletonABCMeta):
     @property
     def assistant_has_teams(self) -> bool:
         """True when the assistant's email is backed by Microsoft (MS365)."""
-        return getattr(self, "assistant_email_provider", "") == "microsoft"
+        return self.assistant_email_provider == "microsoft"
 
     @property
     def session_logger(self) -> SessionLogger:
