@@ -317,11 +317,16 @@ def _dispatch_attachment_to_workers(
         fm_alias="Local",
         logical_path=file_path,
     )
+    # No ``upload_prefix`` -- ``publish_parse_request`` composes every
+    # source file under ``jobs/<job_id>/source/<basename>``. Because
+    # ``job_id = f"attachment-{assistant_id}-{attachment_id}"`` below,
+    # attachments remain scoped per-assistant-and-attachment, just
+    # nested under the unified ``jobs/`` root that every other
+    # pipeline artifact also lives under.
     target = DispatchTarget(
         project_id=project_id,
         bucket_name=bucket_name,
         env_suffix=env_suffix,
-        upload_prefix=f"attachments/{assistant_id}/{attachment_id}",
     )
 
     result = publish_parse_request(
