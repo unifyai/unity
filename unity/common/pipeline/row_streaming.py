@@ -108,7 +108,10 @@ def _iter_object_store_rows(handle: ObjectStoreArtifactHandle) -> Iterator[JsonO
             f"Artifact streaming is not implemented for {handle.artifact_format!r}",
         )
 
-    path = _resolve_local_path(source_local_path="", storage_uri=handle.storage_uri)
+    path = _resolve_local_path(
+        source_local_path=handle.source_local_path,
+        storage_uri=handle.storage_uri,
+    )
     with path.open("r", encoding="utf-8") as fh:
         for line in fh:
             text = line.strip()

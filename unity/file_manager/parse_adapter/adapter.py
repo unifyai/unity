@@ -196,6 +196,7 @@ def lower_to_ingest_plan(
         parse_result,
         artifact_store=artifact_store,
         artifact_format=artifact_format,
+        job_id=run_id,
     )
     tables_meta = _build_tables_meta(parse_result)
 
@@ -223,6 +224,7 @@ def lower_to_ingest_plan(
                         content_rows,
                         logical_path=logical_path,
                         artifact_format=artifact_format,
+                        job_id=run_id,
                     )
             except Exception:
                 content_rows_handle = None

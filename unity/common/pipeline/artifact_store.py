@@ -36,7 +36,19 @@ class ArtifactStore(Protocol):
         logical_path: str,
         table_id: str,
         artifact_format: str,
-    ) -> ObjectStoreArtifactHandle: ...
+        job_id: str = "",
+    ) -> ObjectStoreArtifactHandle:
+        """Materialise *handle* as a durable artifact.
+
+        ``job_id`` is optional so callers that operate outside the
+        worker pipeline (e.g. a local developer running the
+        ``LocalArtifactStore`` with a hash-based on-disk layout) can
+        leave it empty. Object-store-backed implementations (e.g.
+        ``GcsArtifactStore``) use it to scope every artifact under a
+        single ``jobs/<job_id>/artifacts/...`` root so all of a job's
+        outputs live in one place.
+        """
+        ...
 
     def materialize_content_rows(
         self,
@@ -44,6 +56,7 @@ class ArtifactStore(Protocol):
         *,
         logical_path: str,
         artifact_format: str = "jsonl",
+        job_id: str = "",
     ) -> ObjectStoreArtifactHandle:
         """Serialise lowered content rows into a JSONL artifact handle.
 
@@ -51,7 +64,8 @@ class ArtifactStore(Protocol):
         ``dict`` payloads; each is normalised to a JSON object before being
         written.  The resulting handle uses the conventional
         ``CONTENT_ROWS_TABLE_ID`` so manifests/handles for derived content
-        stay consistent across implementations.
+        stay consistent across implementations. See
+        :meth:`materialize_table_input` for the meaning of ``job_id``.
         """
         ...
 
@@ -88,7 +102,14 @@ class LocalArtifactStore:
         logical_path: str,
         table_id: str,
         artifact_format: str,
+        job_id: str = "",
     ) -> ObjectStoreArtifactHandle:
+        # ``job_id`` is intentionally ignored here: LocalArtifactStore's
+        # on-disk layout is hash-based and optimised for developer
+        # ergonomics, not for the per-job roll-ups that the GCS store
+        # uses in production. Keeping the kwarg keeps the protocol
+        # uniform across backends.
+        del job_id
         if isinstance(handle, ObjectStoreArtifactHandle):
             return handle
         if artifact_format != "jsonl":
@@ -130,6 +151,7 @@ class LocalArtifactStore:
         *,
         logical_path: str,
         artifact_format: str = "jsonl",
+        job_id: str = "",
     ) -> ObjectStoreArtifactHandle:
         """Serialise content rows as JSONL via ``materialize_table_input``.
 
@@ -164,6 +186,7 @@ class LocalArtifactStore:
             logical_path=logical_path,
             table_id=CONTENT_ROWS_TABLE_ID,
             artifact_format=artifact_format,
+            job_id=job_id,
         )
 
     # -- manifest CRUD -----------------------------------------------------

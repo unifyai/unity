@@ -148,8 +148,8 @@ class TestFmModeBytes:
         bucket = storage.buckets["unit-test-bucket"]
         assert len(bucket.blobs) == 1
         blob_key, blob = next(iter(bucket.blobs.items()))
-        assert blob_key.endswith("/q1.csv")
-        assert blob_key.startswith("dispatch/")
+        assert blob_key.endswith("/source/q1.csv")
+        assert blob_key.startswith("jobs/")
         assert blob.data == b"a,b\n1,2\n"
         assert result.gs_uri == f"gs://unit-test-bucket/{blob_key}"
 

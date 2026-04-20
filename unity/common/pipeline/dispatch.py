@@ -55,17 +55,18 @@ class DispatchTarget:
     appended to every environment-qualified resource name
     (``parse_topic_base + env_suffix``).
 
-    ``upload_prefix`` controls where uploaded bytes land under the bucket
-    (default ``"dispatch"``); callers can override this when they want a
-    different namespace (for example the attachment path historically
-    uses ``"attachments/{assistant_id}/{attachment_id}"``).
+    Upload location is **not** configurable per-caller. Every dispatched
+    source file lands at ``jobs/<job_id>/source/<basename>`` so all
+    artifacts for a job share a single self-contained root directory and
+    operators can ``gsutil ls gs://<bucket>/jobs/<job_id>/`` to see
+    everything (source bytes, manifests, materialised tables, ledgers)
+    for that job in one place.
     """
 
     project_id: str
     bucket_name: str
     env_suffix: str = ""
     parse_topic_base: str = "unity-parse"
-    upload_prefix: str = "dispatch"
 
 
 @dataclass(frozen=True)
@@ -236,7 +237,6 @@ def _ensure_in_gcs(
         return source_gs_uri
 
     resolved_blob_key = blob_key or _default_blob_key(
-        upload_prefix=target.upload_prefix,
         job_id=job_id,
         logical_path=logical_path,
     )
@@ -258,18 +258,18 @@ def _ensure_in_gcs(
     return gs_uri
 
 
-def _default_blob_key(*, upload_prefix: str, job_id: str, logical_path: str) -> str:
-    """Compose ``{prefix}/{job_id}/{basename(logical_path)}``.
+def _default_blob_key(*, job_id: str, logical_path: str) -> str:
+    """Compose ``jobs/<job_id>/source/<basename(logical_path)>``.
 
-    The basename keeps uploads human-legible in the console; the job_id
-    prefix ensures uniqueness even if two callers dispatch the same file
-    name.
+    This is the single authoritative location for a dispatched source
+    file. Co-locating the source bytes with the downstream manifests,
+    materialised artifacts, and ledgers under the same ``jobs/<job_id>/``
+    root means one directory contains everything operators need to
+    inspect or purge a single job, and makes cross-environment leaks
+    structurally impossible (the enclosing bucket is env-scoped).
     """
     basename = Path(logical_path).name or "unnamed"
-    clean_prefix = upload_prefix.strip("/")
-    if clean_prefix:
-        return f"{clean_prefix}/{job_id}/{basename}"
-    return f"{job_id}/{basename}"
+    return f"jobs/{job_id}/source/{basename}"
 
 
 def _publish(

@@ -42,6 +42,7 @@ def build_table_handles(
     *,
     artifact_store: Optional["ArtifactStore"] = None,
     artifact_format: str = "jsonl",
+    job_id: str = "",
 ) -> Dict[str, TableInputHandle]:
     """Build transport handles for every table in *parse_result*.
 
@@ -87,6 +88,7 @@ def build_table_handles(
                 logical_path=logical_path,
                 table_id=table_id,
                 artifact_format=artifact_format,
+                job_id=job_id,
             )
 
         result[table_id] = handle
