@@ -3,10 +3,10 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>unity-agent — steerable agent runtime for AI teammates</title>
+    <title>unity-agent — open-source, persistent AI teammates</title>
     <meta
       name="description"
-      content="The open-source agent runtime behind Unify. Steerable nested execution, code-first planning, and typed state managers for coordinated AI teammates."
+      content="Open-source, persistent AI teammates from Unify. Steerable nested execution, code-first planning, and shared typed state for coordinated assistants."
     />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
@@ -48,15 +48,15 @@
               <span class="eyebrow-tick">]</span>
             </p>
             <h1 class="hero-title">
-              A <em>steerable</em> runtime<br />
-              for AI teammates.
+              <em>Steerable</em> AI teammates.<br />
+              Built to coordinate.
             </h1>
             <p class="hero-lede">
-              unity-agent is the open-source runtime behind Unify's persistent
-              AI teammates. It plans in real Python over typed state, steers
-              live work without restarts, and coordinates multiple assistants
-              over shared typed state rather than swapping summaries between
-              isolated threads.
+              unity-agent is Unify's persistent AI teammate, open-sourced. You
+              host it. It plans in real Python over typed state, steers live
+              work without restarts, and coordinates with other teammates over
+              shared typed state rather than swapping summaries between isolated
+              threads.
             </p>
             <div class="hero-ctas">
               <a
@@ -77,13 +77,13 @@
             </p>
           </div>
 
-          <aside class="hero-right" aria-label="Runtime visualization">
+          <aside class="hero-right" aria-label="Live session visualization">
             <div class="panel">
               <div class="panel-head">
                 <span class="panel-dot red"></span>
                 <span class="panel-dot amber"></span>
                 <span class="panel-dot green"></span>
-                <span class="panel-title">unity://runtime</span>
+                <span class="panel-title">unity://session</span>
               </div>
               <pre class="panel-body"><code><span class="c-dim">$</span> <span class="c-fn">assistant</span>.act(<span class="c-str">"catch Sarah up on the Q3 launch"</span>)
 
@@ -132,8 +132,7 @@
           <div class="section-head">
             <p class="kicker">Capabilities</p>
             <h2 class="section-title">
-              <span class="serif-accent">Six capabilities.</span><br />
-              One runtime.
+              <span class="serif-accent">Six</span> capabilities.
             </h2>
           </div>
 
@@ -275,7 +274,7 @@ python -m sandboxes.conversation_manager.sandbox \
           <div class="section-head">
             <p class="kicker">How it runs</p>
             <h2 class="section-title">
-              The stack, <span class="serif-accent">top to bottom.</span>
+              The architecture, <span class="serif-accent">top to bottom.</span>
             </h2>
           </div>
 
@@ -338,7 +337,7 @@ python -m sandboxes.conversation_manager.sandbox \
                 <span class="arch-role">collective</span>
               </div>
               <div class="arch-card">
-                <h3>Shared substrate</h3>
+                <h3>Shared typed state</h3>
                 <p>
                   Managers can selectively share state across assistants. Typed
                   boundaries make cross-assistant coordination explicit rather
@@ -390,10 +389,11 @@ python -m sandboxes.conversation_manager.sandbox \
                 <em>All MIT-licensed.</em>
               </p>
               <p class="signal-note">
-                <strong>unity-agent</strong> is the runtime.
-                <strong>unify</strong> is the Python SDK for hosted persistence.
-                <strong>unillm</strong> is the provider-agnostic LLM client.
-                Clone all three to run locally.
+                <strong>unity-agent</strong> is the code you run — the
+                assistants and their managers. <strong>unify</strong> is the
+                Python SDK for hosted persistence. <strong>unillm</strong> is
+                the provider-agnostic LLM client. Clone all three to run
+                locally.
               </p>
             </div>
           </div>
