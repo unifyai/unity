@@ -472,6 +472,68 @@ class DiscordChannelMessageSent(Event):
 
 
 @dataclass
+class TeamsMessageReceived(Event):
+    """A message received in a Microsoft Teams chat (1:1, group, or meeting)."""
+
+    topic: ClassVar[str | None] = "app:comms:teams_message"
+    content_logged: ClassVar[bool] = True
+
+    contact: dict
+    content: str
+    chat_id: str = ""
+    message_id: str = ""
+    chat_type: str | None = None
+    chat_topic: str | None = None
+    attachments: list[dict] = field(default_factory=list)
+
+
+@dataclass
+class TeamsChannelMessageReceived(Event):
+    """A message received in a Microsoft Teams channel."""
+
+    topic: ClassVar[str | None] = "app:comms:teams_channel_message"
+    content_logged: ClassVar[bool] = True
+
+    contact: dict
+    content: str
+    channel_id: str = ""
+    team_id: str = ""
+    message_id: str = ""
+    is_reply: bool = False
+    parent_message_id: str | None = None
+    thread_id: str = ""
+    post_subject: str | None = None
+    attachments: list[dict] = field(default_factory=list)
+
+
+@dataclass
+class TeamsMessageSent(Event):
+    """A message sent in a Microsoft Teams chat."""
+
+    topic: ClassVar[str | None] = "app:comms:teams_message_sent"
+    content_logged: ClassVar[bool] = True
+
+    contact: dict
+    content: str
+    chat_id: str = ""
+    attachments: list[dict] | None = None
+
+
+@dataclass
+class TeamsChannelMessageSent(Event):
+    """A message sent in a Microsoft Teams channel."""
+
+    topic: ClassVar[str | None] = "app:comms:teams_channel_message_sent"
+    content_logged: ClassVar[bool] = True
+
+    contact: dict
+    content: str
+    channel_id: str = ""
+    team_id: str = ""
+    attachments: list[dict] | None = None
+
+
+@dataclass
 class UnifyMessageReceived(Event):
     """A message was received via the Unify console chat interface.
 

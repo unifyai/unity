@@ -102,6 +102,10 @@ _MESSAGE_PRODUCING_EVENTS = {
     "DiscordMessageSent",
     "DiscordChannelMessageReceived",
     "DiscordChannelMessageSent",
+    "TeamsMessageReceived",
+    "TeamsMessageSent",
+    "TeamsChannelMessageReceived",
+    "TeamsChannelMessageSent",
 }
 
 
@@ -285,6 +289,46 @@ async def hydrate_global_thread(cm: "ConversationManager") -> None:
                     contact_id=contact_id,
                     sender_name=sender_name,
                     thread_name=Medium.DISCORD_CHANNEL_MESSAGE,
+                    message_content=cm_event.content,
+                    role="assistant",
+                    timestamp=ts,
+                )
+
+            # --- Teams Messages ---
+            case "TeamsMessageReceived":
+                entry = cm.contact_index.build_message(
+                    contact_id=contact_id,
+                    sender_name=sender_name,
+                    thread_name=Medium.TEAMS_MESSAGE,
+                    message_content=cm_event.content,
+                    role="user",
+                    timestamp=ts,
+                    attachments=getattr(cm_event, "attachments", None),
+                )
+            case "TeamsMessageSent":
+                entry = cm.contact_index.build_message(
+                    contact_id=contact_id,
+                    sender_name=sender_name,
+                    thread_name=Medium.TEAMS_MESSAGE,
+                    message_content=cm_event.content,
+                    role="assistant",
+                    timestamp=ts,
+                )
+            case "TeamsChannelMessageReceived":
+                entry = cm.contact_index.build_message(
+                    contact_id=contact_id,
+                    sender_name=sender_name,
+                    thread_name=Medium.TEAMS_CHANNEL_MESSAGE,
+                    message_content=cm_event.content,
+                    role="user",
+                    timestamp=ts,
+                    attachments=getattr(cm_event, "attachments", None),
+                )
+            case "TeamsChannelMessageSent":
+                entry = cm.contact_index.build_message(
+                    contact_id=contact_id,
+                    sender_name=sender_name,
+                    thread_name=Medium.TEAMS_CHANNEL_MESSAGE,
                     message_content=cm_event.content,
                     role="assistant",
                     timestamp=ts,
@@ -758,6 +802,12 @@ async def log_message(
             Medium.DISCORD_CHANNEL_MESSAGE
             if "channel" in event_name
             else Medium.DISCORD_MESSAGE
+        )
+    elif "teams" in event_name:
+        medium = (
+            Medium.TEAMS_CHANNEL_MESSAGE
+            if "channel" in event_name
+            else Medium.TEAMS_MESSAGE
         )
     else:
         medium = Medium.EMAIL

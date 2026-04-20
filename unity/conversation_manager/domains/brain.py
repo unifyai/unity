@@ -227,6 +227,7 @@ def build_brain_spec(
         assistant_has_email=bool(cm.assistant_email),
         assistant_has_whatsapp=bool(cm.assistant_whatsapp_number),
         assistant_has_discord=bool(cm.assistant_discord_bot_id),
+        assistant_has_teams=bool(cm.assistant_has_teams),
         user_desktop_control=SETTINGS.conversation.USER_DESKTOP_CONTROL_ENABLED,
     )
 
