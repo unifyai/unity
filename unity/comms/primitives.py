@@ -1363,7 +1363,7 @@ class CommsPrimitives:
             if is_channel
             else "app:comms:teams_message_sent"
         )
-        target_kind = "teams_channel" if is_channel else "teams_chat"
+        target_kind = "teams_channel" if is_channel else "contact"
 
         def _target_metadata() -> dict[str, Any]:
             base: dict[str, Any] = {

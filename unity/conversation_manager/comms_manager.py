@@ -1025,35 +1025,33 @@ class CommsManager:
                         return
 
                     if is_channel:
-                        teams_event = TeamsChannelMessageReceived(
-                            contact=contact,
-                            content=content,
-                            channel_id=event.get("channel_id", ""),
-                            team_id=event.get("team_id", ""),
-                            message_id=message_id,
-                            is_reply=event.get("is_reply", False),
-                            parent_message_id=event.get("parent_message_id"),
-                            thread_id=event.get("thread_id", ""),
-                            post_subject=event.get("post_subject"),
-                            attachments=attachments,
-                        )
                         await publish(
                             "app:comms:teams_channel_message",
-                            teams_event.to_json(),
+                            events_map[thread](
+                                contact=contact,
+                                content=content,
+                                channel_id=event.get("channel_id", ""),
+                                team_id=event.get("team_id", ""),
+                                message_id=message_id,
+                                is_reply=event.get("is_reply", False),
+                                parent_message_id=event.get("parent_message_id"),
+                                thread_id=event.get("thread_id", ""),
+                                post_subject=event.get("post_subject"),
+                                attachments=attachments,
+                            ).to_json(),
                         )
                     else:
-                        teams_event = TeamsMessageReceived(
-                            contact=contact,
-                            content=content,
-                            chat_id=event.get("chat_id", ""),
-                            message_id=message_id,
-                            chat_type=event.get("chat_type"),
-                            chat_topic=event.get("chat_topic"),
-                            attachments=attachments,
-                        )
                         await publish(
                             "app:comms:teams_message",
-                            teams_event.to_json(),
+                            events_map[thread](
+                                contact=contact,
+                                content=content,
+                                chat_id=event.get("chat_id", ""),
+                                message_id=message_id,
+                                chat_type=event.get("chat_type"),
+                                chat_topic=event.get("chat_topic"),
+                                attachments=attachments,
+                            ).to_json(),
                         )
 
                     if attachments:
