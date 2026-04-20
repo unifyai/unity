@@ -2134,6 +2134,29 @@ async def _(
     await cm.request_llm_run(delay=0)
 
 
+# Notification text shown to the slow brain when initialization completes.
+#
+# Wording is deliberately strong about preferring `wait` over a follow-up
+# message: in cold-start flows where the brain already replied to a user
+# message during pre-init, the original "review … and follow up if needed
+# (correct, elaborate, or confirm)" wording was being interpreted as
+# permission to send a rephrased duplicate. We still need to allow the
+# brain to follow up legitimately when it deferred work, gave an
+# incomplete/incorrect answer due to missing context, or has new history
+# from hydration — so the directive enumerates those cases explicitly and
+# tells the brain to call `wait` otherwise.
+INITIALIZATION_COMPLETE_NOTIFICATION = (
+    "Initialization complete — all actions are now available and full "
+    "conversation history has been loaded. If your previous reply during "
+    "initialization (a) deferred work you can now perform, (b) was "
+    "incorrect or incomplete because of missing context now revealed by "
+    "hydrated history, or (c) needs a concrete update, follow up now "
+    "(act, correct, or elaborate). Otherwise call wait — do NOT send a "
+    "message that simply rephrases, restates, or confirms a reply you "
+    "already gave."
+)
+
+
 @EventHandler.register((InitializationComplete,))
 async def _(
     event: "InitializationComplete",
@@ -2143,12 +2166,7 @@ async def _(
 ):
     cm.notifications_bar.push_notif(
         "System",
-        (
-            "Initialization complete — all actions are now available and "
-            "full conversation history has been loaded. Review any earlier "
-            "responses you gave during initialization and follow up if "
-            "needed (correct, elaborate, or confirm)."
-        ),
+        INITIALIZATION_COMPLETE_NOTIFICATION,
         event.timestamp,
     )
     cm._session_logger.debug("initialization", "Initialization complete")
