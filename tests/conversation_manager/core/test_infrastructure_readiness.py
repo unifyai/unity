@@ -373,9 +373,7 @@ async def test_brain_completes_deferred_work_after_init(initialized_cm):
         f"but called: {cm.all_tool_calls}"
     )
     phase1_replies = filter_events_by_type(phase1.output_events, UnifyMessageSent)
-    assert (
-        len(phase1_replies) >= 1
-    ), "Brain should send a deferral reply during Phase 1"
+    assert len(phase1_replies) >= 1, "Brain should send a deferral reply during Phase 1"
     cm.all_tool_calls.clear()
 
     # Phase 2: initialization completes — brain must follow up on the
