@@ -1540,6 +1540,7 @@ async def _(event, cm: "ConversationManager", *args, **kwargs):
         case TeamsMessageSent():
             medium = Medium.TEAMS_MESSAGE
             message_content = event.content
+            attachments = event.attachments
             notif_content = f"Teams message sent to {sender_name}"
             role = "assistant"
             event_trace = getattr(cm, "_current_event_trace", None) or {}
@@ -1561,6 +1562,7 @@ async def _(event, cm: "ConversationManager", *args, **kwargs):
         case TeamsChannelMessageSent():
             medium = Medium.TEAMS_CHANNEL_MESSAGE
             message_content = event.content
+            attachments = event.attachments
             notif_content = "Teams channel message sent"
             role = "assistant"
             event_trace = getattr(cm, "_current_event_trace", None) or {}
