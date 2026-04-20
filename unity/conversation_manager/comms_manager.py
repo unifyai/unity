@@ -84,6 +84,26 @@ def _already_seen_discord(message_id: str) -> bool:
     return False
 
 
+# In-memory dedup for Microsoft Graph Teams message IDs.
+# Graph change-notification subscriptions can redeliver when acks fall behind,
+# so we guard against duplicate ingestion the same way Discord does.
+_seen_teams_ids: dict[str, float] = {}
+_TEAMS_DEDUP_TTL = 300.0
+
+
+def _already_seen_teams(message_id: str) -> bool:
+    """Return True if this Teams message_id was already processed recently."""
+    now = time.time()
+    cutoff = now - _TEAMS_DEDUP_TTL
+    expired = [k for k, t in _seen_teams_ids.items() if t < cutoff]
+    for k in expired:
+        del _seen_teams_ids[k]
+    if message_id in _seen_teams_ids:
+        return True
+    _seen_teams_ids[message_id] = now
+    return False
+
+
 if TYPE_CHECKING:
     from unity.conversation_manager.in_memory_event_broker import InMemoryEventBroker
 
@@ -964,6 +984,13 @@ class CommsManager:
                     message_id = event.get("message_id", "")
                     is_channel = thread == "teams_channel"
                     attachments = event.get("attachments") or []
+
+                    if message_id and _already_seen_teams(message_id):
+                        LOGGER.debug(
+                            f"{DEFAULT_ICON} Skipping duplicate Teams message {message_id}",
+                        )
+                        ack_now()
+                        return
 
                     medium_for_blacklist = (
                         Medium.TEAMS_CHANNEL_MESSAGE
