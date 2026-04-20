@@ -40,8 +40,8 @@ from .catalog import build_table_profile_text, summarize_table_profile
 
 
 @dataclass(frozen=True)
-class LoweringResult:
-    """Lowering output: ingestion-ready `/Content/` rows + optional file-level summary."""
+class ContentLoweringOutput:
+    """FileManager-owned `/Content/` rows plus an optional file-level summary."""
 
     rows: List[FileContentRow]
     document_summary: str = ""
@@ -189,7 +189,7 @@ def lower_graph_to_content_rows(
     tables: List[ExtractedTable],
     business_contexts: Optional[BusinessContextsConfig],
     settings: FileParserSettings = FILE_PARSER_SETTINGS,
-) -> LoweringResult:
+) -> ContentLoweringOutput:
     """
     Lower a ContentGraph (plus extracted tables) into `/Content/` rows.
 
@@ -205,7 +205,7 @@ def lower_graph_to_content_rows(
     # Defensive: root node should exist.
     root = graph.nodes.get(graph.root_id)
     if root is None:
-        return LoweringResult(rows=[], document_summary="")
+        return ContentLoweringOutput(rows=[], document_summary="")
 
     # ------------------------------------------------------------------
     # Spreadsheet lowering: document + sheet + table catalog rows
@@ -383,7 +383,7 @@ def lower_graph_to_content_rows(
                 ),
             )
 
-        return LoweringResult(rows=rows, document_summary="")
+        return ContentLoweringOutput(rows=rows, document_summary="")
 
     # ------------------------------------------------------------------
     # Document lowering: document + section + paragraph + sentence (+ image/table)
@@ -549,4 +549,4 @@ def lower_graph_to_content_rows(
             walk(child, inherited)
 
     walk(root, node_to_ids[root.node_id])
-    return LoweringResult(rows=rows, document_summary=doc_summary)
+    return ContentLoweringOutput(rows=rows, document_summary=doc_summary)

@@ -295,6 +295,13 @@ async def test_brain_waits_after_init_when_nothing_deferred(initialized_cm):
     completes and the brain gets a post-init turn with full context.
     Since the conversation was already handled and nothing is pending,
     the brain should call wait without sending another message.
+
+    Regression test for the Unify duplicate-reply bug: the
+    InitializationComplete notification text in
+    ``event_handlers.INITIALIZATION_COMPLETE_NOTIFICATION`` explicitly
+    instructs the brain to call ``wait`` and NOT send a message that
+    rephrases or restates a reply it already gave.  This eval verifies
+    the brain actually obeys that directive end-to-end.
     """
     cm = initialized_cm
     cm.cm.initialized = False
@@ -330,4 +337,55 @@ async def test_brain_waits_after_init_when_nothing_deferred(initialized_cm):
     assert len(replies) == 0, (
         f"Brain should NOT send an unsolicited message when there is nothing "
         f"to follow up on, but sent {len(replies)} message(s)"
+    )
+
+
+@pytest.mark.asyncio
+@_handle_project
+async def test_brain_completes_deferred_work_after_init(initialized_cm):
+    """When the brain deferred work pre-init, it must follow up post-init.
+
+    The strengthened InitializationComplete notification still permits
+    legitimate follow-ups when "your previous reply during initialization
+    deferred work you can now perform".  This eval verifies the brain
+    correctly distinguishes a deferred reply (must follow up) from a
+    completed reply (should wait) under the new prompt.
+
+    Phase 1: user asks for a calendar action while ``initialized=False``;
+    brain defers with an "I'll look into it once I'm fully booted" reply.
+
+    Phase 2: InitializationComplete fires.  The brain must wake up and
+    actually perform the deferred work — either by calling ``act`` or by
+    sending a substantive follow-up message that delivers the answer.
+    """
+    cm = initialized_cm
+    cm.cm.initialized = False
+
+    # Phase 1: user asks something the brain cannot complete pre-init.
+    phase1 = await cm.step_until_wait(
+        UnifyMessageReceived(
+            contact=BOSS,
+            content="What meetings do I have today?",
+        ),
+    )
+    assert "act" not in cm.all_tool_calls, (
+        "Phase 1 brain should defer (not act) when not initialized, "
+        f"but called: {cm.all_tool_calls}"
+    )
+    phase1_replies = filter_events_by_type(phase1.output_events, UnifyMessageSent)
+    assert len(phase1_replies) >= 1, "Brain should send a deferral reply during Phase 1"
+    cm.all_tool_calls.clear()
+
+    # Phase 2: initialization completes — brain must follow up on the
+    # deferred work, not call wait silently.
+    cm.cm.initialized = True
+    result = await cm.step_until_wait(InitializationComplete())
+
+    acted = "act" in cm.all_tool_calls
+    replies = filter_events_by_type(result.output_events, UnifyMessageSent)
+    assert acted or len(replies) >= 1, (
+        f"Brain MUST follow up on a pre-init deferral after "
+        f"initialization completes — either by calling act or by sending "
+        f"the substantive reply.  tool_calls={cm.all_tool_calls}, "
+        f"replies={len(replies)}"
     )

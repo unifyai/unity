@@ -662,6 +662,8 @@ class ContactManager(BaseContactManager):
                 unique_eq_patterns = (
                     r"\s*email_address\s*==\s*(['\"])\S.*?\1\s*",
                     r"\s*phone_number\s*==\s*(['\"])\S.*?\1\s*",
+                    r"\s*whatsapp_number\s*==\s*(['\"])\S.*?\1\s*",
+                    r"\s*discord_id\s*==\s*(['\"])\S.*?\1\s*",
                 )
                 if any(re.fullmatch(p, filter) for p in unique_eq_patterns):
                     eff_limit = min(eff_limit, 1)
@@ -728,6 +730,7 @@ class ContactManager(BaseContactManager):
         email_address: Optional[str] = None,
         phone_number: Optional[str] = None,
         bio: Optional[str] = None,
+        job_title: Optional[str] = None,
         timezone: Optional[str] = None,
         rolling_summary: Optional[str] = None,
         should_respond: bool = True,
@@ -753,6 +756,11 @@ class ContactManager(BaseContactManager):
             otherwise digits only. Must be unique.
         bio : str | None
             Free‑form notes or description about the contact. Optional.
+        job_title : str | None
+            Free‑text job title / specialization (e.g. "Growth marketing",
+            "QA engineer"). On the assistant contact (``contact_id == 0``)
+            this mirrors the assistant's job title from the backend and is
+            surfaced to the LLM via the broader-context prompt. Optional.
         timezone : str | None
             IANA Timezone identifier (e.g. "America/New_York"). Optional.
         rolling_summary : str | None
@@ -805,6 +813,7 @@ class ContactManager(BaseContactManager):
             email_address=email_address,
             phone_number=phone_number,
             bio=bio,
+            job_title=job_title,
             timezone=timezone,
             rolling_summary=rolling_summary,
             should_respond=should_respond,
@@ -822,6 +831,7 @@ class ContactManager(BaseContactManager):
         phone_number: Optional[str] = None,
         whatsapp_number: Optional[str] = None,
         bio: Optional[str] = None,
+        job_title: Optional[str] = None,
         timezone: Optional[str] = None,
         rolling_summary: Optional[str] = None,
         should_respond: Optional[bool] = None,
@@ -852,6 +862,8 @@ class ContactManager(BaseContactManager):
             New WhatsApp number. Digits only unless explicitly provided with leading ``+``.
         bio : str | None
             Free‑form notes/description.
+        job_title : str | None
+            Free‑text job title / specialization. See ``_create_contact``.
         timezone : str | None
             IANA Timezone identifier.
         rolling_summary : str | None
@@ -897,6 +909,7 @@ class ContactManager(BaseContactManager):
             phone_number=phone_number,
             whatsapp_number=whatsapp_number,
             bio=bio,
+            job_title=job_title,
             timezone=timezone,
             rolling_summary=rolling_summary,
             should_respond=should_respond,

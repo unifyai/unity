@@ -19,6 +19,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from tests.async_helpers import _wait_for_condition
 from unity.conversation_manager.domains import comms_utils
 from unity.file_manager.managers.local import LocalFileManager
 from unity.settings import SETTINGS
@@ -28,6 +29,20 @@ SAMPLE_TEXT_CONTENT = (
     b"Quarterly revenue report\nTotal revenue: $1,234,567\nNet profit: $456,789\n"
 )
 SAMPLE_CSV_CONTENT = b"name,amount,date\nAlice,1000,2025-01-15\nBob,2500,2025-02-20\n"
+
+
+async def _wait_for_attachment_status(
+    file_manager,
+    display_name: str,
+    *,
+    statuses: set[str],
+    timeout: float = 30.0,
+) -> None:
+    async def _predicate():
+        storage = file_manager.describe(file_path=display_name)
+        return (storage.parsed_status or "") in statuses
+
+    await _wait_for_condition(_predicate, poll=0.05, timeout=timeout)
 
 
 @pytest.fixture()
@@ -69,7 +84,10 @@ class TestAttachmentIngestion:
         mock_session.__aenter__ = AsyncMock(return_value=mock_session)
         mock_session.__aexit__ = AsyncMock(return_value=None)
 
-        with patch("aiohttp.ClientSession", return_value=mock_session):
+        with (
+            patch("aiohttp.ClientSession", return_value=mock_session),
+            patch.object(SETTINGS.file, "IMPLICIT_INGESTION", True),
+        ):
             attachments = [
                 {
                     "id": "att-1",
@@ -82,14 +100,30 @@ class TestAttachmentIngestion:
         display_name = "Attachments/att-1_report.txt"
         assert fm.exists(display_name)
 
+        await _wait_for_attachment_status(
+            fm,
+            display_name,
+            statuses={"queued", "ingesting", "success"},
+        )
         storage = fm.describe(file_path=display_name)
         assert storage.indexed_exists, "Downloaded attachment must be indexed"
+        assert storage.parsed_status in {"queued", "ingesting", "success"}
+
+        await _wait_for_attachment_status(
+            fm,
+            display_name,
+            statuses={"success"},
+            timeout=120.0,
+        )
+        storage = fm.describe(file_path=display_name)
         assert storage.parsed_status == "success", "Attachment must be parsed"
         assert storage.has_document, "Parsed content must be available"
 
     @pytest.mark.asyncio
     async def test_downloaded_email_attachment_is_ingested(self, real_file_manager):
-        """Attachment downloaded via add_email_attachments should be fully ingested."""
+        """Email attachments should become discoverable immediately and expose
+        explicit background-ingestion status through FileManager.describe().
+        """
         fm = real_file_manager
 
         mock_response = MagicMock()
@@ -120,16 +154,20 @@ class TestAttachmentIngestion:
             await comms_utils.add_email_attachments(
                 attachments,
                 receiver_email="assistant@example.com",
-                gmail_message_id="msg-123",
+                message_id="msg-123",
             )
 
         display_name = "Attachments/att-email-1_data.csv"
         assert fm.exists(display_name)
 
+        await _wait_for_attachment_status(
+            fm,
+            display_name,
+            statuses={"queued", "ingesting", "success"},
+        )
         storage = fm.describe(file_path=display_name)
         assert storage.indexed_exists, "Downloaded email attachment must be indexed"
-        assert storage.parsed_status == "success", "Email attachment must be parsed"
-        assert storage.has_document, "Parsed content must be available"
+        assert storage.parsed_status in {"queued", "ingesting", "success"}
 
 
 class TestHydrationAttachmentMaterialization:
@@ -177,6 +215,11 @@ class TestHydrationAttachmentMaterialization:
 
         display_name = "Attachments/hydrated-att-1_notes.txt"
         assert fm.exists(display_name), "Hydrated attachment must appear on disk"
+        await _wait_for_attachment_status(
+            fm,
+            display_name,
+            statuses={"queued", "ingesting", "success"},
+        )
         storage = fm.describe(file_path=display_name)
         assert storage.indexed_exists, "Hydrated attachment must be indexed"
 

@@ -37,8 +37,8 @@ DEFAULT_BACKEND_CLASS_PATHS_BY_FORMAT: Dict[str, str] = {
     "xml": "unity.file_manager.file_parsers.implementations.docling.backends.xml_backend.XmlBackend",
     "json": "unity.file_manager.file_parsers.implementations.docling.backends.json_backend.JsonBackend",
     # Tabular formats
-    "xlsx": "unity.file_manager.file_parsers.implementations.docling.backends.ms_excel_backend.MsExcelBackend",
-    "csv": "unity.file_manager.file_parsers.implementations.docling.backends.csv_backend.CsvBackend",
+    "xlsx": "unity.file_manager.file_parsers.implementations.native.backends.excel_backend.NativeExcelBackend",
+    "csv": "unity.file_manager.file_parsers.implementations.native.backends.csv_backend.NativeCsvBackend",
     # Text formats / fallbacks
     "txt": "unity.file_manager.file_parsers.implementations.python.backends.text_backend.TextBackend",
 }

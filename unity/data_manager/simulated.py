@@ -972,8 +972,9 @@ class SimulatedDataManager(BaseDataManager):
     def ingest(
         self,
         context: str,
-        rows: List[Dict[str, Any]],
+        rows: Optional[List[Dict[str, Any]]] = None,
         *,
+        table_input_handle=None,
         description: Optional[str] = None,
         fields: Optional[Dict[str, Any]] = None,
         unique_keys: Optional[Dict[str, str]] = None,
@@ -988,6 +989,15 @@ class SimulatedDataManager(BaseDataManager):
         on_task_complete=None,
         coerce_types: bool = True,
     ) -> IngestResult:
+        if table_input_handle is not None:
+            from unity.common.pipeline.row_streaming import (
+                iter_table_input_rows,
+            )
+
+            rows = list(iter_table_input_rows(table_input_handle))
+        elif rows is None:
+            rows = []
+
         start = time.perf_counter()
         resolved = self._resolve_context(context)
 

@@ -117,7 +117,10 @@ def extract_metadata_from_text_best_effort(
     for any reason (model error, invalid JSON, etc.) we fall back to a small,
     deterministic extraction to ensure `FileParseResult.metadata` is populated.
     """
-    if not has_meaningful_text(text):
+    stripped = (text or "").strip()
+    if len(stripped) < int(
+        settings.ENRICHMENT_MIN_TEXT_CHARS,
+    ) or not has_meaningful_text(text):
         return _fallback_metadata_from_text(text or "")
 
     prompt = build_metadata_extraction_prompt(
@@ -295,7 +298,9 @@ def summarize_spreadsheet_profile_best_effort(
     """
     Best-effort spreadsheet summary that is always embedding-safe and non-empty.
     """
-    if not has_meaningful_text(profile_text):
+    if len((profile_text or "").strip()) < int(
+        settings.ENRICHMENT_MIN_TEXT_CHARS,
+    ) or not has_meaningful_text(profile_text):
         return (fallback or profile_text).strip()
 
     prompt = build_spreadsheet_summary_prompt(

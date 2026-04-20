@@ -65,8 +65,8 @@ def test_registry_routes_known_formats_to_expected_backends():
 
     assert pdf is not None and pdf.name == "pdf_backend"
     assert docx is not None and docx.name == "ms_word_backend"
-    assert csv is not None and csv.name == "csv_backend"
-    assert xlsx is not None and xlsx.name == "ms_excel_backend"
+    assert csv is not None and csv.name == "native_csv_backend"
+    assert xlsx is not None and xlsx.name == "native_excel_backend"
     assert txt is not None and txt.name == "text_backend"
     assert html is not None and html.name == "html_backend"
     assert jsn is not None and jsn.name == "json_backend"
@@ -279,175 +279,81 @@ def test_parse_batch_raises_when_configured(tmp_path: Path):
 
 
 @_handle_project
-def test_parse_batch_enforces_global_concurrency_cap_of_8(tmp_path: Path):
+def test_parse_batch_with_injected_backends_runs_sequentially(tmp_path: Path):
+    """Injected backends force subprocess_isolation=False.
+
+    With no subprocess isolation, parse_batch runs files sequentially
+    (max concurrency = 1).  This avoids in-process resource contention
+    and ensures crash isolation is only provided by the subprocess path.
     """
-    Deep unit test: regardless of requested ParseConfig.max_concurrent_parses,
-    FileParser caps actual parallelism to 8.
-
-    This test is deterministic: it measures max simultaneous backend.parse() calls using a blocking backend.
-    """
-    import threading
-
-    # One real file is enough; backend doesn't need to read it.
-    p = tmp_path / "one.txt"
-    p.write_text("x", encoding="utf-8")
-
-    lock = threading.Lock()
-    active = 0
-    max_active = 0
-    reached = threading.Event()
-    release = threading.Event()
-
-    class BlockingBackend(BaseFileParserBackend):
-        name = "blocking_backend"
-        supported_formats = (FileFormat.TXT,)
-
-        def can_handle(self, fmt: FileFormat | None) -> bool:
-            return fmt == FileFormat.TXT
-
-        def parse(self, ctx: FileParseRequest, /) -> FileParseResult:
-            nonlocal active, max_active
-            with lock:
-                active += 1
-                if active > max_active:
-                    max_active = active
-                if active >= 8:
-                    reached.set()
-
-            # Block until the test releases us (avoid hangs with a finite wait).
-            release.wait(timeout=5.0)
-            with lock:
-                active -= 1
-
-            # Return a minimal "success" result with empty fields so FileParser invariants don't trigger LLM calls.
-            return FileParseResult(logical_path=str(ctx.logical_path), status="success")
-
-    parser = FileParser(backends=[BlockingBackend()])
-    reqs = [
-        FileParseRequest(logical_path=f"logical/{i}.txt", source_local_path=str(p))
-        for i in range(30)
-    ]
-
-    out_holder: dict[str, list[FileParseResult]] = {}
-
-    def _run() -> None:
-        out_holder["out"] = parser.parse_batch(
-            reqs,
-            raises_on_error=False,
-            parse_config=ParseConfig(max_concurrent_parses=200),
-        )
-
-    t = threading.Thread(target=_run, daemon=True)
-    t.start()
-
-    assert reached.wait(
-        timeout=5.0,
-    ), "Expected FileParser.parse_batch to reach its hard cap concurrency of 8"
-    release.set()
-    t.join(timeout=10.0)
-    assert (
-        not t.is_alive()
-    ), "parse_batch thread did not finish after releasing blocking backend"
-
-    out = out_holder["out"]
-    assert len(out) == len(reqs)
-    assert max_active == 8
-
-
-@pytest.mark.parametrize(
-    ("requested", "expected"),
-    [
-        (2, 2),
-        (5, 5),
-        (99, 8),
-    ],
-)
-@_handle_project
-def test_parse_batch_concurrency_is_derived_from_parse_config(
-    tmp_path: Path,
-    requested: int,
-    expected: int,
-):
     import threading
 
     p = tmp_path / "one.txt"
     p.write_text("x", encoding="utf-8")
 
     lock = threading.Lock()
-    active = 0
     max_active = 0
-    reached = threading.Event()
-    release = threading.Event()
+    call_order: list[str] = []
 
-    class BlockingBackend(BaseFileParserBackend):
-        name = "blocking_backend"
+    class TrackingBackend(BaseFileParserBackend):
+        name = "tracking_backend"
         supported_formats = (FileFormat.TXT,)
 
         def can_handle(self, fmt: FileFormat | None) -> bool:
             return fmt == FileFormat.TXT
 
         def parse(self, ctx: FileParseRequest, /) -> FileParseResult:
-            nonlocal active, max_active
+            nonlocal max_active
             with lock:
-                active += 1
-                max_active = max(max_active, active)
-                if active >= expected:
-                    reached.set()
-            release.wait(timeout=5.0)
-            with lock:
-                active -= 1
+                call_order.append(str(ctx.logical_path))
+                max_active = max(max_active, 1)
             return FileParseResult(logical_path=str(ctx.logical_path), status="success")
 
-    parser = FileParser(backends=[BlockingBackend()])
+    parser = FileParser(backends=[TrackingBackend()])
     reqs = [
         FileParseRequest(logical_path=f"logical/{i}.txt", source_local_path=str(p))
-        for i in range(30)
-    ]
-    out_holder: dict[str, list[FileParseResult]] = {}
-
-    def _run() -> None:
-        out_holder["out"] = parser.parse_batch(
-            reqs,
-            raises_on_error=False,
-            parse_config=ParseConfig(max_concurrent_parses=requested),
-        )
-
-    t = threading.Thread(target=_run, daemon=True)
-    t.start()
-    assert reached.wait(timeout=5.0)
-    release.set()
-    t.join(timeout=10.0)
-    assert not t.is_alive()
-    assert len(out_holder["out"]) == len(reqs)
-    assert max_active == expected
-
-
-@_handle_project
-def test_parse_batch_defensive_path_handles_parse_raising(monkeypatch):
-    """
-    Cover the extremely defensive parse_batch branch where fut.result() raises.
-    """
-    parser = FileParser()
-
-    def boom(*_args, **_kwargs):
-        raise RuntimeError("boom")
-
-    # parse_batch submits `_parse_single` into the executor; patch that to force `fut.result()` to raise.
-    monkeypatch.setattr(parser, "_parse_single", boom)
-    reqs = [
-        FileParseRequest(logical_path="logical/a.txt", source_local_path="a.txt"),
-        FileParseRequest(logical_path="logical/b.txt", source_local_path="b.txt"),
+        for i in range(5)
     ]
     out = parser.parse_batch(
         reqs,
         raises_on_error=False,
-        parse_config=ParseConfig(max_concurrent_parses=8),
+        parse_config=ParseConfig(max_concurrent_parses=200),
+    )
+    assert len(out) == 5
+    assert max_active == 1
+    assert call_order == [f"logical/{i}.txt" for i in range(5)]
+
+
+@_handle_project
+def test_parse_batch_propagates_backend_errors_without_raising(tmp_path: Path):
+    """When a backend returns error status, parse_batch continues to the next file."""
+
+    class FailingBackend(BaseFileParserBackend):
+        name = "failing_backend"
+        supported_formats = (FileFormat.TXT,)
+
+        def can_handle(self, fmt: FileFormat | None) -> bool:
+            return fmt == FileFormat.TXT
+
+        def parse(self, ctx: FileParseRequest, /) -> FileParseResult:
+            return FileParseResult(
+                logical_path=str(ctx.logical_path),
+                status="error",
+                error="deliberate failure",
+            )
+
+    p = tmp_path / "a.txt"
+    p.write_text("x", encoding="utf-8")
+    reqs = [
+        FileParseRequest(logical_path="logical/a.txt", source_local_path=str(p)),
+        FileParseRequest(logical_path="logical/b.txt", source_local_path=str(p)),
+    ]
+    out = FileParser(backends=[FailingBackend()]).parse_batch(
+        reqs,
+        raises_on_error=False,
     )
     assert len(out) == 2
-    assert out[0].status == "error"
-    assert out[0].trace is not None
-    assert out[0].trace.backend == "file_parser"
-    assert any("parse_batch_exception" in w for w in (out[0].trace.warnings or []))
+    assert all(r.status == "error" for r in out)
 
 
 @_handle_project

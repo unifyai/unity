@@ -179,6 +179,109 @@ class SecretManager(BaseSecretManager):
             return ("required", {"ask": current_tools["ask"]})
         return ("auto", current_tools)
 
+    # --------------------- Internal helpers (assistant secret sync) ---------- #
+
+    OAUTH_SECRET_ALLOWLIST = frozenset(
+        {
+            "GOOGLE_ACCESS_TOKEN",
+            "GOOGLE_REFRESH_TOKEN",
+            "GOOGLE_TOKEN_EXPIRES_AT",
+            "GOOGLE_GRANTED_SCOPES",
+            "MICROSOFT_ACCESS_TOKEN",
+            "MICROSOFT_REFRESH_TOKEN",
+            "MICROSOFT_TOKEN_EXPIRES_AT",
+            "MICROSOFT_GRANTED_SCOPES",
+        },
+    )
+
+    def _sync_assistant_secrets(self) -> None:
+        """Pull OAuth tokens from Orchestra's assistant secrets into the Secrets context.
+
+        Communication stores OAuth tokens (Google/Microsoft) as assistant-level
+        secrets in Orchestra after each OAuth callback.  This method reads those
+        secrets via the admin API and upserts them into the ``Secrets`` context
+        so the Actor can discover and use them in code-first plans.
+
+        Best-effort: failures are logged and silently swallowed.
+        """
+        from ..session_details import SESSION_DETAILS
+
+        agent_id = SESSION_DETAILS.assistant.agent_id
+        if agent_id is None:
+            return
+
+        base_url = SETTINGS.ORCHESTRA_URL
+        admin_key = SETTINGS.ORCHESTRA_ADMIN_KEY.get_secret_value()
+        if not base_url or not admin_key:
+            return
+
+        try:
+            from unify.utils import http
+
+            resp = http.get(
+                f"{base_url}/admin/assistant",
+                headers={"Authorization": f"Bearer {admin_key}"},
+                params={"agent_id": int(agent_id), "from_fields": "secrets"},
+                timeout=15,
+            )
+            if resp.status_code != 200:
+                return
+            payload = resp.json()
+            items = payload.get("info", [])
+            if not items:
+                return
+            secrets_dict: dict = items[0].get("secrets") or {}
+        except Exception:
+            return
+
+        for name, value in secrets_dict.items():
+            if name not in self.OAUTH_SECRET_ALLOWLIST:
+                continue
+            if not isinstance(value, str) or not value:
+                continue
+            try:
+                existing = unify.get_logs(
+                    context=self._ctx,
+                    filter=f"name == {name!r}",
+                    limit=1,
+                    return_ids_only=True,
+                )
+                description = "System-managed OAuth credential (auto-synced)"
+                if existing:
+                    unify.update_logs(
+                        logs=[existing[0]],
+                        context=self._ctx,
+                        entries={"value": value, "description": description},
+                        overwrite=True,
+                    )
+                else:
+                    unity_log(
+                        context=self._ctx,
+                        name=name,
+                        value=value,
+                        description=description,
+                        new=True,
+                        mutable=True,
+                        add_to_all_context=self.include_in_multi_assistant_table,
+                    )
+                self._env_set(name, value)
+            except Exception:
+                continue
+
+        for stale_name in self.OAUTH_SECRET_ALLOWLIST - secrets_dict.keys():
+            try:
+                ids = unify.get_logs(
+                    context=self._ctx,
+                    filter=f"name == {stale_name!r}",
+                    limit=1,
+                    return_ids_only=True,
+                )
+                if ids:
+                    unify.delete_logs(context=self._ctx, logs=ids[0])
+                    self._env_remove(stale_name)
+            except Exception:
+                continue
+
     # --------------------- Internal helpers (.env sync) --------------------- #
     def _dotenv_path(self) -> str:
         """Return the path to the .env file used for local sync.
@@ -218,7 +321,7 @@ class SecretManager(BaseSecretManager):
             self._env_merge_and_write(add_or_update=name_to_value, remove_keys=None)
 
     def _ensure_dotenv_synced_on_init(self) -> None:
-        """Create .env if missing and merge existing Unify secrets into it."""
+        """Create .env if missing, pull assistant OAuth tokens, and merge all secrets."""
         path = self._dotenv_path()
         # Ensure directory exists
         try:
@@ -230,6 +333,7 @@ class SecretManager(BaseSecretManager):
             with open(path, "w", encoding="utf-8") as fh:
                 fh.write("")
 
+        self._sync_assistant_secrets()
         self._sync_dotenv()
 
     @staticmethod
@@ -383,8 +487,13 @@ class SecretManager(BaseSecretManager):
         _clarification_down_q: Optional[asyncio.Queue[str]] = None,
         _call_id: Optional[str] = None,
     ) -> SteerableToolHandle:
-        # Sync .env so externally-added secrets (e.g. via Console UI) are
-        # available through os.environ before the Actor's code reads them.
+        # Pull OAuth tokens from Orchestra → Secrets context, then sync
+        # all secrets (including freshly-synced OAuth tokens) into .env
+        # so they're available through os.environ before the Actor reads them.
+        try:
+            self._sync_assistant_secrets()
+        except Exception:
+            pass
         try:
             self._sync_dotenv()
         except Exception:

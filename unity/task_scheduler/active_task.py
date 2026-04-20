@@ -20,7 +20,12 @@ from ..actor.base import BaseActor
 from unity.common.async_tool_loop import SteerableToolHandle
 from unity.common.task_execution_context import current_task_execution_delegate
 from unity.common._async_tool.messages import forward_handle_call
-from .machine_state import TaskRunReference, update_task_run_record
+from .machine_state import (
+    TaskRunProvenance,
+    TaskRunReference,
+    create_or_adopt_live_task_run,
+    update_task_run_record,
+)
 from .types.status import Status
 from ..common.llm_client import new_llm_client
 import logging
@@ -161,6 +166,7 @@ class ActiveTask(BaseActiveTask, HandleWrapperMixin):
         scheduler: Optional["TaskScheduler"] = None,
         entrypoint: Optional[int] = None,
         task_run_reference: Optional[TaskRunReference] = None,
+        task_run_provenance: Optional[TaskRunProvenance] = None,
     ) -> "ActiveTask":
         """
         Create an ActiveTask by starting work on the provided ``actor``.
@@ -203,12 +209,26 @@ class ActiveTask(BaseActiveTask, HandleWrapperMixin):
                     },
                 )
             raise
+        materialized_task_run_reference = task_run_reference
+        if materialized_task_run_reference is None and task_run_provenance is not None:
+            try:
+                materialized_task_run_reference = await asyncio.to_thread(
+                    create_or_adopt_live_task_run,
+                    task_run_provenance,
+                )
+            except Exception:
+                logger.exception(
+                    "Failed to materialize live task run after execution started "
+                    "(task_id=%s, instance_id=%s)",
+                    task_id,
+                    instance_id,
+                )
         return cls(
             actor_steerable_handle,  # type: ignore[arg-type]
             task_id=task_id,
             instance_id=instance_id,
             scheduler=scheduler,
-            task_run_reference=task_run_reference,
+            task_run_reference=materialized_task_run_reference,
         )
 
     @functools.wraps(BaseActiveTask.ask, updated=())

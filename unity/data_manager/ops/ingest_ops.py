@@ -28,7 +28,7 @@ import logging
 import threading
 import time
 import uuid
-from typing import Any, Dict, List, Optional, TYPE_CHECKING
+from typing import Any, Dict, List, Literal, Optional, TYPE_CHECKING
 
 import unify as _unify
 
@@ -109,6 +109,24 @@ def _chunk_rows(
 ) -> List[List[Dict[str, Any]]]:
     """Split *rows* into sublists of at most *chunk_size* elements."""
     return [rows[i : i + chunk_size] for i in range(0, len(rows), chunk_size)]
+
+
+def _chunk_ids(ids: List[int], batch_size: int) -> List[List[int]]:
+    """Split log IDs into embedding-sized batches."""
+    return [ids[i : i + batch_size] for i in range(0, len(ids), batch_size)]
+
+
+def _should_serialize_insert_chunks(
+    *,
+    auto_counting: Optional[Dict[str, Optional[str]]],
+    insert_parallelism: Literal["auto", "serial", "parallel"],
+) -> bool:
+    """Decide whether insert chunks must run sequentially."""
+    if insert_parallelism == "serial":
+        return True
+    if insert_parallelism == "parallel":
+        return False
+    return bool(auto_counting)
 
 
 def _derive_target_name(field_name: str, suffix: str) -> str:
@@ -268,6 +286,8 @@ def _make_embed_func(
     async_embeddings: bool = True,
     ids_store: Optional[_InsertedIdsStore] = None,
     insert_task_id: Optional[str] = None,
+    embedding_batch_size: int = 1000,
+    sync_first_batch: bool = False,
 ):
     """Return a zero-arg callable that embeds columns for specific rows.
 
@@ -309,17 +329,25 @@ def _make_embed_func(
             logger.info("No row IDs to embed for %s -- skipping", context)
             return {"rows_embedded": 0}
 
+        id_batches = _chunk_ids(from_ids, embedding_batch_size)
+
         def _do_col(col: str) -> int:
             target = f"_{col}_emb"
-            _ensure_vector_column(
-                context=context,
-                embed_column=target,
-                source_column=col,
-                derived_expr=None,
-                from_ids=from_ids,
-                async_embeddings=async_embeddings,
-            )
-            return len(from_ids)
+            embedded = 0
+            for batch_index, id_batch in enumerate(id_batches):
+                batch_async = async_embeddings
+                if sync_first_batch and batch_index == 0:
+                    batch_async = False
+                _ensure_vector_column(
+                    context=context,
+                    embed_column=target,
+                    source_column=col,
+                    derived_expr=None,
+                    from_ids=id_batch,
+                    async_embeddings=batch_async,
+                )
+                embedded += len(id_batch)
+            return embedded
 
         if len(embed_columns) == 1:
             total = _do_col(embed_columns[0])
@@ -350,6 +378,8 @@ def _build_ingest_graph(
     infer_untyped_fields: bool,
     add_to_all_context: bool = False,
     total_rows: int = 0,
+    insert_parallelism: Literal["auto", "serial", "parallel"] = "auto",
+    embedding_batch_size: int = 1000,
 ) -> TaskGraph:
     """Build a :class:`TaskGraph` for a full ingest operation.
 
@@ -385,12 +415,16 @@ def _build_ingest_graph(
     )
 
     # -- insert chunks ------------------------------------------------------
-    # Inserts are chained (each depends on the previous) so the backend's
-    # auto_counting counter advances atomically between batches.  Embed
-    # chunks still pipeline: embed_N starts as soon as insert_N finishes,
-    # overlapping with insert_N+1.
+    # Insert ordering is execution-configurable:
+    # - serial: every chunk depends on the previous chunk
+    # - parallel: every chunk fans out from create_table
+    # - auto: serial only when auto_counting is configured
     insert_ids: List[str] = []
     pad = len(str(total_chunks - 1)) if total_chunks > 0 else 1
+    serialize_inserts = _should_serialize_insert_chunks(
+        auto_counting=auto_counting,
+        insert_parallelism=insert_parallelism,
+    )
     prev_insert_id = create_id
     for idx, chunk in enumerate(chunks):
         task_id = f"insert_chunk_{idx:0{pad}d}_{nonce}"
@@ -405,30 +439,28 @@ def _build_ingest_graph(
                     ids_store=ids_store,
                     task_id=task_id,
                 ),
-                dependencies={prev_insert_id},
+                dependencies={prev_insert_id} if serialize_inserts else {create_id},
                 metadata={
                     "context": context,
                     "chunk_index": idx,
                     "chunk_size": len(chunk),
                     "total_chunks": total_chunks,
                     "total_rows": total_rows,
+                    "insert_parallelism": (
+                        "serial" if serialize_inserts else "parallel"
+                    ),
                 },
             ),
         )
         insert_ids.append(task_id)
-        prev_insert_id = task_id
+        if serialize_inserts:
+            prev_insert_id = task_id
 
     # -- optional embedding -------------------------------------------------
     if embed_columns:
         if embed_strategy == "along":
             for idx, ins_id in enumerate(insert_ids):
                 embed_task_id = f"embed_chunk_{idx:0{pad}d}_{nonce}"
-                # First chunk uses sync embeddings to guarantee the
-                # FieldType (field_category="derived_entry") is created
-                # via Orchestra's sync path.  The async path queues
-                # embeddings but returns NULLs which can prevent
-                # FieldType creation.  Subsequent chunks use async.
-                use_async = idx > 0
                 graph.add_task(
                     Task(
                         id=embed_task_id,
@@ -436,9 +468,11 @@ def _build_ingest_graph(
                         func=_make_embed_func(
                             context,
                             embed_columns,
-                            async_embeddings=use_async,
+                            async_embeddings=True,
                             ids_store=ids_store,
                             insert_task_id=ins_id,
+                            embedding_batch_size=embedding_batch_size,
+                            sync_first_batch=(idx == 0),
                         ),
                         dependencies={ins_id},
                         metadata={
@@ -447,6 +481,7 @@ def _build_ingest_graph(
                             "total_chunks": total_chunks,
                             "embed_columns": embed_columns,
                             "depends_on_ingest": ins_id,
+                            "embedding_batch_size": embedding_batch_size,
                         },
                     ),
                 )
@@ -458,7 +493,10 @@ def _build_ingest_graph(
                     func=_make_embed_func(
                         context,
                         embed_columns,
+                        async_embeddings=True,
                         ids_store=ids_store,
+                        embedding_batch_size=embedding_batch_size,
+                        sync_first_batch=True,
                     ),
                     dependencies=set(insert_ids),
                     metadata={
@@ -466,6 +504,7 @@ def _build_ingest_graph(
                         "strategy": "after",
                         "embed_columns": embed_columns,
                         "total_rows": total_rows,
+                        "embedding_batch_size": embedding_batch_size,
                     },
                 ),
             )
@@ -520,8 +559,9 @@ def _aggregate_results(
 def run_ingest(
     dm: "DataManager",
     context: str,
-    rows: List[Dict[str, Any]],
+    rows: Optional[List[Dict[str, Any]]] = None,
     *,
+    table_input_handle: Optional[Any] = None,
     description: Optional[str] = None,
     fields: Optional[Dict[str, Any]] = None,
     unique_keys: Optional[Dict[str, str]] = None,
@@ -542,31 +582,102 @@ def run_ingest(
     a :class:`TaskGraph`, runs it through :class:`PipelineExecutor`, and
     returns an aggregated :class:`IngestResult`.
 
+    Accepts **either** a materialised row list (``rows``) **or** a typed
+    streaming handle (``table_input_handle``).  When a handle is provided
+    the rows are streamed from source, prescanned once for type inference,
+    and ingested in bounded-memory chunks.
+
     Parameters
     ----------
     dm : DataManager
-        The calling DataManager instance (used for context resolution which
-        has already been performed by the caller -- kept here for potential
-        future needs).
+        The calling DataManager instance.
     context : str
         **Already-resolved** Unify context path.
-    rows : list[dict]
-        Row data to insert.
+    rows : list[dict] | None
+        Materialised row data.  Mutually exclusive with *table_input_handle*.
+    table_input_handle : TableInputHandle | None
+        Typed streaming handle.  Mutually exclusive with *rows*.
     description, fields, unique_keys, embed_columns,
     embed_strategy, chunk_size, auto_counting, infer_untyped_fields :
         See :meth:`DataManager.ingest` for semantics.
     execution : IngestExecutionConfig | None
         Pipeline execution settings.
     post_ingest : PostIngestConfig | None
-        Post-ingest derived column rules.  When provided, rules are
-        executed after the pipeline graph completes.  When ``None``,
-        no post-ingest processing occurs.
+        Post-ingest derived column rules.
 
     Returns
     -------
     IngestResult
         Aggregated outcome of the operation.
     """
+    if table_input_handle is not None and rows is not None:
+        raise ValueError("Provide exactly one of rows or table_input_handle, not both")
+
+    if table_input_handle is not None:
+        return _run_ingest_streaming(
+            dm,
+            context,
+            table_input_handle,
+            description=description,
+            fields=fields,
+            unique_keys=unique_keys,
+            embed_columns=embed_columns,
+            embed_strategy=embed_strategy,
+            chunk_size=chunk_size,
+            auto_counting=auto_counting,
+            infer_untyped_fields=infer_untyped_fields,
+            add_to_all_context=add_to_all_context,
+            execution=execution,
+            post_ingest=post_ingest,
+            on_task_complete=on_task_complete,
+            coerce_types=coerce_types,
+        )
+
+    return _run_ingest_materialised(
+        dm,
+        context,
+        rows or [],
+        description=description,
+        fields=fields,
+        unique_keys=unique_keys,
+        embed_columns=embed_columns,
+        embed_strategy=embed_strategy,
+        chunk_size=chunk_size,
+        auto_counting=auto_counting,
+        infer_untyped_fields=infer_untyped_fields,
+        add_to_all_context=add_to_all_context,
+        execution=execution,
+        post_ingest=post_ingest,
+        on_task_complete=on_task_complete,
+        coerce_types=coerce_types,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Materialised path (original implementation)
+# ---------------------------------------------------------------------------
+
+
+def _run_ingest_materialised(
+    dm: "DataManager",
+    context: str,
+    rows: List[Dict[str, Any]],
+    *,
+    description: Optional[str] = None,
+    fields: Optional[Dict[str, Any]] = None,
+    unique_keys: Optional[Dict[str, str]] = None,
+    embed_columns: Optional[List[str]] = None,
+    embed_strategy: str = "along",
+    chunk_size: int = 1000,
+    auto_counting: Optional[Dict[str, Optional[str]]] = None,
+    infer_untyped_fields: bool = False,
+    add_to_all_context: bool = False,
+    execution: Optional[IngestExecutionConfig] = None,
+    post_ingest: Optional[PostIngestConfig] = None,
+    on_task_complete=None,
+    coerce_types: bool = True,
+) -> IngestResult:
+    """Ingest from a fully materialised row list (original code path)."""
     if not rows:
         return IngestResult(context=context)
 
@@ -590,9 +701,6 @@ def run_ingest(
             coercion_stats.total_cells,
         )
 
-        # Merge prescan types into fields for create_table (unify.create_fields).
-        # If a field already exists as a structured dict (e.g. with a description
-        # but no type), inject the prescan type into it rather than skipping.
         fields = dict(fields or {})
         for col, col_type in column_types.items():
             existing = fields.get(col)
@@ -601,7 +709,6 @@ def run_ingest(
             elif isinstance(existing, dict) and "type" not in existing:
                 existing["type"] = col_type
 
-        # Inject explicit_types into every row so Orchestra bypasses its own inference
         explicit_types = {
             col: {"type": col_type} for col, col_type in column_types.items()
         }
@@ -617,8 +724,6 @@ def run_ingest(
             )
 
     exec_cfg = execution or IngestExecutionConfig()
-
-    # Translate IngestExecutionConfig -> pipeline ExecutionConfig
     pipeline_cfg = ExecutionConfig(
         max_workers=exec_cfg.max_workers,
         max_retries=exec_cfg.max_retries,
@@ -649,6 +754,8 @@ def run_ingest(
         infer_untyped_fields=infer_untyped_fields,
         add_to_all_context=add_to_all_context,
         total_rows=len(rows),
+        insert_parallelism=exec_cfg.insert_parallelism,
+        embedding_batch_size=exec_cfg.embedding_batch_size,
     )
 
     executor = PipelineExecutor(config=pipeline_cfg, on_task_complete=on_task_complete)
@@ -663,26 +770,247 @@ def run_ingest(
 
         ingest_result.coercion_stats = asdict(coercion_stats)
 
-    # Post-ingestion: run config-driven derived column rules
-    if post_ingest and post_ingest.derived_columns:
-        try:
-            derived_cols = _run_post_ingest_rules(context, post_ingest)
-            if derived_cols:
-                ingest_result.derived_columns_created = derived_cols
-                logger.info(
-                    "Created %d derived columns for %s: %s",
-                    len(derived_cols),
-                    context,
-                    ", ".join(derived_cols),
-                )
-        except Exception:
-            logger.warning(
-                "Failed to create post-ingest derived columns for %s",
-                context,
-                exc_info=True,
-            )
+    _run_post_ingest_if_needed(context, post_ingest, ingest_result)
+    _log_ingest_summary(context, graph, results, ingest_result, duration_ms)
 
-    # Log summary
+    return ingest_result
+
+
+# ---------------------------------------------------------------------------
+# Streaming path (table_input_handle)
+# ---------------------------------------------------------------------------
+
+
+def _run_ingest_streaming(
+    dm: "DataManager",
+    context: str,
+    handle: Any,
+    *,
+    description: Optional[str] = None,
+    fields: Optional[Dict[str, Any]] = None,
+    unique_keys: Optional[Dict[str, str]] = None,
+    embed_columns: Optional[List[str]] = None,
+    embed_strategy: str = "along",
+    chunk_size: int = 1000,
+    auto_counting: Optional[Dict[str, Optional[str]]] = None,
+    infer_untyped_fields: bool = False,
+    add_to_all_context: bool = False,
+    execution: Optional[IngestExecutionConfig] = None,
+    post_ingest: Optional[PostIngestConfig] = None,
+    on_task_complete=None,
+    coerce_types: bool = True,
+) -> IngestResult:
+    """Ingest from a typed streaming handle in bounded-memory chunks.
+
+    Phase 1 -- drain up to ``_PRESCAN_SAMPLE_SIZE`` rows from the handle
+    and build a :class:`TypeMap` for consistent type coercion.
+
+    Phase 2 -- chain the sample rows with the remaining stream, iterate
+    in chunks of ``chunk_size``, coerce each chunk against the type map,
+    build a per-chunk task graph, execute, and accumulate results.
+    """
+    import itertools
+
+    from unity.data_manager.ops.type_prescan import (
+        TypeMap,
+        coerce_batch,
+        coerce_empty_strings,
+        prescan_from_rows,
+    )
+    from unity.common.pipeline.row_streaming import iter_table_input_rows
+
+    row_iter = iter_table_input_rows(handle)
+
+    # Phase 1: drain sample for type inference
+    type_map: Optional[TypeMap] = None
+    sample: List[Dict[str, Any]] = list(
+        itertools.islice(row_iter, _PRESCAN_SAMPLE_SIZE),
+    )
+
+    if not sample:
+        return IngestResult(context=context)
+
+    if coerce_types:
+        type_map = prescan_from_rows(sample)
+        logger.info(
+            "Streaming prescan for %s: %d columns typed from %d-row sample",
+            context,
+            len(type_map.column_types),
+            type_map.sample_size,
+        )
+        fields = _merge_prescan_fields(fields, type_map.column_types)
+
+    # Phase 2: stream batches -- sample rows first, then remainder
+    all_rows = itertools.chain(sample, row_iter)
+    exec_cfg = execution or IngestExecutionConfig()
+    pipeline_cfg = ExecutionConfig(
+        max_workers=exec_cfg.max_workers,
+        max_retries=exec_cfg.max_retries,
+        retry_delay_seconds=exec_cfg.retry_delay_seconds,
+        fail_fast=exec_cfg.fail_fast,
+    )
+
+    overall_start = time.perf_counter()
+    result = IngestResult(context=context)
+    chunk_idx = 0
+    total_rows_seen = 0
+    aggregate_coercion: Optional[Dict[str, Any]] = None
+
+    for batch in _iter_chunks(all_rows, chunk_size):
+        if coerce_types and type_map is not None:
+            batch, batch_stats = coerce_batch(batch, type_map)
+            _inject_explicit_types(batch, type_map.column_types)
+            if aggregate_coercion is None:
+                from dataclasses import asdict
+
+                aggregate_coercion = asdict(batch_stats)
+            else:
+                aggregate_coercion["total_cells"] += batch_stats.total_cells
+                aggregate_coercion[
+                    "empty_strings_coerced"
+                ] += batch_stats.empty_strings_coerced
+                aggregate_coercion["type_coerced"] += batch_stats.type_coerced
+        elif not coerce_types:
+            batch, _ = coerce_empty_strings(batch)
+
+        total_rows_seen += len(batch)
+        chunks = [batch]
+
+        graph = _build_ingest_graph(
+            context,
+            chunks,
+            description=description,
+            fields=fields,
+            unique_keys=unique_keys,
+            embed_columns=embed_columns,
+            embed_strategy=embed_strategy,
+            auto_counting=auto_counting,
+            infer_untyped_fields=infer_untyped_fields,
+            add_to_all_context=add_to_all_context,
+            total_rows=total_rows_seen,
+            insert_parallelism=exec_cfg.insert_parallelism,
+            embedding_batch_size=exec_cfg.embedding_batch_size,
+        )
+
+        executor = PipelineExecutor(
+            config=pipeline_cfg,
+            on_task_complete=on_task_complete,
+        )
+        chunk_results = executor.execute(graph)
+        chunk_result = _aggregate_results(context, graph, chunk_results, 0.0)
+
+        result.rows_inserted += chunk_result.rows_inserted
+        result.rows_embedded += chunk_result.rows_embedded
+        result.log_ids.extend(chunk_result.log_ids)
+        result.chunks_processed += chunk_result.chunks_processed
+        result.derived_columns_created.extend(chunk_result.derived_columns_created)
+        chunk_idx += 1
+
+        # Only pass description/fields for the first chunk (table creation is idempotent)
+        description = None
+
+    duration_ms = (time.perf_counter() - overall_start) * 1000
+    result.duration_ms = duration_ms
+
+    if aggregate_coercion is not None:
+        result.coercion_stats = aggregate_coercion
+
+    logger.info(
+        "Streaming ingest into %s: %d rows in %d chunks (%.0fms, embed=%s)",
+        context,
+        total_rows_seen,
+        chunk_idx,
+        duration_ms,
+        embed_columns,
+    )
+
+    _run_post_ingest_if_needed(context, post_ingest, result)
+
+    return result
+
+
+_PRESCAN_SAMPLE_SIZE = 500
+
+
+def _merge_prescan_fields(
+    fields: Optional[Dict[str, Any]],
+    column_types: Dict[str, str],
+) -> Dict[str, Any]:
+    """Merge prescan type inference into the fields dict for create_table."""
+    merged = dict(fields or {})
+    for col, col_type in column_types.items():
+        existing = merged.get(col)
+        if existing is None:
+            merged[col] = col_type
+        elif isinstance(existing, dict) and "type" not in existing:
+            existing["type"] = col_type
+    return merged
+
+
+def _inject_explicit_types(
+    batch: List[Dict[str, Any]],
+    column_types: Dict[str, str],
+) -> None:
+    """Inject explicit_types into every row so Orchestra bypasses inference."""
+    explicit_types = {col: {"type": col_type} for col, col_type in column_types.items()}
+    for row in batch:
+        row["explicit_types"] = explicit_types
+
+
+def _iter_chunks(
+    iterable: Any,
+    chunk_size: int,
+) -> Any:
+    """Yield bounded lists from an arbitrary iterable."""
+    import itertools
+
+    it = iter(iterable)
+    while True:
+        batch = list(itertools.islice(it, chunk_size))
+        if not batch:
+            return
+        yield batch
+
+
+# ---------------------------------------------------------------------------
+# Shared post-ingest and logging helpers
+# ---------------------------------------------------------------------------
+
+
+def _run_post_ingest_if_needed(
+    context: str,
+    post_ingest: Optional[PostIngestConfig],
+    ingest_result: IngestResult,
+) -> None:
+    """Run post-ingest derived column rules if configured."""
+    if not post_ingest or not post_ingest.derived_columns:
+        return
+    try:
+        derived_cols = _run_post_ingest_rules(context, post_ingest)
+        if derived_cols:
+            ingest_result.derived_columns_created = derived_cols
+            logger.info(
+                "Created %d derived columns for %s: %s",
+                len(derived_cols),
+                context,
+                ", ".join(derived_cols),
+            )
+    except Exception:
+        logger.warning(
+            "Failed to create post-ingest derived columns for %s",
+            context,
+            exc_info=True,
+        )
+
+
+def _log_ingest_summary(
+    context: str,
+    graph: TaskGraph,
+    results: Dict[str, TaskResult],
+    ingest_result: IngestResult,
+    duration_ms: float,
+) -> None:
+    """Log a summary of the ingest operation."""
     summary = graph.get_summary()
     if summary["success"]:
         logger.info(
@@ -703,5 +1031,3 @@ def run_ingest(
             ", ".join(failed[:5]),
             ingest_result.rows_inserted,
         )
-
-    return ingest_result

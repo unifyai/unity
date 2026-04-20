@@ -62,6 +62,12 @@ def mock_cm():
     cm.chat_history = []
     cm.assistant_number = "+15555550000"
     cm.assistant_email = "assistant@test.com"
+    cm.assistant_email_provider = "google_workspace"
+    cm.assistant_whatsapp_number = ""
+    cm.assistant_discord_bot_id = ""
+    cm.call_manager.has_active_call = False
+    cm.call_manager.has_active_google_meet = False
+    cm.call_manager._whatsapp_call_joining = False
     cm.contact_manager = _setup_mock_contacts(cm.contact_index, [])
     return cm
 
@@ -347,7 +353,7 @@ class TestSendEmailImplicitEmailAddress:
         _setup_mock_contacts(mock_cm.contact_index, [contact])
 
         with patch(
-            "unity.conversation_manager.domains.brain_action_tools.comms_utils.send_email_via_address",
+            "unity.comms.primitives.comms_utils.send_email_via_address",
         ) as mock_send:
             mock_send.return_value = {"success": True, "id": "sent-123"}
 
@@ -382,7 +388,7 @@ class TestSendEmailImplicitEmailAddress:
         _setup_mock_contacts(mock_cm.contact_index, [contact])
 
         with patch(
-            "unity.conversation_manager.domains.brain_action_tools.comms_utils.send_email_via_address",
+            "unity.comms.primitives.comms_utils.send_email_via_address",
         ) as mock_send:
             mock_send.return_value = {"success": True, "id": "sent-123"}
 
@@ -437,7 +443,7 @@ class TestSendEmailImplicitEmailAddress:
         _setup_mock_contacts(mock_cm.contact_index, [contact])
 
         with patch(
-            "unity.conversation_manager.domains.brain_action_tools.comms_utils.send_email_via_address",
+            "unity.comms.primitives.comms_utils.send_email_via_address",
         ) as mock_send:
             mock_send.return_value = {"success": True, "id": "sent-123"}
 
@@ -478,7 +484,7 @@ class TestSendEmailImplicitEmailAddress:
         _setup_mock_contacts(mock_cm.contact_index, contacts)
 
         with patch(
-            "unity.conversation_manager.domains.brain_action_tools.comms_utils.send_email_via_address",
+            "unity.comms.primitives.comms_utils.send_email_via_address",
         ) as mock_send:
             mock_send.return_value = {"success": True, "id": "sent-123"}
 
@@ -576,7 +582,7 @@ class TestSendEmailImplicitEmailAddress:
         _setup_mock_contacts(mock_cm.contact_index, contacts)
 
         with patch(
-            "unity.conversation_manager.domains.brain_action_tools.comms_utils.send_email_via_address",
+            "unity.comms.primitives.comms_utils.send_email_via_address",
         ) as mock_send:
             mock_send.return_value = {"success": True, "id": "sent-123"}
 

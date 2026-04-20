@@ -31,16 +31,21 @@ _FUNCTION_AND_GUIDANCE_LIBRARY = textwrap.dedent("""
       together. Search results include `function_ids` pointing back to
       concrete implementations.
 
-    Always search **both** before writing new code with raw `primitives.*`
-    calls:
+    Always search **both** before deciding how to execute:
 
     1. `FunctionManager_search_functions` — find existing implementations
     2. `GuidanceManager_search` — find procedural instructions and
        compositional strategies
-    3. If a function exists, call it via `execute_function`; if guidance exists,
-       follow its procedure
-    4. Only fall back to raw `primitives.*` if neither library has relevant
-       entries
+    3. If a relevant function exists, call it via `execute_function`; if
+       relevant guidance exists, follow its procedure
+    4. If neither library has a relevant entry, do **not** treat that as
+       permission to immediately write new code. Search is a discovery step,
+       not an execution decision.
+    5. After discovery, choose the minimal correct execution path:
+       - if the request or discovery step already identifies one exact function
+         or primitive call, use `execute_function`
+       - use `execute_code` only when the task genuinely requires multi-step
+         composition, branching, iteration, or combining intermediate results
 
     #### Writing Guidance
 
@@ -455,6 +460,29 @@ _EXTERNAL_APP_INTEGRATION = textwrap.dedent("""
     `install_python_packages`). Shell CLI tools have no equivalent dependency
     management. Most services offer Python SDKs that are more reliable and
     composable for programmatic use.
+
+    #### Checking OAuth Scope Before API Calls
+
+    Before making Google or Microsoft API calls using platform-managed
+    OAuth tokens, check `GOOGLE_GRANTED_SCOPES` or
+    `MICROSOFT_GRANTED_SCOPES` to verify the needed feature is
+    authorized.  These secrets contain space-separated feature names:
+
+    | Feature      | Covers                                              |
+    |--------------|-----------------------------------------------------|
+    | `email`      | Gmail / Outlook Mail                                |
+    | `calendar`   | Google Calendar / Outlook Calendar                  |
+    | `drive`      | Google Drive / OneDrive                             |
+    | `contacts`   | Google People / Outlook Contacts                    |
+    | `tasks`      | Google Tasks / Microsoft To Do                      |
+    | `teams`      | Microsoft Teams (Microsoft only)                    |
+    | `sharepoint` | SharePoint (Microsoft only)                         |
+
+    If the granted-scopes secret is not found at all, proceed normally
+    with the API call.  If it is present but the needed feature is
+    absent, do not attempt the API call.  Instead, tell the user that
+    access to that service is not currently enabled and they can add it
+    by editing their connected account in the console.
 """).strip()
 
 

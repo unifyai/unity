@@ -10,6 +10,7 @@ full user task table.
 from __future__ import annotations
 
 import hashlib
+import json
 import logging
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -25,11 +26,17 @@ from .storage import TasksStore
 TASKS_CONTEXT_NAME = "Tasks"
 TASK_ACTIVATIONS_CONTEXT_NAME = "Tasks/Activations"
 TASK_RUNS_CONTEXT_NAME = "Tasks/Runs"
+TASK_OUTBOUND_OPERATIONS_CONTEXT_NAME = "Tasks/OutboundOperations"
 _TASK_ACTIVATIONS_CONTEXT_LEAF = "Activations"
 _TASK_RUNS_CONTEXT_LEAF = "Runs"
+_TASK_OUTBOUND_OPERATIONS_CONTEXT_LEAF = "OutboundOperations"
 TASK_MACHINE_STATE_PROJECT = "Assistants"
 _TASK_RUN_CREATE_OR_ADOPT_PATH = "/admin/task-run/create-or-adopt"
 _TASK_RUN_UPDATE_PATH = "/admin/task-run/update"
+_TASK_OUTBOUND_OPERATION_CREATE_OR_ADOPT_PATH = (
+    "/admin/task-outbound-operation/create-or-adopt"
+)
+_TASK_OUTBOUND_OPERATION_UPDATE_PATH = "/admin/task-outbound-operation/update"
 _TASK_RUN_HTTP_TIMEOUT_SECONDS = 15
 _ACTIVATION_QUERY_FIELDS = [
     "assistant_id",
@@ -53,6 +60,7 @@ _ACTIVATION_QUERY_FIELDS = [
 ]
 _DEFAULT_TRIGGER_PAGE_SIZE = 200
 _PENDING_LIVE_TASK_RUNS: dict[int, "TaskRunProvenance"] = {}
+_PENDING_TRIGGER_LIVE_TASK_RUNS: dict[str, "TaskRunProvenance"] = {}
 
 logger = logging.getLogger(__name__)
 
@@ -101,6 +109,9 @@ class TaskRunProvenance:
     source_medium: str | None = None
     source_ref: str | None = None
     source_contact_id: str | None = None
+    source_contact_display_name: str | None = None
+    task_name: str | None = None
+    task_description: str | None = None
     attempt_token: str | None = None
 
 
@@ -110,6 +121,39 @@ class TaskRunReference:
 
     assistant_id: str
     run_key: str
+
+
+@dataclass(frozen=True)
+class TaskOutboundOperationProvenance:
+    """Durable provenance facts for one assistant-owned outbound operation."""
+
+    assistant_id: str
+    task_run_key: str
+    operation_index: int
+    method_name: str
+    medium: str
+    target_kind: str
+    target_metadata: Mapping[str, Any] = field(default_factory=dict)
+    task_id: int | None = None
+    source_task_log_id: int | None = None
+    contact_id: int | None = None
+
+
+@dataclass(frozen=True)
+class TaskOutboundOperationReference:
+    """Stable identifiers needed to patch one outbound ledger row later."""
+
+    assistant_id: str
+    operation_key: str
+
+
+@dataclass(frozen=True)
+class TaskOutboundOperationRecord:
+    """Materialized outbound operation row returned by Orchestra admin APIs."""
+
+    reference: TaskOutboundOperationReference
+    payload: dict[str, Any]
+    created: bool
 
 
 def build_activation_key(*, assistant_id: str | int | None, task_id: int) -> str:
@@ -149,6 +193,20 @@ def build_task_runs_context_name(
     )
 
 
+def build_task_outbound_operations_context_name(
+    *,
+    user_context: str | None = None,
+    assistant_context: str | None = None,
+) -> str:
+    """Return the assistant-scoped Orchestra context for outbound operation rows."""
+
+    return _build_task_machine_context_name(
+        leaf_name=_TASK_OUTBOUND_OPERATIONS_CONTEXT_LEAF,
+        user_context=user_context,
+        assistant_context=assistant_context,
+    )
+
+
 def _build_task_machine_context_name(
     *,
     leaf_name: str,
@@ -170,6 +228,12 @@ def _build_task_machine_context_name(
 def remember_live_task_run_provenance(provenance: TaskRunProvenance) -> None:
     """Remember one pending live-run provenance until the task actually starts."""
 
+    normalized_attempt_token = _normalize_pending_trigger_attempt_token(
+        provenance.attempt_token,
+    )
+    if provenance.source_type == "triggered" and normalized_attempt_token:
+        _PENDING_TRIGGER_LIVE_TASK_RUNS[normalized_attempt_token] = provenance
+        return
     _PENDING_LIVE_TASK_RUNS[provenance.task_id] = provenance
 
 
@@ -179,14 +243,18 @@ def consume_live_task_run_provenance(
     task_id: int,
     source_type: str,
     source_task_log_id: int | None = None,
+    trigger_attempt_token: str | None = None,
 ) -> TaskRunProvenance | None:
     """Claim the pending live-run provenance for one task, or build a fallback."""
 
-    pending = _PENDING_LIVE_TASK_RUNS.pop(task_id, None)
     normalized_assistant_id = _coerce_str(assistant_id)
+    pending = _claim_pending_live_task_run_provenance(
+        assistant_id=normalized_assistant_id,
+        task_id=task_id,
+        source_type=source_type,
+        trigger_attempt_token=trigger_attempt_token,
+    )
     if pending is not None:
-        if normalized_assistant_id and pending.assistant_id == normalized_assistant_id:
-            return pending
         return pending
     if not normalized_assistant_id:
         return None
@@ -216,7 +284,60 @@ def consume_live_task_run_provenance(
             if source_type == "triggered" and activation
             else None
         ),
+        task_name=(activation.task_name if activation is not None else None),
+        task_description=(
+            activation.task_description if activation is not None else None
+        ),
     )
+
+
+def _claim_pending_live_task_run_provenance(
+    *,
+    assistant_id: str | None,
+    task_id: int,
+    source_type: str,
+    trigger_attempt_token: str | None,
+) -> TaskRunProvenance | None:
+    """Claim one pending provenance entry without misattributing another attempt."""
+
+    pending: TaskRunProvenance | None
+    if source_type == "triggered":
+        normalized_attempt_token = _normalize_pending_trigger_attempt_token(
+            trigger_attempt_token,
+        )
+        if not normalized_attempt_token:
+            return None
+        pending = _PENDING_TRIGGER_LIVE_TASK_RUNS.pop(normalized_attempt_token, None)
+    else:
+        pending = _PENDING_LIVE_TASK_RUNS.pop(task_id, None)
+    if pending is None:
+        return None
+    if pending.task_id != task_id:
+        logger.warning(
+            "Discarding pending live task provenance for mismatched task id "
+            "(expected=%s, actual=%s, source_type=%s)",
+            task_id,
+            pending.task_id,
+            source_type,
+        )
+        return None
+    if assistant_id and pending.assistant_id != assistant_id:
+        logger.warning(
+            "Discarding pending live task provenance for mismatched assistant "
+            "(expected=%s, actual=%s, task_id=%s, source_type=%s)",
+            assistant_id,
+            pending.assistant_id,
+            task_id,
+            source_type,
+        )
+        return None
+    return pending
+
+
+def _normalize_pending_trigger_attempt_token(attempt_token: str | None) -> str | None:
+    """Return the normalized pending-provenance key for one trigger attempt token."""
+
+    return _normalize_run_key_component(attempt_token)
 
 
 def source_type_from_activation_reason(reason: str | None) -> str:
@@ -254,6 +375,9 @@ def create_or_adopt_live_task_run(
                 "source_medium": provenance.source_medium,
                 "source_ref": provenance.source_ref,
                 "source_contact_id": provenance.source_contact_id,
+                "source_contact_display_name": provenance.source_contact_display_name,
+                "task_name": provenance.task_name,
+                "task_description": provenance.task_description,
                 "started_at": started_at or _now_iso(),
                 "state": "running",
             },
@@ -290,8 +414,80 @@ def update_task_run_record(
     )
 
 
+def create_or_adopt_task_outbound_operation(
+    provenance: TaskOutboundOperationProvenance,
+    *,
+    created_at: str | None = None,
+) -> TaskOutboundOperationRecord | None:
+    """Create or adopt one outbound operation row for offline send idempotency."""
+
+    operation_key = build_task_outbound_operation_key(provenance)
+    response_body = _orchestra_admin_post(
+        _TASK_OUTBOUND_OPERATION_CREATE_OR_ADOPT_PATH,
+        _drop_none_values(
+            {
+                "project_name": TASK_MACHINE_STATE_PROJECT,
+                "operation_key": operation_key,
+                "assistant_id": provenance.assistant_id,
+                "task_run_key": provenance.task_run_key,
+                "task_id": provenance.task_id,
+                "source_task_log_id": provenance.source_task_log_id,
+                "operation_index": provenance.operation_index,
+                "method_name": provenance.method_name,
+                "medium": provenance.medium,
+                "target_kind": provenance.target_kind,
+                "contact_id": provenance.contact_id,
+                "target_metadata": dict(provenance.target_metadata),
+                "created_at": created_at or _now_iso(),
+                "status": "pending",
+            },
+        ),
+    )
+    if not isinstance(response_body, Mapping):
+        return None
+    operation_payload = response_body.get("operation")
+    if not isinstance(operation_payload, Mapping):
+        return None
+    persisted_operation_key = (
+        _coerce_str(operation_payload.get("operation_key")) or operation_key
+    )
+    return TaskOutboundOperationRecord(
+        reference=TaskOutboundOperationReference(
+            assistant_id=provenance.assistant_id,
+            operation_key=persisted_operation_key,
+        ),
+        payload=dict(operation_payload),
+        created=bool(response_body.get("created")),
+    )
+
+
+def update_task_outbound_operation_record(
+    operation_reference: TaskOutboundOperationReference | None,
+    updates: Mapping[str, Any],
+) -> None:
+    """Patch one previously materialized outbound operation row in Orchestra."""
+
+    if operation_reference is None:
+        return
+    _orchestra_admin_post(
+        _TASK_OUTBOUND_OPERATION_UPDATE_PATH,
+        {
+            "project_name": TASK_MACHINE_STATE_PROJECT,
+            "assistant_id": operation_reference.assistant_id,
+            "operation_key": operation_reference.operation_key,
+            "updates": _drop_none_values(dict(updates)),
+        },
+    )
+
+
 def build_task_run_key(provenance: TaskRunProvenance) -> str:
-    """Build the canonical run-key shape shared across live and offline lanes."""
+    """Build the canonical run-key shape shared across live and offline lanes.
+
+    The trigger-attempt token is intentionally excluded from the persisted key.
+    It only disambiguates pending live trigger provenance before execution
+    starts; once a run is materialized, live and offline lanes share the same
+    provenance-based identity contract.
+    """
 
     revision_digest = hashlib.sha256(
         str(provenance.activation_revision or "").encode("utf-8"),
@@ -311,13 +507,34 @@ def build_task_run_key(provenance: TaskRunProvenance) -> str:
         tail_parts.append(
             hashlib.sha256(provenance.source_ref.encode("utf-8")).hexdigest()[:12],
         )
-    normalized_attempt_token = _normalize_run_key_component(provenance.attempt_token)
-    if normalized_attempt_token:
-        tail_parts.append(f"attempt-{normalized_attempt_token[:24]}")
     tail = "-".join(tail_parts) or "once"
     return (
         f"{provenance.execution_mode}:{provenance.source_type}:"
         f"{provenance.assistant_id}:{provenance.task_id}:{revision_digest}:{tail}"
+    )
+
+
+def build_task_outbound_operation_key(
+    provenance: TaskOutboundOperationProvenance,
+) -> str:
+    """Build the canonical outbound-operation key shared across retry attempts."""
+
+    target_identity = _drop_none_values(
+        {
+            "contact_id": provenance.contact_id,
+            "target_kind": provenance.target_kind,
+            "target_metadata": dict(provenance.target_metadata),
+        },
+    )
+    target_digest = hashlib.sha256(
+        json.dumps(target_identity, sort_keys=True, default=str).encode("utf-8"),
+    ).hexdigest()[:12]
+    method_fragment = (
+        _normalize_run_key_component(provenance.method_name) or "operation"
+    )
+    return (
+        f"{provenance.task_run_key}:op-{provenance.operation_index}:"
+        f"{method_fragment[:24]}:{target_digest}"
     )
 
 

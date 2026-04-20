@@ -19,9 +19,9 @@ FileManager stores or ingests content.
 
 from __future__ import annotations
 
-from .adapter import AdaptedParseOutput, adapt_parse_result_for_file_manager
+from .adapter import FileManagerIngestPayload, adapt_parse_result_for_file_manager
 
 __all__ = [
-    "AdaptedParseOutput",
+    "FileManagerIngestPayload",
     "adapt_parse_result_for_file_manager",
 ]

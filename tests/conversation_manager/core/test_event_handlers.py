@@ -1937,6 +1937,139 @@ class TestTaskDueEventHandlers:
         mock_cm.request_llm_run.assert_called_once_with(delay=0)
 
 
+class TestInitializationCompleteHandler:
+    """Tests for the InitializationComplete handler.
+
+    The handler always schedules a post-init brain turn (so deferred work
+    from pre-init replies is not silently dropped), but the system
+    notification it pins is deliberately worded to discourage gratuitous
+    duplicate replies — see
+    ``event_handlers.INITIALIZATION_COMPLETE_NOTIFICATION``. These tests
+    lock in both the "always run the brain" contract and the key wording
+    of that directive (regression coverage for the cold-start
+    duplicate-reply bug observed for assistant 1820).
+    """
+
+    @pytest.fixture(autouse=True)
+    def _init_handler_state(self, mock_cm):
+        """Reset per-test CM attributes the handler reads."""
+        mock_cm._startup_wake_reasons = []
+        mock_cm.call_manager._socket_server = None
+        yield
+
+    @pytest.mark.asyncio
+    async def test_notification_pushed(self, mock_cm):
+        """The handler must pin an 'Initialization complete' notification."""
+
+        await EventHandler.handle_event(InitializationComplete(), mock_cm)
+
+        assert any(
+            "Initialization complete" in notif.content
+            for notif in mock_cm.notifications_bar.notifications
+        )
+
+    @pytest.mark.asyncio
+    async def test_notification_uses_anti_duplicate_directive(self, mock_cm):
+        """The pinned notif must explicitly tell the brain to call wait
+        and NOT send a duplicate/rephrased reply.
+
+        Regression test for the Unify duplicate-reply bug: the previous
+        wording ("Review any earlier responses … and follow up if needed
+        — correct, elaborate, or confirm") was being read as permission
+        to re-send a rephrased version of the pre-init reply. The new
+        wording must keep the legitimate follow-up paths (deferred work,
+        wrong/incomplete due to missing context) but explicitly forbid
+        rephrase/restate/confirm-style duplicates.
+        """
+        from unity.conversation_manager.domains.event_handlers import (
+            INITIALIZATION_COMPLETE_NOTIFICATION,
+        )
+
+        await EventHandler.handle_event(InitializationComplete(), mock_cm)
+
+        notif = next(
+            n
+            for n in mock_cm.notifications_bar.notifications
+            if "Initialization complete" in n.content
+        )
+        assert notif.content == INITIALIZATION_COMPLETE_NOTIFICATION
+
+        text = notif.content.lower()
+        # Must keep the legitimate follow-up affordance.
+        assert "deferred work" in text
+        assert "incorrect or incomplete" in text
+        # Must explicitly direct the brain to wait and forbid duplicates.
+        assert "call wait" in text
+        assert "do not send a message" in text
+        assert "rephrases" in text or "restates" in text
+
+    @pytest.mark.asyncio
+    async def test_always_requests_post_init_brain_run(self, mock_cm):
+        """The handler must always schedule a brain turn, even when the
+        pre-init conversation already has a trailing assistant reply.
+
+        The brain still needs the opportunity to follow up on deferred
+        work (e.g. the user asked for something the brain couldn't do
+        until managers were ready, replied with "I'll look into it",
+        and now needs to actually do it). Suppressing the brain run
+        here would silently drop those follow-ups, which is a worse
+        failure mode than the duplicate reply we mitigate via the
+        notification wording above.
+        """
+
+        mock_cm.contact_index.push_message(
+            contact_id=1,
+            sender_name="Boss",
+            thread_name=Medium.UNIFY_MESSAGE,
+            message_content="What meetings do I have today?",
+            role="user",
+        )
+        mock_cm.contact_index.push_message(
+            contact_id=1,
+            sender_name="You",
+            thread_name=Medium.UNIFY_MESSAGE,
+            message_content="I'm still booting up — give me a moment.",
+            role="assistant",
+        )
+
+        await EventHandler.handle_event(InitializationComplete(), mock_cm)
+
+        mock_cm.request_llm_run.assert_called_once_with(delay=0)
+
+    @pytest.mark.asyncio
+    async def test_requests_brain_run_when_thread_is_empty(self, mock_cm):
+        """No pre-init traffic — handler still schedules a brain turn so
+        the brain can react to any startup wake reasons or hydration."""
+
+        await EventHandler.handle_event(InitializationComplete(), mock_cm)
+
+        mock_cm.request_llm_run.assert_called_once_with(delay=0)
+
+    @pytest.mark.asyncio
+    async def test_voice_mode_pushes_fast_brain_notification(self, mock_cm):
+        """In voice mode the handler also pushes a (silent) FastBrainNotification
+        so the voice agent subprocess sees the post-init context.
+
+        This path is independent of the slow-brain notification wording
+        change, but we lock it in so a refactor to the handler doesn't
+        silently drop it.
+        """
+
+        mock_socket = MagicMock()
+        mock_socket.queue_for_clients = AsyncMock()
+        mock_cm.call_manager._socket_server = mock_socket
+
+        await EventHandler.handle_event(InitializationComplete(), mock_cm)
+
+        mock_socket.queue_for_clients.assert_called_once()
+        channel, payload = mock_socket.queue_for_clients.call_args.args
+        assert channel == "app:call:notification"
+        notification = FastBrainNotification.from_json(payload)
+        assert notification.should_speak is False
+        assert notification.source == "initialization"
+        assert "Initialization complete" in notification.content
+
+
 class TestTriggeredTaskNotifications:
     """Tests for mechanically matched trigger-task notifications."""
 
@@ -2000,12 +2133,17 @@ class TestTriggeredTaskNotifications:
         assert "Invoice follow-up" in trigger_notification
         assert "Help handle invoice-related requests from Alice" in trigger_notification
         assert "Semantic judgement is still pending" in trigger_notification
+        assert (
+            'primitives.tasks.execute(task_id=301, trigger_attempt_token="'
+            in trigger_notification
+        )
         assert "Hidden offline task" not in trigger_notification
         assert "Wrong sender task" not in trigger_notification
         remembered = mock_remember_provenance.call_args.args[0]
         assert remembered.task_id == 301
         assert remembered.source_type == "triggered"
         assert remembered.source_medium == "sms_message"
+        assert remembered.attempt_token
         mock_offline_dispatch.assert_called_once()
         mock_cm.request_llm_run.assert_called_once_with(triggering_contact_id=2)
 

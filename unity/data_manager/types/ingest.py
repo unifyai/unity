@@ -134,6 +134,17 @@ class IngestExecutionConfig(BaseModel):
     fail_fast : bool
         If ``True``, stop the pipeline on the first chunk failure rather
         than attempting remaining chunks.  Default ``False``.
+    insert_parallelism : Literal["auto", "serial", "parallel"]
+        Controls whether insert chunks are chained or fanned out after table
+        creation.  ``"auto"`` (default) serializes only when ``auto_counting``
+        is configured, ``"serial"`` always chains inserts, and ``"parallel"``
+        forces fan-out for callers willing to trade deterministic batch order
+        for throughput.
+    embedding_batch_size : int
+        Maximum number of row IDs sent in a single embedding-derived-column
+        request.  Large ``embed_strategy="after"`` runs are split into batches
+        of this size so one giant request does not become the throughput
+        bottleneck.  Default ``1000``.
 
     Examples
     --------
@@ -146,6 +157,8 @@ class IngestExecutionConfig(BaseModel):
     max_retries: int = Field(default=3, ge=0)
     retry_delay_seconds: float = Field(default=3.0, ge=0.0)
     fail_fast: bool = False
+    insert_parallelism: Literal["auto", "serial", "parallel"] = "auto"
+    embedding_batch_size: int = Field(default=1000, ge=1)
 
 
 class IngestResult(BaseModel):

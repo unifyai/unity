@@ -38,17 +38,13 @@ class ParseConfig(BaseModel):
     This enables swapping an entire implementation set OR a single format backend
     (e.g., swap XLSX only) without changing FileParser code.
 
-    Memory-bounded scheduling
-    -------------------------
-    When ``subprocess_isolation`` is enabled, files are classified as "heavy" or
-    "light" based on their on-disk size and a configurable expansion factor.
-    Heavy files are parsed one at a time (serialised) while light files are
-    parsed concurrently — all within isolated subprocesses so arena-fragmented
-    memory is reclaimed by the OS when each child exits.
-
-    Thresholds are expressed as **fractions of total system RAM** (via
-    ``psutil.virtual_memory().total``) so they adapt automatically across local
-    machines, CI runners, and cloud containers with varying memory.
+    Scheduling
+    ----------
+    When ``subprocess_isolation`` is enabled, files are classified as
+    "heavy" (Docling formats OR files ≥ 100 MB) or "light" (everything
+    else).  Heavy files are serialised (one at a time); light files run
+    concurrently up to ``max_concurrent_parses``.  Each file gets its
+    own isolated subprocess so memory is fully reclaimed on exit.
     """
 
     # Controls parse-stage parallelism (number of files processed concurrently).
@@ -61,28 +57,11 @@ class ParseConfig(BaseModel):
     # exits, preventing unbounded RSS growth across large batches.
     subprocess_isolation: bool = True
 
-    # A file is "heavy" when  file_size * expansion_factor  exceeds
-    # heavy_file_memory_pct * total_system_ram.  Heavy files are serialised
-    # (one subprocess at a time) to prevent concurrent OOM.
-    heavy_file_memory_pct: float = 0.25
-    expansion_factor: float = 300.0
-
-    # Per-subprocess virtual-address-space cap expressed as a fraction of total
-    # system RAM.  Applied via resource.setrlimit(RLIMIT_AS, ...) on Linux.
-    # Disabled by default because RLIMIT_AS limits *virtual* address space
-    # (not RSS), and Python + Docling routinely map 4–8 GB of virtual memory
-    # even when RSS is well under 1 GB.  Enable and tune this only in
-    # environments where you have measured the baseline virtual footprint.
-    max_subprocess_memory_pct: Optional[float] = None
-
-    # Maximum wall-clock seconds to wait for a single subprocess parse to
-    # finish.  If a child process hangs (e.g., MemoryError leaves it wedged),
-    # the parent will time out, kill the stuck worker, reset the pool, and
-    # continue processing remaining files instead of hanging indefinitely.
-    # This is the *base* timeout; the effective per-file timeout is:
-    #   max(parse_timeout_seconds, file_size_mb * timeout_seconds_per_mb)
-    # so large files automatically get proportionally more time.
-    parse_timeout_seconds: float = 600.0
+    # Base timeout (seconds) for a single subprocess parse.  The effective
+    # per-file timeout is:  max(parse_timeout_seconds, file_size_mb * timeout_seconds_per_mb)
+    # so large files automatically get proportionally more time while small
+    # files fail fast instead of blocking the batch for 10 minutes.
+    parse_timeout_seconds: float = 120.0
 
     # Scaling factor for adaptive per-file timeout.  Large files legitimately
     # need more wall-clock time (e.g., a 50 MB XLSX might need 25 minutes).
@@ -279,6 +258,30 @@ class OutputConfig(BaseModel):
     return_mode: Literal["compact", "full", "none"] = "compact"
 
 
+class TransportConfig(BaseModel):
+    """Controls how table payloads cross the parser -> ingest boundary.
+
+    table_input_mode:
+        - "source_reference" (default): large tables stream from the original source.
+        - "materialized_artifact": table inputs are copied into a local artifact file
+          and then referenced via ``ObjectStoreArtifactHandle``.
+
+    artifact_format:
+        - "jsonl": newline-delimited JSON rows for local, portable artifact
+          materialization. This mode is opt-in and disabled by default.
+
+    artifact_root_dir:
+        Root directory for materialized table artifacts when
+        ``table_input_mode == "materialized_artifact"``.
+    """
+
+    table_input_mode: Literal["source_reference", "materialized_artifact"] = (
+        "source_reference"
+    )
+    artifact_format: Literal["jsonl"] = "jsonl"
+    artifact_root_dir: str = "logs/file_manager_artifacts"
+
+
 class DiagnosticsConfig(BaseModel):
     """Controls optional pipeline diagnostics output.
 
@@ -293,12 +296,52 @@ class DiagnosticsConfig(BaseModel):
         - "low" (default): minimal events (file_path, phase, status, timestamp)
         - "medium": detailed (include chunk numbers, row counts, table labels, durations)
         - "high": verbose (all metadata plus intermediate step details)
+    - enable_run_ledger: when True, emit typed JSONL run/file/stage manifests.
+    - run_ledger_file: path for JSON-lines run manifest output. If not provided,
+      an auto-generated file is created under `logs/file_manager_runs/`.
     """
 
-    enable_progress: bool = False
+    enable_progress: bool = True
     progress_mode: Literal["json_file", "callback", "off"] = "json_file"
     progress_file: Optional[str] = None
     verbosity: Literal["low", "medium", "high"] = "low"
+    enable_run_ledger: bool = True
+    run_ledger_file: Optional[str] = None
+
+
+class CostRateCardConfig(BaseModel):
+    """Versioned local rate card used for immediate pipeline cost estimates."""
+
+    version: str = "local-default-v1"
+    currency: str = "USD"
+    parse_cpu_per_second: float = 0.000011
+    parse_memory_gb_second: float = 0.0000015
+    artifact_storage_gb_month: float = 0.020
+    row_ingest_request: float = 0.0005
+    row_ingest_row: float = 0.000001
+    embedding_row: float = 0.00002
+    llm_enrichment_call: float = 0.002
+    observability_event: float = 0.0000005
+
+
+class CostLedgerConfig(BaseModel):
+    """Controls optional per-run cost estimation output.
+
+    - enable_cost_ledger: when True, emit a typed per-run estimated cost ledger.
+    - cost_ledger_file: destination JSONL path for ledger output. If omitted,
+      an auto-generated file is created under `logs/file_manager_runs/`.
+    - environment: environment tag recorded on the ledger for later reconciliation.
+    - tenant_id: optional tenant/customer identifier for downstream joins.
+    - artifact_retention_days: assumed retention window for artifact storage estimates.
+    - rate_card: local versioned unit-cost rates used for immediate estimates.
+    """
+
+    enable_cost_ledger: bool = True
+    cost_ledger_file: Optional[str] = None
+    environment: str = "local"
+    tenant_id: Optional[str] = None
+    artifact_retention_days: int = 30
+    rate_card: CostRateCardConfig = CostRateCardConfig()
 
 
 class ExecutionConfig(BaseModel):
@@ -320,12 +363,22 @@ class RetryConfig(BaseModel):
 
     - max_retries: maximum retry attempts for failed tasks (0 = no retries).
     - retry_delay_seconds: base delay between retries (with exponential backoff).
+    - backoff_multiplier: multiplicative backoff factor applied after each retry.
+    - max_backoff_seconds: optional cap on exponential backoff growth.
+    - jitter_ratio: random jitter as a fraction of the computed backoff delay.
+    - deadline_seconds: optional wall-clock deadline for a single step across all attempts.
+    - retry_mode: whether to retry all errors or only transient/network-shaped failures.
     - fail_fast: when True, stop pipeline on first failure without processing
       remaining files/tasks.
     """
 
     max_retries: int = 3
     retry_delay_seconds: float = 3.0
+    backoff_multiplier: float = 2.0
+    max_backoff_seconds: float | None = 60.0
+    jitter_ratio: float = 0.1
+    deadline_seconds: float | None = None
+    retry_mode: Literal["all_errors", "transient_only"] = "transient_only"
     fail_fast: bool = False
 
 
@@ -348,7 +401,9 @@ class FilePipelineConfig(BaseModel):
     ingest: IngestConfig = IngestConfig()
     embed: EmbeddingsConfig = EmbeddingsConfig()
     output: OutputConfig = OutputConfig()
+    transport: TransportConfig = TransportConfig()
     diagnostics: DiagnosticsConfig = DiagnosticsConfig()
+    cost: CostLedgerConfig = CostLedgerConfig()
     execution: ExecutionConfig = ExecutionConfig()
     retry: RetryConfig = RetryConfig()
 
@@ -394,7 +449,9 @@ class FilePipelineConfig(BaseModel):
             ingest: Optional[Dict[str, Any]] = None
             embed: Optional[Dict[str, Any]] = None
             output: Optional[Dict[str, Any]] = None
+            transport: Optional[Dict[str, Any]] = None
             diagnostics: Optional[Dict[str, Any]] = None
+            cost: Optional[Dict[str, Any]] = None
             execution: Optional[Dict[str, Any]] = None
             retry: Optional[Dict[str, Any]] = None
 
@@ -409,20 +466,8 @@ class FilePipelineConfig(BaseModel):
             p = config_file.parse
             if "max_concurrent_parses" in p:
                 cfg.parse.max_concurrent_parses = int(p["max_concurrent_parses"])
-            elif "batch_size" in p:
-                # Back-compat alias: batch_size historically controlled parse concurrency.
-                cfg.parse.max_concurrent_parses = int(p["batch_size"])
             if "subprocess_isolation" in p:
                 cfg.parse.subprocess_isolation = bool(p["subprocess_isolation"])
-            if "heavy_file_memory_pct" in p:
-                cfg.parse.heavy_file_memory_pct = float(p["heavy_file_memory_pct"])
-            if "expansion_factor" in p:
-                cfg.parse.expansion_factor = float(p["expansion_factor"])
-            if "max_subprocess_memory_pct" in p:
-                val = p["max_subprocess_memory_pct"]
-                cfg.parse.max_subprocess_memory_pct = (
-                    float(val) if val is not None else None
-                )
             if "parse_timeout_seconds" in p:
                 cfg.parse.parse_timeout_seconds = float(
                     p["parse_timeout_seconds"],
@@ -525,6 +570,19 @@ class FilePipelineConfig(BaseModel):
             if "return_mode" in config_file.output:
                 cfg.output.return_mode = config_file.output["return_mode"]
 
+        # Transport config
+        if config_file.transport:
+            if "table_input_mode" in config_file.transport:
+                cfg.transport.table_input_mode = config_file.transport[
+                    "table_input_mode"
+                ]
+            if "artifact_format" in config_file.transport:
+                cfg.transport.artifact_format = config_file.transport["artifact_format"]
+            if "artifact_root_dir" in config_file.transport:
+                cfg.transport.artifact_root_dir = str(
+                    config_file.transport["artifact_root_dir"],
+                )
+
         # Diagnostics config
         if config_file.diagnostics:
             if "enable_progress" in config_file.diagnostics:
@@ -537,6 +595,35 @@ class FilePipelineConfig(BaseModel):
                 cfg.diagnostics.progress_file = config_file.diagnostics["progress_file"]
             if "verbosity" in config_file.diagnostics:
                 cfg.diagnostics.verbosity = config_file.diagnostics["verbosity"]
+            if "enable_run_ledger" in config_file.diagnostics:
+                cfg.diagnostics.enable_run_ledger = config_file.diagnostics[
+                    "enable_run_ledger"
+                ]
+            if "run_ledger_file" in config_file.diagnostics:
+                cfg.diagnostics.run_ledger_file = config_file.diagnostics[
+                    "run_ledger_file"
+                ]
+
+        # Cost ledger config
+        if config_file.cost:
+            if "enable_cost_ledger" in config_file.cost:
+                cfg.cost.enable_cost_ledger = config_file.cost["enable_cost_ledger"]
+            if "cost_ledger_file" in config_file.cost:
+                cfg.cost.cost_ledger_file = config_file.cost["cost_ledger_file"]
+            if "environment" in config_file.cost:
+                cfg.cost.environment = str(config_file.cost["environment"])
+            if "tenant_id" in config_file.cost:
+                tenant_id = config_file.cost["tenant_id"]
+                cfg.cost.tenant_id = str(tenant_id) if tenant_id is not None else None
+            if "artifact_retention_days" in config_file.cost:
+                cfg.cost.artifact_retention_days = int(
+                    config_file.cost["artifact_retention_days"],
+                )
+            rate_card = config_file.cost.get("rate_card")
+            if isinstance(rate_card, dict):
+                for key, value in rate_card.items():
+                    if hasattr(cfg.cost.rate_card, key):
+                        setattr(cfg.cost.rate_card, key, value)
 
         # Execution config
         if config_file.execution:
@@ -557,6 +644,16 @@ class FilePipelineConfig(BaseModel):
                 cfg.retry.max_retries = config_file.retry["max_retries"]
             if "retry_delay_seconds" in config_file.retry:
                 cfg.retry.retry_delay_seconds = config_file.retry["retry_delay_seconds"]
+            if "backoff_multiplier" in config_file.retry:
+                cfg.retry.backoff_multiplier = config_file.retry["backoff_multiplier"]
+            if "max_backoff_seconds" in config_file.retry:
+                cfg.retry.max_backoff_seconds = config_file.retry["max_backoff_seconds"]
+            if "jitter_ratio" in config_file.retry:
+                cfg.retry.jitter_ratio = config_file.retry["jitter_ratio"]
+            if "deadline_seconds" in config_file.retry:
+                cfg.retry.deadline_seconds = config_file.retry["deadline_seconds"]
+            if "retry_mode" in config_file.retry:
+                cfg.retry.retry_mode = config_file.retry["retry_mode"]
             if "fail_fast" in config_file.retry:
                 cfg.retry.fail_fast = config_file.retry["fail_fast"]
 

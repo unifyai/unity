@@ -1,10 +1,27 @@
-"""Headless executor for offline function-backed task activations.
+"""Entry point for Unity's headless offline task lane.
 
-This module runs inside a short-lived Unity Kubernetes Job created by
-Communication's offline task lane. It intentionally avoids booting the full
-ConversationManager runtime; instead it populates `SESSION_DETAILS`, executes
-one stored function entrypoint via `SingleFunctionActor`, and writes run-state
-updates back to Orchestra's internal `Tasks/Runs` API.
+This module runs inside the short-lived Unity job created by Communication when
+a scheduled or triggered task should execute without waking the full live
+assistant runtime. It exists to answer one simple question:
+
+"How do we run one stored function-backed task in the background, with the
+assistant's identity and primitives available, but without booting the whole
+ConversationManager?"
+
+The runner is intentionally small and procedural:
+
+1. Read the activation/run payload that Communication injected into env vars.
+2. Mark the corresponding `Tasks/Runs` row as `running` in Orchestra.
+3. Populate `SESSION_DETAILS` so shared primitives know which assistant is
+   acting.
+4. Execute exactly one stored function entrypoint through
+   `SingleFunctionActor(headless=True)`.
+5. Persist the terminal run state (`completed` or `failed`) plus a compact
+   hidden summary back to Orchestra.
+
+Communication owns orchestration and job creation. The stored function owns the
+actual task behavior. This module is the thin bridge that executes that one
+function and keeps the durable run record up to date.
 """
 
 from __future__ import annotations
@@ -31,7 +48,13 @@ SUMMARY_LIMIT = 4000
 
 @dataclass(frozen=True)
 class OfflineTaskConfig:
-    """Environment-backed configuration for one offline execution attempt."""
+    """One fully-materialized offline run request from job environment variables.
+
+    Communication injects these values when it creates the short-lived Unity
+    job. Together they identify which assistant is acting, which stored
+    function should run, why it was activated, and which durable `Tasks/Runs`
+    row should be updated as execution progresses.
+    """
 
     assistant_id: str
     run_key: str
@@ -174,7 +197,7 @@ async def _execute_offline_task(config: OfflineTaskConfig) -> Any:
 
 
 def main() -> int:
-    """Run one offline task to completion and persist the terminal run state."""
+    """Run one offline task to completion and persist the final run state."""
 
     config = _load_config_from_env()
     LOGGER.info(

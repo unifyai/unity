@@ -22,6 +22,7 @@ import logging
 from typing import Any, Dict, List, Optional
 
 from unity.file_manager.file_parsers.types.contracts import FileParseResult
+from unity.common.pipeline import InlineRowsHandle, TableInputHandle
 from unity.file_manager.types.config import (
     FilePipelineConfig,
     TableBusinessContextSpec,
@@ -242,10 +243,20 @@ def execute_ingest_content(
     *,
     file_manager: Any,
     file_path: str,
-    content_rows: List[FileContentRow],
+    content_rows: Optional[List[FileContentRow]] = None,
+    content_rows_handle: Optional[TableInputHandle] = None,
     config: FilePipelineConfig,
 ) -> Dict[str, Any]:
     """Ingest ALL content rows for a file via ``dm.ingest()``.
+
+    Either ``content_rows`` (in-process path, inline Pydantic models) or
+    ``content_rows_handle`` (worker path, handle backed by an object
+    store) must be supplied.  When a handle is provided the rows are
+    streamed in batches via
+    :func:`unity.common.pipeline.row_streaming.iter_table_input_row_batches`
+    and rebuilt into ``FileContentRow`` models before being passed to
+    ``ingest_content_batch``; the manifest never materialises the full
+    document content in memory.
 
     Chunking, retry, and embedding are handled internally by DM's ingest
     pipeline.  This function:
@@ -275,9 +286,31 @@ def execute_ingest_content(
         build_dm_execution_config,
     )
     from unity.common.model_to_fields import model_to_fields
+    from unity.common.pipeline.row_streaming import iter_table_input_row_batches
     from unity.file_manager.types.file import FileContent
 
     dm = file_manager._data_manager
+
+    # Materialise the content rows from whichever input channel the caller
+    # provided.  Handles are drained in batches so memory stays bounded
+    # even for very large lowered documents.
+    if content_rows_handle is not None and content_rows is not None:
+        raise ValueError(
+            "execute_ingest_content received both content_rows and content_rows_handle; "
+            "supply exactly one.",
+        )
+    if content_rows_handle is not None:
+        streamed: List[FileContentRow] = []
+        for batch in iter_table_input_row_batches(
+            content_rows_handle,
+            batch_size=max(int(config.ingest.content_rows_batch_size or 1000), 1),
+        ):
+            for row in batch:
+                streamed.append(FileContentRow.model_validate(row))
+        content_rows = streamed
+    elif content_rows is None:
+        content_rows = []
+
     logger.debug(
         f"[TaskFn] Ingesting content for {file_path} ({len(content_rows)} rows)",
     )
@@ -365,7 +398,7 @@ def execute_ingest_content(
 
 
 # =============================================================================
-# TABLE INGEST TASK  (delegates to dm.ingest via ingest_table_batch)
+# TABLE INGEST TASK  (delegates to dm.ingest)
 # =============================================================================
 
 
@@ -374,7 +407,8 @@ def execute_ingest_table(
     file_manager: Any,
     file_path: str,
     table_label: str,
-    table_rows: List[Dict[str, Any]],
+    table_rows: Optional[List[Dict[str, Any]]] = None,
+    table_input: Optional[TableInputHandle] = None,
     columns: List[str],
     config: FilePipelineConfig,
 ) -> Dict[str, Any]:
@@ -401,16 +435,16 @@ def execute_ingest_table(
     from .ingest_ops import (
         get_file_id_from_path,
         get_storage_id_from_path,
-        ingest_table_batch,
         resolve_embed_columns_for_table,
         resolve_embed_strategy,
         build_dm_execution_config,
-        with_infer_untyped_fields,
     )
 
     dm = file_manager._data_manager
     logger.debug(
-        f"[TaskFn] Ingesting table '{table_label}' for {file_path} ({len(table_rows)} rows)",
+        "[TaskFn] Ingesting table '%s' for %s",
+        table_label,
+        file_path,
     )
 
     file_id = get_file_id_from_path(
@@ -429,7 +463,14 @@ def execute_ingest_table(
     if not storage_id:
         raise ValueError(f"No storage_id found for {file_path}")
 
-    if not table_rows:
+    if table_input is None:
+        table_input = InlineRowsHandle(
+            rows=list(table_rows or []),
+            columns=list(columns or []),
+            row_count=len(list(table_rows or [])),
+        )
+
+    if isinstance(table_input, InlineRowsHandle) and not table_input.rows:
         from unity.data_manager.types.ingest import IngestResult
 
         return {
@@ -457,23 +498,26 @@ def execute_ingest_table(
     )
     embed_strategy = resolve_embed_strategy(config)
     execution = build_dm_execution_config(config)
+    batch_size = config.ingest.table_rows_batch_size
 
-    prepared_rows = with_infer_untyped_fields(
-        table_rows,
-        enabled=config.ingest.infer_untyped_fields,
-    )
+    rows: Optional[List[Dict[str, Any]]] = None
+    handle: Optional[TableInputHandle] = None
+    if isinstance(table_input, InlineRowsHandle):
+        rows = list(table_input.rows)
+    else:
+        handle = table_input
 
-    result = ingest_table_batch(
-        data_manager=dm,
-        context=context,
-        rows=prepared_rows,
+    result = dm.ingest(
+        context,
+        rows,
+        table_input_handle=handle,
         description=description,
         fields=fields,
         unique_keys={"row_id": "int"},
         auto_counting={"row_id": None},
         embed_columns=embed_columns or None,
         embed_strategy=embed_strategy,
-        chunk_size=config.ingest.table_rows_batch_size,
+        chunk_size=batch_size,
         infer_untyped_fields=config.ingest.infer_untyped_fields,
         add_to_all_context=file_manager.include_in_multi_assistant_table,
         execution=execution,

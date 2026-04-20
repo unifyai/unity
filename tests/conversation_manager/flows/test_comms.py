@@ -19,6 +19,8 @@ architecture, the Main CM Brain only provides guidance to the Voice Agent
 (fast brain) - it doesn't produce speech directly.
 """
 
+from unittest.mock import AsyncMock, patch
+
 import pytest
 
 from tests.helpers import _handle_project
@@ -35,6 +37,7 @@ from tests.conversation_manager.conftest import (
 from unity.conversation_manager.events import (
     ApiMessageReceived,
     ApiMessageSent,
+    DiscordMessageReceived,
     EmailReceived,
     EmailSent,
     InboundPhoneUtterance,
@@ -550,6 +553,49 @@ async def test_unify_message_to_phone_call(initialized_cm):
     assert_has_one(result.output_events, PhoneCallSent)
     call = filter_events_by_type(result.output_events, PhoneCallSent)[0]
     assert call.contact["phone_number"] == contact["phone_number"]
+
+
+@pytest.mark.asyncio
+@_handle_project
+async def test_discord_message_to_discord_message(initialized_cm):
+    """Discord DM request for joke -> reply via Discord DM through brain action tools."""
+    cm = initialized_cm
+    contact = TEST_CONTACTS[0]
+    discord_id = "discord-user-123"
+
+    cm.cm.assistant_discord_bot_id = "discord-bot-123"
+    assert cm.cm.contact_manager is not None
+    cm.cm.contact_manager.update_contact(
+        contact_id=contact["contact_id"],
+        discord_id=discord_id,
+    )
+
+    with patch(
+        "unity.comms.primitives.comms_utils.send_discord_message",
+        new=AsyncMock(return_value={"success": True}),
+    ):
+        result = await cm.step_until_wait(
+            DiscordMessageReceived(
+                contact={**contact, "discord_id": discord_id},
+                content="Tell me a joke",
+                channel_id="dm-channel-1",
+                bot_id="discord-bot-123",
+                message_id="discord-message-1",
+            ),
+        )
+
+    assert "send_discord_message" in cm.all_tool_calls
+    discord_thread = cm.contact_index.get_messages_for_contact(
+        contact["contact_id"],
+        Medium.DISCORD_MESSAGE,
+    )
+    assistant_messages = [
+        message
+        for message in discord_thread
+        if getattr(message, "role", None) == "assistant"
+    ]
+    assert assistant_messages
+    assert assistant_messages[-1].content
 
 
 # ---------------------------------------------------------------------------

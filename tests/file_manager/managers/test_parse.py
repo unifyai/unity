@@ -4,6 +4,7 @@ FileManager parse functionality tests.
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
@@ -76,6 +77,214 @@ async def test_parse_with_options(file_manager, supported_file_examples: dict):
     item = result[display_name]
     # All returns are now Pydantic models - use attribute access
     assert item.status == "success"
+
+
+@pytest.mark.asyncio
+async def test_parse_can_emit_run_ledger(file_manager, tmp_path: Path):
+    txt = tmp_path / "ledger.txt"
+    txt.write_text("Alpha paragraph.\n\nBeta paragraph.", encoding="utf-8")
+    ledger_path = tmp_path / "run_ledger.jsonl"
+
+    from unity.file_manager.types import FilePipelineConfig
+
+    result = file_manager.ingest_files(
+        str(txt),
+        config=FilePipelineConfig(
+            diagnostics={
+                "enable_run_ledger": True,
+                "run_ledger_file": str(ledger_path),
+            },
+        ),
+    )
+
+    assert result[str(txt)].status == "success"
+    assert ledger_path.exists()
+
+    records = [
+        json.loads(line)
+        for line in ledger_path.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    assert records
+
+    run_ids = {record["run_id"] for record in records}
+    assert len(run_ids) == 1
+
+    record_types = {record["record_type"] for record in records}
+    assert {"run", "file", "stage"} <= record_types
+
+    stage_names = {
+        record["stage_name"] for record in records if record["record_type"] == "stage"
+    }
+    assert "file_record" in stage_names
+    assert "ingest_content" in stage_names
+
+    file_records = [record for record in records if record["record_type"] == "file"]
+    assert file_records
+    assert file_records[0]["status"] == "success"
+
+
+@pytest.mark.asyncio
+async def test_parse_can_emit_correlated_progress_events(file_manager, tmp_path: Path):
+    from unittest.mock import patch
+
+    csv = tmp_path / "people.csv"
+    csv.write_text("Name,Age,City\nJohn,30,NYC\nJane,25,LDN\n", encoding="utf-8")
+    progress_path = tmp_path / "progress.jsonl"
+
+    from unity.file_manager.types import FilePipelineConfig
+
+    cfg = FilePipelineConfig(
+        diagnostics={
+            "enable_progress": True,
+            "progress_mode": "json_file",
+            "progress_file": str(progress_path),
+            "verbosity": "high",
+        },
+    )
+
+    with patch(
+        "unity.file_manager.parse_adapter.lowering.content_rows.summarize_table_profile",
+        return_value="stub table summary",
+    ):
+        result = file_manager.ingest_files(str(csv), config=cfg)
+
+    assert result[str(csv)].status == "success"
+    assert progress_path.exists()
+
+    events = [
+        json.loads(line)
+        for line in progress_path.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    assert events
+    assert all(event.get("event_id") for event in events)
+
+    run_ids = {event["run_id"] for event in events if event.get("run_id")}
+    assert len(run_ids) == 1
+
+    parse_events = [event for event in events if event["phase"] == "parse"]
+    assert {event["status"] for event in parse_events} >= {"started", "completed"}
+
+    stage_events = [
+        event
+        for event in events
+        if event["phase"] in {"file_record", "ingest_content", "ingest_table"}
+    ]
+    assert stage_events
+    assert all(event.get("stage_id") for event in stage_events)
+    assert all(event.get("file_id") is not None for event in stage_events)
+    assert all(event.get("storage_id") for event in stage_events)
+
+    table_events = [event for event in events if event["phase"] == "ingest_table"]
+    assert table_events
+    assert table_events[0].get("table_id")
+    assert table_events[0]["meta"]["table_label"] == "people"
+    assert table_events[0]["meta"]["row_count"] == 2
+
+    file_complete = [event for event in events if event["phase"] == "file_complete"]
+    assert file_complete
+    assert file_complete[0]["status"] == "completed"
+    assert file_complete[0]["meta"]["parse_backend"] == "native_csv_backend"
+
+
+@pytest.mark.asyncio
+async def test_parse_can_emit_estimated_cost_ledger(file_manager, tmp_path: Path):
+    from unittest.mock import patch
+
+    csv = tmp_path / "cost_people.csv"
+    csv.write_text("Name,Age,City\nJohn,30,NYC\nJane,25,LDN\n", encoding="utf-8")
+    cost_ledger_path = tmp_path / "cost_ledger.jsonl"
+    artifact_root = tmp_path / "artifacts"
+
+    from unity.file_manager.types import FilePipelineConfig
+
+    cfg = FilePipelineConfig(
+        transport={
+            "table_input_mode": "materialized_artifact",
+            "artifact_root_dir": str(artifact_root),
+        },
+        cost={
+            "enable_cost_ledger": True,
+            "cost_ledger_file": str(cost_ledger_path),
+            "tenant_id": "tenant-local",
+            "environment": "test",
+        },
+    )
+
+    with patch(
+        "unity.file_manager.parse_adapter.lowering.content_rows.summarize_table_profile",
+        return_value="stub table summary",
+    ):
+        result = file_manager.ingest_files(str(csv), config=cfg)
+
+    assert result[str(csv)].status == "success"
+    assert cost_ledger_path.exists()
+
+    ledgers = [
+        json.loads(line)
+        for line in cost_ledger_path.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    assert len(ledgers) == 1
+
+    ledger = ledgers[0]
+    assert ledger["record_type"] == "cost_ledger"
+    assert ledger["tenant_id"] == "tenant-local"
+    assert ledger["environment"] == "test"
+    assert ledger["estimated_total"] > 0
+
+    line_items = ledger["line_items"]
+    components = {item["component"] for item in line_items}
+    assert "parse_compute_cpu" in components
+    assert "parse_compute_memory" in components
+    assert "artifact_storage" in components
+    assert "row_ingest_requests" in components
+    assert "row_ingest_storage" in components
+    assert "observability" in components
+
+    artifact_item = next(
+        item for item in line_items if item["component"] == "artifact_storage"
+    )
+    assert artifact_item["meta"]["artifact_bytes"] > 0
+    assert artifact_item["meta"]["artifact_count"] == 1
+
+
+def test_executor_retry_policy_retries_transient_errors_and_stops_on_non_retryable():
+    from unity.common.pipeline import run_with_retry as _run_with_retry
+    from unity.file_manager.types import RetryConfig
+
+    retry_cfg = RetryConfig(
+        max_retries=3,
+        retry_delay_seconds=0.0,
+        jitter_ratio=0.0,
+        retry_mode="transient_only",
+    )
+
+    transient_attempts = {"count": 0}
+
+    def flaky() -> str:
+        transient_attempts["count"] += 1
+        if transient_attempts["count"] < 3:
+            raise TimeoutError("timed out")
+        return "ok"
+
+    transient_result = _run_with_retry(flaky, {}, retry_config=retry_cfg, label="flaky")
+    assert transient_result.success is True
+    assert transient_result.value == "ok"
+    assert transient_result.retries == 2
+    assert transient_attempts["count"] == 3
+
+    fatal_attempts = {"count": 0}
+
+    def fatal() -> None:
+        fatal_attempts["count"] += 1
+        raise ValueError("bad input")
+
+    fatal_result = _run_with_retry(fatal, {}, retry_config=retry_cfg, label="fatal")
+    assert fatal_result.success is False
+    assert fatal_result.failure_kind == "non_retryable"
+    assert fatal_attempts["count"] == 1
 
 
 @pytest.mark.asyncio
@@ -156,7 +365,7 @@ async def test_parse_supported(file_manager, supported_file_examples: dict):
             step_names = {s.name for s in (item.trace.steps or [])}
             assert "docling_convert" in step_names
             assert "docling_index_structure" in step_names
-            assert "generate_hierarchical_summaries" in step_names
+            assert "llm_enrichment" in step_names
             assert any(
                 s in step_names
                 for s in (
@@ -242,7 +451,7 @@ async def test_parse_trace_backend_routing(file_manager, tmp_path: Path):
     assert ContentType.DOCUMENT in ctypes_txt
     assert ContentType.PARAGRAPH in ctypes_txt
 
-    # --------------------------- CSV -> csv_backend --------------------------- #
+    # ---------------------- CSV -> native_csv_backend ------------------------ #
     csv = tmp_path / "people.csv"
     csv.write_text("Name,Age,City\nJohn,30,NYC\nJane,25,LDN\n", encoding="utf-8")
     csv_path = str(csv)
@@ -276,7 +485,7 @@ async def test_parse_trace_backend_routing(file_manager, tmp_path: Path):
     out_csv = csv_res[csv_path]
     assert out_csv.status == "success"
     assert out_csv.trace is not None
-    assert out_csv.trace.backend == "csv_backend"
+    assert out_csv.trace.backend == "native_csv_backend"
     assert out_csv.trace.logical_path == csv_path
     assert out_csv.trace.source_local_path and out_csv.trace.parsed_local_path
     assert out_csv.trace.parsed_local_path == out_csv.trace.source_local_path

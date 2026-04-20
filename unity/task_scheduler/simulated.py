@@ -576,6 +576,7 @@ class SimulatedTaskScheduler(BaseTaskScheduler):
         self,
         task_id: int | str,
         *,
+        trigger_attempt_token: Optional[str] = None,
         response_format: Optional[Type[BaseModel]] = None,
         isolated: Optional[bool] = None,
         _parent_chat_context: list[dict] | None = None,

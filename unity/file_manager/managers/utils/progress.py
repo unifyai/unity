@@ -21,6 +21,7 @@ import re
 import sys
 import threading
 import time
+from uuid import uuid4
 from pathlib import Path
 from typing import (
     Any,
@@ -48,6 +49,20 @@ class ProgressEvent(TypedDict, total=False):
     ----------
     timestamp : str
         ISO-formatted timestamp of the event.
+    event_id : str
+        Unique identifier for this emitted progress event.
+    run_id : str
+        Correlation identifier shared across parse + ingest for one pipeline run.
+    stage_id : str
+        Deterministic identifier for one stage within a run.
+    file_id : int
+        FileRecord identifier once the file record has been created.
+    storage_id : str
+        Storage identifier associated with the file's content/table contexts.
+    table_id : str
+        Parser-level table identifier when the event corresponds to a table stage.
+    trace_id : str
+        Optional distributed trace identifier when available from upstream tracing.
     file_path : str
         The file being processed.
     phase : str
@@ -78,6 +93,13 @@ class ProgressEvent(TypedDict, total=False):
     """
 
     timestamp: str
+    event_id: str
+    run_id: str
+    stage_id: str
+    file_id: int
+    storage_id: str
+    table_id: str
+    trace_id: str
     file_path: str
     phase: str
     status: str
@@ -635,6 +657,13 @@ def create_progress_event(
     phase: str,
     status: str,
     *,
+    event_id: Optional[str] = None,
+    run_id: Optional[str] = None,
+    stage_id: Optional[str] = None,
+    file_id: Optional[int] = None,
+    storage_id: Optional[str] = None,
+    table_id: Optional[str] = None,
+    trace_id: Optional[str] = None,
     duration_ms: float = 0.0,
     elapsed_ms: float = 0.0,
     error: Optional[str] = None,
@@ -697,12 +726,25 @@ def create_progress_event(
     """
     event: ProgressEvent = {
         "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S"),
+        "event_id": event_id or uuid4().hex,
         "file_path": file_path,
         "phase": phase,
         "status": status,
         "duration_ms": duration_ms,
         "elapsed_ms": elapsed_ms,
     }
+    if run_id is not None:
+        event["run_id"] = run_id
+    if stage_id is not None:
+        event["stage_id"] = stage_id
+    if file_id is not None:
+        event["file_id"] = file_id
+    if storage_id is not None:
+        event["storage_id"] = storage_id
+    if table_id is not None:
+        event["table_id"] = table_id
+    if trace_id is not None:
+        event["trace_id"] = trace_id
 
     # Add error fields if present
     if error is not None:
@@ -723,11 +765,21 @@ def create_progress_event(
                 "total_rows",
                 "rows_inserted",
                 "rows_embedded",
+                "column_count",
                 "task_type",
                 "strategy",
                 "context",
                 "success",
                 "error",
+                "retries_used",
+                "failure_kind",
+                "content_row_count",
+                "parse_backend",
+                "parse_trace_status",
+                "warnings_count",
+                "table_count",
+                "file_format",
+                "mime_type",
             }
             filtered_meta = {k: v for k, v in meta.items() if k in _MEDIUM_KEYS}
             if filtered_meta:

@@ -206,23 +206,36 @@ async def test_xlsx_multi_tab_per_table_context(file_manager, tmp_path: Path):
         else:
             assert False
 
-    # Verify multiple per-table contexts exist (one per tab)
+    # Verify per-file and per-table contexts exist.
+    # Context paths follow the pattern:
+    #   .../Files/Local/<storage_id>/Tables/<SheetName>
+    # retail_data.xlsx  -> Local/0/Tables/{Stores,Sales,Inventory,Returns}
+    # workforce_data.xlsx -> Local/1/Tables/{Employees,Attendance,Salaries}
     import unify
 
     ctxs = unify.get_contexts()
-    # unify.get_contexts() returns a list of dicts with 'name' field
     ctx_names = (
         [ctx.get("name", "") for ctx in ctxs]
         if isinstance(ctxs, list)
         else list(ctxs.keys())
     )
-    table_ctx_candidates = [
-        name
-        for name in ctx_names
-        if "/Tables/" in name
-        and any(k in name for k in ["retail_data", "workforce_data"])
+    test_prefix = "test_xlsx_multi_tab_per_table_context"
+    table_ctxs = [
+        name for name in ctx_names if "/Tables/" in name and test_prefix in name
     ]
-    assert len(table_ctx_candidates) >= 2
+
+    retail_sheets = {"Stores", "Sales", "Inventory", "Returns"}
+    workforce_sheets = {"Employees", "Attendance", "Salaries"}
+    all_expected_sheets = retail_sheets | workforce_sheets
+
+    found_sheets = {name.rsplit("/Tables/", 1)[-1] for name in table_ctxs}
+    assert found_sheets == all_expected_sheets, (
+        f"Expected per-table contexts for {all_expected_sheets}, " f"got {found_sheets}"
+    )
+
+    # Verify they span two distinct per-file storage IDs (Local/0 and Local/1)
+    storage_ids = {name.split("/Tables/")[0].rsplit("/", 1)[-1] for name in table_ctxs}
+    assert len(storage_ids) == 2, f"Expected 2 per-file storage IDs, got {storage_ids}"
 
 
 @pytest.mark.asyncio

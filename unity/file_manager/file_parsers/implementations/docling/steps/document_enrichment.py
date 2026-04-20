@@ -91,6 +91,9 @@ def generate_hierarchical_summaries(
     - paragraph.summary
     - section.summary (from paragraph summaries)
     - document.summary (from section summaries)
+
+    Called post-parse by ``enrich_parse_result`` — never inside
+    subprocess workers.
     """
     from unity.file_manager.file_parsers.prompts.document_prompts import (
         build_chunked_text_summary_prompt,
@@ -104,14 +107,25 @@ def generate_hierarchical_summaries(
         embedding_budget_tokens=settings.EMBEDDING_MAX_INPUT_TOKENS,
     )
     paragraphs = _iter_nodes_by_kind(graph, NodeKind.PARAGRAPH)
+    paragraph_summary_calls = 0
     for p in paragraphs:
         if p.summary:
             continue
         text = (p.text or "").strip()
-        if not has_meaningful_text(text):
+        if len(text) < int(
+            settings.PARAGRAPH_SUMMARY_MIN_CHARS,
+        ) or not has_meaningful_text(text):
             p.summary = text.strip()
             continue
+        if paragraph_summary_calls >= int(settings.MAX_PARAGRAPH_SUMMARY_CALLS):
+            p.summary = clip_text_to_token_limit_conservative(
+                text,
+                settings.EMBEDDING_MAX_INPUT_TOKENS,
+                settings.EMBEDDING_ENCODING,
+            )
+            continue
         try:
+            paragraph_summary_calls += 1
             p.summary = _generate_embedding_safe_summary(
                 prompt=para_prompt,
                 source_text=text,
@@ -130,6 +144,7 @@ def generate_hierarchical_summaries(
         embedding_budget_tokens=settings.EMBEDDING_MAX_INPUT_TOKENS,
     )
     sections = _iter_nodes_by_kind(graph, NodeKind.SECTION)
+    section_summary_calls = 0
     for s in sections:
         # Collect child paragraph summaries in stable order
         child_paras = [
@@ -145,6 +160,22 @@ def generate_hierarchical_summaries(
             s.summary = (s.title or "").strip()
             continue
         joined = "\n\n".join(parts)
+        if len(joined) < int(
+            settings.ENRICHMENT_MIN_TEXT_CHARS,
+        ) or not has_meaningful_text(joined):
+            s.summary = clip_text_to_token_limit_conservative(
+                joined,
+                settings.EMBEDDING_MAX_INPUT_TOKENS,
+                settings.EMBEDDING_ENCODING,
+            )
+            continue
+        if section_summary_calls >= int(settings.MAX_SECTION_SUMMARY_CALLS):
+            s.summary = clip_text_to_token_limit_conservative(
+                joined,
+                settings.EMBEDDING_MAX_INPUT_TOKENS,
+                settings.EMBEDDING_ENCODING,
+            )
+            continue
 
         # Map-reduce fallback when the input is too large for a single summariser call.
         try:
@@ -186,6 +217,7 @@ def generate_hierarchical_summaries(
                         len(chunks),
                         embedding_budget_tokens=settings.EMBEDDING_MAX_INPUT_TOKENS,
                     )
+                    section_summary_calls += 1
                     chunk_summaries.append(
                         _generate_embedding_safe_summary(
                             prompt=cprompt,
@@ -196,12 +228,14 @@ def generate_hierarchical_summaries(
                 joined_chunks = "\n\n".join(
                     [x for x in chunk_summaries if x and x.strip()],
                 )
+                section_summary_calls += 1
                 s.summary = _generate_embedding_safe_summary(
                     prompt=sec_prompt,
                     source_text=joined_chunks,
                     settings=settings,
                 )
             else:
+                section_summary_calls += 1
                 s.summary = _generate_embedding_safe_summary(
                     prompt=sec_prompt,
                     source_text=joined,
@@ -236,6 +270,15 @@ def generate_hierarchical_summaries(
     joined = "\n\n".join(sec_summaries)
     if not joined:
         root.summary = ""
+        return
+    if len(joined) < int(settings.ENRICHMENT_MIN_TEXT_CHARS) or not has_meaningful_text(
+        joined,
+    ):
+        root.summary = clip_text_to_token_limit_conservative(
+            joined,
+            settings.EMBEDDING_MAX_INPUT_TOKENS,
+            settings.EMBEDDING_ENCODING,
+        )
         return
 
     try:
@@ -317,7 +360,9 @@ def extract_metadata(
         DocumentMetadataExtraction,
     )
 
-    if not has_meaningful_text(full_text):
+    if len((full_text or "").strip()) < int(
+        settings.ENRICHMENT_MIN_TEXT_CHARS,
+    ) or not has_meaningful_text(full_text):
         return FileParseMetadata(
             key_topics="",
             named_entities="",

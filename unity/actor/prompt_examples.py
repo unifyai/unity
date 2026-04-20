@@ -1858,57 +1858,23 @@ def get_example_function_map() -> dict[str, callable]:
 # ---------------------------------------------------------------------------
 
 
-def get_discovery_first_pattern_example() -> str:
-    """Example: prioritizing pre-saved functions and guidance via discovery tools (CodeAct style)."""
-
-    return r"""
-# ✅ PATTERN: Discovery-First Workflow (CodeActActor)
-# If FunctionManager and GuidanceManager tools are available, ALWAYS search both
-# for existing functions and guidance BEFORE writing custom logic with raw primitives.
-#
-# Step 1 (JSON TOOL CALL): search for an existing function
-# {
-#   "name": "FunctionManager_search_functions",
-#   "arguments": {"query": "contacts prefer phone", "n": 5}
-# }
-#
-# Step 2 (JSON TOOL CALL): execute the discovered function
-# {
-#   "name": "execute_code",
-#   "arguments": {
-#     "language": "python",
-#     "state_mode": "stateless",
-#     "code": "result = await ask_contacts_question('Which of our contacts prefers phone contact?')\nprint(result)"
-#   }
-# }
-#
-# FunctionManager-discovered functions are available in all execute_code calls
-# (both stateful and stateless). Use stateful only when you need intermediate
-# variables to persist across calls.
-#
-# If no function exists, THEN fall back to composing with primitives directly in Python.
-# For multi-step compositions, emit `notify({...})` at meaningful milestones.
-# For a single primitive call, use `execute_function` — no notify needed.
-"""
-
-
 def get_discovery_first_anti_pattern_example() -> str:
-    """Anti-pattern: skipping FunctionManager/GuidanceManager search when they exist (CodeAct style)."""
+    """Anti-pattern: treating discovery as permission to jump into custom code."""
 
     return r"""
-# ❌ ANTI-PATTERN #1: Skipping FunctionManager when it's available
+# ❌ ANTI-PATTERN: Treating discovery as permission to write new code
 #
 # DON'T do this:
-#   - immediately call raw primitives
-#   - re-implement logic that likely exists as a stored function
-#
-# Example (bad):
-#   handle = await primitives.contacts.ask("Which contacts prefer phone?")
-#   result = await handle.result()
+#   1) Search FunctionManager / GuidanceManager
+#   2) Find no relevant library hit
+#   3) Jump straight to execute_code for work that could be completed by one
+#      exact function or primitive call
 #
 # ✅ CORRECT:
-#   1) Call FunctionManager_search_functions(...) as a JSON tool call
-#   2) Call execute_code and invoke the discovered function (any state_mode works)
+#   1) Call both discovery tools first
+#   2) Then choose the minimal correct execution path
+#   3) If one exact function or primitive call is enough, use execute_function
+#   4) Use execute_code only when the task genuinely needs multi-step composition
 """
 
 
@@ -1923,22 +1889,23 @@ def get_function_parameter_exploration_example() -> str:
 # - argspec
 # - docstring
 #
-# Use that to pick the right parameters before calling the injected function in Python.
+# Use that metadata to issue the matching execute_function call.
 #
 # Example:
 # 1) JSON tool call:
 #    FunctionManager_search_functions(query="update guidance runbook", n=5)
 #
-# 2) Inspect returned `argspec`/docstring (mentally), then in Python:
-#    result = await update_guidance("Create a runbook titled 'Runbook: DB Failover' ...")
-#    print(result)
+# 2) Inspect returned `argspec`/docstring (mentally), then call it directly:
+#    execute_function(
+#        function_name="update_guidance",
+#        call_kwargs={"title": "Runbook: DB Failover", "text": "..."}
+#    )
 """
 
 
 def get_code_act_discovery_first_examples() -> str:
     """Get discovery-first examples for CodeActActor."""
     examples = [
-        get_discovery_first_pattern_example().strip(),
         get_discovery_first_anti_pattern_example().strip(),
         get_function_parameter_exploration_example().strip(),
     ]
@@ -1960,10 +1927,13 @@ def get_code_act_session_examples() -> str:
     return r"""
 ### Multi-Language + Multi-Session Execution (CodeActActor)
 
-**Key idea:** Use `execute_code` for *everything* (Python + shell), and use sessions
-to preserve state across multiple tool calls.
+**Key idea:** Use `execute_code` for multi-step Python + shell workflows, and use
+sessions to preserve state across multiple tool calls.
 
-> **Note**: FunctionManager-discovered functions are available in all `execute_code` calls regardless of `state_mode`.
+> **Note**: FunctionManager-discovered functions are also available inside
+> `execute_code` regardless of `state_mode` when you genuinely need
+> composition. If a single discovered function call is sufficient, prefer
+> `execute_function`.
 
 #### Example A — Stateful shell session for repo navigation
 ```json

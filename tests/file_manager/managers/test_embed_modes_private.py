@@ -7,6 +7,7 @@ import pytest
 import unify
 
 from tests.helpers import _handle_project
+from unity.common.pipeline.instrumentation import PipelineInstrumentation
 from unity.file_manager.file_parsers.types.contracts import FileParseResult
 from unity.file_manager.file_parsers.types.table import ExtractedTable
 from unity.file_manager.types import (
@@ -145,7 +146,13 @@ def test_embed_off_no_columns(file_manager, tmp_path: Path):
     from unity.file_manager.managers.utils.executor import process_single_file
     from unity.file_manager.managers.utils.ingest_ops import get_file_id_from_path
 
-    process_single_file(fm, parse_result=parse_result, file_path=file_path, config=cfg)
+    process_single_file(
+        fm,
+        parse_result=parse_result,
+        file_path=file_path,
+        config=cfg,
+        instrumentation=PipelineInstrumentation(),
+    )
 
     # Look up file_id and use storage_id-based context
     file_id = get_file_id_from_path(
@@ -236,7 +243,13 @@ def test_embed_after_creates_columns(file_manager, tmp_path: Path):
     from unity.file_manager.managers.utils.executor import process_single_file
     from unity.file_manager.managers.utils.ingest_ops import get_file_id_from_path
 
-    process_single_file(fm, parse_result=parse_result, file_path=file_path, config=cfg)
+    process_single_file(
+        fm,
+        parse_result=parse_result,
+        file_path=file_path,
+        config=cfg,
+        instrumentation=PipelineInstrumentation(),
+    )
 
     # Look up file_id and use storage_id-based context
     file_id = get_file_id_from_path(
@@ -335,7 +348,13 @@ def test_embed_along_content(file_manager, tmp_path: Path):
     from unity.file_manager.managers.utils.executor import process_single_file
     from unity.file_manager.managers.utils.ingest_ops import get_file_id_from_path
 
-    process_single_file(fm, parse_result=parse_result, file_path=file_path, config=cfg)
+    process_single_file(
+        fm,
+        parse_result=parse_result,
+        file_path=file_path,
+        config=cfg,
+        instrumentation=PipelineInstrumentation(),
+    )
     # Note: plugin hooks are optional and may be wired in/out depending on executor implementation.
     # The critical invariant for "along" is that embeddings are created successfully.
 
@@ -451,7 +470,13 @@ def test_table_embeddings_along_for_csv_and_xlsx(
     # Run along pipeline using process_single_file from executor
     from unity.file_manager.managers.utils.executor import process_single_file
 
-    process_single_file(fm, parse_result=parse_result, file_path=file_name, config=cfg)
+    process_single_file(
+        fm,
+        parse_result=parse_result,
+        file_path=file_name,
+        config=cfg,
+        instrumentation=PipelineInstrumentation(),
+    )
 
     # Locate a per-file table using describe() and assert the embedding columns exist
     storage = fm.describe(file_path=file_name)

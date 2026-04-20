@@ -30,6 +30,7 @@ from unity.function_manager.primitives.registry import (
 from unity.manager_registry import SingletonABCMeta
 
 if TYPE_CHECKING:
+    from unity.comms.primitives import CommsPrimitives
     from unity.function_manager.computer_backends import ComputerBackend
     from unity.contact_manager.contact_manager import ContactManager
     from unity.transcript_manager.transcript_manager import TranscriptManager
@@ -882,6 +883,7 @@ def _create_async_wrapper(manager: Any, manager_alias: str) -> _AsyncPrimitiveWr
 # Maps manager_alias to ManagerRegistry getter method name.
 # Empty string means direct construction (e.g. singleton via metaclass).
 _ALIAS_TO_GETTER: dict[str, str] = {
+    "comms": "",
     "contacts": "get_contact_manager",
     "dashboards": "get_dashboard_manager",
     "data": "get_data_manager",
@@ -1003,6 +1005,11 @@ class Primitives:
 
     # Convenience properties for type hints (IDE support)
     # These are optional and just provide better autocomplete
+
+    @property
+    def comms(self) -> "CommsPrimitives":
+        """Assistant-owned communication primitives."""
+        return self._get_manager("comms")
 
     @property
     def contacts(self) -> "ContactManager":

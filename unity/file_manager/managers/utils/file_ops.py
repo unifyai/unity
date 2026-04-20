@@ -100,8 +100,8 @@ def build_compact_ingest_model(
     content_ctx = file_manager._ctx_for_file_content(storage_id)
     from unity.file_manager.parse_adapter import adapt_parse_result_for_file_manager
 
-    adapted = adapt_parse_result_for_file_manager(parse_result, config=config)
-    record_count = len(list(adapted.content_rows or []))
+    ingest_payload = adapt_parse_result_for_file_manager(parse_result, config=config)
+    record_count = len(list(ingest_payload.content_rows or []))
     try:
         text_chars = len(parse_result.full_text)
     except Exception:
@@ -120,7 +120,9 @@ def build_compact_ingest_model(
             label = str(getattr(tbl, "label", None) or f"{idx:02d}")
             label_safe = file_manager.safe(label)
             columns = list(getattr(tbl, "columns", []) or [])[:16]
-            row_count = len(getattr(tbl, "rows", []) or [])
+            row_count = getattr(tbl, "num_rows", None)
+            if row_count is None:
+                row_count = len(getattr(tbl, "rows", []) or [])
             # Use storage_id-based context
             table_ctx = file_manager._ctx_for_file_table(storage_id, label_safe)
             tables_meta.append(
@@ -194,7 +196,7 @@ def build_compact_ingest_model(
 
     if Model is _IngestedPDF:
         # Derive counts from lowered content rows and tables
-        rows = list(adapted.content_rows or [])
+        rows = list(ingest_payload.content_rows or [])
 
         return Model(
             **base_kwargs,
@@ -206,7 +208,7 @@ def build_compact_ingest_model(
             total_records=len(rows),
         )
     if Model in (_IngestedDocx, _IngestedDoc):
-        rows = list(adapted.content_rows or [])
+        rows = list(ingest_payload.content_rows or [])
         return Model(
             **base_kwargs,
             total_sections=sum(1 for r in rows if _ctype(r) == ContentType.SECTION)
@@ -216,7 +218,7 @@ def build_compact_ingest_model(
             total_records=len(rows),
         )
     if Model is _IngestedXlsx:
-        rows = list(adapted.content_rows or [])
+        rows = list(ingest_payload.content_rows or [])
         sheet_names: List[str] = []
         for r in rows:
             try:
@@ -229,6 +231,11 @@ def build_compact_ingest_model(
             except Exception:
                 continue
         tables = list(getattr(parse_result, "tables", []) or [])
+        if not sheet_names:
+            for table in tables:
+                sheet_name = str(getattr(table, "sheet_name", "") or "").strip()
+                if sheet_name and sheet_name not in sheet_names:
+                    sheet_names.append(sheet_name)
         return Model(
             **base_kwargs,
             sheet_count=len(sheet_names) if sheet_names else (len(tables) or None),

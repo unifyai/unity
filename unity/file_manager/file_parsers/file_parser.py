@@ -7,10 +7,10 @@ invariants, and orchestrates concurrent/subprocess batch parsing.
 Infrastructure that does **not** belong to the core parse flow is
 delegated to focused utility modules:
 
-- ``utils.subprocess_pool``  — warm ``ProcessPoolExecutor``, forkserver
-  setup, RLIMIT_AS enforcement, subprocess entry point.
-- ``utils.memory_scheduler`` — format-agnostic heavy/light file
-  classification based on dynamic system-memory percentages.
+- ``utils.subprocess_pool``  — per-file isolated process spawning,
+  forkserver setup, subprocess entry point.
+- ``utils.memory_scheduler`` — format-and-size-based heavy/light file
+  classification for batch scheduling.
 - ``utils.diagnostics``      — optional ``SAVE_PARSED_RESULTS`` debug
   serialisation to disk.
 """
@@ -20,8 +20,7 @@ from __future__ import annotations
 import logging
 import os
 import time
-from concurrent.futures import BrokenExecutor, Future, ThreadPoolExecutor
-from concurrent.futures import TimeoutError as FuturesTimeoutError
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Iterable, List, Optional, Sequence, Tuple
 
@@ -41,20 +40,12 @@ from unity.file_manager.file_parsers.types.formats import (
     extension_to_mime,
 )
 from unity.file_manager.file_parsers.utils.diagnostics import save_result_to_disk
-from unity.file_manager.file_parsers.utils.memory_scheduler import (
-    classify_file,
-    fmt_bytes,
-    get_system_memory_bytes,
-)
+from unity.file_manager.file_parsers.utils.memory_scheduler import classify_file
 from unity.file_manager.file_parsers.utils.postconditions import (
     enforce_parse_success_invariants,
 )
-from unity.file_manager.file_parsers.utils.subprocess_pool import (
-    force_reset_pool,
-    get_or_create_pool,
-    shutdown_pool,
-    subprocess_parse_single,
-)
+from unity.file_manager.file_parsers.utils.enrich import enrich_parse_result
+from unity.file_manager.file_parsers.utils.subprocess_pool import run_isolated
 from unity.file_manager.types.config import ParseConfig
 
 logger = logging.getLogger(__name__)
@@ -184,7 +175,7 @@ class FileParser:
             if parse_config is not None
             else self._default_registry
         )
-        return self._parse_single(request, registry=reg)
+        return self._parse_and_enrich(request, registry=reg)
 
     def _parse_single(
         self,
@@ -303,10 +294,33 @@ class FileParser:
         # -------------------- Postconditions / invariants -------------------- #
         enforce_parse_success_invariants(out, settings=FILE_PARSER_SETTINGS)
 
-        # Make trace duration cover the full facade work (backend + invariants/enforcement).
         out.trace.duration_ms = (time.perf_counter() - t0) * 1000.0
 
         save_result_to_disk(out)
+        return out
+
+    def _parse_and_enrich(
+        self,
+        request: FileParseRequest,
+        *,
+        registry: BackendRegistry,
+    ) -> FileParseResult:
+        """Parse a file and run LLM enrichment (summary + metadata).
+
+        This is the standard entry point for all non-subprocess callers.
+        Subprocesses call ``_parse_single`` directly (no LLM) and
+        enrichment runs in the parent process after the child returns.
+        """
+        out = self._parse_single(request, registry=registry)
+        if out.status == "success":
+            try:
+                enrich_parse_result(out)
+            except Exception:
+                logger.debug(
+                    "Enrichment failed for %s",
+                    out.logical_path,
+                    exc_info=True,
+                )
         return out
 
     # ------------------------------------------------------------------
@@ -320,32 +334,24 @@ class FileParser:
         raises_on_error: bool = False,
         parse_config: Optional[ParseConfig] = None,
     ) -> List[FileParseResult]:
-        """Parse multiple files with optional bounded concurrency.
+        """Parse multiple files with LLM enrichment.
+
+        Execution paths
+        ~~~~~~~~~~~~~~~
+        - **Single file or no subprocess isolation** → sequential
+          in-process via ``_parse_and_enrich``.  Used for interactive
+          call sites and test fixtures with injected backends.
+        - **Multi-file with subprocess isolation** → each file gets its
+          own ``multiprocessing.Process`` (via ``_parse_batch_subprocess``).
+          Files are classified by format as *heavy* (Docling → serialised)
+          or *light* (concurrent).  LLM enrichment runs in the parent
+          process after all subprocesses complete.
 
         Notes
         -----
-        - This method preserves input ordering in its outputs.
-        - Concurrency is implemented with a ThreadPool by default.  When
-          ``parse_config.subprocess_isolation`` is True a ProcessPool is
-          used instead, ensuring that each file's parse runs in a
-          dedicated child process whose memory is fully reclaimed by the
-          OS on exit.
-        - Concurrency is derived from ``parse_config.max_concurrent_parses``
-          and is conservatively capped to 8 to avoid resource exhaustion
-          in typical environments.
-        - When ``raises_on_error=True``, the first error result raises a
-          ``RuntimeError``.  In ingestion pipelines this should generally
-          remain ``False``.
-
-        Adaptive scheduling (subprocess mode)
-        ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-        When subprocess isolation is enabled, files are classified as
-        *heavy* or *light* (based on file size, a configurable expansion
-        factor, and total system RAM via ``psutil``).  Heavy files are
-        parsed **one at a time** to prevent concurrent OOM; light files
-        are parsed in parallel.  All subprocess workers use
-        ``max_tasks_per_child=1`` so memory (including Python arena
-        fragments) is fully reclaimed by the OS after each file.
+        - Input ordering is preserved in outputs.
+        - Concurrency is capped to ``min(max_concurrent_parses, 8)``.
+        - ``raises_on_error=True`` raises on the first error result.
         """
         reqs = list(requests)
         if not reqs:
@@ -354,6 +360,11 @@ class FileParser:
         use_subprocess = bool(
             getattr(parse_config, "subprocess_isolation", False),
         )
+        if use_subprocess and self._backends is not None:
+            logger.debug(
+                "Ignoring subprocess isolation because FileParser is using injected backends",
+            )
+            use_subprocess = False
 
         reg = (
             BackendRegistry.from_config(
@@ -378,37 +389,25 @@ class FileParser:
             min(int(requested) if isinstance(requested, int) else 1, 8),
         )
 
-        # Sequential fallback (no subprocess isolation needed for serial)
-        if (workers <= 1 or len(reqs) <= 1) and not use_subprocess:
+        # Single file or no subprocess isolation → sequential in-process.
+        # This covers: single files, test fixtures with injected backends,
+        # and any explicitly non-subprocess configuration.
+        if len(reqs) <= 1 or not use_subprocess:
             outcomes: List[FileParseResult] = []
             for req in reqs:
-                out = self._parse_single(req, registry=reg)
+                out = self._parse_and_enrich(req, registry=reg)
                 if raises_on_error and out.status == "error":
                     raise RuntimeError(out.error or "parse failed")
                 outcomes.append(out)
             return outcomes
 
-        if use_subprocess:
-            return self._parse_batch_subprocess(
-                reqs,
-                parse_config=parse_config,
-                workers=workers,
-                raises_on_error=raises_on_error,
-            )
-
-        # Parallel parse (threaded): preserve request order in outputs.
-        outcomes = []
-        with ThreadPoolExecutor(max_workers=workers) as ex:
-            futures = [ex.submit(self._parse_single, req, registry=reg) for req in reqs]
-            for req, fut in zip(reqs, futures):
-                try:
-                    out = fut.result()
-                except Exception as e:
-                    out = _error_result(req, f"parse_batch_exception: {e}")
-                if raises_on_error and out.status == "error":
-                    raise RuntimeError(out.error or "parse failed")
-                outcomes.append(out)
-        return outcomes
+        # Multi-file with subprocess isolation — the production path.
+        return self._parse_batch_subprocess(
+            reqs,
+            parse_config=parse_config,
+            workers=workers,
+            raises_on_error=raises_on_error,
+        )
 
     # ------------------------------------------------------------------
     # Subprocess-isolated batch with adaptive scheduling
@@ -422,130 +421,108 @@ class FileParser:
         workers: int,
         raises_on_error: bool,
     ) -> List[FileParseResult]:
-        """Run ``parse_batch`` with process-level isolation and adaptive scheduling.
+        """Run ``parse_batch`` with per-file process isolation.
 
-        Files are classified as *heavy* or *light*.  Light files are
-        submitted to the warm pool concurrently; heavy files are
-        submitted one at a time.  Results are placed back at their
-        original indices to preserve ordering.
+        Each file is parsed in a **fully isolated** ``multiprocessing.Process``
+        (via ``run_isolated``).
 
-        Fault tolerance
-        ~~~~~~~~~~~~~~~
-        Every ``fut.result()`` is guarded by ``parse_timeout_seconds``.
-        If a child hangs (e.g., ``MemoryError`` leaves it wedged) or the
-        pool breaks (e.g., OOM killer terminated a child), the pool is
-        force-reset and processing continues for the remaining files.
-        This guarantees the parent process **never** hangs indefinitely.
+        Scheduling
+        ~~~~~~~~~~
+        Files are split into two lanes:
+
+        - **Heavy** (Docling formats OR files ≥ 100 MB) — run one at a
+          time to prevent concurrent memory exhaustion.
+        - **Light** (everything else) — run concurrently up to
+          ``max_concurrent_parses``.
+
+        Fault isolation & retry
+        ~~~~~~~~~~~~~~~~~~~~~~~
+        Every file gets its own process and IPC channel.  If a child
+        crashes (OOM, segfault, SIGKILL), only that file's result is an
+        error.  **Crashed light files are retried once in isolation**
+        (concurrency=1) on the assumption that the crash was caused by
+        concurrent memory pressure rather than the file itself being
+        unparseable.
         """
         config = parse_config or ParseConfig()
-        sys_mem = get_system_memory_bytes()
         effective_workers = max(1, min(len(reqs), workers))
 
         heavy: List[Tuple[int, FileParseRequest]] = []
         light: List[Tuple[int, FileParseRequest]] = []
         for idx, req in enumerate(reqs):
-            bucket = classify_file(req, sys_memory=sys_mem, config=config)
-            if bucket == "heavy":
+            if classify_file(req) == "heavy":
                 heavy.append((idx, req))
             else:
                 light.append((idx, req))
 
         if heavy:
+            heavy_names = [os.path.basename(r.logical_path) for _, r in heavy]
             logger.info(
-                "Adaptive scheduler: %d heavy, %d light files "
-                "(sys_mem=%s, threshold=%.0f%%)",
+                "Batch scheduler: %d heavy (serialised), %d light "
+                "(concurrency=%d): %s",
                 len(heavy),
                 len(light),
-                fmt_bytes(sys_mem),
-                config.heavy_file_memory_pct * 100,
+                effective_workers,
+                heavy_names,
             )
 
         results: List[Optional[FileParseResult]] = [None] * len(reqs)
-        pool_needs_reset = False
 
-        # Light files — dispatched concurrently to the pool.
+        # --- Light files: concurrent with hard concurrency cap ----------- #
         if light:
-            pool = get_or_create_pool(effective_workers)
-            light_futures: List[Tuple[Future, int]] = []  # type: ignore[type-arg]
-            for idx, req in light:
-                try:
-                    fut = pool.submit(
-                        subprocess_parse_single,
-                        req,
-                        parse_config,
-                    )
-                    light_futures.append((fut, idx))
-                except BrokenExecutor:
-                    pool_needs_reset = True
-                    results[idx] = _error_result(
-                        req,
-                        "subprocess_pool_broken_on_submit",
-                    )
-                    break
+            with ThreadPoolExecutor(max_workers=effective_workers) as tp:
+                futures = {}
+                for idx, req in light:
+                    timeout = _adaptive_timeout(req, config)
+                    fut = tp.submit(run_isolated, req, parse_config, timeout)
+                    futures[fut] = (idx, req)
 
-            for fut, idx in light_futures:
-                file_timeout = _adaptive_timeout(reqs[idx], config)
-                out, needs_reset = _collect_future(
-                    fut,
-                    reqs[idx],
-                    raises_on_error,
-                    timeout=file_timeout,
-                )
-                results[idx] = out
-                if needs_reset:
-                    pool_needs_reset = True
+                for fut in futures:
+                    idx, req = futures[fut]
+                    results[idx] = fut.result()
 
-        # Heavy files — dispatched one at a time to avoid concurrent OOM.
-        for idx, req in heavy:
-            if pool_needs_reset:
-                force_reset_pool(effective_workers)
-                pool_needs_reset = False
-
-            pool = get_or_create_pool(effective_workers)
-            try:
-                fut = pool.submit(subprocess_parse_single, req, parse_config)
-            except BrokenExecutor:
-                force_reset_pool(effective_workers)
-                pool = get_or_create_pool(effective_workers)
-                try:
-                    fut = pool.submit(
-                        subprocess_parse_single,
-                        req,
-                        parse_config,
-                    )
-                except Exception as e:
-                    results[idx] = _error_result(
-                        req,
-                        f"subprocess_submit_failed: {e}",
-                    )
-                    continue
-
-            file_timeout = _adaptive_timeout(req, config)
-            out, needs_reset = _collect_future(
-                fut,
-                req,
-                raises_on_error,
-                timeout=file_timeout,
+        # Retry crashed light files once in isolation.
+        retry_items = [
+            (idx, req)
+            for idx, req in light
+            if results[idx] is not None
+            and results[idx].status == "error"  # type: ignore[union-attr]
+            and _is_subprocess_crash(results[idx])  # type: ignore[arg-type]
+        ]
+        if retry_items:
+            logger.info(
+                "Retrying %d crashed light file(s) in isolation: %s",
+                len(retry_items),
+                [os.path.basename(r.logical_path) for _, r in retry_items],
             )
-            results[idx] = out
-            if needs_reset:
-                pool_needs_reset = True
+            for idx, req in retry_items:
+                timeout = _adaptive_timeout(req, config)
+                results[idx] = run_isolated(req, parse_config, timeout)
 
-        # Final cleanup: if the pool was left in a bad state, reset it so
-        # the next parse_batch call starts with a healthy pool.
-        if pool_needs_reset:
-            force_reset_pool(effective_workers)
+        # --- Heavy files: one at a time ---------------------------------- #
+        for idx, req in heavy:
+            timeout = _adaptive_timeout(req, config)
+            results[idx] = run_isolated(req, parse_config, timeout)
+
+        # --- LLM enrichment in parent process ---------------------------- #
+        for r in results:
+            if r is not None and r.status == "success":
+                try:
+                    enrich_parse_result(r)
+                except Exception:
+                    logger.debug(
+                        "Enrichment failed for %s",
+                        r.logical_path,
+                        exc_info=True,
+                    )
+
+        # Check for errors after all attempts.
+        if raises_on_error:
+            for r in results:
+                if r is not None and r.status == "error":
+                    raise RuntimeError(r.error or "parse failed")
 
         return [r for r in results if r is not None]  # type: ignore[misc]
-
-    # ------------------------------------------------------------------
-    # Pool lifecycle (delegates to utils.subprocess_pool)
-    # ------------------------------------------------------------------
-
-    @staticmethod
-    def shutdown_pool() -> None:
-        """Shut down the persistent subprocess pool (if any)."""
-        shutdown_pool()
 
 
 # ---------------------------------------------------------------------------
@@ -576,81 +553,10 @@ def _adaptive_timeout(
     return max(base, size_mb * per_mb)
 
 
-def _collect_future(
-    fut: Future,  # type: ignore[type-arg]
-    req: FileParseRequest,
-    raises_on_error: bool,
-    *,
-    timeout: Optional[float] = None,
-) -> Tuple[FileParseResult, bool]:
-    """Collect a result from a subprocess future with timeout and error handling.
-
-    Returns ``(result, pool_needs_reset)``.  The second element is ``True``
-    when the failure mode indicates the pool is unhealthy (timeout or broken
-    executor) and the caller should call ``force_reset_pool`` before
-    submitting more work.
-
-    Three failure modes are handled so the parent **never** hangs:
-
-    1. **Normal exception** from the child (e.g., parse error) — logged and
-       wrapped in an error ``FileParseResult``.
-    2. **Timeout** (child stuck, e.g., ``MemoryError`` left it wedged) —
-       the pool must be force-reset.
-    3. **Broken pool** (child crashed, e.g., OOM killer) — the pool must
-       be force-reset.
-    """
-    pool_needs_reset = False
-    try:
-        out = fut.result(timeout=timeout)
-    except FuturesTimeoutError:
-        logger.error(
-            "Subprocess parse timed out after %.0fs for %s — "
-            "child is likely stuck; pool will be force-reset",
-            timeout,
-            req.logical_path,
-        )
-        out = _error_result(
-            req,
-            f"subprocess_parse_timeout: exceeded {timeout}s",
-        )
-        pool_needs_reset = True
-    except BrokenExecutor as e:
-        logger.error(
-            "Subprocess pool broken while parsing %s: %s",
-            req.logical_path,
-            e,
-        )
-        out = _error_result(req, f"subprocess_pool_broken: {e}")
-        pool_needs_reset = True
-    except Exception as e:
-        logger.exception(
-            "Subprocess parse failed for %s: %s",
-            req.logical_path,
-            e,
-        )
-        out = _error_result(req, f"subprocess_parse_exception: {e}")
-    if raises_on_error and out.status == "error":
-        raise RuntimeError(out.error or "parse failed")
-    return out, pool_needs_reset
+_CRASH_ERROR_PREFIXES = ("subprocess_crash:", "subprocess_parse_timeout:")
 
 
-def _error_result(req: FileParseRequest, warning: str) -> FileParseResult:
-    """Build an error ``FileParseResult`` for a failed request."""
-    trace = FileParseTrace(
-        logical_path=str(req.logical_path),
-        backend="file_parser",
-        file_format=req.file_format,
-        mime_type=req.mime_type,
-        status=StepStatus.FAILED,
-        source_local_path=req.source_local_path,
-        parsed_local_path=req.source_local_path,
-        warnings=[warning],
-    )
-    return FileParseResult(
-        logical_path=str(req.logical_path),
-        status="error",
-        error=warning,
-        file_format=req.file_format,
-        mime_type=req.mime_type,
-        trace=trace,
-    )
+def _is_subprocess_crash(result: FileParseResult) -> bool:
+    """True if the error indicates the child process crashed or was killed."""
+    err = result.error or ""
+    return any(err.startswith(p) for p in _CRASH_ERROR_PREFIXES)

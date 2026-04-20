@@ -1,0 +1,2744 @@
+"""Shared assistant-owned communication domain.
+
+`CommsPrimitives` is the single implementation of assistant-owned outbound
+communication behavior. Two different runtime surfaces delegate into this same
+module:
+
+- `primitives.comms.*` inside CodeAct, `SingleFunctionActor`, and the offline
+  task runner
+- `ConversationManagerBrainActionTools` inside the live assistant runtime
+
+Keeping the behavior here ensures that contact resolution, capability gating,
+inline identifier attachment, transport calls, transcript/event publication,
+and offline outbound-operation tracking stay consistent across live and
+headless execution paths.
+"""
+
+from __future__ import annotations
+
+import base64
+import os
+import uuid
+from typing import TYPE_CHECKING, Any, Mapping
+
+from unity.common.hierarchical_logger import DEFAULT_ICON
+from unity.common.prompt_helpers import now as prompt_now
+from unity.conversation_manager.cm_types import Medium
+from unity.conversation_manager.domains import comms_utils
+from unity.conversation_manager.event_broker import get_event_broker
+from unity.conversation_manager.events import (
+    ApiMessageSent,
+    DiscordChannelMessageSent,
+    DiscordMessageSent,
+    EmailSent,
+    Error,
+    PhoneCallSent,
+    SMSSent,
+    UnifyMessageSent,
+    WhatsAppCallInviteSent,
+    WhatsAppCallSent,
+    WhatsAppSent,
+)
+from unity.logger import LOGGER
+from unity.manager_registry import ManagerRegistry
+from unity.session_details import SESSION_DETAILS
+from unity.comms.offline_support import (
+    OfflineOutboundReservation,
+    finalize_outbound_operation_failure,
+    finalize_outbound_operation_success,
+    reserve_outbound_operation,
+)
+
+if TYPE_CHECKING:
+    from unity.conversation_manager.conversation_manager import ConversationManager
+    from unity.conversation_manager.in_memory_event_broker import InMemoryEventBroker
+
+
+_DETAIL_LABELS = {
+    "email_address": "email address",
+    "phone_number": "phone number",
+    "whatsapp_number": "WhatsApp number",
+    "discord_id": "Discord ID",
+}
+
+
+def _coerce_contact_id(value: Any) -> int:
+    """Coerce a contact_id value to int."""
+    if isinstance(value, int):
+        return value
+    if isinstance(value, str):
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            pass
+    raise TypeError(
+        f"contact_id must be an integer, got {type(value).__name__}: {value!r}",
+    )
+
+
+def _get_contact_display_name(contact: dict | None) -> str:
+    """Return a human-readable contact label for errors."""
+    if not contact:
+        return "unknown contact"
+    first = contact.get("first_name") or ""
+    last = contact.get("surname") or ""
+    name = f"{first} {last}".strip()
+    if name:
+        return name
+    return f"contact_id={contact.get('contact_id', 'unknown')}"
+
+
+class CommsPrimitives:
+    """Assistant-owned communication primitives shared by live and actor paths."""
+
+    _PRIMITIVE_METHODS = (
+        "send_sms",
+        "send_whatsapp",
+        "send_email",
+        "make_call",
+        "make_whatsapp_call",
+        "send_unify_message",
+        "send_api_response",
+        "send_discord_message",
+        "send_discord_channel_message",
+    )
+
+    def __init__(
+        self,
+        *,
+        conversation_manager: "ConversationManager | None" = None,
+        event_broker: "InMemoryEventBroker | None" = None,
+    ) -> None:
+        self._cm = conversation_manager
+        self._event_broker = event_broker or get_event_broker()
+
+    def _assistant_number(self) -> str:
+        if self._cm is not None:
+            return getattr(self._cm, "assistant_number", "") or ""
+        return SESSION_DETAILS.assistant.number or ""
+
+    def _assistant_email(self) -> str:
+        if self._cm is not None:
+            return getattr(self._cm, "assistant_email", "") or ""
+        return SESSION_DETAILS.assistant.email or ""
+
+    def _assistant_whatsapp_number(self) -> str:
+        if self._cm is not None:
+            return getattr(self._cm, "assistant_whatsapp_number", "") or ""
+        return SESSION_DETAILS.assistant.whatsapp_number or ""
+
+    def _assistant_discord_bot_id(self) -> str:
+        if self._cm is not None:
+            return getattr(self._cm, "assistant_discord_bot_id", "") or ""
+        return SESSION_DETAILS.assistant.discord_bot_id or ""
+
+    def _contact_manager(self):
+        if (
+            self._cm is not None
+            and self._cm.contact_index.is_contact_manager_initialized
+        ):
+            return self._cm.contact_index.contact_manager
+        return ManagerRegistry.get_contact_manager()
+
+    @staticmethod
+    def _as_contact_dict(contact: Any) -> dict | None:
+        """Normalize pydantic/plain contact values to a plain dict."""
+        if contact is None:
+            return None
+        if hasattr(contact, "model_dump"):
+            return contact.model_dump()
+        if isinstance(contact, dict):
+            return dict(contact)
+        return dict(contact)
+
+    @staticmethod
+    def _contact_dedupe_key(contact: dict) -> tuple[Any, ...]:
+        """Build a stable de-duplication key for contact search results."""
+        contact_id = contact.get("contact_id")
+        if contact_id is not None:
+            return ("contact_id", contact_id)
+        return (
+            "detail",
+            contact.get("email_address"),
+            contact.get("phone_number"),
+            contact.get("whatsapp_number"),
+            contact.get("discord_id"),
+            contact.get("first_name"),
+            contact.get("surname"),
+        )
+
+    def _fallback_contacts(self) -> list[dict]:
+        """Return fallback contacts cached on the live ContactIndex."""
+        if self._cm is None:
+            return []
+        fallback = getattr(self._cm.contact_index, "_fallback_contacts", {}) or {}
+        return [
+            self._as_contact_dict(contact)
+            for contact in fallback.values()
+            if self._as_contact_dict(contact) is not None
+        ]
+
+    def _filter_contacts(
+        self,
+        *,
+        field_name: str,
+        value: str,
+        limit: int = 10,
+    ) -> list[dict]:
+        """Search contacts by a single strong identifier."""
+        contacts: list[dict] = []
+        seen: set[tuple[Any, ...]] = set()
+
+        for contact in self._fallback_contacts():
+            if contact.get(field_name) != value:
+                continue
+            key = self._contact_dedupe_key(contact)
+            if key in seen:
+                continue
+            seen.add(key)
+            contacts.append(contact)
+            if len(contacts) >= limit:
+                return contacts
+
+        escaped = value.replace("\\", "\\\\").replace("'", "\\'")
+        try:
+            result = self._contact_manager().filter_contacts(
+                filter=f"{field_name} == '{escaped}'",
+                limit=limit,
+            )
+        except Exception:
+            return contacts
+
+        for contact in result.get("contacts", []):
+            contact_dict = self._as_contact_dict(contact)
+            if contact_dict is None:
+                continue
+            key = self._contact_dedupe_key(contact_dict)
+            if key in seen:
+                continue
+            seen.add(key)
+            contacts.append(contact_dict)
+            if len(contacts) >= limit:
+                break
+        return contacts
+
+    def _get_contact(
+        self,
+        *,
+        contact_id: int | None = None,
+        phone_number: str | None = None,
+        email: str | None = None,
+        whatsapp_number: str | None = None,
+        discord_id: str | None = None,
+    ) -> dict | None:
+        """Resolve a contact by ID or a communication detail."""
+        if self._cm is not None:
+            try:
+                contact = self._cm.contact_index.get_contact(
+                    contact_id=contact_id,
+                    phone_number=phone_number,
+                    email=email,
+                    whatsapp_number=whatsapp_number,
+                    discord_id=discord_id,
+                )
+                contact_dict = self._as_contact_dict(contact)
+                if contact_dict is not None:
+                    return contact_dict
+            except Exception:
+                pass
+
+        try:
+            if contact_id is not None:
+                result = self._contact_manager().get_contact_info(contact_id)
+                return self._as_contact_dict(result.get(contact_id))
+        except Exception:
+            return None
+
+        if phone_number is not None:
+            matches = self._filter_contacts(
+                field_name="phone_number",
+                value=phone_number,
+                limit=1,
+            )
+        elif email is not None:
+            matches = self._filter_contacts(
+                field_name="email_address",
+                value=email,
+                limit=1,
+            )
+        elif whatsapp_number is not None:
+            matches = self._filter_contacts(
+                field_name="whatsapp_number",
+                value=whatsapp_number,
+                limit=1,
+            )
+        elif discord_id is not None:
+            matches = self._filter_contacts(
+                field_name="discord_id",
+                value=discord_id,
+                limit=1,
+            )
+        else:
+            return None
+        return matches[0] if matches else None
+
+    def _find_conflicting_contact(
+        self,
+        *,
+        field_name: str,
+        value: str,
+        exclude_contact_id: int,
+    ) -> dict | None:
+        """Return another contact that already owns the provided identifier."""
+        for contact in self._filter_contacts(
+            field_name=field_name,
+            value=value,
+            limit=10,
+        ):
+            if contact.get("contact_id") != exclude_contact_id:
+                return contact
+        return None
+
+    def _assistant_anchor_contact(self) -> dict:
+        """Return the assistant contact as a synthetic anchor for channel-only sends."""
+        assistant_contact_id = SESSION_DETAILS.assistant.contact_id or 0
+        return self._get_contact(contact_id=assistant_contact_id) or {
+            "contact_id": assistant_contact_id,
+            "first_name": SESSION_DETAILS.assistant.first_name,
+            "surname": SESSION_DETAILS.assistant.surname,
+        }
+
+    def _normalize_optional_contact(self, contact_id: int | str | None) -> dict | None:
+        """Resolve an optional contact_id to a contact dict when provided."""
+        if contact_id is None:
+            return None
+        return self._get_contact(contact_id=_coerce_contact_id(contact_id))
+
+    def _check_outbound_allowed(self, contact: dict | None) -> str | None:
+        """Check whether a contact may receive assistant-owned outbound comms."""
+        if not contact:
+            return "Contact not found"
+        should_respond = contact.get("should_respond", False)
+        if should_respond:
+            return None
+        contact_name = _get_contact_display_name(contact)
+        return (
+            f"Cannot send outbound communication to {contact_name}: "
+            f"should_respond is False for this contact. "
+            f"Check the contact's response_policy for details or ask your boss for guidance."
+        )
+
+    def _resolve_or_attach_detail(
+        self,
+        *,
+        contact: dict | None,
+        contact_id: int,
+        field_name: str,
+        inline_value: str | None,
+        medium_label: str,
+    ) -> tuple[str | None, dict | None]:
+        """Resolve a strong identifier, optionally attaching it to the contact."""
+        if contact is None:
+            return ("Contact not found", None)
+
+        existing_value = contact.get(field_name)
+        if existing_value:
+            if inline_value and inline_value != existing_value:
+                detail_label = _DETAIL_LABELS[field_name]
+                return (
+                    f"{_get_contact_display_name(contact)} already has "
+                    f"{detail_label} {existing_value}. "
+                    f"Do not overwrite identifiers during a {medium_label} send. "
+                    f"Use `act` or `update_contacts` first if the contact really changed.",
+                    contact,
+                )
+            return (None, contact)
+
+        if not inline_value:
+            detail_label = _DETAIL_LABELS[field_name]
+            return (
+                f"{_get_contact_display_name(contact)} does not have a {detail_label} on file. "
+                f"Provide `{field_name}` in this send or update the contact first.",
+                contact,
+            )
+
+        conflict = self._find_conflicting_contact(
+            field_name=field_name,
+            value=inline_value,
+            exclude_contact_id=contact_id,
+        )
+        if conflict is not None:
+            detail_label = _DETAIL_LABELS[field_name]
+            return (
+                f"Cannot use {detail_label} {inline_value} for "
+                f"{_get_contact_display_name(contact)} because it already belongs to "
+                f"{_get_contact_display_name(conflict)}. "
+                f"Update the existing contact first instead of reassigning identifiers during a send.",
+                contact,
+            )
+
+        self._contact_manager().update_contact(
+            contact_id=contact_id,
+            **{field_name: inline_value},
+        )
+        refreshed = self._get_contact(contact_id=contact_id) or {
+            **contact,
+            field_name: inline_value,
+        }
+        return (None, refreshed)
+
+    async def _surface_comms_error(
+        self,
+        error_msg: str,
+        topic: str,
+        *,
+        contact_id: int | None = None,
+        medium: Medium | None = None,
+        offline_reservation: OfflineOutboundReservation | None = None,
+        attempted_content: str = "",
+        receiver_ids: list[int] | None = None,
+        target_metadata: Mapping[str, Any] | None = None,
+        history_metadata: Mapping[str, Any] | None = None,
+        attachments: list[dict] | None = None,
+    ) -> dict[str, Any]:
+        """Publish a comms error and surface it in the live conversation thread."""
+        if offline_reservation is not None:
+            finalize_outbound_operation_failure(
+                offline_reservation,
+                error=error_msg,
+                attempted_content=attempted_content,
+                receiver_ids=receiver_ids,
+                target_metadata=target_metadata,
+                metadata=history_metadata,
+                attachments=attachments,
+            )
+        if self._cm is not None and contact_id is not None and medium is not None:
+            self._cm.contact_index.push_message(
+                contact_id=contact_id,
+                sender_name="System",
+                thread_name=medium,
+                message_content=f"[Send Failed] {error_msg}",
+                role="system",
+                timestamp=prompt_now(as_string=False),
+            )
+        await self._event_broker.publish(topic, Error(error_msg).to_json())
+        return {"status": "error", "error": error_msg}
+
+    def _reserve_offline_operation(
+        self,
+        *,
+        method_name: str,
+        medium: Medium,
+        target_kind: str,
+        target_metadata: Mapping[str, Any],
+        contact_id: int | None = None,
+    ) -> tuple[OfflineOutboundReservation | None, dict[str, Any] | None]:
+        """Reserve one durable offline outbound operation when headless tracking is active."""
+
+        decision = reserve_outbound_operation(
+            method_name=method_name,
+            medium=medium,
+            target_kind=target_kind,
+            target_metadata=target_metadata,
+            contact_id=contact_id,
+        )
+        return decision.reservation, decision.response
+
+    def _record_offline_success(
+        self,
+        offline_reservation: OfflineOutboundReservation | None,
+        *,
+        attempted_content: str,
+        receiver_ids: list[int] | None,
+        target_metadata: Mapping[str, Any] | None = None,
+        history_metadata: Mapping[str, Any] | None = None,
+        attachments: list[dict] | None = None,
+        provider_response: Mapping[str, Any] | None = None,
+        status: str = "completed",
+    ) -> None:
+        """Persist offline assistant history and finalize the ledger on success."""
+
+        finalize_outbound_operation_success(
+            offline_reservation,
+            attempted_content=attempted_content,
+            receiver_ids=receiver_ids,
+            target_metadata=target_metadata,
+            metadata=history_metadata,
+            attachments=attachments,
+            provider_response=provider_response,
+            status=status,
+        )
+
+    async def send_sms(
+        self,
+        *,
+        contact_id: int | str,
+        content: str,
+        phone_number: str | None = None,
+    ) -> dict[str, Any]:
+        """Send an assistant-owned SMS message to an existing contact.
+
+        The contact must already exist in the system.
+
+        - If the contact already has a phone number on file, omit
+          ``phone_number``.
+        - If the contact is missing a phone number but you know it, pass it via
+          ``phone_number`` and the contact record will be updated before the
+          SMS is sent.
+        - Do not supply a different phone number from the one already on file.
+          Update the contact first, then retry.
+
+        Parameters
+        ----------
+        contact_id : int | str
+            Recipient contact from ``active_conversations`` or from contact
+            search/create tools.
+        content : str
+            Text body to send.
+        phone_number : str | None, optional
+            Recipient phone number when the contact does not already have one on
+            file.
+
+        Returns
+        -------
+        dict[str, Any]
+            ``{"status": "ok"}`` on success, or an error payload describing
+            why the send was rejected or failed.
+        """
+        contact_id = _coerce_contact_id(contact_id)
+        offline_reservation = None
+        contact = self._get_contact(contact_id=contact_id)
+
+        outbound_error = self._check_outbound_allowed(contact)
+        if outbound_error:
+            return await self._surface_comms_error(
+                outbound_error,
+                "app:comms:sms_sent",
+                contact_id=contact_id,
+                medium=Medium.SMS_MESSAGE,
+                offline_reservation=offline_reservation,
+                attempted_content=content,
+                receiver_ids=[contact_id],
+                target_metadata={
+                    "contact_id": contact_id,
+                    "phone_number": (contact or {}).get("phone_number")
+                    or phone_number
+                    or "",
+                },
+                history_metadata={
+                    "contact_display_name": _get_contact_display_name(contact),
+                },
+            )
+
+        if not self._assistant_number():
+            return await self._surface_comms_error(
+                "You don't have a number, please provision one.",
+                "app:comms:sms_sent",
+                contact_id=contact_id,
+                medium=Medium.SMS_MESSAGE,
+                attempted_content=content,
+                receiver_ids=[contact_id],
+                target_metadata={
+                    "contact_id": contact_id,
+                    "phone_number": (contact or {}).get("phone_number")
+                    or phone_number
+                    or "",
+                },
+                history_metadata={
+                    "contact_display_name": _get_contact_display_name(contact),
+                },
+            )
+
+        detail_error, contact = self._resolve_or_attach_detail(
+            contact=contact,
+            contact_id=contact_id,
+            field_name="phone_number",
+            inline_value=phone_number,
+            medium_label="SMS",
+        )
+        if detail_error:
+            return await self._surface_comms_error(
+                detail_error,
+                "app:comms:sms_sent",
+                contact_id=contact_id,
+                medium=Medium.SMS_MESSAGE,
+                offline_reservation=offline_reservation,
+                attempted_content=content,
+                receiver_ids=[contact_id],
+                target_metadata={
+                    "contact_id": contact_id,
+                    "phone_number": (contact or {}).get("phone_number")
+                    or phone_number
+                    or "",
+                },
+                history_metadata={
+                    "contact_display_name": _get_contact_display_name(contact),
+                },
+            )
+
+        offline_reservation, offline_response = self._reserve_offline_operation(
+            method_name="send_sms",
+            medium=Medium.SMS_MESSAGE,
+            target_kind="contact",
+            target_metadata={
+                "contact_id": (contact or {}).get("contact_id") or contact_id,
+                "phone_number": (contact or {}).get("phone_number")
+                or phone_number
+                or "",
+            },
+            contact_id=(contact or {}).get("contact_id") or contact_id,
+        )
+        if offline_response is not None:
+            return offline_response
+
+        to_number = (contact or {}).get("phone_number")
+        response = await comms_utils.send_sms_message_via_number(
+            to_number=to_number,
+            content=content,
+        )
+        if response.get("success"):
+            fresh_contact = self._get_contact(phone_number=to_number) or contact or {}
+            event = SMSSent(contact=fresh_contact, content=content)
+            await self._event_broker.publish("app:comms:sms_sent", event.to_json())
+            self._record_offline_success(
+                offline_reservation,
+                attempted_content=content,
+                receiver_ids=[fresh_contact.get("contact_id") or contact_id],
+                target_metadata={
+                    "contact_id": fresh_contact.get("contact_id") or contact_id,
+                    "phone_number": to_number or "",
+                },
+                history_metadata={
+                    "contact_display_name": _get_contact_display_name(fresh_contact),
+                },
+                provider_response=response,
+            )
+            return {"status": "ok"}
+
+        if not self._assistant_number():
+            error_msg = "You don't have a number, please provision one."
+        else:
+            error_msg = f"Failed to send sms to {to_number}"
+        return await self._surface_comms_error(
+            error_msg,
+            "app:comms:sms_sent",
+            contact_id=contact_id,
+            medium=Medium.SMS_MESSAGE,
+            offline_reservation=offline_reservation,
+            attempted_content=content,
+            receiver_ids=[contact_id],
+            target_metadata={
+                "contact_id": contact_id,
+                "phone_number": to_number or phone_number or "",
+            },
+            history_metadata={
+                "contact_display_name": _get_contact_display_name(contact),
+            },
+        )
+
+    async def send_whatsapp(
+        self,
+        *,
+        contact_id: int | str,
+        content: str,
+        whatsapp_number: str | None = None,
+        attachment_filepath: str | None = None,
+    ) -> dict[str, Any]:
+        """Send an assistant-owned WhatsApp message to an existing contact.
+
+        The contact must already exist in the system.
+
+        - If the contact already has a WhatsApp number on file, omit
+          ``whatsapp_number``.
+        - If the contact is missing a WhatsApp number but you know it, pass it
+          via ``whatsapp_number`` and the contact record will be updated before
+          the message is sent.
+        - Do not supply a different WhatsApp number from the one already on
+          file. Update the contact first, then retry.
+
+        WhatsApp accepts one attachment per outbound message. Inside the normal
+        24-hour window, standard media types can be sent alongside the text. If
+        WhatsApp falls back to a template notification instead of the verbatim
+        body, a live assistant session can queue the original message for resend
+        after the contact replies. Headless offline task runs cannot queue that
+        follow-up, so they only report that a notification was sent.
+
+        Parameters
+        ----------
+        contact_id : int | str
+            Recipient contact from ``active_conversations`` or from contact
+            search/create tools.
+        content : str
+            Message body to send.
+        whatsapp_number : str | None, optional
+            Recipient WhatsApp number when the contact does not already have one
+            on file.
+        attachment_filepath : str | None, optional
+            Workspace-relative file path for one attachment to upload and send.
+
+        Returns
+        -------
+        dict[str, Any]
+            Status payload describing whether the send succeeded, failed, or
+            entered the live resend flow.
+        """
+        contact_id = _coerce_contact_id(contact_id)
+        offline_reservation = None
+        contact = self._get_contact(contact_id=contact_id)
+
+        topic = "app:comms:whatsapp_sent"
+        outbound_error = self._check_outbound_allowed(contact)
+        if outbound_error:
+            return await self._surface_comms_error(
+                outbound_error,
+                topic,
+                contact_id=contact_id,
+                medium=Medium.WHATSAPP_MESSAGE,
+                offline_reservation=offline_reservation,
+                attempted_content=content,
+                receiver_ids=[contact_id],
+                target_metadata={
+                    "contact_id": contact_id,
+                    "whatsapp_number": (contact or {}).get("whatsapp_number")
+                    or whatsapp_number
+                    or "",
+                    "attachment_filepath": attachment_filepath or "",
+                },
+                history_metadata={
+                    "contact_display_name": _get_contact_display_name(contact),
+                },
+            )
+
+        if not self._assistant_whatsapp_number():
+            return await self._surface_comms_error(
+                "WhatsApp is not enabled for this assistant.",
+                topic,
+                contact_id=contact_id,
+                medium=Medium.WHATSAPP_MESSAGE,
+                attempted_content=content,
+                receiver_ids=[contact_id],
+                target_metadata={
+                    "contact_id": contact_id,
+                    "whatsapp_number": (contact or {}).get("whatsapp_number")
+                    or whatsapp_number
+                    or "",
+                    "attachment_filepath": attachment_filepath or "",
+                },
+                history_metadata={
+                    "contact_display_name": _get_contact_display_name(contact),
+                },
+            )
+
+        detail_error, contact = self._resolve_or_attach_detail(
+            contact=contact,
+            contact_id=contact_id,
+            field_name="whatsapp_number",
+            inline_value=whatsapp_number,
+            medium_label="WhatsApp",
+        )
+        if detail_error:
+            return await self._surface_comms_error(
+                detail_error,
+                topic,
+                contact_id=contact_id,
+                medium=Medium.WHATSAPP_MESSAGE,
+                offline_reservation=offline_reservation,
+                attempted_content=content,
+                receiver_ids=[contact_id],
+                target_metadata={
+                    "contact_id": contact_id,
+                    "whatsapp_number": (contact or {}).get("whatsapp_number")
+                    or whatsapp_number
+                    or "",
+                    "attachment_filepath": attachment_filepath or "",
+                },
+                history_metadata={
+                    "contact_display_name": _get_contact_display_name(contact),
+                },
+            )
+
+        offline_reservation, offline_response = self._reserve_offline_operation(
+            method_name="send_whatsapp",
+            medium=Medium.WHATSAPP_MESSAGE,
+            target_kind="contact",
+            target_metadata={
+                "contact_id": (contact or {}).get("contact_id") or contact_id,
+                "whatsapp_number": (contact or {}).get("whatsapp_number")
+                or whatsapp_number
+                or "",
+                "attachment_filepath": attachment_filepath or "",
+            },
+            contact_id=(contact or {}).get("contact_id") or contact_id,
+        )
+        if offline_response is not None:
+            return offline_response
+
+        attachment = None
+        media_url = None
+        if attachment_filepath:
+            from unity.file_manager.filesystem_adapters.local_adapter import (
+                LocalFileSystemAdapter,
+            )
+
+            adapter = LocalFileSystemAdapter()
+            try:
+                abs_path = adapter._abspath(attachment_filepath)
+                with open(abs_path, "rb") as file_handle:
+                    file_contents = file_handle.read()
+            except FileNotFoundError:
+                return await self._surface_comms_error(
+                    f"File not found: {attachment_filepath}",
+                    topic,
+                    contact_id=contact_id,
+                    medium=Medium.WHATSAPP_MESSAGE,
+                    offline_reservation=offline_reservation,
+                    attempted_content=content,
+                    receiver_ids=[contact_id],
+                    target_metadata={
+                        "contact_id": contact_id,
+                        "whatsapp_number": (contact or {}).get("whatsapp_number")
+                        or whatsapp_number
+                        or "",
+                        "attachment_filepath": attachment_filepath or "",
+                    },
+                    history_metadata={
+                        "contact_display_name": _get_contact_display_name(contact),
+                    },
+                )
+            except Exception as exc:
+                return await self._surface_comms_error(
+                    f"Failed to read file: {exc}",
+                    topic,
+                    contact_id=contact_id,
+                    medium=Medium.WHATSAPP_MESSAGE,
+                    offline_reservation=offline_reservation,
+                    attempted_content=content,
+                    receiver_ids=[contact_id],
+                    target_metadata={
+                        "contact_id": contact_id,
+                        "whatsapp_number": (contact or {}).get("whatsapp_number")
+                        or whatsapp_number
+                        or "",
+                        "attachment_filepath": attachment_filepath or "",
+                    },
+                    history_metadata={
+                        "contact_display_name": _get_contact_display_name(contact),
+                    },
+                )
+
+            attachment_filename = os.path.basename(attachment_filepath)
+            upload_result = await comms_utils.upload_unify_attachment(
+                file_content=file_contents,
+                filename=attachment_filename,
+            )
+            if "error" in upload_result:
+                return await self._surface_comms_error(
+                    f"Failed to upload attachment: {upload_result['error']}",
+                    topic,
+                    contact_id=contact_id,
+                    medium=Medium.WHATSAPP_MESSAGE,
+                    offline_reservation=offline_reservation,
+                    attempted_content=content,
+                    receiver_ids=[contact_id],
+                    target_metadata={
+                        "contact_id": contact_id,
+                        "whatsapp_number": (contact or {}).get("whatsapp_number")
+                        or whatsapp_number
+                        or "",
+                        "attachment_filepath": attachment_filepath or "",
+                    },
+                    history_metadata={
+                        "contact_display_name": _get_contact_display_name(contact),
+                    },
+                )
+
+            attachment = upload_result
+            attachment_id = attachment.get("id", "")
+            attachment_target = f"Attachments/{attachment_id}_{attachment_filename}"
+            try:
+                import shutil
+
+                attachment_dir = adapter._abspath("Attachments")
+                os.makedirs(attachment_dir, exist_ok=True)
+                shutil.copy2(
+                    abs_path,
+                    os.path.join(
+                        attachment_dir,
+                        f"{attachment_id}_{attachment_filename}",
+                    ),
+                )
+            except Exception:
+                pass
+            attachment["filepath"] = attachment_target
+
+            media_url = attachment.get("url") or attachment.get("gs_url")
+            if media_url and media_url.startswith("gs://"):
+                import aiohttp as _aiohttp
+
+                from unity.conversation_manager.domains.comms_utils import (
+                    _get_signed_url_from_gs_url,
+                )
+
+                async with _aiohttp.ClientSession() as session:
+                    media_url = await _get_signed_url_from_gs_url(session, media_url)
+
+        to_number = (contact or {}).get("whatsapp_number")
+        response = await comms_utils.send_whatsapp_message(
+            to_number=to_number,
+            content=content,
+            user_name=(contact or {}).get("first_name", ""),
+            agent_name=SESSION_DETAILS.assistant.first_name,
+            media_url=media_url,
+        )
+        if response.get("success"):
+            via_template = response.get("method") == "template"
+            fresh_contact = (
+                self._get_contact(whatsapp_number=to_number) or contact or {}
+            )
+            attachments_for_event = [attachment] if attachment else []
+            event = WhatsAppSent(
+                contact=fresh_contact,
+                content=content,
+                via_template=via_template,
+                attachments=attachments_for_event or None,
+            )
+            await self._event_broker.publish(topic, event.to_json())
+            pending_resends = None
+            automatic_resend_available = False
+            if via_template and self._cm is not None:
+                pending_resends = getattr(self._cm, "_pending_whatsapp_resends", None)
+                automatic_resend_available = isinstance(pending_resends, dict)
+            self._record_offline_success(
+                offline_reservation,
+                attempted_content=content,
+                receiver_ids=[fresh_contact.get("contact_id") or contact_id],
+                target_metadata={
+                    "contact_id": fresh_contact.get("contact_id") or contact_id,
+                    "whatsapp_number": to_number or "",
+                    "attachment_filepath": attachment_filepath or "",
+                },
+                history_metadata={
+                    "contact_display_name": _get_contact_display_name(fresh_contact),
+                    "via_template": via_template,
+                    "automatic_resend_available": automatic_resend_available,
+                },
+                attachments=attachments_for_event or None,
+                provider_response=response,
+                status=(
+                    "pending_resend"
+                    if via_template and automatic_resend_available
+                    else "completed"
+                ),
+            )
+            if via_template:
+                if automatic_resend_available and pending_resends is not None:
+                    pending_resends[contact_id] = content
+                    return {
+                        "status": "ok",
+                        "pending_resend": True,
+                        "note": (
+                            "The message could not be delivered verbatim. "
+                            "A notification was sent to the contact instead. "
+                            "When they reply, you will be prompted to resend your message."
+                        ),
+                    }
+                return {
+                    "status": "ok",
+                    "note": (
+                        "The message could not be delivered verbatim. "
+                        "A notification was sent to the contact instead. "
+                        "Because this send ran without a live assistant session, "
+                        "the original message was not queued for automatic resend."
+                    ),
+                }
+            return {"status": "ok"}
+
+        if not self._assistant_whatsapp_number():
+            error_msg = "WhatsApp is not enabled for this assistant."
+        else:
+            error_msg = f"Failed to send WhatsApp message to {to_number}"
+        return await self._surface_comms_error(
+            error_msg,
+            topic,
+            contact_id=contact_id,
+            medium=Medium.WHATSAPP_MESSAGE,
+            offline_reservation=offline_reservation,
+            attempted_content=content,
+            receiver_ids=[contact_id],
+            target_metadata={
+                "contact_id": contact_id,
+                "whatsapp_number": to_number or whatsapp_number or "",
+                "attachment_filepath": attachment_filepath or "",
+            },
+            history_metadata={
+                "contact_display_name": _get_contact_display_name(contact),
+            },
+            attachments=[attachment] if attachment else None,
+        )
+
+    async def send_discord_message(
+        self,
+        *,
+        contact_id: int | str,
+        content: str,
+        discord_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Send an assistant-owned Discord direct message to an existing contact.
+
+        Use this for one-to-one Discord replies. For guild channel posts, use
+        ``send_discord_channel_message`` instead.
+
+        - If the contact already has a Discord ID on file, omit ``discord_id``.
+        - If the contact is missing a Discord ID but you know it, pass it via
+          ``discord_id`` and the contact record will be updated before the DM is
+          sent.
+        - Do not supply a different Discord ID from the one already on file.
+          Update the contact first, then retry.
+
+        Parameters
+        ----------
+        contact_id : int | str
+            Recipient contact from ``active_conversations`` or from contact
+            search/create tools.
+        content : str
+            Direct-message body to send.
+        discord_id : str | None, optional
+            Recipient Discord user ID when the contact does not already have one
+            on file.
+
+        Returns
+        -------
+        dict[str, Any]
+            ``{"status": "ok"}`` on success, or an error payload describing
+            why the DM could not be sent.
+        """
+        contact_id = _coerce_contact_id(contact_id)
+        offline_reservation = None
+        contact = self._get_contact(contact_id=contact_id)
+        topic = "app:comms:discord_message_sent"
+
+        outbound_error = self._check_outbound_allowed(contact)
+        if outbound_error:
+            return await self._surface_comms_error(
+                outbound_error,
+                topic,
+                contact_id=contact_id,
+                medium=Medium.DISCORD_MESSAGE,
+                offline_reservation=offline_reservation,
+                attempted_content=content,
+                receiver_ids=[contact_id],
+                target_metadata={
+                    "contact_id": contact_id,
+                    "discord_id": (contact or {}).get("discord_id") or discord_id or "",
+                },
+                history_metadata={
+                    "contact_display_name": _get_contact_display_name(contact),
+                },
+            )
+
+        bot_id = self._assistant_discord_bot_id()
+        if not bot_id:
+            return await self._surface_comms_error(
+                "Discord is not enabled for this assistant.",
+                topic,
+                contact_id=contact_id,
+                medium=Medium.DISCORD_MESSAGE,
+                attempted_content=content,
+                receiver_ids=[contact_id],
+                target_metadata={
+                    "contact_id": contact_id,
+                    "discord_id": (contact or {}).get("discord_id") or discord_id or "",
+                },
+                history_metadata={
+                    "contact_display_name": _get_contact_display_name(contact),
+                },
+            )
+
+        detail_error, contact = self._resolve_or_attach_detail(
+            contact=contact,
+            contact_id=contact_id,
+            field_name="discord_id",
+            inline_value=discord_id,
+            medium_label="Discord",
+        )
+        if detail_error:
+            return await self._surface_comms_error(
+                detail_error,
+                topic,
+                contact_id=contact_id,
+                medium=Medium.DISCORD_MESSAGE,
+                offline_reservation=offline_reservation,
+                attempted_content=content,
+                receiver_ids=[contact_id],
+                target_metadata={
+                    "contact_id": contact_id,
+                    "discord_id": (contact or {}).get("discord_id") or discord_id or "",
+                },
+                history_metadata={
+                    "contact_display_name": _get_contact_display_name(contact),
+                },
+            )
+
+        offline_reservation, offline_response = self._reserve_offline_operation(
+            method_name="send_discord_message",
+            medium=Medium.DISCORD_MESSAGE,
+            target_kind="contact",
+            target_metadata={
+                "contact_id": (contact or {}).get("contact_id") or contact_id,
+                "discord_id": (contact or {}).get("discord_id") or discord_id or "",
+            },
+            contact_id=(contact or {}).get("contact_id") or contact_id,
+        )
+        if offline_response is not None:
+            return offline_response
+
+        to_discord_id = (contact or {}).get("discord_id")
+        response = await comms_utils.send_discord_message(
+            to=to_discord_id,
+            body=content,
+            bot_id=bot_id,
+        )
+        if response.get("success"):
+            fresh_contact = self._get_contact(discord_id=to_discord_id) or contact or {}
+            event = DiscordMessageSent(contact=fresh_contact, content=content)
+            await self._event_broker.publish(topic, event.to_json())
+            self._record_offline_success(
+                offline_reservation,
+                attempted_content=content,
+                receiver_ids=[fresh_contact.get("contact_id") or contact_id],
+                target_metadata={
+                    "contact_id": fresh_contact.get("contact_id") or contact_id,
+                    "discord_id": to_discord_id or "",
+                },
+                history_metadata={
+                    "contact_display_name": _get_contact_display_name(fresh_contact),
+                },
+                provider_response=response,
+            )
+            return {"status": "ok"}
+
+        if not bot_id:
+            error_msg = "Discord is not enabled for this assistant."
+        else:
+            error_msg = "Failed to send Discord message"
+        return await self._surface_comms_error(
+            error_msg,
+            topic,
+            contact_id=contact_id,
+            medium=Medium.DISCORD_MESSAGE,
+            offline_reservation=offline_reservation,
+            attempted_content=content,
+            receiver_ids=[contact_id],
+            target_metadata={
+                "contact_id": contact_id,
+                "discord_id": to_discord_id or discord_id or "",
+            },
+            history_metadata={
+                "contact_display_name": _get_contact_display_name(contact),
+            },
+        )
+
+    async def send_discord_channel_message(
+        self,
+        *,
+        channel_id: str,
+        content: str,
+        guild_id: str = "",
+        contact_id: int | str | None = None,
+    ) -> dict[str, Any]:
+        """Post an assistant-owned message into a Discord guild channel.
+
+        Use this when the assistant should speak in a shared Discord channel
+        rather than DM one person. The optional ``contact_id`` does not change
+        where the message is sent; it only provides a contact anchor for
+        transcript ownership and response-policy checks when the channel post is
+        associated with a particular person or thread.
+
+        If you want a one-to-one Discord reply, use
+        ``send_discord_message`` instead.
+
+        Parameters
+        ----------
+        channel_id : str
+            Target Discord channel ID to post into.
+        content : str
+            Message body to publish.
+        guild_id : str, optional
+            Discord guild ID for transcript/event metadata when known.
+        contact_id : int | str | None, optional
+            Optional contact anchor for transcript ownership and response-policy
+            checks.
+
+        Returns
+        -------
+        dict[str, Any]
+            Status payload with success or error details.
+        """
+        normalized_contact_id = (
+            _coerce_contact_id(contact_id) if contact_id is not None else None
+        )
+        offline_reservation = None
+        resolved_contact = self._normalize_optional_contact(normalized_contact_id)
+        if resolved_contact is not None:
+            outbound_error = self._check_outbound_allowed(resolved_contact)
+            if outbound_error:
+                return await self._surface_comms_error(
+                    outbound_error,
+                    "app:comms:discord_channel_message_sent",
+                    contact_id=resolved_contact.get("contact_id"),
+                    medium=Medium.DISCORD_CHANNEL_MESSAGE,
+                    offline_reservation=offline_reservation,
+                    attempted_content=content,
+                    receiver_ids=[resolved_contact.get("contact_id")],
+                    target_metadata={
+                        "channel_id": channel_id,
+                        "guild_id": guild_id,
+                        "contact_id": resolved_contact.get("contact_id"),
+                    },
+                    history_metadata={
+                        "contact_display_name": _get_contact_display_name(
+                            resolved_contact,
+                        ),
+                    },
+                )
+        anchor_contact = resolved_contact or self._assistant_anchor_contact()
+        anchor_contact_id = anchor_contact.get("contact_id")
+        bot_id = self._assistant_discord_bot_id()
+        if not bot_id:
+            return await self._surface_comms_error(
+                "Discord is not enabled for this assistant.",
+                "app:comms:discord_channel_message_sent",
+                contact_id=anchor_contact_id,
+                medium=Medium.DISCORD_CHANNEL_MESSAGE,
+                attempted_content=content,
+                receiver_ids=(
+                    [anchor_contact_id] if anchor_contact_id is not None else None
+                ),
+                target_metadata={
+                    "channel_id": channel_id,
+                    "guild_id": guild_id,
+                    "contact_id": anchor_contact_id,
+                },
+                history_metadata={
+                    "contact_display_name": _get_contact_display_name(anchor_contact),
+                },
+            )
+        offline_reservation, offline_response = self._reserve_offline_operation(
+            method_name="send_discord_channel_message",
+            medium=Medium.DISCORD_CHANNEL_MESSAGE,
+            target_kind="discord_channel",
+            target_metadata={
+                "channel_id": channel_id,
+                "guild_id": guild_id,
+                "contact_id": normalized_contact_id,
+            },
+            contact_id=normalized_contact_id,
+        )
+        if offline_response is not None:
+            return offline_response
+        response = await comms_utils.send_discord_message(
+            channel_id=channel_id,
+            body=content,
+            bot_id=bot_id,
+        )
+        if response.get("success"):
+            event = DiscordChannelMessageSent(
+                contact=anchor_contact,
+                content=content,
+                channel_id=channel_id,
+                guild_id=guild_id,
+            )
+            await self._event_broker.publish(
+                "app:comms:discord_channel_message_sent",
+                event.to_json(),
+            )
+            self._record_offline_success(
+                offline_reservation,
+                attempted_content=content,
+                receiver_ids=(
+                    [anchor_contact_id] if anchor_contact_id is not None else None
+                ),
+                target_metadata={
+                    "channel_id": channel_id,
+                    "guild_id": guild_id,
+                    "contact_id": anchor_contact_id,
+                },
+                history_metadata={
+                    "contact_display_name": _get_contact_display_name(anchor_contact),
+                },
+                provider_response=response,
+            )
+            return {"status": "ok"}
+
+        if not bot_id:
+            error_msg = "Discord is not enabled for this assistant."
+        else:
+            error_msg = "Failed to send Discord channel message"
+        return await self._surface_comms_error(
+            error_msg,
+            "app:comms:discord_channel_message_sent",
+            contact_id=anchor_contact_id,
+            medium=Medium.DISCORD_CHANNEL_MESSAGE,
+            offline_reservation=offline_reservation,
+            attempted_content=content,
+            receiver_ids=[anchor_contact_id] if anchor_contact_id is not None else None,
+            target_metadata={
+                "channel_id": channel_id,
+                "guild_id": guild_id,
+                "contact_id": anchor_contact_id,
+            },
+            history_metadata={
+                "contact_display_name": _get_contact_display_name(anchor_contact),
+            },
+        )
+
+    async def send_unify_message(
+        self,
+        *,
+        content: str,
+        contact_id: int | str,
+        attachment_filepath: str | None = None,
+    ) -> dict[str, Any]:
+        """Send an assistant-owned Unify inbox message to one contact.
+
+        Use this when the assistant should message someone inside the Unify
+        product rather than over an external channel like SMS or email. The
+        recipient must already exist as a contact. You may include one local
+        file attachment, which will be uploaded first and then referenced from
+        the outbound message and transcript history.
+
+        Parameters
+        ----------
+        content : str
+            Message body to send through the Unify platform.
+        contact_id : int | str
+            Existing contact that should receive the Unify message.
+        attachment_filepath : str | None, optional
+            Workspace-local file path for one attachment to upload and include.
+
+        Returns
+        -------
+        dict[str, Any]
+            ``{"status": "ok"}`` on success, or an error payload describing
+            why the message or attachment flow failed.
+        """
+        contact_id = _coerce_contact_id(contact_id)
+        offline_reservation, offline_response = self._reserve_offline_operation(
+            method_name="send_unify_message",
+            medium=Medium.UNIFY_MESSAGE,
+            target_kind="contact",
+            target_metadata={
+                "contact_id": contact_id,
+                "attachment_filepath": attachment_filepath or "",
+            },
+            contact_id=contact_id,
+        )
+        if offline_response is not None:
+            return offline_response
+        contact = self._get_contact(contact_id=contact_id)
+        topic = "app:comms:unify_message_sent"
+
+        if contact:
+            outbound_error = self._check_outbound_allowed(contact)
+            if outbound_error:
+                return await self._surface_comms_error(
+                    outbound_error,
+                    topic,
+                    contact_id=contact_id,
+                    medium=Medium.UNIFY_MESSAGE,
+                    offline_reservation=offline_reservation,
+                    attempted_content=content,
+                    receiver_ids=[contact_id],
+                    target_metadata={
+                        "contact_id": contact_id,
+                        "attachment_filepath": attachment_filepath or "",
+                    },
+                    history_metadata={
+                        "contact_display_name": _get_contact_display_name(contact),
+                    },
+                )
+
+        attachment = None
+        if attachment_filepath:
+            from unity.file_manager.filesystem_adapters.local_adapter import (
+                LocalFileSystemAdapter,
+            )
+
+            try:
+                adapter = LocalFileSystemAdapter()
+                adapter.get_file(attachment_filepath)
+                abs_path = adapter._abspath(attachment_filepath)
+                with open(abs_path, "rb") as file_handle:
+                    file_contents = file_handle.read()
+
+                file_size_mb = len(file_contents) / (1024 * 1024)
+                if file_size_mb > 25:
+                    return await self._surface_comms_error(
+                        f"File too large: {file_size_mb:.1f}MB exceeds 25MB attachment limit.",
+                        topic,
+                        contact_id=contact_id,
+                        medium=Medium.UNIFY_MESSAGE,
+                        offline_reservation=offline_reservation,
+                        attempted_content=content,
+                        receiver_ids=[contact_id],
+                        target_metadata={
+                            "contact_id": contact_id,
+                            "attachment_filepath": attachment_filepath or "",
+                        },
+                        history_metadata={
+                            "contact_display_name": _get_contact_display_name(contact),
+                        },
+                    )
+
+                attachment_filename = os.path.basename(attachment_filepath)
+                upload_result = await comms_utils.upload_unify_attachment(
+                    file_content=file_contents,
+                    filename=attachment_filename,
+                )
+                if "error" in upload_result:
+                    return await self._surface_comms_error(
+                        f"Failed to upload attachment: {upload_result['error']}",
+                        topic,
+                        contact_id=contact_id,
+                        medium=Medium.UNIFY_MESSAGE,
+                        offline_reservation=offline_reservation,
+                        attempted_content=content,
+                        receiver_ids=[contact_id],
+                        target_metadata={
+                            "contact_id": contact_id,
+                            "attachment_filepath": attachment_filepath or "",
+                        },
+                        history_metadata={
+                            "contact_display_name": _get_contact_display_name(contact),
+                        },
+                    )
+
+                attachment = upload_result
+                attachment_id = attachment.get("id", "")
+                attachment_target = f"Attachments/{attachment_id}_{attachment_filename}"
+                try:
+                    import shutil
+
+                    attachment_dir = adapter._abspath("Attachments")
+                    os.makedirs(attachment_dir, exist_ok=True)
+                    shutil.copy2(
+                        abs_path,
+                        os.path.join(
+                            attachment_dir,
+                            f"{attachment_id}_{attachment_filename}",
+                        ),
+                    )
+                except Exception:
+                    pass
+                attachment["filepath"] = attachment_target
+            except FileNotFoundError:
+                return await self._surface_comms_error(
+                    f"File not found: {attachment_filepath}",
+                    topic,
+                    contact_id=contact_id,
+                    medium=Medium.UNIFY_MESSAGE,
+                    offline_reservation=offline_reservation,
+                    attempted_content=content,
+                    receiver_ids=[contact_id],
+                    target_metadata={
+                        "contact_id": contact_id,
+                        "attachment_filepath": attachment_filepath or "",
+                    },
+                    history_metadata={
+                        "contact_display_name": _get_contact_display_name(contact),
+                    },
+                )
+            except Exception as exc:
+                return await self._surface_comms_error(
+                    f"Failed to read file: {exc}",
+                    topic,
+                    contact_id=contact_id,
+                    medium=Medium.UNIFY_MESSAGE,
+                    offline_reservation=offline_reservation,
+                    attempted_content=content,
+                    receiver_ids=[contact_id],
+                    target_metadata={
+                        "contact_id": contact_id,
+                        "attachment_filepath": attachment_filepath or "",
+                    },
+                    history_metadata={
+                        "contact_display_name": _get_contact_display_name(contact),
+                    },
+                )
+
+        response = await comms_utils.send_unify_message(
+            content=content,
+            contact_id=contact_id,
+            attachment=attachment,
+        )
+        if response.get("success"):
+            fresh_contact = self._get_contact(contact_id=contact_id) or contact or {}
+            event = UnifyMessageSent(
+                contact=fresh_contact,
+                content=content,
+                attachments=[attachment] if attachment else [],
+            )
+            await self._event_broker.publish(topic, event.to_json())
+            self._record_offline_success(
+                offline_reservation,
+                attempted_content=content,
+                receiver_ids=[fresh_contact.get("contact_id") or contact_id],
+                target_metadata={
+                    "contact_id": fresh_contact.get("contact_id") or contact_id,
+                    "attachment_filepath": attachment_filepath or "",
+                },
+                history_metadata={
+                    "contact_display_name": _get_contact_display_name(fresh_contact),
+                },
+                attachments=[attachment] if attachment else None,
+                provider_response=response,
+            )
+            return {"status": "ok"}
+
+        return await self._surface_comms_error(
+            "Failed to send unify message",
+            topic,
+            contact_id=contact_id,
+            medium=Medium.UNIFY_MESSAGE,
+            offline_reservation=offline_reservation,
+            attempted_content=content,
+            receiver_ids=[contact_id],
+            target_metadata={
+                "contact_id": contact_id,
+                "attachment_filepath": attachment_filepath or "",
+            },
+            history_metadata={
+                "contact_display_name": _get_contact_display_name(contact),
+            },
+            attachments=[attachment] if attachment else None,
+        )
+
+    async def send_api_response(
+        self,
+        *,
+        content: str,
+        contact_id: int | str = 1,
+        attachment_filepaths: list[str] | None = None,
+        tags: list[str] | None = None,
+    ) -> dict[str, Any]:
+        """Reply to the currently pending developer API message.
+
+        This is a special assistant-owned reply path for requests that arrived
+        through the developer API and are waiting for the assistant to complete
+        them. It is not a general outbound messaging tool. If there is no
+        pending API request in the live session, the method returns an ``ok``
+        status with a note instead of creating a new outbound conversation.
+
+        Parameters
+        ----------
+        content : str
+            Response text to send back to the waiting API caller.
+        contact_id : int | str, optional
+            Contact anchor for transcript logging, defaulting to the boss
+            contact.
+        attachment_filepaths : list[str] | None, optional
+            Workspace-local file paths to upload and attach to the API response.
+        tags : list[str] | None, optional
+            Optional response tags to persist alongside the completion.
+
+        Returns
+        -------
+        dict[str, Any]
+            ``{"status": "ok"}`` when the pending API message was completed, or
+            a status payload explaining that there was no pending API message or
+            why the response could not be sent.
+        """
+        contact_id = _coerce_contact_id(contact_id)
+        api_message_id = getattr(self._cm, "_pending_api_message_id", None)
+        if not api_message_id:
+            return {"status": "ok", "note": "no pending api message"}
+
+        contact = self._get_contact(contact_id=contact_id) or {"contact_id": contact_id}
+        topic = "app:comms:api_message_sent"
+        if tags is None:
+            tags = getattr(self._cm, "_pending_api_message_tags", None) or []
+
+        uploaded_attachments: list[dict] = []
+        if attachment_filepaths:
+            from unity.file_manager.filesystem_adapters.local_adapter import (
+                LocalFileSystemAdapter,
+            )
+
+            for filepath in attachment_filepaths:
+                try:
+                    adapter = LocalFileSystemAdapter()
+                    adapter.get_file(filepath)
+                    abs_path = adapter._abspath(filepath)
+                    with open(abs_path, "rb") as file_handle:
+                        file_contents = file_handle.read()
+
+                    upload_result = await comms_utils.upload_unify_attachment(
+                        file_content=file_contents,
+                        filename=os.path.basename(filepath),
+                    )
+                    if "error" in upload_result:
+                        return await self._surface_comms_error(
+                            f"Failed to upload attachment: {upload_result['error']}",
+                            topic,
+                            contact_id=contact_id,
+                            medium=Medium.API_MESSAGE,
+                        )
+
+                    attachment_id = upload_result.get("id", "")
+                    attachment_filename = os.path.basename(filepath)
+                    attachment_target = (
+                        f"Attachments/{attachment_id}_{attachment_filename}"
+                    )
+                    try:
+                        import shutil
+
+                        attachment_dir = adapter._abspath("Attachments")
+                        os.makedirs(attachment_dir, exist_ok=True)
+                        shutil.copy2(
+                            abs_path,
+                            os.path.join(
+                                attachment_dir,
+                                f"{attachment_id}_{attachment_filename}",
+                            ),
+                        )
+                    except Exception:
+                        pass
+                    upload_result["filepath"] = attachment_target
+                    uploaded_attachments.append(upload_result)
+                except FileNotFoundError:
+                    return await self._surface_comms_error(
+                        f"File not found: {filepath}",
+                        topic,
+                        contact_id=contact_id,
+                        medium=Medium.API_MESSAGE,
+                    )
+                except Exception as exc:
+                    return await self._surface_comms_error(
+                        f"Failed to read file: {exc}",
+                        topic,
+                        contact_id=contact_id,
+                        medium=Medium.API_MESSAGE,
+                    )
+
+        result = await comms_utils.complete_api_message(
+            api_message_id=api_message_id,
+            response=content,
+            attachments=uploaded_attachments or None,
+            tags=tags or None,
+        )
+        if result.get("success"):
+            event = ApiMessageSent(
+                contact=contact,
+                content=content,
+                api_message_id=api_message_id,
+                attachments=uploaded_attachments,
+                tags=tags,
+            )
+            await self._event_broker.publish(topic, event.to_json())
+            if self._cm is not None:
+                self._cm._pending_api_message_id = None
+                self._cm._pending_api_message_tags = None
+            return {"status": "ok"}
+
+        return await self._surface_comms_error(
+            "Failed to send API response",
+            topic,
+            contact_id=contact_id,
+            medium=Medium.API_MESSAGE,
+        )
+
+    async def send_email(
+        self,
+        *,
+        to: list[int | dict] | None = None,
+        cc: list[int | dict] | None = None,
+        bcc: list[int | dict] | None = None,
+        subject: str,
+        body: str,
+        reply_all: bool = False,
+        email_id_to_reply_to: str | None = None,
+        attachment_filepath: str | None = None,
+    ) -> dict[str, Any]:
+        """Send an assistant-owned email to explicit recipients or a reply thread.
+
+        Each recipient in ``to``, ``cc``, and ``bcc`` can be provided in one of
+        two ways:
+
+        - Bare ``contact_id`` when the contact already has an email address on
+          file.
+        - ``{"contact_id": ..., "email_address": ...}`` when the contact is
+          missing an email address but you know it and want to attach it during
+          the send.
+
+        Mixed recipient forms are allowed in the same call, and duplicate email
+        addresses are collapsed automatically. Do not use the dict form to
+        provide an email address that conflicts with the one already stored on
+        the contact; update the contact first, then retry.
+
+        ``reply_all=True`` is mutually exclusive with explicit ``to`` / ``cc`` /
+        ``bcc`` lists. When reply-all is used, recipients are inferred from the
+        referenced email thread instead.
+
+        Parameters
+        ----------
+        to : list[int | dict] | None, optional
+            Primary recipients.
+        cc : list[int | dict] | None, optional
+            Carbon-copy recipients.
+        bcc : list[int | dict] | None, optional
+            Blind-carbon-copy recipients.
+        subject : str
+            Subject line for the outgoing email.
+        body : str
+            Email body content to send.
+        reply_all : bool, optional
+            Reply to the referenced thread's participants instead of providing
+            explicit recipients.
+        email_id_to_reply_to : str | None, optional
+            Explicit email ID to reply to for threading. Required for
+            deterministic reply behavior when multiple candidate emails exist.
+        attachment_filepath : str | None, optional
+            Workspace-relative file path for one attachment to include.
+
+        Returns
+        -------
+        dict[str, Any]
+            ``{"status": "ok"}`` on success, or an error payload describing
+            why the email could not be sent.
+        """
+        from unity.file_manager.filesystem_adapters.local_adapter import (
+            LocalFileSystemAdapter,
+        )
+
+        def _raw_recipients_for_history(items: list[int | dict] | None) -> list[dict]:
+            serialized: list[dict] = []
+            for item in items or []:
+                if isinstance(item, dict):
+                    serialized.append(
+                        {
+                            "contact_id": item.get("contact_id"),
+                            "email_address": item.get("email_address") or "",
+                        },
+                    )
+                elif isinstance(item, tuple) and len(item) == 2:
+                    serialized.append(
+                        {
+                            "contact_id": item[0],
+                            "email_address": item[1] or "",
+                        },
+                    )
+                else:
+                    serialized.append({"contact_id": item, "email_address": ""})
+            return serialized
+
+        def _first_contact_id_from_raw(items: list[int | dict] | None) -> int | None:
+            for item in items or []:
+                try:
+                    if isinstance(item, dict):
+                        raw_contact_id = item.get("contact_id")
+                        if raw_contact_id is None:
+                            continue
+                        return _coerce_contact_id(raw_contact_id)
+                    return _coerce_contact_id(item)
+                except (TypeError, ValueError):
+                    continue
+            return None
+
+        def _coerce_recipients(
+            items: list | None,
+        ) -> list[tuple[int, str | None]] | None:
+            if items is None:
+                return None
+            result: list[tuple[int, str | None]] = []
+            for item in items:
+                if isinstance(item, dict):
+                    contact_id = item.get("contact_id")
+                    if contact_id is None:
+                        raise TypeError(
+                            f"Email recipient dict must include 'contact_id', got: {item!r}",
+                        )
+                    result.append(
+                        (_coerce_contact_id(contact_id), item.get("email_address")),
+                    )
+                else:
+                    result.append((_coerce_contact_id(item), None))
+            return result
+
+        topic = "app:comms:email_sent"
+        offline_reservation = None
+        initial_error_contact_id = (
+            _first_contact_id_from_raw(to)
+            or _first_contact_id_from_raw(cc)
+            or _first_contact_id_from_raw(bcc)
+        )
+        try:
+            to = _coerce_recipients(to)
+            cc = _coerce_recipients(cc)
+            bcc = _coerce_recipients(bcc)
+        except TypeError as exc:
+            return await self._surface_comms_error(
+                str(exc),
+                topic,
+                contact_id=initial_error_contact_id,
+                medium=Medium.EMAIL,
+                offline_reservation=offline_reservation,
+                attempted_content=f"Subject: {subject}\n\n{body}",
+                receiver_ids=(
+                    [initial_error_contact_id]
+                    if initial_error_contact_id is not None
+                    else None
+                ),
+                target_metadata={
+                    "to": _raw_recipients_for_history(to),
+                    "cc": _raw_recipients_for_history(cc),
+                    "bcc": _raw_recipients_for_history(bcc),
+                    "reply_all": reply_all,
+                    "email_id_to_reply_to": email_id_to_reply_to or "",
+                    "attachment_filepath": attachment_filepath or "",
+                },
+            )
+        error_contact_id = (
+            (to[0][0] if to else None)
+            or (cc[0][0] if cc else None)
+            or (bcc[0][0] if bcc else None)
+        )
+
+        if reply_all and (to or cc or bcc):
+            return await self._surface_comms_error(
+                "reply_all=True is mutually exclusive with to/cc/bcc. "
+                "Either use reply_all to auto-populate recipients from the thread, "
+                "or specify recipients explicitly.",
+                topic,
+                contact_id=error_contact_id,
+                medium=Medium.EMAIL,
+                offline_reservation=offline_reservation,
+                attempted_content=f"Subject: {subject}\n\n{body}",
+                receiver_ids=(
+                    [error_contact_id] if error_contact_id is not None else None
+                ),
+                target_metadata={
+                    "to": _raw_recipients_for_history(to),
+                    "cc": _raw_recipients_for_history(cc),
+                    "bcc": _raw_recipients_for_history(bcc),
+                    "reply_all": reply_all,
+                    "email_id_to_reply_to": email_id_to_reply_to or "",
+                    "attachment_filepath": attachment_filepath or "",
+                },
+            )
+
+        if not self._assistant_email():
+            return await self._surface_comms_error(
+                "You don't have an email address, please provision one.",
+                topic,
+                contact_id=error_contact_id,
+                medium=Medium.EMAIL,
+                attempted_content=f"Subject: {subject}\n\n{body}",
+                receiver_ids=(
+                    [error_contact_id] if error_contact_id is not None else None
+                ),
+                target_metadata={
+                    "to": _raw_recipients_for_history(to),
+                    "cc": _raw_recipients_for_history(cc),
+                    "bcc": _raw_recipients_for_history(bcc),
+                    "reply_all": reply_all,
+                    "email_id_to_reply_to": email_id_to_reply_to or "",
+                    "attachment_filepath": attachment_filepath or "",
+                },
+            )
+
+        def _resolve_recipients(
+            recipients: list[tuple[int, str | None]] | None,
+        ) -> tuple[str | None, list[tuple[str, dict]]]:
+            if not recipients:
+                return (None, [])
+            resolved_by_email: dict[str, dict] = {}
+            for contact_id, inline_email in recipients:
+                contact = self._get_contact(contact_id=contact_id)
+                error, resolved_contact = self._resolve_or_attach_detail(
+                    contact=contact,
+                    contact_id=contact_id,
+                    field_name="email_address",
+                    inline_value=inline_email,
+                    medium_label="email",
+                )
+                if error:
+                    return (error, [])
+                email_address = (resolved_contact or {}).get("email_address")
+                if email_address and email_address not in resolved_by_email:
+                    resolved_by_email[email_address] = resolved_contact or {}
+            return (
+                None,
+                [(email, contact) for email, contact in resolved_by_email.items()],
+            )
+
+        final_to: list[str] = []
+        final_cc: list[str] = []
+        final_bcc: list[str] = []
+        reply_email_id = email_id_to_reply_to
+        primary_contact: dict | None = None
+        to_resolved: list[tuple[str, dict]] = []
+        cc_resolved: list[tuple[str, dict]] = []
+        bcc_resolved: list[tuple[str, dict]] = []
+
+        if reply_all:
+            if self._cm is None:
+                return await self._surface_comms_error(
+                    "reply_all=True requires a live ConversationManager email thread.",
+                    topic,
+                    contact_id=error_contact_id,
+                    medium=Medium.EMAIL,
+                    offline_reservation=offline_reservation,
+                    attempted_content=f"Subject: {subject}\n\n{body}",
+                    receiver_ids=(
+                        [error_contact_id] if error_contact_id is not None else None
+                    ),
+                    target_metadata={
+                        "reply_all": True,
+                        "email_id_to_reply_to": reply_email_id or "",
+                        "attachment_filepath": attachment_filepath or "",
+                    },
+                )
+
+            original_email = None
+            all_emails = [
+                entry.message
+                for entry in self._cm.contact_index.global_thread
+                if entry.medium == Medium.EMAIL
+            ]
+            if reply_email_id:
+                for message in all_emails:
+                    if getattr(message, "email_id", None) == reply_email_id:
+                        original_email = message
+                        break
+            else:
+                for message in reversed(all_emails):
+                    if getattr(message, "name", None) == "You":
+                        continue
+                    if not getattr(message, "email_id", None):
+                        continue
+                    clean_subject = subject.removeprefix("Re: ").strip()
+                    clean_message_subject = (
+                        (getattr(message, "subject", "") or "")
+                        .removeprefix(
+                            "Re: ",
+                        )
+                        .strip()
+                    )
+                    if clean_subject == clean_message_subject or not clean_subject:
+                        original_email = message
+                        reply_email_id = message.email_id
+                        break
+
+            if original_email is None:
+                return await self._surface_comms_error(
+                    "reply_all=True but no email found to reply to. "
+                    "Either provide email_id_to_reply_to or ensure there's a matching inbound email in the thread.",
+                    topic,
+                    contact_id=error_contact_id,
+                    medium=Medium.EMAIL,
+                    offline_reservation=offline_reservation,
+                    attempted_content=f"Subject: {subject}\n\n{body}",
+                    receiver_ids=(
+                        [error_contact_id] if error_contact_id is not None else None
+                    ),
+                    target_metadata={
+                        "reply_all": True,
+                        "email_id_to_reply_to": reply_email_id or "",
+                        "attachment_filepath": attachment_filepath or "",
+                    },
+                )
+
+            assistant_email = self._assistant_email()
+            original_to = getattr(original_email, "to", []) or []
+            original_cc = getattr(original_email, "cc", []) or []
+
+            sender_email = None
+            for entry in self._cm.contact_index.global_thread:
+                if entry.message is not original_email:
+                    continue
+                for role_contact_id, role in entry.contact_roles.items():
+                    if role != "sender":
+                        continue
+                    sender_contact = self._get_contact(contact_id=role_contact_id)
+                    if sender_contact:
+                        sender_email = sender_contact.get("email_address")
+                        primary_contact = sender_contact
+                    break
+                break
+
+            if sender_email:
+                final_to = [sender_email]
+
+            all_original_recipients = set(original_to) | set(original_cc)
+            if assistant_email:
+                all_original_recipients.discard(assistant_email)
+            if sender_email:
+                all_original_recipients.discard(sender_email)
+            final_cc = list(all_original_recipients)
+        else:
+            to_error, to_resolved = _resolve_recipients(to)
+            if to_error:
+                return await self._surface_comms_error(
+                    to_error,
+                    topic,
+                    contact_id=error_contact_id,
+                    medium=Medium.EMAIL,
+                    offline_reservation=offline_reservation,
+                    attempted_content=f"Subject: {subject}\n\n{body}",
+                    receiver_ids=(
+                        [error_contact_id] if error_contact_id is not None else None
+                    ),
+                    target_metadata={
+                        "to": _raw_recipients_for_history(to),
+                        "cc": _raw_recipients_for_history(cc),
+                        "bcc": _raw_recipients_for_history(bcc),
+                        "reply_all": False,
+                        "email_id_to_reply_to": reply_email_id or "",
+                        "attachment_filepath": attachment_filepath or "",
+                    },
+                )
+
+            cc_error, cc_resolved = _resolve_recipients(cc)
+            if cc_error:
+                return await self._surface_comms_error(
+                    cc_error,
+                    topic,
+                    contact_id=error_contact_id,
+                    medium=Medium.EMAIL,
+                    offline_reservation=offline_reservation,
+                    attempted_content=f"Subject: {subject}\n\n{body}",
+                    receiver_ids=(
+                        [error_contact_id] if error_contact_id is not None else None
+                    ),
+                    target_metadata={
+                        "to": _raw_recipients_for_history(to),
+                        "cc": _raw_recipients_for_history(cc),
+                        "bcc": _raw_recipients_for_history(bcc),
+                        "reply_all": False,
+                        "email_id_to_reply_to": reply_email_id or "",
+                        "attachment_filepath": attachment_filepath or "",
+                    },
+                )
+
+            bcc_error, bcc_resolved = _resolve_recipients(bcc)
+            if bcc_error:
+                return await self._surface_comms_error(
+                    bcc_error,
+                    topic,
+                    contact_id=error_contact_id,
+                    medium=Medium.EMAIL,
+                    offline_reservation=offline_reservation,
+                    attempted_content=f"Subject: {subject}\n\n{body}",
+                    receiver_ids=(
+                        [error_contact_id] if error_contact_id is not None else None
+                    ),
+                    target_metadata={
+                        "to": _raw_recipients_for_history(to),
+                        "cc": _raw_recipients_for_history(cc),
+                        "bcc": _raw_recipients_for_history(bcc),
+                        "reply_all": False,
+                        "email_id_to_reply_to": reply_email_id or "",
+                        "attachment_filepath": attachment_filepath or "",
+                    },
+                )
+
+            final_to = [email for email, _contact in to_resolved]
+            final_cc = [email for email, _contact in cc_resolved]
+            final_bcc = [email for email, _contact in bcc_resolved]
+
+            if to_resolved:
+                primary_contact = to_resolved[0][1]
+            elif cc_resolved:
+                primary_contact = cc_resolved[0][1]
+            elif bcc_resolved:
+                primary_contact = bcc_resolved[0][1]
+
+            if not final_to and not final_cc and not final_bcc:
+                return await self._surface_comms_error(
+                    "At least one recipient is required. Provide to, cc, or bcc, or use reply_all=True.",
+                    topic,
+                    contact_id=error_contact_id,
+                    medium=Medium.EMAIL,
+                    offline_reservation=offline_reservation,
+                    attempted_content=f"Subject: {subject}\n\n{body}",
+                    receiver_ids=(
+                        [error_contact_id] if error_contact_id is not None else None
+                    ),
+                    target_metadata={
+                        "to": _raw_recipients_for_history(to),
+                        "cc": _raw_recipients_for_history(cc),
+                        "bcc": _raw_recipients_for_history(bcc),
+                        "reply_all": False,
+                        "email_id_to_reply_to": reply_email_id or "",
+                        "attachment_filepath": attachment_filepath or "",
+                    },
+                )
+
+            if not reply_email_id and self._cm is not None:
+                try:
+                    all_emails = [
+                        entry.message
+                        for entry in self._cm.contact_index.global_thread
+                        if entry.medium == Medium.EMAIL
+                    ]
+                    for message in reversed(all_emails):
+                        if (
+                            getattr(message, "name", None) != "You"
+                            and getattr(
+                                message,
+                                "subject",
+                                None,
+                            )
+                            == subject
+                            and getattr(message, "email_id", None)
+                        ):
+                            reply_email_id = message.email_id
+                            break
+                except Exception:
+                    pass
+
+        final_subject = (
+            f"Re: {subject}"
+            if reply_email_id and not subject.startswith("Re: ")
+            else subject
+        )
+        offline_reservation, offline_response = self._reserve_offline_operation(
+            method_name="send_email",
+            medium=Medium.EMAIL,
+            target_kind="email",
+            target_metadata={
+                "to": final_to,
+                "cc": final_cc,
+                "bcc": final_bcc,
+                "reply_all": reply_all,
+                "email_id_to_reply_to": reply_email_id or "",
+                "attachment_filepath": attachment_filepath or "",
+            },
+            contact_id=(primary_contact or {}).get("contact_id") or error_contact_id,
+        )
+        if offline_response is not None:
+            return offline_response
+
+        attachment = None
+        attachment_meta = None
+        if attachment_filepath:
+            try:
+                adapter = LocalFileSystemAdapter()
+                adapter.get_file(attachment_filepath)
+                abs_path = adapter._abspath(attachment_filepath)
+                with open(abs_path, "rb") as file_handle:
+                    file_contents = file_handle.read()
+
+                file_size_mb = len(file_contents) / (1024 * 1024)
+                if file_size_mb > 25:
+                    return await self._surface_comms_error(
+                        f"File too large for email: {file_size_mb:.1f}MB exceeds Gmail's 25MB attachment limit. "
+                        "Consider sharing via Unify message instead.",
+                        topic,
+                        contact_id=error_contact_id,
+                        medium=Medium.EMAIL,
+                        offline_reservation=offline_reservation,
+                        attempted_content=f"Subject: {final_subject}\n\n{body}",
+                        receiver_ids=(
+                            [error_contact_id] if error_contact_id is not None else None
+                        ),
+                        target_metadata={
+                            "to": final_to,
+                            "cc": final_cc,
+                            "bcc": final_bcc,
+                            "reply_all": reply_all,
+                            "email_id_to_reply_to": reply_email_id or "",
+                            "attachment_filepath": attachment_filepath or "",
+                        },
+                    )
+
+                attachment_filename = os.path.basename(attachment_filepath)
+                attachment_id = str(uuid.uuid4())
+                attachment = {
+                    "filename": attachment_filename,
+                    "content_base64": base64.b64encode(file_contents).decode("utf-8"),
+                }
+                attachment_target = f"Attachments/{attachment_id}_{attachment_filename}"
+                try:
+                    import shutil
+
+                    attachment_dir = adapter._abspath("Attachments")
+                    os.makedirs(attachment_dir, exist_ok=True)
+                    shutil.copy2(
+                        abs_path,
+                        os.path.join(
+                            attachment_dir,
+                            f"{attachment_id}_{attachment_filename}",
+                        ),
+                    )
+                except Exception:
+                    pass
+                attachment_meta = {
+                    "id": attachment_id,
+                    "filename": attachment_filename,
+                    "filepath": attachment_target,
+                }
+            except FileNotFoundError:
+                return await self._surface_comms_error(
+                    f"File not found: {attachment_filepath}",
+                    topic,
+                    contact_id=error_contact_id,
+                    medium=Medium.EMAIL,
+                    offline_reservation=offline_reservation,
+                    attempted_content=f"Subject: {final_subject}\n\n{body}",
+                    receiver_ids=(
+                        [error_contact_id] if error_contact_id is not None else None
+                    ),
+                    target_metadata={
+                        "to": final_to,
+                        "cc": final_cc,
+                        "bcc": final_bcc,
+                        "reply_all": reply_all,
+                        "email_id_to_reply_to": reply_email_id or "",
+                        "attachment_filepath": attachment_filepath or "",
+                    },
+                )
+            except Exception as exc:
+                return await self._surface_comms_error(
+                    f"Failed to read file: {exc}",
+                    topic,
+                    contact_id=error_contact_id,
+                    medium=Medium.EMAIL,
+                    offline_reservation=offline_reservation,
+                    attempted_content=f"Subject: {final_subject}\n\n{body}",
+                    receiver_ids=(
+                        [error_contact_id] if error_contact_id is not None else None
+                    ),
+                    target_metadata={
+                        "to": final_to,
+                        "cc": final_cc,
+                        "bcc": final_bcc,
+                        "reply_all": reply_all,
+                        "email_id_to_reply_to": reply_email_id or "",
+                        "attachment_filepath": attachment_filepath or "",
+                    },
+                )
+
+        history_receiver_ids = [
+            contact.get("contact_id")
+            for _email, contact in (to_resolved + cc_resolved + bcc_resolved)
+            if contact.get("contact_id") is not None
+        ]
+        if not history_receiver_ids and primary_contact is not None:
+            primary_contact_id = primary_contact.get("contact_id")
+            if primary_contact_id is not None:
+                history_receiver_ids = [primary_contact_id]
+
+        response = await comms_utils.send_email_via_address(
+            to=final_to,
+            subject=final_subject,
+            body=body,
+            cc=final_cc or None,
+            bcc=final_bcc or None,
+            email_id=reply_email_id,
+            attachment=attachment,
+        )
+        if response.get("success"):
+            event = EmailSent(
+                contact=primary_contact or {},
+                body=body,
+                subject=final_subject,
+                email_id_replied_to=reply_email_id,
+                attachments=[attachment_meta] if attachment_meta else [],
+                to=final_to,
+                cc=final_cc,
+                bcc=final_bcc,
+            )
+            await self._event_broker.publish(topic, event.to_json())
+            self._record_offline_success(
+                offline_reservation,
+                attempted_content=f"Subject: {final_subject}\n\n{body}",
+                receiver_ids=history_receiver_ids
+                or ([error_contact_id] if error_contact_id is not None else None),
+                target_metadata={
+                    "to": final_to,
+                    "cc": final_cc,
+                    "bcc": final_bcc,
+                    "reply_all": reply_all,
+                    "email_id_to_reply_to": reply_email_id or "",
+                    "attachment_filepath": attachment_filepath or "",
+                },
+                history_metadata={
+                    "contact_display_name": _get_contact_display_name(primary_contact),
+                    "reply_to_email_id": reply_email_id or None,
+                },
+                attachments=[attachment_meta] if attachment_meta else None,
+                provider_response=response,
+            )
+            return {"status": "ok"}
+
+        if not self._assistant_email():
+            error_msg = "You don't have an email address, please provision one."
+        else:
+            recipients = final_to + final_cc + final_bcc
+            error_msg = response.get("error", f"Failed to send email to {recipients}")
+        return await self._surface_comms_error(
+            error_msg,
+            topic,
+            contact_id=error_contact_id,
+            medium=Medium.EMAIL,
+            offline_reservation=offline_reservation,
+            attempted_content=f"Subject: {final_subject}\n\n{body}",
+            receiver_ids=history_receiver_ids
+            or ([error_contact_id] if error_contact_id is not None else None),
+            target_metadata={
+                "to": final_to,
+                "cc": final_cc,
+                "bcc": final_bcc,
+                "reply_all": reply_all,
+                "email_id_to_reply_to": reply_email_id or "",
+                "attachment_filepath": attachment_filepath or "",
+            },
+            history_metadata={
+                "contact_display_name": _get_contact_display_name(primary_contact),
+                "reply_to_email_id": reply_email_id or None,
+            },
+            attachments=[attachment_meta] if attachment_meta else None,
+        )
+
+    async def make_call(
+        self,
+        *,
+        contact_id: int | str,
+        context: str,
+        phone_number: str | None = None,
+    ) -> dict[str, Any]:
+        """Start an assistant-owned outbound phone call to an existing contact.
+
+        The contact must already exist in the system.
+
+        - If the contact already has a phone number on file, omit
+          ``phone_number``.
+        - If the contact is missing a phone number but you know it, pass it via
+          ``phone_number`` and the contact record will be updated before the
+          call is placed.
+        - Do not supply a different phone number from the one already on file.
+          Update the contact first, then retry.
+
+        Parameters
+        ----------
+        contact_id : int | str
+            Person to call.
+        context : str
+            Mission briefing for the voice agent. This is the agent's main
+            context for opening and handling the call, so include the purpose,
+            key facts, questions to ask, tone, relationship context, and any
+            constraints or fallback behavior.
+        phone_number : str | None, optional
+            Recipient phone number when the contact does not already have one on
+            file.
+
+        Returns
+        -------
+        dict[str, Any]
+            ``{"status": "ok"}`` on success, or an error payload describing
+            why the call could not be started.
+        """
+        contact_id = _coerce_contact_id(contact_id)
+        offline_reservation = None
+
+        if self._cm is not None and (
+            self._cm.call_manager.has_active_call
+            or self._cm.call_manager.has_active_google_meet
+            or self._cm.call_manager._whatsapp_call_joining
+        ):
+            return {
+                "status": "error",
+                "message": "A call or meeting is already active.",
+            }
+
+        contact = self._get_contact(contact_id=contact_id)
+        outbound_error = self._check_outbound_allowed(contact)
+        if outbound_error:
+            return await self._surface_comms_error(
+                outbound_error,
+                "app:comms:make_call",
+                contact_id=contact_id,
+                medium=Medium.PHONE_CALL,
+                offline_reservation=offline_reservation,
+                attempted_content="<Sending Call...>",
+                receiver_ids=[contact_id],
+                target_metadata={
+                    "contact_id": contact_id,
+                    "phone_number": (contact or {}).get("phone_number")
+                    or phone_number
+                    or "",
+                },
+                history_metadata={
+                    "contact_display_name": _get_contact_display_name(contact),
+                },
+            )
+
+        if not self._assistant_number():
+            return await self._surface_comms_error(
+                "You don't have a number, please provision one.",
+                "app:comms:make_call",
+                contact_id=contact_id,
+                medium=Medium.PHONE_CALL,
+                attempted_content="<Sending Call...>",
+                receiver_ids=[contact_id],
+                target_metadata={
+                    "contact_id": contact_id,
+                    "phone_number": (contact or {}).get("phone_number")
+                    or phone_number
+                    or "",
+                },
+                history_metadata={
+                    "contact_display_name": _get_contact_display_name(contact),
+                },
+            )
+
+        detail_error, contact = self._resolve_or_attach_detail(
+            contact=contact,
+            contact_id=contact_id,
+            field_name="phone_number",
+            inline_value=phone_number,
+            medium_label="phone call",
+        )
+        if detail_error:
+            return await self._surface_comms_error(
+                detail_error,
+                "app:comms:make_call",
+                contact_id=contact_id,
+                medium=Medium.PHONE_CALL,
+                offline_reservation=offline_reservation,
+                attempted_content="<Sending Call...>",
+                receiver_ids=[contact_id],
+                target_metadata={
+                    "contact_id": contact_id,
+                    "phone_number": (contact or {}).get("phone_number")
+                    or phone_number
+                    or "",
+                },
+                history_metadata={
+                    "contact_display_name": _get_contact_display_name(contact),
+                },
+            )
+
+        offline_reservation, offline_response = self._reserve_offline_operation(
+            method_name="make_call",
+            medium=Medium.PHONE_CALL,
+            target_kind="contact",
+            target_metadata={
+                "contact_id": (contact or {}).get("contact_id") or contact_id,
+                "phone_number": (contact or {}).get("phone_number")
+                or phone_number
+                or "",
+            },
+            contact_id=(contact or {}).get("contact_id") or contact_id,
+        )
+        if offline_response is not None:
+            return offline_response
+
+        to_number = (contact or {}).get("phone_number")
+        LOGGER.debug(
+            f"{DEFAULT_ICON} [make_call] context: {context}, to_number: {to_number}",
+        )
+        if self._cm is not None and context:
+            self._cm.call_manager.initial_notification = context
+
+        response = await comms_utils.start_call(to_number=to_number)
+        if response.get("success"):
+            fresh_contact = self._get_contact(phone_number=to_number) or contact or {}
+            event = PhoneCallSent(contact=fresh_contact)
+            await self._event_broker.publish("app:comms:make_call", event.to_json())
+            self._record_offline_success(
+                offline_reservation,
+                attempted_content="<Sending Call...>",
+                receiver_ids=[fresh_contact.get("contact_id") or contact_id],
+                target_metadata={
+                    "contact_id": fresh_contact.get("contact_id") or contact_id,
+                    "phone_number": to_number or "",
+                },
+                history_metadata={
+                    "contact_display_name": _get_contact_display_name(fresh_contact),
+                },
+                provider_response=response,
+            )
+            return {"status": "ok"}
+
+        if not self._assistant_number():
+            error_msg = "You don't have a number, please provision one."
+        else:
+            error_msg = f"Failed to send call to {to_number}"
+        return await self._surface_comms_error(
+            error_msg,
+            "app:comms:make_call",
+            contact_id=contact_id,
+            medium=Medium.PHONE_CALL,
+            offline_reservation=offline_reservation,
+            attempted_content="<Sending Call...>",
+            receiver_ids=[contact_id],
+            target_metadata={
+                "contact_id": contact_id,
+                "phone_number": to_number or phone_number or "",
+            },
+            history_metadata={
+                "contact_display_name": _get_contact_display_name(contact),
+            },
+        )
+
+    async def make_whatsapp_call(
+        self,
+        *,
+        contact_id: int | str,
+        context: str,
+        whatsapp_number: str | None = None,
+    ) -> dict[str, Any]:
+        """Start an assistant-owned outbound WhatsApp voice call.
+
+        The contact must already exist in the system.
+
+        - If the contact already has a WhatsApp number on file, omit
+          ``whatsapp_number``.
+        - If the contact is missing a WhatsApp number but you know it, pass it
+          via ``whatsapp_number`` and the contact record will be updated before
+          the call is placed.
+        - Do not supply a different WhatsApp number from the one already on
+          file. Update the contact first, then retry.
+
+        If WhatsApp call permission has not yet been granted by the contact, a
+        call invite can be sent instead. A live assistant session can keep the
+        callback context ready for when the contact taps "Call now". Headless
+        offline task runs cannot queue that follow-up context, so they only
+        report that an invite was sent.
+
+        Parameters
+        ----------
+        contact_id : int | str
+            Person to call.
+        context : str
+            Mission briefing for the voice agent. This is the agent's main
+            context for opening and handling the call, so include the purpose,
+            key facts, questions to ask, tone, relationship context, and any
+            constraints or fallback behavior.
+        whatsapp_number : str | None, optional
+            Recipient WhatsApp number when the contact does not already have one
+            on file.
+
+        Returns
+        -------
+        dict[str, Any]
+            Status payload with success, error, or live callback-follow-up
+            details.
+        """
+        from unity.conversation_manager.domains.call_manager import make_room_name
+
+        contact_id = _coerce_contact_id(contact_id)
+        offline_reservation = None
+        if self._cm is not None and (
+            self._cm.call_manager.has_active_call
+            or self._cm.call_manager.has_active_google_meet
+            or self._cm.call_manager._whatsapp_call_joining
+        ):
+            return {
+                "status": "error",
+                "message": "A call or meeting is already active.",
+            }
+
+        contact = self._get_contact(contact_id=contact_id)
+        outbound_error = self._check_outbound_allowed(contact)
+        if outbound_error:
+            return await self._surface_comms_error(
+                outbound_error,
+                "app:comms:whatsapp_call_sent",
+                contact_id=contact_id,
+                medium=Medium.WHATSAPP_CALL,
+                offline_reservation=offline_reservation,
+                attempted_content="<Sending WhatsApp Call...>",
+                receiver_ids=[contact_id],
+                target_metadata={
+                    "contact_id": contact_id,
+                    "whatsapp_number": (contact or {}).get("whatsapp_number")
+                    or whatsapp_number
+                    or "",
+                },
+                history_metadata={
+                    "contact_display_name": _get_contact_display_name(contact),
+                },
+            )
+
+        if not self._assistant_whatsapp_number():
+            return await self._surface_comms_error(
+                "You don't have a WhatsApp number configured.",
+                "app:comms:whatsapp_call_sent",
+                contact_id=contact_id,
+                medium=Medium.WHATSAPP_CALL,
+                attempted_content="<Sending WhatsApp Call...>",
+                receiver_ids=[contact_id],
+                target_metadata={
+                    "contact_id": contact_id,
+                    "whatsapp_number": (contact or {}).get("whatsapp_number")
+                    or whatsapp_number
+                    or "",
+                },
+                history_metadata={
+                    "contact_display_name": _get_contact_display_name(contact),
+                },
+            )
+
+        detail_error, contact = self._resolve_or_attach_detail(
+            contact=contact,
+            contact_id=contact_id,
+            field_name="whatsapp_number",
+            inline_value=whatsapp_number,
+            medium_label="WhatsApp call",
+        )
+        if detail_error:
+            return await self._surface_comms_error(
+                detail_error,
+                "app:comms:whatsapp_call_sent",
+                contact_id=contact_id,
+                medium=Medium.WHATSAPP_CALL,
+                offline_reservation=offline_reservation,
+                attempted_content="<Sending WhatsApp Call...>",
+                receiver_ids=[contact_id],
+                target_metadata={
+                    "contact_id": contact_id,
+                    "whatsapp_number": (contact or {}).get("whatsapp_number")
+                    or whatsapp_number
+                    or "",
+                },
+                history_metadata={
+                    "contact_display_name": _get_contact_display_name(contact),
+                },
+            )
+
+        offline_reservation, offline_response = self._reserve_offline_operation(
+            method_name="make_whatsapp_call",
+            medium=Medium.WHATSAPP_CALL,
+            target_kind="contact",
+            target_metadata={
+                "contact_id": (contact or {}).get("contact_id") or contact_id,
+                "whatsapp_number": (contact or {}).get("whatsapp_number")
+                or whatsapp_number
+                or "",
+            },
+            contact_id=(contact or {}).get("contact_id") or contact_id,
+        )
+        if offline_response is not None:
+            return offline_response
+
+        to_number = (contact or {}).get("whatsapp_number")
+        assistant_id = str(SESSION_DETAILS.assistant.agent_id)
+        room_name = make_room_name(assistant_id, "whatsapp_call")
+        LOGGER.debug(
+            f"{DEFAULT_ICON} [make_whatsapp_call] context: {context}, to_number: {to_number}",
+        )
+
+        if self._cm is not None:
+            self._cm.call_manager._whatsapp_call_joining = True
+
+        response = await comms_utils.start_whatsapp_call(
+            to_number=to_number,
+            agent_name=SESSION_DETAILS.assistant.name or "",
+            room_name=room_name,
+        )
+        if not response.get("success"):
+            if self._cm is not None:
+                self._cm.call_manager._whatsapp_call_joining = False
+            if not self._assistant_whatsapp_number():
+                error_msg = "You don't have a WhatsApp number configured."
+            else:
+                error_msg = f"Failed to initiate WhatsApp call to {to_number}"
+            return await self._surface_comms_error(
+                error_msg,
+                "app:comms:whatsapp_call_sent",
+                contact_id=contact_id,
+                medium=Medium.WHATSAPP_CALL,
+                offline_reservation=offline_reservation,
+                attempted_content="<Sending WhatsApp Call...>",
+                receiver_ids=[contact_id],
+                target_metadata={
+                    "contact_id": contact_id,
+                    "whatsapp_number": to_number or whatsapp_number or "",
+                },
+                history_metadata={
+                    "contact_display_name": _get_contact_display_name(contact),
+                },
+            )
+
+        fresh_contact = self._get_contact(whatsapp_number=to_number) or contact or {}
+        method = response.get("method")
+        if method == "direct":
+            if self._cm is not None and context:
+                self._cm.call_manager.initial_notification = context
+            event = WhatsAppCallSent(contact=fresh_contact)
+            await self._event_broker.publish(
+                "app:comms:whatsapp_call_sent",
+                event.to_json(),
+            )
+            self._record_offline_success(
+                offline_reservation,
+                attempted_content="<Sending WhatsApp Call...>",
+                receiver_ids=[fresh_contact.get("contact_id") or contact_id],
+                target_metadata={
+                    "contact_id": fresh_contact.get("contact_id") or contact_id,
+                    "whatsapp_number": to_number or "",
+                },
+                history_metadata={
+                    "contact_display_name": _get_contact_display_name(fresh_contact),
+                },
+                provider_response=response,
+            )
+            return {"status": "ok"}
+
+        pending_contexts = None
+        automatic_callback_available = False
+        if self._cm is not None:
+            self._cm.call_manager._whatsapp_call_joining = False
+            pending_contexts = getattr(
+                self._cm,
+                "_pending_whatsapp_call_contexts",
+                None,
+            )
+            if context:
+                if isinstance(pending_contexts, dict):
+                    pending_contexts[contact_id] = context
+                    automatic_callback_available = True
+            else:
+                automatic_callback_available = True
+
+        event = WhatsAppCallInviteSent(contact=fresh_contact)
+        await self._event_broker.publish(
+            "app:comms:whatsapp_call_invite_sent",
+            event.to_json(),
+        )
+        self._record_offline_success(
+            offline_reservation,
+            attempted_content="<WhatsApp Call Invite Sent>",
+            receiver_ids=[fresh_contact.get("contact_id") or contact_id],
+            target_metadata={
+                "contact_id": fresh_contact.get("contact_id") or contact_id,
+                "whatsapp_number": to_number or "",
+            },
+            history_metadata={
+                "contact_display_name": _get_contact_display_name(fresh_contact),
+                "automatic_callback_available": automatic_callback_available,
+            },
+            provider_response=response,
+            status="pending_callback" if automatic_callback_available else "completed",
+        )
+        if automatic_callback_available:
+            return {
+                "status": "ok",
+                "pending_callback": True,
+                "note": (
+                    "Call permission not yet granted. A call invite was sent instead. "
+                    "When the contact taps 'Call now', the call will connect and you will "
+                    "be briefed with the context you provided."
+                ),
+            }
+        return {
+            "status": "ok",
+            "note": (
+                "Call permission not yet granted. A call invite was sent instead. "
+                "Because this send ran without a live assistant session, the callback "
+                "was not queued with your briefing context."
+            ),
+        }

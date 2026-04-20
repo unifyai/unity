@@ -153,6 +153,7 @@ def provision_assistant_contact(self, assistant_log) -> None:
                 ast.discord_bot_id if populated and ast.discord_bot_id else None
             ),
             "bio": ast.about if populated else PLACEHOLDER_ASSISTANT_BIO,
+            "job_title": (ast.job_title or None) if populated else None,
             "timezone": (ast.timezone or "UTC") if populated else "UTC",
             "rolling_summary": None,
         },
@@ -172,9 +173,13 @@ def provision_assistant_contact(self, assistant_log) -> None:
             )
             fetched_first_name = ast.first_name if populated else None
             fetched_surname = ast.surname if populated else None
+            fetched_job_title = (ast.job_title or None) if populated else None
 
             needs_timezone = fetched_tz and entries.get("timezone") != fetched_tz
             needs_bio = fetched_bio and entries.get("bio") != fetched_bio
+            needs_job_title = (
+                populated and (entries.get("job_title") or None) != fetched_job_title
+            )
             needs_phone = fetched_phone and entries.get("phone_number") != fetched_phone
             needs_whatsapp = (
                 fetched_whatsapp and entries.get("whatsapp_number") != fetched_whatsapp
@@ -193,6 +198,7 @@ def provision_assistant_contact(self, assistant_log) -> None:
             if (
                 needs_timezone
                 or needs_bio
+                or needs_job_title
                 or needs_phone
                 or needs_whatsapp
                 or needs_discord
@@ -208,6 +214,8 @@ def provision_assistant_contact(self, assistant_log) -> None:
                     update_kwargs["timezone"] = fetched_tz
                 if needs_bio:
                     update_kwargs["bio"] = fetched_bio
+                if needs_job_title:
+                    update_kwargs["job_title"] = fetched_job_title
                 if needs_phone:
                     update_kwargs["phone_number"] = fetched_phone
                 if needs_whatsapp:

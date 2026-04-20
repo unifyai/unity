@@ -4,6 +4,7 @@ from __future__ import annotations
 import pytest
 
 from tests.helpers import _handle_project
+from unity.common.pipeline.instrumentation import PipelineInstrumentation
 from unity.file_manager.managers.local import LocalFileManager
 from unity.file_manager.file_parsers.types.contracts import FileParseResult
 from unity.file_manager.file_parsers.types.enums import NodeKind
@@ -61,6 +62,7 @@ def test_file_manager_reduce_param_shapes(file_manager: LocalFileManager, tmp_pa
             parse_result=parse_result,
             file_path=f"dummy_{i}.txt",
             config=cfg,
+            instrumentation=PipelineInstrumentation(),
         )
 
     # Single column, no grouping

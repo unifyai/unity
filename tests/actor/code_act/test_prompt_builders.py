@@ -112,6 +112,29 @@ def test_code_act_prompt_includes_diverse_examples_sessions_computer_primitives_
 
 
 @pytest.mark.timeout(30)
+def test_code_act_prompt_includes_comms_namespace_and_docstrings():
+    from unity.actor.environments.state_managers import StateManagerEnvironment
+    from unity.function_manager.primitives import PrimitiveScope, Primitives
+
+    actor = CodeActActor()
+    env = StateManagerEnvironment(
+        Primitives(primitive_scope=PrimitiveScope.single("comms")),
+    )
+    prompt = build_code_act_prompt(
+        environments={"primitives": env},
+        tools=dict(actor.get_tools("act")),
+    )
+
+    assert "primitives.comms" in prompt
+    assert ".send_whatsapp" in prompt
+    assert ".send_discord_message" in prompt
+    assert ".send_discord_channel_message" in prompt
+    assert "assistant-owned WhatsApp message" in prompt
+    assert "assistant-owned Discord direct message" in prompt
+    assert "Discord guild channel" in prompt
+
+
+@pytest.mark.timeout(30)
 def test_incremental_execution_present_and_execution_rules_not_duplicated():
     """Incremental Execution section is present; _EXECUTION_RULES appears exactly once."""
     actor = CodeActActor()
@@ -142,6 +165,49 @@ def test_python_first_principle_present():
     assert "Python-first principle" in prompt
     assert "install_python_packages" in prompt
     assert "install_shell_packages" in prompt
+
+
+@pytest.mark.timeout(30)
+def test_discovery_first_guidance_separates_search_from_execution_choice():
+    """Discovery-first should not imply that a missing library hit means execute_code."""
+    actor = CodeActActor()
+    prompt = build_code_act_prompt(
+        environments=_real_envs_mixed(),
+        tools=dict(actor.get_tools("act")),
+        discovery_first_policy=True,
+    )
+
+    assert "Search is a discovery step" in prompt
+    assert "not an execution decision." in prompt
+    assert (
+        "if the request or discovery step already identifies one exact function"
+        in prompt
+    )
+
+
+@pytest.mark.timeout(30)
+def test_discovery_first_examples_no_longer_model_execute_code_as_default_fallback():
+    """Discovery-first examples should not teach no-hit => write custom code."""
+    actor = CodeActActor()
+    prompt = build_code_act_prompt(
+        environments=_real_envs_mixed(),
+        tools=dict(actor.get_tools("act")),
+        discovery_first_policy=True,
+    )
+
+    assert (
+        "If no function exists, THEN fall back to composing with primitives directly in Python."
+        not in prompt
+    )
+    assert (
+        "FunctionManager-discovered functions are available in all execute_code calls"
+        not in prompt
+    )
+    assert "Use `execute_code` for *everything* (Python + shell)" not in prompt
+    assert (
+        "If one exact function or primitive call is enough, use execute_function"
+        in prompt
+    )
 
 
 @pytest.mark.timeout(30)

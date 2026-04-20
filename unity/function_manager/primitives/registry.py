@@ -80,6 +80,26 @@ _COMMON_EXCLUDED_METHODS: frozenset[str] = frozenset(
 
 _MANAGER_SPECS: tuple[ManagerSpec, ...] = (
     ManagerSpec(
+        manager_alias="comms",
+        manager_registry_key="",
+        primitive_class_path="unity.comms.primitives.CommsPrimitives",
+        excluded_methods=frozenset(),
+        priority=4,
+        domain="Assistant-Owned Communication",
+        description=(
+            "Send assistant-owned outbound messages and calls across SMS, email, "
+            "WhatsApp, Discord, Unify, and API-response channels"
+        ),
+        use_when=(
+            "The assistant needs to proactively contact people or post into "
+            "assistant-owned communication channels as part of a task"
+        ),
+        examples=(
+            "'Text Alice that the meeting moved', 'Email all shortlisted leads', "
+            "'Reply in the Discord channel', 'Send a Unify update to the team lead'"
+        ),
+    ),
+    ManagerSpec(
         manager_alias="contacts",
         manager_registry_key="contacts",
         primitive_class_path="unity.contact_manager.contact_manager.ContactManager",

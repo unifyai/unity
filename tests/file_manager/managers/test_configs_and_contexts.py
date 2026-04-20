@@ -4,6 +4,7 @@ Config and context structure tests for FileManager.
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
@@ -134,6 +135,80 @@ def test_embedding_specs_smoke(file_manager, tmp_path: Path):
 
 
 @_handle_project
+def test_file_pipeline_config_loads_extended_retry_policy(tmp_path: Path):
+    config_data = {
+        "retry": {
+            "max_retries": 4,
+            "retry_delay_seconds": 1.5,
+            "backoff_multiplier": 3.0,
+            "max_backoff_seconds": 15.0,
+            "jitter_ratio": 0.0,
+            "deadline_seconds": 20.0,
+            "retry_mode": "all_errors",
+            "fail_fast": True,
+        },
+    }
+    config_file = tmp_path / "retry_config.json"
+    config_file.write_text(json.dumps(config_data), encoding="utf-8")
+
+    cfg = FilePipelineConfig.from_file(str(config_file))
+
+    assert cfg.retry.max_retries == 4
+    assert cfg.retry.retry_delay_seconds == 1.5
+    assert cfg.retry.backoff_multiplier == 3.0
+    assert cfg.retry.max_backoff_seconds == 15.0
+    assert cfg.retry.jitter_ratio == 0.0
+    assert cfg.retry.deadline_seconds == 20.0
+    assert cfg.retry.retry_mode == "all_errors"
+    assert cfg.retry.fail_fast is True
+
+
+@_handle_project
+def test_file_pipeline_config_loads_cost_ledger_settings(tmp_path: Path):
+    config_data = {
+        "cost": {
+            "enable_cost_ledger": True,
+            "cost_ledger_file": "logs/custom_cost_ledger.jsonl",
+            "environment": "staging",
+            "tenant_id": "tenant-123",
+            "artifact_retention_days": 14,
+            "rate_card": {
+                "version": "staging-v2",
+                "currency": "USD",
+                "parse_cpu_per_second": 0.1,
+                "parse_memory_gb_second": 0.2,
+                "artifact_storage_gb_month": 0.3,
+                "row_ingest_request": 0.4,
+                "row_ingest_row": 0.5,
+                "embedding_row": 0.6,
+                "llm_enrichment_call": 0.7,
+                "observability_event": 0.8,
+            },
+        },
+    }
+    config_file = tmp_path / "cost_config.json"
+    config_file.write_text(json.dumps(config_data), encoding="utf-8")
+
+    cfg = FilePipelineConfig.from_file(str(config_file))
+
+    assert cfg.cost.enable_cost_ledger is True
+    assert cfg.cost.cost_ledger_file == "logs/custom_cost_ledger.jsonl"
+    assert cfg.cost.environment == "staging"
+    assert cfg.cost.tenant_id == "tenant-123"
+    assert cfg.cost.artifact_retention_days == 14
+    assert cfg.cost.rate_card.version == "staging-v2"
+    assert cfg.cost.rate_card.currency == "USD"
+    assert cfg.cost.rate_card.parse_cpu_per_second == 0.1
+    assert cfg.cost.rate_card.parse_memory_gb_second == 0.2
+    assert cfg.cost.rate_card.artifact_storage_gb_month == 0.3
+    assert cfg.cost.rate_card.row_ingest_request == 0.4
+    assert cfg.cost.rate_card.row_ingest_row == 0.5
+    assert cfg.cost.rate_card.embedding_row == 0.6
+    assert cfg.cost.rate_card.llm_enrichment_call == 0.7
+    assert cfg.cost.rate_card.observability_event == 0.8
+
+
+@_handle_project
 def test_table_ingest_toggle_off_skips_tables_contexts(file_manager, tmp_path: Path):
     fm = file_manager
     fm.clear()
@@ -171,7 +246,7 @@ def test_file_pipeline_config_defaults():
     assert cfg.ingest.storage_id is None  # default per-file mode
     assert cfg.embed.strategy == "after"
     assert cfg.output.return_mode == "compact"
-    assert cfg.diagnostics.enable_progress is False
+    assert cfg.diagnostics.enable_progress is True
 
 
 def test_table_embedding_spec():
@@ -312,7 +387,7 @@ def test_config_from_file_partial(tmp_path: Path):
     import json
 
     config_data = {
-        "parse": {"batch_size": 10},
+        "parse": {"max_concurrent_parses": 10},
         "output": {"return_mode": "full"},
     }
     config_file = tmp_path / "partial_config.json"
@@ -525,9 +600,8 @@ def test_config_from_file_full(tmp_path: Path):
     import json
 
     config_data = {
-        # batch_size is supported as a back-compat alias for max_concurrent_parses.
         # parser_kwargs/plugins are ignored (legacy/removed); this test ensures unknown keys don't break loading.
-        "parse": {"batch_size": 5, "parser_kwargs": {"key": "value"}},
+        "parse": {"max_concurrent_parses": 5, "parser_kwargs": {"key": "value"}},
         "ingest": {
             "storage_id": "FullTest",
             "table_rows_batch_size": 3000,
@@ -775,7 +849,7 @@ def test_config_all_sections_populated(tmp_path: Path):
 
     config_data = {
         "parse": {
-            "batch_size": 10,
+            "max_concurrent_parses": 10,
             "parser_kwargs": {"custom_option": "value", "another": 123},
         },
         "ingest": {

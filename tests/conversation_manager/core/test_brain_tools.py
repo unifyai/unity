@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import asyncio
 from datetime import datetime
+import inspect
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -90,7 +91,10 @@ def mock_cm():
     cm.chat_history = []
     cm.assistant_number = "+15555550000"
     cm.assistant_email = "assistant@test.com"
+    cm.assistant_email_provider = "google_workspace"
     cm.assistant_whatsapp_number = ""
+    cm.assistant_discord_bot_id = ""
+    cm.initialized = True
     cm.call_manager.has_active_call = False
     cm.call_manager.has_active_google_meet = False
     cm.call_manager._whatsapp_call_joining = False
@@ -324,8 +328,10 @@ class TestActionToolsAsTools:
         """All comms tools present when assistant has both phone and email."""
         tools = brain_action_tools.as_tools()
         expected = {
+            "join_google_meet",
             "send_sms",
             "send_unify_message",
+            "send_api_response",
             "send_email",
             "make_call",
             "act",
@@ -379,6 +385,22 @@ class TestActionToolsAsTools:
         assert "send_email" not in tools
         assert "send_unify_message" in tools
         assert "wait" in tools
+
+    def test_includes_whatsapp_and_discord_tools_when_enabled(self, mock_cm):
+        """WhatsApp and Discord tools appear when those assistant capabilities exist."""
+        mock_cm.assistant_whatsapp_number = "+15555557777"
+        mock_cm.assistant_discord_bot_id = "discord-bot-123"
+        with patch(
+            "unity.conversation_manager.domains.brain_action_tools.get_event_broker",
+        ) as mock_broker:
+            mock_broker.return_value = MagicMock()
+            mock_broker.return_value.publish = AsyncMock()
+            tools = ConversationManagerBrainActionTools(mock_cm).as_tools()
+
+        assert "send_whatsapp" in tools
+        assert "make_whatsapp_call" in tools
+        assert "send_discord_message" in tools
+        assert "send_discord_channel_message" in tools
 
 
 class TestWaitTool:
@@ -458,6 +480,28 @@ class TestSendSmsTool:
         assert result["status"] == "error"
         assert "does not have" in result["error"]
         assert "phone" in result["error"].lower()
+
+
+class TestSendDiscordMessageTool:
+    """Tests for send_discord_message tool metadata."""
+
+    def test_uses_dm_only_signature(self, brain_action_tools):
+        """Channel reply args stay on send_discord_channel_message only."""
+        parameters = inspect.signature(
+            brain_action_tools.send_discord_message,
+        ).parameters
+
+        assert "contact_id" in parameters
+        assert "content" in parameters
+        assert "discord_id" in parameters
+        assert "channel_id" not in parameters
+        assert "guild_id" not in parameters
+
+    def test_docstring_points_channel_replies_to_channel_tool(self, brain_action_tools):
+        """DM docstring steers channel posting to the dedicated channel tool."""
+        doc = brain_action_tools.send_discord_message.__doc__
+        assert doc is not None
+        assert "send_discord_channel_message" in doc
 
 
 class TestSendUnifyMessageTool:
@@ -555,10 +599,10 @@ class TestSendUnifyMessageTool:
                 lambda: LocalFileSystemAdapter(root=str(tmp_path)),
             ),
             patch(
-                "unity.conversation_manager.domains.brain_action_tools.comms_utils.upload_unify_attachment",
+                "unity.comms.primitives.comms_utils.upload_unify_attachment",
             ) as mock_upload,
             patch(
-                "unity.conversation_manager.domains.brain_action_tools.comms_utils.send_unify_message",
+                "unity.comms.primitives.comms_utils.send_unify_message",
             ) as mock_send,
         ):
             # Configure mocks
@@ -612,7 +656,7 @@ class TestSendUnifyMessageTool:
                 lambda: LocalFileSystemAdapter(root=str(tmp_path)),
             ),
             patch(
-                "unity.conversation_manager.domains.brain_action_tools.comms_utils.upload_unify_attachment",
+                "unity.comms.primitives.comms_utils.upload_unify_attachment",
             ) as mock_upload,
         ):
             mock_upload.return_value = {
@@ -683,7 +727,7 @@ class TestSendEmailTool:
         _setup_mock_contacts(mock_cm.contact_index, sample_contacts)
 
         with patch(
-            "unity.conversation_manager.domains.brain_action_tools.comms_utils.send_email_via_address",
+            "unity.comms.primitives.comms_utils.send_email_via_address",
         ) as mock_send:
             mock_send.return_value = {"success": True, "id": "sent-email-123"}
 
@@ -772,7 +816,7 @@ class TestSendEmailTool:
                 lambda: LocalFileSystemAdapter(root=str(tmp_path)),
             ),
             patch(
-                "unity.conversation_manager.domains.brain_action_tools.comms_utils.send_email_via_address",
+                "unity.comms.primitives.comms_utils.send_email_via_address",
             ) as mock_send,
         ):
             mock_send.return_value = {"success": True, "id": "sent-email-123"}
@@ -809,7 +853,7 @@ class TestSendEmailTool:
         _setup_mock_contacts(mock_cm.contact_index, sample_contacts)
 
         with patch(
-            "unity.conversation_manager.domains.brain_action_tools.comms_utils.send_email_via_address",
+            "unity.comms.primitives.comms_utils.send_email_via_address",
         ) as mock_send:
             mock_send.return_value = {"success": True, "id": "sent-email-123"}
 
@@ -835,7 +879,7 @@ class TestSendEmailTool:
         _setup_mock_contacts(mock_cm.contact_index, sample_contacts)
 
         with patch(
-            "unity.conversation_manager.domains.brain_action_tools.comms_utils.send_email_via_address",
+            "unity.comms.primitives.comms_utils.send_email_via_address",
         ) as mock_send:
             mock_send.return_value = {"success": True, "id": "sent-email-123"}
 
@@ -861,7 +905,7 @@ class TestSendEmailTool:
         _setup_mock_contacts(mock_cm.contact_index, sample_contacts)
 
         with patch(
-            "unity.conversation_manager.domains.brain_action_tools.comms_utils.send_email_via_address",
+            "unity.comms.primitives.comms_utils.send_email_via_address",
         ) as mock_send:
             mock_send.return_value = {"success": True, "id": "sent-email-123"}
 
@@ -888,7 +932,7 @@ class TestSendEmailTool:
         _setup_mock_contacts(mock_cm.contact_index, sample_contacts)
 
         with patch(
-            "unity.conversation_manager.domains.brain_action_tools.comms_utils.send_email_via_address",
+            "unity.comms.primitives.comms_utils.send_email_via_address",
         ) as mock_send:
             mock_send.return_value = {"success": True, "id": "sent-email-123"}
 
@@ -919,6 +963,10 @@ class TestMakeCallTool:
         """Make call tool has descriptive docstring."""
         assert brain_action_tools.make_call.__doc__ is not None
         assert "call" in brain_action_tools.make_call.__doc__.lower()
+        assert (
+            "Mission briefing for the voice agent"
+            in brain_action_tools.make_call.__doc__
+        )
 
     @pytest.mark.asyncio
     async def test_calls_contact(
