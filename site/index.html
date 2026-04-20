@@ -1,0 +1,410 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>unity-agent — a hive mind for your assistants</title>
+    <meta
+      name="description"
+      content="The open-source agent runtime behind Unify. Steerable nested execution, code-first planning, and typed state managers that let many assistants share one world."
+    />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=Instrument+Serif:ital@0;1&family=JetBrains+Mono:wght@400;500;700&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div class="grain" aria-hidden="true"></div>
+
+    <div class="frame">
+      <header class="nav">
+        <a class="logo" href="#top" aria-label="unity-agent home">
+          <span class="logo-mark" aria-hidden="true">◎</span>
+          <span class="logo-text">unity<span class="logo-dim">/agent</span></span>
+        </a>
+        <nav class="nav-links" aria-label="Primary">
+          <a href="#what">What it is</a>
+          <a href="#install">Install</a>
+          <a href="#architecture">Architecture</a>
+          <a href="https://github.com/unifyai/unity" target="_blank" rel="noreferrer"
+            >GitHub ↗</a
+          >
+        </nav>
+        <div class="nav-meta">
+          <span class="status-dot" aria-hidden="true"></span>
+          <span>v0.1 · MIT</span>
+        </div>
+      </header>
+
+      <main id="top">
+        <!-- HERO -->
+        <section class="hero">
+          <div class="hero-left">
+            <p class="eyebrow">
+              <span class="eyebrow-tick">[</span> open-source · mit · runs local
+              <span class="eyebrow-tick">]</span>
+            </p>
+            <h1 class="hero-title">
+              A <em>hive&nbsp;mind</em><br />
+              for your assistants.
+            </h1>
+            <p class="hero-lede">
+              Not a coding copilot stuck in your IDE. Not a chat wrapper around
+              one API. unity-agent is the steerable agent runtime behind Unify's
+              persistent AI teammates — it lives on your machine, grows the
+              longer it runs, and lets many assistants coordinate over one shared
+              typed world instead of drowning in isolated threads.
+            </p>
+            <div class="hero-ctas">
+              <a
+                class="btn primary"
+                href="https://github.com/unifyai/unity"
+                target="_blank"
+                rel="noreferrer"
+                >Get it on GitHub →</a
+              >
+              <a class="btn ghost" href="#install">Quick install</a>
+            </div>
+            <p class="hero-quote">
+              <span class="quote-mark">&ldquo;</span>Many minds, one will. Zero
+              tyranny.<span class="quote-mark">&rdquo;</span>
+              <span class="quote-attr">— the vibe, roughly</span>
+            </p>
+          </div>
+
+          <aside class="hero-right" aria-label="Runtime visualization">
+            <div class="panel">
+              <div class="panel-head">
+                <span class="panel-dot red"></span>
+                <span class="panel-dot amber"></span>
+                <span class="panel-dot green"></span>
+                <span class="panel-title">unity://runtime</span>
+              </div>
+              <pre class="panel-body"><code><span class="c-dim">$</span> <span class="c-fn">assistant</span>.act(<span class="c-str">"catch Sarah up on the Q3 launch"</span>)
+
+<span class="c-ok">◎</span> conversation_manager <span class="c-dim">// steering</span>
+ └─ <span class="c-ok">◎</span> actor.act
+     ├─ <span class="c-accent">contacts</span>.ask(<span class="c-str">"who is Sarah?"</span>)
+     ├─ <span class="c-accent">knowledge</span>.ask(<span class="c-str">"Q3 launch notes"</span>)
+     ├─ <span class="c-accent">transcripts</span>.ask(<span class="c-str">"recent threads"</span>)
+     └─ <span class="c-accent">comms</span>.send(<span class="c-str">"draft catch-up email"</span>)
+
+<span class="c-dim">&gt;</span> user: <span class="c-user">"also mention the budget thing"</span>
+<span class="c-ok">◎</span> interject <span class="c-dim">// no restart. keep going.</span></code></pre>
+              <div class="panel-foot">
+                <span class="foot-pill">pause</span>
+                <span class="foot-pill">resume</span>
+                <span class="foot-pill">interject</span>
+                <span class="foot-pill">ask</span>
+                <span class="foot-pill">stop</span>
+              </div>
+            </div>
+          </aside>
+        </section>
+
+        <!-- MANIFESTO STRIP -->
+        <section class="strip" aria-label="Pitch">
+          <div class="strip-item">
+            <span class="strip-num">01</span>
+            <span>Lives where you do.</span>
+          </div>
+          <div class="strip-item">
+            <span class="strip-num">02</span>
+            <span>Grows as it runs.</span>
+          </div>
+          <div class="strip-item">
+            <span class="strip-num">03</span>
+            <span>Steers live work. No restarts.</span>
+          </div>
+          <div class="strip-item">
+            <span class="strip-num">04</span>
+            <span>Many minds, one world.</span>
+          </div>
+        </section>
+
+        <!-- WHAT IT IS -->
+        <section class="section" id="what">
+          <div class="section-head">
+            <p class="kicker">What it is</p>
+            <h2 class="section-title">
+              Not another chatbot wrapper.<br />
+              <span class="serif-accent">A runtime</span> with opinions.
+            </h2>
+          </div>
+
+          <div class="feature-grid">
+            <article class="feature">
+              <header>
+                <span class="feature-index">01</span>
+                <h3>Lives where you do</h3>
+              </header>
+              <p>
+                SMS, email, phone calls, meetings, Slack, WhatsApp — one identity,
+                one memory, one set of tasks across every channel. Start on a
+                call, finish over email, pick it up on voice tomorrow.
+              </p>
+              <code class="feature-code">voice · sms · email · slack · meet</code>
+            </article>
+
+            <article class="feature">
+              <header>
+                <span class="feature-index">02</span>
+                <h3>Grows the longer it runs</h3>
+              </header>
+              <p>
+                Consolidates memory in the background. Extracts contacts, tasks,
+                and preferences from every interaction. Stores reusable Python
+                functions and guidance. It gets sharper the longer you use it.
+              </p>
+              <code class="feature-code">memory · functions · guidance</code>
+            </article>
+
+            <article class="feature">
+              <header>
+                <span class="feature-index">03</span>
+                <h3>Runs in the background</h3>
+              </header>
+              <p>
+                Durable scheduled tasks you can pause, defer, or interject
+                mid-run. Not just cron — live handles you can steer from
+                anywhere, even while they&rsquo;re executing.
+              </p>
+              <code class="feature-code">scheduler.defer(task, until="fri")</code>
+            </article>
+
+            <article class="feature">
+              <header>
+                <span class="feature-index">04</span>
+                <h3>Steerable all the way down</h3>
+              </header>
+              <p>
+                Every operation returns a live handle. Ask it for status.
+                Interject mid-run. Pause a branch. Stop one task without burning
+                the other three. No restarts, no lost context.
+              </p>
+              <code class="feature-code"
+                >handle.interject("also check trains")</code
+              >
+            </article>
+
+            <article class="feature">
+              <header>
+                <span class="feature-index">05</span>
+                <h3>Code plans, not tool menus</h3>
+              </header>
+              <p>
+                CodeActActor writes real Python over typed
+                <code>primitives.*</code> in a sandboxed session. You get
+                variables, loops, composition, reuse — not a thousand JSON
+                tool-calls in a trenchcoat.
+              </p>
+              <code class="feature-code"
+                >for c in primitives.contacts.ask(...)</code
+              >
+            </article>
+
+            <article class="feature">
+              <header>
+                <span class="feature-index">06</span>
+                <h3>Many minds, one world</h3>
+              </header>
+              <p>
+                Typed state managers can share state across assistants —
+                contacts, tasks, transcripts, knowledge. Optional, scoped,
+                auditable. Hive-mind energy, without the tyranny.
+              </p>
+              <code class="feature-code">share: contacts + tasks · scoped</code>
+            </article>
+          </div>
+        </section>
+
+        <!-- INSTALL -->
+        <section class="section" id="install">
+          <div class="section-head">
+            <p class="kicker">Try it locally</p>
+            <h2 class="section-title">
+              Clone. Sync. <span class="serif-accent">Run the brain.</span>
+            </h2>
+            <p class="section-sub">
+              Runs on your machine. No platform install required to poke at the
+              runtime. Five minutes to a steerable, nested, code-first sandbox.
+            </p>
+          </div>
+
+          <div class="terminal">
+            <div class="terminal-head">
+              <span class="term-prompt">~/unity</span>
+              <button class="copy-btn" data-copy="install-block" type="button">
+                <span class="copy-label">Copy</span>
+              </button>
+            </div>
+            <pre id="install-block" class="terminal-body"><code><span class="c-dim"># grab the three repos</span>
+git clone https://github.com/unifyai/unity.git
+git clone https://github.com/unifyai/unify.git
+git clone https://github.com/unifyai/unillm.git
+
+<span class="c-dim"># sync the env (uv recommended)</span>
+cd unity &amp;&amp; uv sync
+
+<span class="c-dim"># wire up your keys</span>
+cp .env.example .env
+
+<span class="c-dim"># launch the sandbox</span>
+source .venv/bin/activate
+python -m sandboxes.conversation_manager.sandbox \
+    --project_name Sandbox --overwrite</code></pre>
+          </div>
+
+          <p class="install-note">
+            At the prompt, pick <strong>option 2</strong> — CodeAct + Simulated
+            Managers. That's the full runtime shape with simulated backends, which
+            is what you want the first time.
+          </p>
+        </section>
+
+        <!-- ARCHITECTURE -->
+        <section class="section" id="architecture">
+          <div class="section-head">
+            <p class="kicker">How it runs</p>
+            <h2 class="section-title">
+              The stack, <span class="serif-accent">top to bottom.</span>
+            </h2>
+          </div>
+
+          <div class="arch-grid">
+            <div class="arch-row">
+              <div class="arch-label">
+                <span class="arch-index">01</span>
+                <span class="arch-role">orchestration</span>
+              </div>
+              <div class="arch-card">
+                <h3>ConversationManager</h3>
+                <p>
+                  Owns the session. Sees notifications, in-flight work, and user
+                  input. Makes a single deliberate decision per turn. Talks to the
+                  fast brain over IPC when voice is live.
+                </p>
+              </div>
+            </div>
+
+            <div class="arch-divider"></div>
+
+            <div class="arch-row">
+              <div class="arch-label">
+                <span class="arch-index">02</span>
+                <span class="arch-role">planning</span>
+              </div>
+              <div class="arch-card">
+                <h3>CodeActActor</h3>
+                <p>
+                  Writes Python against typed primitives. Runs in a sandboxed
+                  session. One program per turn, with variables and control flow.
+                  Discovery-first tool policy keeps it honest.
+                </p>
+              </div>
+            </div>
+
+            <div class="arch-divider"></div>
+
+            <div class="arch-row">
+              <div class="arch-label">
+                <span class="arch-index">03</span>
+                <span class="arch-role">domain</span>
+              </div>
+              <div class="arch-card">
+                <h3>State Managers</h3>
+                <p>
+                  Each manager owns its domain and runs its own async tool loop.
+                  ContactManager. KnowledgeManager. TaskScheduler. Each returns a
+                  live handle. Each can delegate further.
+                </p>
+              </div>
+            </div>
+
+            <div class="arch-divider"></div>
+
+            <div class="arch-row">
+              <div class="arch-label">
+                <span class="arch-index">04</span>
+                <span class="arch-role">collective</span>
+              </div>
+              <div class="arch-card">
+                <h3>Shared substrate</h3>
+                <p>
+                  Managers can selectively share state across assistants. Typed
+                  boundaries make cross-assistant coordination legible instead of
+                  terrifying. Opt-in. Scoped. Auditable.
+                </p>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- HIVEMIND FOOTER -->
+        <section class="section closer">
+          <div class="closer-grid">
+            <div>
+              <p class="kicker">One more thing</p>
+              <h2 class="section-title">
+                <span class="serif-accent">Read the runtime.</span><br />
+                Then make it weird.
+              </h2>
+              <p class="section-sub">
+                The repo is the playground. ARCHITECTURE.md explains the guts. This
+                page is just the door.
+              </p>
+              <div class="hero-ctas">
+                <a
+                  class="btn primary"
+                  href="https://github.com/unifyai/unity/blob/main/ARCHITECTURE.md"
+                  target="_blank"
+                  rel="noreferrer"
+                  >Read ARCHITECTURE.md →</a
+                >
+                <a
+                  class="btn ghost"
+                  href="https://discord.com/invite/sXyFF8tDtm"
+                  target="_blank"
+                  rel="noreferrer"
+                  >Join Discord</a
+                >
+              </div>
+            </div>
+
+            <div class="signal-card">
+              <div class="signal-head">
+                <span class="signal-dot"></span>
+                <span>live</span>
+              </div>
+              <p class="signal-quote">
+                <em>"Hello Rick. Hello Morty."</em>
+              </p>
+              <p class="signal-note">
+                Inspired by collective-mind sci-fi energy. Not affiliated with
+                Adult Swim. We just like the idea.
+              </p>
+            </div>
+          </div>
+        </section>
+      </main>
+
+      <footer class="footer">
+        <div class="footer-left">
+          <span class="logo-mark" aria-hidden="true">◎</span>
+          <span>unity-agent · MIT · built by <a href="https://unify.ai" target="_blank" rel="noreferrer">Unify</a></span>
+        </div>
+        <div class="footer-right">
+          <a href="https://github.com/unifyai/unity" target="_blank" rel="noreferrer">GitHub</a>
+          <a href="https://github.com/unifyai/unify" target="_blank" rel="noreferrer">unify</a>
+          <a href="https://github.com/unifyai/unillm" target="_blank" rel="noreferrer">unillm</a>
+          <a href="https://discord.com/invite/sXyFF8tDtm" target="_blank" rel="noreferrer">Discord</a>
+        </div>
+      </footer>
+    </div>
+
+    <script src="./app.js"></script>
+  </body>
+</html>
