@@ -182,7 +182,26 @@ class AttachmentCallback(BaseModel):
     display_name: str
 
 
-class FmBinding(BaseModel):
+class IngestBinding(BaseModel):
+    """Common identity fields for any ingest-mode binding.
+
+    Both FM and DM ingest need a Unify ``UNIFY_KEY`` to authenticate
+    backend calls. Workers are shared across many assistants, so the
+    key cannot live on the pod; it is looked up per message via
+    Orchestra admin endpoints.
+
+    ``user_id`` is always required for provenance / routing, and
+    ``assistant_id`` is always required for deterministic Orchestra key
+    resolution via ``GET /v0/admin/assistant?agent_id=...``.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    user_id: str
+    assistant_id: str
+
+
+class FmBinding(IngestBinding):
     """Routing info the ingest worker needs to run FM-mode ingest.
 
     With these fields the worker can activate the right Unify context,
@@ -192,23 +211,17 @@ class FmBinding(BaseModel):
     entry (rather than a bare ``DataManager`` context).
     """
 
-    model_config = ConfigDict(frozen=True)
-
-    user_id: str
-    assistant_id: str
     fm_alias: str = "Local"
     logical_path: str
 
 
-class DmBinding(BaseModel):
+class DmBinding(IngestBinding):
     """Routing info the ingest worker needs to run DM-mode ingest.
 
     Used when the caller wants raw ``DataManager`` ingestion into a
-    specific context (e.g. operator-driven bulk ingests of a
-    ``PipelineConfig``). No ``FileRecords`` entry is created in this mode.
+    specific context while still authenticating as a concrete
+    assistant. No ``FileRecords`` entry is created in this mode.
     """
-
-    model_config = ConfigDict(frozen=True)
 
     target_context: str
     create_table_prefix: str = ""

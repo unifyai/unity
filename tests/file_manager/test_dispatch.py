@@ -211,7 +211,11 @@ class TestDmModeGsUri:
         storage: _FakeStorageClient,
         pubsub: _FakePublisherClient,
     ) -> None:
-        dm_binding = DmBinding(target_context="alice/42/Orders")
+        dm_binding = DmBinding(
+            user_id="alice",
+            assistant_id="42",
+            target_context="alice/42/Orders",
+        )
 
         result = publish_parse_request(
             target=target,
@@ -228,6 +232,8 @@ class TestDmModeGsUri:
 
         payload = json.loads(pubsub.published[0]["data"].decode("utf-8"))
         assert payload["ingestion_mode"] == "dm"
+        assert payload["dm_binding"]["user_id"] == "alice"
+        assert payload["dm_binding"]["assistant_id"] == "42"
         assert payload["dm_binding"]["target_context"] == "alice/42/Orders"
         assert payload["fm_binding"] is None
         assert payload["file_paths"] == ["gs://bucket/foo.csv"]
@@ -328,7 +334,11 @@ class TestValidation:
                     fm_alias="Local",
                     logical_path="x.csv",
                 ),
-                dm_binding=DmBinding(target_context="ctx"),
+                dm_binding=DmBinding(
+                    user_id="a",
+                    assistant_id="0",
+                    target_context="ctx",
+                ),
                 source_bytes=b"x\n",
                 storage_client=storage,
                 publisher_client=pubsub,
@@ -346,7 +356,11 @@ class TestValidation:
                     fm_alias="Local",
                     logical_path="x.csv",
                 ),
-                dm_binding=DmBinding(target_context="ctx"),
+                dm_binding=DmBinding(
+                    user_id="a",
+                    assistant_id="0",
+                    target_context="ctx",
+                ),
                 source_bytes=b"x\n",
                 storage_client=storage,
                 publisher_client=pubsub,
@@ -426,3 +440,81 @@ class TestValidation:
                 storage_client=storage,
                 publisher_client=pubsub,
             )
+
+
+# ---------------------------------------------------------------------------
+# Binding identity shape (IngestBinding parent + FM/DM subclasses)
+# ---------------------------------------------------------------------------
+
+
+class TestIngestBindingShape:
+    """Lock in the shared-identity shape of FmBinding / DmBinding.
+
+    These assertions are load-bearing for the per-message UNIFY_KEY
+    resolution flow: the ingest worker passes an ``IngestBinding`` to
+    the resolver, so the frozen-parent + shared required identity
+    fields must stay stable.
+    """
+
+    def test_fm_binding_is_ingest_binding(self) -> None:
+        from unity.common.pipeline.types import IngestBinding
+
+        binding = FmBinding(
+            user_id="alice",
+            assistant_id="42",
+            logical_path="x.csv",
+        )
+        assert isinstance(binding, IngestBinding)
+        # FM inherits the required assistant_id from the parent.
+        assert binding.assistant_id == "42"
+        assert binding.user_id == "alice"
+
+    def test_dm_binding_is_ingest_binding(self) -> None:
+        from unity.common.pipeline.types import IngestBinding
+
+        binding = DmBinding(
+            user_id="alice",
+            assistant_id="42",
+            target_context="ctx",
+        )
+        assert isinstance(binding, IngestBinding)
+        # DM inherits the same required assistant_id from the parent.
+        assert binding.assistant_id == "42"
+        assert binding.user_id == "alice"
+        assert binding.target_context == "ctx"
+
+    def test_fm_binding_rejects_missing_assistant_id(self) -> None:
+        from pydantic import ValidationError
+
+        with pytest.raises(ValidationError):
+            FmBinding(user_id="alice", logical_path="x.csv")  # type: ignore[call-arg]
+
+    def test_parent_binding_rejects_missing_assistant_id(self) -> None:
+        from pydantic import ValidationError
+        from unity.common.pipeline.types import IngestBinding
+
+        with pytest.raises(ValidationError):
+            IngestBinding(user_id="alice")  # type: ignore[call-arg]
+
+    def test_dm_binding_rejects_missing_user_id(self) -> None:
+        from pydantic import ValidationError
+
+        with pytest.raises(ValidationError):
+            DmBinding(assistant_id="42", target_context="ctx")  # type: ignore[call-arg]
+
+    def test_dm_binding_rejects_missing_assistant_id(self) -> None:
+        from pydantic import ValidationError
+
+        with pytest.raises(ValidationError):
+            DmBinding(user_id="alice", target_context="ctx")  # type: ignore[call-arg]
+
+    def test_bindings_are_frozen(self) -> None:
+        from pydantic import ValidationError
+
+        fm = FmBinding(user_id="a", assistant_id="0", logical_path="x.csv")
+        dm = DmBinding(user_id="a", assistant_id="0", target_context="ctx")
+        # Frozen inheritance: parent's model_config must propagate.
+        with pytest.raises(ValidationError):
+            fm.user_id = "b"  # type: ignore[misc]
+        with pytest.raises(ValidationError):
+            dm.user_id = "b"  # type: ignore[misc]
