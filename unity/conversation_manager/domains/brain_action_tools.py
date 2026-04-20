@@ -1349,7 +1349,7 @@ class ConversationManagerBrainActionTools:
         if self._cm.assistant_discord_bot_id:
             tools["send_discord_message"] = self.send_discord_message
             tools["send_discord_channel_message"] = self.send_discord_channel_message
-        if getattr(self._cm, "assistant_has_teams", False):
+        if self._cm.assistant_has_teams:
             tools["send_teams_message"] = self.send_teams_message
         if getattr(self._cm.mode, "is_voice", False):
             tools["guide_voice_agent"] = self.guide_voice_agent
