@@ -32,7 +32,6 @@ from unity.conversation_manager.events import (
     ActorHandleStarted,
     ActorHandleResponse,
     FastBrainNotification,
-    Error,
 )
 from unity.common._async_tool.dynamic_tools_factory import DynamicToolFactory
 from unity.common._async_tool.utils import get_handle_paused_state
@@ -121,47 +120,7 @@ def schema_dict_to_pydantic(
     return _create_model(model_name, **fields)
 
 
-def _coerce_contact_id(v: Any) -> int:
-    """Coerce a contact_id value to int, handling string-encoded integers."""
-    if isinstance(v, int):
-        return v
-    if isinstance(v, str):
-        try:
-            return int(v)
-        except (ValueError, TypeError):
-            pass
-    raise TypeError(f"contact_id must be an integer, got {type(v).__name__}: {v!r}")
-
-
-# Global handle ID counter for action tracking
 _next_handle_id = 0
-
-
-def _get_contact_display_name(contact: dict | None) -> str:
-    """Get a display name for a contact for error messages."""
-    if not contact:
-        return "unknown contact"
-    first = contact.get("first_name") or ""
-    last = contact.get("surname") or ""
-    name = f"{first} {last}".strip()
-    if not name:
-        name = f"contact_id={contact.get('contact_id', 'unknown')}"
-    return name
-
-
-def _check_outbound_allowed(contact: dict | None) -> str | None:
-    """Check if outbound communication is allowed for a contact."""
-    if not contact:
-        return "Contact not found"
-    should_respond = contact.get("should_respond", False)
-    if not should_respond:
-        contact_name = _get_contact_display_name(contact)
-        return (
-            f"Cannot send outbound communication to {contact_name}: "
-            f"should_respond is False for this contact. "
-            f"Check the contact's response_policy for details or ask your boss for guidance."
-        )
-    return None
 
 
 # Pattern matching <in_flight_actions>...</in_flight_actions> sections.
@@ -281,44 +240,6 @@ class ConversationManagerBrainActionTools:
             event_broker=self._event_broker,
         )
 
-    async def _surface_comms_error(
-        self,
-        error_msg: str,
-        topic: str,
-        *,
-        contact_id: int | None = None,
-        medium: str | None = None,
-    ) -> dict[str, Any]:
-        """Push a comms error into the conversation thread and publish the Error event.
-
-        Ensures the brain sees the failure in ``active_conversations`` on the
-        next turn and can reason about recovery (retry with missing info,
-        fall back to a different channel, etc.).
-
-        Args:
-            error_msg: Human-readable error description.
-            topic: Event broker topic (e.g. ``"app:comms:sms_sent"``).
-            contact_id: Target contact (when known) — the error is pushed into
-                their conversation thread.
-            medium: Communication medium for the thread entry (e.g.
-                ``Medium.SMS_MESSAGE``).
-
-        Returns:
-            ``{"status": "error", "error": <error_msg>}`` for the tool return.
-        """
-        if contact_id is not None and medium is not None:
-            self._cm.contact_index.push_message(
-                contact_id=contact_id,
-                sender_name="System",
-                thread_name=medium,
-                message_content=f"[Send Failed] {error_msg}",
-                role="system",
-                timestamp=prompt_now(as_string=False),
-            )
-        event = Error(error_msg)
-        await self._event_broker.publish(topic, event.to_json())
-        return {"status": "error", "error": error_msg}
-
     @wraps(CommsPrimitives.send_sms)
     async def send_sms(
         self,
@@ -377,6 +298,26 @@ class ConversationManagerBrainActionTools:
             content=content,
             guild_id=guild_id,
             contact_id=contact_id,
+        )
+
+    @wraps(CommsPrimitives.send_teams_message)
+    async def send_teams_message(
+        self,
+        *,
+        contact_id: int | str,
+        content: str,
+        chat_id: str | None = None,
+        channel_id: str | None = None,
+        team_id: str | None = None,
+        attachment_filepath: str | None = None,
+    ) -> dict[str, Any]:
+        return await self._comms.send_teams_message(
+            contact_id=contact_id,
+            content=content,
+            chat_id=chat_id,
+            channel_id=channel_id,
+            team_id=team_id,
+            attachment_filepath=attachment_filepath,
         )
 
     @wraps(CommsPrimitives.send_unify_message)
@@ -1408,6 +1349,8 @@ class ConversationManagerBrainActionTools:
         if self._cm.assistant_discord_bot_id:
             tools["send_discord_message"] = self.send_discord_message
             tools["send_discord_channel_message"] = self.send_discord_channel_message
+        if getattr(self._cm, "assistant_has_teams", False):
+            tools["send_teams_message"] = self.send_teams_message
         if getattr(self._cm.mode, "is_voice", False):
             tools["guide_voice_agent"] = self.guide_voice_agent
         if SETTINGS.DEMO_MODE:

@@ -1282,6 +1282,10 @@ def _push_email_to_all_contacts(
         DiscordMessageSent,
         DiscordChannelMessageReceived,
         DiscordChannelMessageSent,
+        TeamsMessageReceived,
+        TeamsMessageSent,
+        TeamsChannelMessageReceived,
+        TeamsChannelMessageSent,
     ),
 )
 async def _(event, cm: "ConversationManager", *args, **kwargs):
@@ -1532,6 +1536,48 @@ async def _(event, cm: "ConversationManager", *args, **kwargs):
             cm._session_logger.info(
                 "discord_channel_message_received",
                 f"Discord channel from {sender_name}: {event.content}",
+            )
+        case TeamsMessageSent():
+            medium = Medium.TEAMS_MESSAGE
+            message_content = event.content
+            notif_content = f"Teams message sent to {sender_name}"
+            role = "assistant"
+            event_trace = getattr(cm, "_current_event_trace", None) or {}
+            cm._session_logger.info(
+                "teams_message_sent",
+                f"Teams chat to {sender_name}: {event.content}",
+            )
+        case TeamsMessageReceived():
+            medium = Medium.TEAMS_MESSAGE
+            message_content = event.content
+            attachments = event.attachments
+            notif_content = f"Teams message from {sender_name}"
+            role = "user"
+            event_trace = getattr(cm, "_current_event_trace", None) or {}
+            cm._session_logger.info(
+                "teams_message_received",
+                f"Teams chat from {sender_name}: {event.content}",
+            )
+        case TeamsChannelMessageSent():
+            medium = Medium.TEAMS_CHANNEL_MESSAGE
+            message_content = event.content
+            notif_content = "Teams channel message sent"
+            role = "assistant"
+            event_trace = getattr(cm, "_current_event_trace", None) or {}
+            cm._session_logger.info(
+                "teams_channel_message_sent",
+                f"Teams channel message: {event.content}",
+            )
+        case TeamsChannelMessageReceived():
+            medium = Medium.TEAMS_CHANNEL_MESSAGE
+            message_content = event.content
+            attachments = event.attachments
+            notif_content = f"Teams channel message from {sender_name}"
+            role = "user"
+            event_trace = getattr(cm, "_current_event_trace", None) or {}
+            cm._session_logger.info(
+                "teams_channel_message_received",
+                f"Teams channel from {sender_name}: {event.content}",
             )
 
     # Non-email messages: push to single contact only

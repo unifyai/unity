@@ -162,6 +162,8 @@ events_map: dict[str, Event] = {
     "unify_message": UnifyMessageReceived,
     "api_message": ApiMessageReceived,
     "discord": DiscordMessageReceived,
+    "teams_chat": TeamsMessageReceived,
+    "teams_channel": TeamsChannelMessageReceived,
 }
 
 
@@ -249,6 +251,8 @@ def _get_or_create_unknown_contact(
                 field_name = "email_address"
             elif medium in ("discord_message", "discord_channel_message"):
                 field_name = "discord_id"
+            elif medium in ("teams_message", "teams_channel_message"):
+                field_name = "email_address"
             else:
                 # For unify_message, we don't have external contact details
                 return None
@@ -900,6 +904,92 @@ class CommsManager:
                                 message_id=message_id,
                                 attachments=attachments,
                             ).to_json(),
+                        )
+
+                    if attachments:
+                        schedule(add_unify_message_attachments(attachments))
+
+                    if is_new_unknown:
+                        await publish(
+                            "app:comms:unknown_contact_created",
+                            UnknownContactCreated(
+                                contact=contact,
+                                medium=medium_for_blacklist,
+                                message_preview=content[:100] if content else "",
+                            ).to_json(),
+                        )
+
+                    ack_now()
+                    return
+
+                if thread in ("teams_chat", "teams_channel"):
+                    sender_email = event.get("sender", "")
+                    message_id = event.get("message_id", "")
+                    is_channel = thread == "teams_channel"
+                    attachments = event.get("attachments") or []
+
+                    medium_for_blacklist = (
+                        Medium.TEAMS_CHANNEL_MESSAGE
+                        if is_channel
+                        else Medium.TEAMS_MESSAGE
+                    )
+
+                    if _is_blacklisted(medium_for_blacklist, sender_email):
+                        LOGGER.debug(
+                            f"{DEFAULT_ICON} Ignoring blacklisted Teams from: {sender_email}",
+                        )
+                        ack_now()
+                        return
+
+                    contact = next(
+                        (c for c in contacts if c.get("email_address") == sender_email),
+                        None,
+                    )
+                    is_new_unknown = False
+                    if contact is None:
+                        contact = _get_or_create_unknown_contact(
+                            medium_for_blacklist,
+                            sender_email,
+                        )
+                        is_new_unknown = contact is not None
+
+                    if contact is None:
+                        LOGGER.error(
+                            f"{DEFAULT_ICON} Failed to resolve contact for Teams from: {sender_email}",
+                        )
+                        ack_now()
+                        return
+
+                    if is_channel:
+                        teams_event = TeamsChannelMessageReceived(
+                            contact=contact,
+                            content=content,
+                            channel_id=event.get("channel_id", ""),
+                            team_id=event.get("team_id", ""),
+                            message_id=message_id,
+                            is_reply=event.get("is_reply", False),
+                            parent_message_id=event.get("parent_message_id"),
+                            thread_id=event.get("thread_id", ""),
+                            post_subject=event.get("post_subject"),
+                            attachments=attachments,
+                        )
+                        await publish(
+                            "app:comms:teams_channel_message",
+                            teams_event.to_json(),
+                        )
+                    else:
+                        teams_event = TeamsMessageReceived(
+                            contact=contact,
+                            content=content,
+                            chat_id=event.get("chat_id", ""),
+                            message_id=message_id,
+                            chat_type=event.get("chat_type"),
+                            chat_topic=event.get("chat_topic"),
+                            attachments=attachments,
+                        )
+                        await publish(
+                            "app:comms:teams_message",
+                            teams_event.to_json(),
                         )
 
                     if attachments:

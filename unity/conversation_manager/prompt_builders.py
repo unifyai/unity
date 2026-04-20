@@ -214,6 +214,7 @@ def _build_comms_tool_listing(
     assistant_has_email: bool,
     assistant_has_whatsapp: bool = False,
     assistant_has_discord: bool = False,
+    assistant_has_teams: bool = False,
 ) -> str:
     """Build the communication tools block for the output format section."""
     lines: list[str] = []
@@ -227,6 +228,10 @@ def _build_comms_tool_listing(
     if assistant_has_discord:
         lines.append(
             "- `send_discord_message`: Send a Discord message to a contact (use when the inbound thread is `discord_message`)",
+        )
+    if assistant_has_teams:
+        lines.append(
+            "- `send_teams_message`: Send a Teams message to a contact (use when the inbound thread is `teams_message` or `teams_channel_message`)",
         )
     lines.append(
         "- `send_api_response`: Reply to a programmatic API message (use when the inbound medium is `api_message`). Supports optional `attachment_filepaths` and `tags`.",
@@ -293,6 +298,7 @@ def build_system_prompt(
     assistant_has_email: bool = True,
     assistant_has_whatsapp: bool = False,
     assistant_has_discord: bool = False,
+    assistant_has_teams: bool = False,
     user_desktop_control: bool = False,
 ) -> PromptParts:
     """Build the system prompt for the ConversationManager LLM.
@@ -352,6 +358,7 @@ def build_system_prompt(
         assistant_has_email,
         assistant_has_whatsapp,
         assistant_has_discord,
+        assistant_has_teams,
     )
     sms_call_note = (
         " I can send SMS while on a call, but I cannot make a new call"
@@ -689,6 +696,11 @@ I do NOT need to poll or check on actions - the system will wake me when somethi
             available_tool_names.index("send_unify_message"),
             "send_discord_message",
         )
+    if assistant_has_teams:
+        available_tool_names.insert(
+            available_tool_names.index("send_unify_message"),
+            "send_teams_message",
+        )
     comms_tool_names = ", ".join(available_tool_names)
 
     inline_detail_examples: list[str] = []
@@ -707,6 +719,10 @@ I do NOT need to poll or check on actions - the system will wake me when somethi
     if assistant_has_discord:
         inline_detail_examples.append(
             '`send_discord_message(contact_id=5, content="Hi", discord_id="123456789")`',
+        )
+    if assistant_has_teams:
+        inline_detail_examples.append(
+            '`send_teams_message(contact_id=5, content="Hi", chat_id="19:abc@thread.v2")`',
         )
     inline_detail_line = ""
     if inline_detail_examples:
@@ -730,6 +746,11 @@ I do NOT need to poll or check on actions - the system will wake me when somethi
         available_channels.insert(
             available_channels.index("unify messages"),
             "Discord",
+        )
+    if assistant_has_teams:
+        available_channels.insert(
+            available_channels.index("unify messages"),
+            "Teams",
         )
     channels_str = ", ".join(available_channels)
 

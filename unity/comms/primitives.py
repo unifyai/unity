@@ -34,6 +34,8 @@ from unity.conversation_manager.events import (
     Error,
     PhoneCallSent,
     SMSSent,
+    TeamsChannelMessageSent,
+    TeamsMessageSent,
     UnifyMessageSent,
     WhatsAppCallInviteSent,
     WhatsAppCallSent,
@@ -101,6 +103,7 @@ class CommsPrimitives:
         "send_api_response",
         "send_discord_message",
         "send_discord_channel_message",
+        "send_teams_message",
     )
 
     def __init__(
@@ -131,6 +134,11 @@ class CommsPrimitives:
         if self._cm is not None:
             return getattr(self._cm, "assistant_discord_bot_id", "") or ""
         return SESSION_DETAILS.assistant.discord_bot_id or ""
+
+    def _assistant_has_teams(self) -> bool:
+        if self._cm is not None:
+            return bool(getattr(self._cm, "assistant_has_teams", False))
+        return getattr(SESSION_DETAILS.assistant, "email_provider", "") == "microsoft"
 
     def _contact_manager(self):
         if (
@@ -1290,6 +1298,241 @@ class CommsPrimitives:
             history_metadata={
                 "contact_display_name": _get_contact_display_name(anchor_contact),
             },
+        )
+
+    async def send_teams_message(
+        self,
+        *,
+        contact_id: int | str,
+        content: str,
+        chat_id: str | None = None,
+        channel_id: str | None = None,
+        team_id: str | None = None,
+        attachment_filepath: str | None = None,
+    ) -> dict[str, Any]:
+        """Send an assistant-owned Microsoft Teams message.
+
+        Teams runs in two distinct modes, and exactly one must be used per call:
+
+        - **Chat reply** (1:1, group, or meeting chat): pass ``chat_id``.
+          ``contact_id`` identifies the recipient and is used for
+          response-policy checks and transcript ownership.
+        - **Channel post**: pass both ``team_id`` and ``channel_id``.
+          ``contact_id`` still anchors the post to a contact thread for
+          response-policy checks and transcript attribution, but does not
+          change where the message is delivered.
+
+        Teams accepts one attachment per outbound message. Supply a workspace
+        file path via ``attachment_filepath`` and Communication will upload
+        it through OneDrive before posting.
+
+        Parameters
+        ----------
+        contact_id : int | str
+            Contact anchor for the send. Required in both chat and channel
+            modes for response-policy gating and transcript attribution.
+        content : str
+            Message body to send.
+        chat_id : str | None, optional
+            Teams chat ID. Required for chat replies; leave empty for channel
+            posts.
+        channel_id : str | None, optional
+            Teams channel ID. Required together with ``team_id`` for channel
+            posts.
+        team_id : str | None, optional
+            Teams team ID. Required together with ``channel_id`` for channel
+            posts.
+        attachment_filepath : str | None, optional
+            Workspace-relative file path for one attachment to include with
+            the message.
+
+        Returns
+        -------
+        dict[str, Any]
+            ``{"status": "ok"}`` on success, or an error payload describing
+            why the send could not complete.
+        """
+        contact_id = _coerce_contact_id(contact_id)
+        offline_reservation = None
+        contact = self._get_contact(contact_id=contact_id)
+
+        is_channel = bool(channel_id and team_id)
+        medium = Medium.TEAMS_CHANNEL_MESSAGE if is_channel else Medium.TEAMS_MESSAGE
+        topic = (
+            "app:comms:teams_channel_message_sent"
+            if is_channel
+            else "app:comms:teams_message_sent"
+        )
+        target_kind = "teams_channel" if is_channel else "teams_chat"
+
+        def _target_metadata() -> dict[str, Any]:
+            base: dict[str, Any] = {
+                "contact_id": (contact or {}).get("contact_id") or contact_id,
+                "attachment_filepath": attachment_filepath or "",
+            }
+            if is_channel:
+                base["team_id"] = team_id or ""
+                base["channel_id"] = channel_id or ""
+            else:
+                base["chat_id"] = chat_id or ""
+            return base
+
+        def _history_metadata() -> dict[str, Any]:
+            return {
+                "contact_display_name": _get_contact_display_name(contact),
+            }
+
+        outbound_error = self._check_outbound_allowed(contact)
+        if outbound_error:
+            return await self._surface_comms_error(
+                outbound_error,
+                topic,
+                contact_id=contact_id,
+                medium=medium,
+                offline_reservation=offline_reservation,
+                attempted_content=content,
+                receiver_ids=[contact_id],
+                target_metadata=_target_metadata(),
+                history_metadata=_history_metadata(),
+            )
+
+        if not self._assistant_has_teams():
+            return await self._surface_comms_error(
+                "Microsoft Teams is not enabled for this assistant.",
+                topic,
+                contact_id=contact_id,
+                medium=medium,
+                attempted_content=content,
+                receiver_ids=[contact_id],
+                target_metadata=_target_metadata(),
+                history_metadata=_history_metadata(),
+            )
+
+        if not is_channel and not chat_id:
+            return await self._surface_comms_error(
+                "chat_id is required for Teams chat messages",
+                topic,
+                contact_id=contact_id,
+                medium=medium,
+                attempted_content=content,
+                receiver_ids=[contact_id],
+                target_metadata=_target_metadata(),
+                history_metadata=_history_metadata(),
+            )
+
+        offline_reservation, offline_response = self._reserve_offline_operation(
+            method_name="send_teams_message",
+            medium=medium,
+            target_kind=target_kind,
+            target_metadata=_target_metadata(),
+            contact_id=(contact or {}).get("contact_id") or contact_id,
+        )
+        if offline_response is not None:
+            return offline_response
+
+        outbound_attachments: list[dict] | None = None
+        attachment_meta: dict[str, Any] | None = None
+        if attachment_filepath:
+            from unity.file_manager.filesystem_adapters.local_adapter import (
+                LocalFileSystemAdapter,
+            )
+
+            adapter = LocalFileSystemAdapter()
+            try:
+                abs_path = adapter._abspath(attachment_filepath)
+                with open(abs_path, "rb") as file_handle:
+                    file_contents = file_handle.read()
+            except FileNotFoundError:
+                return await self._surface_comms_error(
+                    f"File not found: {attachment_filepath}",
+                    topic,
+                    contact_id=contact_id,
+                    medium=medium,
+                    offline_reservation=offline_reservation,
+                    attempted_content=content,
+                    receiver_ids=[contact_id],
+                    target_metadata=_target_metadata(),
+                    history_metadata=_history_metadata(),
+                )
+            except Exception as exc:
+                return await self._surface_comms_error(
+                    f"Failed to read file: {exc}",
+                    topic,
+                    contact_id=contact_id,
+                    medium=medium,
+                    offline_reservation=offline_reservation,
+                    attempted_content=content,
+                    receiver_ids=[contact_id],
+                    target_metadata=_target_metadata(),
+                    history_metadata=_history_metadata(),
+                )
+
+            filename = os.path.basename(attachment_filepath)
+            outbound_attachments = [
+                {
+                    "filename": filename,
+                    "content_base64": base64.b64encode(file_contents).decode("ascii"),
+                },
+            ]
+            attachment_meta = {"filename": filename, "filepath": attachment_filepath}
+
+        response = await comms_utils.send_teams_message(
+            chat_id=chat_id,
+            team_id=team_id,
+            channel_id=channel_id,
+            body=content,
+            attachments=outbound_attachments,
+        )
+
+        if response.get("success"):
+            fresh_contact = (
+                self._get_contact(
+                    contact_id=(contact or {}).get("contact_id") or contact_id,
+                )
+                or contact
+                or {}
+            )
+            attachments_for_event = [attachment_meta] if attachment_meta else None
+            if is_channel:
+                event = TeamsChannelMessageSent(
+                    contact=fresh_contact,
+                    content=content,
+                    channel_id=channel_id or "",
+                    team_id=team_id or "",
+                    attachments=attachments_for_event,
+                )
+            else:
+                event = TeamsMessageSent(
+                    contact=fresh_contact,
+                    content=content,
+                    chat_id=chat_id or "",
+                    attachments=attachments_for_event,
+                )
+            await self._event_broker.publish(topic, event.to_json())
+            self._record_offline_success(
+                offline_reservation,
+                attempted_content=content,
+                receiver_ids=[fresh_contact.get("contact_id") or contact_id],
+                target_metadata=_target_metadata(),
+                history_metadata={
+                    "contact_display_name": _get_contact_display_name(fresh_contact),
+                },
+                provider_response=response,
+                attachments=[attachment_meta] if attachment_meta else None,
+            )
+            return {"status": "ok"}
+
+        return await self._surface_comms_error(
+            "Failed to send Teams message",
+            topic,
+            contact_id=contact_id,
+            medium=medium,
+            offline_reservation=offline_reservation,
+            attempted_content=content,
+            receiver_ids=[contact_id],
+            target_metadata=_target_metadata(),
+            history_metadata=_history_metadata(),
+            attachments=[attachment_meta] if attachment_meta else None,
         )
 
     async def send_unify_message(

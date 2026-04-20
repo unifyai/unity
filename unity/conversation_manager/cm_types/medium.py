@@ -40,6 +40,8 @@ class Medium(StrEnum):
     API_MESSAGE = "api_message"
     DISCORD_MESSAGE = "discord_message"
     DISCORD_CHANNEL_MESSAGE = "discord_channel_message"
+    TEAMS_MESSAGE = "teams_message"
+    TEAMS_CHANNEL_MESSAGE = "teams_channel_message"
 
     @property
     def info(self) -> MediumInfo:
@@ -112,6 +114,16 @@ MEDIUM_REGISTRY: dict[Medium, MediumInfo] = {
     Medium.DISCORD_CHANNEL_MESSAGE: MediumInfo(
         value=Medium.DISCORD_CHANNEL_MESSAGE,
         description="A message in a Discord guild channel, triggered by @mentioning the bot.",
+        mode=Mode.TEXT,
+    ),
+    Medium.TEAMS_MESSAGE: MediumInfo(
+        value=Medium.TEAMS_MESSAGE,
+        description="A message in a Microsoft Teams chat (1:1, group, or meeting chat).",
+        mode=Mode.TEXT,
+    ),
+    Medium.TEAMS_CHANNEL_MESSAGE: MediumInfo(
+        value=Medium.TEAMS_CHANNEL_MESSAGE,
+        description="A message in a Microsoft Teams channel.",
         mode=Mode.TEXT,
     ),
 }

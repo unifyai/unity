@@ -559,6 +559,67 @@ async def send_discord_message(
             return result
 
 
+async def send_teams_message(
+    chat_id: str | None = None,
+    team_id: str | None = None,
+    channel_id: str | None = None,
+    body: str = "",
+    content_type: str = "text",
+    attachments: list[dict] | None = None,
+) -> dict:
+    """Send a Microsoft Teams message via the Communication service.
+
+    Routes to the appropriate endpoint based on the parameters:
+    - Chat (1:1, group, meeting): pass ``chat_id`` → POST /teams/send
+    - Channel: pass ``team_id`` and ``channel_id`` → POST /teams/channel/{team_id}/{channel_id}/send
+
+    Args:
+        chat_id: Teams chat ID (for chat messages).
+        team_id: Teams team ID (for channel messages).
+        channel_id: Teams channel ID (for channel messages).
+        body: The text content to send.
+        content_type: "text" (default) or "html".
+        attachments: Optional list of attachment dicts, each with
+            ``filename`` and ``content_base64`` keys. Communication
+            handles the OneDrive upload.
+
+    Returns:
+        dict with 'success' key and optionally 'message_id'.
+    """
+    from_email = SESSION_DETAILS.assistant.email
+    if not from_email:
+        return {"success": False, "error": "No sender email configured"}
+
+    payload: dict = {
+        "from": from_email,
+        "body": body,
+        "content_type": content_type,
+    }
+    if attachments:
+        payload["attachments"] = attachments
+
+    is_channel = bool(team_id and channel_id)
+    if is_channel:
+        url = f"{SETTINGS.conversation.COMMS_URL}/teams/channel/{team_id}/{channel_id}/send"
+    else:
+        payload["chat_id"] = chat_id
+        url = f"{SETTINGS.conversation.COMMS_URL}/teams/send"
+
+    async with aiohttp.ClientSession() as session:
+        async with session.post(url, headers=headers, json=payload) as response:
+            try:
+                response.raise_for_status()
+            except Exception as e:
+                target = "channel" if is_channel else "chat"
+                LOGGER.error(
+                    f"{ICONS['comms_outbound']} Teams {target} send failed: {e}",
+                )
+                return {"success": False}
+            result = await response.json()
+            result["success"] = True
+            return result
+
+
 async def send_email_via_address(
     to: list[str],
     subject: str,

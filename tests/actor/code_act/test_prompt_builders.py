@@ -129,9 +129,11 @@ def test_code_act_prompt_includes_comms_namespace_and_docstrings():
     assert ".send_whatsapp" in prompt
     assert ".send_discord_message" in prompt
     assert ".send_discord_channel_message" in prompt
+    assert ".send_teams_message" in prompt
     assert "assistant-owned WhatsApp message" in prompt
     assert "assistant-owned Discord direct message" in prompt
     assert "Discord guild channel" in prompt
+    assert "assistant-owned Microsoft Teams message" in prompt
 
 
 @pytest.mark.timeout(30)
