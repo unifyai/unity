@@ -1,5 +1,5 @@
 version = 1
-revision = 2
+revision = 3
 requires-python = ">=3.12"
 resolution-markers = [
     "python_full_version >= '3.14' and sys_platform == 'win32'",
@@ -8798,77 +8798,7 @@ wheels = [
 ]
 
 [[package]]
-name = "unify"
-version = "0.9.10"
-source = { editable = "../unify" }
-dependencies = [
-    { name = "aiohttp" },
-    { name = "requests" },
-    { name = "tqdm" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "aiohttp", specifier = ">=3.12.14" },
-    { name = "requests", specifier = ">=2.32.4" },
-    { name = "tqdm", specifier = ">=4.67.0" },
-]
-
-[package.metadata.requires-dev]
-dev = [
-    { name = "autoflake", specifier = ">=1.6.1" },
-    { name = "black", specifier = "==26.3.1" },
-    { name = "flake8", specifier = ">=4.0.1" },
-    { name = "isort", specifier = ">=5.11.4" },
-    { name = "mypy", specifier = ">=1.1.1" },
-    { name = "opentelemetry-api", specifier = ">=1.20.0" },
-    { name = "opentelemetry-exporter-otlp", specifier = ">=1.20.0" },
-    { name = "opentelemetry-sdk", specifier = ">=1.20.0" },
-    { name = "pre-commit", specifier = ">=3.0.1" },
-    { name = "pytest", specifier = ">=8.3.3" },
-    { name = "pytest-asyncio", specifier = ">=0.24.0" },
-    { name = "pytest-dotenv", specifier = ">=0.5.2" },
-    { name = "pytest-timeout", specifier = ">=2.3.1" },
-    { name = "pytest-xdist", specifier = ">=3.8.0" },
-    { name = "python-dotenv", specifier = ">=1.2.1" },
-    { name = "types-requests" },
-]
-
-[[package]]
-name = "unillm"
-version = "0.1.0"
-source = { editable = "../unillm" }
-dependencies = [
-    { name = "litellm" },
-    { name = "pydantic" },
-    { name = "pydantic-settings" },
-    { name = "unify" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "litellm", specifier = "==1.83.4" },
-    { name = "pydantic", specifier = ">=2.12.5" },
-    { name = "pydantic-settings", specifier = ">=2.12.0" },
-    { name = "unify" },
-]
-
-[package.metadata.requires-dev]
-dev = [
-    { name = "autoflake", specifier = ">=2.3.1" },
-    { name = "black", specifier = "==26.3.1" },
-    { name = "opentelemetry-api", specifier = ">=1.20.0" },
-    { name = "opentelemetry-exporter-otlp", specifier = ">=1.20.0" },
-    { name = "opentelemetry-sdk", specifier = ">=1.20.0" },
-    { name = "pre-commit", specifier = ">=4.0.1" },
-    { name = "pytest", specifier = ">=8.4.2" },
-    { name = "pytest-asyncio", specifier = ">=0.24.0" },
-    { name = "pytest-dotenv", specifier = ">=0.5.2" },
-    { name = "pytest-timeout", specifier = ">=2.3.1" },
-]
-
-[[package]]
-name = "unity"
+name = "unify-agent"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
@@ -8920,8 +8850,8 @@ dependencies = [
     { name = "textual-dev" },
     { name = "tiktoken" },
     { name = "twilio" },
-    { name = "unify" },
-    { name = "unillm" },
+    { name = "unify-llm" },
+    { name = "unify-sdk" },
     { name = "uvicorn", extra = ["standard"] },
     { name = "websockify" },
 ]
@@ -8996,8 +8926,8 @@ requires-dist = [
     { name = "textual-dev", specifier = ">=1.2.0" },
     { name = "tiktoken", specifier = ">=0.11.0" },
     { name = "twilio", specifier = ">=8.0.0" },
-    { name = "unify", editable = "../unify" },
-    { name = "unillm", editable = "../unillm" },
+    { name = "unify-llm", editable = "../unillm" },
+    { name = "unify-sdk", editable = "../unify" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.24.0" },
     { name = "websockify", specifier = ">=0.13.0" },
 ]
@@ -9020,6 +8950,76 @@ dev = [
     { name = "pytest-xdist", specifier = ">=3.6.1" },
     { name = "rich", specifier = ">=13.9.4" },
     { name = "viztracer", specifier = ">=1.0.4" },
+]
+
+[[package]]
+name = "unify-llm"
+version = "0.1.0"
+source = { editable = "../unillm" }
+dependencies = [
+    { name = "litellm" },
+    { name = "pydantic" },
+    { name = "pydantic-settings" },
+    { name = "unify-sdk" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "litellm", specifier = "==1.83.4" },
+    { name = "pydantic", specifier = ">=2.12.5" },
+    { name = "pydantic-settings", specifier = ">=2.12.0" },
+    { name = "unify-sdk", editable = "../unify" },
+]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "autoflake", specifier = ">=2.3.1" },
+    { name = "black", specifier = "==26.3.1" },
+    { name = "opentelemetry-api", specifier = ">=1.20.0" },
+    { name = "opentelemetry-exporter-otlp", specifier = ">=1.20.0" },
+    { name = "opentelemetry-sdk", specifier = ">=1.20.0" },
+    { name = "pre-commit", specifier = ">=4.0.1" },
+    { name = "pytest", specifier = ">=8.4.2" },
+    { name = "pytest-asyncio", specifier = ">=0.24.0" },
+    { name = "pytest-dotenv", specifier = ">=0.5.2" },
+    { name = "pytest-timeout", specifier = ">=2.3.1" },
+]
+
+[[package]]
+name = "unify-sdk"
+version = "0.1.0"
+source = { editable = "../unify" }
+dependencies = [
+    { name = "aiohttp" },
+    { name = "requests" },
+    { name = "tqdm" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "aiohttp", specifier = ">=3.12.14" },
+    { name = "requests", specifier = ">=2.32.4" },
+    { name = "tqdm", specifier = ">=4.67.0" },
+]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "autoflake", specifier = ">=1.6.1" },
+    { name = "black", specifier = "==26.3.1" },
+    { name = "flake8", specifier = ">=4.0.1" },
+    { name = "isort", specifier = ">=5.11.4" },
+    { name = "mypy", specifier = ">=1.1.1" },
+    { name = "opentelemetry-api", specifier = ">=1.20.0" },
+    { name = "opentelemetry-exporter-otlp", specifier = ">=1.20.0" },
+    { name = "opentelemetry-sdk", specifier = ">=1.20.0" },
+    { name = "pre-commit", specifier = ">=3.0.1" },
+    { name = "pytest", specifier = ">=8.3.3" },
+    { name = "pytest-asyncio", specifier = ">=0.24.0" },
+    { name = "pytest-dotenv", specifier = ">=0.5.2" },
+    { name = "pytest-timeout", specifier = ">=2.3.1" },
+    { name = "pytest-xdist", specifier = ">=3.8.0" },
+    { name = "python-dotenv", specifier = ">=1.2.1" },
+    { name = "types-requests" },
 ]
 
 [[package]]
