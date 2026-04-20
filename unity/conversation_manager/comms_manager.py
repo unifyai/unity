@@ -25,7 +25,9 @@ from __future__ import annotations
 
 import asyncio
 from functools import partial
+import html
 import json
+import re
 import threading
 import time
 from typing import TYPE_CHECKING, Any
@@ -116,6 +118,35 @@ def _coerce_int(value: Any) -> int | None:
         return int(value)
     except (TypeError, ValueError):
         return None
+
+
+_TEAMS_BR_RE = re.compile(r"<br\s*/?>", re.IGNORECASE)
+_TEAMS_BLOCK_END_RE = re.compile(r"</(p|div|li|h[1-6]|tr)>", re.IGNORECASE)
+_TEAMS_TAG_RE = re.compile(r"<[^>]+>")
+_TEAMS_INLINE_WS_RE = re.compile(r"[ \t]+")
+
+
+def _teams_html_to_text(raw: str) -> str:
+    """Convert a Teams HTML message body into plain text.
+
+    Microsoft Graph returns Teams chat and channel message bodies as HTML
+    whenever the user authored them in the Teams UI (e.g. ``<p>hi</p>``).
+    Storing the raw markup in transcripts is noisy and bloats downstream
+    LLM prompts, so we normalize to plain text at ingress:
+
+    - ``<br>`` and block-closing tags (``</p>``, ``</div>`` etc.) become newlines
+    - all remaining tags are dropped
+    - HTML entities (``&amp;``, ``&nbsp;`` etc.) are unescaped
+    - inline whitespace is collapsed; leading/trailing empty lines stripped
+    """
+    if not raw:
+        return ""
+    s = _TEAMS_BR_RE.sub("\n", raw)
+    s = _TEAMS_BLOCK_END_RE.sub("\n", s)
+    s = _TEAMS_TAG_RE.sub("", s)
+    s = html.unescape(s)
+    lines = [_TEAMS_INLINE_WS_RE.sub(" ", line).strip() for line in s.splitlines()]
+    return "\n".join(line for line in lines).strip()
 
 
 def _task_due_event_from_payload(
@@ -572,6 +603,12 @@ class CommsManager:
                 )
 
                 content = event["body"]
+
+                if (
+                    thread in ("teams_chat", "teams_channel")
+                    and event.get("content_type") == "html"
+                ):
+                    content = _teams_html_to_text(content)
 
                 if thread == "email":
                     content = "Subject: " + event["subject"] + "\n\n" + event["body"]
