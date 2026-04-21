@@ -762,6 +762,9 @@ def fm_process_plan(
     reporter=None,
     enable_progress: bool = False,
     verbosity: str = "low",
+    storage_client=None,
+    artifact_store=None,
+    job_id: str = "",
 ):
     """Process a pointer-only ``IngestPlan`` through the FM ingest pipeline.
 
@@ -892,7 +895,23 @@ def fm_process_plan(
         work_items: List[ArtifactWorkItem] = []
         do_tables = bool(config.ingest.table_ingest and plan.tables_meta)
 
+        from unity.common.pipeline.types import CONTENT_CHECKPOINT_ID
+
         if plan.content_rows_handle is not None:
+            _content_skip = 0
+            if artifact_store and job_id:
+                _content_ckpt = artifact_store.read_checkpoint(
+                    job_id,
+                    CONTENT_CHECKPOINT_ID,
+                )
+                if _content_ckpt:
+                    _content_skip = _content_ckpt.rows_committed
+                    logger.info(
+                        "[fm_process_plan] Resuming content from checkpoint: "
+                        "%d rows already committed",
+                        _content_skip,
+                    )
+
             work_items.append(
                 ArtifactWorkItem(
                     kind="content",
@@ -904,6 +923,8 @@ def fm_process_plan(
                         "content_rows": None,
                         "content_rows_handle": plan.content_rows_handle,
                         "config": config,
+                        "storage_client": storage_client,
+                        "skip_rows": _content_skip,
                     },
                     row_count=content_row_count,
                     stage_id=instrumentation.make_stage_id(
@@ -933,6 +954,19 @@ def fm_process_plan(
                 if row_count is None:
                     row_count = getattr(table_input, "row_count", None) or 0
                 table_label = str(meta.label or table_id or "table")
+
+                _table_skip = 0
+                if artifact_store and job_id and table_id:
+                    _table_ckpt = artifact_store.read_checkpoint(job_id, table_id)
+                    if _table_ckpt:
+                        _table_skip = _table_ckpt.rows_committed
+                        logger.info(
+                            "[fm_process_plan] Resuming table=%s from checkpoint: "
+                            "%d rows already committed",
+                            table_id,
+                            _table_skip,
+                        )
+
                 work_items.append(
                     ArtifactWorkItem(
                         kind="table",
@@ -946,6 +980,8 @@ def fm_process_plan(
                             "table_input": table_input,
                             "columns": columns,
                             "config": config,
+                            "storage_client": storage_client,
+                            "skip_rows": _table_skip,
                         },
                         columns=columns,
                         row_count=int(row_count or 0),
@@ -967,9 +1003,33 @@ def fm_process_plan(
                 )
 
         def _fm_ingest_fn(item: ArtifactWorkItem) -> dict:
+            payload = dict(item.payload)
+            if artifact_store and job_id:
+                _art_id = (
+                    CONTENT_CHECKPOINT_ID
+                    if item.kind == "content"
+                    else (item.table_id or item.label or "table")
+                )
+                _ckpt_skip = payload.get("skip_rows", 0)
+                _ckpt_initial = 0
+                if _ckpt_skip:
+                    _prev = artifact_store.read_checkpoint(job_id, _art_id)
+                    _ckpt_initial = _prev.chunks_committed if _prev else 0
+
+                from unity_deploy.infra.workers.ingest_worker import (
+                    _make_checkpoint_callback,
+                )
+
+                payload["on_task_complete"] = _make_checkpoint_callback(
+                    artifact_store,
+                    job_id,
+                    _art_id,
+                    initial_rows=_ckpt_skip,
+                    initial_chunks=_ckpt_initial,
+                )
             if item.kind == "content":
-                return execute_ingest_content(**item.payload)
-            return execute_ingest_table(**item.payload)
+                return execute_ingest_content(**payload)
+            return execute_ingest_table(**payload)
 
         max_workers = getattr(config.execution, "max_embed_workers", 8)
         artifact_results = ingest_artifacts(

@@ -575,6 +575,8 @@ def run_ingest(
     post_ingest: Optional[PostIngestConfig] = None,
     on_task_complete=None,
     coerce_types: bool = True,
+    storage_client=None,
+    skip_rows: int = 0,
 ) -> IngestResult:
     """Execute a full ingest pipeline: create table, insert rows, optionally embed.
 
@@ -631,6 +633,8 @@ def run_ingest(
             post_ingest=post_ingest,
             on_task_complete=on_task_complete,
             coerce_types=coerce_types,
+            storage_client=storage_client,
+            skip_rows=skip_rows,
         )
 
     return _run_ingest_materialised(
@@ -799,6 +803,8 @@ def _run_ingest_streaming(
     post_ingest: Optional[PostIngestConfig] = None,
     on_task_complete=None,
     coerce_types: bool = True,
+    storage_client=None,
+    skip_rows: int = 0,
 ) -> IngestResult:
     """Ingest from a typed streaming handle in bounded-memory chunks.
 
@@ -819,7 +825,11 @@ def _run_ingest_streaming(
     )
     from unity.common.pipeline.row_streaming import iter_table_input_rows
 
-    row_iter = iter_table_input_rows(handle)
+    row_iter = iter_table_input_rows(
+        handle,
+        storage_client=storage_client,
+        skip_rows=skip_rows,
+    )
 
     # Phase 1: drain sample for type inference
     type_map: Optional[TypeMap] = None

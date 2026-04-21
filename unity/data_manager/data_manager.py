@@ -640,6 +640,8 @@ class DataManager(BaseDataManager):
         post_ingest: Optional["PostIngestConfig"] = None,
         on_task_complete=None,
         coerce_types: bool = True,
+        storage_client=None,
+        skip_rows: int = 0,
     ) -> "IngestResult":
         resolved = self._resolve_context(context)
         unique_keys, auto_counting = self._resolve_unique_keys_and_auto_counting(
@@ -665,6 +667,8 @@ class DataManager(BaseDataManager):
             post_ingest=post_ingest,
             on_task_complete=on_task_complete,
             coerce_types=coerce_types,
+            storage_client=storage_client,
+            skip_rows=skip_rows,
         )
 
     # ──────────────────────────────────────────────────────────────────────────

@@ -2268,6 +2268,8 @@ class BaseDataManager(BaseStateManager):
         post_ingest: Optional["PostIngestConfig"] = None,
         on_task_complete: Optional[Callable] = None,
         coerce_types: bool = True,
+        storage_client: Optional[Any] = None,
+        skip_rows: int = 0,
     ) -> "IngestResult":
         """
         Create a table, insert rows, and optionally embed -- in one call.

@@ -212,6 +212,7 @@ def ingest_content_batch(
     infer_untyped_fields: bool = False,
     add_to_all_context: bool = False,
     execution: Optional[IngestExecutionConfig] = None,
+    on_task_complete=None,
 ) -> IngestResult:
     """Ingest content rows into a context via ``DataManager.ingest()``.
 
@@ -271,6 +272,7 @@ def ingest_content_batch(
             infer_untyped_fields=infer_untyped_fields,
             add_to_all_context=add_to_all_context,
             execution=execution,
+            on_task_complete=on_task_complete,
         )
     except Exception as e:
         logger.error(f"Failed to ingest content batch: {e}")
