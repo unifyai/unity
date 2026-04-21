@@ -339,6 +339,52 @@ def _get_or_create_unknown_contact(
             return None
 
 
+def _resolve_teams_participants(
+    *,
+    raw_participants: list[dict],
+    sender_email: str,
+    sender_contact_id: int | None,
+    medium: str,
+    unknown_contact_resolver,
+) -> list[int]:
+    """Collapse the adapter-supplied participants payload into contact IDs.
+
+    Each entry is shaped as ``{"contact_id": int | None, "email": str | None,
+    "display_name": str, "aad_user_id": str | None}``. Pre-resolved entries
+    (``contact_id`` set) are used directly. Unresolved entries with a real
+    email are finished via ``unknown_contact_resolver`` — the single
+    canonical path for minting external contacts (gated by
+    ``BLACKLIST_CHECKS_ENABLED``). Entries without a usable email (or with
+    a synthetic ``@teams`` placeholder) are dropped rather than pollute the
+    contact store.
+
+    The sender's contact_id is seeded into the set because the ingress
+    caller has already resolved them via the sender-specific branch;
+    entries matching ``sender_email`` are skipped to avoid a redundant
+    resolver call.
+    """
+    participant_contact_ids: set[int] = set()
+    if sender_contact_id is not None:
+        participant_contact_ids.add(sender_contact_id)
+
+    for entry in raw_participants:
+        entry_email = (entry.get("email") or "").strip()
+        if entry_email and sender_email and entry_email == sender_email:
+            continue
+        entry_cid = entry.get("contact_id")
+        if entry_cid is not None:
+            participant_contact_ids.add(entry_cid)
+            continue
+        if not entry_email or entry_email.endswith("@teams"):
+            continue
+        resolved = unknown_contact_resolver(medium, entry_email)
+        resolved_cid = (resolved or {}).get("contact_id")
+        if resolved_cid is not None:
+            participant_contact_ids.add(resolved_cid)
+
+    return sorted(participant_contact_ids)
+
+
 class CommsManager:
     """
     Handles external communications via GCP PubSub.
@@ -1024,6 +1070,21 @@ class CommsManager:
                         ack_now()
                         return
 
+                    if event.get("participants_incomplete"):
+                        LOGGER.warning(
+                            f"{DEFAULT_ICON} Teams participants incomplete "
+                            f"(reason={event.get('participants_reason', 'ok')}, "
+                            f"thread={thread})",
+                        )
+
+                    participants_list = _resolve_teams_participants(
+                        raw_participants=event.get("participants") or [],
+                        sender_email=sender_email,
+                        sender_contact_id=contact.get("contact_id"),
+                        medium=medium_for_blacklist,
+                        unknown_contact_resolver=_get_or_create_unknown_contact,
+                    )
+
                     if is_channel:
                         await publish(
                             "app:comms:teams_channel_message",
@@ -1038,6 +1099,7 @@ class CommsManager:
                                 thread_id=event.get("thread_id", ""),
                                 post_subject=event.get("post_subject"),
                                 attachments=attachments,
+                                participants=participants_list,
                             ).to_json(),
                         )
                     else:
@@ -1051,6 +1113,7 @@ class CommsManager:
                                 chat_type=event.get("chat_type"),
                                 chat_topic=event.get("chat_topic"),
                                 attachments=attachments,
+                                participants=participants_list,
                             ).to_json(),
                         )
 

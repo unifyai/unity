@@ -283,7 +283,7 @@ class ConversationManager(metaclass=SingletonABCMeta):
     @property
     def assistant_has_teams(self) -> bool:
         """True when the assistant's email is backed by Microsoft (MS365)."""
-        return self.assistant_email_provider == "microsoft"
+        return self.assistant_email_provider == "microsoft_365"
 
     @property
     def session_logger(self) -> SessionLogger:

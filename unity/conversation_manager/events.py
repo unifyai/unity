@@ -485,6 +485,7 @@ class TeamsMessageReceived(Event):
     chat_type: str | None = None
     chat_topic: str | None = None
     attachments: list[dict] = field(default_factory=list)
+    participants: list[int] = field(default_factory=list)
 
 
 @dataclass
@@ -504,6 +505,7 @@ class TeamsChannelMessageReceived(Event):
     thread_id: str = ""
     post_subject: str | None = None
     attachments: list[dict] = field(default_factory=list)
+    participants: list[int] = field(default_factory=list)
 
 
 @dataclass
@@ -517,6 +519,7 @@ class TeamsMessageSent(Event):
     content: str
     chat_id: str = ""
     attachments: list[dict] | None = None
+    participants: list[int] = field(default_factory=list)
 
 
 @dataclass
@@ -531,6 +534,7 @@ class TeamsChannelMessageSent(Event):
     channel_id: str = ""
     team_id: str = ""
     attachments: list[dict] | None = None
+    participants: list[int] = field(default_factory=list)
 
 
 @dataclass

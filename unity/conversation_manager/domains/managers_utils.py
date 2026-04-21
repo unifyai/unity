@@ -901,6 +901,30 @@ async def log_message(
                 resolved_ids.add(0)
                 receiver_ids = sorted(resolved_ids)
 
+    # For Teams, use the conversation roster (already resolved to contact
+    # IDs upstream by comms_manager from the adapter-supplied participants
+    # list) so receiver_ids reflects everyone in the chat/channel.
+    if isinstance(
+        event,
+        (
+            TeamsMessageReceived,
+            TeamsChannelMessageReceived,
+            TeamsMessageSent,
+            TeamsChannelMessageSent,
+        ),
+    ):
+        resolved_ids: set[int] = set(getattr(event, "participants", []) or [])
+        if resolved_ids:
+            if role == "Assistant":
+                resolved_ids.discard(0)
+                if resolved_ids:
+                    receiver_ids = sorted(resolved_ids)
+            else:
+                resolved_ids.add(0)
+                resolved_ids.discard(sender_id)
+                if resolved_ids:
+                    receiver_ids = sorted(resolved_ids)
+
     exchange_id = getattr(event, "exchange_id", UNASSIGNED)
 
     # For pre-hire messages, reuse the cached exchange_id if available

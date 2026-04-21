@@ -138,7 +138,9 @@ class CommsPrimitives:
     def _assistant_has_teams(self) -> bool:
         if self._cm is not None:
             return bool(getattr(self._cm, "assistant_has_teams", False))
-        return getattr(SESSION_DETAILS.assistant, "email_provider", "") == "microsoft"
+        return (
+            getattr(SESSION_DETAILS.assistant, "email_provider", "") == "microsoft_365"
+        )
 
     def _contact_manager(self):
         if (
@@ -1493,20 +1495,29 @@ class CommsPrimitives:
                 or {}
             )
             attachments_for_event = [attachment_meta] if attachment_meta else None
+            fresh_contact_id = fresh_contact.get("contact_id")
             if is_channel:
+                # Channel sends: unity has no local roster; let the downstream
+                # receiver_ids derivation fall back to its default using the
+                # message's target contact_id.
                 event = TeamsChannelMessageSent(
                     contact=fresh_contact,
                     content=content,
                     channel_id=channel_id or "",
                     team_id=team_id or "",
                     attachments=attachments_for_event,
+                    participants=[],
                 )
             else:
+                participants_list: list[int] = [0]
+                if fresh_contact_id is not None and fresh_contact_id != 0:
+                    participants_list.append(fresh_contact_id)
                 event = TeamsMessageSent(
                     contact=fresh_contact,
                     content=content,
                     chat_id=chat_id or "",
                     attachments=attachments_for_event,
+                    participants=sorted(set(participants_list)),
                 )
             await self._event_broker.publish(topic, event.to_json())
             self._record_offline_success(
