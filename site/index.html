@@ -48,15 +48,13 @@
               <span class="eyebrow-tick">]</span>
             </p>
             <h1 class="hero-title">
-              <em>Steerable</em> AI teammates.<br />
-              Built to coordinate.
+              <em>Steerable</em> AI teammates.
             </h1>
             <p class="hero-lede">
-              unity-agent is Unify's persistent AI teammate, open-sourced. You
-              host it. It plans in real Python over typed state, steers live
-              work without restarts, and coordinates with other teammates over
-              shared typed state rather than swapping summaries between isolated
-              threads.
+              unity-agent is Unify's persistent AI teammate, open-sourced. It
+              runs on your machine, plans in real Python over typed state,
+              steers live work without restarting, and coordinates with other
+              teammates over shared typed state.
             </p>
             <div class="hero-ctas">
               <a
@@ -70,10 +68,8 @@
             </div>
             <p class="hero-quote">
               Every operation returns a live handle — ask, interject, pause, or
-              stop without restarting.
-              <span class="quote-attr"
-                >SteerableToolHandle · the universal return type</span
-              >
+              stop it mid-run.
+              <span class="quote-attr">SteerableToolHandle</span>
             </p>
           </div>
 
@@ -115,25 +111,22 @@
           </div>
           <div class="strip-item">
             <span class="strip-num">02</span>
-            <span>Memory compounds between turns.</span>
+            <span>Memory consolidates between turns.</span>
           </div>
           <div class="strip-item">
             <span class="strip-num">03</span>
-            <span>Steer live work. No restarts.</span>
+            <span>Steerable mid-run.</span>
           </div>
           <div class="strip-item">
             <span class="strip-num">04</span>
-            <span>Shared state, opt-in.</span>
+            <span>Hive mind, opt-in.</span>
           </div>
         </section>
 
         <!-- WHAT IT IS -->
         <section class="section" id="what">
           <div class="section-head">
-            <p class="kicker">Capabilities</p>
-            <h2 class="section-title">
-              <span class="serif-accent">Six</span> capabilities.
-            </h2>
+            <p class="kicker">Features</p>
           </div>
 
           <div class="feature-grid">
@@ -143,9 +136,8 @@
                 <h3>One identity across channels</h3>
               </header>
               <p>
-                SMS, email, phone calls, meetings, Slack, WhatsApp — one
-                identity, one memory, one task queue across every channel. A
-                conversation on Monday's call is context for Tuesday's email.
+                SMS, email, phone calls, meetings, Slack, WhatsApp. One
+                identity, one memory, one task queue across every channel.
               </p>
               <code class="feature-code">voice · sms · email · slack · meet</code>
             </article>
@@ -159,8 +151,7 @@
                 Every 50 messages, the MemoryManager runs a background
                 extraction pass — distilling contacts, tasks, preferences, and
                 policies into typed tables. Reusable Python functions and
-                guidance procedures are stored alongside. Knowledge grows
-                without the context window growing with it.
+                guidance procedures are stored alongside.
               </p>
               <code class="feature-code">memory · functions · guidance</code>
             </article>
@@ -181,12 +172,12 @@
             <article class="feature">
               <header>
                 <span class="feature-index">04</span>
-                <h3>Steerable all the way down</h3>
+                <h3>Steerable nested execution</h3>
               </header>
               <p>
-                Every operation returns a live handle. Ask it for status.
-                Interject mid-run. Pause a branch. Stop one task without
-                affecting the others. No restarts, no lost context.
+                Every operation returns a live handle. Ask for status,
+                interject, pause a branch, or stop one task without affecting
+                the others.
               </p>
               <code class="feature-code"
                 >handle.interject("also check trains")</code
@@ -199,10 +190,9 @@
                 <h3>Code plans over typed primitives</h3>
               </header>
               <p>
-                CodeActActor writes real Python over typed
+                CodeActActor writes Python over typed
                 <code>primitives.*</code> in a sandboxed session. One program
-                per turn, with variables, loops, and composition — rather than
-                a sequence of individual JSON tool-call turns.
+                per turn, with variables, loops, and composition.
               </p>
               <code class="feature-code"
                 >for c in primitives.contacts.ask(...)</code
@@ -212,7 +202,7 @@
             <article class="feature">
               <header>
                 <span class="feature-index">06</span>
-                <h3>Shared state, opt-in</h3>
+                <h3>Hive mind, opt-in</h3>
               </header>
               <p>
                 Typed state managers can share state across assistants —
@@ -227,14 +217,10 @@
         <!-- INSTALL -->
         <section class="section" id="install">
           <div class="section-head">
-            <p class="kicker">Try it locally</p>
-            <h2 class="section-title">
-              Clone. Sync. <span class="serif-accent">Run locally.</span>
-            </h2>
+            <p class="kicker">Install</p>
             <p class="section-sub">
-              The open-source path runs fully on your machine. About five
-              minutes from clone to a working sandbox against simulated
-              backends.
+              Runs locally against simulated backends. No platform setup
+              required for the sandbox.
             </p>
           </div>
 
@@ -264,18 +250,15 @@ python -m sandboxes.conversation_manager.sandbox \
 
           <p class="install-note">
             At the prompt, select <strong>option 2</strong> — CodeAct +
-            Simulated Managers. This runs the full architecture with simulated
-            backends; the recommended starting configuration.
+            Simulated Managers. This runs the full architecture against
+            simulated backends.
           </p>
         </section>
 
         <!-- ARCHITECTURE -->
         <section class="section" id="architecture">
           <div class="section-head">
-            <p class="kicker">How it runs</p>
-            <h2 class="section-title">
-              The architecture, <span class="serif-accent">top to bottom.</span>
-            </h2>
+            <p class="kicker">Architecture</p>
           </div>
 
           <div class="arch-grid">
@@ -339,10 +322,9 @@ python -m sandboxes.conversation_manager.sandbox \
               <div class="arch-card">
                 <h3>Shared typed state</h3>
                 <p>
-                  Managers can selectively share state across assistants. Typed
-                  boundaries make cross-assistant coordination explicit rather
-                  than ambient. Opt-in per manager, scoped by workspace,
-                  auditable at the boundary.
+                  Managers can selectively share state across assistants.
+                  Cross-assistant coordination is opt-in per manager, scoped by
+                  workspace, and auditable at the boundary.
                 </p>
               </div>
             </div>
@@ -353,14 +335,10 @@ python -m sandboxes.conversation_manager.sandbox \
         <section class="section closer">
           <div class="closer-grid">
             <div>
-              <p class="kicker">Dig deeper</p>
-              <h2 class="section-title">
-                <span class="serif-accent">Read the architecture.</span><br />
-                Then read the code.
-              </h2>
+              <p class="kicker">Further reading</p>
               <p class="section-sub">
-                ARCHITECTURE.md is the technical deep-dive. The repo itself is
-                the source of truth for everything on this page.
+                ARCHITECTURE.md contains the full technical walkthrough. The
+                repo is the source of truth for everything above.
               </p>
               <div class="hero-ctas">
                 <a
