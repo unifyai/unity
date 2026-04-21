@@ -159,7 +159,12 @@ class FileManager(BaseFileManager):
             If None, a DataManager will be lazily instantiated when needed.
         """
         super().__init__()
-        self.include_in_multi_assistant_table = True
+        # TODO: Re-enable once the backend stops incrementing auto_counting
+        # counters on add_logs_to_context reference writes to All/ aggregation
+        # contexts.  With this enabled, file_id gets bumped by the aggregation
+        # writes, causing non-sequential IDs and mismatches between FileRecords
+        # and Files/<alias>/<file_id>/... sub-context paths.
+        self.include_in_multi_assistant_table = False
         if adapter is None:
             from unity.file_manager.filesystem_adapters.local_adapter import (
                 LocalFileSystemAdapter,
