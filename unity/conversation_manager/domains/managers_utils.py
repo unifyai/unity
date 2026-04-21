@@ -304,6 +304,8 @@ async def hydrate_global_thread(cm: "ConversationManager") -> None:
                     role="user",
                     timestamp=ts,
                     attachments=getattr(cm_event, "attachments", None),
+                    chat_id=getattr(cm_event, "chat_id", None),
+                    message_id=getattr(cm_event, "message_id", None),
                 )
             case "TeamsMessageSent":
                 entry = cm.contact_index.build_message(
@@ -314,6 +316,7 @@ async def hydrate_global_thread(cm: "ConversationManager") -> None:
                     role="assistant",
                     timestamp=ts,
                     attachments=getattr(cm_event, "attachments", None),
+                    chat_id=getattr(cm_event, "chat_id", None),
                 )
             case "TeamsChannelMessageReceived":
                 entry = cm.contact_index.build_message(
@@ -324,6 +327,10 @@ async def hydrate_global_thread(cm: "ConversationManager") -> None:
                     role="user",
                     timestamp=ts,
                     attachments=getattr(cm_event, "attachments", None),
+                    team_id=getattr(cm_event, "team_id", None),
+                    channel_id=getattr(cm_event, "channel_id", None),
+                    thread_id=getattr(cm_event, "thread_id", None),
+                    message_id=getattr(cm_event, "message_id", None),
                 )
             case "TeamsChannelMessageSent":
                 entry = cm.contact_index.build_message(
@@ -334,6 +341,8 @@ async def hydrate_global_thread(cm: "ConversationManager") -> None:
                     role="assistant",
                     timestamp=ts,
                     attachments=getattr(cm_event, "attachments", None),
+                    team_id=getattr(cm_event, "team_id", None),
+                    channel_id=getattr(cm_event, "channel_id", None),
                 )
 
             # --- Email ---

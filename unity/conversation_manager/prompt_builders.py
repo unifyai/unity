@@ -231,7 +231,12 @@ def _build_comms_tool_listing(
         )
     if assistant_has_teams:
         lines.append(
-            "- `send_teams_message`: Send a Teams message to a contact (use when the inbound thread is `teams_message` or `teams_channel_message`)",
+            "- `send_teams_message`: Send a Teams message to a contact. "
+            "For a 1:1/group chat reply, pass the `chat_id` shown on the most "
+            "recent inbound Teams message in that thread (rendered as "
+            '`[chat_id="…"]` on the message line). For a channel reply, pass '
+            "`team_id` and `channel_id` (and `thread_id` when replying in an "
+            "existing thread) from the inbound channel message's annotation.",
         )
     lines.append(
         "- `send_api_response`: Reply to a programmatic API message (use when the inbound medium is `api_message`). Supports optional `attachment_filepaths` and `tags`.",
@@ -720,10 +725,10 @@ I do NOT need to poll or check on actions - the system will wake me when somethi
         inline_detail_examples.append(
             '`send_discord_message(contact_id=5, content="Hi", discord_id="123456789")`',
         )
-    if assistant_has_teams:
-        inline_detail_examples.append(
-            '`send_teams_message(contact_id=5, content="Hi", chat_id="19:abc@thread.v2")`',
-        )
+    # Note: send_teams_message's `chat_id` / `team_id` / `channel_id` / `thread_id`
+    # are NOT contact-level details — they are per-thread identifiers surfaced on
+    # each inbound Teams message (see the tool description). They must not be
+    # listed here under the inline-contact-detail guidance.
     inline_detail_line = ""
     if inline_detail_examples:
         examples_str = " or ".join(inline_detail_examples)
