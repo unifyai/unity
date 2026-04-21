@@ -25,6 +25,7 @@ __all__ = [
     "DeploymentObservabilityRefs",
     "DeploymentQueuePayload",
     "DeploymentRunMode",
+    "DispatchManifest",
     "StageReporter",
 ]
 
@@ -129,6 +130,7 @@ class DeploymentIngestionJob(BaseModel):
     """Tracked execution record for one deployment bundle ingest."""
 
     job_id: str = Field(default_factory=lambda: uuid4().hex)
+    dispatch_id: str = ""
     bundle_ref: DeploymentBundleRef
     run_mode: DeploymentRunMode
     execution_target: DeploymentExecutionTarget = "local"
@@ -146,6 +148,24 @@ class DeploymentIngestionJob(BaseModel):
     observability_refs: DeploymentObservabilityRefs = Field(
         default_factory=DeploymentObservabilityRefs,
     )
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class DispatchManifest(BaseModel):
+    """Batch-level index linking all jobs spawned by a single dispatch invocation.
+
+    Written to ``dispatches/<dispatch_id>/manifest.json`` in GCS by
+    both ``dispatch_pipeline.py`` and ``pipeline_control submit``.
+    The ``list`` CLI scans these manifests to enumerate recent dispatches.
+    """
+
+    dispatch_id: str
+    created_at: str = Field(default_factory=utc_now_iso)
+    source: Literal["dispatch_pipeline", "pipeline_control"] = "dispatch_pipeline"
+    mode: str = ""
+    config_path: str = ""
+    job_ids: list[str] = Field(default_factory=list)
+    total_files: int = 0
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 

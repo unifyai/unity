@@ -91,7 +91,7 @@ def publish_parse_request(
     source_gs_uri: Optional[str] = None,
     blob_key: Optional[str] = None,
     attachment_callback: Optional[AttachmentCallback] = None,
-    deployment_id: str = "",
+    dispatch_id: str = "",
     job_id: Optional[str] = None,
     pubsub_attributes: Optional[dict[str, str]] = None,
     storage_client: Any | None = None,
@@ -134,7 +134,7 @@ def publish_parse_request(
 
     parse_msg = ParseRequested(
         job_id=resolved_job_id,
-        deployment_id=deployment_id,
+        dispatch_id=dispatch_id,
         file_paths=[gs_uri],
         attachment_callback=attachment_callback,
         ingestion_mode=ingestion_mode,
