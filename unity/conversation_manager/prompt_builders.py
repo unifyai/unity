@@ -231,12 +231,27 @@ def _build_comms_tool_listing(
         )
     if assistant_has_teams:
         lines.append(
-            "- `send_teams_message`: Send a Teams message to a contact. "
-            "For a 1:1/group chat reply, pass the `chat_id` shown on the most "
-            "recent inbound Teams message in that thread (rendered as "
-            '`[chat_id="…"]` on the message line). For a channel reply, pass '
-            "`team_id` and `channel_id` (and `thread_id` when replying in an "
-            "existing thread) from the inbound channel message's annotation.",
+            "- `send_teams_message`: Send a Teams message. Three mutually "
+            "exclusive modes: "
+            "(1) reply in an existing 1:1/group chat — pass the `chat_id` "
+            "shown on the most recent inbound Teams message in that thread "
+            '(rendered as `[chat_id="…"]` on the message line); '
+            "(2) post in a channel — pass `team_id` and `channel_id` (and "
+            "`thread_id` when replying in an existing thread) from the "
+            "inbound channel message's annotation; "
+            "(3) start a new chat — omit chat_id/team_id/channel_id and pass "
+            "one or more recipients via `contact_id` (list form). One "
+            "recipient creates a 1:1 DM (dedupes to the same chat on repeat); "
+            "two or more recipients create a group chat and accept an "
+            "optional `chat_topic`.",
+        )
+        lines.append(
+            "- `create_teams_channel`: Create a new channel inside an "
+            "existing Teams team. Use this when the user wants a dedicated "
+            "channel (not just a chat). After creation, use "
+            "`send_teams_message` with the returned `team_id`/`channel_id` "
+            "to post into it. `private` and `shared` channels require "
+            "`owner_contact_ids`.",
         )
     lines.append(
         "- `send_api_response`: Reply to a programmatic API message (use when the inbound medium is `api_message`). Supports optional `attachment_filepaths` and `tags`.",
@@ -702,10 +717,9 @@ I do NOT need to poll or check on actions - the system will wake me when somethi
             "send_discord_message",
         )
     if assistant_has_teams:
-        available_tool_names.insert(
-            available_tool_names.index("send_unify_message"),
-            "send_teams_message",
-        )
+        idx = available_tool_names.index("send_unify_message")
+        available_tool_names.insert(idx, "send_teams_message")
+        available_tool_names.insert(idx + 1, "create_teams_channel")
     comms_tool_names = ", ".join(available_tool_names)
 
     inline_detail_examples: list[str] = []
@@ -725,10 +739,17 @@ I do NOT need to poll or check on actions - the system will wake me when somethi
         inline_detail_examples.append(
             '`send_discord_message(contact_id=5, content="Hi", discord_id="123456789")`',
         )
+    if assistant_has_teams:
+        inline_detail_examples.append(
+            '`send_teams_message(contact_id=[{{"contact_id": 5, "email_address": "alice@example.com"}}], content="Hi")`',
+        )
     # Note: send_teams_message's `chat_id` / `team_id` / `channel_id` / `thread_id`
     # are NOT contact-level details — they are per-thread identifiers surfaced on
     # each inbound Teams message (see the tool description). They must not be
-    # listed here under the inline-contact-detail guidance.
+    # listed here under the inline-contact-detail guidance. The inline-email
+    # example above applies only when starting a **new** Teams chat (find-or-
+    # create mode), which uses the same `{{contact_id, email_address}}` shape
+    # as `send_email`.
     inline_detail_line = ""
     if inline_detail_examples:
         examples_str = " or ".join(inline_detail_examples)

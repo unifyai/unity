@@ -643,6 +643,155 @@ async def send_teams_message(
         return {"success": False, "error": error_msg}
 
 
+async def create_teams_chat(
+    chat_type: str,
+    member_emails: list[str],
+    topic: str | None = None,
+) -> dict:
+    """Create (or return the existing dedup'd) Microsoft Teams chat.
+
+    POSTs to the Communication ``/teams/chats`` endpoint which wraps Graph
+    ``POST /chats``. Graph dedupes ``oneOnOne`` chats with the same member
+    pair, so repeat calls return the same ``chat_id``.
+
+    Args:
+        chat_type: ``"oneOnOne"`` for a 1:1 DM or ``"group"`` for a group chat.
+        member_emails: Participant UPNs (emails) excluding the assistant
+            sender — the server adds the sender implicitly.
+        topic: Optional topic for ``"group"`` chats; rejected server-side
+            for ``"oneOnOne"``.
+
+    Returns:
+        dict with ``success`` bool and, on success, ``chat_id`` / ``chat_type``.
+    """
+    from_email = SESSION_DETAILS.assistant.email
+    if not from_email:
+        return {"success": False, "error": "No sender email configured"}
+
+    payload: dict = {
+        "from": from_email,
+        "chat_type": chat_type,
+        "members": list(member_emails),
+    }
+    if topic:
+        payload["topic"] = topic
+
+    url = f"{SETTINGS.conversation.COMMS_URL}/teams/chats"
+    LOGGER.info(
+        f"{ICONS['comms_outbound']} Teams chat create → POST {url} "
+        f"from={from_email} chat_type={chat_type} members={len(member_emails)} "
+        f"topic={'yes' if topic else 'no'}",
+    )
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.post(url, headers=headers, json=payload) as response:
+                try:
+                    response.raise_for_status()
+                except Exception as e:
+                    body_text = ""
+                    try:
+                        body_text = (await response.text())[:500]
+                    except Exception:
+                        pass
+                    error_msg = (
+                        f"HTTP {response.status}: {body_text}"
+                        if body_text
+                        else f"HTTP {response.status}: {e}"
+                    )
+                    LOGGER.error(
+                        f"{ICONS['comms_outbound']} Teams chat create failed: {error_msg}",
+                    )
+                    return {"success": False, "error": error_msg}
+                result = await response.json()
+                result["success"] = True
+                return result
+    except Exception as e:
+        error_msg = f"{type(e).__name__}: {e}"
+        LOGGER.error(
+            f"{ICONS['comms_outbound']} Teams chat create request failed before response: {error_msg}",
+        )
+        return {"success": False, "error": error_msg}
+
+
+async def create_teams_channel(
+    team_id: str,
+    display_name: str,
+    description: str | None = None,
+    membership_type: str = "standard",
+    owner_emails: list[str] | None = None,
+) -> dict:
+    """Create a new channel inside an existing Microsoft Teams team.
+
+    POSTs to the Communication ``/teams/channels`` endpoint which wraps Graph
+    ``POST /teams/{team-id}/channels``. The communication service rebuilds
+    the assistant's Teams watch subscriptions on success so new-channel
+    notifications flow immediately.
+
+    Args:
+        team_id: ID of the existing team to create the channel within.
+        display_name: Channel display name.
+        description: Optional channel description.
+        membership_type: ``"standard"``, ``"private"``, or ``"shared"``.
+            ``"private"`` and ``"shared"`` require at least one owner.
+        owner_emails: Required iff ``membership_type != "standard"``. Owner
+            UPNs (emails) for the channel.
+
+    Returns:
+        dict with ``success`` bool and, on success, ``channel_id`` /
+        ``team_id`` / ``membership_type``.
+    """
+    from_email = SESSION_DETAILS.assistant.email
+    if not from_email:
+        return {"success": False, "error": "No sender email configured"}
+
+    payload: dict = {
+        "from": from_email,
+        "team_id": team_id,
+        "display_name": display_name,
+        "membership_type": membership_type,
+    }
+    if description:
+        payload["description"] = description
+    if owner_emails:
+        payload["owners"] = list(owner_emails)
+
+    url = f"{SETTINGS.conversation.COMMS_URL}/teams/channels"
+    LOGGER.info(
+        f"{ICONS['comms_outbound']} Teams channel create → POST {url} "
+        f"from={from_email} team_id={team_id} display_name={display_name!r} "
+        f"membership_type={membership_type} owners={len(owner_emails or [])}",
+    )
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.post(url, headers=headers, json=payload) as response:
+                try:
+                    response.raise_for_status()
+                except Exception as e:
+                    body_text = ""
+                    try:
+                        body_text = (await response.text())[:500]
+                    except Exception:
+                        pass
+                    error_msg = (
+                        f"HTTP {response.status}: {body_text}"
+                        if body_text
+                        else f"HTTP {response.status}: {e}"
+                    )
+                    LOGGER.error(
+                        f"{ICONS['comms_outbound']} Teams channel create failed: {error_msg}",
+                    )
+                    return {"success": False, "error": error_msg}
+                result = await response.json()
+                result["success"] = True
+                return result
+    except Exception as e:
+        error_msg = f"{type(e).__name__}: {e}"
+        LOGGER.error(
+            f"{ICONS['comms_outbound']} Teams channel create request failed before response: {error_msg}",
+        )
+        return {"success": False, "error": error_msg}
+
+
 async def send_email_via_address(
     to: list[str],
     subject: str,
