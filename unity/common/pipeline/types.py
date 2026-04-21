@@ -136,6 +136,7 @@ class TableMeta(BaseModel):
     sheet_name: Optional[str] = None
     table_summary: Optional[str] = None
 
+    context: Optional[str] = None
     description: Optional[str] = None
     column_descriptions: Optional[Dict[str, str]] = None
     embed_columns: Optional[list[str]] = None
