@@ -48,13 +48,14 @@
               <span class="eyebrow-tick">]</span>
             </p>
             <h1 class="hero-title">
-              <em>Steerable</em> AI teammates.
+              Many assistants.<br />
+              <em>One hive mind.</em>
             </h1>
             <p class="hero-lede">
-              unity-agent is Unify's persistent AI teammate, open-sourced. It
-              runs on your machine, plans in real Python over typed state,
-              steers live work without restarting, and coordinates with other
-              teammates over shared typed state.
+              unity-agent is Unify's AI teammates, open-sourced. Many
+              assistants share one typed state — a hive mind you host yourself
+              — with real-time voice, steerable nested execution, and
+              code-first planning.
             </p>
             <div class="hero-ctas">
               <a
@@ -107,11 +108,11 @@
         <section class="strip" aria-label="Pitch">
           <div class="strip-item">
             <span class="strip-num">01</span>
-            <span>One identity across channels.</span>
+            <span>Hive mind, opt-in.</span>
           </div>
           <div class="strip-item">
             <span class="strip-num">02</span>
-            <span>Memory consolidates between turns.</span>
+            <span>Sub-second voice.</span>
           </div>
           <div class="strip-item">
             <span class="strip-num">03</span>
@@ -119,7 +120,7 @@
           </div>
           <div class="strip-item">
             <span class="strip-num">04</span>
-            <span>Hive mind, opt-in.</span>
+            <span>One identity across channels.</span>
           </div>
         </section>
 
@@ -133,51 +134,40 @@
             <article class="feature">
               <header>
                 <span class="feature-index">01</span>
-                <h3>One identity across channels</h3>
+                <h3>Hive mind, opt-in</h3>
               </header>
               <p>
-                SMS, email, phone calls, meetings, Slack, WhatsApp. One
-                identity, one memory, one task queue across every channel.
+                Typed state managers can share state across assistants —
+                contacts, tasks, transcripts, knowledge. Opt-in per manager,
+                scoped by workspace, auditable at the boundary.
               </p>
-              <code class="feature-code">voice · sms · email · slack · meet</code>
+              <code class="feature-code">share: contacts + tasks · scoped</code>
             </article>
 
             <article class="feature">
               <header>
                 <span class="feature-index">02</span>
-                <h3>Consolidates as it runs</h3>
+                <h3>Real-time voice, dual-brain</h3>
               </header>
               <p>
-                Every 50 messages, the MemoryManager runs a background
-                extraction pass — distilling contacts, tasks, preferences, and
-                policies into typed tables. Reusable Python functions and
-                guidance procedures are stored alongside.
+                A fast voice process handles the conversation sub-second over
+                LiveKit. A slower orchestration brain plans tool work in
+                parallel. They coordinate over IPC using SPEAK, NOTIFY, and
+                BLOCK messages.
               </p>
-              <code class="feature-code">memory · functions · guidance</code>
+              <code class="feature-code">slow ⇄ fast · ipc · livekit</code>
             </article>
 
             <article class="feature">
               <header>
                 <span class="feature-index">03</span>
-                <h3>Durable scheduled tasks</h3>
-              </header>
-              <p>
-                Scheduled work that returns the same live handle as everything
-                else. Pause, defer, or interject a task mid-run — from anywhere,
-                while it&rsquo;s still executing.
-              </p>
-              <code class="feature-code">scheduler.defer(task, until="fri")</code>
-            </article>
-
-            <article class="feature">
-              <header>
-                <span class="feature-index">04</span>
                 <h3>Steerable nested execution</h3>
               </header>
               <p>
-                Every operation returns a live handle. Ask for status,
-                interject, pause a branch, or stop one task without affecting
-                the others.
+                Every operation returns a live handle — at every level of
+                nesting. Ask for status, interject, pause a branch, or stop one
+                task without affecting the others. Works inside a running tool
+                call, not just at the top.
               </p>
               <code class="feature-code"
                 >handle.interject("also check trains")</code
@@ -186,7 +176,7 @@
 
             <article class="feature">
               <header>
-                <span class="feature-index">05</span>
+                <span class="feature-index">04</span>
                 <h3>Code plans over typed primitives</h3>
               </header>
               <p>
@@ -201,15 +191,28 @@
 
             <article class="feature">
               <header>
-                <span class="feature-index">06</span>
-                <h3>Hive mind, opt-in</h3>
+                <span class="feature-index">05</span>
+                <h3>One identity across channels</h3>
               </header>
               <p>
-                Typed state managers can share state across assistants —
-                contacts, tasks, transcripts, knowledge. Opt-in per manager,
-                scoped by workspace, auditable at the boundary.
+                SMS, email, phone calls, meetings, Slack, WhatsApp. One
+                identity, one memory, one task queue across every channel.
               </p>
-              <code class="feature-code">share: contacts + tasks · scoped</code>
+              <code class="feature-code">voice · sms · email · slack · meet</code>
+            </article>
+
+            <article class="feature">
+              <header>
+                <span class="feature-index">06</span>
+                <h3>Consolidates as it runs</h3>
+              </header>
+              <p>
+                Every 50 messages, the MemoryManager runs a background
+                extraction pass — distilling contacts, tasks, preferences, and
+                policies into typed tables. Reusable Python functions and
+                guidance procedures are stored alongside.
+              </p>
+              <code class="feature-code">memory · functions · guidance</code>
             </article>
           </div>
         </section>
