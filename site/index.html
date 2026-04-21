@@ -3,10 +3,10 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>unity-agent — a hive mind for your assistants</title>
+    <title>unity-agent — open-source, persistent AI teammates</title>
     <meta
       name="description"
-      content="The open-source agent runtime behind Unify. Steerable nested execution, code-first planning, and typed state managers that let many assistants share one world."
+      content="Open-source, persistent AI teammates from Unify. Steerable nested execution, code-first planning, and shared typed state for coordinated assistants."
     />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
@@ -48,16 +48,13 @@
               <span class="eyebrow-tick">]</span>
             </p>
             <h1 class="hero-title">
-              A <em>hive&nbsp;mind</em><br />
-              for your assistants.
+              <em>Steerable</em> AI teammates.
             </h1>
             <p class="hero-lede">
-              Not a single assistant stuck in a chat window. Not a tool menu in
-              a trench coat. unity-agent is the open-source runtime behind
-              Unify's persistent AI teammates — it plans in real Python over
-              typed state, steers live work without restarts, and lets many
-              specialists share one world instead of drowning in isolated
-              threads.
+              unity-agent is Unify's persistent AI teammate, open-sourced. It
+              runs on your machine, plans in real Python over typed state,
+              steers live work without restarting, and coordinates with other
+              teammates over shared typed state.
             </p>
             <div class="hero-ctas">
               <a
@@ -70,19 +67,19 @@
               <a class="btn ghost" href="#install">Quick install</a>
             </div>
             <p class="hero-quote">
-              <span class="quote-mark">&ldquo;</span>Many minds, one will. Zero
-              tyranny.<span class="quote-mark">&rdquo;</span>
-              <span class="quote-attr">— the vibe, roughly</span>
+              Every operation returns a live handle — ask, interject, pause, or
+              stop it mid-run.
+              <span class="quote-attr">SteerableToolHandle</span>
             </p>
           </div>
 
-          <aside class="hero-right" aria-label="Runtime visualization">
+          <aside class="hero-right" aria-label="Live session visualization">
             <div class="panel">
               <div class="panel-head">
                 <span class="panel-dot red"></span>
                 <span class="panel-dot amber"></span>
                 <span class="panel-dot green"></span>
-                <span class="panel-title">unity://runtime</span>
+                <span class="panel-title">unity://session</span>
               </div>
               <pre class="panel-body"><code><span class="c-dim">$</span> <span class="c-fn">assistant</span>.act(<span class="c-str">"catch Sarah up on the Q3 launch"</span>)
 
@@ -94,7 +91,7 @@
      └─ <span class="c-accent">comms</span>.send(<span class="c-str">"draft catch-up email"</span>)
 
 <span class="c-dim">&gt;</span> user: <span class="c-user">"also mention the budget thing"</span>
-<span class="c-ok">◎</span> interject <span class="c-dim">// no restart. keep going.</span></code></pre>
+<span class="c-ok">◎</span> interject <span class="c-dim">// no restart required</span></code></pre>
               <div class="panel-foot">
                 <span class="foot-pill">pause</span>
                 <span class="foot-pill">resume</span>
@@ -110,43 +107,37 @@
         <section class="strip" aria-label="Pitch">
           <div class="strip-item">
             <span class="strip-num">01</span>
-            <span>Every channel, one mind.</span>
+            <span>One identity across channels.</span>
           </div>
           <div class="strip-item">
             <span class="strip-num">02</span>
-            <span>Memory that compounds.</span>
+            <span>Memory consolidates between turns.</span>
           </div>
           <div class="strip-item">
             <span class="strip-num">03</span>
-            <span>Steer live work. No restarts.</span>
+            <span>Steerable mid-run.</span>
           </div>
           <div class="strip-item">
             <span class="strip-num">04</span>
-            <span>Many minds, one world.</span>
+            <span>Hive mind, opt-in.</span>
           </div>
         </section>
 
         <!-- WHAT IT IS -->
         <section class="section" id="what">
           <div class="section-head">
-            <p class="kicker">What it is</p>
-            <h2 class="section-title">
-              Not another chatbot wrapper.<br />
-              <span class="serif-accent">A runtime</span> with opinions.
-            </h2>
+            <p class="kicker">Features</p>
           </div>
 
           <div class="feature-grid">
             <article class="feature">
               <header>
                 <span class="feature-index">01</span>
-                <h3>One mind across every channel</h3>
+                <h3>One identity across channels</h3>
               </header>
               <p>
-                SMS, email, phone calls, meetings, Slack, WhatsApp — one
-                identity, one memory, one task queue across every surface. What
-                gets said on Monday's call is sitting in Tuesday's email
-                thread.
+                SMS, email, phone calls, meetings, Slack, WhatsApp. One
+                identity, one memory, one task queue across every channel.
               </p>
               <code class="feature-code">voice · sms · email · slack · meet</code>
             </article>
@@ -159,9 +150,8 @@
               <p>
                 Every 50 messages, the MemoryManager runs a background
                 extraction pass — distilling contacts, tasks, preferences, and
-                policies into typed tables. Plus reusable Python functions and
-                stored guidance. Compounding structure, not compounding
-                context.
+                policies into typed tables. Reusable Python functions and
+                guidance procedures are stored alongside.
               </p>
               <code class="feature-code">memory · functions · guidance</code>
             </article>
@@ -169,12 +159,12 @@
             <article class="feature">
               <header>
                 <span class="feature-index">03</span>
-                <h3>Runs in the background</h3>
+                <h3>Durable scheduled tasks</h3>
               </header>
               <p>
-                Durable scheduled tasks you can pause, defer, or interject
-                mid-run. Not just cron — live handles you can steer from
-                anywhere, even while they&rsquo;re executing.
+                Scheduled work that returns the same live handle as everything
+                else. Pause, defer, or interject a task mid-run — from anywhere,
+                while it&rsquo;s still executing.
               </p>
               <code class="feature-code">scheduler.defer(task, until="fri")</code>
             </article>
@@ -182,12 +172,12 @@
             <article class="feature">
               <header>
                 <span class="feature-index">04</span>
-                <h3>Steerable all the way down</h3>
+                <h3>Steerable nested execution</h3>
               </header>
               <p>
-                Every operation returns a live handle. Ask it for status.
-                Interject mid-run. Pause a branch. Stop one task without burning
-                the other three. No restarts, no lost context.
+                Every operation returns a live handle. Ask for status,
+                interject, pause a branch, or stop one task without affecting
+                the others.
               </p>
               <code class="feature-code"
                 >handle.interject("also check trains")</code
@@ -197,13 +187,12 @@
             <article class="feature">
               <header>
                 <span class="feature-index">05</span>
-                <h3>Code plans, not tool menus</h3>
+                <h3>Code plans over typed primitives</h3>
               </header>
               <p>
-                CodeActActor writes real Python over typed
-                <code>primitives.*</code> in a sandboxed session. You get
-                variables, loops, composition, reuse — not a thousand JSON
-                tool-calls in a trenchcoat.
+                CodeActActor writes Python over typed
+                <code>primitives.*</code> in a sandboxed session. One program
+                per turn, with variables, loops, and composition.
               </p>
               <code class="feature-code"
                 >for c in primitives.contacts.ask(...)</code
@@ -213,12 +202,12 @@
             <article class="feature">
               <header>
                 <span class="feature-index">06</span>
-                <h3>Many minds, one world</h3>
+                <h3>Hive mind, opt-in</h3>
               </header>
               <p>
                 Typed state managers can share state across assistants —
-                contacts, tasks, transcripts, knowledge. Optional, scoped,
-                auditable. Hive-mind energy, without the tyranny.
+                contacts, tasks, transcripts, knowledge. Opt-in per manager,
+                scoped by workspace, auditable at the boundary.
               </p>
               <code class="feature-code">share: contacts + tasks · scoped</code>
             </article>
@@ -228,13 +217,10 @@
         <!-- INSTALL -->
         <section class="section" id="install">
           <div class="section-head">
-            <p class="kicker">Try it locally</p>
-            <h2 class="section-title">
-              Clone. Sync. <span class="serif-accent">Run the brain.</span>
-            </h2>
+            <p class="kicker">Install</p>
             <p class="section-sub">
-              Runs on your machine. No platform install required to poke at the
-              runtime. Five minutes to a steerable, nested, code-first sandbox.
+              Runs locally against simulated backends. No platform setup
+              required for the sandbox.
             </p>
           </div>
 
@@ -263,19 +249,16 @@ python -m sandboxes.conversation_manager.sandbox \
           </div>
 
           <p class="install-note">
-            At the prompt, pick <strong>option 2</strong> — CodeAct + Simulated
-            Managers. That's the full runtime shape with simulated backends, which
-            is what you want the first time.
+            At the prompt, select <strong>option 2</strong> — CodeAct +
+            Simulated Managers. This runs the full architecture against
+            simulated backends.
           </p>
         </section>
 
         <!-- ARCHITECTURE -->
         <section class="section" id="architecture">
           <div class="section-head">
-            <p class="kicker">How it runs</p>
-            <h2 class="section-title">
-              The stack, <span class="serif-accent">top to bottom.</span>
-            </h2>
+            <p class="kicker">Architecture</p>
           </div>
 
           <div class="arch-grid">
@@ -304,9 +287,10 @@ python -m sandboxes.conversation_manager.sandbox \
               <div class="arch-card">
                 <h3>CodeActActor</h3>
                 <p>
-                  Writes Python against typed primitives. Runs in a sandboxed
-                  session. One program per turn, with variables and control flow.
-                  Discovery-first tool policy keeps it honest.
+                  Writes Python against typed primitives in a sandboxed session.
+                  One program per turn, with variables, loops, and composition.
+                  Discovery-first tool policy ensures the actor explores stored
+                  functions and guidance before writing new code.
                 </p>
               </div>
             </div>
@@ -336,29 +320,25 @@ python -m sandboxes.conversation_manager.sandbox \
                 <span class="arch-role">collective</span>
               </div>
               <div class="arch-card">
-                <h3>Shared substrate</h3>
+                <h3>Shared typed state</h3>
                 <p>
-                  Managers can selectively share state across assistants. Typed
-                  boundaries make cross-assistant coordination legible instead of
-                  terrifying. Opt-in. Scoped. Auditable.
+                  Managers can selectively share state across assistants.
+                  Cross-assistant coordination is opt-in per manager, scoped by
+                  workspace, and auditable at the boundary.
                 </p>
               </div>
             </div>
           </div>
         </section>
 
-        <!-- HIVEMIND FOOTER -->
+        <!-- CLOSER -->
         <section class="section closer">
           <div class="closer-grid">
             <div>
-              <p class="kicker">One more thing</p>
-              <h2 class="section-title">
-                <span class="serif-accent">Read the runtime.</span><br />
-                Then make it weird.
-              </h2>
+              <p class="kicker">Further reading</p>
               <p class="section-sub">
-                The repo is the playground. ARCHITECTURE.md explains the guts. This
-                page is just the door.
+                ARCHITECTURE.md contains the full technical walkthrough. The
+                repo is the source of truth for everything above.
               </p>
               <div class="hero-ctas">
                 <a
@@ -381,14 +361,17 @@ python -m sandboxes.conversation_manager.sandbox \
             <div class="signal-card">
               <div class="signal-head">
                 <span class="signal-dot"></span>
-                <span>live</span>
+                <span>three repos</span>
               </div>
               <p class="signal-quote">
-                <em>"Hello Rick. Hello Morty."</em>
+                <em>All MIT-licensed.</em>
               </p>
               <p class="signal-note">
-                Inspired by collective-mind sci-fi energy. Not affiliated with
-                Adult Swim. We just like the idea.
+                <strong>unity-agent</strong> is the code you run — the
+                assistants and their managers. <strong>unify</strong> is the
+                Python SDK for hosted persistence. <strong>unillm</strong> is
+                the provider-agnostic LLM client. Clone all three to run
+                locally.
               </p>
             </div>
           </div>
