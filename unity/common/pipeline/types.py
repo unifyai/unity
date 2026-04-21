@@ -246,6 +246,33 @@ class DmBinding(IngestBinding):
     create_table_prefix: str = ""
 
 
+# ---------------------------------------------------------------------------
+# Ingest checkpoint (crash-recovery progress marker)
+# ---------------------------------------------------------------------------
+
+
+class IngestCheckpoint(BaseModel):
+    """Durable per-artifact progress marker for crash recovery.
+
+    Written to GCS after each successful chunk commit so a retried
+    worker can skip already-committed rows via ``skip_rows``.
+
+    The ``artifact_id`` is ``table_id`` for table artifacts and
+    ``"__content__"`` for content-row artifacts.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    job_id: str
+    artifact_id: str
+    chunks_committed: int = 0
+    rows_committed: int = 0
+    last_updated: str = ""
+
+
+CONTENT_CHECKPOINT_ID = "__content__"
+
+
 class ParseRequested(BaseModel):
     """Message placed on the parse queue by the coordinator.
 
