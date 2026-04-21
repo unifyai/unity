@@ -20,8 +20,8 @@ CodeActActor ── generates Python plans ──► primitives.* API
  │
  │  each primitive call starts its own LLM tool loop
  ▼
-┌─────────────────────────────────────────────────┐
-│  State Managers (each returns a SteerableToolHandle) │
+┌───────────────────────────────────────────────────────┐
+│  State Managers (each returns a SteerableToolHandle)  │
 │                                                       │
 │  ContactManager    KnowledgeManager   TaskScheduler   │
 │  TranscriptManager GuidanceManager    FileManager     │
@@ -52,7 +52,7 @@ The async tool loop is the universal runtime. Nearly every public manager method
 
 ```
 ┌──────────────────────────────────────────────┐
-│              async_tool_loop_inner            │
+│             async_tool_loop_inner            │
 │                                              │
 │  1. Send messages to LLM                     │
 │  2. LLM returns tool calls                   │

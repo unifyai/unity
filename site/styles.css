@@ -662,6 +662,21 @@ em {
   margin: 0;
 }
 
+.install-note-secondary {
+  margin-top: 10px;
+}
+
+.install-note a {
+  color: var(--green-soft);
+  text-decoration: none;
+  border-bottom: 1px solid rgba(154, 215, 181, 0.35);
+}
+
+.install-note a:hover {
+  color: var(--ink);
+  border-bottom-color: var(--green);
+}
+
 .install-note strong {
   color: var(--green-soft);
   font-weight: 600;
@@ -784,6 +799,16 @@ em {
   color: var(--ink-dim);
   font-size: 0.85rem;
   line-height: 1.55;
+}
+
+.signal-note a {
+  color: var(--green-soft);
+  border-bottom: 1px solid rgba(154, 215, 181, 0.35);
+}
+
+.signal-note a:hover {
+  color: var(--ink);
+  border-bottom-color: var(--green);
 }
 
 /* footer */
