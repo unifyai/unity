@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Dict, Literal, Optional, TypeAlias
+from typing import Any, Dict, Literal, Optional, TypeAlias
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -119,6 +119,12 @@ class TableMeta(BaseModel):
     ``IngestPlan.table_inputs[table_id]``.  ``TableMeta`` is only the
     structural + contextual info the ingest worker needs to provision the
     destination context and resolve embed columns / descriptions.
+
+    The optional config fields (``description`` through ``post_ingest``)
+    are populated at dispatch time from ``PipelineConfig`` and threaded
+    through the ``ParseRequested.table_config`` dict.  When absent the
+    ingest worker falls back to bare-minimum behavior (no embeddings,
+    no descriptions, no post-ingest transforms).
     """
 
     model_config = ConfigDict(frozen=True)
@@ -129,6 +135,13 @@ class TableMeta(BaseModel):
     row_count: Optional[int] = None
     sheet_name: Optional[str] = None
     table_summary: Optional[str] = None
+
+    description: Optional[str] = None
+    column_descriptions: Optional[Dict[str, str]] = None
+    embed_columns: Optional[list[str]] = None
+    embed_strategy: str = "off"
+    chunk_size: int = 500
+    post_ingest: Optional[Dict[str, Any]] = None
 
 
 class IngestPlan(BaseModel):
@@ -259,6 +272,7 @@ class ParseRequested(BaseModel):
     ingestion_mode: Literal["dm", "fm"] = "dm"
     fm_binding: Optional[FmBinding] = None
     dm_binding: Optional[DmBinding] = None
+    table_config: Optional[Dict[str, Any]] = None
 
 
 class IngestRequested(BaseModel):

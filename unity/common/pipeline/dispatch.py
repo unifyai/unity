@@ -92,6 +92,7 @@ def publish_parse_request(
     blob_key: Optional[str] = None,
     attachment_callback: Optional[AttachmentCallback] = None,
     dispatch_id: str = "",
+    table_config: Optional[dict] = None,
     job_id: Optional[str] = None,
     pubsub_attributes: Optional[dict[str, str]] = None,
     storage_client: Any | None = None,
@@ -140,6 +141,7 @@ def publish_parse_request(
         ingestion_mode=ingestion_mode,
         fm_binding=fm_binding,
         dm_binding=dm_binding,
+        table_config=table_config,
     )
 
     topic_path, message_id = _publish(
