@@ -250,7 +250,7 @@ class ParseRequested(BaseModel):
 
     kind: Literal["parse_requested"] = "parse_requested"
     job_id: str
-    deployment_id: str = ""
+    dispatch_id: str = ""
     file_paths: list[str] = Field(default_factory=list)
     manifest_key: str = ""
     transport_mode: str = "source_reference"
@@ -274,7 +274,7 @@ class IngestRequested(BaseModel):
 
     kind: Literal["ingest_requested"] = "ingest_requested"
     job_id: str
-    deployment_id: str = ""
+    dispatch_id: str = ""
     manifest_key: str = ""
     target_context: str = ""
     batch_size: int = 500
