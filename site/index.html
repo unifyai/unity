@@ -286,39 +286,38 @@
           <div class="section-head">
             <p class="kicker">Install</p>
             <p class="section-sub">
-              Runs locally against simulated backends. No platform setup
-              required for the sandbox.
+              One command. Clones the code, installs Python + Docker deps,
+              spins up a local Orchestra (Postgres + FastAPI) as the
+              persistence backend, and wires your <code>.env</code>. macOS,
+              Linux, and WSL2. No Unify account required.
             </p>
           </div>
 
           <div class="terminal">
             <div class="terminal-head">
-              <span class="term-prompt">~/unity</span>
+              <span class="term-prompt">~</span>
               <button class="copy-btn" data-copy="install-block" type="button">
                 <span class="copy-label">Copy</span>
               </button>
             </div>
-            <pre id="install-block" class="terminal-body"><code><span class="c-dim"># grab the three repos</span>
-git clone https://github.com/unifyai/unity.git
-git clone https://github.com/unifyai/unify.git
-git clone https://github.com/unifyai/unillm.git
+            <pre id="install-block" class="terminal-body"><code><span class="c-dim"># one-liner: install + local Orchestra + .env wiring</span>
+curl -fsSL https://raw.githubusercontent.com/unifyai/unity/main/scripts/install.sh | bash
 
-<span class="c-dim"># sync the env (uv recommended)</span>
-cd unity &amp;&amp; uv sync
-
-<span class="c-dim"># wire up your keys</span>
-cp .env.example .env
+<span class="c-dim"># add an LLM provider key</span>
+$EDITOR ~/.unity/unity/.env
 
 <span class="c-dim"># launch the sandbox</span>
-source .venv/bin/activate
-python -m sandboxes.conversation_manager.sandbox \
-    --project_name Sandbox --overwrite</code></pre>
+unity --project_name Sandbox --overwrite</code></pre>
           </div>
 
           <p class="install-note">
-            At the prompt, select <strong>option 2</strong> — CodeAct +
-            Simulated Managers. This runs the full architecture against
-            simulated backends.
+            Installs <code>unity</code>, <code>unify</code>,
+            <code>unillm</code>, and <code>orchestra</code> as siblings
+            under <code>~/.unity/</code>. Pass
+            <code>--skip-setup</code> to install code only;
+            <code>unity setup</code> can bootstrap (or re-bootstrap)
+            Orchestra anytime; <code>unity stop</code> / <code>unity
+            status</code> control it.
           </p>
         </section>
 
@@ -428,17 +427,20 @@ python -m sandboxes.conversation_manager.sandbox \
             <div class="signal-card">
               <div class="signal-head">
                 <span class="signal-dot"></span>
-                <span>three repos</span>
+                <span>four repos</span>
               </div>
               <p class="signal-quote">
                 <em>All MIT-licensed.</em>
               </p>
               <p class="signal-note">
                 <strong>unity-agent</strong> is the code you run — the
-                assistants and their managers. <strong>unify</strong> is the
-                Python SDK for hosted persistence. <strong>unillm</strong> is
-                the provider-agnostic LLM client. Clone all three to run
-                locally.
+                assistants and their managers.
+                <strong>orchestra</strong> is the persistence backend
+                (FastAPI + Postgres + pgvector) that the installer spins
+                up locally in Docker. <strong>unify</strong> is the
+                Python SDK that talks to Orchestra; <strong>unillm</strong>
+                is the provider-agnostic LLM client. The installer wires
+                all four together.
               </p>
             </div>
           </div>
@@ -454,6 +456,7 @@ python -m sandboxes.conversation_manager.sandbox \
           <a href="https://github.com/unifyai/unity" target="_blank" rel="noreferrer">GitHub</a>
           <a href="https://github.com/unifyai/unify" target="_blank" rel="noreferrer">unify</a>
           <a href="https://github.com/unifyai/unillm" target="_blank" rel="noreferrer">unillm</a>
+          <a href="https://github.com/unifyai/orchestra" target="_blank" rel="noreferrer">orchestra</a>
           <a href="https://discord.com/invite/sXyFF8tDtm" target="_blank" rel="noreferrer">Discord</a>
         </div>
       </footer>
