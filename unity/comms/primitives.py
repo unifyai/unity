@@ -1534,7 +1534,7 @@ class CommsPrimitives:
             return {"status": "ok"}
 
         return await self._surface_comms_error(
-            "Failed to send Teams message",
+            response.get("error") or "Failed to send Teams message",
             topic,
             contact_id=contact_id,
             medium=medium,

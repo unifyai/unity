@@ -605,19 +605,42 @@ async def send_teams_message(
         payload["chat_id"] = chat_id
         url = f"{SETTINGS.conversation.COMMS_URL}/teams/send"
 
-    async with aiohttp.ClientSession() as session:
-        async with session.post(url, headers=headers, json=payload) as response:
-            try:
-                response.raise_for_status()
-            except Exception as e:
-                target = "channel" if is_channel else "chat"
-                LOGGER.error(
-                    f"{ICONS['comms_outbound']} Teams {target} send failed: {e}",
-                )
-                return {"success": False}
-            result = await response.json()
-            result["success"] = True
-            return result
+    target = "channel" if is_channel else "chat"
+    LOGGER.info(
+        f"{ICONS['comms_outbound']} Teams {target} send → POST {url} "
+        f"from={from_email} chat_id={chat_id or ''} "
+        f"team_id={team_id or ''} channel_id={channel_id or ''} "
+        f"body_len={len(body or '')} attachments={len(attachments or [])}",
+    )
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.post(url, headers=headers, json=payload) as response:
+                try:
+                    response.raise_for_status()
+                except Exception as e:
+                    body_text = ""
+                    try:
+                        body_text = (await response.text())[:500]
+                    except Exception:
+                        pass
+                    error_msg = (
+                        f"HTTP {response.status}: {body_text}"
+                        if body_text
+                        else f"HTTP {response.status}: {e}"
+                    )
+                    LOGGER.error(
+                        f"{ICONS['comms_outbound']} Teams {target} send failed: {error_msg}",
+                    )
+                    return {"success": False, "error": error_msg}
+                result = await response.json()
+                result["success"] = True
+                return result
+    except Exception as e:
+        error_msg = f"{type(e).__name__}: {e}"
+        LOGGER.error(
+            f"{ICONS['comms_outbound']} Teams {target} request failed before response: {error_msg}",
+        )
+        return {"success": False, "error": error_msg}
 
 
 async def send_email_via_address(
