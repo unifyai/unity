@@ -198,13 +198,37 @@ def execute_create_file_record(
         document_summary=document_summary,
     )
 
+    # Capture the entry's file_id before the insert (should be None for
+    # new files since auto_counting assigns it server-side).
+    pre_insert_file_id = entry.get("file_id")
+
     created_file_record = _ops_create_file_record(file_manager, entry=entry)
-    logger.debug(f"[TaskFn] Created file record: {created_file_record}")
+
+    # After insert, the entry dict may have been mutated if
+    # _apply_row_ids ran on the same object (it doesn't today because
+    # _inject_private_fields copies).
+    post_insert_file_id = entry.get("file_id")
+
+    logger.info(
+        "[TaskFn] create_file_record result for %s: "
+        "pre_insert_file_id=%s, post_insert_file_id=%s, ops_result=%s",
+        file_path,
+        pre_insert_file_id,
+        post_insert_file_id,
+        created_file_record,
+    )
 
     file_id = get_file_id_from_path(
         data_manager=dm,
         index_context=file_manager._ctx,
         file_path=file_path,
+    )
+
+    logger.info(
+        "[TaskFn] get_file_id_from_path(%s, ctx=%s) -> %s",
+        file_path,
+        file_manager._ctx,
+        file_id,
     )
 
     if file_id is None:
@@ -222,8 +246,11 @@ def execute_create_file_record(
             filter=f"file_id == {file_id}",
         )
 
-    logger.debug(
-        f"[TaskFn] File record created: file_id={file_id}, storage_id={storage_id}",
+    logger.info(
+        "[TaskFn] File record finalised: file_path=%s file_id=%s storage_id=%s",
+        file_path,
+        file_id,
+        storage_id,
     )
 
     return {
