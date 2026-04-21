@@ -198,16 +198,11 @@ def execute_create_file_record(
         document_summary=document_summary,
     )
 
-    # Capture the entry's file_id before the insert (should be None for
-    # new files since auto_counting assigns it server-side).
-    pre_insert_file_id = entry.get("file_id")
+    pre_insert_file_id = getattr(entry, "file_id", None)
 
     created_file_record = _ops_create_file_record(file_manager, entry=entry)
 
-    # After insert, the entry dict may have been mutated if
-    # _apply_row_ids ran on the same object (it doesn't today because
-    # _inject_private_fields copies).
-    post_insert_file_id = entry.get("file_id")
+    post_insert_file_id = getattr(entry, "file_id", None)
 
     logger.info(
         "[TaskFn] create_file_record result for %s: "
