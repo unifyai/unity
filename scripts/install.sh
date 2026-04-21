@@ -164,23 +164,46 @@ check_system_deps() {
     [ "$CHECK_DEPS" = "false" ] && return 0
     log_info "Checking system dependencies..."
 
-    local missing=()
+    local hard_missing=() warn_missing=()
 
-    # PortAudio — needed for voice/audio features
     case "$OS" in
         macos)
-            pkg-config --exists portaudio-2.0 2>/dev/null || missing+=("portaudio (install: brew install portaudio)")
+            # Xcode CLI tools — required for any package building from sdist (pyaudio etc.)
+            xcode-select -p >/dev/null 2>&1 || hard_missing+=("Xcode Command Line Tools  (install: xcode-select --install)")
+            pkg-config --exists portaudio-2.0 2>/dev/null || warn_missing+=("portaudio  (install: brew install portaudio)")
             ;;
         linux)
-            pkg-config --exists portaudio-2.0 2>/dev/null || missing+=("portaudio (install: sudo apt-get install portaudio19-dev python3-dev)")
+            # pyaudio has no manylinux wheel for Py3.12; it builds from sdist and needs gcc + Python headers.
+            command -v gcc >/dev/null 2>&1 || hard_missing+=("gcc / build-essential  (install: sudo apt-get install -y build-essential python3-dev)")
+            pkg-config --exists portaudio-2.0 2>/dev/null || hard_missing+=("portaudio development headers  (install: sudo apt-get install -y portaudio19-dev)")
             ;;
     esac
 
-    if [ ${#missing[@]} -gt 0 ]; then
+    if [ ${#hard_missing[@]} -gt 0 ]; then
+        log_error "Required system packages are missing:"
+        for m in "${hard_missing[@]}"; do echo "    - $m"; done
+        echo ""
+        case "$OS" in
+            linux)
+                echo "    Quick fix:"
+                echo "      sudo apt-get update && sudo apt-get install -y build-essential python3-dev portaudio19-dev"
+                echo "    Then re-run: curl -fsSL https://raw.githubusercontent.com/unifyai/unity/main/scripts/install.sh | bash"
+                ;;
+            macos)
+                echo "    Quick fix:"
+                echo "      xcode-select --install   # if not already installed"
+                echo "      brew install portaudio"
+                echo "    Then re-run install.sh."
+                ;;
+        esac
+        echo ""
+        echo "    (Bypass with --skip-deps at your own risk; uv sync will fail on native extensions.)"
+        exit 1
+    fi
+
+    if [ ${#warn_missing[@]} -gt 0 ]; then
         log_warn "Optional system packages missing (voice features will be limited):"
-        for m in "${missing[@]}"; do
-            echo "    - $m"
-        done
+        for m in "${warn_missing[@]}"; do echo "    - $m"; done
     else
         log_success "System dependencies OK"
     fi
@@ -325,17 +348,30 @@ EOF
 run_setup() {
     [ "$RUN_SETUP" = "false" ] && {
         log_info "Skipping local Orchestra spin-up (--skip-setup). Run \`unity setup\` later."
+        SETUP_OK=skipped
         return 0
     }
 
-    if [ -x "$UNITY_REPO/scripts/setup.sh" ]; then
-        # Export UNITY_HOME so setup.sh uses the same layout
-        UNITY_HOME="$UNITY_HOME" bash "$UNITY_REPO/scripts/setup.sh" || {
-            log_warn "Local Orchestra setup didn't complete. You can re-run with:  unity setup"
-            return 0  # Don't hard-fail the install
-        }
-    else
+    if [ ! -x "$UNITY_REPO/scripts/setup.sh" ]; then
         log_warn "setup.sh not found at $UNITY_REPO/scripts/setup.sh — skipping Orchestra spin-up."
+        SETUP_OK=failed
+        return 0
+    fi
+
+    # Export UNITY_HOME so setup.sh uses the same layout. Export PATH
+    # additions so setup.sh finds uv (which install.sh just installed
+    # to ~/.local/bin but didn't add to PATH globally yet).
+    UNITY_HOME="$UNITY_HOME" \
+        PATH="$HOME/.local/bin:$HOME/.cargo/bin:$PATH" \
+        bash "$UNITY_REPO/scripts/setup.sh"
+    local setup_exit=$?
+
+    if (( setup_exit == 0 )); then
+        SETUP_OK=ok
+    else
+        SETUP_OK=failed
+        log_warn "Local Orchestra setup didn't complete (exit=$setup_exit)."
+        log_info "Re-run after fixing the issue:  unity setup"
     fi
 }
 
@@ -344,20 +380,25 @@ run_setup() {
 # ----------------------------------------------------------------------------
 print_next_steps() {
     echo ""
-    echo -e "${GREEN}${BOLD}Installation complete.${NC}"
+    if [ "${SETUP_OK:-}" = "failed" ]; then
+        echo -e "${YELLOW}${BOLD}Installation partially complete.${NC}"
+        echo "  Code is installed; local Orchestra didn't start. See warnings above."
+    else
+        echo -e "${GREEN}${BOLD}Installation complete.${NC}"
+    fi
     echo ""
     echo -e "${BOLD}Next steps:${NC}"
     echo ""
-    if [ "$RUN_SETUP" = "false" ]; then
+    if [ "${SETUP_OK:-}" = "ok" ]; then
+        echo "  1. Add an LLM provider key to $UNITY_REPO/.env"
+        echo "     OPENAI_API_KEY or ANTHROPIC_API_KEY"
+        echo "     (ORCHESTRA_URL and UNIFY_KEY are already wired to local Orchestra.)"
+    else
         echo "  1. Bootstrap local Orchestra:"
         echo -e "     ${CYAN}\$ unity setup${NC}"
         echo ""
         echo "  2. Add an LLM provider key to $UNITY_REPO/.env"
         echo "     OPENAI_API_KEY or ANTHROPIC_API_KEY"
-    else
-        echo "  1. Add an LLM provider key to $UNITY_REPO/.env"
-        echo "     OPENAI_API_KEY or ANTHROPIC_API_KEY"
-        echo "     (ORCHESTRA_URL and UNIFY_KEY are already wired to local Orchestra.)"
     fi
     echo ""
     if [ "$CREATE_CLI" = "true" ]; then
