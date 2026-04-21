@@ -247,14 +247,36 @@ def _ensure_in_gcs(
     bucket = client.bucket(target.bucket_name)
     blob = bucket.blob(resolved_blob_key)
 
+    import os
+    import time as _time
+
+    upload_size = 0
+    if source_bytes is not None:
+        upload_size = len(source_bytes)
+    elif source_local_path is not None:
+        try:
+            upload_size = os.path.getsize(source_local_path)
+        except OSError:
+            pass
+
+    t0 = _time.perf_counter()
     if source_bytes is not None:
         blob.upload_from_string(source_bytes)
     else:
         assert source_local_path is not None  # narrowed by _validate_inputs
         blob.upload_from_filename(source_local_path)
+    elapsed = _time.perf_counter() - t0
 
     gs_uri = f"gs://{target.bucket_name}/{resolved_blob_key}"
-    logger.debug("Uploaded source to %s", gs_uri)
+    mb = upload_size / (1024 * 1024)
+    rate = mb / elapsed if elapsed > 0 else 0
+    logger.info(
+        "Uploaded %.1f MB to %s in %.1fs (%.1f MB/s)",
+        mb,
+        gs_uri,
+        elapsed,
+        rate,
+    )
     return gs_uri
 
 
