@@ -837,6 +837,116 @@ em {
    RESPONSIVE
    ──────────────────────────────────────────────── */
 
+/* ────────────────────────────────────────────────
+   IN-CONTEXT COMPARISON
+   ──────────────────────────────────────────────── */
+
+.context-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+  background: var(--surface);
+  margin-bottom: 22px;
+}
+
+.context-card {
+  padding: 30px 26px;
+  border-right: 1px solid var(--line);
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  transition: background 180ms ease;
+}
+
+.context-card:last-child {
+  border-right: 0;
+}
+
+.context-card.accent {
+  background: rgba(46, 163, 107, 0.04);
+}
+
+.context-card header {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding-bottom: 14px;
+  border-bottom: 1px solid var(--line);
+}
+
+.context-card h3 {
+  margin: 0;
+  font-size: 1.12rem;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  color: var(--ink);
+}
+
+.context-card.accent h3 {
+  color: var(--green-soft);
+}
+
+.context-tag {
+  margin: 0;
+  font-family: var(--font-serif);
+  font-style: italic;
+  font-size: 0.98rem;
+  color: var(--ink-dim);
+  line-height: 1.3;
+}
+
+.context-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+}
+
+.context-list li {
+  color: var(--ink-soft);
+  font-size: 0.92rem;
+  line-height: 1.5;
+  padding-left: 16px;
+  position: relative;
+}
+
+.context-list li::before {
+  content: "→";
+  position: absolute;
+  left: 0;
+  color: var(--ink-faint);
+  font-size: 0.82rem;
+}
+
+.context-card.accent .context-list li::before {
+  color: var(--green);
+}
+
+.context-note {
+  font-size: 0.93rem;
+  color: var(--ink-dim);
+  max-width: 72ch;
+  margin: 0;
+  line-height: 1.6;
+}
+
+@media (max-width: 1000px) {
+  .context-grid {
+    grid-template-columns: 1fr;
+  }
+  .context-card {
+    border-right: 0;
+    border-bottom: 1px solid var(--line);
+  }
+  .context-card:last-child {
+    border-bottom: 0;
+  }
+}
+
 @media (max-width: 1000px) {
   .hero {
     grid-template-columns: 1fr;
