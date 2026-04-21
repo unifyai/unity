@@ -52,26 +52,33 @@ Get a local sandbox running in under 5 minutes. The runtime executes on your mac
 
 ### Install
 
+One command:
+
 ```bash
-git clone https://github.com/unifyai/unity.git
-git clone https://github.com/unifyai/unify.git
-git clone https://github.com/unifyai/unillm.git
-
-cd unity
-
-# Install uv if you don't have it
-curl -LsSf https://astral.sh/uv/install.sh | sh
-
-uv sync
+curl -fsSL https://raw.githubusercontent.com/unifyai/unity/main/scripts/install.sh | bash
 ```
 
-### Configure
+This clones `unity`, `unify`, and `unillm` as siblings under `~/.unity/`, installs `uv` if you don't have it, syncs dependencies, drops a `unity` command into `~/.local/bin/`, and scaffolds a `.env` you fill in. Works on macOS, Linux, and WSL2.
+
+<details>
+<summary>Manual install</summary>
 
 ```bash
+git clone https://github.com/unifyai/unity.git   ~/.unity/unity
+git clone https://github.com/unifyai/unify.git   ~/.unity/unify
+git clone https://github.com/unifyai/unillm.git  ~/.unity/unillm
+
+cd ~/.unity/unity
+curl -LsSf https://astral.sh/uv/install.sh | sh
+uv sync
 cp .env.example .env
 ```
 
-Fill in:
+</details>
+
+### Configure
+
+Edit `~/.unity/unity/.env`:
 
 ```bash
 UNIFY_KEY=your-unify-key
@@ -83,9 +90,19 @@ OPENAI_API_KEY=sk-...        # or ANTHROPIC_API_KEY=...
 ### Run
 
 ```bash
+unity --project_name Sandbox --overwrite
+```
+
+<details>
+<summary>Without the CLI shim</summary>
+
+```bash
+cd ~/.unity/unity
 source .venv/bin/activate
 python -m sandboxes.conversation_manager.sandbox --project_name Sandbox --overwrite
 ```
+
+</details>
 
 At the configuration prompt, **select option 2** (CodeAct + Simulated Managers). This runs the full architecture: ConversationManager orchestrates CodeActActor, which writes and executes Python plans against the manager APIs, with simulated backends for the managers themselves.
 
