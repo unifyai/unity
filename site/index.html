@@ -26,7 +26,8 @@
           <span class="logo-text">unity<span class="logo-dim">/agent</span></span>
         </a>
         <nav class="nav-links" aria-label="Primary">
-          <a href="#what">What it is</a>
+          <a href="#context">In context</a>
+          <a href="#what">Features</a>
           <a href="#install">Install</a>
           <a href="#architecture">Architecture</a>
           <a href="https://github.com/unifyai/unity" target="_blank" rel="noreferrer"
@@ -124,7 +125,67 @@
           </div>
         </section>
 
-        <!-- WHAT IT IS -->
+        <!-- IN CONTEXT -->
+        <section class="section" id="context">
+          <div class="section-head">
+            <p class="kicker">In context</p>
+            <p class="section-sub">
+              unity-agent has been the agent runtime behind Unify's production
+              AI teammates since mid-2025. It sits alongside OpenClaw and
+              Hermes-Agent — two projects that made self-hosted AI agents real
+              — and extends the category for teams of assistants.
+            </p>
+          </div>
+
+          <div class="context-grid">
+            <article class="context-card">
+              <header>
+                <h3>OpenClaw</h3>
+                <p class="context-tag">Personal AI assistant</p>
+              </header>
+              <ul class="context-list">
+                <li>Multi-channel presence</li>
+                <li>Self-hosted on your hardware</li>
+                <li>Skill-extensible</li>
+                <li>Long-running background work</li>
+              </ul>
+            </article>
+
+            <article class="context-card">
+              <header>
+                <h3>Hermes-Agent</h3>
+                <p class="context-tag">An agent that grows with you</p>
+              </header>
+              <ul class="context-list">
+                <li>Continual learning</li>
+                <li>Auto-generated skills</li>
+                <li>Natural-language scheduling</li>
+                <li>Delegated subagents</li>
+              </ul>
+            </article>
+
+            <article class="context-card accent">
+              <header>
+                <h3>unity-agent</h3>
+                <p class="context-tag">Many assistants, one hive mind</p>
+              </header>
+              <ul class="context-list">
+                <li>Hive mind, opt-in</li>
+                <li>Real-time voice, dual-brain</li>
+                <li>Steerable nested execution</li>
+                <li>Code-first planning</li>
+              </ul>
+            </article>
+          </div>
+
+          <p class="context-note">
+            OpenClaw proved the self-hosted personal assistant. Hermes-Agent
+            proved the self-improving agent. unity-agent extends the model to
+            coordinated teams of assistants.
+          </p>
+        </section>
+
+        <!-- FEATURES -->
         <section class="section" id="what">
           <div class="section-head">
             <p class="kicker">Features</p>
@@ -204,15 +265,18 @@
             <article class="feature">
               <header>
                 <span class="feature-index">06</span>
-                <h3>Consolidates as it runs</h3>
+                <h3>Functions, typed and linked</h3>
               </header>
               <p>
-                Every 50 messages, the MemoryManager runs a background
-                extraction pass — distilling contacts, tasks, preferences, and
-                policies into typed tables. Reusable Python functions and
-                guidance procedures are stored alongside.
+                Every 50 messages, a background pass distills contacts, tasks,
+                preferences, and policies into typed tables. Reusable Python
+                functions are stored alongside — validated at storage, with
+                AST-tracked dependencies, invokable by name. Guidance
+                procedures describe when to use each one, linked many-to-many.
               </p>
-              <code class="feature-code">memory · functions · guidance</code>
+              <code class="feature-code"
+                >typed · ast-analyzed · semantically indexed</code
+              >
             </article>
           </div>
         </section>

@@ -43,12 +43,14 @@ Get a local sandbox running in under 5 minutes. The runtime executes on your mac
 
 ### Prerequisites
 
-- **Python 3.12+**
+- **Python 3.12+** (the installer will fetch it via `uv` if you don't have it)
+- **Docker** (runs the local Orchestra backend — Postgres + pgvector in a container)
 - **PortAudio** (audio support)
   - macOS: `brew install portaudio`
   - Ubuntu/Debian: `sudo apt-get install portaudio19-dev python3-dev`
 - **An LLM provider key** — [OpenAI](https://platform.openai.com/api-keys) or [Anthropic](https://console.anthropic.com/) are the simplest paths from this README
-- **A [Unify](https://unify.ai) account** — required for the hosted persistence backend the runtime talks to
+
+> If you don't want a local Orchestra and would rather point at Unify's hosted backend, install with `--skip-setup` and fill in `UNIFY_KEY` / `ORCHESTRA_URL` manually.
 
 ### Install
 
@@ -58,30 +60,36 @@ One command:
 curl -fsSL https://raw.githubusercontent.com/unifyai/unity/main/scripts/install.sh | bash
 ```
 
-This clones `unity`, `unify`, and `unillm` as siblings under `~/.unity/`, installs `uv` if you don't have it, syncs dependencies, drops a `unity` command into `~/.local/bin/`, and scaffolds a `.env` you fill in. Works on macOS, Linux, and WSL2.
+This clones `unity`, `unify`, `unillm`, and `orchestra` as siblings under `~/.unity/`, installs `uv` and `poetry` if you don't have them, syncs dependencies, drops a `unity` command into `~/.local/bin/`, then spins up a local Orchestra (Docker Postgres + FastAPI) and wires your `.env` with the local `UNIFY_KEY` and `ORCHESTRA_URL`. Works on macOS, Linux, and WSL2.
+
+Flags: `--skip-setup` (don't spin up Orchestra — just install the code), `--no-cli` (don't install the `unity` shim), `--dir PATH` (install somewhere other than `~/.unity`), `--branch NAME`.
 
 <details>
 <summary>Manual install</summary>
 
 ```bash
-git clone https://github.com/unifyai/unity.git   ~/.unity/unity
-git clone https://github.com/unifyai/unify.git   ~/.unity/unify
-git clone https://github.com/unifyai/unillm.git  ~/.unity/unillm
+git clone https://github.com/unifyai/unity.git      ~/.unity/unity
+git clone https://github.com/unifyai/unify.git      ~/.unity/unify
+git clone https://github.com/unifyai/unillm.git     ~/.unity/unillm
+git clone https://github.com/unifyai/orchestra.git  ~/.unity/orchestra
 
 cd ~/.unity/unity
 curl -LsSf https://astral.sh/uv/install.sh | sh
 uv sync
-cp .env.example .env
+
+cd ~/.unity/orchestra
+poetry install
+ORCHESTRA_INACTIVITY_TIMEOUT_SECONDS=0 scripts/local.sh start
+# Copy the UNIFY_BASE_URL and UNIFY_KEY it prints into ~/.unity/unity/.env
 ```
 
 </details>
 
 ### Configure
 
-Edit `~/.unity/unity/.env`:
+After `install.sh`, `~/.unity/unity/.env` already has `ORCHESTRA_URL` and `UNIFY_KEY` set to your local Orchestra. All you need to add is an LLM provider key:
 
 ```bash
-UNIFY_KEY=your-unify-key
 OPENAI_API_KEY=sk-...        # or ANTHROPIC_API_KEY=...
 ```
 
@@ -92,6 +100,13 @@ OPENAI_API_KEY=sk-...        # or ANTHROPIC_API_KEY=...
 ```bash
 unity --project_name Sandbox --overwrite
 ```
+
+Other `unity` subcommands:
+- `unity setup` — re-bootstrap local Orchestra (useful if Docker wasn't running the first time)
+- `unity status` — show local Orchestra status
+- `unity stop` — stop local Orchestra
+- `unity restart` — stop + start (wipes DB)
+- `unity help`
 
 <details>
 <summary>Without the CLI shim</summary>
