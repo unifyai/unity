@@ -62,11 +62,13 @@ from .run_ledger import (
 from .row_streaming import iter_table_input_row_batches, iter_table_input_rows
 from .transport import build_table_handles, detect_csv_dialect
 from .types import (
+    CONTENT_CHECKPOINT_ID,
     AttachmentCallback,
     CsvFileHandle,
     DmBinding,
     FmBinding,
     IngestBinding,
+    IngestCheckpoint,
     IngestPlan,
     IngestRequested,
     InlineRowsHandle,
@@ -157,10 +159,12 @@ __all__ = sorted(
         "detect_csv_dialect",
         # Types
         "AttachmentCallback",
+        "CONTENT_CHECKPOINT_ID",
         "CsvFileHandle",
         "DmBinding",
         "FmBinding",
         "IngestBinding",
+        "IngestCheckpoint",
         "IngestPlan",
         "IngestRequested",
         "InlineRowsHandle",
