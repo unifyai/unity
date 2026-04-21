@@ -304,11 +304,12 @@ class ConversationManagerBrainActionTools:
     async def send_teams_message(
         self,
         *,
-        contact_id: int | str,
+        contact_id: int | str | list[int | str | dict],
         content: str,
         chat_id: str | None = None,
         channel_id: str | None = None,
         team_id: str | None = None,
+        chat_topic: str | None = None,
         attachment_filepath: str | None = None,
     ) -> dict[str, Any]:
         return await self._comms.send_teams_message(
@@ -317,7 +318,26 @@ class ConversationManagerBrainActionTools:
             chat_id=chat_id,
             channel_id=channel_id,
             team_id=team_id,
+            chat_topic=chat_topic,
             attachment_filepath=attachment_filepath,
+        )
+
+    @wraps(CommsPrimitives.create_teams_channel)
+    async def create_teams_channel(
+        self,
+        *,
+        team_id: str,
+        display_name: str,
+        description: str | None = None,
+        membership_type: str = "standard",
+        owner_contact_ids: list[int | str | dict] | None = None,
+    ) -> dict[str, Any]:
+        return await self._comms.create_teams_channel(
+            team_id=team_id,
+            display_name=display_name,
+            description=description,
+            membership_type=membership_type,
+            owner_contact_ids=owner_contact_ids,
         )
 
     @wraps(CommsPrimitives.send_unify_message)
@@ -1351,6 +1371,7 @@ class ConversationManagerBrainActionTools:
             tools["send_discord_channel_message"] = self.send_discord_channel_message
         if self._cm.assistant_has_teams:
             tools["send_teams_message"] = self.send_teams_message
+            tools["create_teams_channel"] = self.create_teams_channel
         if getattr(self._cm.mode, "is_voice", False):
             tools["guide_voice_agent"] = self.guide_voice_agent
         if SETTINGS.DEMO_MODE:

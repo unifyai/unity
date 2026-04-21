@@ -538,6 +538,21 @@ class TeamsChannelMessageSent(Event):
 
 
 @dataclass
+class TeamsChannelCreated(Event):
+    """A new Microsoft Teams channel was created by the assistant."""
+
+    topic: ClassVar[str | None] = "app:comms:teams_channel_created"
+    content_logged: ClassVar[bool] = True
+
+    contact: dict
+    team_id: str = ""
+    channel_id: str = ""
+    display_name: str = ""
+    description: str = ""
+    membership_type: str = "standard"
+
+
+@dataclass
 class UnifyMessageReceived(Event):
     """A message was received via the Unify console chat interface.
 
