@@ -80,13 +80,13 @@ def add_or_replace_file_row(
             }
 
     # Create new row via DataManager
-    file_id_before = entry.get("file_id")
+    file_id_before = getattr(entry, "file_id", None)
     log_ids = dm.insert_rows(
         context=file_manager._ctx,
         rows=[entry],
         add_to_all_context=file_manager.include_in_multi_assistant_table,
     )
-    file_id_after = entry.get("file_id")
+    file_id_after = getattr(entry, "file_id", None)
     logger.info(
         "[ops] insert_rows for %s: file_id before=%s after=%s, "
         "add_to_all=%s, log_ids=%s",
@@ -99,8 +99,8 @@ def add_or_replace_file_row(
     return {
         "outcome": "file created successfully",
         "details": {
-            "file_id": entry.get("file_id"),
-            "file_path": entry.get("file_path"),
+            "file_id": getattr(entry, "file_id", None),
+            "file_path": getattr(entry, "file_path", None),
         },
     }
 
