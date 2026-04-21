@@ -95,6 +95,44 @@ class WhatsAppMessage(CommsMessage):
 
 
 @dataclass
+class TeamsMessage(CommsMessage):
+    """A Microsoft Teams chat message (1:1, group, or meeting chat).
+
+    ``chat_id`` is the Teams thread identifier required to reply into the
+    same chat. ``message_id`` is the server-side Teams message id (used to
+    thread replies when relevant).
+    """
+
+    name: str
+    content: str
+    timestamp: datetime
+    role: str  # "user" or "assistant"
+    chat_id: str = ""
+    message_id: str = ""
+    attachments: list[dict] = field(default_factory=list)
+
+
+@dataclass
+class TeamsChannelMessage(CommsMessage):
+    """A Microsoft Teams channel message.
+
+    Channel identity is carried by ``team_id`` + ``channel_id``. ``thread_id``
+    (also called root message id) is required to reply in-thread, while
+    ``message_id`` is the specific post's id.
+    """
+
+    name: str
+    content: str
+    timestamp: datetime
+    role: str  # "user" or "assistant"
+    team_id: str = ""
+    channel_id: str = ""
+    thread_id: str = ""
+    message_id: str = ""
+    attachments: list[dict] = field(default_factory=list)
+
+
+@dataclass
 class ApiMessage(CommsMessage):
     """A programmatic API message, optionally with attachments and developer-supplied tags.
 
@@ -407,6 +445,11 @@ class ContactIndex:
         bcc: list[str] | None = None,
         contact_role: str | None = None,
         tags: list[str] | None = None,
+        chat_id: str | None = None,
+        channel_id: str | None = None,
+        team_id: str | None = None,
+        thread_id: str | None = None,
+        message_id: str | None = None,
     ) -> "GlobalThreadEntry":
         """
         Build a GlobalThreadEntry without appending it to the global thread.
@@ -461,6 +504,28 @@ class ContactIndex:
                 role=role,
                 attachments=attachments,
             )
+        elif thread_name == Medium.TEAMS_MESSAGE:
+            message = TeamsMessage(
+                name=name,
+                content=message_content or "",
+                timestamp=timestamp,
+                role=role,
+                chat_id=chat_id or "",
+                message_id=message_id or "",
+                attachments=attachments or [],
+            )
+        elif thread_name == Medium.TEAMS_CHANNEL_MESSAGE:
+            message = TeamsChannelMessage(
+                name=name,
+                content=message_content or "",
+                timestamp=timestamp,
+                role=role,
+                team_id=team_id or "",
+                channel_id=channel_id or "",
+                thread_id=thread_id or "",
+                message_id=message_id or "",
+                attachments=attachments or [],
+            )
         elif thread_name == Medium.API_MESSAGE:
             message = ApiMessage(
                 name=name,
@@ -503,6 +568,11 @@ class ContactIndex:
         bcc: list[str] | None = None,
         contact_role: str | None = None,
         tags: list[str] | None = None,
+        chat_id: str | None = None,
+        channel_id: str | None = None,
+        team_id: str | None = None,
+        thread_id: str | None = None,
+        message_id: str | None = None,
     ) -> int:
         """
         Build a message and append it to the shared global thread.
@@ -525,6 +595,11 @@ class ContactIndex:
             bcc=bcc,
             contact_role=contact_role,
             tags=tags,
+            chat_id=chat_id,
+            channel_id=channel_id,
+            team_id=team_id,
+            thread_id=thread_id,
+            message_id=message_id,
         )
         self.global_thread.append(entry)
         msg = entry.message

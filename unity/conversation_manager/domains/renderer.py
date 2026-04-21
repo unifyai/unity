@@ -21,6 +21,8 @@ from unity.conversation_manager.domains.contact_index import (
     EmailMessage,
     UnifyMessage,
     WhatsAppMessage,
+    TeamsMessage,
+    TeamsChannelMessage,
     GuidanceMessage,
     ConversationState,
     ContactIndex,
@@ -1076,6 +1078,8 @@ class Renderer:
             | EmailMessage
             | UnifyMessage
             | WhatsAppMessage
+            | TeamsMessage
+            | TeamsChannelMessage
             | ApiMessage
             | GuidanceMessage
         ),
@@ -1216,6 +1220,117 @@ class Renderer:
                     tz_block_line = f"\n{tz_block}"
 
             return f"{new_marker}[{message.name} @ {timestamp_str}]: {message.content}{attachments_line}{tz_block_line}"
+
+        if isinstance(message, TeamsMessage):
+            attachments_line = ""
+            if message.attachments:
+
+                def _teams_att_detail(att, is_self: bool) -> str:
+                    if isinstance(att, dict):
+                        fname = att.get(
+                            "filename",
+                            f"attachment_{att.get('id', 'unknown')}",
+                        )
+                        att_id = att.get("id")
+                        id_part = f"id: {att_id}, " if att_id else ""
+                        if is_self:
+                            fpath = att.get("filepath")
+                            if fpath:
+                                return f"{fname} ({id_part}attached from {fpath})"
+                            return (
+                                f"{fname} ({id_part}attached)"
+                                if id_part
+                                else f"{fname} (attached)"
+                            )
+                        return f"{fname} ({id_part}auto-downloaded to Attachments/{att_id}_{fname})"
+                    return (
+                        f"{att} (attached)" if is_self else f"{att} (auto-downloaded)"
+                    )
+
+                attachment_details = [
+                    _teams_att_detail(att, message.name == "You")
+                    for att in message.attachments
+                ]
+                attachments_line = f" [Attachments: {', '.join(attachment_details)}]"
+
+            tz_block_line = ""
+            if contact_name:
+                tz_block = _get_message_timezone_block(
+                    contact_name,
+                    contact_timezone,
+                    assistant_timezone,
+                )
+                if tz_block:
+                    tz_block_line = f"\n{tz_block}"
+
+            # Surface the Teams chat_id so the LLM can reply into the same
+            # thread via send_teams_message(chat_id=...).
+            ids_line = ""
+            if message.chat_id:
+                ids_line = f' [chat_id="{message.chat_id}"]'
+
+            return (
+                f"{new_marker}[{message.name} @ {timestamp_str}]: "
+                f"{message.content}{ids_line}{attachments_line}{tz_block_line}"
+            )
+
+        if isinstance(message, TeamsChannelMessage):
+            attachments_line = ""
+            if message.attachments:
+
+                def _teams_channel_att_detail(att, is_self: bool) -> str:
+                    if isinstance(att, dict):
+                        fname = att.get(
+                            "filename",
+                            f"attachment_{att.get('id', 'unknown')}",
+                        )
+                        att_id = att.get("id")
+                        id_part = f"id: {att_id}, " if att_id else ""
+                        if is_self:
+                            fpath = att.get("filepath")
+                            if fpath:
+                                return f"{fname} ({id_part}attached from {fpath})"
+                            return (
+                                f"{fname} ({id_part}attached)"
+                                if id_part
+                                else f"{fname} (attached)"
+                            )
+                        return f"{fname} ({id_part}auto-downloaded to Attachments/{att_id}_{fname})"
+                    return (
+                        f"{att} (attached)" if is_self else f"{att} (auto-downloaded)"
+                    )
+
+                attachment_details = [
+                    _teams_channel_att_detail(att, message.name == "You")
+                    for att in message.attachments
+                ]
+                attachments_line = f" [Attachments: {', '.join(attachment_details)}]"
+
+            tz_block_line = ""
+            if contact_name:
+                tz_block = _get_message_timezone_block(
+                    contact_name,
+                    contact_timezone,
+                    assistant_timezone,
+                )
+                if tz_block:
+                    tz_block_line = f"\n{tz_block}"
+
+            # Surface team_id, channel_id, and thread_id so the LLM can reply
+            # into the same channel thread via send_teams_message(...).
+            id_bits: list[str] = []
+            if message.team_id:
+                id_bits.append(f'team_id="{message.team_id}"')
+            if message.channel_id:
+                id_bits.append(f'channel_id="{message.channel_id}"')
+            if message.thread_id:
+                id_bits.append(f'thread_id="{message.thread_id}"')
+            ids_line = f" [{' '.join(id_bits)}]" if id_bits else ""
+
+            return (
+                f"{new_marker}[{message.name} @ {timestamp_str}]: "
+                f"{message.content}{ids_line}{attachments_line}{tz_block_line}"
+            )
 
         if isinstance(message, ApiMessage):
             attachments_line = ""

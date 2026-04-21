@@ -1295,6 +1295,11 @@ async def _(event, cm: "ConversationManager", *args, **kwargs):
     attachments = None
     tags = None
     notif_content = None
+    chat_id = None
+    channel_id = None
+    team_id = None
+    thread_id = None
+    message_id = None
 
     # Get contact info from ContactManager, fallback to event.contact
     # Note: event.contact may be empty dict for emails to external addresses
@@ -1541,6 +1546,7 @@ async def _(event, cm: "ConversationManager", *args, **kwargs):
             medium = Medium.TEAMS_MESSAGE
             message_content = event.content
             attachments = event.attachments
+            chat_id = getattr(event, "chat_id", "") or None
             notif_content = f"Teams message sent to {sender_name}"
             role = "assistant"
             event_trace = getattr(cm, "_current_event_trace", None) or {}
@@ -1552,6 +1558,8 @@ async def _(event, cm: "ConversationManager", *args, **kwargs):
             medium = Medium.TEAMS_MESSAGE
             message_content = event.content
             attachments = event.attachments
+            chat_id = getattr(event, "chat_id", "") or None
+            message_id = getattr(event, "message_id", "") or None
             notif_content = f"Teams message from {sender_name}"
             role = "user"
             event_trace = getattr(cm, "_current_event_trace", None) or {}
@@ -1563,6 +1571,8 @@ async def _(event, cm: "ConversationManager", *args, **kwargs):
             medium = Medium.TEAMS_CHANNEL_MESSAGE
             message_content = event.content
             attachments = event.attachments
+            team_id = getattr(event, "team_id", "") or None
+            channel_id = getattr(event, "channel_id", "") or None
             notif_content = "Teams channel message sent"
             role = "assistant"
             event_trace = getattr(cm, "_current_event_trace", None) or {}
@@ -1574,6 +1584,10 @@ async def _(event, cm: "ConversationManager", *args, **kwargs):
             medium = Medium.TEAMS_CHANNEL_MESSAGE
             message_content = event.content
             attachments = event.attachments
+            team_id = getattr(event, "team_id", "") or None
+            channel_id = getattr(event, "channel_id", "") or None
+            thread_id = getattr(event, "thread_id", "") or None
+            message_id = getattr(event, "message_id", "") or None
             notif_content = f"Teams channel message from {sender_name}"
             role = "user"
             event_trace = getattr(cm, "_current_event_trace", None) or {}
@@ -1593,6 +1607,11 @@ async def _(event, cm: "ConversationManager", *args, **kwargs):
             timestamp=event.timestamp,
             role=role,
             tags=tags,
+            chat_id=chat_id,
+            channel_id=channel_id,
+            team_id=team_id,
+            thread_id=thread_id,
+            message_id=message_id,
         )
     cm.notifications_bar.push_notif("comms", notif_content, event.timestamp)
     if role == "user":
