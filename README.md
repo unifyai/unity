@@ -19,11 +19,13 @@ Unity is the cognitive architecture behind [Unify's](https://unify.ai) persisten
 
 ## What's open and what isn't
 
-Unity is the **open core** of the Unify platform. This repository contains the full agent runtime — the managers, tool loops, CodeAct, dual-brain voice coordination, event backbone, memory consolidation. All MIT-licensed, published here because the architecture may be useful to others building agent systems.
+Unity is the **open core** of the Unify platform. This repository contains the full agent runtime — the managers, tool loops, CodeAct, dual-brain voice coordination, event backbone, memory consolidation. All MIT-licensed.
 
-It is **not** a fully self-contained product you can install and run without Unify. The state managers persist through Unify's hosted API. Some components of the broader platform — external communication routing, the hosted communication edge, telephony/voice infrastructure, the assistant session control plane, the billing and identity layer — are not open-sourced and run as part of the managed service.
+The persistence backend is also open-source: [Orchestra](https://github.com/unifyai/orchestra) (FastAPI + Postgres + pgvector) runs as a Docker container on your machine by default. The [Quick Start](#quick-start) `curl | bash` installer spins it up for you. **No Unify account required** to run the full open core locally.
 
-If you're here to **study the runtime**, start with [ARCHITECTURE.md](ARCHITECTURE.md). If you're here to **run it**, the [Quick Start](#quick-start) gets you a sandbox in under 5 minutes, connected to Unify's hosted backend.
+**Not open-sourced** — the managed platform layer. External communication routing, the hosted communication edge (telephony, WhatsApp Business Solution Provider, Microsoft 365 tenant integration, SIP trunking), the assistant session control plane, the billing layer, and the identity layer run as part of the hosted service at [unify.ai](https://unify.ai). You can point the runtime at Unify's hosted Orchestra instead of a local one, but features that depend on the managed platform layer only work against the hosted backend.
+
+If you're here to **study the runtime**, start with [ARCHITECTURE.md](ARCHITECTURE.md). If you're here to **run it**, the [Quick Start](#quick-start) gets you a full local install (runtime + Orchestra) in under 5 minutes.
 
 ## What the runtime does
 
@@ -39,7 +41,7 @@ If you're here to **study the runtime**, start with [ARCHITECTURE.md](ARCHITECTU
 
 ## Quick Start
 
-Get a local sandbox running in under 5 minutes. The runtime executes on your machine; persistence and a subset of platform services go through [Unify's hosted backend](https://unify.ai).
+Get a fully local sandbox running in under 5 minutes. The runtime, the LLM client, and the persistence backend ([Orchestra](https://github.com/unifyai/orchestra), via Docker) all run on your machine. Hosted backend at [unify.ai](https://unify.ai) is an opt-in alternative.
 
 ### Prerequisites
 
@@ -274,10 +276,11 @@ State Managers (each runs its own async LLM tool loop)
 | Repo | Role |
 |------|------|
 | **unity** (this) | The agent runtime — managers, tool loops, CodeAct, voice, orchestration |
-| **[unify](https://github.com/unifyai/unify)** | Python SDK — the interface to Unify's hosted persistence and logging layer |
+| **[orchestra](https://github.com/unifyai/orchestra)** | Persistence backend — FastAPI + Postgres + pgvector. Installer spins it up locally in Docker |
+| **[unify](https://github.com/unifyai/unify)** | Python SDK — the client Unity uses to talk to Orchestra |
 | **[unillm](https://github.com/unifyai/unillm)** | LLM access layer — OpenAI, Anthropic, or any compatible endpoint |
 
-All MIT-licensed. The managed product layer — hosted persistence, communication routing, telephony, the assistant session control plane, the web dashboard — runs on [Unify's platform](https://unify.ai) and is not part of this open core.
+All MIT-licensed. The managed product layer — communication routing, telephony, the assistant session control plane, the web dashboard, billing, identity — runs on [Unify's platform](https://unify.ai) and is not part of this open core. You can point Unity at Unify's hosted Orchestra instead of a local one, but managed-service features only work against the hosted backend.
 
 ## Running the tests
 
