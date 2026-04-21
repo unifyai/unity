@@ -988,13 +988,21 @@ class SimulatedDataManager(BaseDataManager):
         post_ingest: Optional[PostIngestConfig] = None,
         on_task_complete=None,
         coerce_types: bool = True,
+        storage_client=None,
+        skip_rows: int = 0,
     ) -> IngestResult:
         if table_input_handle is not None:
             from unity.common.pipeline.row_streaming import (
                 iter_table_input_rows,
             )
 
-            rows = list(iter_table_input_rows(table_input_handle))
+            rows = list(
+                iter_table_input_rows(
+                    table_input_handle,
+                    storage_client=storage_client,
+                    skip_rows=skip_rows,
+                ),
+            )
         elif rows is None:
             rows = []
 
