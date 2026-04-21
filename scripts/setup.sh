@@ -25,6 +25,10 @@ ORCHESTRA_REPO="${UNITY_HOME}/orchestra"
 ORCHESTRA_PORT="${ORCHESTRA_PORT:-8000}"
 ORCHESTRA_DB_PORT="${ORCHESTRA_DB_PORT:-5432}"
 
+# Ensure user-local tool dirs are on PATH. `uv` and tools `uv` installs
+# (e.g. poetry) land here, and in a fresh shell they may not be picked up.
+export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$PATH"
+
 # --- Colors / logging -----------------------------------------------------
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[0;33m'
 BLUE='\033[0;34m'; CYAN='\033[0;36m'; BOLD='\033[1m'; NC='\033[0m'
