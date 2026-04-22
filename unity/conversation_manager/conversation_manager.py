@@ -1533,6 +1533,7 @@ class ConversationManager(metaclass=SingletonABCMeta):
         self.org_id: int | None = payload.get("org_id")
         self.org_name: str = payload.get("org_name", "")
         self.team_ids: list[int] = payload.get("team_ids") or []
+        self.hive_id: int | None = payload.get("hive_id")
         # Set API key on SESSION_DETAILS for runtime access
         if payload.get("api_key"):
             SESSION_DETAILS.unify_key = payload["api_key"]
@@ -1560,6 +1561,7 @@ class ConversationManager(metaclass=SingletonABCMeta):
             org_id=self.org_id,
             org_name=self.org_name,
             team_ids=self.team_ids,
+            hive_id=self.hive_id,
             voice_provider=self.voice_provider,
             voice_id=self.voice_id,
             binding_id=self.binding_id,

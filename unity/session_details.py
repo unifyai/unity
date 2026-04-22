@@ -131,6 +131,18 @@ class TeamDetails:
 
 
 @dataclass
+class HiveDetails:
+    """Hive membership for the active body.
+
+    ``id`` is ``None`` for a solo body. When populated it is the Hive primary
+    key that anchors the shared storage namespace: Hive-scoped managers write
+    to ``Hives/{id}/...`` instead of the assistant's own context tree.
+    """
+
+    id: int | None = None
+
+
+@dataclass
 class VoiceConfig:
     """Voice configuration for the session."""
 
@@ -178,6 +190,9 @@ class SessionDetails:
 
     # Team memberships within the org
     team: TeamDetails = field(default_factory=TeamDetails)
+
+    # Hive membership (None id for a solo body)
+    hive: HiveDetails = field(default_factory=HiveDetails)
 
     _initialized: bool = field(default=False, repr=False)
 
@@ -237,6 +252,15 @@ class SessionDetails:
         self.team.ids = value
 
     @property
+    def hive_id(self) -> int | None:
+        """Shortcut to ``hive.id``; ``None`` when the body is solo."""
+        return self.hive.id
+
+    @hive_id.setter
+    def hive_id(self, value: int | None) -> None:
+        self.hive.id = value
+
+    @property
     def unify_key(self) -> str:
         """API key for Unify services.
 
@@ -291,6 +315,7 @@ class SessionDetails:
         org_id: int | None = None,
         org_name: str = "",
         team_ids: list[int] | None = None,
+        hive_id: int | None = None,
         voice_provider: str = "",
         voice_id: str = "",
         binding_id: str = "",
@@ -331,6 +356,7 @@ class SessionDetails:
         self.org.id = org_id
         self.org.name = org_name
         self.team.ids = team_ids or []
+        self.hive.id = hive_id
         self.voice.provider = voice_provider
         self.voice.id = voice_id
         self._initialized = True
@@ -341,6 +367,7 @@ class SessionDetails:
         self.user = UserDetails()
         self.org = OrgDetails()
         self.team = TeamDetails()
+        self.hive = HiveDetails()
         self.voice = VoiceConfig()
         self.voice_call = VoiceCallConfig()
         self._unify_key = ""
@@ -388,6 +415,7 @@ class SessionDetails:
         os.environ["TEAM_IDS"] = (
             ",".join(str(t) for t in self.team.ids) if self.team.ids else ""
         )
+        os.environ["HIVE_ID"] = str(self.hive.id) if self.hive.id is not None else ""
         os.environ["VOICE_PROVIDER"] = self.voice.provider
         os.environ["VOICE_ID"] = self.voice.id
         os.environ["VOICE_MODE"] = self.voice.mode
@@ -470,6 +498,11 @@ class SessionDetails:
         if val := os.environ.get("TEAM_IDS"):
             try:
                 self.team.ids = [int(t) for t in val.split(",") if t.strip()]
+            except (ValueError, TypeError):
+                pass
+        if (val := os.environ.get("HIVE_ID")) is not None and val != "":
+            try:
+                self.hive.id = int(val)
             except (ValueError, TypeError):
                 pass
         if val := os.environ.get("VOICE_PROVIDER"):
