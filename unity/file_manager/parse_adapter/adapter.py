@@ -157,6 +157,7 @@ def lower_to_ingest_plan(
     config: FilePipelineConfig,
     artifact_store: "ArtifactStore",
     artifact_format: str = "jsonl",
+    source_gs_uri: str = "",
 ) -> IngestPlan:
     """Lower a ``FileParseResult`` into a pointer-only ``IngestPlan``.
 
@@ -197,6 +198,7 @@ def lower_to_ingest_plan(
         artifact_store=artifact_store,
         artifact_format=artifact_format,
         job_id=run_id,
+        source_gs_uri=source_gs_uri,
     )
     tables_meta = _build_tables_meta(parse_result)
 
