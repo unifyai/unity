@@ -6,6 +6,7 @@ from the voice agent subprocess back to the parent ConversationManager process.
 """
 
 import asyncio
+import json
 import os
 import time as _time
 import pytest
@@ -219,6 +220,78 @@ class TestCallEventSocketServer:
         mock_event_broker.publish.assert_not_called()
 
         await server.stop()
+
+    @pytest.mark.asyncio
+    async def test_disconnect_fallback_waits_for_inflight_message_processing(
+        self,
+        mock_event_broker,
+    ):
+        """A disconnect fallback must not overtake an already received message.
+
+        This reproduces the staging failure class where the voice worker sends a
+        lifecycle event and then disconnects immediately afterward. The server
+        schedules inbound message processing on the main loop, and separately
+        schedules ``on_client_disconnected`` when the socket closes. If the
+        disconnect callback runs first, the parent can observe
+        ``UnifyMeetEnded`` before the earlier ``UnifyMeetStarted``.
+
+        The correct ordering is to finish processing messages already received
+        from the client before running the disconnect fallback.
+        """
+        from unity.conversation_manager.events import UnifyMeetStarted
+
+        started_processing = asyncio.Event()
+        allow_started_finish = asyncio.Event()
+        seen: list[str] = []
+
+        async def on_event(channel: str, event_json: str) -> None:
+            event_name = json.loads(event_json)["event_name"]
+            if event_name == "UnifyMeetStarted":
+                started_processing.set()
+                await allow_started_finish.wait()
+            seen.append(event_name)
+
+        server = CallEventSocketServer(
+            mock_event_broker,
+            on_event=on_event,
+            forward_channels=[],
+        )
+        socket_path = await server.start()
+
+        async def on_disconnected() -> None:
+            seen.append("UnifyMeetEnded")
+
+        server.on_client_disconnected = on_disconnected
+
+        client = CallEventSocketClient(socket_path)
+        try:
+            await client.send_event(
+                "app:comms:unify_meet_started",
+                UnifyMeetStarted(contact={"contact_id": 1}).to_json(),
+            )
+
+            started_entered = await _wait_for_condition(
+                lambda: started_processing.is_set(),
+                timeout=2.0,
+            )
+            assert started_entered, "Timed out waiting for inbound message processing"
+
+            await client.close()
+
+            disconnected = await _wait_for_condition(
+                lambda: len(server._connected_clients) == 0,
+                timeout=2.0,
+            )
+            assert disconnected, "Timed out waiting for socket disconnect"
+
+            allow_started_finish.set()
+
+            ordered = await _wait_for_condition(lambda: len(seen) >= 2, timeout=2.0)
+            assert ordered, f"Timed out waiting for lifecycle events, seen={seen!r}"
+            assert seen == ["UnifyMeetStarted", "UnifyMeetEnded"]
+        finally:
+            await client.close()
+            await server.stop()
 
 
 class TestCallEventSocketClient:
