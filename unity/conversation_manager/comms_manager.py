@@ -62,6 +62,34 @@ from unity.conversation_manager.cm_types import Medium
 
 load_dotenv()
 
+
+def _hive_id_from_event(event: dict) -> int | None:
+    """Extract ``hive_id`` from a comms envelope, tolerating both shapes.
+
+    The bootstrap Secret flattens the assistant's Hive membership to
+    ``hive_id`` before Unity reads it; the ``assistant_update`` Pub/Sub
+    envelope still carries the Orchestra-shaped ``hive`` summary dict
+    (``{"hive_id": int, "name": str}``). Callers do not need to care which
+    envelope they're looking at — this helper returns the int id or ``None``
+    in both cases.
+    """
+    hive = event.get("hive")
+    if isinstance(hive, dict):
+        hive_id = hive.get("hive_id")
+        if hive_id is not None:
+            try:
+                return int(hive_id)
+            except (TypeError, ValueError):
+                return None
+    flat = event.get("hive_id")
+    if flat is None:
+        return None
+    try:
+        return int(flat)
+    except (TypeError, ValueError):
+        return None
+
+
 # Lock for unknown contact creation to prevent duplicates
 _unknown_contact_lock = threading.Lock()
 
@@ -570,6 +598,7 @@ class CommsManager:
                     "org_id": event.get("org_id"),
                     "org_name": event.get("org_name", ""),
                     "team_ids": event.get("team_ids") or [],
+                    "hive_id": _hive_id_from_event(event),
                     "demo_id": event.get("demo_id"),
                 }
                 await publish(
@@ -1708,6 +1737,7 @@ class CommsManager:
                     "org_id": event.get("org_id"),
                     "org_name": event.get("org_name", ""),
                     "team_ids": event.get("team_ids") or [],
+                    "hive_id": _hive_id_from_event(event),
                     "wake_reasons": event.get("wake_reasons") or [],
                     "demo_id": event.get("demo_id"),
                 }
