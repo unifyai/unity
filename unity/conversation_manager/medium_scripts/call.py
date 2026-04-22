@@ -58,7 +58,6 @@ from unity.conversation_manager.medium_scripts.common import (
     event_broker,
     create_end_call,  # kept for test monkeypatch compatibility
     match_say_meta,
-    setup_inactivity_timeout,
     setup_participant_disconnect_handler,  # kept for test monkeypatch compatibility
     publish_call_started,
     publish_call_ended,
@@ -904,7 +903,7 @@ async def entrypoint(ctx: agents.JobContext):
         assistant_utterance_event = OutboundUnifyMeetUtterance
 
     # Register cleanup as a LiveKit shutdown callback so it runs on any
-    # exit path: participant disconnect, inactivity, or explicit stop.
+    # exit path: participant disconnect or explicit stop.
     async def _on_job_shutdown():
         if audio_bridge is not None:
             await asyncio.to_thread(audio_bridge.stop)
@@ -924,11 +923,6 @@ async def entrypoint(ctx: agents.JobContext):
 
         if ev.reason == CloseReason.PARTICIPANT_DISCONNECTED:
             ctx.shutdown(reason="participant_disconnected")
-
-    async def _shutdown_inactivity():
-        ctx.shutdown(reason="inactivity")
-
-    touch_activity = setup_inactivity_timeout(_shutdown_inactivity)
 
     def _check_quiescence_transition() -> None:
         nonlocal _was_quiescent
@@ -951,7 +945,6 @@ async def entrypoint(ctx: agents.JobContext):
         state_id = f"usrstate-{user_state_seq:06d}"
         user_is_speaking = ev.new_state == "speaking"
         _log.user_state(ev.new_state, state_id=state_id)
-        touch_activity()
         _check_quiescence_transition()
 
     @session.on("agent_state_changed")
@@ -1205,7 +1198,6 @@ async def entrypoint(ctx: agents.JobContext):
                     event.to_json(),
                 ),
             )
-        touch_activity()
 
     audio_bridge: MeetAudioBridge | None = None
     if channel == "google_meet":
@@ -1259,7 +1251,6 @@ async def entrypoint(ctx: agents.JobContext):
 
     # Publish call started (shared helper)
     await publish_call_started(contact, channel)
-    touch_activity()
 
     pending_notifications: list[tuple[str, str, bool, str, str, str]] = (
         []
@@ -1271,7 +1262,6 @@ async def entrypoint(ctx: agents.JobContext):
         nonlocal gmeet_session_id
         event_type = data.get("type", "")
         _log.call_status(event_type)
-        touch_activity()
 
         if event_type == "call_answered":
             call_answered_flag.set()
@@ -1579,7 +1569,6 @@ async def entrypoint(ctx: agents.JobContext):
             speak=should_speak,
             turn=triggers_turn,
         )
-        touch_activity()
 
         if content:
             if not session_ready:
@@ -1633,7 +1622,6 @@ async def entrypoint(ctx: agents.JobContext):
         if not text:
             return
         _log.participant_comms(text)
-        touch_activity()
         if not session_ready:
             return
         _inject_silent_context(text)
