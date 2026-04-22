@@ -820,6 +820,10 @@ class _SessionConfigBase(Event):
     org_id: int | None = None
     org_name: str = ""
     team_ids: list[int] = field(default_factory=list)
+    # Hive membership identifier. ``None`` marks a solo body; a positive integer
+    # marks a Hive member whose Tasks and shared contexts live at the per-Hive
+    # path rather than under the assistant's own context tree.
+    hive_id: int | None = None
     wake_reasons: list[dict[str, Any]] = field(default_factory=list)
     # Demo assistant metadata ID. If set, this is a demo session.
     # Unity derives demo_mode from (demo_id is not None).
