@@ -2172,6 +2172,569 @@ app.post('/googlemeet/stop-present', auth, async (req: Request, res: Response) =
   }
 });
 
+// =====================================================================
+// Microsoft Teams Meeting browser automation
+// ---------------------------------------------------------------------
+// Mirrors the Google Meet implementation above: a dedicated browser
+// session per meeting, configured with the same PulseAudio sinks/sources
+// used by the LiveKit audio bridge, with per-session DOM polling for
+// participants, active speaker, and meeting end detection.
+// =====================================================================
+
+const startTeamsMeetBrowser = async (meetUrl: string): Promise<BrowserAgent> => {
+  try {
+    const agent = await startBrowserAgent({
+      url: meetUrl,
+      browser: {
+        launchOptions: {
+          headless: false,
+          args: [
+            "--disable-blink-features=AutomationControlled",
+            "--disable-features=IsolateOrigins,site-per-process",
+            '--auto-select-desktop-capture-source="Entire screen"',
+            '--auto-select-tab-capture-source-by-title=Desktop',
+          ],
+          env: {
+            ...process.env,
+            PULSE_SINK: "agent_sink",
+            PULSE_SOURCE: "meet_mic",
+          },
+          downloadsPath: defaultBrowserPaths.downloadsPath || undefined,
+          tracesDir: defaultBrowserPaths.tracesDir || undefined,
+        },
+        contextOptions: {
+          viewport: null,
+          ignoreHTTPSErrors: true,
+          permissions: ['camera', 'microphone'],
+        },
+      },
+      narrate: true,
+      llm: {
+        provider: 'openai-generic',
+        options: {
+          model: 'claude-4.6-sonnet@anthropic',
+          baseUrl: `${process.env.UNITY_COMMS_URL}/unillm`,
+          headers: {
+            'Authorization': `Bearer ${process.env.UNIFY_KEY}`,
+          },
+          temperature: 0.2,
+        }
+      }
+    });
+    agent.context.setDefaultNavigationTimeout(90000);
+    console.log("✅ Teams Meet BrowserAgent started successfully.");
+    return agent;
+  } catch (err) {
+    console.error("❌ Failed to start Teams Meet BrowserAgent:", err);
+    throw err;
+  }
+};
+
+type TeamsMeetStatus = 'joining' | 'lobby' | 'active' | 'ended' | 'removed' | 'error';
+
+interface TeamsMeetParticipant {
+  name: string;
+  isSpeaking: boolean;
+}
+
+interface TeamsMeetSessionInfo {
+  agent: BrowserAgent;
+  status: TeamsMeetStatus;
+  meetUrl: string;
+  displayName: string;
+  createdAt: Date;
+  participants: TeamsMeetParticipant[];
+  activeSpeaker: string | null;
+  pollIntervalId: ReturnType<typeof setInterval> | null;
+  latestScreenshot: string | null;
+  presenting: boolean;
+  desktopTabPage: any | null;
+}
+
+const teamsMeetSessions = new Map<string, TeamsMeetSessionInfo>();
+
+type TeamsMeetJoinResult =
+  | { status: 'active' | 'lobby' }
+  | { status: 'error'; reason: string };
+
+// Teams pre-join UI varies across the consumer (teams.live.com) and business
+// (teams.microsoft.com) clients. The consumer UI exposes a name input, camera
+// preview + toggle, a "Computer audio" card with Microphone + Speaker dropdowns
+// and a mic mute toggle, and a "Join now" button — all on a single pre-join
+// dialog. Audio is therefore configured BEFORE clicking Join (matching the
+// Google Meet flow). The in-meeting device-settings path is kept as a fallback
+// for clients that skip the pre-join dialog entirely.
+
+const TEAMS_PREPARE_TASK = (displayName: string) =>
+  `You are on a Microsoft Teams meeting entry flow.\n` +
+  `Teams may show either the consumer (teams.live.com) or business (teams.microsoft.com) UI.\n` +
+  `Complete these steps in order, skipping any that do not apply:\n` +
+  `1. If a "Continue on this browser" or "Join on the web instead" button is visible, click it.\n` +
+  `2. Dismiss any cookie banners, "Got it" buttons, or download-the-app prompts.\n` +
+  `3. Only if the page explicitly requires sign-in AND a "Join as a guest" / "Continue without an account" option exists, take that option. Otherwise ignore this step.\n` +
+  `4. If there is a "Type your name" or "Enter name" text input, clear it and type: ${displayName}\n` +
+  `5. Turn OFF the camera if its toggle is on. Leave the microphone toggle ON.\n` +
+  `Do NOT click "Join now" or "Join meeting" yet — audio devices are configured in a separate later step.\n` +
+  `Do NOT open or touch the Microphone or Speaker dropdowns yet.\n` +
+  `Ignore any warnings about camera/microphone not being found — those are expected.\n` +
+  `If the page shows a fatal error like "this meeting has expired" or "invalid meeting link", do nothing — just stop.`;
+
+const TEAMS_ENSURE_COMPUTER_AUDIO_TASK =
+  `You are on a Microsoft Teams pre-join screen. There is an audio selector with three options: "Computer audio", "Phone audio", and "Don't use audio".\n` +
+  `If the "Computer audio" radio is not already selected, click it.\n` +
+  `Do NOT click "Phone audio" or "Don't use audio".\n` +
+  `Do NOT click "Join now".`;
+
+const TEAMS_SELECT_MIC_TASK = (micLabel: string) =>
+  `You are on a Microsoft Teams pre-join screen, inside the "Computer audio" card.\n` +
+  `Click the Microphone dropdown (currently showing a device name like "Default" or similar).\n` +
+  `From the opened list, select the option whose name contains "${micLabel}".\n` +
+  `Once done, press the Escape key to dismiss it (do NOT click any other button).\n` +
+  `Do NOT toggle the mute switch.\n` +
+  `Do NOT click "Join now".`;
+
+const TEAMS_SELECT_SPEAKER_TASK = (speakerLabel: string) =>
+  `You are on a Microsoft Teams pre-join screen, inside the "Computer audio" card.\n` +
+  `Click the Speaker dropdown (currently showing a device name like "Default" or similar).\n` +
+  `From the opened list, select the option whose name contains "${speakerLabel}".\n` +
+  `Once done, press the Escape key to dismiss it (do NOT click any other button).\n` +
+  `Do NOT click "Join now".`;
+
+const TEAMS_ENSURE_MIC_UNMUTED_TASK =
+  `You are on a Microsoft Teams pre-join screen, inside the "Computer audio" card.\n` +
+  `Next to the selected Microphone there is a mute toggle switch.\n` +
+  `If the toggle is currently muted (off / grey / crossed-out icon), click it once to unmute.\n` +
+  `If the toggle is already unmuted (blue / on), do nothing.\n` +
+  `Do NOT click "Join now".`;
+
+const TEAMS_CLICK_JOIN_TASK =
+  `You are on a Microsoft Teams meeting pre-join screen. The audio devices have already been configured.\n` +
+  `Click the "Join now" button (sometimes labelled "Join meeting") to enter the meeting.\n` +
+  `Ignore any warnings about camera/microphone not being found — those are expected.\n` +
+  `If the page shows a fatal error like "this meeting has expired" or "invalid meeting link", do nothing — just stop.`;
+
+const TEAMS_PRESENT_TAB_TASK =
+  `You are in an active Microsoft Teams meeting.\n` +
+  `Click the "Share" or "Share content" button (screen share icon in the meeting toolbar).\n` +
+  `Then select the "Browser tab" / "Microsoft Edge tab" / "Chrome tab" option from the share menu.\n` +
+  `A tab will be auto-selected — just confirm the selection if a dialog appears.\n` +
+  `Do NOT select "Screen", "Window", or "PowerPoint Live".`;
+
+const TEAMS_STOP_PRESENT_TASK =
+  `You are in an active Microsoft Teams meeting and currently sharing a tab.\n` +
+  `Click the "Stop sharing" or "Stop presenting" button to end the presentation.\n` +
+  `If there is no stop button visible, look for a "You are sharing" banner or bar and click stop there.`;
+
+// In-meeting fallback: only used when the pre-join audio configuration failed.
+// Consumer Teams typically exposes audio devices via a caret next to the mic
+// button; business Teams hides them behind "More (…) → Settings → Device settings".
+const TEAMS_AUDIO_SETTINGS_TASK =
+  `You are in an active Microsoft Teams meeting. The device settings panel is currently closed.\n` +
+  `Open it using whichever of these paths is available:\n` +
+  `  (a) Click the small caret/arrow next to the Microphone button in the meeting toolbar; a device menu should open.\n` +
+  `  (b) If (a) is not visible, click "More" / "..." in the meeting toolbar, then "Settings", then "Device settings".\n` +
+  `Once the device options are visible, stop. Do NOT close them.`;
+
+const TEAMS_PREPARE_MAX_ITERATIONS = 4;
+const TEAMS_JOIN_MAX_ITERATIONS = 3;
+const TEAMS_PRESENT_MAX_ITERATIONS = 3;
+// Single-click audio sub-steps run with a tight iteration cap.
+const TEAMS_AUDIO_STEP_MAX_ITERATIONS = 2;
+// The in-meeting settings-opener may need a couple of clicks to navigate menus.
+const TEAMS_AUDIO_OPEN_MAX_ITERATIONS = 3;
+
+async function teamsMeetJoinFlow(agent: BrowserAgent, displayName: string): Promise<TeamsMeetJoinResult> {
+  const page = agent.page;
+  await page.waitForLoadState('domcontentloaded', { timeout: 15000 }).catch(() => {});
+
+  const pageUrl = page.url?.() ?? 'unknown';
+  console.log(`[teamsmeet/join] Page loaded: url=${pageUrl}`);
+
+  // Phase 1: pre-join prep (continue-in-browser, popups, name, camera off)
+  console.log('[teamsmeet/join] Phase 1: prepare...');
+  await runMagnitudeLoop(agent, TEAMS_PREPARE_TASK(displayName), TEAMS_PREPARE_MAX_ITERATIONS, 'teamsmeet/prepare');
+
+  // Phase 1b: pre-join audio device configuration. The consumer Teams UI exposes
+  // mic/speaker dropdowns on the pre-join dialog itself, so we configure the
+  // virtual devices here — mirroring the Google Meet flow. Failures fall through
+  // to an in-meeting fallback after join.
+  console.log('[teamsmeet/join] Phase 1b: configuring pre-join audio devices...');
+  let preJoinAudioOk = true;
+  try {
+    await runMagnitudeLoop(agent, TEAMS_ENSURE_COMPUTER_AUDIO_TASK, TEAMS_AUDIO_STEP_MAX_ITERATIONS, 'teamsmeet/audio-computer');
+    await runMagnitudeLoop(agent, TEAMS_SELECT_MIC_TASK('agent_sink'), TEAMS_AUDIO_STEP_MAX_ITERATIONS, 'teamsmeet/select-mic');
+    await runMagnitudeLoop(agent, TEAMS_SELECT_SPEAKER_TASK('meet_sink'), TEAMS_AUDIO_STEP_MAX_ITERATIONS, 'teamsmeet/select-speaker');
+    await runMagnitudeLoop(agent, TEAMS_ENSURE_MIC_UNMUTED_TASK, TEAMS_AUDIO_STEP_MAX_ITERATIONS, 'teamsmeet/mic-unmuted');
+  } catch (err) {
+    preJoinAudioOk = false;
+    console.log(`[teamsmeet/join] Phase 1b: pre-join audio setup failed — will retry in-meeting: ${err}`);
+  }
+
+  // Phase 2: click join
+  console.log('[teamsmeet/join] Phase 2: clicking join...');
+  await runMagnitudeLoop(agent, TEAMS_CLICK_JOIN_TASK, TEAMS_JOIN_MAX_ITERATIONS, 'teamsmeet/click-join');
+
+  // Phase 2b (fallback): only runs if pre-join audio config threw. Business
+  // Teams sometimes skips the pre-join dialog entirely — in that case the
+  // in-meeting Settings → Device settings panel is our only route.
+  if (!preJoinAudioOk) {
+    await sleep(2500);
+    console.log('[teamsmeet/join] Phase 2b: pre-join audio failed — configuring via in-meeting Settings...');
+    try {
+      await runMagnitudeLoop(agent, TEAMS_AUDIO_SETTINGS_TASK, TEAMS_AUDIO_OPEN_MAX_ITERATIONS, 'teamsmeet/audio-open');
+      await runMagnitudeLoop(agent, TEAMS_SELECT_MIC_TASK('agent_sink'), TEAMS_AUDIO_STEP_MAX_ITERATIONS, 'teamsmeet/select-mic-fallback');
+      await runMagnitudeLoop(agent, TEAMS_SELECT_SPEAKER_TASK('meet_sink'), TEAMS_AUDIO_STEP_MAX_ITERATIONS, 'teamsmeet/select-speaker-fallback');
+    } catch (err) {
+      console.log(`[teamsmeet/join] Phase 2b: in-meeting audio fallback also failed — using defaults: ${err}`);
+    }
+  }
+
+  // Determine outcome by checking the page state after the agent finished
+  await sleep(1500);
+
+  // Active in-meeting indicators (Teams uses these across consumer + business UIs)
+  const meetingActive = await page.locator(
+    '[data-tid="hangup-button"], [data-tid="call-end"], [aria-label*="Leave" i], [aria-label*="Hang up" i], [data-tid="toggle-mute"]'
+  ).first().isVisible({ timeout: 5000 }).catch(() => false);
+  if (meetingActive) return { status: 'active' };
+
+  const inLobby = await page.locator(
+    'text=/waiting for|someone will let you in|when the meeting starts|admit you/i'
+  ).first().isVisible({ timeout: 3000 }).catch(() => false);
+  if (inLobby) return { status: 'lobby' };
+
+  const hasError = await page.locator(
+    'text=/this meeting has expired|invalid meeting|meeting not found|sign in to join|cannot join/i'
+  ).first().isVisible({ timeout: 1000 }).catch(() => false);
+  if (hasError) {
+    const errorMsg = await page.locator(
+      'text=/this meeting has expired|invalid meeting|meeting not found|sign in to join|cannot join/i'
+    ).first().textContent().catch(() => 'unknown');
+    return { status: 'error', reason: `teams_page_error: "${errorMsg}" (url=${pageUrl})` };
+  }
+
+  const hasJoinBtn = await page.locator(
+    'button:has-text("Join now"), button:has-text("Join meeting")'
+  ).first().isVisible({ timeout: 1000 }).catch(() => false);
+  if (hasJoinBtn) {
+    return { status: 'error', reason: `join_button_still_visible: Agent completed but join button was not clicked (url=${pageUrl})` };
+  }
+
+  // No definitive signal — assume we're waiting for admission
+  return { status: 'lobby' };
+}
+
+async function teamsMeetPollState(sessionId: string): Promise<void> {
+  const session = teamsMeetSessions.get(sessionId);
+  if (!session || session.status === 'ended' || session.status === 'error') return;
+
+  try {
+    const page = session.agent.page;
+
+    // Detect if meeting has ended / was kicked
+    const meetingEnded = await page.locator(
+      'text=/the meeting has ended|you left the meeting|you have been removed|removed from the meeting/i'
+    ).first().isVisible({ timeout: 500 }).catch(() => false);
+
+    if (meetingEnded) {
+      session.status = 'ended';
+      return;
+    }
+
+    // If we were in the lobby, check if we're admitted now
+    if (session.status === 'lobby') {
+      const admitted = await page.locator(
+        '[data-tid="hangup-button"], [data-tid="call-end"], [aria-label*="Leave" i], [aria-label*="Hang up" i]'
+      ).first().isVisible({ timeout: 500 }).catch(() => false);
+      if (admitted) session.status = 'active';
+
+      const denied = await page.locator(
+        'text=/not admitted|denied|sorry, but you were not admitted|not let in/i'
+      ).first().isVisible({ timeout: 500 }).catch(() => false);
+      if (denied) {
+        session.status = 'removed';
+        return;
+      }
+    }
+
+    // Scrape participants and active speaker from the DOM.
+    // Teams renders participant tiles inside the meeting stage with various
+    // data-tid attributes; the speaking indicator is typically a class or
+    // aria attribute on the tile container.
+    const participants: TeamsMeetParticipant[] = [];
+    let activeSpeaker: string | null = null;
+
+    const tileElements = await page.locator(
+      '[data-tid="participant-tile"], [data-tid="stream-content"], [data-cid="calling-participant-stream"]'
+    ).all().catch(() => []);
+
+    for (const el of tileElements) {
+      const name = await el.getAttribute('aria-label').catch(() => null)
+        || await el.getAttribute('data-tid-displayname').catch(() => null)
+        || await el.innerText().catch(() => null);
+      if (!name) continue;
+
+      const containerClasses = await el.evaluate(
+        (node: Element) => node.closest('[class]')?.className || ''
+      ).catch(() => '');
+      const ariaLive = await el.getAttribute('aria-live').catch(() => '') || '';
+      const isSpeaking = /speaking/i.test(containerClasses) ||
+        /speaking/i.test(ariaLive) ||
+        (await el.locator('[class*="speaking" i], [aria-label*="speaking" i]').first().isVisible({ timeout: 100 }).catch(() => false));
+
+      const cleanName = name.split('\n')[0].trim();
+      if (!cleanName) continue;
+      participants.push({ name: cleanName, isSpeaking });
+      if (isSpeaking) activeSpeaker = cleanName;
+    }
+
+    session.participants = participants;
+    session.activeSpeaker = activeSpeaker;
+
+    // Cache a screenshot of the Teams tab for non-blocking reads
+    try {
+      const raw = await session.agent.page.screenshot({ type: 'jpeg', quality: 85 });
+      session.latestScreenshot = Buffer.from(raw).toString('base64');
+    } catch {
+      // Screenshot may fail transiently; keep the previous cached value
+    }
+  } catch {
+    // Browser may have disconnected
+    session.status = 'error';
+  }
+}
+
+app.post('/teamsmeet/join', auth, async (req: Request, res: Response) => {
+  const { meetUrl, displayName } = req.body;
+  if (!meetUrl) {
+    return res.status(400).json({ error: 'bad_request', message: 'meetUrl is required.' });
+  }
+
+  const name = displayName || 'Unity Assistant';
+  const sessionId = randomUUID();
+  const t0 = Date.now();
+  console.log(`[teamsmeet/join] BEGIN sessionId=${sessionId} url=${meetUrl}`);
+
+  try {
+    const agent = await startTeamsMeetBrowser(meetUrl);
+
+    const result = await teamsMeetJoinFlow(agent, name);
+    console.log(`[teamsmeet/join] Join flow completed: status=${result.status}${result.status === 'error' ? ` reason="${result.reason}"` : ''} [${Date.now() - t0}ms]`);
+
+    if (result.status === 'error') {
+      await agent.stop().catch(() => {});
+      return res.status(400).json({
+        error: 'join_failed',
+        reason: result.reason,
+        message: `Could not join Teams meeting: ${result.reason}`,
+      });
+    }
+
+    const sessionInfo: TeamsMeetSessionInfo = {
+      agent,
+      status: result.status,
+      meetUrl,
+      displayName: name,
+      createdAt: new Date(),
+      participants: [],
+      activeSpeaker: null,
+      pollIntervalId: null,
+      latestScreenshot: null,
+      presenting: false,
+      desktopTabPage: null,
+    };
+
+    sessionInfo.pollIntervalId = setInterval(() => {
+      teamsMeetPollState(sessionId).then(() => {
+        const s = teamsMeetSessions.get(sessionId);
+        if (s && (s.status === 'ended' || s.status === 'removed' || s.status === 'error')) {
+          if (s.pollIntervalId) clearInterval(s.pollIntervalId);
+          s.pollIntervalId = null;
+          console.log(`[teamsmeet] Session ${sessionId} ended (status=${s.status}), polling stopped.`);
+        }
+      });
+    }, 1000);
+
+    teamsMeetSessions.set(sessionId, sessionInfo);
+
+    console.log(`[teamsmeet/join] DONE sessionId=${sessionId} status=${result.status} [${Date.now() - t0}ms]`);
+    res.json({ status: result.status, sessionId });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    const stack = err instanceof Error ? err.stack : undefined;
+    console.error(`[teamsmeet/join] EXCEPTION after ${Date.now() - t0}ms: ${message}`, stack ? `\n${stack}` : '');
+    res.status(500).json({ error: 'join_exception', message });
+  }
+});
+
+app.post('/teamsmeet/leave', auth, async (req: Request, res: Response) => {
+  const { sessionId } = req.body;
+  if (!sessionId) {
+    return res.status(400).json({ error: 'bad_request', message: 'sessionId is required.' });
+  }
+
+  const session = teamsMeetSessions.get(sessionId);
+  if (!session) {
+    return res.status(404).json({ error: 'session_not_found', message: `Teams meeting session ${sessionId} not found.` });
+  }
+
+  try {
+    if (session.pollIntervalId) {
+      clearInterval(session.pollIntervalId);
+      session.pollIntervalId = null;
+    }
+
+    if (session.desktopTabPage) {
+      await session.desktopTabPage.close().catch(() => {});
+      session.desktopTabPage = null;
+    }
+    session.presenting = false;
+
+    await session.agent.stop();
+    session.status = 'ended';
+    teamsMeetSessions.delete(sessionId);
+
+    console.log(`[teamsmeet/leave] Session ${sessionId} stopped.`);
+    res.json({ status: 'left' });
+  } catch (err) {
+    console.error(`[teamsmeet/leave] Error stopping session ${sessionId}:`, err);
+    teamsMeetSessions.delete(sessionId);
+    const message = err instanceof Error ? err.message : String(err);
+    res.status(500).json({ error: 'leave_failed', message });
+  }
+});
+
+app.get('/teamsmeet/sessions', auth, async (_req: Request, res: Response) => {
+  const sessions = Array.from(teamsMeetSessions.entries()).map(([sessionId, session]) => ({
+    sessionId,
+    meetUrl: session.meetUrl,
+    status: session.status,
+    displayName: session.displayName,
+    createdAt: session.createdAt,
+  }));
+  res.json({ sessions });
+});
+
+app.get('/teamsmeet/state', auth, async (req: Request, res: Response) => {
+  const sessionId = req.query.sessionId as string;
+  if (!sessionId) {
+    return res.status(400).json({ error: 'bad_request', message: 'sessionId query parameter is required.' });
+  }
+
+  const session = teamsMeetSessions.get(sessionId);
+  if (!session) {
+    return res.status(404).json({ error: 'session_not_found', message: `Teams meeting session ${sessionId} not found.` });
+  }
+
+  res.json({
+    status: session.status,
+    meetUrl: session.meetUrl,
+    displayName: session.displayName,
+    createdAt: session.createdAt,
+    participants: session.participants,
+    activeSpeaker: session.activeSpeaker,
+  });
+});
+
+app.get('/teamsmeet/screenshot/latest', auth, async (req: Request, res: Response) => {
+  const sessionId = req.query.sessionId as string;
+  if (!sessionId) {
+    return res.status(400).json({ error: 'bad_request', message: 'sessionId query parameter is required.' });
+  }
+
+  const session = teamsMeetSessions.get(sessionId);
+  if (!session) {
+    return res.status(404).json({ error: 'session_not_found', message: `Teams meeting session ${sessionId} not found.` });
+  }
+
+  if (!session.latestScreenshot) {
+    return res.status(204).end();
+  }
+
+  res.json({ screenshot: session.latestScreenshot });
+});
+
+app.post('/teamsmeet/present', auth, async (req: Request, res: Response) => {
+  const { sessionId, desktopUrl } = req.body;
+  if (!sessionId || !desktopUrl) {
+    return res.status(400).json({ error: 'bad_request', message: 'sessionId and desktopUrl are required.' });
+  }
+
+  const session = teamsMeetSessions.get(sessionId);
+  if (!session) {
+    return res.status(404).json({ error: 'session_not_found', message: `Teams meeting session ${sessionId} not found.` });
+  }
+  if (session.presenting) {
+    return res.json({ status: 'already_presenting' });
+  }
+
+  const t0 = Date.now();
+  console.log(`[teamsmeet/present] BEGIN sessionId=${sessionId} desktopUrl=${desktopUrl}`);
+
+  try {
+    const context = session.agent.context;
+    const desktopTab = await context.newPage();
+    await desktopTab.goto(desktopUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
+    console.log(`[teamsmeet/present] Desktop tab opened [${Date.now() - t0}ms]`);
+
+    // Switch back to the Teams tab for the LLM to click "Share"
+    const meetPage = session.agent.page;
+    await meetPage.bringToFront();
+
+    await runMagnitudeLoop(session.agent, TEAMS_PRESENT_TAB_TASK, TEAMS_PRESENT_MAX_ITERATIONS, 'teamsmeet/present');
+    console.log(`[teamsmeet/present] Present flow completed [${Date.now() - t0}ms]`);
+
+    session.presenting = true;
+    session.desktopTabPage = desktopTab;
+
+    res.json({ status: 'presenting' });
+    console.log(`[teamsmeet/present] DONE [${Date.now() - t0}ms]`);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.error(`[teamsmeet/present] EXCEPTION after ${Date.now() - t0}ms: ${message}`);
+    res.status(500).json({ error: 'present_failed', message });
+  }
+});
+
+app.post('/teamsmeet/stop-present', auth, async (req: Request, res: Response) => {
+  const { sessionId } = req.body;
+  if (!sessionId) {
+    return res.status(400).json({ error: 'bad_request', message: 'sessionId is required.' });
+  }
+
+  const session = teamsMeetSessions.get(sessionId);
+  if (!session) {
+    return res.status(404).json({ error: 'session_not_found', message: `Teams meeting session ${sessionId} not found.` });
+  }
+  if (!session.presenting) {
+    return res.json({ status: 'not_presenting' });
+  }
+
+  const t0 = Date.now();
+  console.log(`[teamsmeet/stop-present] BEGIN sessionId=${sessionId}`);
+
+  try {
+    await session.agent.page.bringToFront();
+
+    await runMagnitudeLoop(session.agent, TEAMS_STOP_PRESENT_TASK, TEAMS_PRESENT_MAX_ITERATIONS, 'teamsmeet/stop-present');
+    console.log(`[teamsmeet/stop-present] Stop flow completed [${Date.now() - t0}ms]`);
+
+    if (session.desktopTabPage) {
+      await session.desktopTabPage.close().catch(() => {});
+    }
+
+    session.presenting = false;
+    session.desktopTabPage = null;
+
+    res.json({ status: 'stopped' });
+    console.log(`[teamsmeet/stop-present] DONE [${Date.now() - t0}ms]`);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.error(`[teamsmeet/stop-present] EXCEPTION after ${Date.now() - t0}ms: ${message}`);
+    res.status(500).json({ error: 'stop_present_failed', message });
+  }
+});
+
 // --- /exec endpoint: Execute shell commands (use /files first to upload files) ---
 app.post('/exec', auth, async (req: Request, res: Response) => {
   const { command, cwd, timeout, shell_mode } = req.body;
