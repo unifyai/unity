@@ -31,7 +31,6 @@ conversation while the Main CM Brain (slow brain) handles orchestration.
 2. **Common helpers** (common.py):
    - publish_call_started / publish_call_ended
    - create_end_call with pre_shutdown_callback
-   - setup_inactivity_timeout
    - configure_from_cli argument parsing
 
 3. **Voice Agent prompt**:
@@ -756,47 +755,6 @@ class TestUtteranceEventPublishing:
 
 
 # =============================================================================
-# Unit Tests: Inactivity Timeout
-# =============================================================================
-
-
-@pytest.mark.asyncio
-class TestInactivityTimeout:
-    """Tests for inactivity timeout setup."""
-
-    async def test_setup_inactivity_timeout_returns_touch_function(
-        self,
-        event_broker,
-        boss_contact,
-    ):
-        """setup_inactivity_timeout returns a callable touch function."""
-        from unittest.mock import AsyncMock
-
-        from unity.conversation_manager.medium_scripts.common import (
-            setup_inactivity_timeout,
-        )
-
-        end_call = AsyncMock()
-        touch = setup_inactivity_timeout(end_call, timeout=300)
-
-        assert callable(touch)
-
-    async def test_touch_function_is_callable(self, event_broker, boss_contact):
-        """Touch function can be called without error."""
-        from unittest.mock import AsyncMock
-
-        from unity.conversation_manager.medium_scripts.common import (
-            setup_inactivity_timeout,
-        )
-
-        end_call = AsyncMock()
-        touch = setup_inactivity_timeout(end_call, timeout=300)
-
-        # Should not raise
-        touch()
-
-
-# =============================================================================
 # Guidance tests: chat context and system messages
 # =============================================================================
 
@@ -966,11 +924,6 @@ class TestFastBrainGuidanceFlow:
             call_script,
             "create_end_call",
             lambda *args, **kwargs: _noop_end_call,
-        )
-        monkeypatch.setattr(
-            call_script,
-            "setup_inactivity_timeout",
-            lambda end_call: (lambda: None),
         )
         monkeypatch.setattr(
             call_script,
@@ -1191,11 +1144,6 @@ class TestFastBrainGuidanceFlow:
         monkeypatch.setattr(call_script, "start_event_broker_receive", _noop_async)
         monkeypatch.setattr(
             call_script,
-            "setup_inactivity_timeout",
-            lambda end_call: (lambda: None),
-        )
-        monkeypatch.setattr(
-            call_script,
             "setup_participant_disconnect_handler",
             _noop_async,
         )
@@ -1389,11 +1337,6 @@ class TestFastBrainGuidanceFlow:
             call_script,
             "create_end_call",
             lambda *args, **kwargs: _noop_end_call,
-        )
-        monkeypatch.setattr(
-            call_script,
-            "setup_inactivity_timeout",
-            lambda end_call: (lambda: None),
         )
         monkeypatch.setattr(
             call_script,
@@ -1618,11 +1561,6 @@ class TestFastBrainGuidanceFlow:
             call_script,
             "create_end_call",
             lambda *args, **kwargs: _noop_end_call,
-        )
-        monkeypatch.setattr(
-            call_script,
-            "setup_inactivity_timeout",
-            lambda end_call: (lambda: None),
         )
         monkeypatch.setattr(
             call_script,
@@ -1938,11 +1876,6 @@ class TestFastBrainGuidanceFlow:
         )
         monkeypatch.setattr(
             call_script,
-            "setup_inactivity_timeout",
-            lambda end_call: (lambda: None),
-        )
-        monkeypatch.setattr(
-            call_script,
             "setup_participant_disconnect_handler",
             lambda *args, **kwargs: None,
         )
@@ -2169,11 +2102,6 @@ class TestFastBrainGuidanceFlow:
             call_script,
             "create_end_call",
             lambda *args, **kwargs: _noop_end_call,
-        )
-        monkeypatch.setattr(
-            call_script,
-            "setup_inactivity_timeout",
-            lambda end_call: (lambda: None),
         )
         monkeypatch.setattr(
             call_script,
@@ -2416,11 +2344,6 @@ class TestFastBrainSpeechDedup:
             call_script,
             "create_end_call",
             lambda *args, **kwargs: _noop_end_call,
-        )
-        monkeypatch.setattr(
-            call_script,
-            "setup_inactivity_timeout",
-            lambda end_call: (lambda: None),
         )
         monkeypatch.setattr(
             call_script,

@@ -205,11 +205,6 @@ async def _boot_entrypoint(monkeypatch):
     )
     monkeypatch.setattr(
         call_script,
-        "setup_inactivity_timeout",
-        lambda end_call: (lambda: None),
-    )
-    monkeypatch.setattr(
-        call_script,
         "setup_participant_disconnect_handler",
         lambda *args, **kwargs: None,
     )

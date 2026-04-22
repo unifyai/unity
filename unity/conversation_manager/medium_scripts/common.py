@@ -419,10 +419,6 @@ async def start_event_broker_receive() -> bool:
     return await event_broker.start_receiving()
 
 
-# Default inactivity timeout used by both agents
-DEFAULT_INACTIVITY_TIMEOUT = 300  # 5 minutes
-
-
 # -------- Call lifecycle helpers -------- #
 
 
@@ -500,38 +496,6 @@ def setup_participant_disconnect_handler(room, end_call: Callable[[], Awaitable[
         asyncio.create_task(end_call())
 
     room.on("participant_disconnected", on_participant_disconnected)
-
-
-def setup_inactivity_timeout(
-    end_call: Callable[[], Awaitable[None]],
-    timeout: float = DEFAULT_INACTIVITY_TIMEOUT,
-) -> Callable[[], None]:
-    """
-    Starts an inactivity watchdog and returns a `touch()` function.
-
-    Call the returned function whenever there is user/assistant activity
-    that should reset the inactivity timer.
-    """
-    loop = asyncio.get_event_loop()
-    state = {"last_activity": loop.time()}
-
-    async def check_inactivity():
-        while True:
-            await asyncio.sleep(10)
-            current_time = loop.time()
-            if current_time - state["last_activity"] > timeout:
-                LOGGER.info(
-                    f"{ICONS['lifecycle']} Inactivity timeout reached, shutting down agent...",
-                )
-                await end_call()
-                break
-
-    asyncio.create_task(check_inactivity())
-
-    def touch() -> None:
-        state["last_activity"] = loop.time()
-
-    return touch
 
 
 # -------- Say-meta matching -------- #
