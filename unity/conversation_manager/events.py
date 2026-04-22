@@ -309,6 +309,81 @@ class GoogleMeetParticipantLeft(Event):
 
 
 @dataclass
+class TeamsMeetReceived(Event):
+    """A request to join a Microsoft Teams meeting via browser."""
+
+    topic: ClassVar[str | None] = "app:comms:teamsmeet_received"
+    prominent: ClassVar[bool] = True
+
+    contact: dict
+    meet_url: str
+
+
+@dataclass
+class TeamsMeetStarted(Event):
+    """The Teams meeting browser session is active and audio bridge is running."""
+
+    topic: ClassVar[str | None] = "app:comms:teamsmeet_started"
+    prominent: ClassVar[bool] = True
+
+    contact: dict
+
+
+@dataclass
+class TeamsMeetEnded(Event):
+    """The Teams meeting browser session has ended."""
+
+    topic: ClassVar[str | None] = "app:comms:teamsmeet_ended"
+    prominent: ClassVar[bool] = True
+
+    contact: dict
+
+
+@dataclass
+class InboundTeamsMeetUtterance(Event):
+    """Utterance received from a participant during a Teams meeting."""
+
+    topic: ClassVar[str | None] = "app:comms:teamsmeet_utterance"
+
+    contact: dict
+    content: str
+    speaker_label: str | None = None
+    participant_names: list[str] | None = None
+    diarization_speaker_id: str | None = None
+
+
+@dataclass
+class OutboundTeamsMeetUtterance(Event):
+    """Utterance sent by the assistant during a Teams meeting."""
+
+    topic: ClassVar[str | None] = "app:comms:teamsmeet_utterance"
+
+    contact: dict
+    content: str
+    participant_names: list[str] | None = None
+
+
+@dataclass
+class TeamsMeetParticipantJoined(Event):
+    """A participant joined the Teams meeting session."""
+
+    topic: ClassVar[str | None] = "app:comms:teamsmeet_participant"
+
+    contact: dict
+    participant_name: str
+
+
+@dataclass
+class TeamsMeetParticipantLeft(Event):
+    """A participant left the Teams meeting session."""
+
+    topic: ClassVar[str | None] = "app:comms:teamsmeet_participant"
+
+    contact: dict
+    participant_name: str
+
+
+@dataclass
 class RecordingReady(Event):
     """A call/meet recording has been processed and is available in GCS."""
 

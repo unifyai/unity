@@ -443,6 +443,7 @@ class ConversationManagerBrainActionTools:
         if (
             self._cm.call_manager.has_active_call
             or self._cm.call_manager.has_active_google_meet
+            or self._cm.call_manager.has_active_teams_meet
         ):
             return {
                 "status": "error",
@@ -473,24 +474,7 @@ class ConversationManagerBrainActionTools:
 
         # Stop the browser agent immediately so the assistant disappears
         # from the Meet before the event handler's full cleanup pipeline.
-        session_id = self._cm.call_manager._gmeet_session_id
-        if session_id:
-            import aiohttp
-
-            from unity.session_details import SESSION_DETAILS
-
-            try:
-                async with aiohttp.ClientSession() as session:
-                    await session.post(
-                        "http://localhost:3000/googlemeet/leave",
-                        json={"sessionId": session_id},
-                        headers={
-                            "authorization": f"Bearer {SESSION_DETAILS.unify_key}",
-                        },
-                        timeout=aiohttp.ClientTimeout(total=30),
-                    )
-            except Exception:
-                pass
+        await self._notify_browser_meet_leave("googlemeet")
 
         from unity.conversation_manager.events import GoogleMeetEnded
 
@@ -534,6 +518,130 @@ class ConversationManagerBrainActionTools:
             "message": "Failed to stop screen sharing.",
         }
 
+    async def join_teams_meet(
+        self,
+        meet_url: str,
+        context: str = "",
+    ) -> dict[str, Any]:
+        """Join a Microsoft Teams meeting.
+
+        This is the **only** way to join a Teams meeting — it configures audio
+        devices, establishes the voice pipeline, and dispatches the voice
+        agent so the assistant can hear and speak in the meeting.  Never
+        attempt to join a Teams meeting URL via ``act``.
+
+        Args:
+            meet_url: The full Teams meeting URL (e.g.
+                https://teams.microsoft.com/l/meetup-join/... or
+                https://teams.live.com/meet/...).
+            context: Briefing for the voice agent about the meeting purpose,
+                expected participants, topics to cover, and how to behave.
+                Same guidance principles as make_call's context parameter.
+        """
+        if (
+            self._cm.call_manager.has_active_call
+            or self._cm.call_manager.has_active_google_meet
+            or self._cm.call_manager.has_active_teams_meet
+        ):
+            return {
+                "status": "error",
+                "message": "A call or meeting is already active.",
+            }
+
+        if context:
+            self._cm.call_manager.initial_notification = context
+
+        from unity.conversation_manager.events import TeamsMeetReceived
+
+        boss = self._cm.contact_index.get_contact(contact_id=1) or {}
+        event = TeamsMeetReceived(contact=boss, meet_url=meet_url)
+        await self._event_broker.publish(event.topic, event.to_json())
+        return {"status": "ok", "message": f"Joining Teams meeting at {meet_url}"}
+
+    async def leave_teams_meet(self) -> dict[str, Any]:
+        """Leave the current Microsoft Teams meeting.
+
+        Disconnects the assistant from the active Teams meeting session,
+        closing the browser and tearing down the audio bridge.
+        """
+        if not self._cm.call_manager.has_active_teams_meet:
+            return {
+                "status": "error",
+                "message": "No active Teams meeting session to leave.",
+            }
+
+        await self._notify_browser_meet_leave("teamsmeet")
+
+        from unity.conversation_manager.events import TeamsMeetEnded
+
+        contact = self._cm.call_manager._disconnect_contact or {}
+        event = TeamsMeetEnded(contact=contact)
+        await self._event_broker.publish(event.topic, event.to_json())
+        return {"status": "ok", "message": "Leaving Teams meeting"}
+
+    async def start_teams_meet_screenshare(self) -> dict[str, Any]:
+        """Share the assistant's desktop screen in the active Teams meeting.
+
+        Opens a live view of the assistant's desktop and presents it to all
+        meeting participants. Use this when participants need to see what the
+        assistant is doing on its computer.
+        """
+        result = await self._cm.call_manager.start_teams_meet_screenshare()
+        if result:
+            return {
+                "status": "ok",
+                "message": "Now presenting desktop in Teams meeting.",
+            }
+        return {
+            "status": "error",
+            "message": "Failed to start screen sharing.",
+        }
+
+    async def stop_teams_meet_screenshare(self) -> dict[str, Any]:
+        """Stop sharing the assistant's desktop screen in Teams meeting.
+
+        Ends the current screen presentation. Meeting participants will no
+        longer see the assistant's desktop.
+        """
+        result = await self._cm.call_manager.stop_teams_meet_screenshare()
+        if result:
+            return {
+                "status": "ok",
+                "message": "Stopped presenting in Teams meeting.",
+            }
+        return {
+            "status": "error",
+            "message": "Failed to stop screen sharing.",
+        }
+
+    async def _notify_browser_meet_leave(self, path_prefix: str) -> None:
+        """Best-effort notify the agent-service to leave the active browser meet.
+
+        ``path_prefix`` is the agent-service URL prefix (``"googlemeet"`` or
+        ``"teamsmeet"``).  Failures are silently ignored — the event handler's
+        cleanup pipeline still tears down the session even if this call fails.
+        """
+        session_id = self._cm.call_manager._meet_session_id
+        if not session_id:
+            return
+
+        import aiohttp
+
+        from unity.session_details import SESSION_DETAILS
+
+        try:
+            async with aiohttp.ClientSession() as session:
+                await session.post(
+                    f"http://localhost:3000/{path_prefix}/leave",
+                    json={"sessionId": session_id},
+                    headers={
+                        "authorization": f"Bearer {SESSION_DETAILS.unify_key}",
+                    },
+                    timeout=aiohttp.ClientTimeout(total=30),
+                )
+        except Exception:
+            pass
+
     async def act(
         self,
         *,
@@ -558,11 +666,14 @@ class ConversationManagerBrainActionTools:
           schedule tasks, create reminders
         - **Combined**: Find information and act on it (e.g., "find David's email")
 
-        **Excluded:** Do not use ``act`` for Google Meet operations — use the
-        dedicated tools instead: ``join_google_meet`` to join,
-        ``leave_google_meet`` to leave, ``start_google_meet_screenshare`` to
-        present the assistant's desktop, and ``stop_google_meet_screenshare``
-        to stop presenting.
+        **Excluded:** Do not use ``act`` for Google Meet or Microsoft Teams
+        meeting operations — use the dedicated tools instead:
+        ``join_google_meet`` / ``join_teams_meet`` to join,
+        ``leave_google_meet`` / ``leave_teams_meet`` to leave,
+        ``start_google_meet_screenshare`` / ``start_teams_meet_screenshare`` to
+        present the assistant's desktop, and
+        ``stop_google_meet_screenshare`` / ``stop_teams_meet_screenshare`` to
+        stop presenting.
 
         **When uncertain, call ``act``**: If you need information you don't have (like
         a contact's email address), call ``act`` to search for it. If ``act`` can't find
@@ -1339,10 +1450,12 @@ class ConversationManagerBrainActionTools:
             self._cm.mode.is_voice
             or self._cm.call_manager.has_active_call
             or self._cm.call_manager.has_active_google_meet
+            or self._cm.call_manager.has_active_teams_meet
             or self._cm.call_manager._whatsapp_call_joining
         )
         if not call_or_meet_in_progress:
             tools["join_google_meet"] = self.join_google_meet
+            tools["join_teams_meet"] = self.join_teams_meet
         if self._cm.call_manager.has_active_google_meet:
             tools["leave_google_meet"] = self.leave_google_meet
             from unity.session_details import SESSION_DETAILS
@@ -1355,6 +1468,19 @@ class ConversationManagerBrainActionTools:
                 else:
                     tools["stop_google_meet_screenshare"] = (
                         self.stop_google_meet_screenshare
+                    )
+        if self._cm.call_manager.has_active_teams_meet:
+            tools["leave_teams_meet"] = self.leave_teams_meet
+            from unity.session_details import SESSION_DETAILS
+
+            if SESSION_DETAILS.assistant.desktop_url:
+                if not self._cm.call_manager.has_teams_presenting:
+                    tools["start_teams_meet_screenshare"] = (
+                        self.start_teams_meet_screenshare
+                    )
+                else:
+                    tools["stop_teams_meet_screenshare"] = (
+                        self.stop_teams_meet_screenshare
                     )
         if self._cm.assistant_number:
             tools["send_sms"] = self.send_sms
