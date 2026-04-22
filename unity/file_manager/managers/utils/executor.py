@@ -765,6 +765,7 @@ def fm_process_plan(
     storage_client=None,
     artifact_store=None,
     job_id: str = "",
+    is_cancelled=None,
 ):
     """Process a pointer-only ``IngestPlan`` through the FM ingest pipeline.
 
@@ -1026,6 +1027,7 @@ def fm_process_plan(
                     _art_id,
                     initial_rows=_ckpt_skip,
                     initial_chunks=_ckpt_initial,
+                    is_cancelled=is_cancelled,
                 )
             if item.kind == "content":
                 return execute_ingest_content(**payload)
@@ -1039,6 +1041,7 @@ def fm_process_plan(
             source_path=file_path,
             max_workers=max_workers,
             retry_config=config.retry,
+            is_cancelled=is_cancelled,
         )
 
         if enable_progress and reporter:
