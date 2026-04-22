@@ -2265,19 +2265,32 @@ type TeamsMeetJoinResult =
 // Google Meet flow). The in-meeting device-settings path is kept as a fallback
 // for clients that skip the pre-join dialog entirely.
 
-const TEAMS_PREPARE_TASK = (displayName: string) =>
-  `You are on a Microsoft Teams meeting entry flow.\n` +
+const TEAMS_PREPARE_TASK =
+  `You are on a Microsoft Teams meeting entry flow, before the pre-join screen is fully ready.\n` +
   `Teams may show either the consumer (teams.live.com) or business (teams.microsoft.com) UI.\n` +
   `Complete these steps in order, skipping any that do not apply:\n` +
   `1. If a "Continue on this browser" or "Join on the web instead" button is visible, click it.\n` +
   `2. Dismiss any cookie banners, "Got it" buttons, or download-the-app prompts.\n` +
   `3. Only if the page explicitly requires sign-in AND a "Join as a guest" / "Continue without an account" option exists, take that option. Otherwise ignore this step.\n` +
-  `4. If there is a "Type your name" or "Enter name" text input, clear it and type: ${displayName}\n` +
-  `5. Turn OFF the camera if its toggle is on. Leave the microphone toggle ON.\n` +
-  `Do NOT click "Join now" or "Join meeting" yet — audio devices are configured in a separate later step.\n` +
+  `4. Turn OFF the camera if its toggle is currently on. Leave the microphone toggle alone.\n` +
+  `Stop as soon as the pre-join screen (with a "Type your name" input and a "Join now" button) is visible and stable.\n` +
+  `Do NOT type into the name field — that is handled in a separate dedicated step.\n` +
+  `Do NOT click "Join now" or "Join meeting" — joining is handled in a separate later step.\n` +
   `Do NOT open or touch the Microphone or Speaker dropdowns yet.\n` +
   `Ignore any warnings about camera/microphone not being found — those are expected.\n` +
   `If the page shows a fatal error like "this meeting has expired" or "invalid meeting link", do nothing — just stop.`;
+
+const TEAMS_FILL_NAME_TASK = (displayName: string) =>
+  `You are on the Microsoft Teams pre-join screen. There is a single-line text input labelled "Type your name" or "Enter name" — it is the ONLY thing you should interact with in this task.\n` +
+  `Important: if the input shows the words "Type your name" in grey/muted placeholder text and no real typed characters, the field is EMPTY and you MUST fill it. Do not assume it already contains a name just because those words are visible.\n` +
+  `Steps:\n` +
+  `1. Click inside the name input field to focus it.\n` +
+  `2. Press Control+A (the "keyboard:select_all" action) to select any existing content.\n` +
+  `3. Type exactly: ${displayName}\n` +
+  `Only mark the task done once the input visibly contains the typed text "${displayName}" in normal (non-placeholder) styling.\n` +
+  `Do NOT click "Join now" or "Join meeting".\n` +
+  `Do NOT toggle the camera, microphone, or any audio controls.\n` +
+  `Do NOT open the Microphone or Speaker dropdowns.`;
 
 const TEAMS_ENSURE_COMPUTER_AUDIO_TASK =
   `You are on a Microsoft Teams pre-join screen. There is an audio selector with three options: "Computer audio", "Phone audio", and "Don't use audio".\n` +
@@ -2307,9 +2320,10 @@ const TEAMS_ENSURE_MIC_UNMUTED_TASK =
   `If the toggle is already unmuted (blue / on), do nothing.\n` +
   `Do NOT click "Join now".`;
 
-const TEAMS_CLICK_JOIN_TASK =
-  `You are on a Microsoft Teams meeting pre-join screen. The audio devices have already been configured.\n` +
+const TEAMS_CLICK_JOIN_TASK = (displayName: string) =>
+  `You are on a Microsoft Teams meeting pre-join screen. The name and audio devices should already be configured.\n` +
   `Click the "Join now" button (sometimes labelled "Join meeting") to enter the meeting.\n` +
+  `Safety net — only if, after clicking, the page surfaces a tooltip or inline error such as "Please enter a name before joining" (meaning the name field is still empty): click the "Type your name" input, press Control+A to select any existing content, type exactly "${displayName}", then click "Join now" again. Do NOT invent a different name such as "Guest" — always use "${displayName}".\n` +
   `Ignore any warnings about camera/microphone not being found — those are expected.\n` +
   `If the page shows a fatal error like "this meeting has expired" or "invalid meeting link", do nothing — just stop.`;
 
@@ -2336,6 +2350,7 @@ const TEAMS_AUDIO_SETTINGS_TASK =
   `Once the device options are visible, stop. Do NOT close them.`;
 
 const TEAMS_PREPARE_MAX_ITERATIONS = 4;
+const TEAMS_FILL_NAME_MAX_ITERATIONS = 3;
 const TEAMS_JOIN_MAX_ITERATIONS = 3;
 const TEAMS_PRESENT_MAX_ITERATIONS = 3;
 // Single-click audio sub-steps run with a tight iteration cap.
@@ -2350,9 +2365,17 @@ async function teamsMeetJoinFlow(agent: BrowserAgent, displayName: string): Prom
   const pageUrl = page.url?.() ?? 'unknown';
   console.log(`[teamsmeet/join] Page loaded: url=${pageUrl}`);
 
-  // Phase 1: pre-join prep (continue-in-browser, popups, name, camera off)
+  // Phase 1: pre-join prep (continue-in-browser, popups, camera off). Name
+  // entry is handled as its own dedicated task below — keeping PREPARE narrow
+  // avoids the LLM silently skipping name entry inside a multi-step checklist.
   console.log('[teamsmeet/join] Phase 1: prepare...');
-  await runMagnitudeLoop(agent, TEAMS_PREPARE_TASK(displayName), TEAMS_PREPARE_MAX_ITERATIONS, 'teamsmeet/prepare');
+  await runMagnitudeLoop(agent, TEAMS_PREPARE_TASK, TEAMS_PREPARE_MAX_ITERATIONS, 'teamsmeet/prepare');
+
+  // Phase 1a: fill the display name. Isolated as a single-purpose task so the
+  // LLM cannot conflate the placeholder text "Type your name" with a pre-filled
+  // value.
+  console.log('[teamsmeet/join] Phase 1a: filling display name...');
+  await runMagnitudeLoop(agent, TEAMS_FILL_NAME_TASK(displayName), TEAMS_FILL_NAME_MAX_ITERATIONS, 'teamsmeet/fill-name');
 
   // Phase 1b: pre-join audio device configuration. The consumer Teams UI exposes
   // mic/speaker dropdowns on the pre-join dialog itself, so we configure the
@@ -2372,7 +2395,7 @@ async function teamsMeetJoinFlow(agent: BrowserAgent, displayName: string): Prom
 
   // Phase 2: click join
   console.log('[teamsmeet/join] Phase 2: clicking join...');
-  await runMagnitudeLoop(agent, TEAMS_CLICK_JOIN_TASK, TEAMS_JOIN_MAX_ITERATIONS, 'teamsmeet/click-join');
+  await runMagnitudeLoop(agent, TEAMS_CLICK_JOIN_TASK(displayName), TEAMS_JOIN_MAX_ITERATIONS, 'teamsmeet/click-join');
 
   // Phase 2b (fallback): only runs if pre-join audio config threw. Business
   // Teams sometimes skips the pre-join dialog entirely — in that case the
