@@ -43,6 +43,7 @@ def build_table_handles(
     artifact_store: Optional["ArtifactStore"] = None,
     artifact_format: str = "jsonl",
     job_id: str = "",
+    source_gs_uri: str = "",
 ) -> Dict[str, TableInputHandle]:
     """Build transport handles for every table in *parse_result*.
 
@@ -57,6 +58,12 @@ def build_table_handles(
         keep source-reference handles.
     artifact_format:
         Format used when materialising (``"jsonl"`` today).
+    source_gs_uri:
+        When the source file is already in GCS (e.g. ``gs://bucket/path``),
+        pass its URI here.  CSV/XLSX handles will carry this URI in their
+        ``storage_uri`` field, allowing ``_can_materialize`` to skip
+        redundant JSONL materialization for files that can be streamed
+        directly from cloud storage at ingest time.
 
     Returns
     -------
@@ -67,7 +74,7 @@ def build_table_handles(
     file_format = getattr(parse_result, "file_format", None)
     trace = getattr(parse_result, "trace", None)
     source_local_path = _resolve_source_local_path(trace)
-    storage_uri = _to_storage_uri(source_local_path)
+    storage_uri = source_gs_uri or _to_storage_uri(source_local_path)
     logical_path = str(getattr(parse_result, "logical_path", "") or "")
     parse_succeeded = getattr(parse_result, "status", "error") == "success"
 
@@ -242,6 +249,9 @@ def _can_materialize(handle: TableInputHandle) -> bool:
         return False
     if isinstance(handle, InlineRowsHandle):
         return bool(handle.rows)
+    if isinstance(handle, (CsvFileHandle, XlsxSheetHandle)):
+        if handle.storage_uri.startswith("gs://"):
+            return False
     return True
 
 
