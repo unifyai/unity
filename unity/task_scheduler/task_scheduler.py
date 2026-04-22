@@ -255,7 +255,7 @@ class TaskScheduler(BaseTaskScheduler):
 
         # active task
         self.__actor = actor
-        self._ctx = ContextRegistry.get_context(self, "Tasks")
+        self._ctx = self._resolve_tasks_base()
 
         # Install storage adapter and ensure context/fields exist
         self._provision_storage()
@@ -313,6 +313,41 @@ class TaskScheduler(BaseTaskScheduler):
             except Exception:
                 pass
 
+    def _resolve_tasks_base(self) -> str:
+        """Return the fully-qualified Tasks context path for this body.
+
+        When ``SESSION_DETAILS.hive_id`` is set, every body in the Hive shares a
+        single ``Hives/{hive_id}/Tasks`` table so task definitions are authored
+        once and visible to every member. Solo bodies keep the per-body path
+        that :class:`ContextRegistry` resolves from the active Unify context
+        (``{user_id}/{assistant_id}/Tasks``).
+
+        The Hive-scoped context is provisioned on demand (idempotent) with the
+        same schema, field list, and aggregation contexts as the solo path, and
+        then cached under the Tasks key in :class:`ContextRegistry` so that
+        :meth:`ContextRegistry.forget` / :meth:`ContextRegistry.get_context`
+        round-trips keep working.
+
+        This helper is intentionally local to ``TaskScheduler``. When other
+        managers grow Hive awareness, the logic can move into a shared
+        ``ContextRegistry.base_for`` resolver without changing call sites.
+        """
+        hive_id = SESSION_DETAILS.hive_id
+        if hive_id is None:
+            return ContextRegistry.get_context(self, "Tasks")
+
+        manager_name = ContextRegistry._get_manager_name(self)
+        registry_key = (manager_name, "Tasks")
+        hive_base = f"Hives/{int(hive_id)}"
+        expected = f"{hive_base}/Tasks"
+        cached = ContextRegistry._registry.get(registry_key)
+        if cached == expected:
+            return expected
+
+        contexts = ContextRegistry._get_contexts_for_manager(self, hive_base)
+        ContextRegistry._create_context_wrapper(manager_name, contexts["Tasks"])
+        return expected
+
     def _provision_storage(self) -> None:
         """Ensure Tasks context, schema and local view exist (idempotent)."""
         # Install storage adapter and ensure context/fields exist
@@ -342,7 +377,7 @@ class TaskScheduler(BaseTaskScheduler):
         ContextRegistry.forget(self, "Tasks")
 
         # Re-create the context with proper schema and fields
-        self._ctx = ContextRegistry.get_context(self, "Tasks")
+        self._ctx = self._resolve_tasks_base()
 
         # Re-provision storage (schema, local view)
         self._provision_storage()
