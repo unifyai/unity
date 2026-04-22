@@ -340,6 +340,30 @@ class ConversationManagerBrainActionTools:
             owner_contact_ids=owner_contact_ids,
         )
 
+    @wraps(CommsPrimitives.create_teams_meet)
+    async def create_teams_meet(
+        self,
+        *,
+        mode: str = "instant",
+        subject: str | None = None,
+        start: str | None = None,
+        duration_minutes: int = 30,
+        timezone: str = "UTC",
+        attendee_contact_ids: list[int | str | dict] | None = None,
+        body_html: str | None = None,
+        location: str | None = None,
+    ) -> dict[str, Any]:
+        return await self._comms.create_teams_meet(
+            mode=mode,
+            subject=subject,
+            start=start,
+            duration_minutes=duration_minutes,
+            timezone=timezone,
+            attendee_contact_ids=attendee_contact_ids,
+            body_html=body_html,
+            location=location,
+        )
+
     @wraps(CommsPrimitives.send_unify_message)
     async def send_unify_message(
         self,
@@ -1498,6 +1522,7 @@ class ConversationManagerBrainActionTools:
         if self._cm.assistant_has_teams:
             tools["send_teams_message"] = self.send_teams_message
             tools["create_teams_channel"] = self.create_teams_channel
+            tools["create_teams_meet"] = self.create_teams_meet
         if getattr(self._cm.mode, "is_voice", False):
             tools["guide_voice_agent"] = self.guide_voice_agent
         if SETTINGS.DEMO_MODE:

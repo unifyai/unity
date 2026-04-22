@@ -792,6 +792,92 @@ async def create_teams_channel(
         return {"success": False, "error": error_msg}
 
 
+async def create_teams_meet(
+    *,
+    mode: str,
+    subject: str | None = None,
+    start: str | None = None,
+    end: str | None = None,
+    timezone: str = "UTC",
+    attendees: list[str] | None = None,
+    body_html: str | None = None,
+    location: str | None = None,
+) -> dict:
+    """Create a Microsoft Teams meeting via the communication service.
+
+    Mirrors the shipped ``POST /teams/create_meeting`` contract. ``mode`` is
+    ``"instant"`` for a reusable ad-hoc meeting (no calendar entry) or
+    ``"scheduled"`` for a calendar event with an attached Teams meeting
+    (``subject``, ``start``, ``end`` required downstream).
+
+    ``body_html`` is forwarded verbatim and the comms side sends it with
+    ``contentType=HTML`` to Graph. ``attendees`` is a list of UPNs — the
+    caller resolves contact ids to emails before calling this helper.
+
+    Returns ``{success, join_web_url, meeting_id, event_id, subject, start,
+    end, web_link}`` on success (fields are "" when not applicable to
+    ``mode``), or ``{success: False, error: ...}`` on failure.
+    """
+    from_email = SESSION_DETAILS.assistant.email
+    if not from_email:
+        return {"success": False, "error": "No sender email configured"}
+
+    payload: dict = {
+        "assistant_email": from_email,
+        "mode": mode,
+        "timezone": timezone,
+    }
+    if subject is not None:
+        payload["subject"] = subject
+    if start is not None:
+        payload["start"] = start
+    if end is not None:
+        payload["end"] = end
+    if attendees:
+        payload["attendees"] = list(attendees)
+    if body_html is not None:
+        payload["body"] = body_html
+    if location is not None:
+        payload["location"] = location
+
+    url = f"{SETTINGS.conversation.COMMS_URL}/teams/create_meeting"
+    LOGGER.info(
+        f"{ICONS['comms_outbound']} Teams meeting create → POST {url} "
+        f"from={from_email} mode={mode} subject={(subject or '')[:40]!r} "
+        f"attendees={len(attendees or [])} "
+        f"has_body={'yes' if body_html else 'no'}",
+    )
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.post(url, headers=headers, json=payload) as response:
+                try:
+                    response.raise_for_status()
+                except Exception as e:
+                    body_text = ""
+                    try:
+                        body_text = (await response.text())[:500]
+                    except Exception:
+                        pass
+                    error_msg = (
+                        f"HTTP {response.status}: {body_text}"
+                        if body_text
+                        else f"HTTP {response.status}: {e}"
+                    )
+                    LOGGER.error(
+                        f"{ICONS['comms_outbound']} Teams meeting create failed: {error_msg}",
+                    )
+                    return {"success": False, "error": error_msg}
+                result = await response.json()
+                result["success"] = True
+                return result
+    except Exception as e:
+        error_msg = f"{type(e).__name__}: {e}"
+        LOGGER.error(
+            f"{ICONS['comms_outbound']} Teams meeting create request failed before response: {error_msg}",
+        )
+        return {"success": False, "error": error_msg}
+
+
 async def send_email_via_address(
     to: list[str],
     subject: str,

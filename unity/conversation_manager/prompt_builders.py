@@ -253,6 +253,20 @@ def _build_comms_tool_listing(
             "to post into it. `private` and `shared` channels require "
             "`owner_contact_ids`.",
         )
+        lines.append(
+            "- `create_teams_meet`: Create a Microsoft Teams meeting via "
+            "Graph. Two explicit modes: `instant` (default — returns a "
+            "reusable join URL, no calendar entry; `subject` is optional and "
+            "`start`/`duration_minutes`/`attendee_contact_ids` are ignored) "
+            "or `scheduled` (requires `subject`; `start` defaults to ~5min "
+            "from now, `duration_minutes` defaults to 30; places a calendar "
+            "event with the Teams meeting attached, supply "
+            "`attendee_contact_ids` to invite people — Outlook invites are "
+            "automatic). `body_html` is sent verbatim as HTML. The returned "
+            "`join_web_url` can be passed straight to `join_teams_meet` to "
+            "join the meeting myself, or shared via `send_teams_message` / "
+            "`send_email` / `send_sms`.",
+        )
     lines.append(
         "- `send_api_response`: Reply to a programmatic API message (use when the inbound medium is `api_message`). Supports optional `attachment_filepaths` and `tags`.",
     )
@@ -723,6 +737,7 @@ I do NOT need to poll or check on actions - the system will wake me when somethi
         idx = available_tool_names.index("send_unify_message")
         available_tool_names.insert(idx, "send_teams_message")
         available_tool_names.insert(idx + 1, "create_teams_channel")
+        available_tool_names.insert(idx + 2, "create_teams_meet")
     comms_tool_names = ", ".join(available_tool_names)
 
     inline_detail_examples: list[str] = []

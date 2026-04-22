@@ -36,6 +36,7 @@ from unity.conversation_manager.events import (
     SMSSent,
     TeamsChannelCreated,
     TeamsChannelMessageSent,
+    TeamsMeetCreated,
     TeamsMessageSent,
     UnifyMessageSent,
     WhatsAppCallInviteSent,
@@ -106,6 +107,7 @@ class CommsPrimitives:
         "send_discord_channel_message",
         "send_teams_message",
         "create_teams_channel",
+        "create_teams_meet",
     )
 
     def __init__(
@@ -1923,6 +1925,264 @@ class CommsPrimitives:
             contact_id=anchor_contact_id,
             medium=medium,
             attempted_content=f"create channel {display_name} in team {team_id}",
+            target_metadata=_target_metadata(),
+            history_metadata=_history_metadata(),
+        )
+
+    async def create_teams_meet(
+        self,
+        *,
+        mode: str = "instant",
+        subject: str | None = None,
+        start: str | None = None,
+        duration_minutes: int = 30,
+        timezone: str = "UTC",
+        attendee_contact_ids: list[int | str | dict] | None = None,
+        body_html: str | None = None,
+        location: str | None = None,
+    ) -> dict[str, Any]:
+        """Create a Microsoft Teams meeting via Graph and return the join URL.
+
+        Two explicit modes:
+
+        - ``"instant"`` (default): creates a reusable Teams meeting with no
+          calendar entry. ``subject`` is optional; ``start``/``duration_minutes``
+          are ignored. Attendees are ignored by Graph in this mode and are
+          therefore dropped here without contact resolution. The returned
+          ``join_web_url`` can be shared or passed to ``join_teams_meet``.
+        - ``"scheduled"``: creates a calendar event with an attached Teams
+          meeting. ``subject`` is required. ``start`` defaults to five minutes
+          from now (Graph requires a future start). ``end`` is computed as
+          ``start + duration_minutes``. ``attendee_contact_ids`` are resolved
+          to email addresses; Outlook invites are sent automatically.
+
+        ``body_html`` is forwarded verbatim — the communication service sends
+        it to Graph with ``contentType=HTML``. Pass pre-rendered HTML or plain
+        text (Graph will render plain text literally).
+
+        Each ``attendee_contact_ids`` entry may be a bare ``contact_id`` when
+        the contact has an ``email_address`` on file, or
+        ``{"contact_id": ..., "email_address": ...}`` to attach the address
+        during the call.
+
+        Parameters
+        ----------
+        mode : str, optional
+            ``"instant"`` (default) or ``"scheduled"``.
+        subject : str | None, optional
+            Meeting subject. Required for ``"scheduled"`` mode.
+        start : str | None, optional
+            ISO-8601 start timestamp. Defaults to ``now + 5min`` for
+            ``"scheduled"`` mode; ignored for ``"instant"``.
+        duration_minutes : int, optional
+            Meeting duration in minutes; used to compute ``end`` for
+            ``"scheduled"`` mode. Default 30.
+        timezone : str, optional
+            Timezone name forwarded to Graph. Default ``"UTC"``.
+        attendee_contact_ids : list[int | str | dict] | None, optional
+            Attendees for ``"scheduled"`` mode; ignored for ``"instant"``.
+        body_html : str | None, optional
+            Meeting body, sent to Graph as HTML.
+        location : str | None, optional
+            Display-name location for the calendar event (scheduled mode).
+
+        Returns
+        -------
+        dict[str, Any]
+            ``{"status": "ok", "mode", "join_web_url", "meeting_id",
+            "event_id", "subject", "start", "end", "web_link"}`` on success,
+            or an error payload describing why the create failed.
+        """
+        topic = "app:comms:teams_meet_created"
+        medium = Medium.TEAMS_MEET
+        anchor_contact = self._assistant_anchor_contact()
+        anchor_contact_id = anchor_contact.get("contact_id")
+
+        def _target_metadata() -> dict[str, Any]:
+            return {
+                "mode": mode,
+                "subject": subject or "",
+                "start": start or "",
+                "duration_minutes": duration_minutes,
+                "timezone": timezone,
+            }
+
+        def _history_metadata() -> dict[str, Any]:
+            return {
+                "contact_display_name": _get_contact_display_name(anchor_contact),
+            }
+
+        if not self._assistant_has_teams():
+            return await self._surface_comms_error(
+                "Microsoft Teams is not enabled for this assistant.",
+                topic,
+                contact_id=anchor_contact_id,
+                medium=medium,
+                attempted_content=f"create teams meeting '{subject or ''}'",
+                target_metadata=_target_metadata(),
+                history_metadata=_history_metadata(),
+            )
+
+        if mode not in ("instant", "scheduled"):
+            return await self._surface_comms_error(
+                "mode must be 'instant' or 'scheduled'",
+                topic,
+                contact_id=anchor_contact_id,
+                medium=medium,
+                attempted_content=f"create teams meeting '{subject or ''}'",
+                target_metadata=_target_metadata(),
+                history_metadata=_history_metadata(),
+            )
+
+        resolved_start: str | None = None
+        resolved_end: str | None = None
+        if mode == "scheduled":
+            if not subject:
+                return await self._surface_comms_error(
+                    "scheduled mode requires a subject",
+                    topic,
+                    contact_id=anchor_contact_id,
+                    medium=medium,
+                    attempted_content="create teams meeting (missing subject)",
+                    target_metadata=_target_metadata(),
+                    history_metadata=_history_metadata(),
+                )
+            from datetime import datetime, timedelta, timezone as _tz
+
+            if start:
+                resolved_start = start
+                try:
+                    base = datetime.fromisoformat(start.replace("Z", "+00:00"))
+                except ValueError:
+                    return await self._surface_comms_error(
+                        f"start is not a valid ISO-8601 timestamp: {start!r}",
+                        topic,
+                        contact_id=anchor_contact_id,
+                        medium=medium,
+                        attempted_content=f"create teams meeting '{subject}'",
+                        target_metadata=_target_metadata(),
+                        history_metadata=_history_metadata(),
+                    )
+            else:
+                base = datetime.now(_tz.utc) + timedelta(minutes=5)
+                resolved_start = base.isoformat()
+            resolved_end = (base + timedelta(minutes=duration_minutes)).isoformat()
+
+        attendee_emails: list[str] = []
+        if mode == "scheduled" and attendee_contact_ids:
+            try:
+                parsed_attendees: list[tuple[int, str | None]] = []
+                for item in attendee_contact_ids:
+                    if isinstance(item, dict):
+                        raw = item.get("contact_id")
+                        if raw is None:
+                            raise TypeError(
+                                "Attendee dict must include 'contact_id', "
+                                f"got: {item!r}",
+                            )
+                        parsed_attendees.append(
+                            (_coerce_contact_id(raw), item.get("email_address")),
+                        )
+                    else:
+                        parsed_attendees.append((_coerce_contact_id(item), None))
+            except TypeError as exc:
+                return await self._surface_comms_error(
+                    str(exc),
+                    topic,
+                    contact_id=anchor_contact_id,
+                    medium=medium,
+                    attempted_content=f"create teams meeting '{subject}'",
+                    target_metadata=_target_metadata(),
+                    history_metadata=_history_metadata(),
+                )
+
+            seen_emails: set[str] = set()
+            for attendee_id, inline_email in parsed_attendees:
+                attendee_contact = self._get_contact(contact_id=attendee_id)
+                error, resolved_attendee = self._resolve_or_attach_detail(
+                    contact=attendee_contact,
+                    contact_id=attendee_id,
+                    field_name="email_address",
+                    inline_value=inline_email,
+                    medium_label="Teams",
+                )
+                if error:
+                    return await self._surface_comms_error(
+                        error,
+                        topic,
+                        contact_id=attendee_id,
+                        medium=medium,
+                        attempted_content=(f"create teams meeting '{subject}'"),
+                        target_metadata=_target_metadata(),
+                        history_metadata=_history_metadata(),
+                    )
+                email_address = (resolved_attendee or {}).get("email_address")
+                if not email_address:
+                    return await self._surface_comms_error(
+                        f"Could not resolve email address for attendee contact_id={attendee_id}",
+                        topic,
+                        contact_id=attendee_id,
+                        medium=medium,
+                        attempted_content=(f"create teams meeting '{subject}'"),
+                        target_metadata=_target_metadata(),
+                        history_metadata=_history_metadata(),
+                    )
+                key = email_address.lower()
+                if key in seen_emails:
+                    continue
+                seen_emails.add(key)
+                attendee_emails.append(email_address)
+
+        response = await comms_utils.create_teams_meet(
+            mode=mode,
+            subject=subject,
+            start=resolved_start if mode == "scheduled" else start,
+            end=resolved_end,
+            timezone=timezone,
+            attendees=attendee_emails if attendee_emails else None,
+            body_html=body_html,
+            location=location,
+        )
+
+        if response.get("success"):
+            join_web_url = response.get("join_web_url") or ""
+            meeting_id = response.get("meeting_id") or ""
+            event_id = response.get("event_id") or ""
+            resp_subject = response.get("subject") or (subject or "")
+            resp_start = response.get("start") or (resolved_start or start or "")
+            resp_end = response.get("end") or (resolved_end or "")
+            web_link = response.get("web_link") or ""
+            event = TeamsMeetCreated(
+                contact=anchor_contact,
+                mode=mode,
+                subject=resp_subject,
+                join_web_url=join_web_url,
+                meeting_id=meeting_id,
+                event_id=event_id,
+                start=resp_start,
+                end=resp_end,
+                attendees=list(attendee_emails),
+                web_link=web_link,
+            )
+            await self._event_broker.publish(topic, event.to_json())
+            return {
+                "status": "ok",
+                "mode": mode,
+                "join_web_url": join_web_url,
+                "meeting_id": meeting_id,
+                "event_id": event_id,
+                "subject": resp_subject,
+                "start": resp_start,
+                "end": resp_end,
+                "web_link": web_link,
+            }
+
+        return await self._surface_comms_error(
+            response.get("error") or "Failed to create Teams meeting",
+            topic,
+            contact_id=anchor_contact_id,
+            medium=medium,
+            attempted_content=f"create teams meeting '{subject or ''}'",
             target_metadata=_target_metadata(),
             history_metadata=_history_metadata(),
         )
