@@ -80,9 +80,11 @@ from .types import (
     XlsxSheetHandle,
 )
 from .work_queue import (
+    CancellationCheck,
     DeadLetterWorkItem,
     InMemoryWorkQueue,
     LocalQueueWorker,
+    PipelineCancelled,
     ReceivedWorkItem,
     RetryWorkItem,
     WorkQueue,
@@ -175,9 +177,11 @@ __all__ = sorted(
         "TableMeta",
         "XlsxSheetHandle",
         # Work queue
+        "CancellationCheck",
         "DeadLetterWorkItem",
         "InMemoryWorkQueue",
         "LocalQueueWorker",
+        "PipelineCancelled",
         "ReceivedWorkItem",
         "RetryWorkItem",
         "WorkQueue",
