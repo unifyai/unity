@@ -482,6 +482,7 @@ class Renderer:
         user_webcam_active: bool = False,
         user_remote_control_active: bool = False,
         google_meet_active: bool = False,
+        teams_meet_active: bool = False,
         active_web_sessions: list | None = None,
         managers_initialized: bool = True,
         vm_ready: bool = True,
@@ -512,6 +513,7 @@ class Renderer:
             user_webcam_active=user_webcam_active,
             user_remote_control_active=user_remote_control_active,
             google_meet_active=google_meet_active,
+            teams_meet_active=teams_meet_active,
         )
 
         web_sessions_render = self.render_active_web_sessions(
@@ -610,8 +612,9 @@ class Renderer:
                 "notification that the VM is ready. If a user asks you to do "
                 "something on the computer, let them know you will action it "
                 "in just a moment.\n"
-                "Note: join_google_meet does NOT depend on the desktop VM — "
-                "it uses a local browser and is available immediately.\n"
+                "Note: join_google_meet and join_teams_meet do NOT depend on "
+                "the desktop VM — they use a local browser and are available "
+                "immediately.\n"
                 "</infrastructure>",
             )
 
@@ -641,6 +644,7 @@ class Renderer:
         user_webcam_active: bool = False,
         user_remote_control_active: bool = False,
         google_meet_active: bool = False,
+        teams_meet_active: bool = False,
     ) -> str:
         """Render active meet interaction states as top-level sections.
 
@@ -699,6 +703,16 @@ class Renderer:
                 "any content being presented, and the meeting UI. When users "
                 "ask if you can see the meeting, confirm that you can.\n"
                 "</google_meet_visual>",
+            )
+
+        if teams_meet_active:
+            parts.append(
+                "<teams_meet_visual status='active'>\n"
+                "You are in a Microsoft Teams meeting and receiving periodic "
+                "screenshots of the meeting view. You can see participants, "
+                "any content being presented, and the meeting UI. When users "
+                "ask if you can see the meeting, confirm that you can.\n"
+                "</teams_meet_visual>",
             )
 
         return "\n\n".join(parts)

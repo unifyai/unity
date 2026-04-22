@@ -223,6 +223,9 @@ class Assistant(Agent):
         elif channel == "google_meet":
             self.utterance_event = InboundGoogleMeetUtterance
             self.assistant_utterance_event = OutboundGoogleMeetUtterance
+        elif channel == "teams_meet":
+            self.utterance_event = InboundTeamsMeetUtterance
+            self.assistant_utterance_event = OutboundTeamsMeetUtterance
         else:
             self.utterance_event = InboundUnifyMeetUtterance
             self.assistant_utterance_event = OutboundUnifyMeetUtterance
@@ -292,7 +295,10 @@ class Assistant(Agent):
         audio: AsyncIterable[rtc.AudioFrame],
         model_settings: ModelSettings,
     ):
-        if self.channel != "google_meet" or self.audio_bridge is None:
+        if (
+            self.channel not in ("google_meet", "teams_meet")
+            or self.audio_bridge is None
+        ):
             async for event in super().stt_node(audio, model_settings):
                 yield event
             return
@@ -339,7 +345,10 @@ class Assistant(Agent):
         text: AsyncIterable[str],
         model_settings: ModelSettings,
     ) -> AsyncIterable:
-        if self.channel != "google_meet" or self.audio_bridge is None:
+        if (
+            self.channel not in ("google_meet", "teams_meet")
+            or self.audio_bridge is None
+        ):
             async for frame in super().tts_node(text, model_settings):
                 yield frame
             return
@@ -470,19 +479,25 @@ async def entrypoint(ctx: agents.JobContext):
         contact = json.loads(SESSION_DETAILS.voice_call.contact_json or "{}")
         boss = json.loads(SESSION_DETAILS.voice_call.boss_json or "{}")
 
-    # Google Meet diarization config
-    gmeet_session_id: str = ""
-    gmeet_meet_url: str = ""
-    gmeet_agent_service_url: str = ""
-    if channel == "google_meet":
+    # Browser-meet diarization config (Google Meet / Teams Meet)
+    meet_session_id: str = ""
+    meet_url: str = ""
+    meet_agent_service_url: str = ""
+    # Per-channel agent-service URL prefix.
+    _MEET_PATH_PREFIX = {
+        "google_meet": "googlemeet",
+        "teams_meet": "teamsmeet",
+    }
+    meet_path_prefix = _MEET_PATH_PREFIX.get(channel, "")
+    if channel in ("google_meet", "teams_meet"):
         if meta:
-            gmeet_session_id = meta.get("gmeet_session_id", "")
-            gmeet_meet_url = meta.get("gmeet_meet_url", "")
-            gmeet_agent_service_url = meta.get("agent_service_url", "")
+            meet_session_id = meta.get("meet_session_id", "")
+            meet_url = meta.get("meet_url", "")
+            meet_agent_service_url = meta.get("agent_service_url", "")
         else:
-            gmeet_session_id = os.environ.get("GMEET_SESSION_ID", "")
-            gmeet_meet_url = os.environ.get("GMEET_MEET_URL", "")
-            gmeet_agent_service_url = os.environ.get("AGENT_SERVICE_URL", "")
+            meet_session_id = os.environ.get("MEET_SESSION_ID", "")
+            meet_url = os.environ.get("MEET_URL", "")
+            meet_agent_service_url = os.environ.get("AGENT_SERVICE_URL", "")
 
     _log.config(
         f"voice_provider={voice_provider} voice_id={voice_id} outbound={outbound} channel={channel}",
@@ -518,32 +533,32 @@ async def entrypoint(ctx: agents.JobContext):
         VAD = silero.VAD.load(min_speech_duration=0.15, min_silence_duration=1.0)
 
     stt_instance = STT
-    if channel == "google_meet":
+    if channel in ("google_meet", "teams_meet"):
         stt_instance = deepgram.STT(
             model="nova-3",
             language="en-GB",
             enable_diarization=True,
         )
 
-    # --- Google Meet speaker + participant tracker ---
+    # --- Browser-meet speaker + participant tracker (Meet / Teams) ---
     # Speaker identity uses two complementary signals:
     # 1. Deepgram diarization (enable_diarization=True) for precise per-utterance
     #    anonymous speaker IDs (S0, S1, ...).
-    # 2. DOM scraping (activeSpeaker) via _gmeet_poll_loop for display names.
-    # The correlation mapping table (_gmeet_speaker_map) links the two.
-    _gmeet_auth_key = SESSION_DETAILS.unify_key
-    _gmeet_cached_active_speaker: str | None = None
-    _gmeet_cached_participants: list[dict] = []
-    _gmeet_prev_participant_names: set[str] = set()
-    _gmeet_latest_screenshot: str | None = None
-    _gmeet_display_name: str = ""
-    _gmeet_last_speaker_id: str | None = None
-    _gmeet_speaker_map: dict[str, dict[str, int]] = {}
-    if channel == "google_meet":
+    # 2. DOM scraping (activeSpeaker) via _meet_poll_loop for display names.
+    # The correlation mapping table (_meet_speaker_map) links the two.
+    _meet_auth_key = SESSION_DETAILS.unify_key
+    _meet_cached_active_speaker: str | None = None
+    _meet_cached_participants: list[dict] = []
+    _meet_prev_participant_names: set[str] = set()
+    _meet_latest_screenshot: str | None = None
+    _meet_display_name: str = ""
+    _meet_last_speaker_id: str | None = None
+    _meet_speaker_map: dict[str, dict[str, int]] = {}
+    if channel in ("google_meet", "teams_meet"):
         if meta:
-            _gmeet_display_name = meta.get("gmeet_display_name", "")
-        if not _gmeet_display_name:
-            _gmeet_display_name = SESSION_DETAILS.assistant.name or "Unity Assistant"
+            _meet_display_name = meta.get("meet_display_name", "")
+        if not _meet_display_name:
+            _meet_display_name = SESSION_DETAILS.assistant.name or "Unity Assistant"
 
     def _resolve_contact_by_name(display_name: str) -> dict | None:
         """Best-effort contact resolution from a Meet display name.
@@ -564,21 +579,21 @@ async def entrypoint(ctx: agents.JobContext):
         return None
 
     def _resolve_speaker() -> tuple[dict, str | None, str | None]:
-        """Resolve the current Google Meet speaker to (contact_dict, display_name, speaker_id).
+        """Resolve the current browser-meet speaker to (contact_dict, display_name, speaker_id).
 
         Uses two signals in priority order:
         1. Diarization speaker_id → correlation mapping (precise, audio-level).
         2. DOM-scraped activeSpeaker name (fallback, 2s polling granularity).
         Returns (contact_dict, display_name_or_None, diarization_speaker_id_or_None).
         """
-        if channel != "google_meet":
+        if channel not in ("google_meet", "teams_meet"):
             return contact, None, None
 
-        sid = _gmeet_last_speaker_id
+        sid = _meet_last_speaker_id
 
         # Primary: diarization speaker_id → mapped display name
-        if sid and sid in _gmeet_speaker_map:
-            votes = _gmeet_speaker_map[sid]
+        if sid and sid in _meet_speaker_map:
+            votes = _meet_speaker_map[sid]
             if votes:
                 top_name = max(votes, key=votes.get)
                 top_count = votes[top_name]
@@ -591,7 +606,7 @@ async def entrypoint(ctx: agents.JobContext):
                     return contact, top_name, sid
 
         # Fallback: DOM active speaker
-        active_name = _gmeet_cached_active_speaker
+        active_name = _meet_cached_active_speaker
         if active_name:
             resolved = _resolve_contact_by_name(active_name)
             if resolved:
@@ -601,56 +616,63 @@ async def entrypoint(ctx: agents.JobContext):
 
         return contact, None, sid
 
-    def _get_gmeet_participant_names() -> list[str]:
+    def _get_meet_participant_names() -> list[str]:
         """Return display names of all human participants (excluding the assistant)."""
         return [
             p["name"]
-            for p in _gmeet_cached_participants
-            if p.get("name") and p["name"] != _gmeet_display_name
+            for p in _meet_cached_participants
+            if p.get("name") and p["name"] != _meet_display_name
         ]
 
-    async def _gmeet_poll_loop() -> None:
+    # Channel-specific event classes for participant join/leave events.
+    if channel == "teams_meet":
+        _ParticipantJoinedEvent = TeamsMeetParticipantJoined
+        _ParticipantLeftEvent = TeamsMeetParticipantLeft
+        _participant_topic = "app:comms:teamsmeet_participant"
+    else:
+        _ParticipantJoinedEvent = GoogleMeetParticipantJoined
+        _ParticipantLeftEvent = GoogleMeetParticipantLeft
+        _participant_topic = "app:comms:googlemeet_participant"
+
+    async def _meet_poll_loop() -> None:
         """Background loop: poll agent-service for active speaker + meeting status.
 
         Two phases:
-        1. Discovery — if gmeet_session_id wasn't provided at dispatch time,
-           poll GET /googlemeet/sessions and match by meetUrl.
-        2. State polling — poll GET /googlemeet/state for active speaker,
+        1. Discovery — if meet_session_id wasn't provided at dispatch time,
+           poll GET /{meet_path_prefix}/sessions and match by meetUrl.
+        2. State polling — poll GET /{meet_path_prefix}/state for active speaker,
            participant roster, and meeting-end detection.
         """
-        nonlocal _gmeet_cached_active_speaker, _gmeet_cached_participants
-        nonlocal _gmeet_prev_participant_names, gmeet_session_id
-        nonlocal _gmeet_latest_screenshot
+        nonlocal _meet_cached_active_speaker, _meet_cached_participants
+        nonlocal _meet_prev_participant_names, meet_session_id
+        nonlocal _meet_latest_screenshot
         import aiohttp as _aiohttp
 
         try:
             async with _aiohttp.ClientSession() as http:
                 # Phase 1: discover session ID if not provided
-                while not gmeet_session_id:
+                while not meet_session_id:
                     _log.info(
-                        "Discovering Google Meet session ID via /googlemeet/sessions...",
+                        f"Discovering {channel} session ID via /{meet_path_prefix}/sessions...",
                     )
                     try:
                         resp = await http.get(
-                            f"{gmeet_agent_service_url}/googlemeet/sessions",
-                            headers={"authorization": f"Bearer {_gmeet_auth_key}"},
+                            f"{meet_agent_service_url}/{meet_path_prefix}/sessions",
+                            headers={"authorization": f"Bearer {_meet_auth_key}"},
                             timeout=_aiohttp.ClientTimeout(total=5),
                         )
                         if resp.status == 200:
                             body = await resp.json()
                             for s in body.get("sessions", []):
-                                if (
-                                    gmeet_meet_url
-                                    and s.get("meetUrl") == gmeet_meet_url
-                                ):
-                                    gmeet_session_id = s["sessionId"]
+                                if meet_url and s.get("meetUrl") == meet_url:
+                                    meet_session_id = s["sessionId"]
                                     _log.info(
-                                        f"Discovered Google Meet session ID: {gmeet_session_id}",
+                                        f"Discovered {channel} session ID: {meet_session_id}",
                                     )
                                     break
                     except Exception:
                         pass
-                    if not gmeet_session_id:
+                    if not meet_session_id:
                         await asyncio.sleep(1)
 
                 # Phase 2: poll state for active speaker + meeting end
@@ -658,9 +680,9 @@ async def entrypoint(ctx: agents.JobContext):
                     await asyncio.sleep(1)
                     try:
                         resp = await http.get(
-                            f"{gmeet_agent_service_url}/googlemeet/state",
-                            params={"sessionId": gmeet_session_id},
-                            headers={"authorization": f"Bearer {_gmeet_auth_key}"},
+                            f"{meet_agent_service_url}/{meet_path_prefix}/state",
+                            params={"sessionId": meet_session_id},
+                            headers={"authorization": f"Bearer {_meet_auth_key}"},
                             timeout=_aiohttp.ClientTimeout(total=5),
                         )
                         if resp.status != 200:
@@ -669,41 +691,41 @@ async def entrypoint(ctx: agents.JobContext):
                     except Exception:
                         continue
 
-                    _gmeet_cached_active_speaker = body.get("activeSpeaker")
-                    _gmeet_cached_participants = body.get("participants", [])
+                    _meet_cached_active_speaker = body.get("activeSpeaker")
+                    _meet_cached_participants = body.get("participants", [])
 
                     # Diff roster for join/leave notifications
                     current_names = {
-                        p["name"] for p in _gmeet_cached_participants if p.get("name")
+                        p["name"] for p in _meet_cached_participants if p.get("name")
                     }
-                    joined = current_names - _gmeet_prev_participant_names
-                    left = _gmeet_prev_participant_names - current_names
-                    _gmeet_prev_participant_names = current_names
+                    joined = current_names - _meet_prev_participant_names
+                    left = _meet_prev_participant_names - current_names
+                    _meet_prev_participant_names = current_names
 
                     for name in joined:
-                        if name == _gmeet_display_name:
+                        if name == _meet_display_name:
                             continue
-                        evt = GoogleMeetParticipantJoined(
+                        evt = _ParticipantJoinedEvent(
                             contact=contact,
                             participant_name=name,
                         )
                         asyncio.create_task(
                             event_broker.publish(
-                                "app:comms:googlemeet_participant",
+                                _participant_topic,
                                 evt.to_json(),
                             ),
                         )
 
                     for name in left:
-                        if name == _gmeet_display_name:
+                        if name == _meet_display_name:
                             continue
-                        evt = GoogleMeetParticipantLeft(
+                        evt = _ParticipantLeftEvent(
                             contact=contact,
                             participant_name=name,
                         )
                         asyncio.create_task(
                             event_broker.publish(
-                                "app:comms:googlemeet_participant",
+                                _participant_topic,
                                 evt.to_json(),
                             ),
                         )
@@ -712,27 +734,27 @@ async def entrypoint(ctx: agents.JobContext):
                     # captures during its own poll cycle)
                     try:
                         ss_resp = await http.get(
-                            f"{gmeet_agent_service_url}/googlemeet/screenshot/latest",
-                            params={"sessionId": gmeet_session_id},
-                            headers={"authorization": f"Bearer {_gmeet_auth_key}"},
+                            f"{meet_agent_service_url}/{meet_path_prefix}/screenshot/latest",
+                            params={"sessionId": meet_session_id},
+                            headers={"authorization": f"Bearer {_meet_auth_key}"},
                             timeout=_aiohttp.ClientTimeout(total=5),
                         )
                         if ss_resp.status == 200:
                             ss_body = await ss_resp.json()
-                            _gmeet_latest_screenshot = ss_body.get("screenshot")
+                            _meet_latest_screenshot = ss_body.get("screenshot")
                     except Exception:
                         pass
 
                     status = body.get("status", "")
                     if status in ("ended", "removed", "error"):
-                        _log.info(f"Google Meet ended (status={status})")
-                        ctx.shutdown(reason=f"gmeet_{status}")
+                        _log.info(f"{channel} ended (status={status})")
+                        ctx.shutdown(reason=f"meet_{status}")
                         return
         except asyncio.CancelledError:
             pass
 
-    if channel == "google_meet":
-        asyncio.create_task(_gmeet_poll_loop())
+    if channel in ("google_meet", "teams_meet"):
+        asyncio.create_task(_meet_poll_loop())
 
     from unity.settings import SETTINGS
 
@@ -964,17 +986,17 @@ async def entrypoint(ctx: agents.JobContext):
         _check_quiescence_transition()
 
     # -- Diarization ↔ DOM speaker correlation --
-    if channel == "google_meet":
+    if channel in ("google_meet", "teams_meet"):
 
         @session.on("user_input_transcribed")
         def _on_user_input_transcribed(ev):
-            nonlocal _gmeet_last_speaker_id
+            nonlocal _meet_last_speaker_id
             if not ev.is_final or not ev.speaker_id:
                 return
-            _gmeet_last_speaker_id = ev.speaker_id
-            dom_speaker = _gmeet_cached_active_speaker
-            if dom_speaker and dom_speaker != _gmeet_display_name:
-                bucket = _gmeet_speaker_map.setdefault(ev.speaker_id, {})
+            _meet_last_speaker_id = ev.speaker_id
+            dom_speaker = _meet_cached_active_speaker
+            if dom_speaker and dom_speaker != _meet_display_name:
+                bucket = _meet_speaker_map.setdefault(ev.speaker_id, {})
                 bucket[dom_speaker] = bucket.get(dom_speaker, 0) + 1
 
     # -- Screenshot state --
@@ -1093,13 +1115,13 @@ async def entrypoint(ctx: agents.JobContext):
             if entry and assistant_screen_share_active:
                 _handle_screenshot(entry)
 
-        if channel == "google_meet" and _gmeet_latest_screenshot:
+        if channel in ("google_meet", "teams_meet") and _meet_latest_screenshot:
             _handle_screenshot(
                 ScreenshotEntry(
-                    b64=_gmeet_latest_screenshot,
+                    b64=_meet_latest_screenshot,
                     utterance="",
                     timestamp=datetime.now(timezone.utc),
-                    source="google_meet",
+                    source=channel,
                 ),
             )
 
@@ -1151,26 +1173,34 @@ async def entrypoint(ctx: agents.JobContext):
                         source="webcam",
                     ),
                 )
-            if channel == "google_meet" and _gmeet_latest_screenshot:
+            if channel in ("google_meet", "teams_meet") and _meet_latest_screenshot:
                 _handle_screenshot(
                     ScreenshotEntry(
-                        b64=_gmeet_latest_screenshot,
+                        b64=_meet_latest_screenshot,
                         utterance=text,
                         timestamp=datetime.now(timezone.utc),
-                        source="google_meet",
+                        source=channel,
                     ),
                 )
 
             async def _publish_user_utterance(text: str) -> None:
-                nonlocal _gmeet_last_speaker_id
+                nonlocal _meet_last_speaker_id
                 resolved_contact, speaker_label, dia_sid = _resolve_speaker()
-                _gmeet_last_speaker_id = None
+                _meet_last_speaker_id = None
                 if channel == "google_meet":
                     event = InboundGoogleMeetUtterance(
                         contact=resolved_contact,
                         content=text,
                         speaker_label=speaker_label,
-                        participant_names=_get_gmeet_participant_names() or None,
+                        participant_names=_get_meet_participant_names() or None,
+                        diarization_speaker_id=dia_sid,
+                    )
+                elif channel == "teams_meet":
+                    event = InboundTeamsMeetUtterance(
+                        contact=resolved_contact,
+                        content=text,
+                        speaker_label=speaker_label,
+                        participant_names=_get_meet_participant_names() or None,
                         diarization_speaker_id=dia_sid,
                     )
                 else:
@@ -1188,7 +1218,13 @@ async def entrypoint(ctx: agents.JobContext):
                 event = OutboundGoogleMeetUtterance(
                     contact=contact,
                     content=text,
-                    participant_names=_get_gmeet_participant_names() or None,
+                    participant_names=_get_meet_participant_names() or None,
+                )
+            elif channel == "teams_meet":
+                event = OutboundTeamsMeetUtterance(
+                    contact=contact,
+                    content=text,
+                    participant_names=_get_meet_participant_names() or None,
                 )
             else:
                 event = assistant_utterance_event(contact, content=text)
@@ -1246,7 +1282,7 @@ async def entrypoint(ctx: agents.JobContext):
         noise_cancellation=(
             noise_cancellation.BVC() if sys.platform == "darwin" else None
         ),
-        close_on_disconnect=(channel != "google_meet"),
+        close_on_disconnect=(channel not in ("google_meet", "teams_meet")),
     )
 
     # Publish call started (shared helper)
@@ -1258,16 +1294,16 @@ async def entrypoint(ctx: agents.JobContext):
     session_ready = False
 
     def on_status(data: dict) -> None:
-        """Handle status events (call_answered, stop, gmeet_session_id)."""
-        nonlocal gmeet_session_id
+        """Handle status events (call_answered, stop, meet_session_id)."""
+        nonlocal meet_session_id
         event_type = data.get("type", "")
         _log.call_status(event_type)
 
         if event_type == "call_answered":
             call_answered_flag.set()
             assistant.set_call_received()
-        elif event_type == "gmeet_session_id":
-            gmeet_session_id = data.get("session_id", "")
+        elif event_type in ("meet_session_id", "gmeet_session_id"):
+            meet_session_id = data.get("session_id", "")
         elif event_type == "stop":
             ctx.shutdown(reason="stopped")
 

@@ -37,6 +37,7 @@ class Medium(StrEnum):
     WHATSAPP_CALL = "whatsapp_call"
     PHONE_CALL = "phone_call"
     GOOGLE_MEET = "google_meet"
+    TEAMS_MEET = "teams_meet"
     API_MESSAGE = "api_message"
     DISCORD_MESSAGE = "discord_message"
     DISCORD_CHANNEL_MESSAGE = "discord_channel_message"
@@ -99,6 +100,11 @@ MEDIUM_REGISTRY: dict[Medium, MediumInfo] = {
     Medium.GOOGLE_MEET: MediumInfo(
         value=Medium.GOOGLE_MEET,
         description="A voice/video meeting conducted via Google Meet, joined by browser.",
+        mode=Mode.MEET,
+    ),
+    Medium.TEAMS_MEET: MediumInfo(
+        value=Medium.TEAMS_MEET,
+        description="A voice/video meeting conducted via Microsoft Teams, joined by browser.",
         mode=Mode.MEET,
     ),
     Medium.API_MESSAGE: MediumInfo(

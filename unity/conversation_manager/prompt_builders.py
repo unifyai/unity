@@ -267,6 +267,9 @@ def _build_comms_tool_listing(
     lines.append(
         "- `join_google_meet`: Join a Google Meet call via browser automation (provide the Meet URL)",
     )
+    lines.append(
+        "- `join_teams_meet`: Join a Microsoft Teams meeting via browser automation (provide the Teams meeting URL)",
+    )
     return "\n".join(lines)
 
 
@@ -1157,7 +1160,8 @@ NOT: first the action, then in a separate response {ack_tool}. That's inefficien
         f"""Scenarios
 ---------
 - If my boss gives a wrong contact address, I will receive an error after the communication attempt, or worse, it might be a completely different person. Simply inform my boss about the error and ask them if there could be something wrong with the contact detail. On the following communication attempt, just change the wrong contact details (phone number or email), and the detail will be implicitly updated.{phone_scenarios_section}
-- To join a Google Meet, I must always use the `join_google_meet` tool — never navigate to a Meet URL via `act`. The `join_google_meet` tool configures audio devices and establishes the voice pipeline; using `act` to visit the URL would join silently with no ability to hear or speak.""",
+- To join a Google Meet, I must always use the `join_google_meet` tool — never navigate to a Meet URL via `act`. The `join_google_meet` tool configures audio devices and establishes the voice pipeline; using `act` to visit the URL would join silently with no ability to hear or speak.
+- To join a Microsoft Teams meeting, I must always use the `join_teams_meet` tool — never navigate to a Teams meeting URL via `act`. Like `join_google_meet`, this tool configures the audio pipeline; using `act` to visit the URL would join silently with no ability to hear or speak.""",
     )
 
     # Add time footer (dynamic content - changes per call)
@@ -1287,7 +1291,8 @@ def build_voice_agent_prompt(
     channel : str
         Voice session medium: ``"phone"`` for a regular phone call,
         ``"unify_meet"`` for a Unify Meet video call,
-        ``"google_meet"`` for a Google Meet call joined via browser.
+        ``"google_meet"`` for a Google Meet call joined via browser,
+        ``"teams_meet"`` for a Microsoft Teams meeting joined via browser.
 
     Returns
     -------
@@ -1330,6 +1335,7 @@ def build_voice_agent_prompt(
     call_description = {
         "unify_meet": "a Unify Meet video call",
         "google_meet": "a Google Meet call (joined via browser — participants may include people I don't know)",
+        "teams_meet": "a Microsoft Teams meeting (joined via browser — participants may include people I don't know)",
     }.get(channel, "a phone call")
     parts.add(
         f"""{name_intro} {call_description} with {caller_description}. The call is live — anything I say is heard by the caller immediately.
@@ -1654,6 +1660,26 @@ screenshots of the meeting tab, labeled:
 - `=== GOOGLE MEET (live view of the meeting) ===` — what the meeting looks
   like right now: participant video tiles, any content being presented, chat
   messages visible in the Meet UI, and meeting controls.
+
+I **can** see the meeting. When someone asks "can you see my screen?" or
+"can you see the meeting?", I confirm that I can — because the screenshot
+in my context IS the live meeting view. I use it to observe who is present,
+what is being presented or shared, and any visual cues from participants.
+
+Screenshots update every few seconds. They are background context — I do not
+narrate what I see unless asked or unless it is directly relevant to the
+conversation.""",
+        )
+
+    if channel == "teams_meet":
+        parts.add(
+            """Microsoft Teams visual context
+-----------------------------
+I am in a Microsoft Teams meeting joined via an automated browser. I receive
+periodic screenshots of the meeting tab, labeled:
+- `=== TEAMS MEETING (live view of the meeting) ===` — what the meeting looks
+  like right now: participant video tiles, any content being presented, chat
+  messages visible in the Teams UI, and meeting controls.
 
 I **can** see the meeting. When someone asks "can you see my screen?" or
 "can you see the meeting?", I confirm that I can — because the screenshot

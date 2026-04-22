@@ -1148,6 +1148,7 @@ class ConversationManager(metaclass=SingletonABCMeta):
             user_webcam_active=self.user_webcam_active,
             user_remote_control_active=self.user_remote_control_active,
             google_meet_active=self.call_manager.has_active_google_meet,
+            teams_meet_active=self.call_manager.has_active_teams_meet,
             active_web_sessions=web_sessions,
             managers_initialized=self.initialized,
             vm_ready=self.vm_ready,
@@ -1242,7 +1243,12 @@ class ConversationManager(metaclass=SingletonABCMeta):
                 tools,
                 tool_choice="required" if tools else "auto",
                 response_format=response_model,
-                exclusive_tools={"make_call", "make_whatsapp_call", "join_google_meet"},
+                exclusive_tools={
+                    "make_call",
+                    "make_whatsapp_call",
+                    "join_google_meet",
+                    "join_teams_meet",
+                },
             )
         finally:
             if hasattr(client, "_pending_thinking_log"):
@@ -1805,6 +1811,7 @@ class ConversationManager(metaclass=SingletonABCMeta):
                 user_webcam_active=self.user_webcam_active,
                 user_remote_control_active=self.user_remote_control_active,
                 google_meet_active=self.call_manager.has_active_google_meet,
+                teams_meet_active=self.call_manager.has_active_teams_meet,
                 vm_ready=self.vm_ready,
                 file_sync_complete=self.file_sync_complete,
                 has_desktop=_has_desktop,

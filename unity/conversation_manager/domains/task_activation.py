@@ -212,8 +212,9 @@ def _voice_fast_brain_available(cm: "ConversationManager") -> bool:
         getattr(cm.mode, "is_voice", False)
         or getattr(call_manager, "has_active_call", False)
         or getattr(call_manager, "has_active_google_meet", False)
+        or getattr(call_manager, "has_active_teams_meet", False)
         or getattr(call_manager, "_whatsapp_call_joining", False)
-        or getattr(call_manager, "_gmeet_joining", False)
+        or getattr(call_manager, "_meet_joining", False)
         or getattr(call_manager, "_socket_server", None) is not None,
     )
 

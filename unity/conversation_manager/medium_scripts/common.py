@@ -25,14 +25,20 @@ from unity.conversation_manager.events import (
     GoogleMeetEnded,
     GoogleMeetParticipantJoined,
     GoogleMeetParticipantLeft,
+    TeamsMeetStarted,
+    TeamsMeetEnded,
+    TeamsMeetParticipantJoined,
+    TeamsMeetParticipantLeft,
     InboundPhoneUtterance,
     InboundUnifyMeetUtterance,
     InboundWhatsAppCallUtterance,
     InboundGoogleMeetUtterance,
+    InboundTeamsMeetUtterance,
     OutboundPhoneUtterance,
     OutboundUnifyMeetUtterance,
     OutboundWhatsAppCallUtterance,
     OutboundGoogleMeetUtterance,
+    OutboundTeamsMeetUtterance,
     SMSReceived,
     SMSSent,
     WhatsAppReceived,
@@ -429,6 +435,8 @@ async def publish_call_started(contact: dict, channel: str) -> None:
         event = WhatsAppCallStarted(contact=contact)
     elif channel == "google_meet":
         event = GoogleMeetStarted(contact=contact)
+    elif channel == "teams_meet":
+        event = TeamsMeetStarted(contact=contact)
     else:
         event = UnifyMeetStarted(contact=contact)
     await event_broker.publish(event.topic, event.to_json())
@@ -441,6 +449,8 @@ async def publish_call_ended(contact: dict, channel: str) -> None:
         event = WhatsAppCallEnded(contact=contact)
     elif channel == "google_meet":
         event = GoogleMeetEnded(contact=contact)
+    elif channel == "teams_meet":
+        event = TeamsMeetEnded(contact=contact)
     else:
         event = UnifyMeetEnded(contact=contact)
     await event_broker.publish(event.topic, event.to_json())
@@ -862,10 +872,11 @@ class ScreenshotHistory:
             "user": "=== USER'S SCREEN (this is THEIR machine, not yours) ===",
             "webcam": "=== USER'S WEBCAM ===",
             "google_meet": "=== GOOGLE MEET (live view of the meeting) ===",
+            "teams_meet": "=== TEAMS MEETING (live view of the meeting) ===",
         }
 
         parts: list = []
-        for source in ("assistant", "user", "webcam", "google_meet"):
+        for source in ("assistant", "user", "webcam", "google_meet", "teams_meet"):
             entry = latest_by_source.get(source)
             if entry is None:
                 continue
@@ -1321,7 +1332,7 @@ def _render_history_event(
         if cid is not None and cid in participant_ids:
             return f"{name}: {event.content}"
         return None
-    if isinstance(event, InboundGoogleMeetUtterance):
+    if isinstance(event, (InboundGoogleMeetUtterance, InboundTeamsMeetUtterance)):
         label = event.speaker_label or name
         return f"{label}: {event.content}"
     if isinstance(
@@ -1331,6 +1342,7 @@ def _render_history_event(
             OutboundUnifyMeetUtterance,
             OutboundWhatsAppCallUtterance,
             OutboundGoogleMeetUtterance,
+            OutboundTeamsMeetUtterance,
         ),
     ):
         return f"{assistant_name}: {event.content}"
@@ -1355,6 +1367,14 @@ def _render_history_event(
     if isinstance(event, GoogleMeetParticipantJoined):
         return f"--- {event.participant_name} joined the meeting ---"
     if isinstance(event, GoogleMeetParticipantLeft):
+        return f"--- {event.participant_name} left the meeting ---"
+    if isinstance(event, (TeamsMeetStarted,)):
+        return f"--- Teams meeting started ---"
+    if isinstance(event, (TeamsMeetEnded,)):
+        return f"--- Teams meeting ended ---"
+    if isinstance(event, TeamsMeetParticipantJoined):
+        return f"--- {event.participant_name} joined the meeting ---"
+    if isinstance(event, TeamsMeetParticipantLeft):
         return f"--- {event.participant_name} left the meeting ---"
     if isinstance(event, (PhoneCallEnded, UnifyMeetEnded, WhatsAppCallEnded)):
         if cid is not None and cid in participant_ids:

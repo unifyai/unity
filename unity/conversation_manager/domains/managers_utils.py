@@ -79,14 +79,18 @@ _MESSAGE_PRODUCING_EVENTS = {
     "OutboundWhatsAppCallUtterance",
     "InboundGoogleMeetUtterance",
     "OutboundGoogleMeetUtterance",
+    "InboundTeamsMeetUtterance",
+    "OutboundTeamsMeetUtterance",
     "FastBrainNotification",
     "PhoneCallReceived",
     "PhoneCallSent",
     "UnifyMeetReceived",
     "GoogleMeetReceived",
+    "TeamsMeetReceived",
     "PhoneCallStarted",
     "UnifyMeetStarted",
     "GoogleMeetStarted",
+    "TeamsMeetStarted",
     "PhoneCallNotAnswered",
     "WhatsAppReceived",
     "WhatsAppSent",
@@ -450,11 +454,31 @@ async def hydrate_global_thread(cm: "ConversationManager") -> None:
                     role="assistant",
                     timestamp=ts,
                 )
+            case "InboundTeamsMeetUtterance":
+                entry = cm.contact_index.build_message(
+                    contact_id=contact_id,
+                    sender_name=sender_name,
+                    thread_name=Medium.TEAMS_MEET,
+                    message_content=cm_event.content,
+                    role="user",
+                    timestamp=ts,
+                )
+            case "OutboundTeamsMeetUtterance":
+                entry = cm.contact_index.build_message(
+                    contact_id=contact_id,
+                    sender_name=sender_name,
+                    thread_name=Medium.TEAMS_MEET,
+                    message_content=cm_event.content,
+                    role="assistant",
+                    timestamp=ts,
+                )
 
             # --- Fast brain notification ---
             case "FastBrainNotification":
                 if cm.call_manager.has_active_google_meet:
                     notif_medium = Medium.GOOGLE_MEET
+                elif cm.call_manager.has_active_teams_meet:
+                    notif_medium = Medium.TEAMS_MEET
                 elif cm.mode == Mode.MEET:
                     notif_medium = Medium.UNIFY_MEET
                 elif cm.call_manager._call_channel == "whatsapp_call":
@@ -507,14 +531,32 @@ async def hydrate_global_thread(cm: "ConversationManager") -> None:
                     role="assistant",
                     timestamp=ts,
                 )
-            case "PhoneCallStarted" | "UnifyMeetStarted" | "GoogleMeetStarted":
+            case "TeamsMeetReceived":
+                entry = cm.contact_index.build_message(
+                    contact_id=contact_id,
+                    sender_name=sender_name,
+                    thread_name=Medium.TEAMS_MEET,
+                    message_content="<Joining Teams meeting...>",
+                    role="assistant",
+                    timestamp=ts,
+                )
+            case (
+                "PhoneCallStarted"
+                | "UnifyMeetStarted"
+                | "GoogleMeetStarted"
+                | "TeamsMeetStarted"
+            ):
                 medium = (
                     Medium.GOOGLE_MEET
                     if payload_cls == "GoogleMeetStarted"
                     else (
-                        Medium.UNIFY_MEET
-                        if payload_cls == "UnifyMeetStarted"
-                        else Medium.PHONE_CALL
+                        Medium.TEAMS_MEET
+                        if payload_cls == "TeamsMeetStarted"
+                        else (
+                            Medium.UNIFY_MEET
+                            if payload_cls == "UnifyMeetStarted"
+                            else Medium.PHONE_CALL
+                        )
                     )
                 )
                 entry = cm.contact_index.build_message(
@@ -762,11 +804,11 @@ async def actor_watch_clarifications(
         )
 
 
-def _resolve_gmeet_name_to_contact(
+def _resolve_meet_name_to_contact(
     cm: "ConversationManager",
     display_name: str,
 ) -> dict | None:
-    """Best-effort resolution of a Google Meet display name to a contact.
+    """Best-effort resolution of a browser-meet display name to a contact.
 
     Iterates the contact_index's fallback cache and checks for exact
     full-name or first-name matches.  Returns the contact dict on match,
@@ -847,6 +889,8 @@ async def log_message(
             OutboundUnifyMeetUtterance,
             InboundGoogleMeetUtterance,
             OutboundGoogleMeetUtterance,
+            InboundTeamsMeetUtterance,
+            OutboundTeamsMeetUtterance,
             ApiMessageSent,
             ApiMessageReceived,
         ),
@@ -868,19 +912,28 @@ async def log_message(
     else:
         sender_id, receiver_ids = contact_id, [0]
 
-    # For Google Meet utterances, resolve participant names to contact IDs
-    # so receiver_ids reflects all known meeting participants.
-    gmeet_participants_meta: list[dict] = []
-    if isinstance(event, (InboundGoogleMeetUtterance, OutboundGoogleMeetUtterance)):
+    # For browser-meet utterances (Google Meet / Teams Meet), resolve
+    # participant names to contact IDs so receiver_ids reflects all known
+    # meeting participants.
+    meet_participants_meta: list[dict] = []
+    if isinstance(
+        event,
+        (
+            InboundGoogleMeetUtterance,
+            OutboundGoogleMeetUtterance,
+            InboundTeamsMeetUtterance,
+            OutboundTeamsMeetUtterance,
+        ),
+    ):
         participant_names = getattr(event, "participant_names", None) or []
         if participant_names:
             resolved_ids: set[int] = set()
             for name in participant_names:
-                resolved = _resolve_gmeet_name_to_contact(cm, name)
+                resolved = _resolve_meet_name_to_contact(cm, name)
                 cid = resolved.get("contact_id") if resolved else None
                 if cid is not None:
                     resolved_ids.add(cid)
-                gmeet_participants_meta.append(
+                meet_participants_meta.append(
                     {"name": name, "contact_id": cid},
                 )
             if role == "Assistant":
@@ -948,6 +1001,8 @@ async def log_message(
         exchange_id = cm.call_manager.unify_meet_exchange_id
     elif medium == Medium.GOOGLE_MEET:
         exchange_id = cm.call_manager.google_meet_exchange_id
+    elif medium == Medium.TEAMS_MEET:
+        exchange_id = cm.call_manager.teams_meet_exchange_id
 
     call_utterance_timestamp = ""
     call_start = (
@@ -959,7 +1014,11 @@ async def log_message(
             else (
                 cm.call_manager.google_meet_start_timestamp
                 if medium == Medium.GOOGLE_MEET
-                else None
+                else (
+                    cm.call_manager.teams_meet_start_timestamp
+                    if medium == Medium.TEAMS_MEET
+                    else None
+                )
             )
         )
     )
@@ -1000,12 +1059,17 @@ async def log_message(
                 }
             elif isinstance(
                 event,
-                (InboundGoogleMeetUtterance, OutboundGoogleMeetUtterance),
+                (
+                    InboundGoogleMeetUtterance,
+                    OutboundGoogleMeetUtterance,
+                    InboundTeamsMeetUtterance,
+                    OutboundTeamsMeetUtterance,
+                ),
             ):
                 participant_names = getattr(event, "participant_names", None) or []
                 if participant_names:
                     metadata = metadata or {}
-                    metadata["gmeet_participants"] = gmeet_participants_meta
+                    metadata["meet_participants"] = meet_participants_meta
                 dia_sid = getattr(event, "diarization_speaker_id", None)
                 if dia_sid:
                     metadata = metadata or {}
@@ -1096,6 +1160,11 @@ async def log_message(
             and cm.call_manager.google_meet_exchange_id == UNASSIGNED
         ):
             cm.call_manager.google_meet_exchange_id = exchange_id
+        elif (
+            medium == Medium.TEAMS_MEET
+            and cm.call_manager.teams_meet_exchange_id == UNASSIGNED
+        ):
+            cm.call_manager.teams_meet_exchange_id = exchange_id
 
     # publish reply as event envelope
     await event_broker.publish(

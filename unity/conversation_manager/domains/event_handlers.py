@@ -204,6 +204,8 @@ def _active_voice_thread_medium(cm: "ConversationManager") -> Medium:
 
     if cm.call_manager.has_active_google_meet:
         return Medium.GOOGLE_MEET
+    if cm.call_manager.has_active_teams_meet:
+        return Medium.TEAMS_MEET
     if cm.mode == Mode.MEET:
         return Medium.UNIFY_MEET
     if cm.call_manager._call_channel == "whatsapp_call":
@@ -435,6 +437,7 @@ async def _(
         cm.mode.is_voice
         or cm.call_manager.has_active_call
         or cm.call_manager.has_active_google_meet
+        or cm.call_manager.has_active_teams_meet
     ):
         return
 
@@ -497,12 +500,97 @@ async def _(
         )
 
 
+@EventHandler.register(TeamsMeetReceived)
+async def _(
+    event: TeamsMeetReceived,
+    cm: "ConversationManager",
+    *args,
+    **kwargs,
+):
+    """Handle request to join a Microsoft Teams meeting — spawn browser + audio bridge."""
+    if (
+        cm.mode.is_voice
+        or cm.call_manager.has_active_call
+        or cm.call_manager.has_active_google_meet
+        or cm.call_manager.has_active_teams_meet
+    ):
+        return
+
+    boss = cm.contact_index.get_contact(contact_id=1) or {}
+    contact = boss
+
+    contact_id = contact.get("contact_id") if contact else 1
+    sender_name = _get_sender_name(contact)
+
+    joined = await cm.call_manager.start_teams_meet(
+        meet_url=event.meet_url,
+        contact=contact,
+        boss=boss,
+    )
+
+    if joined:
+        cm.notifications_bar.push_notif(
+            "Comms",
+            f"Joining Teams meeting...",
+            event.timestamp,
+        )
+        cm.contact_index.push_message(
+            contact_id=contact_id,
+            sender_name=sender_name,
+            thread_name=Medium.TEAMS_MEET,
+            message_content="<Joining Teams meeting...>",
+            role="assistant",
+            timestamp=event.timestamp,
+        )
+        if await _surface_trigger_task_candidates(
+            cm=cm,
+            event=event,
+            medium=Medium.TEAMS_MEET,
+            contact_id=contact_id,
+            sender_name=sender_name,
+            timestamp=event.timestamp,
+        ):
+            await cm.request_llm_run(
+                delay=0,
+                triggering_contact_id=contact_id,
+            )
+    else:
+        await _surface_trigger_task_candidates(
+            cm=cm,
+            event=event,
+            medium=Medium.TEAMS_MEET,
+            contact_id=contact_id,
+            sender_name=sender_name,
+            timestamp=event.timestamp,
+        )
+        cm.notifications_bar.push_notif(
+            "Comms",
+            "Failed to join Teams meeting. You may retry by calling join_teams_meet again.",
+            event.timestamp,
+        )
+        await cm.request_llm_run(
+            delay=0,
+            cancel_running=True,
+            triggering_contact_id=contact_id,
+        )
+
+
 @EventHandler.register(
-    (PhoneCallStarted, UnifyMeetStarted, GoogleMeetStarted, WhatsAppCallStarted),
+    (
+        PhoneCallStarted,
+        UnifyMeetStarted,
+        GoogleMeetStarted,
+        TeamsMeetStarted,
+        WhatsAppCallStarted,
+    ),
 )
 async def _(
     event: (
-        PhoneCallStarted | UnifyMeetStarted | GoogleMeetStarted | WhatsAppCallStarted
+        PhoneCallStarted
+        | UnifyMeetStarted
+        | GoogleMeetStarted
+        | TeamsMeetStarted
+        | WhatsAppCallStarted
     ),
     cm: "ConversationManager",
     *args,
@@ -516,7 +604,7 @@ async def _(
         cm.mode = Mode.CALL
         phone_number = event.contact["phone_number"]
         contact = cm.contact_index.get_contact(phone_number=phone_number)
-    elif isinstance(event, GoogleMeetStarted):
+    elif isinstance(event, (GoogleMeetStarted, TeamsMeetStarted)):
         cm.mode = Mode.MEET
         contact_id = event.contact.get("contact_id")
         contact = cm.contact_index.get_contact(contact_id=contact_id)
@@ -538,6 +626,9 @@ async def _(
     elif isinstance(event, GoogleMeetStarted):
         cm.call_manager.google_meet_start_timestamp = event.timestamp
         label = "Google Meet"
+    elif isinstance(event, TeamsMeetStarted):
+        cm.call_manager.teams_meet_start_timestamp = event.timestamp
+        label = "Teams Meeting"
     elif isinstance(event, UnifyMeetStarted):
         cm.call_manager.unify_meet_start_timestamp = event.timestamp
         label = "Unify Meet"
@@ -551,6 +642,8 @@ async def _(
     )
     if isinstance(event, GoogleMeetStarted):
         medium = Medium.GOOGLE_MEET
+    elif isinstance(event, TeamsMeetStarted):
+        medium = Medium.TEAMS_MEET
     elif isinstance(event, PhoneCallStarted):
         medium = Medium.PHONE_CALL
     elif isinstance(event, WhatsAppCallStarted):
@@ -595,19 +688,38 @@ async def _(
     # - SMSReceived/EmailReceived while on call
 
 
-@EventHandler.register((GoogleMeetParticipantJoined, GoogleMeetParticipantLeft))
+@EventHandler.register(
+    (
+        GoogleMeetParticipantJoined,
+        GoogleMeetParticipantLeft,
+        TeamsMeetParticipantJoined,
+        TeamsMeetParticipantLeft,
+    ),
+)
 async def _(
-    event: GoogleMeetParticipantJoined | GoogleMeetParticipantLeft,
+    event: (
+        GoogleMeetParticipantJoined
+        | GoogleMeetParticipantLeft
+        | TeamsMeetParticipantJoined
+        | TeamsMeetParticipantLeft
+    ),
     cm: "ConversationManager",
     *args,
     **kwargs,
 ):
-    """Surface Google Meet roster changes as notifications so the LLM is aware."""
+    """Surface browser-meet roster changes as notifications so the LLM is aware."""
     name = event.participant_name
-    if isinstance(event, GoogleMeetParticipantJoined):
-        label = f"{name} joined the Google Meet"
+    if isinstance(event, (GoogleMeetParticipantJoined, GoogleMeetParticipantLeft)):
+        meeting_label = "Google Meet"
+        medium = Medium.GOOGLE_MEET
     else:
-        label = f"{name} left the Google Meet"
+        meeting_label = "Teams meeting"
+        medium = Medium.TEAMS_MEET
+
+    if isinstance(event, (GoogleMeetParticipantJoined, TeamsMeetParticipantJoined)):
+        label = f"{name} joined the {meeting_label}"
+    else:
+        label = f"{name} left the {meeting_label}"
 
     cm.notifications_bar.push_notif("Comms", label, event.timestamp)
 
@@ -615,7 +727,7 @@ async def _(
     cm.contact_index.push_message(
         contact_id=contact_id,
         sender_name=name,
-        thread_name=Medium.GOOGLE_MEET,
+        thread_name=medium,
         message_content=f"<{label}>",
         role="system",
         timestamp=event.timestamp,
@@ -668,9 +780,11 @@ async def _(
     cm.call_manager.call_start_timestamp = None
     cm.call_manager.unify_meet_start_timestamp = None
     cm.call_manager.google_meet_start_timestamp = None
+    cm.call_manager.teams_meet_start_timestamp = None
     cm.call_manager.call_exchange_id = UNASSIGNED
     cm.call_manager.unify_meet_exchange_id = UNASSIGNED
     cm.call_manager.google_meet_exchange_id = UNASSIGNED
+    cm.call_manager.teams_meet_exchange_id = UNASSIGNED
 
     # Build display content
     reason_display = _call_not_answered_reason_text(reason)
@@ -867,6 +981,8 @@ async def _(
         OutboundWhatsAppCallUtterance,
         InboundGoogleMeetUtterance,
         OutboundGoogleMeetUtterance,
+        InboundTeamsMeetUtterance,
+        OutboundTeamsMeetUtterance,
     ),
 )
 async def _(event: Event, cm: "ConversationManager", *args, **kwargs):
@@ -890,12 +1006,18 @@ async def _(event: Event, cm: "ConversationManager", *args, **kwargs):
         event,
         (InboundGoogleMeetUtterance, OutboundGoogleMeetUtterance),
     )
+    is_teams_meet = isinstance(
+        event,
+        (InboundTeamsMeetUtterance, OutboundTeamsMeetUtterance),
+    )
     is_unify_meet = isinstance(
         event,
         (InboundUnifyMeetUtterance, OutboundUnifyMeetUtterance),
     )
     if is_google_meet:
         medium = Medium.GOOGLE_MEET
+    elif is_teams_meet:
+        medium = Medium.TEAMS_MEET
     elif is_unify_meet:
         medium = Medium.UNIFY_MEET
     elif is_whatsapp_call:
@@ -903,8 +1025,12 @@ async def _(event: Event, cm: "ConversationManager", *args, **kwargs):
     else:
         medium = Medium.PHONE_CALL
 
-    # For diarized Meet utterances, prefer the speaker_label from the event
-    if isinstance(event, InboundGoogleMeetUtterance) and event.speaker_label:
+    # For diarized browser-meet utterances, prefer the speaker_label from
+    # the event so we attribute speech to the right participant.
+    if (
+        isinstance(event, (InboundGoogleMeetUtterance, InboundTeamsMeetUtterance))
+        and event.speaker_label
+    ):
         sender_name = event.speaker_label
 
     message_id = cm.contact_index.push_message(
@@ -971,10 +1097,22 @@ async def _(
 
 
 @EventHandler.register(
-    (PhoneCallEnded, UnifyMeetEnded, GoogleMeetEnded, WhatsAppCallEnded),
+    (
+        PhoneCallEnded,
+        UnifyMeetEnded,
+        GoogleMeetEnded,
+        TeamsMeetEnded,
+        WhatsAppCallEnded,
+    ),
 )
 async def _(
-    event: PhoneCallEnded | UnifyMeetEnded | GoogleMeetEnded | WhatsAppCallEnded,
+    event: (
+        PhoneCallEnded
+        | UnifyMeetEnded
+        | GoogleMeetEnded
+        | TeamsMeetEnded
+        | WhatsAppCallEnded
+    ),
     cm: "ConversationManager",
     *args,
     **kwargs,
@@ -997,6 +1135,14 @@ async def _(
                 {"room_name": cm.call_manager.room_name},
             )
             cm._recording_exchange_ids[cm.call_manager.room_name] = exchange_id
+    elif isinstance(event, TeamsMeetEnded):
+        exchange_id = cm.call_manager.teams_meet_exchange_id
+        if exchange_id != UNASSIGNED and cm.call_manager.room_name:
+            cm.transcript_manager.update_exchange_metadata(
+                exchange_id,
+                {"room_name": cm.call_manager.room_name},
+            )
+            cm._recording_exchange_ids[cm.call_manager.room_name] = exchange_id
     else:
         exchange_id = cm.call_manager.unify_meet_exchange_id
         if exchange_id != UNASSIGNED and cm.call_manager.room_name:
@@ -1009,7 +1155,7 @@ async def _(
     cm.mode = Mode.TEXT
     cm.call_manager.call_contact = None
 
-    if isinstance(event, (UnifyMeetEnded, GoogleMeetEnded)):
+    if isinstance(event, (UnifyMeetEnded, GoogleMeetEnded, TeamsMeetEnded)):
         contact_id = event.contact.get("contact_id")
         contact = cm.contact_index.get_contact(contact_id=contact_id)
     elif isinstance(event, WhatsAppCallEnded):
@@ -1033,6 +1179,8 @@ async def _(
 
     if isinstance(event, GoogleMeetEnded):
         await cm.call_manager.cleanup_google_meet()
+    elif isinstance(event, TeamsMeetEnded):
+        await cm.call_manager.cleanup_teams_meet()
     else:
         await cm.call_manager.cleanup_call_proc()
     await cm.cancel_proactive_speech()
@@ -1044,13 +1192,17 @@ async def _(
     cm.call_manager.call_start_timestamp = None
     cm.call_manager.unify_meet_start_timestamp = None
     cm.call_manager.google_meet_start_timestamp = None
+    cm.call_manager.teams_meet_start_timestamp = None
     cm.call_manager.call_exchange_id = UNASSIGNED
     cm.call_manager.unify_meet_exchange_id = UNASSIGNED
     cm.call_manager.google_meet_exchange_id = UNASSIGNED
+    cm.call_manager.teams_meet_exchange_id = UNASSIGNED
 
     sender_name = _get_sender_name(contact)
     if isinstance(event, GoogleMeetEnded):
         label = "Google Meet"
+    elif isinstance(event, TeamsMeetEnded):
+        label = "Teams meeting"
     elif isinstance(event, UnifyMeetEnded):
         label = "Unify Meet"
     elif isinstance(event, WhatsAppCallEnded):
@@ -2456,6 +2608,11 @@ async def _(event: LogMessageResponse, cm: "ConversationManager", *args, **kwarg
         and cm.call_manager.google_meet_exchange_id == UNASSIGNED
     ):
         cm.call_manager.google_meet_exchange_id = event.exchange_id
+    if (
+        event.medium == Medium.TEAMS_MEET
+        and cm.call_manager.teams_meet_exchange_id == UNASSIGNED
+    ):
+        cm.call_manager.teams_meet_exchange_id = event.exchange_id
 
 
 @EventHandler.register(PreHireMessage)
