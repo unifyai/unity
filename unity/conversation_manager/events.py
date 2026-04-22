@@ -628,6 +628,32 @@ class TeamsChannelCreated(Event):
 
 
 @dataclass
+class TeamsMeetCreated(Event):
+    """A Microsoft Teams meeting was created by the assistant via Graph.
+
+    ``mode`` is ``"instant"`` (reusable ad-hoc meeting — ``meeting_id``
+    populated, ``event_id``/``web_link`` empty) or ``"scheduled"`` (calendar
+    event with attached Teams meeting — ``event_id``/``web_link`` populated,
+    ``meeting_id`` empty). ``attendees`` lists the UPNs Graph was asked to
+    invite (scheduled mode only).
+    """
+
+    topic: ClassVar[str | None] = "app:comms:teams_meet_created"
+    content_logged: ClassVar[bool] = True
+
+    contact: dict
+    mode: str = "instant"
+    subject: str = ""
+    join_web_url: str = ""
+    meeting_id: str = ""
+    event_id: str = ""
+    start: str = ""
+    end: str = ""
+    attendees: list[str] = field(default_factory=list)
+    web_link: str = ""
+
+
+@dataclass
 class UnifyMessageReceived(Event):
     """A message was received via the Unify console chat interface.
 
