@@ -86,10 +86,10 @@ class Contact(BaseModel):
         "bio": "bio",
         "job_title": "jt",
         "rolling_summary": "rs",
-        "should_respond": "resp",
-        "response_policy": "policy",
         "timezone": "tz",
         "is_system": "sys",
+        "assistant_id": "aid",
+        "authoring_assistant_id": "auth_aid",
     }
 
     # Dynamic aliases for custom columns (full → shorthand); managers can
@@ -148,14 +148,6 @@ class Contact(BaseModel):
         default=None,
         description="Short rolling conversation summary and current objectives with this contact.",
     )
-    should_respond: bool = Field(
-        default=True,
-        description="Whether the assistant should respond to inbound messages or calls from this contact.",
-    )
-    response_policy: Optional[str] = Field(
-        default=None,
-        description="Policy dictating how the assistant should respond to this contact.",
-    )
 
     # IANA timezone identifier (e.g. "America/New_York", "Europe/London")
     timezone: Optional[str] = Field(
@@ -166,6 +158,22 @@ class Contact(BaseModel):
     is_system: bool = Field(
         default=False,
         description="System contact (assistant, user, or org member). Cannot be deleted.",
+    )
+
+    assistant_id: Optional[int] = Field(
+        default=None,
+        description=(
+            "Populated when this contact represents a Hive-member body "
+            "(the assistant the contact *is*); NULL for every non-body contact."
+        ),
+    )
+    authoring_assistant_id: Optional[int] = Field(
+        default=None,
+        description=(
+            "Assistant id that authored this row. Stamped at create time by "
+            "the authoring body and never rewritten by subsequent updates or "
+            "merges (the survivor keeps its original author)."
+        ),
     )
 
     @model_validator(mode="before")
