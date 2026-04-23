@@ -235,7 +235,7 @@ async def conversation_manager(request) -> CMStepDriver:
 
     # Use file lock to coordinate manager initialization across parallel test processes.
     # ContactManager.__init__ creates system contacts (assistant id=0, user id=1)
-    # via _sync_required_contacts(). This must be serialized to prevent duplicate
+    # via _provision_system_overlays(). This must be serialized to prevent duplicate
     # contact creation when multiple pytest sessions start in parallel.
     with scenario_file_lock("cm_conversation_manager"):
         # Initialize managers DIRECTLY (not via event handler)

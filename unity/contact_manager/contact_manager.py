@@ -44,6 +44,7 @@ from .system_contacts import (
     provision_assistant_contact as _sys_provision_assistant_contact,
     provision_user_contact as _sys_provision_user_contact,
     provision_org_member_contacts as _sys_provision_org_member_contacts,
+    provision_system_overlays as _sys_provision_system_overlays,
 )
 from .custom_columns import (
     create_custom_column as _cc_create,
@@ -215,9 +216,9 @@ class ContactManager(BaseContactManager):
         # Ensure context/schema and prefill known custom fields
         self._provision_storage()
 
-        # ── ensure an assistant contact with id 0 exists and is up-to-date ──
-        # ── ensure a default *user* contact with id 1 exists and is up-to-date ──
-        self._sync_required_contacts()
+        # Provision this body's system contacts (shared rows + "self"
+        # / "boss" ContactMembership overlays) and org-member fan-out.
+        self._provision_system_overlays()
 
     # ──────────────────────────────────────────────────────────────────────
     #  Public API (English-only entrypoints for the LLM)
@@ -462,8 +463,8 @@ class ContactManager(BaseContactManager):
         except Exception:
             pass
 
-        # Recreate assistant and default user contacts (id 0 and 1)
-        self._sync_required_contacts()
+        # Re-seed this body's system contacts and their self/boss overlays.
+        self._provision_system_overlays()
 
     # (Optional) Public programmatic helpers (non-LLM)
     def materialize_membership_if_missing(
@@ -1410,7 +1411,19 @@ class ContactManager(BaseContactManager):
     def _ensure_columns_exist(self, extra_fields: Dict[str, Any]) -> None:
         _sys_ensure_columns_exist(self, extra_fields)
 
-    def _sync_required_contacts(self) -> None:
+    def _provision_system_overlays(self) -> None:
+        """Provision this body's system contacts and their overlays.
+
+        The contact rows representing the assistant ("self") and the
+        primary user ("boss") are seeded in the shared ``Contacts``
+        table, then the corresponding :class:`ContactMembership`
+        overlays are materialized eagerly so every reader on this body
+        can rely on the overlay as the source of truth for
+        ``relationship`` / ``should_respond`` / ``response_policy``.
+
+        Org-member fan-out runs last and returns early outside of
+        organization-scoped API key sessions.
+        """
         existing_logs = unify.get_logs(
             context=self._ctx,
             filter="contact_id == 0 or contact_id == 1",
@@ -1426,7 +1439,8 @@ class ContactManager(BaseContactManager):
         _sys_provision_assistant_contact(self, assistant_log)
         _sys_provision_user_contact(self, user_log)
 
-        # Sync org members (returns early if not org API key)
+        _sys_provision_system_overlays(self)
+
         _sys_provision_org_member_contacts(self)
 
     # Validation / sanitization

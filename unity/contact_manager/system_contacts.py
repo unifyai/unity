@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 import logging
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 import unify
 from unify.utils.http import RequestError
 
 _log = logging.getLogger(__name__)
 
+from ..common.context_registry import HIVE_CONTEXT_PREFIX
 from ..knowledge_manager.types import ColumnType
 from ..session_details import (
     PLACEHOLDER_ASSISTANT_BIO,
@@ -18,6 +19,10 @@ from ..session_details import (
     PLACEHOLDER_USER_EMAIL,
     PLACEHOLDER_USER_FIRST_NAME,
     PLACEHOLDER_USER_SURNAME,
+)
+from .settings import (
+    RELATIONSHIP_BOSS,
+    RELATIONSHIP_SELF,
 )
 
 
@@ -124,20 +129,26 @@ def _resolve_user_details(self) -> Dict[str, Any]:
 
 
 def provision_assistant_contact(self, assistant_log) -> None:
-    """Provision the assistant system contact (id == 0).
+    """Seed (or refresh) the shared ``Contacts`` row representing this body.
 
-    Creates or updates the assistant contact using details from
-    SESSION_DETAILS or default values.
+    Values come from ``SESSION_DETAILS`` when the assistant record is
+    populated and from placeholder defaults otherwise. The authoritative
+    "this row is me" signal is the ``"self"`` ``ContactMembership``
+    overlay materialized by :func:`provision_self_contact`; this helper
+    only ensures the shared row exists.
     """
     from ..session_details import SESSION_DETAILS
 
     populated = _is_assistant_populated()
     ast = SESSION_DETAILS.assistant
 
-    base_fields = {fld: None for fld in self._BUILTIN_FIELDS if fld != "contact_id"}
+    base_fields = {
+        fld: None
+        for fld in self._BUILTIN_FIELDS
+        if fld not in {"contact_id", "is_system", "assistant_id"}
+    }
     base_fields["should_respond"] = True
     base_fields["response_policy"] = ""
-    base_fields["is_system"] = True
     base_fields.update(
         {
             "first_name": (
@@ -158,6 +169,10 @@ def provision_assistant_contact(self, assistant_log) -> None:
             "rolling_summary": None,
         },
     )
+    base_fields["_is_system"] = True
+    base_fields["_relationship"] = RELATIONSHIP_SELF
+    if ast.agent_id is not None:
+        base_fields["_assistant_id"] = int(ast.agent_id)
 
     if assistant_log is not None:
         try:
@@ -287,7 +302,8 @@ def provision_user_contact(self, user_log) -> None:
         try:
             self._create_contact(
                 should_respond=True,
-                is_system=True,
+                _is_system=True,
+                _relationship=RELATIONSHIP_BOSS,
                 response_policy=self.USER_MANAGER_RESPONSE_POLICY,
                 timezone="UTC",
             )
@@ -300,10 +316,9 @@ def provision_user_contact(self, user_log) -> None:
     base_fields: Dict[str, Any] = {
         fld: None
         for fld in self._BUILTIN_FIELDS
-        if fld not in {"contact_id", "rolling_summary"}
+        if fld not in {"contact_id", "rolling_summary", "is_system", "assistant_id"}
     }
     base_fields["should_respond"] = True
-    base_fields["is_system"] = True
     base_fields.update(
         {
             "first_name": user_info.get("first_name"),
@@ -316,6 +331,8 @@ def provision_user_contact(self, user_log) -> None:
             "response_policy": self.USER_MANAGER_RESPONSE_POLICY,
         },
     )
+    base_fields["_is_system"] = True
+    base_fields["_relationship"] = RELATIONSHIP_BOSS
 
     # Use fetched timezone if available, fallback to UTC
     base_fields["timezone"] = user_info.get("timezone") or "UTC"
@@ -443,6 +460,340 @@ def _fetch_org_members() -> List[Dict[str, Any]]:
         return []
 
 
+def _overlay_contact_id_for_relationship(
+    self,
+    relationship: str,
+) -> Optional[int]:
+    """Return the ``contact_id`` of this body's overlay row for *relationship*.
+
+    Reads the per-body ``ContactMembership`` overlay, returning
+    ``None`` when no row exists for that relationship (callers treat
+    absence as "overlay not materialized yet" rather than falling
+    back to any magic ``contact_id``).
+    """
+    try:
+        rows = unify.get_logs(
+            context=self._membership_ctx,
+            filter=f"relationship == '{relationship}'",
+            limit=1,
+            from_fields=["contact_id", "relationship"],
+        )
+    except Exception:
+        return None
+    if not rows:
+        return None
+    try:
+        return int(rows[0].entries.get("contact_id"))
+    except Exception:
+        return None
+
+
+def _boss_contact_id_for_body(self) -> Optional[int]:
+    """Return the contact_id this body treats as the boss, if any."""
+    return _overlay_contact_id_for_relationship(self, RELATIONSHIP_BOSS)
+
+
+def _self_overlay_exists(self) -> bool:
+    """Return True when this body already has a ``"self"`` overlay."""
+    return _overlay_contact_id_for_relationship(self, RELATIONSHIP_SELF) is not None
+
+
+def provision_self_contact(self) -> None:
+    """Ensure this body has a ``"self"`` ContactMembership overlay.
+
+    Idempotent: if the per-body ``ContactMembership`` overlay already
+    has a row with ``relationship == "self"``, this returns without
+    doing any work.
+
+    Otherwise it locates (or creates) the shared ``Contact`` row that
+    represents this body — matched by ``assistant_id == <session
+    agent_id>`` — and materializes the ``"self"`` overlay on top. The
+    shared row carries ``assistant_id`` so cross-body readers can
+    recognise it as a Hive-member body; the per-body overlay encodes
+    this body's *policy* toward that row (``should_respond=True``,
+    ``relationship="self"``, etc).
+    """
+    if _self_overlay_exists(self):
+        return
+
+    from ..session_details import SESSION_DETAILS
+
+    populated = _is_assistant_populated()
+    ast = SESSION_DETAILS.assistant
+    agent_id = (
+        getattr(ast, "agent_id", None) if SESSION_DETAILS.is_initialized else None
+    )
+
+    shared_contact_id: Optional[int] = None
+
+    if agent_id is not None:
+        try:
+            existing = unify.get_logs(
+                context=self._ctx,
+                filter=f"assistant_id == {int(agent_id)}",
+                limit=1,
+                from_fields=["contact_id", "assistant_id"],
+            )
+            if existing:
+                shared_contact_id = int(existing[0].entries.get("contact_id"))
+        except Exception:
+            shared_contact_id = None
+
+    if shared_contact_id is None:
+        # Fall back to the seeded ``contact_id == 0`` row from
+        # ``provision_assistant_contact`` when no ``assistant_id`` match
+        # exists yet, and stamp it so readers looking up Hive-mate
+        # bodies by ``assistant_id`` can find this body.
+        try:
+            seeded = unify.get_logs(
+                context=self._ctx,
+                filter="contact_id == 0",
+                limit=1,
+                from_fields=["contact_id", "assistant_id"],
+            )
+        except Exception:
+            seeded = []
+        if seeded:
+            try:
+                shared_contact_id = int(seeded[0].entries.get("contact_id"))
+            except Exception:
+                shared_contact_id = None
+            if (
+                shared_contact_id is not None
+                and agent_id is not None
+                and seeded[0].entries.get("assistant_id") != int(agent_id)
+            ):
+                try:
+                    self.update_contact(
+                        contact_id=shared_contact_id,
+                        assistant_id=int(agent_id),
+                    )
+                except Exception:
+                    pass
+
+    if shared_contact_id is None:
+        create_kwargs: Dict[str, Any] = {
+            "first_name": (
+                ast.first_name if populated else PLACEHOLDER_ASSISTANT_FIRST_NAME
+            ),
+            "surname": ast.surname if populated else PLACEHOLDER_ASSISTANT_SURNAME,
+            "email_address": (ast.email if populated else PLACEHOLDER_ASSISTANT_EMAIL),
+            "phone_number": (ast.number if populated else PLACEHOLDER_ASSISTANT_PHONE),
+            "bio": ast.about if populated else PLACEHOLDER_ASSISTANT_BIO,
+            "job_title": (ast.job_title or None) if populated else None,
+            "timezone": (ast.timezone or "UTC") if populated else "UTC",
+            "should_respond": True,
+            "response_policy": "",
+            "_is_system": True,
+            "_relationship": RELATIONSHIP_SELF,
+            "_assistant_id": int(agent_id) if agent_id is not None else None,
+        }
+        if populated and ast.whatsapp_number:
+            create_kwargs["whatsapp_number"] = ast.whatsapp_number
+        if populated and ast.discord_bot_id:
+            create_kwargs["discord_id"] = ast.discord_bot_id
+
+        try:
+            outcome = self._create_contact(
+                **{k: v for k, v in create_kwargs.items() if v is not None},
+            )
+            if isinstance(outcome, dict):
+                details = outcome.get("details") or {}
+                if "contact_id" in details:
+                    shared_contact_id = int(details["contact_id"])
+        except RequestError as e:
+            if e.response is not None and e.response.status_code in (400, 500):
+                detail = ""
+                try:
+                    detail = str(e.response.json().get("detail", ""))
+                except Exception:
+                    detail = str(getattr(e.response, "text", ""))
+                if "unique" not in detail.lower():
+                    raise
+            else:
+                raise
+
+    if shared_contact_id is None:
+        return
+
+    try:
+        self.materialize_membership_if_missing(
+            shared_contact_id,
+            relationship=RELATIONSHIP_SELF,
+            should_respond=True,
+            response_policy="",
+        )
+    except Exception:
+        pass
+
+
+def provision_hive_boss_contact(
+    hive_id: int,
+    *,
+    email: Optional[str],
+    first_name: Optional[str] = None,
+    surname: Optional[str] = None,
+    phone_number: Optional[str] = None,
+    timezone: Optional[str] = None,
+    bio: Optional[str] = None,
+) -> Optional[int]:
+    """Ensure a shared boss ``Contact`` row exists under ``Hives/{hive_id}/Contacts``.
+
+    Orchestra's Hive-creation pipeline calls this helper once at Hive
+    birth to seed the shared boss row — every Hive member body then
+    materializes its own ``"boss"`` overlay against the same shared
+    contact via :func:`provision_boss_overlay`.
+
+    Idempotent by email: a subsequent call with the same email
+    returns the existing contact_id instead of inserting a duplicate.
+    ``assistant_id`` is intentionally left ``None`` — a boss row
+    represents a human, not a Hive-member body.
+
+    Returns the shared ``contact_id`` on success, ``None`` when the
+    Hive's Contacts context cannot be resolved (e.g. hive_id=None or
+    ContextRegistry not yet set up).
+    """
+    if not hive_id:
+        return None
+
+    hive_contacts_ctx = f"{HIVE_CONTEXT_PREFIX}{int(hive_id)}/Contacts"
+
+    if email:
+        try:
+            existing = unify.get_logs(
+                context=hive_contacts_ctx,
+                filter=f"email_address == '{email}'",
+                limit=1,
+                from_fields=["contact_id", "email_address"],
+            )
+            if existing:
+                try:
+                    return int(existing[0].entries.get("contact_id"))
+                except Exception:
+                    return None
+        except Exception:
+            pass
+
+    entries: Dict[str, Any] = {
+        "first_name": first_name,
+        "surname": surname,
+        "email_address": email,
+        "phone_number": phone_number,
+        "timezone": timezone or "UTC",
+        "bio": bio,
+        "is_system": True,
+        "assistant_id": None,
+    }
+
+    from ..common.log_utils import log as unity_log
+
+    try:
+        log = unity_log(
+            context=hive_contacts_ctx,
+            **{k: v for k, v in entries.items() if v is not None},
+            new=True,
+            mutable=True,
+        )
+    except Exception as e:
+        _log.warning(f"provision_hive_boss_contact: shared insert failed: {e}")
+        return None
+
+    try:
+        return int(log.entries.get("contact_id"))
+    except Exception:
+        return None
+
+
+def provision_boss_overlay(self) -> None:
+    """Materialize a ``"boss"`` ContactMembership overlay on this body.
+
+    Resolves the boss's shared ``Contact`` row — looking first for an
+    existing row flagged ``is_system=True`` with the primary user's
+    email (solo bodies and Hive members alike), then falling back to
+    the active ``SESSION_DETAILS`` user-email as the match key — and
+    writes a ``"boss"`` overlay against it on this body.
+
+    Idempotent: when this body already has a ``"boss"`` overlay
+    (regardless of which shared row it points at) the call is a no-op.
+    """
+    if _overlay_contact_id_for_relationship(self, RELATIONSHIP_BOSS) is not None:
+        return
+
+    from ..session_details import SESSION_DETAILS
+
+    candidate_emails: list[str] = []
+    if SESSION_DETAILS.is_initialized:
+        u_email = getattr(SESSION_DETAILS.user, "email", None)
+        if u_email:
+            candidate_emails.append(str(u_email))
+
+    shared_contact_id: Optional[int] = None
+    for email in candidate_emails:
+        try:
+            matches = unify.get_logs(
+                context=self._ctx,
+                filter=f"email_address == '{email}' and is_system == True",
+                limit=1,
+                from_fields=["contact_id", "email_address", "is_system"],
+            )
+        except Exception:
+            matches = []
+        if matches:
+            try:
+                shared_contact_id = int(matches[0].entries.get("contact_id"))
+                break
+            except Exception:
+                continue
+
+    if shared_contact_id is None:
+        # Fall back to the reserved ``contact_id == 1`` row that
+        # ``provision_user_contact`` always seeds. A later merge_contacts
+        # can still rewrite the overlay to point at a richer row.
+        try:
+            seeded = unify.get_logs(
+                context=self._ctx,
+                filter="contact_id == 1",
+                limit=1,
+                from_fields=["contact_id"],
+            )
+            if seeded:
+                shared_contact_id = int(seeded[0].entries.get("contact_id"))
+        except Exception:
+            shared_contact_id = None
+
+    if shared_contact_id is None:
+        return
+
+    try:
+        self.materialize_membership_if_missing(
+            shared_contact_id,
+            relationship=RELATIONSHIP_BOSS,
+            should_respond=True,
+            response_policy=getattr(self, "USER_MANAGER_RESPONSE_POLICY", None),
+        )
+    except Exception:
+        pass
+
+
+def provision_system_overlays(self) -> None:
+    """Eagerly mint this body's ``self`` + ``boss`` overlays.
+
+    Called from :meth:`ContactManager.__init__` so every body starts
+    life with a ``"self"`` and ``"boss"`` ContactMembership row. The
+    overlay is the authoritative signal for every reader; the
+    shared-row ``is_system`` flag only serves as a fallback when a
+    body's overlay has not yet been materialized.
+    """
+    try:
+        provision_self_contact(self)
+    except Exception:
+        pass
+    try:
+        provision_boss_overlay(self)
+    except Exception:
+        pass
+
+
 def provision_org_member_contacts(self) -> None:
     """
     Ensure org member contacts exist with is_system=True.
@@ -451,25 +802,31 @@ def provision_org_member_contacts(self) -> None:
     - If contact with email exists: ensure is_system=True
     - If no contact exists: create with is_system=True
 
-    Skips the primary user (id=1) to avoid duplicates.
+    Skips the primary user (identified via the per-body
+    ``ContactMembership`` overlay's ``relationship == "boss"`` row)
+    to avoid duplicating the boss contact.
     """
     members = _fetch_org_members()
     if not members:
         return
 
-    # Get primary user email to skip
+    # Resolve the boss email via the per-body overlay → shared row
+    # lookup so the exclusion is keyed on this body's declared boss,
+    # not a hard-coded ``contact_id == 1``.
     primary_user_email = None
-    try:
-        primary_user_rows = unify.get_logs(
-            context=self._ctx,
-            filter="contact_id == 1",
-            limit=1,
-            from_fields=["email_address"],
-        )
-        if primary_user_rows:
-            primary_user_email = primary_user_rows[0].entries.get("email_address")
-    except Exception:
-        pass
+    boss_contact_id = _boss_contact_id_for_body(self)
+    if boss_contact_id is not None:
+        try:
+            boss_rows = unify.get_logs(
+                context=self._ctx,
+                filter=f"contact_id == {int(boss_contact_id)}",
+                limit=1,
+                from_fields=["email_address"],
+            )
+            if boss_rows:
+                primary_user_email = boss_rows[0].entries.get("email_address")
+        except Exception:
+            pass
 
     for member in members:
         email = member.get("email")

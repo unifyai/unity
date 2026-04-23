@@ -2003,7 +2003,7 @@ async def _(
 
     async def _sync_contacts():
         try:
-            await asyncio.to_thread(cm.contact_manager._sync_required_contacts)
+            await asyncio.to_thread(cm.contact_manager._provision_system_overlays)
             cm._session_logger.info("state_update", "Contacts synced successfully")
         except Exception as e:
             cm._session_logger.error("state_update", f"Error syncing contacts: {e}")

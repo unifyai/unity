@@ -1111,14 +1111,13 @@ class SimulatedContactManager(BaseContactManager):
             "details": {"contact_id": contact_id},
         }
 
-    def _sync_required_contacts(self) -> None:
-        """Ensure system contacts (assistant=0, user=1) exist.
+    def _provision_system_overlays(self) -> None:
+        """Ensure this body has its ``"self"`` and ``"boss"`` overlays.
 
-        For SimulatedContactManager, this is a no-op since system contacts
-        are pre-populated in __init__. This method exists for API compatibility
-        with the real ContactManager.
+        For :class:`SimulatedContactManager` this is a no-op because
+        system contacts are pre-populated in ``__init__``. The method
+        exists for API compatibility with :class:`ContactManager`.
         """
-        # System contacts are already pre-populated in __init__, nothing to do
 
     def _merge_contacts(
         self,

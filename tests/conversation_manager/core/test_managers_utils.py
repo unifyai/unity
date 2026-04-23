@@ -59,11 +59,11 @@ async def test_queue_operation_waits_for_initialization():
     mock_cm.notifications_bar = MagicMock()
     mock_cm.initialized = False
 
-    # Wrap _sync_required_contacts to track calls
+    # Wrap _provision_system_overlays to track calls
     with patch.object(
         mock_cm.contact_manager,
-        "_sync_required_contacts",
-        wraps=mock_cm.contact_manager._sync_required_contacts,
+        "_provision_system_overlays",
+        wraps=mock_cm.contact_manager._provision_system_overlays,
     ) as mock_sync:
         # Fire the SyncContacts event (this queues the operation)
         event = SyncContacts(reason="test sync")
