@@ -920,6 +920,9 @@ async def entrypoint(ctx: agents.JobContext):
     elif channel == "google_meet":
         user_utterance_event = InboundGoogleMeetUtterance
         assistant_utterance_event = OutboundGoogleMeetUtterance
+    elif channel == "teams_meet":
+        user_utterance_event = InboundTeamsMeetUtterance
+        assistant_utterance_event = OutboundTeamsMeetUtterance
     else:
         user_utterance_event = InboundUnifyMeetUtterance
         assistant_utterance_event = OutboundUnifyMeetUtterance

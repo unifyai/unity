@@ -586,6 +586,8 @@ class ConversationManager(metaclass=SingletonABCMeta):
 
         if self.call_manager.has_active_google_meet:
             voice_medium = Medium.GOOGLE_MEET
+        elif self.call_manager.has_active_teams_meet:
+            voice_medium = Medium.TEAMS_MEET
         elif self.mode == Mode.MEET:
             voice_medium = Medium.UNIFY_MEET
         elif self.call_manager._call_channel == "whatsapp_call":
@@ -1622,6 +1624,8 @@ class ConversationManager(metaclass=SingletonABCMeta):
             await local_ingress.stop()
         if self.call_manager.has_active_google_meet:
             await self.call_manager.cleanup_google_meet()
+        elif self.call_manager.has_active_teams_meet:
+            await self.call_manager.cleanup_teams_meet()
         else:
             await self.call_manager.cleanup_call_proc()
         await self.call_manager.cleanup_persistent_worker()
@@ -1859,6 +1863,8 @@ class ConversationManager(metaclass=SingletonABCMeta):
                 contact_id = contact.get("contact_id")
                 if self.call_manager.has_active_google_meet:
                     voice_medium = Medium.GOOGLE_MEET
+                elif self.call_manager.has_active_teams_meet:
+                    voice_medium = Medium.TEAMS_MEET
                 elif self.mode == Mode.MEET:
                     voice_medium = Medium.UNIFY_MEET
                 elif self.call_manager._call_channel == "whatsapp_call":

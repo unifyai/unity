@@ -3241,6 +3241,7 @@ class CommsPrimitives:
         if self._cm is not None and (
             self._cm.call_manager.has_active_call
             or self._cm.call_manager.has_active_google_meet
+            or self._cm.call_manager.has_active_teams_meet
             or self._cm.call_manager._whatsapp_call_joining
         ):
             return {
@@ -3430,6 +3431,7 @@ class CommsPrimitives:
         if self._cm is not None and (
             self._cm.call_manager.has_active_call
             or self._cm.call_manager.has_active_google_meet
+            or self._cm.call_manager.has_active_teams_meet
             or self._cm.call_manager._whatsapp_call_joining
         ):
             return {
