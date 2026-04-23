@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Final, Optional
 
 import unify
 from pydantic import ValidationError
@@ -8,8 +8,19 @@ from pydantic import ValidationError
 from ..common.context_registry import ContextRegistry
 from ..common.log_utils import log as unity_log
 from ..common.tool_outcome import ToolOutcome
-from .types.contact import Contact
+from .settings import (
+    RELATIONSHIP_COWORKER,
+    RELATIONSHIP_OTHER,
+)
+from .types.contact import Contact, ContactMembership
 from .custom_columns import sanitize_custom_columns
+
+# Audit-only fields on the shared Contact row: internal provenance
+# stamps that should never count as a user-supplied "contact detail"
+# in create/update surface-area guards.
+_AUDIT_FIELDS: Final[frozenset[str]] = frozenset(
+    {"assistant_id", "authoring_assistant_id", "is_system"},
+)
 
 
 def _get_assistant_id() -> int | None:
@@ -19,6 +30,92 @@ def _get_assistant_id() -> int | None:
     if not SESSION_DETAILS.is_initialized:
         return None
     return SESSION_DETAILS.assistant.agent_id
+
+
+def _write_membership_overlay(
+    self,
+    *,
+    contact_id: int,
+    relationship: Optional[str] = None,
+    should_respond: Optional[bool] = None,
+    response_policy: Optional[str] = None,
+    can_edit: Optional[bool] = None,
+) -> None:
+    """Upsert this body's ContactMembership row for a shared contact.
+
+    Writes a single log to ``{user}/{assistant}/ContactMembership`` with
+    only the supplied fields. If a row for *contact_id* already exists
+    it is updated in place; otherwise a new row is inserted.
+    ``overwrite=True`` ensures the provided fields replace prior values
+    without clobbering fields the caller chose not to pass.
+    """
+    overlay_fields: Dict[str, Any] = {"contact_id": int(contact_id)}
+    if relationship is not None:
+        overlay_fields["relationship"] = relationship
+    if should_respond is not None:
+        overlay_fields["should_respond"] = bool(should_respond)
+    if response_policy is not None:
+        overlay_fields["response_policy"] = response_policy
+    if can_edit is not None:
+        overlay_fields["can_edit"] = bool(can_edit)
+
+    try:
+        existing = unify.get_logs(
+            context=self._membership_ctx,
+            filter=f"contact_id == {int(contact_id)}",
+            limit=1,
+            return_ids_only=True,
+        )
+    except Exception:
+        existing = []
+
+    if existing:
+        unify.update_logs(
+            logs=[existing[0]],
+            context=self._membership_ctx,
+            entries=overlay_fields,
+            overwrite=True,
+        )
+    else:
+        # Default the unspecified fields when minting a brand-new row so
+        # downstream readers get a complete overlay (callers that want
+        # partial state call update_logs on an existing row instead).
+        if "relationship" not in overlay_fields:
+            overlay_fields["relationship"] = RELATIONSHIP_OTHER
+        if "should_respond" not in overlay_fields:
+            overlay_fields["should_respond"] = True
+        if "response_policy" not in overlay_fields:
+            overlay_fields["response_policy"] = None
+        if "can_edit" not in overlay_fields:
+            overlay_fields["can_edit"] = True
+        unity_log(
+            context=self._membership_ctx,
+            **overlay_fields,
+            new=True,
+            mutable=True,
+        )
+
+
+def _default_relationship_for(
+    self,
+    *,
+    explicit: Optional[str],
+    shared_assistant_id: Optional[int],
+) -> str:
+    """Resolve the default ``relationship`` for a freshly-created contact.
+
+    Precedence:
+    1. Explicit ``_relationship`` kwarg (used by system-contact
+       provisioning to mint ``self`` / ``boss``).
+    2. Shared row carries an ``assistant_id`` (the contact IS a
+       Hive-member body) → ``coworker``.
+    3. Fallback → ``other``.
+    """
+    if explicit is not None:
+        return explicit
+    if shared_assistant_id is not None:
+        return RELATIONSHIP_COWORKER
+    return RELATIONSHIP_OTHER
 
 
 def _maybe_sync_timezone_to_backend(
@@ -143,12 +240,39 @@ def create_contact(
     rolling_summary: Optional[str] = None,
     should_respond: bool = True,
     response_policy: Optional[str] = None,
+    _assistant_id: Optional[int] = None,
+    _relationship: Optional[str] = None,
+    _is_system: Optional[bool] = None,
     **kwargs: Any,
 ) -> ToolOutcome:
+    """Create a shared Contact row and materialize this body's overlay.
+
+    Two-stage write:
+
+    1. Insert into the shared ``Contacts`` table — Hive-scoped for Hive
+       members, per-body for solo bodies. The shared row stamps
+       ``authoring_assistant_id`` with the caller's body so the row's
+       origin is traceable for the lifetime of the contact. The caller
+       may also pass ``_assistant_id`` when minting a contact that
+       *represents* another Hive-member body (the shared row's
+       ``assistant_id`` field).
+    2. Materialize a :class:`ContactMembership` overlay on *this*
+       body with ``relationship`` / ``should_respond`` /
+       ``response_policy``. ``relationship`` defaults via
+       :func:`_default_relationship_for` — the explicit ``_relationship``
+       kwarg wins, otherwise a shared row with ``assistant_id`` set
+       becomes ``"coworker"``, and everything else becomes ``"other"``.
+    """
     if "kwargs" in kwargs:
         kwargs = {**kwargs, **kwargs.pop("kwargs")}
 
-    contact_details = {
+    if response_policy is None:
+        response_policy = self.DEFAULT_RESPONSE_POLICY
+
+    # Shared-row fields: identity, contactable details, and the audit
+    # stamps. should_respond/response_policy are **not** written here —
+    # they are body-local and live on the ContactMembership overlay.
+    contact_details: Dict[str, Any] = {
         "first_name": first_name,
         "surname": surname,
         "email_address": email_address,
@@ -157,12 +281,10 @@ def create_contact(
         "job_title": job_title,
         "timezone": timezone,
         "rolling_summary": rolling_summary,
-        "should_respond": should_respond,
-        "response_policy": response_policy,
-        "is_system": False,
+        "is_system": bool(_is_system),
+        "assistant_id": _assistant_id,
+        "authoring_assistant_id": _get_assistant_id(),
     }
-    if contact_details["response_policy"] is None:
-        contact_details["response_policy"] = self.DEFAULT_RESPONSE_POLICY
 
     if kwargs:
         safe_custom = sanitize_custom_columns(kwargs)
@@ -175,7 +297,9 @@ def create_contact(
         except Exception:
             pass
 
-    if not any(v is not None for v in contact_details.values()):
+    if not any(
+        v is not None for k, v in contact_details.items() if k not in _AUDIT_FIELDS
+    ):
         raise AssertionError("At least one contact detail must be provided.")
 
     # Validate against Pydantic model
@@ -205,9 +329,31 @@ def create_contact(
         self._data_store.put(log.entries)
     except Exception:
         pass
+
+    new_contact_id = int(log.entries["contact_id"])
+    relationship = _default_relationship_for(
+        self,
+        explicit=_relationship,
+        shared_assistant_id=_assistant_id,
+    )
+    try:
+        _write_membership_overlay(
+            self,
+            contact_id=new_contact_id,
+            relationship=relationship,
+            should_respond=should_respond,
+            response_policy=response_policy,
+        )
+    except Exception:
+        # Overlay write must not fail the shared-row create. If the
+        # overlay is missing, downstream readers fall back to shared-row
+        # signals and the lazy-materialization helper will backfill it
+        # at the next interaction boundary.
+        pass
+
     return {
         "outcome": "contact created successfully",
-        "details": {"contact_id": log.entries["contact_id"]},
+        "details": {"contact_id": new_contact_id},
     }
 
 
@@ -229,10 +375,21 @@ def update_contact(
     _log_id: Optional[int] = None,
     **kwargs: Any,
 ) -> ToolOutcome:
+    """Update a contact, splitting shared-row and overlay-only fields.
+
+    ``should_respond`` and ``response_policy`` are overlay-only and
+    route to this body's :class:`ContactMembership` row (materialized
+    if missing). Everything else — identity, contactable details, free
+    text, custom columns — goes to the shared ``Contacts`` row as
+    before. ``authoring_assistant_id`` is a write-once audit stamp and
+    is never rewritten by updates.
+    """
     if "kwargs" in kwargs:
         kwargs = {**kwargs, **kwargs.pop("kwargs")}
 
-    contact_details = {
+    # Split the shared-row fields from the overlay-only ones up front
+    # so every downstream guard only ever sees its own slice.
+    shared_kwargs: Dict[str, Any] = {
         "first_name": first_name,
         "surname": surname,
         "email_address": email_address,
@@ -242,12 +399,19 @@ def update_contact(
         "job_title": job_title,
         "timezone": timezone,
         "rolling_summary": rolling_summary,
+    }
+    overlay_kwargs: Dict[str, Any] = {
         "should_respond": should_respond,
         "response_policy": response_policy,
     }
+
     if kwargs:
         safe_custom = sanitize_custom_columns(kwargs)
-        contact_details.update(safe_custom)
+        # authoring_assistant_id is a write-once audit field; drop it
+        # defensively if a caller tries to sneak an override through
+        # the custom-column path.
+        safe_custom.pop("authoring_assistant_id", None)
+        shared_kwargs.update(safe_custom)
         try:
             for k in safe_custom.keys():
                 if k not in self._BUILTIN_FIELDS:
@@ -256,68 +420,94 @@ def update_contact(
         except Exception:
             pass
 
-    updates_dict = {k: v for k, v in contact_details.items() if v is not None}
-    if not updates_dict:
+    shared_updates = {k: v for k, v in shared_kwargs.items() if v is not None}
+    overlay_updates = {k: v for k, v in overlay_kwargs.items() if v is not None}
+
+    if not shared_updates and not overlay_updates:
         raise ValueError("At least one contact detail must be provided for an update.")
 
-    # Validate and normalize via Pydantic model (e.g. "" → None for unique fields)
-    try:
-        validated = Contact(contact_id=contact_id, **updates_dict)
-    except ValidationError as e:
-        msg = str(e)
+    # Validate and normalize the shared-row slice via the Contact model
+    # (e.g. "" → None for unique fields). The overlay fields are kept
+    # separate and validated via ContactMembership.
+    if shared_updates:
         try:
-            err = e.errors()[0]
-            msg = err.get("msg", str(e))
-            if err.get("type") == "value_error":
-                ctx = err.get("ctx", {})
-                if "error" in ctx:
-                    msg = str(ctx["error"])
-        except Exception:
-            pass
-        raise ValueError(msg) from e
-    updates_dict = {
-        k: getattr(validated, k)
-        for k in updates_dict
-        if getattr(validated, k) is not None
-    }
-    if not updates_dict:
+            validated = Contact(contact_id=contact_id, **shared_updates)
+        except ValidationError as e:
+            msg = str(e)
+            try:
+                err = e.errors()[0]
+                msg = err.get("msg", str(e))
+                if err.get("type") == "value_error":
+                    ctx = err.get("ctx", {})
+                    if "error" in ctx:
+                        msg = str(ctx["error"])
+            except Exception:
+                pass
+            raise ValueError(msg) from e
+        shared_updates = {
+            k: getattr(validated, k)
+            for k in shared_updates
+            if getattr(validated, k, None) is not None
+        }
+
+    if overlay_updates:
+        # ContactMembership constructor exercises validation for
+        # should_respond / response_policy shapes.
+        ContactMembership(contact_id=contact_id, **overlay_updates)
+
+    if not shared_updates and not overlay_updates:
         return ToolOutcome(output="No effective changes after normalization.")
 
-    if _log_id is None:
-        target_ids = unify.get_logs(
-            context=self._ctx,
-            filter=f"contact_id == {contact_id}",
-            return_ids_only=True,
-        )
-        if not target_ids:
-            raise ValueError(
-                f"No contact found with contact_id {contact_id} to update.",
+    if shared_updates:
+        if _log_id is None:
+            target_ids = unify.get_logs(
+                context=self._ctx,
+                filter=f"contact_id == {contact_id}",
+                return_ids_only=True,
             )
-        if len(target_ids) > 1:
-            raise ValueError(
-                f"Multiple contacts found with contact_id {contact_id}. Data integrity issue.",
-            )
-        log_to_update_id = target_ids[0]
-    else:
-        log_to_update_id = _log_id
+            if not target_ids:
+                raise ValueError(
+                    f"No contact found with contact_id {contact_id} to update.",
+                )
+            if len(target_ids) > 1:
+                raise ValueError(
+                    f"Multiple contacts found with contact_id {contact_id}. Data integrity issue.",
+                )
+            log_to_update_id = target_ids[0]
+        else:
+            log_to_update_id = _log_id
 
-    unify.update_logs(
-        logs=[log_to_update_id],
-        context=self._ctx,
-        entries=updates_dict,
-        overwrite=True,
-    )
-    try:
-        rows = unify.get_logs(
+        unify.update_logs(
+            logs=[log_to_update_id],
             context=self._ctx,
-            filter=f"contact_id == {contact_id}",
-            limit=1,
-            from_fields=self._allowed_fields(),
+            entries=shared_updates,
+            overwrite=True,
         )
-        if rows:
-            self._data_store.put(rows[0].entries)
-    except Exception:
-        pass
+        try:
+            rows = unify.get_logs(
+                context=self._ctx,
+                filter=f"contact_id == {contact_id}",
+                limit=1,
+                from_fields=self._allowed_fields(),
+            )
+            if rows:
+                self._data_store.put(rows[0].entries)
+        except Exception:
+            pass
+
+    if overlay_updates:
+        try:
+            _write_membership_overlay(
+                self,
+                contact_id=contact_id,
+                should_respond=overlay_updates.get("should_respond"),
+                response_policy=overlay_updates.get("response_policy"),
+            )
+        except Exception:
+            # Overlay write failures must not mask a successful shared
+            # update; log-silence is acceptable here because the next
+            # interaction boundary will backfill the overlay lazily.
+            pass
 
     # Fire-and-forget sync to backend for system contacts
     if timezone is not None:
