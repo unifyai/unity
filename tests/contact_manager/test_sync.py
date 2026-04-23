@@ -142,8 +142,14 @@ def test_org_members_provisioned_as_system_contacts(monkeypatch):
     assert alice.first_name == "Alice"
     assert alice.surname == "Johnson"
     assert alice.is_system is True, "Org member should have is_system=True"
-    assert alice.should_respond is True, "Org member should have should_respond=True"
-    assert alice.response_policy == "", "Org member should have blank response_policy"
+    hydrated_alice = cm._hydrate(alice.contact_id)
+    assert hydrated_alice.membership is not None, "Org member should have an overlay"
+    assert (
+        hydrated_alice.membership.should_respond is True
+    ), "Org member should have should_respond=True"
+    assert (
+        hydrated_alice.membership.response_policy == ""
+    ), "Org member should have blank response_policy"
 
     # Find Bob (single name case)
     bob_contacts = cm.filter_contacts(filter="email_address == 'bob@org.com'")[

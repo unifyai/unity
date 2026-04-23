@@ -17,18 +17,20 @@ def test_json_shorthand_aliases():
 
     dumped = c.model_dump(mode="json", context={"shorthand": True})
 
-    # Aliased keys should exist
-    for k in ("cid", "fn", "sn", "resp"):
+    for k in ("cid", "fn", "sn"):
         assert k in dumped, f"expected shorthand key {k} in dump"
 
-    # Original keys should not be present
     for k in (
         "contact_id",
         "first_name",
         "surname",
-        "should_respond",
     ):
         assert k not in dumped, f"did not expect original key {k} in dump"
+
+    for k in ("resp", "policy", "should_respond", "response_policy"):
+        assert (
+            k not in dumped
+        ), f"{k} is now an overlay field and must not appear on a shared Contact dump"
 
 
 @_handle_project
@@ -43,12 +45,10 @@ def test_json_shorthand_prune():
         context={"shorthand": True, "prune_empty": True},
     )
 
-    # Aliased keys present (id, first_name, should_respond)
-    for k in ("cid", "fn", "resp"):
+    for k in ("cid", "fn"):
         assert k in dumped, f"expected shorthand key {k} in dump"
 
-    # Empty/None fields should be pruned when prune_empty=True → aliases absent
-    for k in ("sn", "email", "phone", "bio", "rs", "policy"):
+    for k in ("sn", "email", "phone", "bio", "rs", "policy", "resp"):
         assert k not in dumped, f"did not expect empty shorthand key {k} in dump"
 
 

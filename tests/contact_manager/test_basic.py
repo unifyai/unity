@@ -24,15 +24,16 @@ def test_create():
     assert contact.contact_id > 1
     assert contact.first_name == "Dan"
     assert contact.bio == "A bit of a loser"
-    # Remaining built-in fields should default to None
     assert contact.surname is None
     assert contact.email_address is None
     assert contact.phone_number is None
     assert contact.rolling_summary is None
-    assert contact.should_respond is True
     assert contact.timezone is None
 
-    assert contact.response_policy == ContactManager.DEFAULT_RESPONSE_POLICY
+    hydrated = contact_manager._hydrate(contact.contact_id)
+    assert hydrated is not None and hydrated.membership is not None
+    assert hydrated.membership.should_respond is True
+    assert hydrated.membership.response_policy == ContactManager.DEFAULT_RESPONSE_POLICY
 
 
 @_handle_project
@@ -70,9 +71,11 @@ def test_update():
     contact = user_contacts[0]
     assert contact.first_name == "Daniel"
     assert contact.bio == "He's alright"
-    assert contact.should_respond is True
 
-    assert contact.response_policy == ContactManager.DEFAULT_RESPONSE_POLICY
+    hydrated = contact_manager._hydrate(contact.contact_id)
+    assert hydrated is not None and hydrated.membership is not None
+    assert hydrated.membership.should_respond is True
+    assert hydrated.membership.response_policy == ContactManager.DEFAULT_RESPONSE_POLICY
 
 
 @_handle_project
@@ -113,13 +116,16 @@ def test_create_multiple():
     assert tom_contact.bio is None
     assert tom_contact.email_address is None
     assert tom_contact.phone_number is None
-    assert tom_contact.bio is None
     assert tom_contact.rolling_summary is None
-    assert tom_contact.should_respond is True
     assert tom_contact.timezone is None
 
-    assert tom_contact.response_policy == custom_policy
-    assert dan_contact.response_policy == ContactManager.DEFAULT_RESPONSE_POLICY
+    tom_h = contact_manager._hydrate(tom_contact.contact_id)
+    dan_h = contact_manager._hydrate(dan_contact.contact_id)
+    assert tom_h is not None and tom_h.membership is not None
+    assert dan_h is not None and dan_h.membership is not None
+    assert tom_h.membership.should_respond is True
+    assert tom_h.membership.response_policy == custom_policy
+    assert dan_h.membership.response_policy == ContactManager.DEFAULT_RESPONSE_POLICY
 
 
 @_handle_project
@@ -173,21 +179,37 @@ def test_timezone():
 
 @_handle_project
 def test_system_should_respond():
-    """Assistant (id 0) and default user (id 1) should have should_respond == True."""
+    """The self and boss overlays default to ``should_respond=True``.
+
+    ``should_respond`` / ``response_policy`` live on the per-body
+    ``ContactMembership`` overlay. System-contact provisioning
+    materializes exactly two overlays (``relationship="self"`` for this
+    body and ``relationship="boss"`` for the Hive/solo user); this test
+    asserts both.
+    """
     cm = ContactManager()
 
-    assistant = cm.filter_contacts(filter="contact_id == 0")["contacts"]
-    assert assistant, "Assistant contact (id 0) must exist"
+    self_h = next(
+        h
+        for cid in [c.contact_id for c in cm.filter_contacts()["contacts"]]
+        if (h := cm._hydrate(cid)) is not None
+        and h.membership is not None
+        and h.membership.relationship == "self"
+    )
+    assert self_h.membership.should_respond is True
+    assert self_h.membership.response_policy == ""
+
+    boss_h = next(
+        h
+        for cid in [c.contact_id for c in cm.filter_contacts()["contacts"]]
+        if (h := cm._hydrate(cid)) is not None
+        and h.membership is not None
+        and h.membership.relationship == "boss"
+    )
+    assert boss_h.membership.should_respond is True
     assert (
-        assistant[0].should_respond is True
-    ), "Assistant should default to should_respond=True"
-    assert assistant[0].response_policy == ""
-
-    user = cm.filter_contacts(filter="contact_id == 1")["contacts"]
-    assert user, "Default user contact (id 1) must exist"
-    assert user[0].should_respond is True, "User should default to should_respond=True"
-
-    assert user[0].response_policy == ContactManager.USER_MANAGER_RESPONSE_POLICY
+        boss_h.membership.response_policy == ContactManager.USER_MANAGER_RESPONSE_POLICY
+    )
 
 
 @_handle_project
@@ -209,12 +231,16 @@ def test_clear():
     # Execute clear
     cm.clear()
 
-    # After clear: system contacts should be present again
     assistants = cm.filter_contacts(filter="contact_id == 0")["contacts"]
     users = cm.filter_contacts(filter="contact_id == 1")["contacts"]
     assert assistants and users
-    assert assistants[0].should_respond is True
-    assert users[0].should_respond is True
+
+    self_h = cm._hydrate(assistants[0].contact_id)
+    boss_h = cm._hydrate(users[0].contact_id)
+    assert self_h is not None and self_h.membership is not None
+    assert boss_h is not None and boss_h.membership is not None
+    assert self_h.membership.should_respond is True
+    assert boss_h.membership.should_respond is True
 
     # All prior user contacts should be gone
     remaining_1 = cm.filter_contacts(filter=f"contact_id == {id1}")["contacts"]

@@ -110,15 +110,28 @@ def test_search_repopulates():
 
 @_handle_project
 def test_system_present_after_init():
+    """System contacts are cached in the DataStore and have live overlays.
+
+    The DataStore holds shared ``Contacts`` rows; ``should_respond`` and the
+    other response-policy fields live on the per-body ``ContactMembership``
+    overlay, so this assertion pairs "shared row present in cache" with
+    "overlay present via ``_hydrate``".
+    """
     cm = ContactManager()
 
     ds = DataStore.for_context(cm._ctx, key_fields=("contact_id",))
 
-    # Assistant and default user should be cached
     a = ds.get(0)
     u = ds.get(1)
-    assert a is not None and a.get("should_respond") is True
-    assert u is not None and u.get("should_respond") is True
+    assert a is not None and a.get("contact_id") == 0
+    assert u is not None and u.get("contact_id") == 1
+
+    self_h = cm._hydrate(0)
+    boss_h = cm._hydrate(1)
+    assert self_h is not None and self_h.membership is not None
+    assert boss_h is not None and boss_h.membership is not None
+    assert self_h.membership.should_respond is True
+    assert boss_h.membership.should_respond is True
 
 
 @_handle_project
