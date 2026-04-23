@@ -1,13 +1,64 @@
 import logging
-import unify
-from unify import create_fields
-from unity.common.state_managers import BaseStateManager
-from unity.common.context_store import _PRIVATE_FIELDS, _create_context_with_retry
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from typing import List, Dict, Optional, Any, Union, Type
+from typing import Any, Dict, Final, FrozenSet, List, Optional, Type, Union
+
+import unify
 from pydantic import BaseModel
+from unify import create_fields
+
+from unity.common.context_store import _PRIVATE_FIELDS, _create_context_with_retry
+from unity.common.state_managers import BaseStateManager
+from unity.session_details import SESSION_DETAILS
 
 _log = logging.getLogger(__name__)
+
+
+HIVE_CONTEXT_PREFIX: Final[str] = "Hives/"
+"""Shared prefix for every Hive-scoped context path.
+
+A body that belongs to a Hive writes shared data under
+``Hives/{hive_id}/<Table>/...`` so every member of the Hive reads the same
+rows. This module owns the single definition on the Unity side — every
+call site that needs to detect, build, or bypass a Hive path imports this
+constant instead of hard-coding the literal.
+"""
+
+
+_HIVE_SCOPED_TABLES: Final[FrozenSet[str]] = frozenset({"Tasks"})
+"""Table names whose storage is shared across every body in a Hive.
+
+:meth:`ContextRegistry.base_for` consults this set to decide whether a
+manager resolves to the Hive root (``Hives/{hive_id}``) or to the per-body
+root (``{user_id}/{assistant_id}``). Add a table name here to make every
+body in a Hive read and write the same rows under
+``Hives/{hive_id}/<Table>``.
+"""
+
+
+def _is_absolute_reference(ref: str, base: str) -> bool:
+    """Return ``True`` when a foreign-key ``references`` value is already absolute.
+
+    :meth:`ContextRegistry._get_contexts_for_manager` prefixes relative
+    references with the caller's context base so ``Contacts.contact_id``
+    resolves to ``{user}/{assistant}/Contacts.contact_id`` at runtime.
+    Cross-root references such as ``Hives/{hive_id}/Contacts.contact_id``
+    (a per-body overlay pointing at a Hive-shared parent) arrive already
+    fully qualified; double-prefixing them corrupts the FK target.
+
+    A reference is absolute when it starts with :data:`HIVE_CONTEXT_PREFIX`
+    or with the first path segment of ``base`` (typically the user id). The
+    second case keeps legitimate same-scope references like
+    ``{user_id}/Contacts.contact_id`` from being rewritten into
+    ``{user_id}/{assistant_id}/{user_id}/...``.
+    """
+    if ref.startswith(HIVE_CONTEXT_PREFIX):
+        return True
+    if not base:
+        return False
+    user_segment = base.split("/", 1)[0]
+    if user_segment and ref.startswith(f"{user_segment}/"):
+        return True
+    return False
 
 
 class TableContext(BaseModel):
@@ -22,7 +73,7 @@ class TableContext(BaseModel):
 
 class ContextRegistry:
     _setup_complete = False
-    _registry = {}
+    _registry: Dict[Any, str] = {}
     _base_context: Optional[str] = None
 
     @staticmethod
@@ -39,46 +90,86 @@ class ContextRegistry:
     ) -> str:
         try:
             return manager.__name__
-        except:
+        except AttributeError:
             return type(manager).__name__
+
+    @classmethod
+    def base_for(cls, table_name: str) -> str:
+        """Return the context base for a manager's table.
+
+        Tables in :data:`_HIVE_SCOPED_TABLES` resolve to
+        ``Hives/{SESSION_DETAILS.hive_id}`` when the active body belongs to
+        a Hive, giving every member of the Hive a shared storage root.
+        Every other table resolves to the per-body base
+        (``{user_id}/{assistant_id}``) regardless of Hive membership, so
+        body-scoped surfaces (events, per-body task activations, per-body
+        overlays) keep their private path even inside a Hive.
+
+        To Hive-scope a manager, add its table name to
+        :data:`_HIVE_SCOPED_TABLES` and declare any cross-root FK
+        references (``Hives/{hive_id}/<Table>.col``) as absolute strings;
+        :func:`_is_absolute_reference` keeps them untouched during FK
+        rewriting.
+
+        Raises
+        ------
+        RuntimeError
+            When no base is available — ``SESSION_DETAILS`` is unpopulated
+            and no active Unify context exists. A silent
+            ``unknown/unknown`` fallback would hide a genuine configuration
+            bug from the caller.
+        """
+        if table_name in _HIVE_SCOPED_TABLES and SESSION_DETAILS.hive_id is not None:
+            return f"{HIVE_CONTEXT_PREFIX}{int(SESSION_DETAILS.hive_id)}"
+        base = cls._base_context or cls._get_active_context()
+        if not base:
+            raise RuntimeError(
+                f"Cannot resolve base context for table {table_name!r}: "
+                "no base context available (ContextRegistry.setup() has not "
+                "run or the active Unify context is empty)",
+            )
+        return base
 
     @classmethod
     def _get_contexts_for_manager(
         cls,
         manager: Union[BaseStateManager, Type[BaseStateManager]],
-        current_context: str,
     ) -> Dict[str, Dict]:
-        """Extract the contexts for a manager, resolving context names to fully qualified names."""
+        """Resolve each of a manager's required contexts to its full path.
+
+        Each :class:`TableContext` is anchored by :meth:`base_for` so a
+        manager that owns both Hive-shared and per-body tables resolves each
+        one to the correct root. Foreign-key references are rewritten to the
+        table's base unless :func:`_is_absolute_reference` recognises them
+        as already qualified, in which case they pass through untouched and
+        keep their absolute target.
+        """
         assert hasattr(
             manager,
             "Config",
-        ), f"Manager {manager.__name__} must have a Config class attribute"
+        ), f"Manager {cls._get_manager_name(manager)} must have a Config class attribute"
         assert hasattr(
             manager.Config,
             "required_contexts",
         ), "Config must have a required_contexts class attribute"
 
-        out = {}
-
+        out: Dict[str, Dict] = {}
         for context in manager.Config.required_contexts:
-            # Create copies of foreign_keys to avoid mutating class-level config.
-            # Without copying, the references get double-prefixed on subsequent
-            # calls (e.g., across test runs), corrupting FK resolution.
-            resolved_foreign_keys = None
+            table_base = cls.base_for(context.name)
+            resolved_foreign_keys: Optional[List[Dict[str, Any]]] = None
             if context.foreign_keys:
                 resolved_foreign_keys = []
                 for foreign_key in context.foreign_keys:
                     fk_copy = foreign_key.copy()
-                    fk_copy["references"] = (
-                        f"{current_context}/{foreign_key['references']}"
-                    )
+                    ref = foreign_key["references"]
+                    if not _is_absolute_reference(ref, table_base):
+                        fk_copy["references"] = f"{table_base}/{ref}"
                     resolved_foreign_keys.append(fk_copy)
-            data = {
-                "resolved_name": f"{current_context}/{context.name}",
+            out[context.name] = {
+                "resolved_name": f"{table_base}/{context.name}",
                 "table_context": context,
                 "resolved_foreign_keys": resolved_foreign_keys,
             }
-            out[context.name] = data
         return out
 
     @classmethod
@@ -87,19 +178,19 @@ class ContextRegistry:
         # TODO: Use dynamic discovery of managers, dynamic discover is slow atm
         # which defeats the purpose of having a context handler
 
+        from unity.blacklist_manager.blacklist_manager import BlackListManager
         from unity.contact_manager.contact_manager import ContactManager
         from unity.dashboard_manager.dashboard_manager import DashboardManager
-        from unity.knowledge_manager.knowledge_manager import KnowledgeManager
-        from unity.transcript_manager.transcript_manager import TranscriptManager
-        from unity.task_scheduler.task_scheduler import TaskScheduler
-        from unity.guidance_manager.guidance_manager import GuidanceManager
-        from unity.secret_manager.secret_manager import SecretManager
-        from unity.web_searcher.web_searcher import WebSearcher
-        from unity.image_manager.image_manager import ImageManager
-        from unity.function_manager.function_manager import FunctionManager
-        from unity.blacklist_manager.blacklist_manager import BlackListManager
         from unity.data_manager.data_manager import DataManager
         from unity.file_manager.managers.file_manager import FileManager
+        from unity.function_manager.function_manager import FunctionManager
+        from unity.guidance_manager.guidance_manager import GuidanceManager
+        from unity.image_manager.image_manager import ImageManager
+        from unity.knowledge_manager.knowledge_manager import KnowledgeManager
+        from unity.secret_manager.secret_manager import SecretManager
+        from unity.task_scheduler.task_scheduler import TaskScheduler
+        from unity.transcript_manager.transcript_manager import TranscriptManager
+        from unity.web_searcher.web_searcher import WebSearcher
 
         return [
             ContactManager,
@@ -122,15 +213,13 @@ class ContextRegistry:
         cls,
         manager_name: str,
         entry: Dict,
-    ):
-        """Create unify context and ensure fields are created, store in registry.
+    ) -> str:
+        """Create the unify context, install its fields, and cache the result.
 
         Idempotent: tolerates pre-existing contexts and concurrent creation.
         """
         table = entry["table_context"]
         target_name = entry["resolved_name"]
-        # Use resolved_foreign_keys (with prefixed references) instead of
-        # table.foreign_keys to avoid using mutated class-level config.
         resolved_foreign_keys = entry.get("resolved_foreign_keys")
         _create_context_with_retry(
             target_name,
@@ -139,14 +228,12 @@ class ContextRegistry:
             description=table.description,
             foreign_keys=resolved_foreign_keys,
         )
-        # Idempotent field creation
         if table.fields:
             try:
                 create_fields(table.fields, context=target_name)
             except Exception:
                 pass  # Fields already exist or transient failure
 
-        # Also create aggregation contexts for cross-assistant and cross-user queries
         cls._ensure_all_contexts(target_name, table)
 
         cls._registry[(manager_name, table.name)] = target_name
@@ -155,39 +242,39 @@ class ContextRegistry:
 
     @classmethod
     def _ensure_all_contexts(cls, target_name: str, table: TableContext) -> None:
+        """Provision cross-assistant and cross-user aggregation shells.
+
+        For a per-body path ``{user_id}/{assistant_id}/<suffix>``, two
+        aggregation contexts are created so readers can query across every
+        body owned by a user or across every user on the platform:
+
+          - ``{user_id}/All/<suffix>`` — all assistants for this user
+          - ``All/<suffix>``          — all users, all assistants
+
+        For test contexts (``tests/.../{user}/{assistant}/<suffix>``), the
+        aggregation shells are scoped to the test root so concurrent test
+        runs stay isolated.
+
+        Hive-scoped paths short-circuit: ``Hives/{hive_id}/...`` is already
+        the shared-across-bodies surface, so minting
+        ``Hives/{hive_id}/All/...`` shells would pollute the tree with
+        unused siblings and force the Hive cascade delete to walk them.
         """
-        Ensure aggregation contexts exist for cross-assistant and cross-user queries.
+        if target_name.startswith(HIVE_CONTEXT_PREFIX):
+            return
 
-        Creates two contexts:
-          - {user_id}/All/{suffix} - all assistants for this user
-          - All/{suffix}           - all users, all assistants
-
-        For test contexts (starting with "tests/"), the aggregation contexts are
-        scoped to the test root for proper isolation:
-          - {test_root}/{user_id}/All/{suffix}
-          - {test_root}/All/{suffix}
-
-        These contexts:
-        - Have the same fields as the source context (for consistent querying)
-        - Include private fields (_user, _user_id, _assistant, _assistant_id, _org, _org_id)
-        - Have NO unique_keys or auto_counting (logs are added by reference)
-        """
         parts = target_name.split("/")
         if len(parts) < 3:
             return
 
-        # Handle test contexts: tests/.../{default_user_id}/{default_assistant_id}/Suffix
-        # Find the user position by looking for the UNASSIGNED_USER_CONTEXT marker
         if parts[0] == "tests":
             from unity.session_details import UNASSIGNED_USER_CONTEXT
 
             try:
                 user_idx = parts.index(UNASSIGNED_USER_CONTEXT)
             except ValueError:
-                # Can't determine structure without the UNASSIGNED_USER_CONTEXT marker
                 return
 
-            # Need at least User/Assistant/Suffix after the test root
             if user_idx + 2 >= len(parts):
                 return
 
@@ -206,7 +293,6 @@ class ContextRegistry:
                 ),
             ]
         else:
-            # Production path: User/Assistant/Suffix
             user_ctx = parts[0]
             suffix = "/".join(parts[2:])
 
@@ -224,7 +310,6 @@ class ContextRegistry:
         for all_ctx, description in all_ctxs:
             _create_context_with_retry(all_ctx, description=description)
 
-            # Mirror fields from source context + add private fields
             if table.fields:
                 fields_with_private = dict(table.fields)
                 fields_with_private.update(_PRIVATE_FIELDS)
@@ -238,7 +323,7 @@ class ContextRegistry:
         cls,
         manager: Union[BaseStateManager, Type[BaseStateManager]],
         ctx_name: str,
-    ):
+    ) -> Optional[str]:
         """Refresh the context by forgetting it and then getting it again."""
         cls.forget(manager, ctx_name)
         return cls.get_context(manager, ctx_name)
@@ -248,7 +333,7 @@ class ContextRegistry:
         cls,
         manager: Union[BaseStateManager, Type[BaseStateManager]],
         ctx_name: str,
-    ):
+    ) -> None:
         """Remove the context from the registry."""
         manager_name = cls._get_manager_name(manager)
         key = (manager_name, ctx_name)
@@ -272,18 +357,8 @@ class ContextRegistry:
         key = (manager_name, ctx_name)
         ret = cls._registry.get(key)
         if ret is None:
-            base = cls._base_context or cls._get_active_context()
-            if not base:
-                raise RuntimeError(
-                    f"Cannot resolve context for {manager_name}.{ctx_name}: "
-                    "no base context available (ContextRegistry.setup() has not "
-                    "run or the active Unify context is empty)",
-                )
-            contexts = cls._get_contexts_for_manager(manager, base)
-            ret = cls._create_context_wrapper(
-                manager_name,
-                contexts[ctx_name],
-            )
+            contexts = cls._get_contexts_for_manager(manager)
+            ret = cls._create_context_wrapper(manager_name, contexts[ctx_name])
 
         return ret
 
@@ -296,9 +371,10 @@ class ContextRegistry:
         """Provision contexts for the given managers against *base*.
 
         Shared implementation behind :meth:`setup` and
-        :meth:`setup_for_managers`.  Sets ``_base_context`` and
-        concurrently creates every required context (+ aggregation
-        contexts) via :meth:`_create_context_wrapper`.
+        :meth:`setup_for_managers`. Sets ``_base_context`` — the per-body
+        fallback :meth:`base_for` uses for non-Hive-scoped tables — and
+        concurrently materializes every required context (plus aggregation
+        shells) through :meth:`_create_context_wrapper`.
         """
         cls._base_context = base
 
@@ -306,10 +382,7 @@ class ContextRegistry:
             futures = []
             for manager in managers:
                 manager_name = cls._get_manager_name(manager)
-                for _, entry in cls._get_contexts_for_manager(
-                    manager,
-                    base,
-                ).items():
+                for _, entry in cls._get_contexts_for_manager(manager).items():
                     futures.append(
                         executor.submit(
                             cls._create_context_wrapper,
@@ -325,7 +398,7 @@ class ContextRegistry:
                     _log.warning("Context creation failed (will retry lazily): %s", e)
 
     @classmethod
-    def setup(cls):
+    def setup(cls) -> None:
         """Setup the context handler by creating the contexts for all managers."""
         if cls._setup_complete:
             return
@@ -366,8 +439,7 @@ class ContextRegistry:
 
     @classmethod
     def get_known_base_contexts(cls) -> List[str]:
-        """
-        Return all registered base context names across all managers.
+        """Return all registered base context names across all managers.
 
         This returns the unresolved context names (e.g., "Contacts", "Knowledge",
         "Tasks") from each manager's Config.required_contexts, not the fully
