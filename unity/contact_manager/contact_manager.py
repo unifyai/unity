@@ -466,6 +466,59 @@ class ContactManager(BaseContactManager):
         self._sync_required_contacts()
 
     # (Optional) Public programmatic helpers (non-LLM)
+    def materialize_membership_if_missing(
+        self,
+        contact_id: int,
+        *,
+        relationship: Optional[str] = None,
+        should_respond: Optional[bool] = None,
+        response_policy: Optional[str] = None,
+    ) -> bool:
+        """Create this body's ContactMembership overlay when absent.
+
+        Idempotent: if a :class:`ContactMembership` row for
+        *contact_id* already exists in
+        ``{user}/{assistant}/ContactMembership``, this method leaves it
+        untouched and returns ``False``. A missing row is inserted with
+        the supplied fields (unspecified fields default to the overlay
+        model's defaults) and returns ``True``.
+
+        Used at interaction boundaries (inbound message fan-in,
+        LLM tool calls that reference a contact) to backfill the
+        overlay lazily — we don't eagerly mint overlays for contacts
+        this body has never interacted with.
+
+        Parameters
+        ----------
+        contact_id :
+            The shared Contacts.contact_id the overlay describes.
+        relationship, should_respond, response_policy :
+            Seed values for the overlay row when it is newly minted.
+            Passed through to :func:`_write_membership_overlay`.
+        """
+        from .ops import _write_membership_overlay
+
+        try:
+            existing = unify.get_logs(
+                context=self._membership_ctx,
+                filter=f"contact_id == {int(contact_id)}",
+                limit=1,
+                return_ids_only=True,
+            )
+        except Exception:
+            existing = []
+        if existing:
+            return False
+
+        _write_membership_overlay(
+            self,
+            contact_id=int(contact_id),
+            relationship=relationship,
+            should_respond=should_respond,
+            response_policy=response_policy,
+        )
+        return True
+
     def _hydrate(self, contact_id: int) -> Optional[HydratedContact]:
         """Compose the shared Contact row with this body's overlay.
 

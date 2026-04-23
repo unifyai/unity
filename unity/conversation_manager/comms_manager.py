@@ -336,6 +336,11 @@ def _get_or_create_unknown_contact(
                 # For unify_message, we don't have external contact details
                 return None
 
+            from unity.contact_manager.settings import (
+                RELATIONSHIP_COWORKER,
+                RELATIONSHIP_OTHER,
+            )
+
             # Check if contact already exists
             result = cm.filter_contacts(
                 filter=f"{field_name} == '{contact_detail}'",
@@ -344,11 +349,40 @@ def _get_or_create_unknown_contact(
             existing = result.get("contacts", [])
             if existing:
                 contact = existing[0]
-                return (
+                contact_dict = (
                     contact.model_dump() if hasattr(contact, "model_dump") else contact
                 )
+                # Lazy overlay materialization: another body in the
+                # Hive may have already created the shared contact; this
+                # body still needs its own per-body ContactMembership
+                # row so routing (should_respond, response_policy) can
+                # read a real overlay instead of the shared-row
+                # fallback.
+                try:
+                    existing_assistant_id = (
+                        contact_dict.get("assistant_id") if contact_dict else None
+                    )
+                    cm.materialize_membership_if_missing(
+                        contact_dict.get("contact_id"),
+                        relationship=(
+                            RELATIONSHIP_COWORKER
+                            if existing_assistant_id is not None
+                            else RELATIONSHIP_OTHER
+                        ),
+                        should_respond=False,
+                        response_policy=ContactManager.UNKNOWN_INBOUND_RESPONSE_POLICY,
+                    )
+                except Exception as e:
+                    LOGGER.warning(
+                        f"{DEFAULT_ICON} Failed to materialize ContactMembership "
+                        f"for existing unknown contact {contact_dict.get('contact_id')}: {e}",
+                    )
+                return contact_dict
 
-            # Create new unknown contact
+            # Create new unknown contact. create_contact also
+            # materializes this body's ContactMembership overlay with
+            # the supplied response fields, so no follow-up overlay
+            # write is needed here.
             create_kwargs = {
                 field_name: contact_detail,
                 "should_respond": False,
