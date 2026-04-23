@@ -182,6 +182,9 @@ def build_update_prompt(*, tools: Dict[str, Callable]) -> PromptParts:
     create_secret_fname = _tool_name(tools, "create_secret")
     update_secret_fname = _tool_name(tools, "update_secret")
     delete_secret_fname = _tool_name(tools, "delete_secret")
+    bind_secret_fname = _tool_name(tools, "bind_secret")
+    unbind_secret_fname = _tool_name(tools, "unbind_secret")
+    set_hive_default_fname = _tool_name(tools, "set_hive_default")
     request_clar_fname = _tool_name(tools, "request_clarification")
 
     # Validate required tools
@@ -230,6 +233,23 @@ Create / Update / Delete
   `{update_secret_fname}(name='openai_api_key', value='sk-new-...', description='Updated API key')`
 • Delete a secret
   `{delete_secret_fname}(name='old_api_key')`
+
+Integration bindings (credential selection)
+-------------------------------------------
+• A **binding** tells this body which vault entry to use for a given integration
+  (e.g. `"salesforce"` → the `"Salesforce Admin"` vault row). Without a binding,
+  Hive bodies fall back to the Hive-wide default, and solo bodies fall back to
+  a vault row whose `name` equals the integration.
+• Create or replace this body's binding
+  `{bind_secret_fname}(integration='salesforce', secret_name='Salesforce Admin')`
+• Remove this body's binding
+  `{unbind_secret_fname}(integration='salesforce')`
+• Install a **Hive-wide default** (Hive members only — solo bodies cannot
+  install defaults and should not attempt to)
+  `{set_hive_default_fname}(integration='salesforce', secret_name='Salesforce Admin')`
+• Prefer binding over creating duplicate vault rows: if two bodies need
+  different credentials for the same integration, each body calls
+  `{bind_secret_fname}` with the vault row it owns.
 
 Naming When User Omits Key
 --------------------------
