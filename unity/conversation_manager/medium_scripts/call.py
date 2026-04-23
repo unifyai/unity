@@ -1239,7 +1239,7 @@ async def entrypoint(ctx: agents.JobContext):
             )
 
     audio_bridge: MeetAudioBridge | None = None
-    if channel == "google_meet":
+    if channel in ("google_meet", "teams_meet"):
         audio_bridge = MeetAudioBridge()
         audio_bridge.start(asyncio.get_event_loop())
 
