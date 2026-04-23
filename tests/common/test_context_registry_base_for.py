@@ -127,3 +127,71 @@ def test_get_contexts_for_manager_passes_hive_reference_through_unrewritten():
     assert entry["resolved_name"] == f"{_PER_BODY_BASE}/TestOverlay"
     assert fks_by_column["target_id"] == "Hives/42/TestTarget.id"
     assert fks_by_column["local_id"] == f"{_PER_BODY_BASE}/TestLocal.id"
+
+
+def test_get_contexts_for_manager_resolves_fk_via_target_table_base():
+    """Relative FKs resolve against the referenced table's base, not the caller's.
+
+    A per-body overlay (``ContactMembership``) that points at a
+    Hive-scoped parent (``Contacts``) declares its FK with a bare
+    ``Contacts.contact_id`` reference. The rewriter must route that to
+    ``Hives/{hive_id}/Contacts.contact_id`` for Hive members — the
+    caller's per-body base would be wrong because the target table lives
+    under the Hive root.
+    """
+    SESSION_DETAILS.hive_id = 42
+
+    class _OverlayManager:
+        class Config:
+            required_contexts = [
+                TableContext(
+                    name="ContactMembership",
+                    description="Per-body overlay pointing at the shared Contacts table.",
+                    foreign_keys=[
+                        {
+                            "column": "contact_id",
+                            "references": "Contacts.contact_id",
+                        },
+                    ],
+                ),
+            ]
+
+    contexts = ContextRegistry._get_contexts_for_manager(_OverlayManager)
+    entry = contexts["ContactMembership"]
+
+    assert entry["resolved_name"] == f"{_PER_BODY_BASE}/ContactMembership"
+    fk = entry["resolved_foreign_keys"][0]
+    assert fk["references"] == "Hives/42/Contacts.contact_id"
+
+
+def test_get_contexts_for_manager_resolves_fk_to_per_body_for_solo_target():
+    """A relative FK to a per-body table stays under the per-body base.
+
+    ``TaskScheduler`` declares ``Functions/Compositional.function_id``. When
+    ``Tasks`` is Hive-scoped but ``Functions/Compositional`` isn't, the
+    rewriter must route the FK to ``{user}/{assistant}/Functions/Compositional.function_id``
+    — the Hive base would dangle.
+    """
+    SESSION_DETAILS.hive_id = 42
+
+    class _HiveTable:
+        class Config:
+            required_contexts = [
+                TableContext(
+                    name="Tasks",
+                    description="Hive-shared table with an FK into a per-body table.",
+                    foreign_keys=[
+                        {
+                            "column": "function_id",
+                            "references": "Functions/Compositional.function_id",
+                        },
+                    ],
+                ),
+            ]
+
+    contexts = ContextRegistry._get_contexts_for_manager(_HiveTable)
+    entry = contexts["Tasks"]
+
+    assert entry["resolved_name"] == "Hives/42/Tasks"
+    fk = entry["resolved_foreign_keys"][0]
+    assert fk["references"] == f"{_PER_BODY_BASE}/Functions/Compositional.function_id"

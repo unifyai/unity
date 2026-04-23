@@ -38,12 +38,14 @@ body in a Hive read and write the same rows under
 def _is_absolute_reference(ref: str, base: str) -> bool:
     """Return ``True`` when a foreign-key ``references`` value is already absolute.
 
-    :meth:`ContextRegistry._get_contexts_for_manager` prefixes relative
-    references with the caller's context base so ``Contacts.contact_id``
-    resolves to ``{user}/{assistant}/Contacts.contact_id`` at runtime.
-    Cross-root references such as ``Hives/{hive_id}/Contacts.contact_id``
-    (a per-body overlay pointing at a Hive-shared parent) arrive already
-    fully qualified; double-prefixing them corrupts the FK target.
+    :meth:`ContextRegistry._get_contexts_for_manager` resolves relative
+    references by routing them to the **target** table's base so
+    ``Contacts.contact_id`` on a per-body overlay whose target lives in a
+    Hive root resolves to ``Hives/{hive_id}/Contacts.contact_id``. Cross-root
+    references that arrive already fully qualified (for example a hand-written
+    ``Hives/{hive_id}/Contacts.contact_id`` or a reference that already
+    includes the caller's user segment) must pass through untouched;
+    double-prefixing them corrupts the FK target.
 
     A reference is absolute when it starts with :data:`HIVE_CONTEXT_PREFIX`
     or with the first path segment of ``base`` (typically the user id). The
@@ -59,6 +61,21 @@ def _is_absolute_reference(ref: str, base: str) -> bool:
     if user_segment and ref.startswith(f"{user_segment}/"):
         return True
     return False
+
+
+def _target_table_from_reference(ref: str) -> Optional[str]:
+    """Extract the target table path from a relative FK reference.
+
+    ``"Contacts.contact_id"`` returns ``"Contacts"``;
+    ``"Functions/Compositional.function_id"`` returns
+    ``"Functions/Compositional"``. Returns ``None`` when the reference has
+    no ``.<column>`` suffix so callers can fall back to the declaring
+    table's base.
+    """
+    if "." not in ref:
+        return None
+    target_path, _column = ref.rsplit(".", 1)
+    return target_path or None
 
 
 class TableContext(BaseModel):
@@ -139,10 +156,13 @@ class ContextRegistry:
 
         Each :class:`TableContext` is anchored by :meth:`base_for` so a
         manager that owns both Hive-shared and per-body tables resolves each
-        one to the correct root. Foreign-key references are rewritten to the
-        table's base unless :func:`_is_absolute_reference` recognises them
-        as already qualified, in which case they pass through untouched and
-        keep their absolute target.
+        one to the correct root. Foreign-key references are rewritten to
+        the **target** table's base (via :meth:`base_for` on the referenced
+        table name) so a per-body overlay pointing at a Hive-shared parent
+        lands correctly on the shared root — and a Hive-shared table with
+        an FK to a per-body parent stays in the per-body root. References
+        that :func:`_is_absolute_reference` recognises as already qualified
+        pass through untouched.
         """
         assert hasattr(
             manager,
@@ -163,7 +183,11 @@ class ContextRegistry:
                     fk_copy = foreign_key.copy()
                     ref = foreign_key["references"]
                     if not _is_absolute_reference(ref, table_base):
-                        fk_copy["references"] = f"{table_base}/{ref}"
+                        target_table = _target_table_from_reference(ref)
+                        target_base = (
+                            cls.base_for(target_table) if target_table else table_base
+                        )
+                        fk_copy["references"] = f"{target_base}/{ref}"
                     resolved_foreign_keys.append(fk_copy)
             out[context.name] = {
                 "resolved_name": f"{table_base}/{context.name}",
