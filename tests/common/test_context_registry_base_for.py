@@ -49,15 +49,26 @@ def test_base_for_tasks_returns_per_body_base_for_solo_body():
     assert ContextRegistry.base_for("Tasks") == _PER_BODY_BASE
 
 
+def test_base_for_contacts_returns_hive_root_for_hive_member():
+    """Contacts is shared across every body in a Hive.
+
+    A body that belongs to a Hive reads and writes the same ``Contacts``
+    rows as every other member under ``Hives/{hive_id}/Contacts``. Solo
+    bodies continue to resolve ``Contacts`` to their per-body base.
+    """
+    SESSION_DETAILS.hive_id = 42
+    assert ContextRegistry.base_for("Contacts") == "Hives/42"
+
+
 def test_base_for_non_hive_scoped_table_ignores_hive_membership():
     """A table missing from ``_HIVE_SCOPED_TABLES`` keeps the per-body base.
 
-    Contacts is not Hive-flagged, so even a body that belongs to a Hive
+    Knowledge is not Hive-flagged, so even a body that belongs to a Hive
     resolves it to ``{user_id}/{assistant_id}``. Only table names listed
     in :data:`_HIVE_SCOPED_TABLES` route through the Hive root.
     """
     SESSION_DETAILS.hive_id = 42
-    assert ContextRegistry.base_for("Contacts") == _PER_BODY_BASE
+    assert ContextRegistry.base_for("Knowledge") == _PER_BODY_BASE
 
 
 def test_base_for_raises_when_no_base_available():

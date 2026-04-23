@@ -24,7 +24,7 @@ constant instead of hard-coding the literal.
 """
 
 
-_HIVE_SCOPED_TABLES: Final[FrozenSet[str]] = frozenset({"Tasks"})
+_HIVE_SCOPED_TABLES: Final[FrozenSet[str]] = frozenset({"Tasks", "Contacts"})
 """Table names whose storage is shared across every body in a Hive.
 
 :meth:`ContextRegistry.base_for` consults this set to decide whether a
