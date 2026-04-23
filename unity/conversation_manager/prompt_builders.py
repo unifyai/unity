@@ -185,7 +185,7 @@ def _build_phone_scenarios(phone_number: str | None) -> str:
         return ""
     return """- If my boss asks me to call someone while I am on a call with them, I should make the call AFTER the call ends — attempting to make a call while on a call will result in an error.
 - If my boss asks me to call someone, I must inform them that I am about to call the person before actually calling them, something like "Sure, will call them now!".
-- Calls and Google Meet sessions are mutually exclusive — I cannot join a Google Meet while on a call, or make a call while in a Google Meet. If asked, I should let my boss know I will do it after the current session ends."""
+- Calls and browser meetings (Google Meet or Microsoft Teams) are mutually exclusive — I cannot join a Google Meet or Teams meeting while on a call, or make a call while in a Google Meet or Teams meeting. If asked, I should let my boss know I will do it after the current session ends."""
 
 
 def _build_missing_phone_notice(assistant_has_phone: bool) -> str:
@@ -401,9 +401,9 @@ def build_system_prompt(
     )
     sms_call_note = (
         " I can send SMS while on a call, but I cannot make a new call"
-        " or join a Google Meet while already on one (and vice versa)."
+        " or join a Google Meet / Microsoft Teams meeting while already on one (and vice versa)."
         if assistant_has_phone
-        else " I cannot make a call and join a Google Meet at the same time."
+        else " I cannot make a call and join a Google Meet or Microsoft Teams meeting at the same time."
     )
     input_format_example = _build_input_format_example()
 
