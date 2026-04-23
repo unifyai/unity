@@ -90,7 +90,7 @@ async def test_create_teams_meet_instant_success(monkeypatch):
 
     monkeypatch.setattr(comms_utils, "create_teams_meet", _fake_transport)
 
-    result = await comms.create_teams_meet()
+    result = await comms.create_teams_meet(mode="instant")
 
     assert result["status"] == "ok"
     assert result["mode"] == "instant"
@@ -137,12 +137,63 @@ async def test_create_teams_meet_instant_ignores_attendees(monkeypatch):
     comms._get_contact = _get
 
     result = await comms.create_teams_meet(
+        mode="instant",
         attendee_contact_ids=[5, 6],
     )
 
     assert result["status"] == "ok"
     assert captured[0]["attendees"] is None
     assert get_calls == []
+
+
+@pytest.mark.anyio
+async def test_create_teams_meet_defaults_to_scheduled(monkeypatch):
+    """A bare call with only a subject defaults to scheduled mode."""
+    comms = _make_comms_with_teams(monkeypatch)
+
+    captured: list[dict] = []
+
+    async def _fake_transport(**kwargs):
+        captured.append(dict(kwargs))
+        return {
+            "success": True,
+            "join_web_url": "https://teams.microsoft.com/l/meetup-join/DEF",
+            "meeting_id": "",
+            "event_id": "evt-default",
+            "subject": kwargs["subject"],
+            "start": kwargs["start"],
+            "end": kwargs["end"],
+        }
+
+    monkeypatch.setattr(comms_utils, "create_teams_meet", _fake_transport)
+
+    before = datetime.now(timezone.utc)
+    result = await comms.create_teams_meet(subject="Standup")
+    after = datetime.now(timezone.utc)
+
+    assert result["status"] == "ok"
+    assert result["mode"] == "scheduled"
+    assert result["subject"] == "Standup"
+    assert result["event_id"] == "evt-default"
+    assert captured[0]["mode"] == "scheduled"
+    sent_start = datetime.fromisoformat(captured[0]["start"])
+    sent_end = datetime.fromisoformat(captured[0]["end"])
+    assert before + timedelta(minutes=4) <= sent_start <= after + timedelta(minutes=6)
+    assert sent_end - sent_start == timedelta(minutes=30)
+
+
+@pytest.mark.anyio
+async def test_create_teams_meet_no_args_requires_subject(monkeypatch):
+    """With scheduled as the default, a no-arg call surfaces the missing-subject error."""
+    comms = _make_comms_with_teams(monkeypatch)
+    transport_mock = AsyncMock()
+    monkeypatch.setattr(comms_utils, "create_teams_meet", transport_mock)
+
+    result = await comms.create_teams_meet()
+
+    assert result["status"] == "error"
+    assert "subject" in result["error"]
+    transport_mock.assert_not_awaited()
 
 
 @pytest.mark.anyio

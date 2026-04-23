@@ -1932,7 +1932,7 @@ class CommsPrimitives:
     async def create_teams_meet(
         self,
         *,
-        mode: str = "instant",
+        mode: str = "scheduled",
         subject: str | None = None,
         start: str | None = None,
         duration_minutes: int = 30,
@@ -1945,16 +1945,17 @@ class CommsPrimitives:
 
         Two explicit modes:
 
-        - ``"instant"`` (default): creates a reusable Teams meeting with no
-          calendar entry. ``subject`` is optional; ``start``/``duration_minutes``
-          are ignored. Attendees are ignored by Graph in this mode and are
-          therefore dropped here without contact resolution. The returned
+        - ``"scheduled"`` (default): creates a calendar event with an attached
+          Teams meeting. ``subject`` is required. ``start`` defaults to five
+          minutes from now (Graph requires a future start). ``end`` is computed
+          as ``start + duration_minutes``. ``attendee_contact_ids`` are
+          resolved to email addresses; Outlook invites are sent automatically.
+          The meeting appears on calendars and generates invites.
+        - ``"instant"``: creates a reusable Teams meeting with no calendar
+          entry and no invites. ``subject`` is optional;
+          ``start``/``duration_minutes``/``attendee_contact_ids`` are ignored
+          (attendees are not contact-resolved in this mode). The returned
           ``join_web_url`` can be shared or passed to ``join_teams_meet``.
-        - ``"scheduled"``: creates a calendar event with an attached Teams
-          meeting. ``subject`` is required. ``start`` defaults to five minutes
-          from now (Graph requires a future start). ``end`` is computed as
-          ``start + duration_minutes``. ``attendee_contact_ids`` are resolved
-          to email addresses; Outlook invites are sent automatically.
 
         ``body_html`` is forwarded verbatim — the communication service sends
         it to Graph with ``contentType=HTML``. Pass pre-rendered HTML or plain
@@ -1968,7 +1969,7 @@ class CommsPrimitives:
         Parameters
         ----------
         mode : str, optional
-            ``"instant"`` (default) or ``"scheduled"``.
+            ``"scheduled"`` (default) or ``"instant"``.
         subject : str | None, optional
             Meeting subject. Required for ``"scheduled"`` mode.
         start : str | None, optional

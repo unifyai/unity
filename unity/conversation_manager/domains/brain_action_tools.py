@@ -344,7 +344,7 @@ class ConversationManagerBrainActionTools:
     async def create_teams_meet(
         self,
         *,
-        mode: str = "instant",
+        mode: str = "scheduled",
         subject: str | None = None,
         start: str | None = None,
         duration_minutes: int = 30,

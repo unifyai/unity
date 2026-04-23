@@ -255,17 +255,19 @@ def _build_comms_tool_listing(
         )
         lines.append(
             "- `create_teams_meet`: Create a Microsoft Teams meeting via "
-            "Graph. Two explicit modes: `instant` (default — returns a "
-            "reusable join URL, no calendar entry; `subject` is optional and "
-            "`start`/`duration_minutes`/`attendee_contact_ids` are ignored) "
-            "or `scheduled` (requires `subject`; `start` defaults to ~5min "
-            "from now, `duration_minutes` defaults to 30; places a calendar "
-            "event with the Teams meeting attached, supply "
-            "`attendee_contact_ids` to invite people — Outlook invites are "
-            "automatic). `body_html` is sent verbatim as HTML. The returned "
-            "`join_web_url` can be passed straight to `join_teams_meet` to "
-            "join the meeting myself, or shared via `send_teams_message` / "
-            "`send_email` / `send_sms`.",
+            "Graph. Default mode is `scheduled` — supply `subject` "
+            "(required), and optionally `start` (ISO-8601; defaults to ~5min "
+            "from now), `duration_minutes` (default 30), "
+            "`attendee_contact_ids` to invite people (Outlook invites go out "
+            "automatically), `body_html` (sent verbatim as HTML), and "
+            "`location`. The meeting appears on calendars and generates "
+            'invites. Pass `mode="instant"` instead for a reusable ad-hoc '
+            "link with no calendar entry and no invites "
+            "(`start`/`duration_minutes`/`attendee_contact_ids` are ignored "
+            "in that mode). In both modes the returned `join_web_url` can "
+            "be passed straight to `join_teams_meet` to join the meeting "
+            "myself, or shared via `send_teams_message` / `send_email` / "
+            "`send_sms`.",
         )
     lines.append(
         "- `send_api_response`: Reply to a programmatic API message (use when the inbound medium is `api_message`). Supports optional `attachment_filepaths` and `tags`.",

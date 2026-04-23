@@ -642,7 +642,7 @@ class TeamsMeetCreated(Event):
     content_logged: ClassVar[bool] = True
 
     contact: dict
-    mode: str = "instant"
+    mode: str = "scheduled"
     subject: str = ""
     join_web_url: str = ""
     meeting_id: str = ""
