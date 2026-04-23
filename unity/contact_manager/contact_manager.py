@@ -811,7 +811,7 @@ class ContactManager(BaseContactManager):
         filter : str | None, default None
             A Python boolean expression evaluated with column names in scope. Examples:
             - ``"first_name == 'John' and surname == 'Doe'"``
-            - ``"is_system != true"``
+            - ``"is_system != True"``
             - ``"email_address.endswith('@company.com')"``
             When ``None``, returns all contacts. String comparisons are case‑sensitive unless
             your expression applies a case‑normalisation.

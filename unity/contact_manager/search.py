@@ -117,7 +117,7 @@ def _system_contact_row_filter(self) -> str:
         except Exception:
             continue
 
-    clauses: list[str] = ["is_system != true"]
+    clauses: list[str] = ["is_system != True"]
     if excluded_ids:
         ids_expr = ", ".join(str(cid) for cid in excluded_ids)
         clauses.append(f"contact_id not in [{ids_expr}]")
