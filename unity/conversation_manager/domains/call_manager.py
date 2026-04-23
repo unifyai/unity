@@ -463,10 +463,15 @@ class LivekitCallManager:
         room_name = make_room_name(self.assistant_id, room_suffix)
         self.room_name = room_name
 
-        # Pre-create the LiveKit room with a long empty_timeout.  Browser-meet
-        # audio flows through sounddevice/PulseAudio — no "real" LiveKit
-        # participant ever joins, so the server's default empty_timeout (300s)
-        # would auto-delete the room after 5 minutes.
+        # Pre-create the LiveKit room with long empty_timeout and departure_timeout.
+        # Browser-meet audio flows through sounddevice/PulseAudio — no "real"
+        # LiveKit participant ever joins, so:
+        #   - empty_timeout (default 300s) would auto-delete the room after 5
+        #     minutes of it being empty.
+        #   - departure_timeout (default 20s) would auto-delete the room 20s
+        #     after the agent participant disconnects, making recovery into the
+        #     same room impossible if the child process is respawned.
+        # Both are raised to 3h so the room survives for the full session.
         from livekit.api import CreateRoomRequest
 
         lk = LiveKitAPI(
@@ -476,7 +481,11 @@ class LivekitCallManager:
         )
         try:
             await lk.room.create_room(
-                CreateRoomRequest(name=room_name, empty_timeout=10800),
+                CreateRoomRequest(
+                    name=room_name,
+                    empty_timeout=10800,
+                    departure_timeout=3600,
+                ),
             )
         finally:
             await lk.aclose()
