@@ -12,6 +12,7 @@ Phase 4: Integration testing across all managers with FK relationships
 ✓ Complex multi-manager workflows
 ✓ Circular reference handling (Functions ↔ Guidance)
 ✓ Bulk operations with FK constraints
+✓ Absolute cross-root FK references (overlay → Hive-shared parent)
 """
 
 from __future__ import annotations
@@ -20,6 +21,7 @@ import pytest
 import unify
 from datetime import datetime
 from tests.helpers import _handle_project
+from unity.common.context_registry import ContextRegistry, TableContext
 from unity.contact_manager.contact_manager import ContactManager
 from unity.transcript_manager.transcript_manager import TranscriptManager
 
@@ -889,3 +891,94 @@ def test_delete_exchange_cascades_messages():
         from_fields=["message_id"],
     )
     assert len(messages_after) == 0  # All messages CASCADE deleted
+
+
+# --------------------------------------------------------------------------- #
+#  Integration: Cross-root FK references (overlay → Hive-shared parent)       #
+# --------------------------------------------------------------------------- #
+
+
+@_handle_project
+@pytest.mark.integration
+def test_absolute_cross_root_fk_resolves_to_hive_target():
+    """Per-body overlays can point at a Hive-shared parent via absolute FKs.
+
+    An overlay that stores per-body state alongside Hive-shared rows
+    spells the FK target root explicitly
+    (``Hives/{hive_id}/Contacts.contact_id``). The FK rewriter in
+    :meth:`ContextRegistry._get_contexts_for_manager` must leave those
+    references untouched — otherwise it would prefix them with the
+    overlay's own per-body base and the FK would never resolve.
+
+    The test creates a Hive-shared parent, a per-body overlay whose FK
+    targets the parent's absolute path, and asserts that deleting a parent
+    row propagates through the FK (SET NULL) instead of silently
+    orphaning the overlay row — proof the FK landed where we asked it to.
+    """
+    base = ContextRegistry.base_for("TestOverlay")
+    assert base, "test setup did not provide a base context"
+
+    hive_parent = f"{base}/Hives/99/TestTarget"
+    unify.create_context(
+        hive_parent,
+        description="Hive-shared parent for the overlay FK integration test.",
+        auto_counting={"id": None},
+    )
+    unify.create_fields({"id": "int", "label": "str"}, context=hive_parent)
+
+    class _OverlayManager:
+        class Config:
+            required_contexts = [
+                TableContext(
+                    name="TestOverlay",
+                    description="Per-body overlay pointing at a Hive-shared parent.",
+                    fields={"overlay_id": "int", "target_id": "int"},
+                    auto_counting={"overlay_id": None},
+                    foreign_keys=[
+                        {
+                            "column": "target_id",
+                            "references": f"{base}/Hives/99/TestTarget.id",
+                            "on_delete": "SET NULL",
+                        },
+                    ],
+                ),
+            ]
+
+    contexts = ContextRegistry._get_contexts_for_manager(_OverlayManager)
+    entry = contexts["TestOverlay"]
+
+    assert entry["resolved_name"] == f"{base}/TestOverlay"
+    fk = entry["resolved_foreign_keys"][0]
+    assert fk["references"] == f"{base}/Hives/99/TestTarget.id"
+
+    ContextRegistry._create_context_wrapper("TestOverlayManager", entry)
+
+    unify.log(context=hive_parent, entries={"label": "parent"})
+    parent_row = unify.get_logs(
+        context=hive_parent,
+        filter="label == 'parent'",
+        from_fields=["id"],
+    )
+    parent_id = int(parent_row[0].entries["id"])
+
+    overlay_ctx = entry["resolved_name"]
+    unify.log(context=overlay_ctx, entries={"target_id": parent_id})
+    overlay_row = unify.get_logs(
+        context=overlay_ctx,
+        from_fields=["overlay_id", "target_id"],
+    )
+    assert overlay_row[0].entries["target_id"] == parent_id
+
+    parent_logs = unify.get_logs(
+        context=hive_parent,
+        filter=f"id == {parent_id}",
+        return_ids_only=True,
+    )
+    unify.delete_logs(context=hive_parent, logs=parent_logs[0])
+
+    overlay_after = unify.get_logs(
+        context=overlay_ctx,
+        from_fields=["overlay_id", "target_id"],
+    )
+    assert len(overlay_after) == 1
+    assert overlay_after[0].entries.get("target_id") is None  # SET NULL fired
