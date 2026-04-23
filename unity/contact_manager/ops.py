@@ -5,6 +5,7 @@ from typing import Any, Dict, Optional
 import unify
 from pydantic import ValidationError
 
+from ..common.context_registry import ContextRegistry
 from ..common.log_utils import log as unity_log
 from ..common.tool_outcome import ToolOutcome
 from .types.contact import Contact
@@ -471,11 +472,9 @@ def merge_contacts(
 
     # Rewrite transcripts BEFORE deleting the merged contact to avoid FK SET NULL
     try:
-        ctxs = unify.get_active_context()
-        read_ctx = ctxs.get("read")
-    except Exception:
-        read_ctx = None
-    transcripts_ctx = f"{read_ctx}/Transcripts" if read_ctx else "Transcripts"
+        transcripts_ctx = f"{ContextRegistry.base_for('Transcripts')}/Transcripts"
+    except RuntimeError:
+        transcripts_ctx = "Transcripts"
 
     try:
         referenced = unify.get_logs(

@@ -3983,9 +3983,10 @@ class FunctionManager(BaseFunctionManager):
     # ------------------------------------------------------------------ #
 
     def _guidance_context(self) -> str:
-        ctxs = unify.get_active_context()
-        read_ctx = ctxs.get("read")
-        return f"{read_ctx}/Guidance" if read_ctx else "Guidance"
+        try:
+            return f"{ContextRegistry.base_for('Guidance')}/Guidance"
+        except RuntimeError:
+            return "Guidance"
 
     def _get_guidance_ids_for_function(self, *, function_id: int) -> List[int]:
         # Prefer reading from the function row if present

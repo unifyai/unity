@@ -98,10 +98,10 @@ def resolve_binding_contexts(
     Falls through gracefully (returning *bindings* unchanged) when no base
     context is available (offline / test scenarios).
     """
-    base = ContextRegistry._base_context
-    if not base:
-        active = unify.get_active_context()
-        base = (active or {}).get("read", "")
+    try:
+        base = ContextRegistry.base_for("Dashboards/Tiles")
+    except RuntimeError:
+        base = ""
     if not base:
         return bindings
 

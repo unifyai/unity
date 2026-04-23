@@ -632,9 +632,10 @@ class GuidanceManager(BaseGuidanceManager):
 
     # ─────────────────────────── Functions helpers ───────────────────────────
     def _functions_context(self) -> str:
-        ctxs = unify.get_active_context()
-        read_ctx = ctxs.get("read")
-        return f"{read_ctx}/Functions" if read_ctx else "Functions"
+        try:
+            return f"{ContextRegistry.base_for('Functions')}/Functions"
+        except RuntimeError:
+            return "Functions"
 
     def _get_functions_for_guidance(
         self,

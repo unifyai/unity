@@ -565,7 +565,7 @@ class TestResolveBindingContexts:
                 "unity.dashboard_manager.ops.tile_ops.unify",
             ) as mock_unify,
         ):
-            mock_reg._base_context = BASE
+            mock_reg.base_for.return_value = BASE
             mock_unify.get_contexts.return_value = {k: "" for k in KNOWN_CONTEXTS}
 
             bindings = [FilterBinding(context="Data/Sales/Monthly", alias="sales")]
@@ -584,7 +584,7 @@ class TestResolveBindingContexts:
                 "unity.dashboard_manager.ops.tile_ops.unify",
             ) as mock_unify,
         ):
-            mock_reg._base_context = BASE
+            mock_reg.base_for.return_value = BASE
             mock_unify.get_contexts.return_value = {k: "" for k in KNOWN_CONTEXTS}
 
             bindings = [
@@ -603,7 +603,7 @@ class TestResolveBindingContexts:
                 "unity.dashboard_manager.ops.tile_ops.unify",
             ) as mock_unify,
         ):
-            mock_reg._base_context = BASE
+            mock_reg.base_for.return_value = BASE
             mock_unify.get_contexts.return_value = {k: "" for k in KNOWN_CONTEXTS}
 
             bindings = [
@@ -643,7 +643,7 @@ class TestResolveBindingContexts:
                 "unity.dashboard_manager.ops.tile_ops.unify",
             ) as mock_unify,
         ):
-            mock_reg._base_context = BASE
+            mock_reg.base_for.return_value = BASE
             mock_unify.get_contexts.return_value = {k: "" for k in KNOWN_CONTEXTS}
 
             bindings = [
@@ -671,16 +671,12 @@ class TestResolveBindingContexts:
             assert any(ct in k for k in b.select)
 
     def test_no_base_context_returns_unchanged(self):
-        with (
-            patch(
-                "unity.dashboard_manager.ops.tile_ops.ContextRegistry",
-            ) as mock_reg,
-            patch(
-                "unity.dashboard_manager.ops.tile_ops.unify",
-            ) as mock_unify,
-        ):
-            mock_reg._base_context = None
-            mock_unify.get_active_context.return_value = {"read": ""}
+        with patch(
+            "unity.dashboard_manager.ops.tile_ops.ContextRegistry",
+        ) as mock_reg:
+            mock_reg.base_for.side_effect = RuntimeError(
+                "no base context available",
+            )
 
             bindings = [FilterBinding(context="Data/X", alias="x")]
             result = resolve_binding_contexts(bindings)
@@ -696,7 +692,7 @@ class TestResolveBindingContexts:
                 "unity.dashboard_manager.ops.tile_ops.unify",
             ) as mock_unify,
         ):
-            mock_reg._base_context = BASE
+            mock_reg.base_for.return_value = BASE
             mock_unify.get_contexts.return_value = {}
 
             bindings = [FilterBinding(context="Data/X", alias="x")]
@@ -713,7 +709,7 @@ class TestResolveBindingContexts:
                 "unity.dashboard_manager.ops.tile_ops.unify",
             ) as mock_unify,
         ):
-            mock_reg._base_context = BASE
+            mock_reg.base_for.return_value = BASE
             mock_unify.get_contexts.return_value = {k: "" for k in KNOWN_CONTEXTS}
 
             fq = f"{BASE}/Data/Sales/Monthly"
@@ -731,7 +727,7 @@ class TestResolveBindingContexts:
                 "unity.dashboard_manager.ops.tile_ops.unify",
             ) as mock_unify,
         ):
-            mock_reg._base_context = BASE
+            mock_reg.base_for.return_value = BASE
             mock_unify.get_contexts.return_value = {k: "" for k in KNOWN_CONTEXTS}
 
             bindings = [
