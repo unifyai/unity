@@ -1,5 +1,6 @@
 import logging
 import zoneinfo
+from dataclasses import dataclass
 from pydantic import (
     BaseModel,
     Field,
@@ -408,3 +409,26 @@ class ContactMembership(BaseModel):
     )
 
     model_config = {"extra": "allow"}
+
+
+@dataclass(frozen=True)
+class HydratedContact:
+    """Composite view returned by :meth:`ContactManager._hydrate`.
+
+    Pairs the shared :class:`Contact` row (read from the Hive-shared or
+    per-body ``Contacts`` table depending on Hive membership) with this
+    body's :class:`ContactMembership` overlay, when one exists. Callers
+    that need to reason about both identity and per-body relationship
+    or response policy take one ``HydratedContact`` instead of two
+    separately fetched rows.
+
+    ``membership`` is ``None`` when the caller's body has not yet
+    materialized an overlay for the shared row — the legitimate state
+    for a contact that was created before this body's first interaction
+    with them. Downstream routing code treats a missing overlay as
+    "fall back to shared-row signals" (e.g. ``is_system``) rather than
+    synthesizing a default overlay.
+    """
+
+    shared: "Contact"
+    membership: Optional["ContactMembership"] = None

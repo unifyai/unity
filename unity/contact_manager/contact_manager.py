@@ -11,7 +11,7 @@ from ..common.tool_spec import read_only, manager_tool, ToolSpec
 from ..common.metrics_utils import reduce_logs
 
 import unify
-from .types.contact import Contact, ContactMembership
+from .types.contact import Contact, ContactMembership, HydratedContact
 from .base import BaseContactManager
 from ..common.context_registry import ContextRegistry, TableContext
 from ..common.data_store import DataStore
@@ -466,11 +466,66 @@ class ContactManager(BaseContactManager):
         self._sync_required_contacts()
 
     # (Optional) Public programmatic helpers (non-LLM)
+    def _hydrate(self, contact_id: int) -> Optional[HydratedContact]:
+        """Compose the shared Contact row with this body's overlay.
+
+        The shared row is read through :meth:`get_contact_info` which is
+        DataStore-backed; the per-body :class:`ContactMembership`
+        overlay is fetched from ``{user}/{assistant}/ContactMembership``
+        with a single bounded ``get_logs`` call. No materialization
+        happens here — a missing overlay returns a
+        :class:`HydratedContact` whose ``membership`` is ``None`` and
+        callers handle the fallback locally (the routing code prefers
+        the overlay signal when present and falls back to ``is_system``
+        / shared-row signals otherwise).
+
+        Returns
+        -------
+        Optional[HydratedContact]
+            ``None`` when no shared Contact row exists for *contact_id*,
+            otherwise the composite view.
+        """
+        cid = int(contact_id)
+        info = self.get_contact_info(cid)
+        row = info.get(cid)
+        if not row:
+            return None
+        try:
+            shared = Contact.model_validate(row)
+        except Exception:
+            # Defensive: if the shared row fails model validation for
+            # any reason (e.g. transient schema drift), fall back to a
+            # best-effort construction so downstream routing can still
+            # observe the known fields.
+            shared = Contact.model_construct(**row)
+
+        membership: Optional[ContactMembership] = None
+        try:
+            overlay_rows = unify.get_logs(
+                context=self._membership_ctx,
+                filter=f"contact_id == {cid}",
+                limit=1,
+            )
+            if overlay_rows:
+                entries = overlay_rows[0].entries or {}
+                try:
+                    membership = ContactMembership.model_validate(entries)
+                except Exception:
+                    membership = ContactMembership.model_construct(**entries)
+        except Exception:
+            # Backend read failure must not break the shared-row path.
+            # Callers that need membership will observe `None` and fall
+            # back to is_system + explicit relationship lookups.
+            membership = None
+
+        return HydratedContact(shared=shared, membership=membership)
+
     def get_contact_info(
         self,
         contact_id: Union[int, List[int]],
         fields: Optional[Union[str, List[str]]] = None,
         search_local_storage: bool = True,
+        include_membership: bool = False,
     ) -> Dict[int, Dict[str, Any]]:
         """
         Return a mapping of requested fields for a single contact.
@@ -481,6 +536,16 @@ class ContactManager(BaseContactManager):
           If not found, fall back to a backend read and resync the DataStore.
         - When fields is None or "all", include all allowed fields.
         - Vector/private fields are never loaded.
+        - When ``include_membership=True``, compose this body's
+          :class:`ContactMembership` overlay into the returned dict
+          under the overlay's own keys (``relationship``,
+          ``should_respond``, ``response_policy``, ``can_edit``). Keys
+          missing from the overlay are omitted; no defaults are
+          synthesized so callers can tell "overlay not materialized"
+          apart from "overlay says should_respond=True". Setting this
+          flag to ``True`` issues one ``get_logs`` against the overlay
+          context per returned contact; leave it ``False`` (the default)
+          on hot paths that only need shared fields.
 
         Returns
         -------
@@ -545,6 +610,39 @@ class ContactManager(BaseContactManager):
                 except Exception:
                     pass
                 results[cid_val] = {k: backend_row.get(k) for k in requested}
+
+        # Optional: layer the per-body ContactMembership overlay on top.
+        # Kept out of the hot path (default False) so existing callers
+        # that only read shared fields don't pay the extra backend hop.
+        if include_membership and results:
+            cids = list(results.keys())
+            if len(cids) == 1:
+                overlay_filter = f"contact_id == {cids[0]}"
+            else:
+                overlay_filter = f"contact_id in [{', '.join(str(c) for c in cids)}]"
+            try:
+                overlay_logs = unify.get_logs(
+                    context=self._membership_ctx,
+                    filter=overlay_filter,
+                    limit=len(cids),
+                )
+            except Exception:
+                overlay_logs = []
+
+            overlay_keys = tuple(ContactMembership.model_fields.keys())
+            for lg in overlay_logs:
+                try:
+                    entries = lg.entries or {}
+                    cid_val = int(entries.get("contact_id"))
+                except Exception:
+                    continue
+                if cid_val not in results:
+                    continue
+                for key in overlay_keys:
+                    if key == "contact_id":
+                        continue
+                    if key in entries:
+                        results[cid_val][key] = entries[key]
 
         return results
 
