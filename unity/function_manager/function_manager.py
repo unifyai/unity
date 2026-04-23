@@ -12,6 +12,7 @@ import socket
 import sys
 import tempfile
 import logging
+import weakref
 from pathlib import Path
 
 from unity.logger import LOGGER
@@ -321,6 +322,15 @@ class _VenvConnection:
         self._lock = asyncio.Lock()  # Serialize calls to same venv
         self._closed = False
         self._tainted = False  # Set to True after timeout or other corruption
+        # Pool generation this connection was spawned under. Stamped by
+        # the owning ``VenvPool`` after ``create``; mismatch against the
+        # pool's current generation signals the subprocess captured a
+        # now-stale ``os.environ`` and must be retired before reuse.
+        self._generation: int = 0
+
+    def is_in_flight(self) -> bool:
+        """Return True while an ``execute``/``get_state`` call holds the connection."""
+        return self._lock.locked()
 
     @classmethod
     async def create(
@@ -604,6 +614,21 @@ class SessionLimitError(RuntimeError):
         return {"error": self.message, "error_type": "resource_limit"}
 
 
+async def _shutdown_silently(conn: "_VenvConnection") -> None:
+    """Shut down a pooled connection, swallowing transient shutdown errors.
+
+    Used by flows that have already unhooked the connection from the
+    pool and therefore can't propagate a shutdown failure to a
+    reachable caller; the process-exit path or ``__del__`` would kill
+    the subprocess anyway, so a failed graceful shutdown here is not
+    worth raising.
+    """
+    try:
+        await conn.shutdown()
+    except Exception:
+        pass
+
+
 class VenvPool:
     """
     Manages a pool of persistent venv subprocess connections.
@@ -616,13 +641,27 @@ class VenvPool:
     stateful sessions per venv. Each session has its own subprocess and globals.
     """
 
+    # Process-wide weak registry of every live ``VenvPool`` instance. Used
+    # by ``invalidate_all_pools`` so credential-sync flows can retire every
+    # pool in the process regardless of which actor owns it, without
+    # keeping pools alive past their actor's lifetime.
+    _all_pools: "weakref.WeakSet[VenvPool]" = weakref.WeakSet()
+
     def __init__(self, *, max_total_sessions: int = 20) -> None:
         # Key: (venv_id, session_id) -> _VenvConnection
         self._connections: Dict[Tuple[int, int], _VenvConnection] = {}
         self._metadata: Dict[Tuple[int, int], SessionMetadata] = {}
+        # Pool generation number. ``invalidate_all`` bumps this; every
+        # connection records the generation it was spawned under so the
+        # next reuse attempt detects the mismatch and respawns the
+        # subprocess under the current ``os.environ``. Lets in-flight
+        # calls finish undisturbed while idle sessions are retired
+        # immediately.
+        self._generation: int = 0
         self._lock = asyncio.Lock()
         self._closed = False
         self._max_total_sessions = int(max_total_sessions)
+        VenvPool._all_pools.add(self)
 
     async def get_or_create_connection(
         self,
@@ -650,15 +689,25 @@ class VenvPool:
 
             if key in self._connections:
                 conn = self._connections[key]
-                if conn.is_alive():
+                if conn.is_alive() and conn._generation == self._generation:
                     md = self._metadata.get(key)
                     if md is not None:
                         md.last_used = datetime.now(timezone.utc)
                     return conn
-                # Connection died, remove it and create a new one
-                logger.warning(
-                    f"VenvPool: connection for venv {venv_id} session {session_id} died, creating new one",
-                )
+                if conn.is_alive():
+                    logger.info(
+                        f"VenvPool: retiring stale connection for venv {venv_id} "
+                        f"session {session_id} (env changed since spawn)",
+                    )
+                    # Shut down outside the pool lock so other callers
+                    # aren't blocked by the subprocess-exit wait. The
+                    # connection is already unreachable from the pool
+                    # once we ``del`` it below.
+                    asyncio.create_task(_shutdown_silently(conn))
+                else:
+                    logger.warning(
+                        f"VenvPool: connection for venv {venv_id} session {session_id} died, creating new one",
+                    )
                 del self._connections[key]
                 self._metadata.pop(key, None)
 
@@ -675,6 +724,7 @@ class VenvPool:
                 function_manager=function_manager,
                 timeout=timeout,
             )
+            conn._generation = self._generation
             self._connections[key] = conn
             now = datetime.now(timezone.utc)
             self._metadata[key] = SessionMetadata(
@@ -942,6 +992,60 @@ class VenvPool:
                 await conn.shutdown()
             self._connections.clear()
             self._metadata.clear()
+
+    async def invalidate_all(self) -> None:
+        """
+        Retire every pooled venv session so the next execution spawns a
+        fresh subprocess under the current ``os.environ``.
+
+        Bumps the pool generation, evicts all connections from the pool
+        map, and best-effort shuts down idle subprocesses in parallel.
+        An in-flight connection is orphaned out of the pool but allowed
+        to finish its current call on its existing subprocess; it is
+        no longer reachable for reuse, so the next call for that
+        ``(venv_id, session_id)`` pair spawns a fresh subprocess under
+        the updated environment.
+
+        Used after credential changes (for example when a body's
+        ``SecretBinding`` is updated) so exported environment variables
+        picked up by venvs at spawn time cannot linger across calls.
+        """
+        async with self._lock:
+            if self._closed:
+                return
+            self._generation += 1
+            stale = list(self._connections.values())
+            self._connections.clear()
+            self._metadata.clear()
+        idle = [conn for conn in stale if not conn.is_in_flight()]
+        if idle:
+            await asyncio.gather(
+                *(_shutdown_silently(conn) for conn in idle),
+                return_exceptions=True,
+            )
+
+    @classmethod
+    async def invalidate_all_pools(cls) -> None:
+        """Invalidate every ``VenvPool`` currently alive in this process.
+
+        Called by flows that mutate environment-bound credentials (for
+        example ``SecretManager`` after a ``SecretBinding`` change or an
+        OAuth token refresh) so subsequent function executions spawn
+        subprocesses with the updated ``os.environ``.
+        """
+        pools = list(cls._all_pools)
+        if not pools:
+            return
+        results = await asyncio.gather(
+            *(pool.invalidate_all() for pool in pools),
+            return_exceptions=True,
+        )
+        for result in results:
+            if isinstance(result, BaseException):
+                logger.error(
+                    "VenvPool.invalidate_all_pools: failed to invalidate one pool",
+                    exc_info=result,
+                )
 
     def __del__(self) -> None:
         """Ensure cleanup on garbage collection."""
