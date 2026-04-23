@@ -1114,11 +1114,22 @@ async def log_message(
 
 
 async def sync_assistant_secrets() -> None:
-    """Pull OAuth tokens from Orchestra into the SecretManager's Secrets context."""
+    """Resync OAuth tokens and resolved credentials into the local environment.
+
+    Refreshes the per-body ``OAuthTokens`` context from Orchestra, then
+    re-runs ``_sync_dotenv`` so the binding-resolved secrets plus OAuth
+    tokens land in ``os.environ`` and the ``~/.env`` file. Finally
+    invalidates every live ``VenvPool`` so function executions spawned
+    from this point forward see the updated environment; already-spawned
+    subprocesses are retired as soon as they go idle.
+    """
+    from unity.function_manager.function_manager import VenvPool
     from unity.manager_registry import ManagerRegistry
 
     sm = ManagerRegistry.get_secret_manager()
     sm._sync_assistant_secrets()
+    sm._sync_dotenv()
+    await VenvPool.invalidate_all_pools()
 
 
 # Contact updates
