@@ -9,7 +9,7 @@ from pydantic import (
     SerializationInfo,
     SerializerFunctionWrapHandler,
 )
-from typing import Optional, ClassVar
+from typing import Literal, Optional, ClassVar
 
 _log = logging.getLogger(__name__)
 
@@ -345,3 +345,66 @@ class Contact(BaseModel):
         except Exception:
             pass
         return shorthand
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Per-body ContactMembership overlay
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+class ContactMembership(BaseModel):
+    """A body-local view onto a shared :class:`Contact` row.
+
+    Each Hive member (or solo body) maintains its own
+    ``{user}/{assistant}/ContactMembership`` overlay. One row per contact
+    expresses *this body's* relationship to the shared contact and its
+    per-body response policy; the shared row (``Contacts``) remains the
+    single source of truth for identity, name, email, etc.
+
+    The overlay is the home of fields that are legitimately body-local:
+    how I relate to this contact (``relationship``) and whether I, as
+    this particular body, should proactively respond to them
+    (``should_respond`` / ``response_policy``). Two bodies sharing the
+    same contact can hold different relationships and different response
+    policies without colliding on the shared identity row.
+    """
+
+    contact_id: int = Field(
+        description="FK to the shared Contact row this overlay describes.",
+        ge=0,
+    )
+    relationship: Literal["self", "boss", "coworker", "other"] = Field(
+        default="other",
+        description=(
+            "This body's relationship to the shared contact. "
+            "'self' for the contact that IS this body, 'boss' for the "
+            "body's primary human principal, 'coworker' for another body "
+            "inside the same Hive, 'other' for everyone else."
+        ),
+    )
+    should_respond: bool = Field(
+        default=True,
+        description=(
+            "Whether *this* body should proactively respond to inbound "
+            "conversational traffic from the contact. Gates the "
+            "conversational response loop only; scheduled and triggered "
+            "tasks fire regardless."
+        ),
+    )
+    response_policy: Optional[str] = Field(
+        default=None,
+        description=(
+            "Body-local response policy for this contact. When None, "
+            "callers should fall back to the manager-level default."
+        ),
+    )
+    can_edit: bool = Field(
+        default=True,
+        description=(
+            "Whether this body is allowed to mutate the shared Contact "
+            "row. Reserved for future permissions work; defaults to True "
+            "so every body can edit by default."
+        ),
+    )
+
+    model_config = {"extra": "allow"}

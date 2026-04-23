@@ -11,7 +11,7 @@ from ..common.tool_spec import read_only, manager_tool, ToolSpec
 from ..common.metrics_utils import reduce_logs
 
 import unify
-from .types.contact import Contact
+from .types.contact import Contact, ContactMembership
 from .base import BaseContactManager
 from ..common.context_registry import ContextRegistry, TableContext
 from ..common.data_store import DataStore
@@ -26,6 +26,7 @@ from ..common.async_tool_loop import (
 )
 from ..common.model_to_fields import model_to_fields
 from ..events.manager_event_logging import log_manager_call
+from .settings import CONTACT_MEMBERSHIP_TABLE
 from ..settings import SETTINGS
 from ..common.read_only_ask_guard import ReadOnlyAskGuardHandle
 from ..common.llm_client import new_llm_client
@@ -70,6 +71,31 @@ class ContactManager(BaseContactManager):
                 unique_keys={"contact_id": "int"},
                 auto_counting={"contact_id": None},
             ),
+            # ContactMembership is the per-body overlay onto the shared
+            # Contacts table. It carries the fields that are legitimately
+            # body-local (``relationship``, ``should_respond``,
+            # ``response_policy``, ``can_edit``) and references the shared
+            # row by ``contact_id``. ContextRegistry routes the FK to the
+            # correct root automatically — Hive-shared Contacts for Hive
+            # members, per-body Contacts for solo bodies — via the
+            # target-table-aware FK resolver.
+            TableContext(
+                name=CONTACT_MEMBERSHIP_TABLE,
+                description=(
+                    "Per-body overlay describing this body's relationship "
+                    "to each shared contact and its response policy."
+                ),
+                fields=model_to_fields(ContactMembership),
+                unique_keys={"contact_id": "int"},
+                auto_counting=None,
+                foreign_keys=[
+                    {
+                        "column": "contact_id",
+                        "references": "Contacts.contact_id",
+                        "on_delete": "SET NULL",
+                    },
+                ],
+            ),
         ]
 
     # ──────────────────────────────────────────────────────────────────────
@@ -112,6 +138,13 @@ class ContactManager(BaseContactManager):
         super().__init__()
         self.include_in_multi_assistant_table = True
         self._ctx = ContextRegistry.get_context(self, "Contacts")
+        # Per-body overlay context. Lives under ``{user}/{assistant}/``
+        # for both Hive members and solo bodies — only the FK's *target*
+        # (Contacts) routes differently.
+        self._membership_ctx = ContextRegistry.get_context(
+            self,
+            CONTACT_MEMBERSHIP_TABLE,
+        )
 
         # Local DataStore mirror (write-through only; never read from it)
         self._data_store = DataStore.for_context(self._ctx, key_fields=("contact_id",))
