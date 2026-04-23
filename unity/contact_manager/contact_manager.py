@@ -90,7 +90,7 @@ class ContactManager(BaseContactManager):
                 auto_counting=None,
                 foreign_keys=[
                     {
-                        "column": "contact_id",
+                        "name": "contact_id",
                         "references": "Contacts.contact_id",
                         "on_delete": "SET NULL",
                     },
