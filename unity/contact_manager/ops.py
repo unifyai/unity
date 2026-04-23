@@ -9,6 +9,7 @@ from ..common.context_registry import ContextRegistry
 from ..common.log_utils import log as unity_log
 from ..common.tool_outcome import ToolOutcome
 from .settings import (
+    CONTACT_MEMBERSHIP_TABLE,
     RELATIONSHIP_COWORKER,
     RELATIONSHIP_OTHER,
 )
@@ -37,8 +38,8 @@ def _relationship_for(self, contact_id: int) -> Optional[str]:
 
     Reads the per-body ContactMembership overlay. Returns ``None`` when
     no overlay row exists so callers can fall back to the shared-row
-    ``is_system`` signal (pre-deploy solo bodies, brand-new Hive members
-    that haven't minted their system overlays yet).
+    ``is_system`` signal — for example, solo bodies that have not yet
+    materialized their system overlays.
     """
     try:
         rows = unify.get_logs(
@@ -176,8 +177,7 @@ def _maybe_sync_timezone_to_backend(
     Routing is driven by the per-body ContactMembership overlay when
     present (``relationship == "self"`` → assistant backend,
     ``"boss"`` → user backend via email) and falls back to the shared
-    ``is_system`` flag when the overlay has not yet been minted
-    (pre-deploy solo bodies, freshly-provisioned Hive bodies).
+    ``is_system`` flag when the overlay has not yet been materialized.
 
     Contacts that represent another Hive-member body (shared row
     carries ``assistant_id``) are treated as ``"coworker"`` and are
@@ -631,6 +631,119 @@ def delete_contact(
     return {"outcome": "contact deleted", "details": {"contact_id": contact_id}}
 
 
+def _rewrite_membership_overlays_for_merge(
+    self,
+    *,
+    delete_id: int,
+    keep_id: int,
+) -> None:
+    """Rewrite every body's ContactMembership overlay after a merge.
+
+    For each member body of the active Hive (or just this body when
+    solo), locate any ``ContactMembership`` row with
+    ``contact_id == delete_id`` and point it at ``keep_id`` instead.
+
+    When a body already has overlays for *both* ids, the losing row is
+    dropped rather than collided with the surviving one — the surviving
+    overlay already encodes that body's policy for the merged contact.
+    Bodies with no overlay on either id are left untouched; the next
+    interaction boundary lazily materializes a fresh overlay against
+    the surviving shared row.
+    """
+    from ..session_details import SESSION_DETAILS
+
+    members: list[tuple[str, int]] = []
+    hive_id = SESSION_DETAILS.hive_id
+    if hive_id is not None:
+        try:
+            from .backend_sync import list_hive_assistants
+
+            members = list_hive_assistants(int(hive_id))
+        except Exception:
+            members = []
+
+    # Solo body or Orchestra call failed → at minimum rewrite this
+    # body's overlay so the merge is locally consistent. The overlay
+    # table is per-body, so the context path rewrite applies cleanly
+    # either way.
+    if not members:
+        _rewrite_single_overlay(
+            self,
+            context=self._membership_ctx,
+            delete_id=delete_id,
+            keep_id=keep_id,
+        )
+        return
+
+    for user_id, assistant_id in members:
+        overlay_ctx = f"{user_id}/{assistant_id}/{CONTACT_MEMBERSHIP_TABLE}"
+        try:
+            _rewrite_single_overlay(
+                self,
+                context=overlay_ctx,
+                delete_id=delete_id,
+                keep_id=keep_id,
+            )
+        except Exception:
+            # A single body's overlay failure must not block the
+            # merge — the shared row still lands, and the failing
+            # body will rematerialize its overlay on the next
+            # interaction boundary.
+            continue
+
+
+def _rewrite_single_overlay(
+    self,
+    *,
+    context: str,
+    delete_id: int,
+    keep_id: int,
+) -> None:
+    """Rewrite one body's ``ContactMembership`` rows in place.
+
+    Reads both sides (losing + surviving) in a single filter pass,
+    then either deletes the losing row (when a surviving overlay
+    already exists — two overlays for one shared contact would
+    violate the unique-key invariant) or rewrites its ``contact_id``
+    to point at the surviving row.
+    """
+    try:
+        rows = unify.get_logs(
+            context=context,
+            filter=f"contact_id in [{int(delete_id)}, {int(keep_id)}]",
+            from_fields=["contact_id"],
+        )
+    except Exception:
+        return
+
+    losing_ids: list[int] = []
+    surviving_present = False
+    for row in rows:
+        cid = row.entries.get("contact_id")
+        if cid is None:
+            continue
+        if int(cid) == int(delete_id):
+            losing_ids.append(int(row.id))
+        elif int(cid) == int(keep_id):
+            surviving_present = True
+
+    if not losing_ids:
+        return
+
+    try:
+        if surviving_present:
+            unify.delete_logs(context=context, logs=losing_ids)
+        else:
+            unify.update_logs(
+                logs=losing_ids,
+                context=context,
+                entries={"contact_id": int(keep_id)},
+                overwrite=True,
+            )
+    except Exception:
+        pass
+
+
 def merge_contacts(
     self,
     *,
@@ -685,6 +798,11 @@ def merge_contacts(
     entries2 = log2.entries
     all_cols = set(entries1.keys()) | set(entries2.keys())
     all_cols.discard("contact_id")
+    # ``authoring_assistant_id`` is a write-once audit stamp recorded
+    # at create-time. It must never be rewritten by a merge, even if
+    # the overrides dict names a source — the surviving row keeps the
+    # body that originally authored it.
+    all_cols.discard("authoring_assistant_id")
 
     consolidated: Dict[str, Any] = {}
     for col in all_cols:
@@ -722,6 +840,17 @@ def merge_contacts(
             },
             **(custom_updates or {}),
         )
+
+    # Rewrite every Hive body's ContactMembership overlay before we
+    # delete the losing shared row. Because the FK from ContactMembership
+    # to Contacts is ``ON DELETE SET NULL``, any overlay still pointing
+    # at ``delete_id`` at delete-time would be silently nulled out —
+    # losing that body's policy for the merged contact.
+    _rewrite_membership_overlays_for_merge(
+        self,
+        delete_id=delete_id,
+        keep_id=keep_id,
+    )
 
     # Rewrite transcripts BEFORE deleting the merged contact to avoid FK SET NULL
     try:

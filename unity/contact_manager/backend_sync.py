@@ -8,11 +8,13 @@ Endpoints:
 - GET /organizations/members (list org members)
 - POST /admin/assistant/update-user (user timezone/bio)
 - PATCH /admin/assistant/{assistant_id} (assistant timezone/about)
+- GET /hives/{hive_id}/assistants (enumerate Hive member bodies)
 """
 
 from __future__ import annotations
 
 import logging
+from typing import List, Tuple
 
 from ..settings import SETTINGS
 
@@ -165,6 +167,52 @@ def sync_assistant_about(assistant_id: int, about: str) -> bool:
     except Exception as e:
         _log.warning(f"Error syncing assistant about: {e}")
         return False
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Hive membership enumeration → GET /hives/{hive_id}/assistants
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def list_hive_assistants(hive_id: int) -> List[Tuple[str, int]]:
+    """Enumerate every ``(user_id, assistant_id)`` pair in a Hive.
+
+    Used by ``ContactManager.merge_contacts`` to fan-out per-body
+    ``ContactMembership`` rewrites across every member of the Hive so
+    the overlay on each body points at the surviving shared row.
+
+    Fire-and-fail-open: if the Orchestra URL or admin key are missing,
+    or the call fails, returns ``[]``. Callers must treat an empty
+    result as "no other bodies to rewrite" and proceed with only the
+    local overlay, which is still correct for solo bodies.
+    """
+    base_url = _get_base_url()
+    admin_key = _get_admin_key()
+    if not base_url or not admin_key or not hive_id:
+        _log.debug("Skipping list_hive_assistants: missing base URL / key / hive_id")
+        return []
+
+    try:
+        from unify.utils import http
+
+        url = f"{base_url}/hives/{int(hive_id)}/assistants"
+        headers = {"Authorization": f"Bearer {admin_key}"}
+        resp = http.get(url, headers=headers, timeout=30)
+        if 200 <= resp.status_code < 300:
+            body = resp.json()
+            return [
+                (str(row["user_id"]), int(row["assistant_id"]))
+                for row in body
+                if row.get("user_id") is not None
+                and row.get("assistant_id") is not None
+            ]
+        _log.warning(
+            f"Failed to list hive assistants: {resp.status_code} {resp.text}",
+        )
+        return []
+    except Exception as e:
+        _log.warning(f"Error listing hive assistants: {e}")
+        return []
 
 
 def sync_assistant_job_title(assistant_id: int, job_title: str) -> bool:
