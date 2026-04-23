@@ -32,6 +32,31 @@ def _get_assistant_id() -> int | None:
     return SESSION_DETAILS.assistant.agent_id
 
 
+def _relationship_for(self, contact_id: int) -> Optional[str]:
+    """Return this body's overlay relationship for *contact_id*, if any.
+
+    Reads the per-body ContactMembership overlay. Returns ``None`` when
+    no overlay row exists so callers can fall back to the shared-row
+    ``is_system`` signal (pre-deploy solo bodies, brand-new Hive members
+    that haven't minted their system overlays yet).
+    """
+    try:
+        rows = unify.get_logs(
+            context=self._membership_ctx,
+            filter=f"contact_id == {int(contact_id)}",
+            limit=1,
+            from_fields=["contact_id", "relationship"],
+        )
+    except Exception:
+        return None
+    if not rows:
+        return None
+    try:
+        return rows[0].entries.get("relationship")
+    except Exception:
+        return None
+
+
 def _write_membership_overlay(
     self,
     *,
@@ -118,16 +143,46 @@ def _default_relationship_for(
     return RELATIONSHIP_OTHER
 
 
+def _get_shared_row(
+    self,
+    contact_id: int,
+    *,
+    fields: list[str],
+) -> Optional[Dict[str, Any]]:
+    """Return the shared Contact row for *contact_id* via cache-then-backend."""
+    try:
+        return self._data_store.get(contact_id)
+    except KeyError:
+        pass
+    try:
+        rows = unify.get_logs(
+            context=self._ctx,
+            filter=f"contact_id == {int(contact_id)}",
+            limit=1,
+            from_fields=fields,
+        )
+    except Exception:
+        return None
+    return rows[0].entries if rows else None
+
+
 def _maybe_sync_timezone_to_backend(
     self,
     contact_id: int,
     timezone: str,
 ) -> None:
-    """
-    Fire-and-forget sync of timezone to backend for system contacts.
+    """Fire-and-forget sync of timezone to backend for system contacts.
 
-    - contact_id=0 → sync to assistant
-    - contact_id=1 or other is_system=True → sync to user via email
+    Routing is driven by the per-body ContactMembership overlay when
+    present (``relationship == "self"`` → assistant backend,
+    ``"boss"`` → user backend via email) and falls back to the shared
+    ``is_system`` flag when the overlay has not yet been minted
+    (pre-deploy solo bodies, freshly-provisioned Hive bodies).
+
+    Contacts that represent another Hive-member body (shared row
+    carries ``assistant_id``) are treated as ``"coworker"`` and are
+    no-ops — we don't reach into another body's Assistant backend
+    record from this body's update path.
     """
     from .backend_sync import sync_assistant_timezone, sync_user_timezone
 
@@ -135,30 +190,29 @@ def _maybe_sync_timezone_to_backend(
     if assistant_id is None:
         return
 
-    if contact_id == 0:
+    relationship = _relationship_for(self, contact_id)
+    if relationship == "self":
         sync_assistant_timezone(assistant_id, timezone)
         return
+    if relationship == "coworker":
+        return
 
-    # User or org member - need email and is_system check
-    try:
-        row = self._data_store.get(contact_id)
-    except KeyError:
-        row = None
+    row = _get_shared_row(
+        self,
+        contact_id,
+        fields=["contact_id", "is_system", "email_address", "assistant_id"],
+    )
+    if not row:
+        return
 
-    if row is None:
-        try:
-            rows = unify.get_logs(
-                context=self._ctx,
-                filter=f"contact_id == {contact_id}",
-                limit=1,
-                from_fields=["contact_id", "is_system", "email_address"],
-            )
-            row = rows[0].entries if rows else None
-        except Exception:
-            return
+    # A coworker shared row (assistant_id set) is never synced back
+    # through this body's sync path even if the overlay is missing.
+    if row.get("assistant_id") is not None:
+        return
 
-    if row and row.get("is_system") and row.get("email_address"):
-        sync_user_timezone(assistant_id, row["email_address"], timezone)
+    if relationship == "boss" or row.get("is_system"):
+        if row.get("email_address"):
+            sync_user_timezone(assistant_id, row["email_address"], timezone)
 
 
 def _maybe_sync_bio_to_backend(
@@ -166,11 +220,11 @@ def _maybe_sync_bio_to_backend(
     contact_id: int,
     bio: str,
 ) -> None:
-    """
-    Fire-and-forget sync of bio to backend for system contacts.
+    """Fire-and-forget sync of bio to backend for system contacts.
 
-    - contact_id=0 → sync to assistant (as 'about')
-    - contact_id=1 or other is_system=True → sync to user (as 'bio')
+    Same overlay-driven routing as :func:`_maybe_sync_timezone_to_backend`:
+    ``"self"`` → assistant ``about``; ``"boss"`` or fallback
+    ``is_system + email`` → user ``bio``; coworker → no-op.
     """
     from .backend_sync import sync_assistant_about, sync_user_bio
 
@@ -178,30 +232,27 @@ def _maybe_sync_bio_to_backend(
     if assistant_id is None:
         return
 
-    if contact_id == 0:
+    relationship = _relationship_for(self, contact_id)
+    if relationship == "self":
         sync_assistant_about(assistant_id, bio)
         return
+    if relationship == "coworker":
+        return
 
-    # User or org member - need email and is_system check
-    try:
-        row = self._data_store.get(contact_id)
-    except KeyError:
-        row = None
+    row = _get_shared_row(
+        self,
+        contact_id,
+        fields=["contact_id", "is_system", "email_address", "assistant_id"],
+    )
+    if not row:
+        return
 
-    if row is None:
-        try:
-            rows = unify.get_logs(
-                context=self._ctx,
-                filter=f"contact_id == {contact_id}",
-                limit=1,
-                from_fields=["contact_id", "is_system", "email_address"],
-            )
-            row = rows[0].entries if rows else None
-        except Exception:
-            return
+    if row.get("assistant_id") is not None:
+        return
 
-    if row and row.get("is_system") and row.get("email_address"):
-        sync_user_bio(assistant_id, row["email_address"], bio)
+    if relationship == "boss" or row.get("is_system"):
+        if row.get("email_address"):
+            sync_user_bio(assistant_id, row["email_address"], bio)
 
 
 def _maybe_sync_job_title_to_backend(
@@ -209,17 +260,16 @@ def _maybe_sync_job_title_to_backend(
     contact_id: int,
     job_title: str,
 ) -> None:
-    """
-    Fire-and-forget sync of ``job_title`` to backend for the assistant contact.
+    """Fire-and-forget sync of ``job_title`` to the assistant's backend.
 
-    Mirrors :func:`_maybe_sync_bio_to_backend` but for the free-text job title
-    / specialization. Only contact_id == 0 (the assistant itself) flows back
-    to the Assistant table; for any other contact the value is purely local
-    metadata.
+    Only the contact that IS this body (``relationship == "self"``)
+    flows its job title back to the Assistant table; for every other
+    contact this value is purely body-local metadata.
     """
     from .backend_sync import sync_assistant_job_title
 
-    if contact_id != 0:
+    relationship = _relationship_for(self, contact_id)
+    if relationship != "self":
         return
     assistant_id = _get_assistant_id()
     if assistant_id is None:
@@ -535,9 +585,17 @@ def delete_contact(
     contact_id: int,
     _log_id: Optional[int] = None,
 ) -> ToolOutcome:
-    # Fast path: hard-coded protection for assistant and primary user
-    if contact_id in (0, 1):
-        raise RuntimeError("Cannot delete system contacts with id 0 or 1.")
+    # Fast path: an overlay relationship of "self" or "boss" protects
+    # the contact from deletion regardless of the shared-row flag.
+    # contact_id 0/1 are no longer reserved — Hive auto-counting picks
+    # whatever id is next — so the overlay is the authoritative signal.
+    relationship = _relationship_for(self, contact_id)
+    if relationship in ("self", "boss"):
+        raise RuntimeError(
+            f"Cannot delete system contact with id {contact_id} "
+            f"(relationship={relationship}). "
+            "System contacts represent the assistant itself or its primary human principal.",
+        )
 
     if _log_id is None:
         # Fetch with is_system to check for org member protection
@@ -615,8 +673,13 @@ def merge_contacts(
 
     keep_id = contact_id_1 if overrides.get("contact_id", 1) == 1 else contact_id_2
     delete_id = contact_id_2 if keep_id == contact_id_1 else contact_id_1
-    if delete_id in (0, 1):
-        raise RuntimeError("Cannot delete system contacts with id 0 or 1 during merge.")
+    delete_relationship = _relationship_for(self, delete_id)
+    if delete_relationship in ("self", "boss"):
+        raise RuntimeError(
+            f"Cannot delete system contact with id {delete_id} "
+            f"(relationship={delete_relationship}) during merge. "
+            "Flip 'contact_id' in overrides to keep the system row instead.",
+        )
 
     entries1 = log1.entries
     entries2 = log2.entries

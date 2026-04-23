@@ -811,7 +811,7 @@ class ContactManager(BaseContactManager):
         filter : str | None, default None
             A Python boolean expression evaluated with column names in scope. Examples:
             - ``"first_name == 'John' and surname == 'Doe'"``
-            - ``"contact_id != 0 and contact_id != 1"``
+            - ``"is_system != true"``
             - ``"email_address.endswith('@company.com')"``
             When ``None``, returns all contacts. String comparisons are case‑sensitive unless
             your expression applies a case‑normalisation.
@@ -894,8 +894,10 @@ class ContactManager(BaseContactManager):
         List[Contact]
             Up to ``k`` Pydantic ``Contact`` models. When semantic references are provided,
             results are sorted by similarity (ascending cosine distance). When references
-            are omitted/empty, returns the most recent contacts. System contacts (ids ``0``
-            and ``1``) are excluded.
+            are omitted/empty, returns the most recent contacts. System contacts
+            (those whose ContactMembership overlay carries
+            ``relationship == "self"`` or ``"boss"``, or whose shared
+            row is marked ``is_system=True``) are excluded.
 
         Notes
         -----
@@ -942,9 +944,10 @@ class ContactManager(BaseContactManager):
             Free‑form notes or description about the contact. Optional.
         job_title : str | None
             Free‑text job title / specialization (e.g. "Growth marketing",
-            "QA engineer"). On the assistant contact (``contact_id == 0``)
-            this mirrors the assistant's job title from the backend and is
-            surfaced to the LLM via the broader-context prompt. Optional.
+            "QA engineer"). On the contact whose ContactMembership
+            overlay has ``relationship == "self"`` this mirrors the
+            assistant's job title from the backend and is surfaced to
+            the LLM via the broader-context prompt. Optional.
         timezone : str | None
             IANA Timezone identifier (e.g. "America/New_York"). Optional.
         rolling_summary : str | None
@@ -981,9 +984,10 @@ class ContactManager(BaseContactManager):
 
         Behaviour and Edge Cases
         ------------------------
-        - If this is the very first contact in the table, the record is inserted immediately
-          and Unify will assign ``contact_id == 0`` (reserved for the assistant account).
-          Subsequent creations will receive the next available id.
+        - Unify auto-assigns ``contact_id`` via the auto-counting column on
+          the shared ``Contacts`` table; no id is reserved for any particular
+          role. System contacts are identified by their ``ContactMembership``
+          overlay relationship (``"self"`` / ``"boss"``) rather than their id.
         - ``response_policy`` defaults to a conservative policy that avoids sharing sensitive
           information when not explicitly provided.
         - Unspecified fields remain ``None`` and can be populated later via ``update_contact``.
@@ -1124,7 +1128,10 @@ class ContactManager(BaseContactManager):
         Raises
         ------
         RuntimeError
-            If attempting to delete reserved system contacts: ``0`` (assistant) or ``1`` (default user).
+            If attempting to delete a contact whose ContactMembership
+            overlay carries ``relationship == "self"`` or ``"boss"``,
+            or a shared row marked ``is_system=True`` when no overlay
+            has been minted yet.
         ValueError
             If the contact does not exist, or if multiple records share the same ``contact_id``
             (indicates data integrity issues).
@@ -1179,7 +1186,11 @@ class ContactManager(BaseContactManager):
             - If either contact cannot be found.
             - If any value in ``overrides`` is not ``1`` or ``2``.
         RuntimeError
-            If the merge would delete a protected system contact (ids ``0`` or ``1``).
+            If the merge would delete a system contact (the loser's
+            ContactMembership overlay carries
+            ``relationship == "self"`` or ``"boss"``). Flip
+            ``"contact_id"`` in ``overrides`` to keep the system row
+            instead.
 
         Notes
         -----
