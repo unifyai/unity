@@ -282,7 +282,15 @@ class ConversationManager(metaclass=SingletonABCMeta):
 
     @property
     def assistant_has_teams(self) -> bool:
-        """True when the assistant's email is backed by Microsoft (MS365)."""
+        """True when Microsoft Teams capabilities are available to this assistant.
+
+        Derived from the email provider rather than a dedicated flag because
+        Teams access is gated by the same MS365 OAuth grant that backs the
+        assistant's email — provisioning the Teams scopes without an MS365
+        mailbox is not a supported configuration. Update both `assistant_has_teams`
+        and `_assistant_has_teams` in `unity.comms.primitives` together if a
+        first-class Teams flag is ever introduced.
+        """
         return self.assistant_email_provider == "microsoft_365"
 
     @property
