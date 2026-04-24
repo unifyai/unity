@@ -1231,23 +1231,27 @@ async def update_session_contacts(
     user_whatsapp_number: str | None = None,
     assistant_job_title: str | None = None,
 ) -> None:
-    """
-    Update the assistant (contact_id=0) and boss (contact_id=1) contacts
-    in the ContactManager when session details change.
+    """Update the self/boss contacts in
+    :class:`~unity.contact_manager.contact_manager.ContactManager` in
+    response to an AssistantUpdateEvent.
 
-    Called when an AssistantUpdateEvent is received.
+    Ids come from :data:`SESSION_DETAILS.{assistant,user}.contact_id`; the
+    hard-coded demoer slot (``contact_id=2``) is updated separately from
+    the user_* fields.
 
-    Note: In demo mode, we skip updating the boss contact (contact_id=1) because
-    the user_* fields contain the demoer's details, not the prospect's. The
-    prospect's details are either:
-    - Set during initialization from demo metadata (prospect_* fields), or
-    - Updated dynamically via set_boss_details during the demo
+    In demo mode we skip the boss update because the user_* fields carry
+    the demoer's details, not the prospect's — the prospect's details are
+    seeded from demo metadata (``prospect_*``) or set dynamically via
+    ``set_boss_details``.
     """
     if cm.contact_manager is None:
         LOGGER.info(
             f"{ICONS['managers_worker']} [ManagersWorker] Cannot update contacts: contact_manager is None",
         )
         return
+
+    self_contact_id = SESSION_DETAILS.assistant.contact_id
+    boss_contact_id = SESSION_DETAILS.user.contact_id
 
     async def _update_contact(
         contact_id: int,
@@ -1257,6 +1261,8 @@ async def update_session_contacts(
         email_address: str,
         whatsapp_number: str | None = None,
         job_title: str | None = None,
+        *,
+        is_self: bool = False,
     ):
         try:
             kwargs: dict = dict(
@@ -1268,7 +1274,7 @@ async def update_session_contacts(
             )
             if whatsapp_number is not None:
                 kwargs["whatsapp_number"] = whatsapp_number
-            if job_title is not None and contact_id == 0:
+            if job_title is not None and is_self:
                 kwargs["job_title"] = job_title
             await asyncio.to_thread(
                 cm.contact_manager.update_contact,
@@ -1282,25 +1288,34 @@ async def update_session_contacts(
                 f"{ICONS['managers_worker']} [ManagersWorker] Failed to update contact {contact_id}: {e}",
             )
 
-    await _update_contact(
-        0,
-        assistant_first_name,
-        assistant_surname,
-        assistant_number,
-        assistant_email,
-        assistant_whatsapp_number,
-        # Pass through assistant_job_title so the AssistantUpdateEvent flow
-        # keeps contact 0 in sync with the backend's value (and triggers the
-        # backend sync helper, which is a no-op when the value matches).
-        assistant_job_title,
-    )
+    if self_contact_id is not None:
+        await _update_contact(
+            self_contact_id,
+            assistant_first_name,
+            assistant_surname,
+            assistant_number,
+            assistant_email,
+            assistant_whatsapp_number,
+            # Pass through assistant_job_title so the AssistantUpdateEvent flow
+            # keeps the self contact in sync with the backend's value (and
+            # triggers the backend sync helper, which is a no-op when the
+            # value matches).
+            assistant_job_title,
+            is_self=True,
+        )
+    else:
+        LOGGER.info(
+            f"{ICONS['managers_worker']} [ManagersWorker] Skipping self contact update: "
+            "SESSION_DETAILS.assistant.contact_id is None (bootstrap has not resolved it yet)",
+        )
 
     # In demo mode:
-    # - Skip updating boss contact (contact_id=1) - prospect details come from Orchestra meta
-    # - Update demoer contact (contact_id=2) with user_* fields (initially created in _init_managers)
+    # - Skip updating boss contact - prospect details come from Orchestra meta
+    # - Update demoer contact (contact_id=2, hard-coded demoer slot) with
+    #   user_* fields (initially created in _init_managers)
     if SETTINGS.DEMO_MODE:
         LOGGER.info(
-            f"{ICONS['managers_worker']} [ManagersWorker] Demo mode: skipping boss contact (contact_id=1), "
+            f"{ICONS['managers_worker']} [ManagersWorker] Demo mode: skipping boss contact, "
             "updating demoer contact (contact_id=2)",
         )
         await _update_contact(
@@ -1313,14 +1328,20 @@ async def update_session_contacts(
         )
         return
 
-    await _update_contact(
-        1,
-        user_first_name,
-        user_surname,
-        user_number,
-        user_email,
-        user_whatsapp_number,
-    )
+    if boss_contact_id is not None:
+        await _update_contact(
+            boss_contact_id,
+            user_first_name,
+            user_surname,
+            user_number,
+            user_email,
+            user_whatsapp_number,
+        )
+    else:
+        LOGGER.info(
+            f"{ICONS['managers_worker']} [ManagersWorker] Skipping boss contact update: "
+            "SESSION_DETAILS.user.contact_id is None (bootstrap has not resolved it yet)",
+        )
 
 
 # Queueing operations that need managers
