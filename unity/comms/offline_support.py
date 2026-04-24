@@ -173,11 +173,18 @@ def _log_outbound_history(
         "target_kind": metadata.get("target_kind"),
         "target_metadata": metadata.get("target_metadata") or {},
     }
+    self_contact_id = SESSION_DETAILS.assistant.contact_id
+    if self_contact_id is None:
+        raise RuntimeError(
+            "offline outbound persistence requires a bootstrap-resolved "
+            "self_contact_id; Orchestra has not materialized the body's "
+            "self ContactMembership overlay yet.",
+        )
     exchange_id, message_id = transcript_manager.log_first_message_in_new_exchange(
         {
             "medium": medium,
-            "sender_id": SESSION_DETAILS.assistant.contact_id or 0,
-            "receiver_ids": receiver_ids or [SESSION_DETAILS.assistant.contact_id or 0],
+            "sender_id": self_contact_id,
+            "receiver_ids": receiver_ids or [self_contact_id],
             "timestamp": datetime.now(timezone.utc),
             "content": content,
             "attachments": list(attachments or []),

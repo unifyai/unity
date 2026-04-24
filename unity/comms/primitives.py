@@ -315,7 +315,13 @@ class CommsPrimitives:
 
     def _assistant_anchor_contact(self) -> dict:
         """Return the assistant contact as a synthetic anchor for channel-only sends."""
-        assistant_contact_id = SESSION_DETAILS.assistant.contact_id or 0
+        assistant_contact_id = SESSION_DETAILS.assistant.contact_id
+        if assistant_contact_id is None:
+            raise RuntimeError(
+                "assistant anchor contact requires a bootstrap-resolved "
+                "self_contact_id; Orchestra has not materialized the body's "
+                "self ContactMembership overlay yet.",
+            )
         return self._get_contact(contact_id=assistant_contact_id) or {
             "contact_id": assistant_contact_id,
             "first_name": SESSION_DETAILS.assistant.first_name,
@@ -2413,7 +2419,7 @@ class CommsPrimitives:
         self,
         *,
         content: str,
-        contact_id: int | str = 1,
+        contact_id: int | str | None = None,
         attachment_filepaths: list[str] | None = None,
         tags: list[str] | None = None,
     ) -> dict[str, Any]:
@@ -2429,9 +2435,9 @@ class CommsPrimitives:
         ----------
         content : str
             Response text to send back to the waiting API caller.
-        contact_id : int | str, optional
-            Contact anchor for transcript logging, defaulting to the boss
-            contact.
+        contact_id : int | str | None, optional
+            Contact anchor for transcript logging. When omitted, resolves to
+            the body's boss contact via ``SESSION_DETAILS.user.contact_id``.
         attachment_filepaths : list[str] | None, optional
             Workspace-local file paths to upload and attach to the API response.
         tags : list[str] | None, optional
@@ -2444,6 +2450,17 @@ class CommsPrimitives:
             a status payload explaining that there was no pending API message or
             why the response could not be sent.
         """
+        if contact_id is None:
+            contact_id = SESSION_DETAILS.user.contact_id
+            if contact_id is None:
+                return {
+                    "status": "error",
+                    "error": (
+                        "send_api_response requires a bootstrap-resolved "
+                        "boss_contact_id; Orchestra has not materialized the "
+                        "body's boss ContactMembership overlay yet."
+                    ),
+                }
         contact_id = _coerce_contact_id(contact_id)
         api_message_id = getattr(self._cm, "_pending_api_message_id", None)
         if not api_message_id:
