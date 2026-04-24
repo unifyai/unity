@@ -6,7 +6,6 @@ import unify
 from pydantic import ValidationError
 
 from ..common.authoring import authoring_assistant_id
-from ..common.context_registry import ContextRegistry
 from ..common.log_utils import log as unity_log
 from ..common.tool_outcome import ToolOutcome
 from .settings import (
@@ -844,26 +843,16 @@ def merge_contacts(
         keep_id=keep_id,
     )
 
-    # Rewrite transcripts BEFORE deleting the merged contact to avoid FK SET NULL
-    try:
-        transcripts_ctx = f"{ContextRegistry.base_for('Transcripts')}/Transcripts"
-    except RuntimeError:
-        transcripts_ctx = "Transcripts"
+    # Rewrite every TranscriptManager reference to the merged contact
+    # BEFORE deleting the losing row, so the shared FK ``ON DELETE SET
+    # NULL`` cascades never run and strip sender/receiver/counterparty
+    # pointers off surviving rows. ``update_contact_id`` no-ops when
+    # neither Transcripts nor Exchanges has matching rows, so the call
+    # is safe to make unconditionally.
+    from unity.manager_registry import ManagerRegistry  # local import
 
-    try:
-        referenced = unify.get_logs(
-            context=transcripts_ctx,
-            filter=f"(sender_id == {delete_id}) or ({delete_id} in receiver_ids)",
-            limit=1,
-            return_ids_only=True,
-        )
-    except Exception:
-        referenced = []
-    if referenced:
-        from unity.manager_registry import ManagerRegistry  # local import
-
-        tm = ManagerRegistry.get_transcript_manager()
-        tm.update_contact_id(original_contact_id=delete_id, new_contact_id=keep_id)
+    tm = ManagerRegistry.get_transcript_manager()
+    tm.update_contact_id(original_contact_id=delete_id, new_contact_id=keep_id)
 
     # Finally, delete the merged contact (FK SET NULL won't fire since no references remain)
     delete_log_id = getattr(by_id[delete_id], "id", None)
