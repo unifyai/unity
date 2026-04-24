@@ -4,6 +4,7 @@ from typing import Dict, Optional, Set
 
 import unify
 
+from ..common.authoring import AUTHORING_COLUMN, authoring_assistant_id
 from ..common.log_utils import log as unity_log
 from ..common.context_registry import ContextRegistry
 from ..common.context_store import TableStore
@@ -132,6 +133,7 @@ def ensure_exchanges_records(
                     exchange_id=int(eid),
                     metadata={},
                     medium=(eid_to_medium or {}).get(int(eid), ""),
+                    **{AUTHORING_COLUMN: authoring_assistant_id()},
                     new=True,
                     mutable=True,
                     add_to_all_context=self.include_in_multi_assistant_table,

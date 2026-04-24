@@ -18,7 +18,6 @@ from __future__ import annotations
 
 from unity.common.context_registry import _HIVE_SCOPED_TABLES
 
-
 EXPECTED_HIVE_SCOPED_TABLES: frozenset[str] = frozenset(
     {
         "BlackList",
@@ -26,6 +25,7 @@ EXPECTED_HIVE_SCOPED_TABLES: frozenset[str] = frozenset(
         "Dashboards/Layouts",
         "Dashboards/Tiles",
         "Data",
+        "Exchanges",
         "FileRecords",
         "Files",
         "Functions/Compositional",
@@ -38,6 +38,7 @@ EXPECTED_HIVE_SCOPED_TABLES: frozenset[str] = frozenset(
         "SecretDefault",
         "Secrets",
         "Tasks",
+        "Transcripts",
     },
 )
 

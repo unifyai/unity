@@ -32,6 +32,7 @@ _HIVE_SCOPED_TABLES: Final[FrozenSet[str]] = frozenset(
         "Dashboards/Layouts",
         "Dashboards/Tiles",
         "Data",
+        "Exchanges",
         "FileRecords",
         "Files",
         "Functions/Compositional",
@@ -44,6 +45,7 @@ _HIVE_SCOPED_TABLES: Final[FrozenSet[str]] = frozenset(
         "SecretDefault",
         "Secrets",
         "Tasks",
+        "Transcripts",
     },
 )
 """Table names whose storage is shared across every body in a Hive.

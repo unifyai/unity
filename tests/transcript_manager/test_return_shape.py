@@ -9,22 +9,13 @@ conflict with the scenario's context management.
 from __future__ import annotations
 
 from unity.contact_manager.types.contact import Contact
+from unity.transcript_manager.types.message import Message
 
-_EXPECTED_FWD = {
-    "message_id": "mid",
-    "medium": "med",
-    "sender_id": "sid",
-    "receiver_ids": "rids",
-    "timestamp": "ts",
-    "content": "c",
-    "exchange_id": "xid",
-    "images": "imgs",
-    "attachments": "atts",
-}
-
-_EXPECTED_INV = {v: k for k, v in _EXPECTED_FWD.items()}
-
-# Contact shorthand legends (derived from Contact.SHORTHAND_MAP)
+# Pull the shorthand legends straight from the models so the assertions stay
+# locked to the source of truth. Hard-coding them here only invites drift
+# every time a new message or contact field lands.
+_EXPECTED_FWD = Message.shorthand_map()
+_EXPECTED_INV = Message.shorthand_inverse_map()
 _CONTACT_FWD = Contact.shorthand_map()
 _CONTACT_INV = Contact.shorthand_inverse_map()
 

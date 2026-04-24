@@ -35,6 +35,14 @@ class Message(BaseModel):
         description="ID of the conversation thread this message belongs to",
         ge=-1,
     )
+    authoring_assistant_id: Optional[int] = Field(
+        default=None,
+        description=(
+            "Assistant id of the body that authored this specific message. "
+            "Stamped once at log time and never rewritten; distinct from "
+            "Exchange.authoring_assistant_id which pins the exchange opener."
+        ),
+    )
     images: AnnotatedImageRefs = Field(
         default_factory=lambda: AnnotatedImageRefs.model_validate([]),
         description=(
@@ -62,6 +70,7 @@ class Message(BaseModel):
         "timestamp": "ts",
         "content": "c",
         "exchange_id": "xid",
+        "authoring_assistant_id": "auth_aid",
         "images": "imgs",
         "attachments": "atts",
         "metadata": "meta",
