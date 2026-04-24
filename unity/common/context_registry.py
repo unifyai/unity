@@ -1,5 +1,6 @@
 import logging
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from functools import lru_cache
 from typing import Any, Dict, Final, FrozenSet, List, Optional, Type, Union
 
 import unify
@@ -25,7 +26,25 @@ constant instead of hard-coding the literal.
 
 
 _HIVE_SCOPED_TABLES: Final[FrozenSet[str]] = frozenset(
-    {"Tasks", "Contacts", "Secrets", "SecretDefault"},
+    {
+        "BlackList",
+        "Contacts",
+        "Dashboards/Layouts",
+        "Dashboards/Tiles",
+        "Data",
+        "FileRecords",
+        "Files",
+        "Functions/Compositional",
+        "Functions/Meta",
+        "Functions/Primitives",
+        "Functions/VirtualEnvs",
+        "Guidance",
+        "Images",
+        "Knowledge",
+        "SecretDefault",
+        "Secrets",
+        "Tasks",
+    },
 )
 """Table names whose storage is shared across every body in a Hive.
 
@@ -34,6 +53,15 @@ manager resolves to the Hive root (``Hives/{hive_id}``) or to the per-body
 root (``{user_id}/{assistant_id}``). Add a table name here to make every
 body in a Hive read and write the same rows under
 ``Hives/{hive_id}/<Table>``.
+
+Per-body overlays onto Hive-shared parents (for example
+``ContactMembership``, ``SecretBinding``, ``OAuthTokens``) stay off this
+list so bodies in the same Hive can layer private state on top of shared
+rows without leaking into each other. ``Functions/VirtualEnvs`` is the
+catalog row for a virtual environment; the on-disk materialization still
+lives per-body because venv paths derive from the active Unify context,
+which stays body-scoped by invariant. File bytes stay per-body too — only
+the ``Files`` and ``FileRecords`` catalog rows are Hive-shared.
 """
 
 
@@ -112,14 +140,34 @@ class ContextRegistry:
         except AttributeError:
             return type(manager).__name__
 
+    @staticmethod
+    @lru_cache(maxsize=512)
+    def _is_hive_scoped(table_name: str) -> bool:
+        """Return True when ``table_name`` resolves onto the Hive root.
+
+        Child paths inherit the Hive-shared flag from any ancestor in
+        :data:`_HIVE_SCOPED_TABLES`, so dynamic sub-tables like
+        ``Data/<dataset>`` or ``Knowledge/<user_table>`` route to the
+        same Hive root as their parent without re-registering.
+        """
+        if table_name in _HIVE_SCOPED_TABLES:
+            return True
+        idx = table_name.rfind("/")
+        while idx > 0:
+            if table_name[:idx] in _HIVE_SCOPED_TABLES:
+                return True
+            idx = table_name.rfind("/", 0, idx)
+        return False
+
     @classmethod
     def base_for(cls, table_name: str) -> str:
         """Return the context base for a manager's table.
 
-        Tables in :data:`_HIVE_SCOPED_TABLES` resolve to
-        ``Hives/{SESSION_DETAILS.hive_id}`` when the active body belongs to
-        a Hive, giving every member of the Hive a shared storage root.
-        Every other table resolves to the per-body base
+        Tables flagged by :meth:`_is_hive_scoped` — i.e. whose own name
+        or any parent path appears in :data:`_HIVE_SCOPED_TABLES` —
+        resolve to ``Hives/{SESSION_DETAILS.hive_id}`` when the active
+        body belongs to a Hive, giving every member of the Hive a shared
+        storage root. Every other table resolves to the per-body base
         (``{user_id}/{assistant_id}``) regardless of Hive membership, so
         body-scoped surfaces (events, per-body task activations, per-body
         overlays) keep their private path even inside a Hive.
@@ -138,7 +186,7 @@ class ContextRegistry:
             ``unknown/unknown`` fallback would hide a genuine configuration
             bug from the caller.
         """
-        if table_name in _HIVE_SCOPED_TABLES and SESSION_DETAILS.hive_id is not None:
+        if cls._is_hive_scoped(table_name) and SESSION_DETAILS.hive_id is not None:
             return f"{HIVE_CONTEXT_PREFIX}{int(SESSION_DETAILS.hive_id)}"
         base = cls._base_context or cls._get_active_context()
         if not base:
