@@ -75,7 +75,10 @@ class AssistantDetails:
     email_provider: str = "google_workspace"
     whatsapp_number: str = ""
     discord_bot_id: str = ""
-    contact_id: int = 0  # Contact ID in Contacts table
+    # Resolved ``ContactMembership`` id for this body's self-contact,
+    # delivered by the bootstrap. ``None`` until Orchestra has materialized
+    # the ``relationship == "self"`` membership row.
+    contact_id: int | None = None
     desktop_mode: str = "ubuntu"  # "ubuntu" or "windows" - determines VM type
     desktop_url: str | None = None  # URL for managed VM desktop access
     user_desktop_mode: str | None = (
@@ -101,7 +104,10 @@ class UserDetails:
     number: str = ""
     email: str = ""
     whatsapp_number: str = ""
-    contact_id: int = 1  # Contact ID in Contacts table
+    # Resolved ``ContactMembership`` id for the boss contact. Populated from
+    # the bootstrap payload; ``None`` until Orchestra has materialized the
+    # ``relationship == "boss"`` membership row for this body.
+    contact_id: int | None = None
 
     @property
     def name(self) -> str:
@@ -305,7 +311,8 @@ class SessionDetails:
         assistant_email_provider: str = "google_workspace",
         assistant_whatsapp_number: str = "",
         assistant_discord_bot_id: str = "",
-        assistant_contact_id: int = 0,
+        self_contact_id: int | None = None,
+        boss_contact_id: int | None = None,
         user_id: str = "",
         user_first_name: str = "",
         user_surname: str = "",
@@ -341,7 +348,8 @@ class SessionDetails:
         self.assistant.email_provider = assistant_email_provider
         self.assistant.whatsapp_number = assistant_whatsapp_number
         self.assistant.discord_bot_id = assistant_discord_bot_id
-        self.assistant.contact_id = assistant_contact_id
+        self.assistant.contact_id = self_contact_id
+        self.user.contact_id = boss_contact_id
         self.assistant.binding_id = binding_id
         self.assistant.desktop_mode = desktop_mode
         self.assistant.user_desktop_mode = user_desktop_mode
@@ -394,6 +402,7 @@ class SessionDetails:
         os.environ["ASSISTANT_EMAIL"] = self.assistant.email
         os.environ["ASSISTANT_EMAIL_PROVIDER"] = self.assistant.email_provider
         os.environ["ASSISTANT_WHATSAPP_NUMBER"] = self.assistant.whatsapp_number
+        os.environ["ASSISTANT_DISCORD_BOT_ID"] = self.assistant.discord_bot_id
         os.environ["ASSISTANT_DESKTOP_MODE"] = self.assistant.desktop_mode
         os.environ["ASSISTANT_DESKTOP_URL"] = self.assistant.desktop_url or ""
         os.environ["ASSISTANT_USER_DESKTOP_MODE"] = (
@@ -416,6 +425,14 @@ class SessionDetails:
             ",".join(str(t) for t in self.team.ids) if self.team.ids else ""
         )
         os.environ["HIVE_ID"] = str(self.hive.id) if self.hive.id is not None else ""
+        os.environ["SELF_CONTACT_ID"] = (
+            str(self.assistant.contact_id)
+            if self.assistant.contact_id is not None
+            else ""
+        )
+        os.environ["BOSS_CONTACT_ID"] = (
+            str(self.user.contact_id) if self.user.contact_id is not None else ""
+        )
         os.environ["VOICE_PROVIDER"] = self.voice.provider
         os.environ["VOICE_ID"] = self.voice.id
         os.environ["VOICE_MODE"] = self.voice.mode
@@ -461,10 +478,15 @@ class SessionDetails:
             self.assistant.whatsapp_number = val
         if val := os.environ.get("ASSISTANT_DISCORD_BOT_ID"):
             self.assistant.discord_bot_id = val
-        if val := os.environ.get("ASSISTANT_CONTACT_ID"):
+        if (val := os.environ.get("SELF_CONTACT_ID")) is not None and val != "":
             try:
                 self.assistant.contact_id = int(val)
-            except ValueError:
+            except (TypeError, ValueError):
+                pass
+        if (val := os.environ.get("BOSS_CONTACT_ID")) is not None and val != "":
+            try:
+                self.user.contact_id = int(val)
+            except (TypeError, ValueError):
                 pass
         if val := os.environ.get("ASSISTANT_DESKTOP_MODE"):
             self.assistant.desktop_mode = val
