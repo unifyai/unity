@@ -30,6 +30,7 @@ from .prompt_builders import build_ask_prompt, build_update_prompt
 from ..common.filter_utils import normalize_filter_expr
 from ..common.search_utils import table_search_top_k, is_plain_identifier
 from ..common.context_registry import ContextRegistry, TableContext
+from ..common.authoring import authoring_assistant_id
 from ..session_details import SESSION_DETAILS
 from .settings import (
     OAUTH_TOKENS_TABLE,
@@ -37,13 +38,6 @@ from .settings import (
     SECRET_DEFAULT_TABLE,
     SECRETS_TABLE,
 )
-
-
-def _authoring_assistant_id() -> Optional[int]:
-    """Return the active body's assistant id for audit stamping, if available."""
-    if not SESSION_DETAILS.is_initialized:
-        return None
-    return SESSION_DETAILS.assistant.agent_id
 
 
 class SecretManager(BaseSecretManager):
@@ -639,7 +633,7 @@ class SecretManager(BaseSecretManager):
             entries = existing[0].entries or {}
             updates: Dict[str, Any] = {"secret_id": int(secret_id)}
             if entries.get("authoring_assistant_id") is None:
-                updates["authoring_assistant_id"] = _authoring_assistant_id()
+                updates["authoring_assistant_id"] = authoring_assistant_id()
             unify.update_logs(
                 logs=[existing[0].id],
                 context=context,
@@ -651,7 +645,7 @@ class SecretManager(BaseSecretManager):
             context=context,
             integration=integration,
             secret_id=int(secret_id),
-            authoring_assistant_id=_authoring_assistant_id(),
+            authoring_assistant_id=authoring_assistant_id(),
             new=True,
             mutable=True,
             add_to_all_context=False,
@@ -1330,7 +1324,7 @@ class SecretManager(BaseSecretManager):
             "name": name,
             "value": value,
             "description": description or "",
-            "authoring_assistant_id": _authoring_assistant_id(),
+            "authoring_assistant_id": authoring_assistant_id(),
         }
         unity_log(
             context=self._ctx,

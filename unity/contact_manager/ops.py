@@ -5,6 +5,7 @@ from typing import Any, Dict, Final, Optional
 import unify
 from pydantic import ValidationError
 
+from ..common.authoring import authoring_assistant_id
 from ..common.context_registry import ContextRegistry
 from ..common.log_utils import log as unity_log
 from ..common.tool_outcome import ToolOutcome
@@ -22,15 +23,6 @@ from .custom_columns import sanitize_custom_columns
 _AUDIT_FIELDS: Final[frozenset[str]] = frozenset(
     {"assistant_id", "authoring_assistant_id", "is_system"},
 )
-
-
-def _get_assistant_id() -> int | None:
-    """Get assistant_id from SESSION_DETAILS, returning None if unavailable."""
-    from ..session_details import SESSION_DETAILS
-
-    if not SESSION_DETAILS.is_initialized:
-        return None
-    return SESSION_DETAILS.assistant.agent_id
 
 
 def _relationship_for(self, contact_id: int) -> Optional[str]:
@@ -186,7 +178,7 @@ def _maybe_sync_timezone_to_backend(
     """
     from .backend_sync import sync_assistant_timezone, sync_user_timezone
 
-    assistant_id = _get_assistant_id()
+    assistant_id = authoring_assistant_id()
     if assistant_id is None:
         return
 
@@ -228,7 +220,7 @@ def _maybe_sync_bio_to_backend(
     """
     from .backend_sync import sync_assistant_about, sync_user_bio
 
-    assistant_id = _get_assistant_id()
+    assistant_id = authoring_assistant_id()
     if assistant_id is None:
         return
 
@@ -271,7 +263,7 @@ def _maybe_sync_job_title_to_backend(
     relationship = _relationship_for(self, contact_id)
     if relationship != "self":
         return
-    assistant_id = _get_assistant_id()
+    assistant_id = authoring_assistant_id()
     if assistant_id is None:
         return
     sync_assistant_job_title(assistant_id, job_title)
@@ -333,7 +325,7 @@ def create_contact(
         "rolling_summary": rolling_summary,
         "is_system": bool(_is_system),
         "assistant_id": _assistant_id,
-        "authoring_assistant_id": _get_assistant_id(),
+        "authoring_assistant_id": authoring_assistant_id(),
     }
 
     if kwargs:
