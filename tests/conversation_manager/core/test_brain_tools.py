@@ -334,6 +334,7 @@ class TestActionToolsAsTools:
         tools = brain_action_tools.as_tools()
         expected = {
             "join_google_meet",
+            "join_teams_meet",
             "send_sms",
             "send_unify_message",
             "send_api_response",
