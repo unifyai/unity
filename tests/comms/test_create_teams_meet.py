@@ -331,13 +331,22 @@ async def test_create_teams_meet_scheduled_attendee_inline_email(monkeypatch):
         "email_address": None,
         "should_respond": True,
     }
-    comms._get_contact = lambda **kwargs: dict(contact_no_email)
+    # Mutable roster so a refetch after `update_contact` observes the inline
+    # email attachment (mirrors how the real contact manager behaves).
+    roster: dict[int, dict] = {9: dict(contact_no_email)}
+    comms._get_contact = lambda **kwargs: (
+        dict(roster[kwargs["contact_id"]])
+        if kwargs.get("contact_id") in roster
+        else None
+    )
     comms._find_conflicting_contact = lambda **kwargs: None
-    comms._contact_manager = lambda: type(
-        "_CM",
-        (),
-        {"update_contact": lambda self, **kw: None},
-    )()
+
+    class _CM:
+        def update_contact(self, **kw):
+            cid = kw.pop("contact_id")
+            roster[cid].update({k: v for k, v in kw.items() if v is not None})
+
+    comms._contact_manager = lambda: _CM()
 
     captured: list[dict] = []
 

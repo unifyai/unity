@@ -97,7 +97,12 @@ def mock_cm():
     cm.initialized = True
     cm.call_manager.has_active_call = False
     cm.call_manager.has_active_google_meet = False
+    cm.call_manager.has_active_teams_meet = False
+    cm.call_manager.has_gmeet_presenting = False
+    cm.call_manager.has_teams_presenting = False
+    cm.call_manager._meet_joining = False
     cm.call_manager._whatsapp_call_joining = False
+    cm.assistant_has_teams = False
     # Set up SimulatedContactManager (starts with system contacts 0 and 1)
     cm.contact_manager = _setup_mock_contacts(cm.contact_index, [])
     return cm

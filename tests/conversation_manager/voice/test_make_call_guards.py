@@ -42,7 +42,12 @@ def _make_mock_cm(*, mode=Mode.TEXT, has_call_proc=False, assistant_number="+155
     cm.call_manager._call_proc = MagicMock() if has_call_proc else None
     cm.call_manager.has_active_call = has_call_proc
     cm.call_manager.has_active_google_meet = False
+    cm.call_manager.has_active_teams_meet = False
+    cm.call_manager.has_gmeet_presenting = False
+    cm.call_manager.has_teams_presenting = False
+    cm.call_manager._meet_joining = False
     cm.call_manager._whatsapp_call_joining = False
+    cm.assistant_has_teams = False
     cm.computer_fast_path_eligible = False
     return cm
 
