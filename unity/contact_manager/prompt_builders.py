@@ -17,6 +17,7 @@ from ..common.prompt_helpers import (
     compose_system_prompt,
     special_contacts_block as _special_contacts_block,
 )
+from ..session_details import SESSION_DETAILS
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Internal helpers
@@ -164,8 +165,13 @@ Anti‑patterns to avoid
             ],
         )
 
-    # Special contacts via shared helper
-    special_block = _special_contacts_block()
+    # Special contacts via shared helper. ``SESSION_DETAILS`` carries
+    # the bootstrap-resolved ``self_contact_id`` and ``boss_contact_id``;
+    # the helper renders a roster-shaped fallback when either is unset.
+    special_block = _special_contacts_block(
+        self_contact_id=SESSION_DETAILS.assistant.contact_id,
+        boss_contact_id=SESSION_DETAILS.user.contact_id,
+    )
 
     # Early exit policy for mutation-intent requests reaching ask() is handled by composer toggle
 
@@ -347,8 +353,12 @@ Anti‑patterns to avoid
             ],
         )
 
-    # Compose using standardized composer with schema-based table info
-    special_block = _special_contacts_block()
+    # Compose using standardized composer with schema-based table info.
+    # See ``build_ask_prompt`` above for the resolution contract.
+    special_block = _special_contacts_block(
+        self_contact_id=SESSION_DETAILS.assistant.contact_id,
+        boss_contact_id=SESSION_DETAILS.user.contact_id,
+    )
 
     # Schemas: Contact for table columns, ColumnType for custom column creation
     schemas = [

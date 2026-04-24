@@ -26,7 +26,6 @@ from ..common.async_tool_loop import (
 )
 from ..common.model_to_fields import model_to_fields
 from ..events.manager_event_logging import log_manager_call
-from .settings import CONTACT_MEMBERSHIP_TABLE
 from ..settings import SETTINGS
 from ..common.read_only_ask_guard import ReadOnlyAskGuardHandle
 from ..common.llm_client import new_llm_client
@@ -41,10 +40,16 @@ from .storage import (
 )
 from .system_contacts import (
     _ensure_columns_exist as _sys_ensure_columns_exist,
+    _overlay_contact_id_for_relationship as _sys_overlay_contact_id_for_relationship,
     provision_assistant_contact as _sys_provision_assistant_contact,
     provision_user_contact as _sys_provision_user_contact,
     provision_org_member_contacts as _sys_provision_org_member_contacts,
     provision_system_overlays as _sys_provision_system_overlays,
+)
+from .settings import (
+    CONTACT_MEMBERSHIP_TABLE,
+    RELATIONSHIP_BOSS,
+    RELATIONSHIP_SELF,
 )
 from .custom_columns import (
     create_custom_column as _cc_create,
@@ -1421,27 +1426,43 @@ class ContactManager(BaseContactManager):
         can rely on the overlay as the source of truth for
         ``relationship`` / ``should_respond`` / ``response_policy``.
 
+        Shared rows are located via the body's ``ContactMembership``
+        overlay (``relationship == "self" | "boss"``); bodies with no
+        overlay yet fall through to the create paths inside the
+        provision helpers.
+
         Org-member fan-out runs last and returns early outside of
         organization-scoped API key sessions.
         """
-        existing_logs = unify.get_logs(
-            context=self._ctx,
-            filter="contact_id == 0 or contact_id == 1",
-            limit=2,
-        )
-        logs_by_contact_id = {
-            int(lg.entries.get("contact_id")): lg
-            for lg in existing_logs
-            if lg.entries.get("contact_id") is not None
-        }
-        assistant_log = logs_by_contact_id.get(0)
-        user_log = logs_by_contact_id.get(1)
+        assistant_log = self._shared_row_for_relationship(RELATIONSHIP_SELF)
+        user_log = self._shared_row_for_relationship(RELATIONSHIP_BOSS)
         _sys_provision_assistant_contact(self, assistant_log)
         _sys_provision_user_contact(self, user_log)
 
         _sys_provision_system_overlays(self)
 
         _sys_provision_org_member_contacts(self)
+
+    def _shared_row_for_relationship(self, relationship: str):
+        """Return the shared ``Contacts`` row for this body's ``relationship`` overlay.
+
+        Resolves the body's ``ContactMembership`` row for *relationship*
+        (``"self"`` or ``"boss"``), then loads the corresponding row from
+        the shared ``Contacts`` table. Returns ``None`` when either lookup
+        misses — the body has no overlay yet or the shared row was wiped.
+        """
+        contact_id = _sys_overlay_contact_id_for_relationship(self, relationship)
+        if contact_id is None:
+            return None
+        try:
+            rows = unify.get_logs(
+                context=self._ctx,
+                filter=f"contact_id == {int(contact_id)}",
+                limit=1,
+            )
+        except Exception:
+            return None
+        return rows[0] if rows else None
 
     # Validation / sanitization
     def _allowed_fields(self) -> list[str]:

@@ -85,8 +85,8 @@ def _resolve_user_details(self) -> Dict[str, Any]:
     When SESSION_DETAILS has not been initialized (e.g., during tests),
     returns default user info to avoid calling real APIs.
 
-    In DEMO_MODE, returns empty details because the boss (contact_id==1)
-    is the prospect being demoed to — their details are unknown at startup
+    In DEMO_MODE, returns empty details because the boss is the
+    prospect being demoed to — their details are unknown at startup
     and will be learned organically during the demo conversation.
 
     Returns
@@ -97,9 +97,9 @@ def _resolve_user_details(self) -> Dict[str, Any]:
     from ..session_details import SESSION_DETAILS
     from ..settings import SETTINGS
 
-    # In demo mode, there is no real user account backing contact_id==1.
-    # The prospect's details will be populated during the demo via
-    # set_boss_details / inline communication tools.
+    # In demo mode, there is no real user account backing the boss
+    # contact. The prospect's details will be populated during the demo
+    # via set_boss_details / inline communication tools.
     if SETTINGS.DEMO_MODE:
         return {}
 
@@ -201,11 +201,11 @@ def provision_assistant_contact(self, assistant_log) -> None:
     if ast.agent_id is not None:
         base_fields["_assistant_id"] = int(ast.agent_id)
 
-        # The caller only probed ``contact_id == 0`` — which belongs to
-        # the Hive's first body. Every subsequent body must find its own
-        # row by ``assistant_id`` and reject the seeded row when it is
-        # already owned by a Hive-mate, otherwise the placeholder update
-        # below would leave a duplicate self contact behind.
+        # Hive-mate bodies must each own their own shared row. The
+        # overlay-based lookup above finds this body's row when the
+        # overlay is already materialized; as a second guard, pick up
+        # any shared row stamped with this body's ``assistant_id`` even
+        # if the overlay drifted.
         own_row = _shared_contact_row_by_assistant_id(self, ast.agent_id)
         if own_row is not None:
             assistant_log = own_row
@@ -264,7 +264,7 @@ def provision_assistant_contact(self, assistant_log) -> None:
                 or needs_surname
             ):
                 update_kwargs: Dict[str, Any] = {
-                    "contact_id": 0,
+                    "contact_id": int(assistant_log.entries["contact_id"]),
                     "_log_id": assistant_log.id,
                 }
                 if needs_timezone:
@@ -310,7 +310,7 @@ def provision_assistant_contact(self, assistant_log) -> None:
 
 
 def provision_user_contact(self, user_log) -> None:
-    """Provision the user system contact (id == 1).
+    """Provision the boss system contact for this body.
 
     Creates or updates the user (boss) contact using details resolved from
     SESSION_DETAILS, the Unify API, or default values.
@@ -331,7 +331,7 @@ def provision_user_contact(self, user_log) -> None:
                 entries = user_log.entries
                 if entries.get("is_system") is not True:
                     self.update_contact(
-                        contact_id=1,
+                        contact_id=int(entries["contact_id"]),
                         _log_id=user_log.id,
                         is_system=True,
                     )
@@ -430,7 +430,7 @@ def provision_user_contact(self, user_log) -> None:
                 or needs_is_system
             ):
                 update_kwargs: Dict[str, Any] = {
-                    "contact_id": 1,
+                    "contact_id": int(user_log.entries["contact_id"]),
                     "_log_id": user_log.id,
                 }
                 if needs_timezone:
@@ -572,42 +572,6 @@ def provision_self_contact(self) -> None:
         existing = _shared_contact_row_by_assistant_id(self, agent_id)
         if existing is not None:
             shared_contact_id = int(existing.entries.get("contact_id"))
-
-    if shared_contact_id is None:
-        # Claim the seeded ``contact_id == 0`` row only when it is
-        # genuinely unstamped (legacy / freshly provisioned) or already
-        # belongs to this body. A row stamped with a different
-        # ``assistant_id`` represents a Hive-mate body's self row — this
-        # body must mint its own shared row instead.
-        try:
-            seeded = unify.get_logs(
-                context=self._ctx,
-                filter="contact_id == 0",
-                limit=1,
-                from_fields=["contact_id", "assistant_id"],
-            )
-        except Exception:
-            seeded = []
-        if seeded:
-            seeded_assistant_id = seeded[0].entries.get("assistant_id")
-            same_body = agent_id is not None and seeded_assistant_id == int(agent_id)
-            if seeded_assistant_id is None or same_body:
-                try:
-                    shared_contact_id = int(seeded[0].entries.get("contact_id"))
-                except Exception:
-                    shared_contact_id = None
-                if (
-                    shared_contact_id is not None
-                    and seeded_assistant_id is None
-                    and agent_id is not None
-                ):
-                    try:
-                        self.update_contact(
-                            contact_id=shared_contact_id,
-                            assistant_id=int(agent_id),
-                        )
-                    except Exception:
-                        pass
 
     if shared_contact_id is None:
         create_kwargs: Dict[str, Any] = {
@@ -784,22 +748,6 @@ def provision_boss_overlay(self) -> None:
                 continue
 
     if shared_contact_id is None:
-        # Fall back to the reserved ``contact_id == 1`` row that
-        # ``provision_user_contact`` always seeds. A later merge_contacts
-        # can still rewrite the overlay to point at a richer row.
-        try:
-            seeded = unify.get_logs(
-                context=self._ctx,
-                filter="contact_id == 1",
-                limit=1,
-                from_fields=["contact_id"],
-            )
-            if seeded:
-                shared_contact_id = int(seeded[0].entries.get("contact_id"))
-        except Exception:
-            shared_contact_id = None
-
-    if shared_contact_id is None:
         return
 
     try:
@@ -849,8 +797,7 @@ def provision_org_member_contacts(self) -> None:
         return
 
     # Resolve the boss email via the per-body overlay → shared row
-    # lookup so the exclusion is keyed on this body's declared boss,
-    # not a hard-coded ``contact_id == 1``.
+    # lookup so the exclusion is keyed on this body's declared boss.
     primary_user_email = None
     boss_contact_id = _boss_contact_id_for_body(self)
     if boss_contact_id is not None:
@@ -871,7 +818,7 @@ def provision_org_member_contacts(self) -> None:
         if not email:
             continue
 
-        # Skip primary user (already synced as id=1)
+        # Skip the primary user — their boss overlay is already provisioned.
         if primary_user_email and email.lower() == primary_user_email.lower():
             continue
 
