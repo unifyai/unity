@@ -123,3 +123,12 @@ class Function(BaseModel):
             "Present for functions defined in the custom/ folder."
         ),
     )
+
+    authoring_assistant_id: Optional[int] = Field(
+        None,
+        description=(
+            "Assistant id of the body that authored this row. Stamped once at "
+            "create time and preserved across updates so reviewers can attribute "
+            "rows shared inside a Hive."
+        ),
+    )

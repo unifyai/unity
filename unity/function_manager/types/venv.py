@@ -38,3 +38,12 @@ class VirtualEnv(BaseModel):
             "Present for venvs defined in the custom/venvs/ folder."
         ),
     )
+    authoring_assistant_id: Optional[int] = Field(
+        None,
+        description=(
+            "Assistant id of the body that authored this catalog row. The "
+            "on-disk venv materialization is per-body because the venv path "
+            "derives from the active Unify context; this field only records "
+            "which body first published the catalog entry inside the Hive."
+        ),
+    )

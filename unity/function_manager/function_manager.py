@@ -34,6 +34,7 @@ from typing import (
 import unify
 from .shell_pool import ShellPool
 from unify.utils.http import RequestError as _UnifyRequestError
+from ..common.authoring import AUTHORING_COLUMN, authoring_assistant_id
 from ..common.log_utils import create_logs as unity_create_logs
 from ..common.embed_utils import ensure_vector_column, list_private_fields
 from ..common.search_utils import table_search_top_k
@@ -2095,7 +2096,11 @@ class FunctionManager(BaseFunctionManager):
                 unity_create_logs(
                     context=self._meta_ctx,
                     entries=[
-                        {"meta_id": 1, "primitives_hash_by_manager": hash_by_manager},
+                        {
+                            "meta_id": 1,
+                            "primitives_hash_by_manager": hash_by_manager,
+                            AUTHORING_COLUMN: authoring_assistant_id(),
+                        },
                     ],
                     add_to_all_context=self.include_in_multi_assistant_table,
                 )
@@ -2142,6 +2147,7 @@ class FunctionManager(BaseFunctionManager):
         if not primitives:
             return
 
+        stamp = authoring_assistant_id()
         entries = []
         for data in primitives:
             entry = {
@@ -2160,6 +2166,7 @@ class FunctionManager(BaseFunctionManager):
                 "guidance_ids": [],
                 "primitive_class": data.get("primitive_class"),
                 "primitive_method": data.get("primitive_method"),
+                AUTHORING_COLUMN: stamp,
             }
             entries.append(entry)
 
@@ -2187,6 +2194,18 @@ class FunctionManager(BaseFunctionManager):
         3. Batch delete all changed managers' primitives (one call)
         4. Batch insert all new primitives (one call)
         5. Update Meta with new hashes (one call)
+
+        Hive-shared catalog semantics
+        -----------------------------
+        ``Functions/Primitives`` is a *catalog*, not a source-of-truth for
+        "executable anywhere in the Hive". Each body writes the primitives
+        for its own configured ``PrimitiveScope``; the shared table is the
+        union of every body's registered managers and bodies with narrower
+        scopes do not remove extras contributed by other bodies.
+        ``compute_primitives_hash`` hashes names, signatures, and docstrings
+        only, so divergent manager implementations with identical signatures
+        are not flagged as a conflict. Each body's executor still only
+        invokes the primitives registered in its own process.
 
         Returns:
             True if sync was performed, False if already up-to-date.
@@ -2299,7 +2318,13 @@ class FunctionManager(BaseFunctionManager):
                 # Create the meta row if it doesn't exist
                 unity_create_logs(
                     context=self._meta_ctx,
-                    entries=[{"meta_id": 1, "custom_functions_hash": hash_value}],
+                    entries=[
+                        {
+                            "meta_id": 1,
+                            "custom_functions_hash": hash_value,
+                            AUTHORING_COLUMN: authoring_assistant_id(),
+                        },
+                    ],
                     add_to_all_context=self.include_in_multi_assistant_table,
                 )
         except Exception as e:
@@ -2341,8 +2366,14 @@ class FunctionManager(BaseFunctionManager):
             function_id=function_id,
             raise_if_missing=True,
         )
-        # Update all fields except function_id (preserve it)
-        update_data = {k: v for k, v in data.items() if k != "function_id"}
+        # Update all fields except function_id and authoring_assistant_id;
+        # authoring_assistant_id is stamped once at create time and must not
+        # change on updates, merges, or re-sync refreshes.
+        update_data = {
+            k: v
+            for k, v in data.items()
+            if k not in {"function_id", AUTHORING_COLUMN}
+        }
         unify.update_logs(
             context=self._compositional_ctx,
             logs=[log.id],
@@ -2354,6 +2385,7 @@ class FunctionManager(BaseFunctionManager):
         """Insert a new custom function."""
         # Remove function_id if present - let it be auto-assigned
         insert_data = {k: v for k, v in data.items() if k != "function_id"}
+        insert_data.setdefault(AUTHORING_COLUMN, authoring_assistant_id())
         result = unity_create_logs(
             context=self._compositional_ctx,
             entries=[insert_data],
@@ -2413,7 +2445,13 @@ class FunctionManager(BaseFunctionManager):
             else:
                 unity_create_logs(
                     context=self._meta_ctx,
-                    entries=[{"meta_id": 1, "custom_venvs_hash": hash_value}],
+                    entries=[
+                        {
+                            "meta_id": 1,
+                            "custom_venvs_hash": hash_value,
+                            AUTHORING_COLUMN: authoring_assistant_id(),
+                        },
+                    ],
                     add_to_all_context=self.include_in_multi_assistant_table,
                 )
         except Exception as e:
@@ -2454,7 +2492,11 @@ class FunctionManager(BaseFunctionManager):
         )
         if not logs:
             raise ValueError(f"VirtualEnv with ID {venv_id} not found")
-        update_data = {k: v for k, v in data.items() if k != "venv_id"}
+        update_data = {
+            k: v
+            for k, v in data.items()
+            if k not in {"venv_id", AUTHORING_COLUMN}
+        }
         unify.update_logs(
             context=self._venvs_ctx,
             logs=[logs[0].id],
@@ -2465,6 +2507,7 @@ class FunctionManager(BaseFunctionManager):
     def _insert_custom_venv(self, data: Dict[str, Any]) -> int:
         """Insert a new custom venv."""
         insert_data = {k: v for k, v in data.items() if k != "venv_id"}
+        insert_data.setdefault(AUTHORING_COLUMN, authoring_assistant_id())
         result = unity_create_logs(
             context=self._venvs_ctx,
             entries=[insert_data],
@@ -2865,6 +2908,7 @@ class FunctionManager(BaseFunctionManager):
         # the root object.  All primitives live under a single "primitives"
         # namespace.
         env_namespaces = frozenset({"primitives"})
+        stamp = authoring_assistant_id()
 
         for name, tree, node, source in parsed:
             if name in duplicates_to_skip:
@@ -2933,6 +2977,7 @@ class FunctionManager(BaseFunctionManager):
                     # Create new function
                     entry_data["name"] = name
                     entry_data["guidance_ids"] = []
+                    entry_data[AUTHORING_COLUMN] = stamp
                     entries_to_create.append(entry_data)
                     results[name] = "added"
             except ValueError as e:
@@ -3067,6 +3112,7 @@ class FunctionManager(BaseFunctionManager):
         entries_to_update: List[Dict[str, Any]] = []
         log_ids_to_update: List[int] = []
         log_id_to_name: Dict[int, str] = {}
+        stamp = authoring_assistant_id()
 
         for name, argspec, docstring, source, lang in parsed:
             if name in duplicates_to_skip:
@@ -3102,6 +3148,7 @@ class FunctionManager(BaseFunctionManager):
                     # Create new function
                     entry_data["name"] = name
                     entry_data["guidance_ids"] = []
+                    entry_data[AUTHORING_COLUMN] = stamp
                     entries_to_create.append(entry_data)
                     results[name] = "added"
 
@@ -4308,7 +4355,12 @@ class FunctionManager(BaseFunctionManager):
         """
         result = unity_create_logs(
             context=self._venvs_ctx,
-            entries=[{"venv": venv}],
+            entries=[
+                {
+                    "venv": venv,
+                    AUTHORING_COLUMN: authoring_assistant_id(),
+                },
+            ],
             add_to_all_context=self.include_in_multi_assistant_table,
         )
         # unity_create_logs can return either a dict or a list of Log objects
@@ -4468,17 +4520,25 @@ class FunctionManager(BaseFunctionManager):
     # ------------------------------------------------------------------ #
 
     def _get_venv_base_dir(self) -> Path:
-        """Get the base directory for all custom venvs.
+        """Return the on-disk base directory for virtual environments.
 
-        The path includes the Unify context name to ensure isolation between
-        different assistants/users and during parallel test runs.
+        The path includes the Unify active-context name to ensure isolation
+        between different assistants/users and during parallel test runs.
+
+        On-disk-vs-catalog invariant
+        ----------------------------
+        Only the ``Functions/VirtualEnvs`` *catalog row* is Hive-shared —
+        every body sees the same pyproject definition. The *on-disk
+        materialization* of the venv stays per-body because it derives from
+        ``unify.get_active_context()``, which remains body-scoped by design.
+        A new body joining a Hive therefore materializes its own copy of the
+        environment locally the first time it is used; no cross-body disk
+        sharing happens through this path.
         """
         from unity.file_manager.settings import get_local_root
 
-        # Get current context for isolation
         ctx = unify.get_active_context()
         ctx_name = ctx.get("read") or ctx.get("write") or "default"
-        # Sanitize context name for filesystem use
         safe_ctx = ctx_name.replace("/", "_").replace("\\", "_")
         return Path(get_local_root()) / ".unity" / "venvs" / safe_ctx
 

@@ -4,7 +4,7 @@ Pydantic model for the Functions/Meta context.
 Stores metadata about the primitives, custom venvs, and custom functions sync state.
 """
 
-from typing import Dict
+from typing import Dict, Optional
 
 from pydantic import BaseModel, Field
 
@@ -36,4 +36,12 @@ class FunctionsMeta(BaseModel):
     custom_functions_hash: str = Field(
         "",
         description="Hash of all source-defined custom function signatures.",
+    )
+    authoring_assistant_id: Optional[int] = Field(
+        None,
+        description=(
+            "Assistant id of the body that first wrote this metadata row. "
+            "Stamped on the initial create; subsequent sync refreshes by any "
+            "body preserve the original author."
+        ),
     )
