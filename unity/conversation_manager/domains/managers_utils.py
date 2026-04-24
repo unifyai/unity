@@ -876,10 +876,24 @@ async def log_message(
     else:
         content = event.content
 
+    self_id = SESSION_DETAILS.assistant.contact_id
+    boss_id = SESSION_DETAILS.user.contact_id
+    if self_id is None:
+        LOGGER.warning(
+            f"{DEFAULT_ICON} Skipping transcript log for {event_name}: "
+            "SESSION_DETAILS.assistant.contact_id is None (bootstrap has not resolved it yet)",
+        )
+        return
+
     contact_id = None
     if isinstance(event, (PreHireMessage,)):
-        # PreHireMessage is always boss context
-        contact_id = 1
+        if boss_id is None:
+            LOGGER.warning(
+                f"{DEFAULT_ICON} Skipping PreHireMessage transcript log: "
+                "SESSION_DETAILS.user.contact_id is None (bootstrap has not resolved it yet)",
+            )
+            return
+        contact_id = boss_id
     elif isinstance(
         event,
         (
@@ -908,9 +922,9 @@ async def log_message(
     elif cm.contact_index.get_contact(contact_id=event.contact["contact_id"]):
         contact_id = event.contact["contact_id"]
     if role == "Assistant":
-        sender_id, receiver_ids = 0, [contact_id]
+        sender_id, receiver_ids = self_id, [contact_id]
     else:
-        sender_id, receiver_ids = contact_id, [0]
+        sender_id, receiver_ids = contact_id, [self_id]
 
     # For browser-meet utterances (Google Meet / Teams Meet), resolve
     # participant names to contact IDs so receiver_ids reflects all known
@@ -942,7 +956,7 @@ async def log_message(
                 if resolved_ids:
                     receiver_ids = sorted(resolved_ids)
             else:
-                resolved_ids.add(0)
+                resolved_ids.add(self_id)
                 resolved_ids.discard(sender_id)
                 if resolved_ids:
                     receiver_ids = sorted(resolved_ids)
@@ -959,8 +973,7 @@ async def log_message(
             if role == "Assistant":
                 receiver_ids = sorted(resolved_ids)
             else:
-                # Keep assistant (0) plus all resolved recipients
-                resolved_ids.add(0)
+                resolved_ids.add(self_id)
                 receiver_ids = sorted(resolved_ids)
 
     # For Teams, use the conversation roster (already resolved to contact
@@ -978,11 +991,11 @@ async def log_message(
         resolved_ids: set[int] = set(getattr(event, "participants", []) or [])
         if resolved_ids:
             if role == "Assistant":
-                resolved_ids.discard(0)
+                resolved_ids.discard(self_id)
                 if resolved_ids:
                     receiver_ids = sorted(resolved_ids)
             else:
-                resolved_ids.add(0)
+                resolved_ids.add(self_id)
                 resolved_ids.discard(sender_id)
                 if resolved_ids:
                     receiver_ids = sorted(resolved_ids)
