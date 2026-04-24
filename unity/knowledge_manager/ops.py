@@ -5,6 +5,7 @@ from typing import Any, Dict, List, Optional, TYPE_CHECKING
 
 import unify
 
+from ..common.authoring import AUTHORING_COLUMN, authoring_assistant_id
 from ..common.embed_utils import ensure_vector_column
 from .storage import ctx_for_table
 
@@ -37,9 +38,14 @@ def add_rows(
     """
     dm = knowledge_manager._data_manager
     ctx = ctx_for_table(knowledge_manager, table)
+    stamp = authoring_assistant_id()
+    stamped_rows = [
+        {**row, AUTHORING_COLUMN: row.get(AUTHORING_COLUMN, stamp)}
+        for row in rows
+    ]
     return dm.insert_rows(
         ctx,
-        rows=rows,
+        rows=stamped_rows,
         add_to_all_context=knowledge_manager.include_in_multi_assistant_table,
     )
 
@@ -116,7 +122,10 @@ def update_rows(
         )
 
     log_ids = [lid for (lid, _) in matched]
-    entries = [entry for (_, entry) in matched]
+    entries = [
+        {k: v for k, v in entry.items() if k != AUTHORING_COLUMN}
+        for (_, entry) in matched
+    ]
 
     # Use unify.update_logs for now (needs DataManager.update_rows enhancement)
     res = unify.update_logs(

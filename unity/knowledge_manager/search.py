@@ -132,6 +132,19 @@ def search(
     """
     Semantic search within a single knowledge table.
 
+    First-reader-writes contract
+    ----------------------------
+    The first call against a freshly shared reference column synchronously
+    mutates the underlying Knowledge schema and backfills per-source
+    embeddings. When two bodies in the same Hive race into the same first
+    call, the database resolves the collision: the winning ``CREATE COLUMN``
+    and embedding inserts persist, and the loser either hits a
+    unique-constraint or an idempotent-skip and converges onto the winner's
+    state. No distributed lock is taken at the Unity layer. The only
+    user-visible effect of the race is that the *first* call per column on
+    a freshly shared table sees elevated latency; steady-state reads are
+    unaffected.
+
     Parameters
     ----------
     knowledge_manager : KnowledgeManager
