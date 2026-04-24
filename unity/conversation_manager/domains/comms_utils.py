@@ -193,7 +193,7 @@ async def send_whatsapp_message(
 
 async def send_unify_message(
     content: str,
-    contact_id: int = 1,
+    contact_id: int,
     attachment: dict | None = None,
 ) -> dict:
     """
@@ -201,7 +201,7 @@ async def send_unify_message(
 
     Args:
         content: The message content to send.
-        contact_id: The target contact's ID. Defaults to 1 (boss).
+        contact_id: The target contact's ID.
         attachment: Optional attachment dict with keys:
             - id: Unique identifier for the attachment
             - filename: The name of the file

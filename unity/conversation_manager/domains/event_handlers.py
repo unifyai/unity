@@ -327,7 +327,12 @@ async def _(event: CallInitEvents, cm: "ConversationManager", *args, **kwargs):
     if cm.mode.is_voice:
         return
 
-    boss = cm.contact_index.get_contact(contact_id=1)
+    boss_contact_id = SESSION_DETAILS.user.contact_id
+    boss = (
+        cm.contact_index.get_contact(contact_id=int(boss_contact_id))
+        if boss_contact_id is not None
+        else None
+    )
     if isinstance(event, UnifyMeetReceived):
         contact = boss
     elif isinstance(event, (WhatsAppCallReceived, WhatsAppCallSent)):
@@ -441,10 +446,17 @@ async def _(
     ):
         return
 
-    boss = cm.contact_index.get_contact(contact_id=1) or {}
+    boss_contact_id = SESSION_DETAILS.user.contact_id
+    boss = (
+        cm.contact_index.get_contact(contact_id=int(boss_contact_id)) or {}
+        if boss_contact_id is not None
+        else {}
+    )
     contact = boss
 
-    contact_id = contact.get("contact_id") if contact else 1
+    contact_id = (
+        contact.get("contact_id") if contact else boss_contact_id
+    )
     sender_name = _get_sender_name(contact)
 
     joined = await cm.call_manager.start_google_meet(
@@ -516,10 +528,15 @@ async def _(
     ):
         return
 
-    boss = cm.contact_index.get_contact(contact_id=1) or {}
+    boss_contact_id = SESSION_DETAILS.user.contact_id
+    boss = (
+        cm.contact_index.get_contact(contact_id=int(boss_contact_id)) or {}
+        if boss_contact_id is not None
+        else {}
+    )
     contact = boss
 
-    contact_id = contact.get("contact_id") if contact else 1
+    contact_id = contact.get("contact_id") if contact else boss_contact_id
     sender_name = _get_sender_name(contact)
 
     joined = await cm.call_manager.start_teams_meet(
@@ -616,7 +633,11 @@ async def _(
     if contact is None:
         contact = event.contact
 
-    contact_id = contact.get("contact_id") if contact else 1
+    contact_id = (
+        contact.get("contact_id")
+        if contact
+        else SESSION_DETAILS.user.contact_id
+    )
     sender_name = _get_sender_name(contact)
 
     cm.call_manager.call_contact = contact
@@ -756,7 +777,11 @@ async def _(
     if contact is None:
         contact = event.contact
 
-    contact_id = contact.get("contact_id") if contact else 1
+    contact_id = (
+        contact.get("contact_id")
+        if contact
+        else SESSION_DETAILS.user.contact_id
+    )
     sender_name = _get_sender_name(contact)
     reason = event.reason or "no-answer"
 
@@ -823,7 +848,11 @@ async def _(
     if contact is None:
         contact = event.contact
 
-    contact_id = contact.get("contact_id") if contact else 1
+    contact_id = (
+        contact.get("contact_id")
+        if contact
+        else SESSION_DETAILS.user.contact_id
+    )
     sender_name = _get_sender_name(contact)
     reason = event.reason or "no-answer"
 
@@ -875,7 +904,11 @@ async def _(
 ):
     """Handle call permission grant/rejection from a WhatsApp contact."""
     contact = event.contact
-    contact_id = contact.get("contact_id") if contact else 1
+    contact_id = (
+        contact.get("contact_id")
+        if contact
+        else SESSION_DETAILS.user.contact_id
+    )
     sender_name = _get_sender_name(contact)
 
     has_pending_context = contact_id in cm._pending_whatsapp_call_contexts
@@ -952,7 +985,11 @@ async def _(
 ):
     """Log the invite template send in the conversation thread."""
     contact = event.contact
-    contact_id = contact.get("contact_id") if contact else 1
+    contact_id = (
+        contact.get("contact_id")
+        if contact
+        else SESSION_DETAILS.user.contact_id
+    )
     sender_name = _get_sender_name(contact)
 
     cm.notifications_bar.push_notif(
@@ -2638,7 +2675,11 @@ async def _(event: DirectMessageEvent, cm: "ConversationManager", *args, **kwarg
         )
 
     contact = cm.get_active_contact()
-    contact_id = contact.get("contact_id") if contact else 1
+    contact_id = (
+        contact.get("contact_id")
+        if contact
+        else SESSION_DETAILS.user.contact_id
+    )
     sender_name = _get_sender_name(contact)
 
     cm.contact_index.push_message(

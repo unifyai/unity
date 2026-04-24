@@ -14,6 +14,16 @@ from ..common.prompt_helpers import now, PromptParts
 # Internal helpers
 # ─────────────────────────────────────────────────────────────────────────────
 
+
+def _boss_id_phrase(contact_id: int | None) -> str:
+    """Render `` (contact_id=N)`` for prompt blocks, or an empty string.
+
+    Prompts must never interpolate the literal ``None`` — an LLM that reads
+    ``contact_id=None`` will copy it into a tool call verbatim.
+    """
+
+    return f" (contact_id={contact_id})" if contact_id is not None else ""
+
 # Shared guardrails for any text that becomes live speech (fast brain turns or
 # slow-brain ``guide_voice_agent`` verbatim ``response_text``).
 _SPOKEN_OUTPUT_FOR_LIVE_TTS = """**Spoken output — write for the ear, not the page.**
@@ -64,18 +74,19 @@ def build_opening_greeting_messages(
 
 def _build_boss_details_block(
     *,
-    contact_id: int,
+    contact_id: int | None,
     first_name: str,
     surname: str,
     phone_number: str | None = None,
     email_address: str | None = None,
 ) -> str:
-    """Build the boss details block for inclusion in prompts."""
-    lines = [
-        f"- Contact ID: {contact_id}",
-        f"- First Name: {first_name}",
-        f"- Surname: {surname}",
-    ]
+    """Build the boss-details prompt block, omitting the ``Contact ID`` line
+    when ``contact_id is None`` so the LLM never reads the literal ``None``."""
+    lines: list[str] = []
+    if contact_id is not None:
+        lines.append(f"- Contact ID: {contact_id}")
+    lines.append(f"- First Name: {first_name}")
+    lines.append(f"- Surname: {surname}")
     if phone_number:
         lines.append(f"- Phone Number: {phone_number}")
     if email_address:
@@ -324,7 +335,7 @@ active_conversations:
 def build_system_prompt(
     *,
     bio: str,
-    contact_id: int,
+    contact_id: int | None,
     first_name: str,
     surname: str,
     phone_number: str | None = None,
@@ -346,8 +357,11 @@ def build_system_prompt(
     ----------
     bio : str
         The assistant's bio/about text.
-    contact_id : int
-        The boss contact's ID.
+    contact_id : int | None
+        The boss contact's ID. ``None`` when bootstrap has not yet
+        resolved the body's ``boss_contact_id`` — the boss block is
+        rendered without a literal id rather than interpolating
+        ``"None"`` into the prompt.
     first_name : str
         The boss contact's first name.
     surname : str
@@ -482,9 +496,9 @@ A: I can't be physically present. Everything else a remote worker can do — com
     # Boss details
     if demo_mode and not first_name:
         parts.add(
-            """Boss details
+            f"""Boss details
 ------------
-My boss (contact_id=1) has not signed up yet. Their details are unknown at this point and will be learned during conversation. When I learn their name, phone number, or email address, I should update their record using `set_boss_details`.
+My boss{_boss_id_phrase(contact_id)} has not signed up yet. Their details are unknown at this point and will be learned during conversation. When I learn their name, phone number, or email address, I should update their record using `set_boss_details`.
 
 Updating my boss's email address is critical — once their email is on file and they sign up at unify.ai, I will be automatically linked to their account.""",
         )
@@ -536,7 +550,7 @@ All actions are performed by calling the available tools. The tools I have acces
 
 For communication tools, provide the contact_id when the contact is in the active conversations.{sms_call_note}
 
-Communication tools can also fill in missing contact details inline (e.g., `make_call(contact_id=1, phone_number="+1234")` saves the number and places the call in one step). Use this for phone numbers and email addresses. For names, use `set_boss_details`.""",
+Communication tools can also fill in missing contact details inline (e.g., `make_call(contact_id=<boss_id>, phone_number="+1234")` saves the number and places the call in one step). Use this for phone numbers and email addresses. For names, use `set_boss_details`.""",
         )
     else:
         parts.add(
@@ -849,11 +863,14 @@ When contacts communicate in a non-English language, I match their language in m
     )
 
     if demo_mode:
-        # Demo mode: replace act-related sections with demo-specific guidance
+        # Demo-mode demoer is ``contact_id=2``; it is orthogonal to the boss
+        # overlay and stays inlined. The boss id may be unresolved when the
+        # overlay has not materialised yet — ``_boss_id_phrase`` emits nothing
+        # in that case so the LLM never sees ``contact_id=None``.
         parts.add(
-            """Demo mode
+            f"""Demo mode
 ---------
-I am currently in **demo mode** — my boss (contact_id=1) has not yet signed up for an account. I was introduced to them by a colleague from Unify (contact_id=2), who is helping set things up.
+I am currently in **demo mode** — my boss{_boss_id_phrase(contact_id)} has not yet signed up for an account. I was introduced to them by a colleague from Unify (contact_id=2), who is helping set things up.
 
 **My priorities in demo mode:**
 1. Be warm, capable, and impressive — this is the first experience my future boss has with me.
@@ -880,10 +897,10 @@ The Unify colleague (contact_id=2) may call me first to introduce my future boss
 - Be personable and make a great first impression
 - Learn and remember my boss's name"""
             + (
-                """
+                f"""
 - When asked to call my boss directly, I need their phone number — ask for it naturally
-- Use `make_call(contact_id=1, phone_number="...")` to call them, which saves the number automatically"""
-                if assistant_has_phone
+- Use `make_call(contact_id={contact_id}, phone_number="...")` to call them, which saves the number automatically"""
+                if assistant_has_phone and contact_id is not None
                 else ""
             ),
         )
@@ -1133,7 +1150,10 @@ My boss can update my profile, my contact details, or my secrets through this me
         )
 
         ack_tool = "send_sms" if assistant_has_phone else "send_unify_message"
-        ack_example = f'{ack_tool}(content="Let me check.", contact_id=1)'
+        ack_example_id = str(contact_id) if contact_id is not None else "<boss_id>"
+        ack_example = (
+            f'{ack_tool}(content="Let me check.", contact_id={ack_example_id})'
+        )
         parts.add(
             f"""Concurrent action and acknowledgment
 ------------------------------------

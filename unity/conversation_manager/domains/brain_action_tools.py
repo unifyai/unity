@@ -383,7 +383,7 @@ class ConversationManagerBrainActionTools:
         self,
         *,
         content: str,
-        contact_id: int | str = 1,
+        contact_id: int | str | None = None,
         attachment_filepaths: list[str] | None = None,
         tags: list[str] | None = None,
     ) -> dict[str, Any]:
@@ -478,8 +478,14 @@ class ConversationManagerBrainActionTools:
             self._cm.call_manager.initial_notification = context
 
         from unity.conversation_manager.events import GoogleMeetReceived
+        from unity.session_details import SESSION_DETAILS
 
-        boss = self._cm.contact_index.get_contact(contact_id=1) or {}
+        boss_contact_id = SESSION_DETAILS.user.contact_id
+        boss = (
+            self._cm.contact_index.get_contact(contact_id=int(boss_contact_id)) or {}
+            if boss_contact_id is not None
+            else {}
+        )
         event = GoogleMeetReceived(contact=boss, meet_url=meet_url)
         await self._event_broker.publish(event.topic, event.to_json())
         return {"status": "ok", "message": f"Joining Google Meet at {meet_url}"}
@@ -576,8 +582,14 @@ class ConversationManagerBrainActionTools:
             self._cm.call_manager.initial_notification = context
 
         from unity.conversation_manager.events import TeamsMeetReceived
+        from unity.session_details import SESSION_DETAILS
 
-        boss = self._cm.contact_index.get_contact(contact_id=1) or {}
+        boss_contact_id = SESSION_DETAILS.user.contact_id
+        boss = (
+            self._cm.contact_index.get_contact(contact_id=int(boss_contact_id)) or {}
+            if boss_contact_id is not None
+            else {}
+        )
         event = TeamsMeetReceived(contact=boss, meet_url=meet_url)
         await self._event_broker.publish(event.topic, event.to_json())
         return {"status": "ok", "message": f"Joining Teams meeting at {meet_url}"}
@@ -1337,8 +1349,7 @@ class ConversationManagerBrainActionTools:
         phone_number: str | None = None,
         email_address: str | None = None,
     ) -> dict[str, Any]:
-        """
-        Update the boss contact's details (contact_id=1).
+        """Update the boss contact's details.
 
         Use this when you learn the boss's name, phone number, or email
         address during conversation. Only provided fields are updated;
@@ -1348,12 +1359,18 @@ class ConversationManagerBrainActionTools:
         their email is on file and they create an account at unify.ai,
         the assistant will be automatically linked to their account.
 
+        The boss contact is resolved at runtime from
+        ``SESSION_DETAILS.user.contact_id`` (populated by bootstrap from
+        the body's ``ContactMembership`` ``"boss"`` overlay).
+
         Args:
             first_name: The boss's first name.
             surname: The boss's surname / last name.
             phone_number: The boss's phone number.
             email_address: The boss's email address.
         """
+        from unity.session_details import SESSION_DETAILS
+
         updates = {
             k: v
             for k, v in {
@@ -1367,8 +1384,18 @@ class ConversationManagerBrainActionTools:
         if not updates:
             return {"status": "error", "error": "No fields provided to update."}
 
+        boss_contact_id = SESSION_DETAILS.user.contact_id
+        if boss_contact_id is None:
+            return {
+                "status": "error",
+                "error": (
+                    "Boss contact has not been resolved yet; "
+                    "bootstrap has not delivered boss_contact_id."
+                ),
+            }
+
         self._cm.contact_index.contact_manager.update_contact(
-            contact_id=1,
+            contact_id=int(boss_contact_id),
             **updates,
         )
         return {"status": "updated", "updates": updates}

@@ -73,7 +73,7 @@ _ASSISTANT_TZ_TTL = 300  # 5 minutes — timezone changes are very rare
 
 
 def _get_assistant_timezone() -> str | None:
-    """Get the assistant's timezone from contact_id=0.
+    """Get the assistant's timezone from the body's self-contact row.
 
     Uses a module-level TTL cache to avoid synchronous HTTP round-trips to
     Orchestra on every render_state() call (which runs in the hot path of the
@@ -99,19 +99,21 @@ def _get_assistant_timezone() -> str | None:
         f"{SESSION_DETAILS.user_context}/{SESSION_DETAILS.assistant_context}/Contacts"
     )
 
-    try:
-        rows = _unify.get_logs(
-            context=_contacts_ctx,
-            filter="contact_id == 0",
-            limit=1,
-            from_fields=["timezone"],
-        )
-        if rows:
-            val = rows[0].entries.get("timezone")
-            if isinstance(val, str) and val.strip():
-                result = val.strip()
-    except Exception:
-        pass
+    self_contact_id = SESSION_DETAILS.assistant.contact_id
+    if self_contact_id is not None:
+        try:
+            rows = _unify.get_logs(
+                context=_contacts_ctx,
+                filter=f"contact_id == {int(self_contact_id)}",
+                limit=1,
+                from_fields=["timezone"],
+            )
+            if rows:
+                val = rows[0].entries.get("timezone")
+                if isinstance(val, str) and val.strip():
+                    result = val.strip()
+        except Exception:
+            pass
 
     _assistant_tz_cache = (now, result)
     return result
@@ -972,7 +974,12 @@ class Renderer:
         rolling_summary = contact_info.get("rolling_summary") or ""
         response_policy = contact_info.get("response_policy") or ""
         should_respond = contact_info.get("should_respond", True)
-        is_boss = contact_id == 1
+        from unity.session_details import SESSION_DETAILS
+
+        is_boss = (
+            SESSION_DETAILS.user.contact_id is not None
+            and contact_id == SESSION_DETAILS.user.contact_id
+        )
 
         # Compute contact name for timezone display
         contact_name = f"{first_name} {surname}".strip() or f"Contact #{contact_id}"

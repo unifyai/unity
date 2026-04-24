@@ -98,9 +98,10 @@ def sig_dict(tools: Dict[str, Callable]) -> Dict[str, str]:
 def now(time_only: bool = False, as_string: bool = True) -> "str | datetime":
     """Return the current timestamp in the assistant's timezone.
 
-    The assistant is the system contact with ``contact_id == 0`` in the
-    Contacts table. We read its ``timezone`` field (an IANA timezone
-    identifier like "America/New_York") and convert UTC to local time.
+    The assistant's ``self_contact_id`` is delivered by the bootstrap and
+    lives on ``SESSION_DETAILS.assistant.contact_id``; we read the matching
+    Contacts row's ``timezone`` field (an IANA timezone identifier like
+    "America/New_York") and convert UTC to local time.
 
     Args:
         time_only: If True and as_string=True, return only the time portion.
@@ -124,20 +125,25 @@ def now(time_only: bool = False, as_string: bool = True) -> "str | datetime":
 
     # Default to UTC if assistant row/field is unavailable
     tz_name: str = "UTC"
-    try:
-        rows = _unify.get_logs(
-            context=_contacts_ctx,
-            filter="contact_id == 0",
-            limit=1,
-            from_fields=["timezone"],
-        )
-        if rows:
-            val = rows[0].entries.get("timezone")
-            if isinstance(val, str) and val.strip():
-                tz_name = val.strip()
-    except Exception:
-        # Best-effort only; fall back to UTC
-        tz_name = "UTC"
+    self_contact_id = SESSION_DETAILS.assistant.contact_id
+    if self_contact_id is None:
+        # Bootstrap has not yet resolved the self-contact overlay; UTC is the
+        # correct conservative default until Orchestra materializes it.
+        pass
+    else:
+        try:
+            rows = _unify.get_logs(
+                context=_contacts_ctx,
+                filter=f"contact_id == {int(self_contact_id)}",
+                limit=1,
+                from_fields=["timezone"],
+            )
+            if rows:
+                val = rows[0].entries.get("timezone")
+                if isinstance(val, str) and val.strip():
+                    tz_name = val.strip()
+        except Exception:
+            tz_name = "UTC"
 
     # Convert UTC now to the target timezone
     utc_now = datetime.now(dt_timezone.utc)
@@ -567,16 +573,50 @@ def clarification_else_policy() -> str:
     return "Do not ask the user questions in your final response. Instead, proceed using sensible defaults/best‑guess values and explicitly tell inner tools that these are assumptions/best guesses, not confirmed answers."
 
 
-def special_contacts_block() -> str:
-    """Standard block describing special contact ids 0 and 1."""
-    return "\n".join(
-        [
-            "Special contacts",
-            "----------------",
-            "• contact_id==0 is the assistant (this agent). Do not include the assistant in suggestions, rankings, or comparisons unless it makes sense from the broader context.",
-            "• contact_id==1 is the central user (the assistant's supervisor). Many requests originate from this user; do not propose the central user as a candidate unless it makes sense from the broader context.",
-        ],
-    )
+def special_contacts_block(
+    *,
+    self_contact_id: Optional[int] = None,
+    boss_contact_id: Optional[int] = None,
+) -> str:
+    """Standard block describing the assistant's self and boss contacts.
+
+    ``self_contact_id`` / ``boss_contact_id`` are the resolved ids delivered by
+    the bootstrap. When either is unknown (for example a freshly provisioned
+    body whose membership overlay has not materialized yet) the block falls back
+    to describing the relationship by role so the LLM still receives actionable
+    guidance without referencing a nonexistent id.
+    """
+
+    if self_contact_id is not None:
+        self_line = (
+            f"• contact_id=={int(self_contact_id)} is the assistant (this agent). "
+            "Do not include the assistant in suggestions, rankings, or "
+            "comparisons unless it makes sense from the broader context."
+        )
+    else:
+        self_line = (
+            "• The assistant (this agent) is represented by its own self "
+            "contact row. Do not include the assistant in suggestions, "
+            "rankings, or comparisons unless it makes sense from the "
+            "broader context."
+        )
+
+    if boss_contact_id is not None:
+        boss_line = (
+            f"• contact_id=={int(boss_contact_id)} is the boss (this "
+            "assistant's supervisor). Many requests originate from the boss; "
+            "do not propose the boss as a candidate unless it makes sense "
+            "from the broader context."
+        )
+    else:
+        boss_line = (
+            "• The boss (this assistant's supervisor) is represented by the "
+            "body's boss contact row. Many requests originate from the boss; "
+            "do not propose the boss as a candidate unless it makes sense "
+            "from the broader context."
+        )
+
+    return "\n".join(["Special contacts", "----------------", self_line, boss_line])
 
 
 def two_table_reasoning_block(
