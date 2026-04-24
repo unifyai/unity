@@ -63,12 +63,15 @@ def test_base_for_contacts_returns_hive_root_for_hive_member():
 def test_base_for_non_hive_scoped_table_ignores_hive_membership():
     """A table missing from ``_HIVE_SCOPED_TABLES`` keeps the per-body base.
 
-    Knowledge is not Hive-flagged, so even a body that belongs to a Hive
-    resolves it to ``{user_id}/{assistant_id}``. Only table names listed
-    in :data:`_HIVE_SCOPED_TABLES` route through the Hive root.
+    Hive scoping is driven by an explicit allowlist: only table names
+    listed in :data:`_HIVE_SCOPED_TABLES` route through the Hive root,
+    and every other table resolves to ``{user_id}/{assistant_id}`` even
+    when the caller belongs to a Hive. A synthetic ``TestLocal`` stands
+    in for any per-body table so the contract is pinned without coupling
+    to the current Hive-scoped set.
     """
     SESSION_DETAILS.hive_id = 42
-    assert ContextRegistry.base_for("Knowledge") == _PER_BODY_BASE
+    assert ContextRegistry.base_for("TestLocal") == _PER_BODY_BASE
 
 
 def test_base_for_raises_when_no_base_available():
@@ -178,14 +181,16 @@ def test_get_contexts_for_manager_resolves_fk_via_target_table_base():
 def test_get_contexts_for_manager_resolves_fk_to_per_body_for_solo_target():
     """A relative FK to a per-body table stays under the per-body base.
 
-    ``TaskScheduler`` declares ``Functions/Compositional.function_id``. When
-    ``Tasks`` is Hive-scoped but ``Functions/Compositional`` isn't, the
-    rewriter must route the FK to ``{user}/{assistant}/Functions/Compositional.function_id``
-    — the Hive base would dangle.
+    When a Hive-scoped table declares an FK into a table that is not in
+    :data:`_HIVE_SCOPED_TABLES`, the rewriter must resolve the reference
+    against the target's base — ``{user}/{assistant}/<Table>.<col>`` —
+    not the caller's Hive root, because the Hive base would dangle.
+    ``TestLocal`` stands in for any per-body target so the contract is
+    pinned without coupling to the current Hive-scoped set.
     """
     SESSION_DETAILS.hive_id = 42
 
-    class _HiveTable:
+    class _HiveSource:
         class Config:
             required_contexts = [
                 TableContext(
@@ -193,16 +198,16 @@ def test_get_contexts_for_manager_resolves_fk_to_per_body_for_solo_target():
                     description="Hive-shared table with an FK into a per-body table.",
                     foreign_keys=[
                         {
-                            "column": "function_id",
-                            "references": "Functions/Compositional.function_id",
+                            "column": "target_id",
+                            "references": "TestLocal.id",
                         },
                     ],
                 ),
             ]
 
-    contexts = ContextRegistry._get_contexts_for_manager(_HiveTable)
+    contexts = ContextRegistry._get_contexts_for_manager(_HiveSource)
     entry = contexts["Tasks"]
 
     assert entry["resolved_name"] == "Hives/42/Tasks"
     fk = entry["resolved_foreign_keys"][0]
-    assert fk["references"] == f"{_PER_BODY_BASE}/Functions/Compositional.function_id"
+    assert fk["references"] == f"{_PER_BODY_BASE}/TestLocal.id"
