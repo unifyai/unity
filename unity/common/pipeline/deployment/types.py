@@ -44,7 +44,14 @@ DeploymentExecutorBackend = Literal["local", "cloud_tasks"]
 DeploymentQueueBackend = Literal["in_memory", "pubsub", "cloud_tasks"]
 DeploymentRunMode = Literal["file_manager", "data_manager", "hybrid"]
 DeploymentExecutionTarget = Literal["local", "local_with_gcp", "staging", "production"]
-DeploymentJobState = Literal["queued", "running", "success", "error", "cancelled"]
+DeploymentJobState = Literal[
+    "queued",
+    "running",
+    "success",
+    "error",
+    "cancelled",
+    "paused",
+]
 
 
 class DeploymentBundleArtifact(BaseModel):
@@ -144,6 +151,9 @@ class DeploymentIngestionJob(BaseModel):
     error: str | None = None
     cancelled_at: str | None = None
     cancel_reason: str | None = None
+    paused_at: str | None = None
+    pause_reason: str | None = None
+    parked_manifest_keys: list[str] = Field(default_factory=list)
     cost_ledger_path: str | None = None
     observability_refs: DeploymentObservabilityRefs = Field(
         default_factory=DeploymentObservabilityRefs,
@@ -166,6 +176,9 @@ class DispatchManifest(BaseModel):
     config_path: str = ""
     job_ids: list[str] = Field(default_factory=list)
     total_files: int = 0
+    status_override: Literal["active", "paused"] = "active"
+    paused_at: str | None = None
+    pause_reason: str | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 
