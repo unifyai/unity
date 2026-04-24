@@ -28,6 +28,14 @@ class Image(BaseModel):
         description="Optional path to the image file on the assistant's local filesystem.",
         json_schema_extra={"unique": True},
     )
+    authoring_assistant_id: Optional[int] = Field(
+        default=None,
+        description=(
+            "Assistant id of the body that captured this image. Stamped once "
+            "at create time and preserved across updates so reviewers can "
+            "attribute Hive-shared rows to their authoring body."
+        ),
+    )
 
     @model_validator(mode="before")
     @classmethod
