@@ -63,31 +63,62 @@ from unity.conversation_manager.cm_types import Medium
 load_dotenv()
 
 
+def _coerce_int(value: Any) -> int | None:
+    """Best-effort integer coercion for webhook payloads."""
+
+    if value in (None, ""):
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
 def _hive_id_from_event(event: dict) -> int | None:
     """Extract ``hive_id`` from a comms envelope, tolerating both shapes.
 
     The bootstrap Secret flattens the assistant's Hive membership to
     ``hive_id`` before Unity reads it; the ``assistant_update`` Pub/Sub
     envelope still carries the Orchestra-shaped ``hive`` summary dict
-    (``{"hive_id": int, "name": str}``). Callers do not need to care which
-    envelope they're looking at — this helper returns the int id or ``None``
+    (``{"hive_id": int, "name": str}``). Returns the int id or ``None``
     in both cases.
     """
     hive = event.get("hive")
     if isinstance(hive, dict):
-        hive_id = hive.get("hive_id")
-        if hive_id is not None:
-            try:
-                return int(hive_id)
-            except (TypeError, ValueError):
-                return None
-    flat = event.get("hive_id")
-    if flat is None:
+        nested = _coerce_int(hive.get("hive_id"))
+        if nested is not None:
+            return nested
+    return _coerce_int(event.get("hive_id"))
+
+
+def _boss_contact_from_contacts(contacts: list[dict]) -> dict | None:
+    """Return the body's boss contact from an inbound contacts list.
+
+    Identified by the bootstrap-delivered ``SESSION_DETAILS.user.contact_id``;
+    returns ``None`` when the overlay has not resolved the boss yet or when
+    the contacts list does not carry the boss row.
+    """
+    boss_id = SESSION_DETAILS.user.contact_id
+    if boss_id is None:
         return None
-    try:
-        return int(flat)
-    except (TypeError, ValueError):
-        return None
+    return next(
+        (c for c in contacts if c.get("contact_id") == boss_id),
+        None,
+    )
+
+
+def _contact_ids_from_event(event: dict) -> tuple[int | None, int | None]:
+    """Extract resolved ``(self, boss)`` ids from a bootstrap envelope.
+
+    Both the JSON Secret and the ``assistant_update`` Pub/Sub payload carry
+    the two ids flat at the top level. Freshly-provisioned bodies return
+    ``(None, None)`` and callers must not substitute ``0`` / ``1``.
+    """
+
+    return (
+        _coerce_int(event.get("self_contact_id")),
+        _coerce_int(event.get("boss_contact_id")),
+    )
 
 
 # Lock for unknown contact creation to prevent duplicates
@@ -155,17 +186,6 @@ def _get_local_contact() -> dict:
         "email_address": SESSION_DETAILS.user.email,
         "whatsapp_number": SESSION_DETAILS.user.whatsapp_number,
     }
-
-
-def _coerce_int(value: Any) -> int | None:
-    """Best-effort integer coercion for webhook payloads."""
-
-    if value in (None, ""):
-        return None
-    try:
-        return int(value)
-    except (TypeError, ValueError):
-        return None
 
 
 _TEAMS_BR_RE = re.compile(r"<br\s*/?>", re.IGNORECASE)
@@ -595,6 +615,7 @@ class CommsManager:
 
         try:
             if thread == "assistant_update":
+                self_contact_id, boss_contact_id = _contact_ids_from_event(event)
                 details = {
                     "api_key": event["api_key"],
                     "binding_id": event.get("binding_id", ""),
@@ -640,6 +661,8 @@ class CommsManager:
                     "org_name": event.get("org_name", ""),
                     "team_ids": event.get("team_ids") or [],
                     "hive_id": _hive_id_from_event(event),
+                    "self_contact_id": self_contact_id,
+                    "boss_contact_id": boss_contact_id,
                     "demo_id": event.get("demo_id"),
                 }
                 await publish(
@@ -871,11 +894,27 @@ class CommsManager:
                     return
 
                 if thread == "api_message":
-                    target_contact_id = event.get("contact_id", 1)
-                    contact = next(
-                        (c for c in contacts if c["contact_id"] == target_contact_id),
-                        contacts[0] if contacts else {},
-                    )
+                    # Adapters publishes with a resolved ``contact_id`` when
+                    # ``boss_contact_id`` is known; omits it when bootstrap
+                    # has not yet materialised the body's overlay. Fall back
+                    # through the session-resolved boss and finally to the
+                    # first contact in the envelope so the message still
+                    # threads into a conversation.
+                    event_contact_id = event.get("contact_id")
+                    if event_contact_id is None:
+                        event_contact_id = SESSION_DETAILS.user.contact_id
+                    contact = _boss_contact_from_contacts(contacts)
+                    if contact is None and event_contact_id is not None:
+                        contact = next(
+                            (
+                                c
+                                for c in contacts
+                                if c["contact_id"] == event_contact_id
+                            ),
+                            None,
+                        )
+                    if contact is None:
+                        contact = contacts[0] if contacts else {}
                     api_message_id = event.get("api_message_id", "")
                     attachments = event.get("attachments") or []
                     tags = event.get("tags") or []
@@ -1309,8 +1348,17 @@ class CommsManager:
                 )
 
                 if thread == "unify_meet":
+                    boss = _boss_contact_from_contacts(contacts)
+                    if boss is None:
+                        LOGGER.error(
+                            f"{DEFAULT_ICON} unify_meet received but boss contact is "
+                            "unresolved (bootstrap has not delivered boss_contact_id "
+                            "or the contact row is missing); skipping publish.",
+                        )
+                        ack_now()
+                        return
                     call_event = UnifyMeetReceived(
-                        contact=next(c for c in contacts if c["contact_id"] == 1),
+                        contact=boss,
                         room_name=event.get("livekit_room"),
                     )
                     event_topic = "app:comms:unify_meet_received"
@@ -1418,7 +1466,15 @@ class CommsManager:
                             None,
                         )
                     if contact is None:
-                        contact = next(c for c in contacts if c["contact_id"] == 1)
+                        contact = _boss_contact_from_contacts(contacts)
+                    if contact is None:
+                        LOGGER.error(
+                            f"{DEFAULT_ICON} whatsapp_call_answered: unable to resolve "
+                            f"contact for number={number!r} and boss contact is "
+                            "unresolved; skipping publish.",
+                        )
+                        ack_now()
+                        return
                     call_event = WhatsAppCallAnswered(contact=contact)
                     event_topic = "app:comms:whatsapp_call_answered"
                 elif thread == "whatsapp_call_not_answered":
@@ -1436,7 +1492,15 @@ class CommsManager:
                             None,
                         )
                     if contact is None:
-                        contact = next(c for c in contacts if c["contact_id"] == 1)
+                        contact = _boss_contact_from_contacts(contacts)
+                    if contact is None:
+                        LOGGER.error(
+                            f"{DEFAULT_ICON} whatsapp_call_not_answered: unable to "
+                            f"resolve contact for number={number!r} and boss contact "
+                            "is unresolved; skipping publish.",
+                        )
+                        ack_now()
+                        return
                     call_event = WhatsAppCallNotAnswered(
                         contact=contact,
                         reason=event.get("call_status", "no-answer"),
@@ -1449,7 +1513,15 @@ class CommsManager:
                         None,
                     )
                     if contact is None:
-                        contact = next(c for c in contacts if c["contact_id"] == 1)
+                        contact = _boss_contact_from_contacts(contacts)
+                    if contact is None:
+                        LOGGER.error(
+                            f"{DEFAULT_ICON} call_not_answered: unable to resolve "
+                            f"contact for number={number!r} and boss contact is "
+                            "unresolved; skipping publish.",
+                        )
+                        ack_now()
+                        return
                     call_event = PhoneCallNotAnswered(
                         contact=contact,
                         reason=event.get("call_status", "no-answer"),
@@ -1462,7 +1534,15 @@ class CommsManager:
                         None,
                     )
                     if contact is None:
-                        contact = next(c for c in contacts if c["contact_id"] == 1)
+                        contact = _boss_contact_from_contacts(contacts)
+                    if contact is None:
+                        LOGGER.error(
+                            f"{DEFAULT_ICON} call_answered: unable to resolve contact "
+                            f"for number={number!r} and boss contact is unresolved; "
+                            "skipping publish.",
+                        )
+                        ack_now()
+                        return
                     call_event = PhoneCallAnswered(contact=contact)
                     event_topic = "app:comms:call_answered"
                 else:
@@ -1734,6 +1814,7 @@ class CommsManager:
                     f"{job_name}: {_get_subscription_id()}",
                 )
 
+                self_contact_id, boss_contact_id = _contact_ids_from_event(event)
                 details = {
                     "api_key": event["api_key"],
                     "binding_id": session_binding_id,
@@ -1779,6 +1860,8 @@ class CommsManager:
                     "org_name": event.get("org_name", ""),
                     "team_ids": event.get("team_ids") or [],
                     "hive_id": _hive_id_from_event(event),
+                    "self_contact_id": self_contact_id,
+                    "boss_contact_id": boss_contact_id,
                     "wake_reasons": event.get("wake_reasons") or [],
                     "demo_id": event.get("demo_id"),
                 }

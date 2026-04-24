@@ -319,9 +319,12 @@ class ConversationManager(metaclass=SingletonABCMeta):
 
     def get_active_contact(self) -> dict | None:
         """Get the contact for the current active call, or fall back to the boss contact."""
-        return self.call_manager.call_contact or self.contact_index.get_contact(
-            contact_id=1,
-        )
+        if self.call_manager.call_contact:
+            return self.call_manager.call_contact
+        boss_contact_id = SESSION_DETAILS.user.contact_id
+        if boss_contact_id is None:
+            return None
+        return self.contact_index.get_contact(contact_id=int(boss_contact_id))
 
     async def capture_assistant_screenshot(
         self,
@@ -1550,6 +1553,8 @@ class ConversationManager(metaclass=SingletonABCMeta):
         self.org_name: str = payload.get("org_name", "")
         self.team_ids: list[int] = payload.get("team_ids") or []
         self.hive_id: int | None = payload.get("hive_id")
+        self.self_contact_id: int | None = payload.get("self_contact_id")
+        self.boss_contact_id: int | None = payload.get("boss_contact_id")
         # Set API key on SESSION_DETAILS for runtime access
         if payload.get("api_key"):
             SESSION_DETAILS.unify_key = payload["api_key"]
@@ -1578,6 +1583,8 @@ class ConversationManager(metaclass=SingletonABCMeta):
             org_name=self.org_name,
             team_ids=self.team_ids,
             hive_id=self.hive_id,
+            self_contact_id=self.self_contact_id,
+            boss_contact_id=self.boss_contact_id,
             voice_provider=self.voice_provider,
             voice_id=self.voice_id,
             binding_id=self.binding_id,

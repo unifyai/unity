@@ -925,6 +925,12 @@ class _SessionConfigBase(Event):
     # marks a Hive member whose Tasks and shared contexts live at the per-Hive
     # path rather than under the assistant's own context tree.
     hive_id: int | None = None
+    # Resolved ``ContactMembership`` ids delivered by the bootstrap. The
+    # runtime reads ``self_contact_id`` and ``boss_contact_id`` directly;
+    # both are ``None`` for freshly-provisioned bodies that have not yet
+    # completed self/boss membership materialization in Orchestra.
+    self_contact_id: int | None = None
+    boss_contact_id: int | None = None
     wake_reasons: list[dict[str, Any]] = field(default_factory=list)
     # Demo assistant metadata ID. If set, this is a demo session.
     # Unity derives demo_mode from (demo_id is not None).
