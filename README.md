@@ -12,9 +12,9 @@
 
 # Unity
 
-Unity is an open-source agent behind [Unify's](https://unify.ai) persistent AI colleagues. It is built for assistants you can onboard like teammates, interrupt and redirect at any depth, talk to in real time, run fully locally by default, and grow over time through typed, long-lived memory.
+Unity is an open-source AI agent designed to feel more like a colleague than a prompt loop. You can onboard it like a teammate, talk to it in real time, interrupt it mid-work, run it fully locally, and let it build up typed, long-lived memory over time.
 
-Instead of one flat tool loop, Unity separates live conversation from action execution. The `ConversationManager` owns the realtime interaction layer and voice orchestration above the `Actor`, which writes code-first plans. Specialized managers own typed state for contacts, transcripts, knowledge, tasks, functions, guidance, secrets, files, images, and more. That state lives in Postgres with pgvector support via [Orchestra](https://github.com/unifyai/orchestra), so memory keeps getting richer without collapsing into one opaque prompt thread. Agents in the same Hive can also share one typed memory layer across all of those managers, so teams learn together instead of starting from scratch body by body.
+Under the hood, Unity separates live conversation from action execution. The `ConversationManager` owns the realtime interaction layer and voice orchestration above the `Actor`, which writes code-first plans. Specialized managers own typed state for contacts, transcripts, knowledge, tasks, functions, guidance, secrets, files, images, and more. That state lives in Postgres with pgvector support via [Orchestra](https://github.com/unifyai/orchestra), so memory keeps getting richer without collapsing into one opaque prompt thread. Agents in the same Hive can also build up shared typed memory together, with a shared-plus-personal memory model on the roadmap so agents can specialize while still contributing back to the team.
 
 > **Start here:** [Overview](https://docs.unify.ai/basics/overview) • [Quickstart](https://docs.unify.ai/basics/quickstart) • [Demos](https://docs.unify.ai/basics/demos) • [ARCHITECTURE.md](ARCHITECTURE.md)
 
@@ -22,7 +22,7 @@ Instead of one flat tool loop, Unity separates live conversation from action exe
 
 - **`ConversationManager` stays above the `Actor`.** Live conversation, voice, and in-flight coordination stay separate from code-first action execution.
 - **Memory is typed and self-evolving.** Contacts, transcripts, knowledge, tasks, functions, guidance, secrets, files, and images live in dedicated managers backed by Postgres + pgvector.
-- **Teams can share a Hive mind.** Agents in the same Hive build up the same typed memory across state managers, so a team of agents can learn together instead of each one relearning the same context alone.
+- **Teams can share a Hive mind.** Today, agents in the same Hive build up shared typed memory together. On the roadmap, each agent will keep both shared Hive memory and its own memory at the same time, making it easier to specialize while still contributing back to the team.
 - **Steering is recursive and bidirectional.** Top-down control (`ask`, `interject`, `pause`, `resume`, `stop`) propagates downward, while bottom-up `next_notification` and `next_clarification` flow back upward.
 - **Voice is first-class.** A fast realtime process handles sub-second conversation while a slower orchestration layer keeps planning, using tools, and steering concurrent work.
 - **It is easy to try.** Unity starts from a one-command install, takes seconds to kick off, and runs fully locally by default.
@@ -31,17 +31,19 @@ Unity is designed to feel less like "prompt, then execute" and more like working
 
 ## Core Capabilities
 
-<table>
-<tr><td><b>Typed, self-evolving memory</b></td><td>Contacts, transcripts, knowledge, tasks, functions, guidance, secrets, files, images, and more live in dedicated typed stores, backed by Postgres + pgvector through Orchestra rather than one freeform memory blob.</td></tr>
-<tr><td><b>Hive-shared team memory</b></td><td>Agents in the same Hive share one typed, self-evolving memory layer across state managers, so teams can coordinate around the same growing knowledge instead of maintaining separate memories per agent.</td></tr>
-<tr><td><b>Fully nested steering</b></td><td>Every operation returns a live handle. Top-down control (<code>ask</code>, <code>interject</code>, <code>pause</code>, <code>resume</code>, <code>stop</code>) propagates downward through the full tree, while bottom-up notifications and clarification requests flow back upward.</td></tr>
-<tr><td><b>Clear realtime boundary</b></td><td><code>ConversationManager</code> owns live conversation, voice, and in-flight coordination above the <code>Actor</code>, which focuses on code-first execution over typed primitives.</td></tr>
-<tr><td><b>Realtime voice, not just chat</b></td><td>A fast voice process handles sub-second conversation while a slower orchestration layer keeps planning, using tools, and steering concurrent work in the background.</td></tr>
-<tr><td><b>Code-first execution</b></td><td>The Actor writes Python programs with variables, loops, and real control flow instead of emitting one JSON tool call at a time.</td></tr>
-<tr><td><b>Distributed state managers</b></td><td>Each domain manager owns its slice of state and runs its own async LLM tool loop, so memory and capabilities stay inspectable instead of melting into one monolithic agent.</td></tr>
-<tr><td><b>Concurrent multi-task execution</b></td><td>Multiple actions can run at once, each with its own steering surface, notification flow, and transcript lineage.</td></tr>
-<tr><td><b>Computer-native workflows</b></td><td>Unity can layer desktop and browser control on top of the same steering, memory, and orchestration model rather than treating GUI work as a separate subsystem.</td></tr>
-</table>
+
+|                                     |                                                                                                                                                                                                                                                                |
+| ----------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Typed, self-evolving memory**     | Contacts, transcripts, knowledge, tasks, functions, guidance, secrets, files, images, and more live in dedicated typed stores, backed by Postgres + pgvector through Orchestra rather than one freeform memory blob.                                           |
+| **Hive mind, with specialization**  | Today, agents in the same Hive build up shared typed memory together. We are also moving toward a model where each agent keeps both the shared Hive memory and its own memory simultaneously, so teams can specialize without losing the collective knowledge. |
+| **Fully nested steering**           | Every operation returns a live handle. Top-down control (`ask`, `interject`, `pause`, `resume`, `stop`) propagates downward through the full tree, while bottom-up notifications and clarification requests flow back upward.                                  |
+| **Clear realtime boundary**         | `ConversationManager` owns live conversation, voice, and in-flight coordination above the `Actor`, which focuses on code-first execution over typed primitives.                                                                                                |
+| **Realtime voice, not just chat**   | A fast voice process handles sub-second conversation while a slower orchestration layer keeps planning, using tools, and steering concurrent work in the background.                                                                                           |
+| **Code-first execution**            | The Actor writes Python programs with variables, loops, and real control flow instead of emitting one JSON tool call at a time.                                                                                                                                |
+| **Distributed state managers**      | Each domain manager owns its slice of state and runs its own async LLM tool loop, so memory and capabilities stay inspectable instead of melting into one monolithic agent.                                                                                    |
+| **Concurrent multi-task execution** | Multiple actions can run at once, each with its own steering surface, notification flow, and transcript lineage.                                                                                                                                               |
+| **Computer-native workflows**       | Unity can layer desktop and browser control on top of the same steering, memory, and orchestration model rather than treating GUI work as a separate subsystem.                                                                                                |
+
 
 ## Quick Start
 
@@ -82,11 +84,13 @@ unity --project_name Sandbox --overwrite
 
 At the configuration prompt:
 
-| Option | What it gives you |
-|------|------|
-| `1` | ConversationManager orchestration without CodeAct — useful if you want to isolate the top-level brain |
-| `2` | The full agent: ConversationManager + CodeAct + simulated managers |
-| `3` | Option 2 plus desktop/browser control through `agent-service` |
+
+| Option | What it gives you                                                                                     |
+| ------ | ----------------------------------------------------------------------------------------------------- |
+| `1`    | ConversationManager orchestration without CodeAct — useful if you want to isolate the top-level brain |
+| `2`    | The full agent: ConversationManager + CodeAct + simulated managers                                    |
+| `3`    | Option 2 plus desktop/browser control through `agent-service`                                         |
+
 
 If you're evaluating Unity as an agent, start with **option 2**.
 
@@ -188,6 +192,7 @@ The persistence backend is open-source too: [Orchestra](https://github.com/unify
 Every operation in Unity returns a **live handle** you can steer. These handles nest: the user steers the ConversationManager, the ConversationManager steers the Actor, the Actor steers the managers. Corrections, pauses, and queries propagate through the full depth.
 
 In practice:
+
 - "Also include Q2 numbers" mid-way through a report → the agent adjusts without restarting
 - "Pause that, something urgent" → work freezes and resumes exactly where it left off
 - "How's the flight search going?" → you get a status update without disrupting the work
@@ -235,6 +240,7 @@ This runs in a sandboxed execution session with the full `primitives.*` API avai
 **Fast brain** — a real-time voice agent on LiveKit, running as a separate subprocess. Sub-second latency. Handles the conversation autonomously.
 
 They talk over IPC. When the slow brain wants to guide the conversation, it sends:
+
 - **SPEAK** — "say exactly this" (bypasses the fast brain's LLM entirely)
 - **NOTIFY** — "here's some context, decide what to do with it"
 - **BLOCK** — nothing; the fast brain keeps going on its own
@@ -315,12 +321,14 @@ State Managers (each runs its own async LLM tool loop)
 
 ## Open-sourced alongside Unity
 
-| Repo | Role |
-|------|------|
-| **unity** (this) | The agent — managers, tool loops, CodeAct, voice, orchestration |
+
+| Repo                                                  | Role                                                                                         |
+| ----------------------------------------------------- | -------------------------------------------------------------------------------------------- |
+| **unity** (this)                                      | The agent — managers, tool loops, CodeAct, voice, orchestration                              |
 | **[orchestra](https://github.com/unifyai/orchestra)** | Persistence backend — FastAPI + Postgres + pgvector. Installer spins it up locally in Docker |
-| **[unify](https://github.com/unifyai/unify)** | Python SDK — the client Unity uses to talk to Orchestra |
-| **[unillm](https://github.com/unifyai/unillm)** | LLM access layer — OpenAI, Anthropic, or any compatible endpoint |
+| **[unify](https://github.com/unifyai/unify)**         | Python SDK — the client Unity uses to talk to Orchestra                                      |
+| **[unillm](https://github.com/unifyai/unillm)**       | LLM access layer — OpenAI, Anthropic, or any compatible endpoint                             |
+
 
 All MIT-licensed. The managed product layer — communication routing, telephony, the assistant session control plane, the web dashboard, billing, identity — runs on [Unify's platform](https://unify.ai) and is not part of this open core. You can point Unity at Unify's hosted Orchestra instead of a local one, but managed-service features only work against the hosted backend.
 
@@ -341,16 +349,18 @@ See [tests/README.md](tests/README.md) for the full philosophy — responses are
 
 ## Where to start reading
 
-| File | What's there |
-|------|-------------|
-| `unity/common/async_tool_loop.py` | `SteerableToolHandle` — the protocol everything returns |
-| `unity/common/_async_tool/loop.py` | The async tool loop engine — nesting, steering, context propagation |
-| `unity/actor/code_act_actor.py` | CodeAct — plan generation, sandbox, primitives |
-| `unity/conversation_manager/conversation_manager.py` | Dual-brain orchestration, debouncing, in-flight actions |
-| `unity/conversation_manager/domains/brain_action_tools.py` | How the brain starts, steers, and tracks concurrent work |
-| `unity/function_manager/primitives/registry.py` | How primitives are assembled into the typed API surface |
-| `unity/events/event_bus.py` | Typed event backbone |
-| `unity/memory_manager/memory_manager.py` | Offline consolidation pipeline |
+
+| File                                                       | What's there                                                        |
+| ---------------------------------------------------------- | ------------------------------------------------------------------- |
+| `unity/common/async_tool_loop.py`                          | `SteerableToolHandle` — the protocol everything returns             |
+| `unity/common/_async_tool/loop.py`                         | The async tool loop engine — nesting, steering, context propagation |
+| `unity/actor/code_act_actor.py`                            | CodeAct — plan generation, sandbox, primitives                      |
+| `unity/conversation_manager/conversation_manager.py`       | Dual-brain orchestration, debouncing, in-flight actions             |
+| `unity/conversation_manager/domains/brain_action_tools.py` | How the brain starts, steers, and tracks concurrent work            |
+| `unity/function_manager/primitives/registry.py`            | How primitives are assembled into the typed API surface             |
+| `unity/events/event_bus.py`                                | Typed event backbone                                                |
+| `unity/memory_manager/memory_manager.py`                   | Offline consolidation pipeline                                      |
+
 
 ## Project structure
 
