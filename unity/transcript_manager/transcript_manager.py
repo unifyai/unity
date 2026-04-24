@@ -1,17 +1,71 @@
+"""Conversation transcript and exchange store for a body.
+
+TranscriptManager owns two tables — ``Transcripts`` (one row per
+message) and ``Exchanges`` (one row per conversation thread). Both are
+Hive-shared: a body inside a Hive reads and writes them under
+``Hives/{hive_id}/Transcripts`` and ``Hives/{hive_id}/Exchanges`` so
+every member sees the same conversation history; a solo body keeps its
+per-body ``{user}/{assistant}/...`` roots. Every row carries
+``authoring_assistant_id`` so shared rows stay attributable to the
+body that wrote them.
+
+Three-layer retrieval split
+---------------------------
+
+Conversation state is split across three surfaces on purpose; each
+TranscriptManager method belongs to exactly one of them.
+
+1. **Body-local recent history** — :class:`ContactIndex` maintains a
+   per-body global-thread view backed by the EventBus. It never reads
+   the shared Hive pool and intentionally reflects only *this* body's
+   in-memory recent messages.
+2. **Hive-wide searchable transcripts** — :meth:`search_messages`,
+   :meth:`get_recent_voice_transcript`, :meth:`get_recent_transcript`
+   and the column/metric helpers read the shared
+   ``Hives/{hive}/Transcripts`` pool and return every body's messages
+   with the contact. This is the Hive-wide surface.
+3. **Shared rolling context** — :attr:`Contact.rolling_summary`,
+   ``bio``, and any custom columns on the shared Contact row are
+   hydrated by :class:`ContactManager` at contact fetch time; they are
+   not exposed as TranscriptManager surfaces.
+
+Body-to-body exchange dedup
+---------------------------
+
+:meth:`log_first_message_in_new_exchange` checks whether the
+counterparty contact is a Hive-mate (``Contact.assistant_id`` is
+populated) and, if so, reuses the most recent existing exchange in
+``Hives/{hive}/Exchanges`` whose ``counterparty_contact_id`` is
+either participant's self-contact id on the same medium — so body A
+writing to body B and body B writing back to body A converge on the
+same row instead of opening a second. External contacts and async-
+media replays on ``log_messages`` always create fresh exchanges; the
+dedup fires only on this explicit entrypoint.
+"""
+
 from __future__ import annotations
 
 import asyncio
 import functools
+import logging
 from typing import List, Dict, Optional, Type, Union, Any, Callable, Literal
 
 import unify
 from pydantic import BaseModel
+from unify.utils.http import RequestError
+
+from ..common.authoring import AUTHORING_COLUMN, authoring_assistant_id
 from ..common.embed_utils import ensure_vector_column
 from ..common.log_utils import log as unity_log, _inject_private_fields, _add_to_all
 from ..contact_manager.base import BaseContactManager
+from ..contact_manager.settings import RELATIONSHIP_SELF
+from ..contact_manager.system_contacts import _overlay_contact_id_for_relationship
 from ..manager_registry import ManagerRegistry
+from ..session_details import SESSION_DETAILS
 from .types.message import Message, UNASSIGNED
 from .types.exchange import Exchange
+
+logger = logging.getLogger(__name__)
 
 # New: allow Contact objects to appear in messages
 from ..contact_manager.types.contact import Contact
@@ -59,6 +113,16 @@ from .images import (
 from ..common.context_registry import ContextRegistry, TableContext
 from ..common.model_to_fields import model_to_fields
 from ..common.metrics_utils import reduce_logs
+
+
+def _coerce_optional_int(value: Any) -> Optional[int]:
+    """Best-effort coercion for nullable int columns read back from storage."""
+    if value is None:
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
 
 
 class TranscriptManager(BaseTranscriptManager):
@@ -111,6 +175,14 @@ class TranscriptManager(BaseTranscriptManager):
                 fields=model_to_fields(Exchange),
                 unique_keys={"exchange_id": "int"},
                 auto_counting={"exchange_id": None},
+                foreign_keys=[
+                    {
+                        "name": "counterparty_contact_id",
+                        "references": "Contacts.contact_id",
+                        "on_delete": "SET NULL",
+                        "on_update": "CASCADE",
+                    },
+                ],
             ),
         ]
 
@@ -478,6 +550,12 @@ class TranscriptManager(BaseTranscriptManager):
                 _ensure_contact_id(r) for r in payload.get("receiver_ids", [])
             ]
 
+            # Stamp the authoring body for this message, but preserve any
+            # caller-supplied value (e.g. backfill paths that need to
+            # attribute a historical row to the original author).
+            if payload.get(AUTHORING_COLUMN) is None:
+                payload[AUTHORING_COLUMN] = authoring_assistant_id()
+
             # Re-instantiate Message model for validation
             normalised_messages.append(Message(**payload))
 
@@ -793,12 +871,21 @@ class TranscriptManager(BaseTranscriptManager):
         original_contact_id: int,
         new_contact_id: int,
     ) -> Dict[str, Any]:
-        """Replace **all** occurrences of *original_contact_id* with *new_contact_id*
-        across every transcript message.
+        """Replace every reference to ``original_contact_id`` with ``new_contact_id``.
 
-        The substitution is applied to both the ``sender_id`` **and** every entry
-        inside ``receiver_ids``.  The update is *in-place* – no new rows are
-        created.
+        The rewrite covers both transcript-level references and
+        exchange-level references so a contact merge leaves no stale
+        pointers behind:
+
+        - ``Transcripts.sender_id`` and every entry in
+          ``Transcripts.receiver_ids``
+        - ``Exchanges.counterparty_contact_id``
+
+        The two rewrites must stay atomic at the manager level —
+        leaving ``Exchanges.counterparty_contact_id`` stale would
+        re-orphan the merged-away contact on the next body-to-body
+        dedup query (``find_hive_mate_exchange_id`` filters on that
+        column). ``authoring_assistant_id`` stamps are never rewritten.
 
         Parameters
         ----------
@@ -810,13 +897,14 @@ class TranscriptManager(BaseTranscriptManager):
         Returns
         -------
         dict
-            ToolOutcome-style payload summarising how many messages were
-            updated.
+            ToolOutcome-style payload summarising how many messages and
+            exchanges were updated.
         """
         if original_contact_id == new_contact_id:
             raise ValueError("original_contact_id and new_contact_id must differ.")
 
-        total_updates = 0
+        updated_messages = 0
+        updated_exchanges = 0
 
         # ── 1.  Bulk update all *sender_id* occurrences ────────────────────
         sender_log_ids = unify.get_logs(
@@ -831,7 +919,7 @@ class TranscriptManager(BaseTranscriptManager):
                 entries={"sender_id": new_contact_id},
                 overwrite=True,
             )
-            total_updates += len(sender_log_ids)
+            updated_messages += len(sender_log_ids)
 
         # ── 2.  Update all *receiver_ids* lists containing the old id ──────
         receiver_logs = unify.get_logs(
@@ -863,14 +951,36 @@ class TranscriptManager(BaseTranscriptManager):
                     entries={"receiver_ids": deduped_rids},
                     overwrite=True,
                 )
-                total_updates += 1
+                updated_messages += 1
+
+        # ── 3.  Rewrite Exchanges.counterparty_contact_id ──────────────────
+        # Kept atomic with the Transcripts rewrites above so a body-to-body
+        # dedup query issued immediately after the merge routes to the
+        # surviving contact, not the retired one.
+        exchange_log_ids = unify.get_logs(
+            context=self._exchanges_ctx,
+            filter=(
+                "counterparty_contact_id is not None and "
+                f"counterparty_contact_id == {original_contact_id}"
+            ),
+            return_ids_only=True,
+        )
+        if exchange_log_ids:
+            unify.update_logs(
+                logs=exchange_log_ids,
+                context=self._exchanges_ctx,
+                entries={"counterparty_contact_id": new_contact_id},
+                overwrite=True,
+            )
+            updated_exchanges += len(exchange_log_ids)
 
         return {
             "outcome": "contact ids updated",
             "details": {
                 "old_contact_id": original_contact_id,
                 "new_contact_id": new_contact_id,
-                "updated_messages": total_updates,
+                "updated_messages": updated_messages,
+                "updated_exchanges": updated_exchanges,
             },
         }
 
@@ -1089,6 +1199,12 @@ class TranscriptManager(BaseTranscriptManager):
                 exchange_id=int(rec.get("exchange_id")),
                 metadata=dict(rec.get("metadata") or {}),
                 medium=str(rec.get("medium") or ""),
+                counterparty_contact_id=_coerce_optional_int(
+                    rec.get("counterparty_contact_id"),
+                ),
+                authoring_assistant_id=_coerce_optional_int(
+                    rec.get(AUTHORING_COLUMN),
+                ),
             )
         except Exception as exc:  # noqa: BLE001
             raise RuntimeError(
@@ -1115,12 +1231,15 @@ class TranscriptManager(BaseTranscriptManager):
                 overwrite=True,
             )
         else:
-            # Upsert behaviour – create a new row with empty medium if missing
+            # Upsert behaviour – create a new row with empty medium if missing.
+            # ``authoring_assistant_id`` is stamped once at create time; the
+            # update-metadata branch above never rewrites it.
             unity_log(
                 context=self._exchanges_ctx,
                 exchange_id=int(exchange_id),
                 metadata=dict(metadata or {}),
                 medium="",
+                **{AUTHORING_COLUMN: authoring_assistant_id()},
                 new=True,
                 mutable=True,
                 add_to_all_context=self.include_in_multi_assistant_table,
@@ -1159,9 +1278,19 @@ class TranscriptManager(BaseTranscriptManager):
         *,
         exchange_initial_metadata: Optional[Dict[str, Any]] = None,
     ) -> tuple[int, int]:
-        """Log the first message of a brand-new exchange and set initial metadata.
+        """Log the first message of an exchange, reusing a Hive-mate thread if present.
 
-        Returns (exchange_id, message_id) for the newly created exchange and message.
+        When the counterparty contact is a Hive-mate body (i.e. the shared
+        ``Contact.assistant_id`` column is populated) and the calling body
+        belongs to the same Hive, the logger reuses the most recent existing
+        ``(medium, counterparty_contact_id)`` row in
+        ``Hives/{hive}/Exchanges`` instead of opening a new one. That is
+        what collapses both Hive-mate bodies' views of the same conversation
+        onto a single shared exchange row. External contacts and solo bodies
+        always open a fresh exchange.
+
+        Returns (exchange_id, message_id) for the resolved exchange and
+        the newly created message.
         """
 
         # 1) Validate no exchange_id is provided by the caller
@@ -1183,7 +1312,7 @@ class TranscriptManager(BaseTranscriptManager):
                 # If attribute missing, treat as acceptable (will be injected downstream)
                 pass
 
-        # 2) Normalise payload and persist directly to obtain an assigned exchange_id
+        # 2) Normalise payload and resolve any Contact objects to ids
         def _ensure_contact_id_local(c: Union[int, Contact]) -> int:
             if not isinstance(c, Contact):
                 if c is None:
@@ -1218,28 +1347,33 @@ class TranscriptManager(BaseTranscriptManager):
                 "exchange_id must NOT be provided when starting a new exchange; use TranscriptManager.log_messages(...) if you already have an existing exchange id.",
             )
 
-        # 3) Create Exchange row FIRST to satisfy FK constraint
-        exchange_log = unity_log(
-            context=self._exchanges_ctx,
-            metadata=dict(exchange_initial_metadata or {}),
-            medium=str(payload.get("medium", "")),
-            new=True,
-            mutable=True,
-            add_to_all_context=self.include_in_multi_assistant_table,
+        medium = str(payload.get("medium", ""))
+        self_cid = self._self_contact_id()
+        counterparty_cid = self._counterparty_contact_id(
+            sender_id=payload.get("sender_id"),
+            receiver_ids=payload.get("receiver_ids") or [],
+            self_cid=self_cid,
         )
 
-        # Extract the assigned exchange_id
-        try:
-            exid = int(exchange_log.entries["exchange_id"])
-        except Exception as exc:  # noqa: BLE001 – precise error context
-            raise RuntimeError(
-                "Created exchange lacks an assigned exchange_id.",
-            ) from exc
-        if exid < 0:
-            raise RuntimeError("Created exchange has an unassigned exchange_id.")
+        # 3) Body-to-body dedup: when the counterparty is a Hive-mate body,
+        # reuse the most recent shared exchange on ``(medium, counterparty)``
+        # instead of opening a new row. Solo bodies and external-contact
+        # counterparties fall through to the "create new" path.
+        exid = self._find_hive_mate_exchange_id(
+            medium=medium,
+            counterparty_contact_id=counterparty_cid,
+            self_contact_id=self_cid,
+        )
+        if exid is None:
+            exid = self._open_exchange_row(
+                medium=medium,
+                counterparty_contact_id=counterparty_cid,
+                initial_metadata=exchange_initial_metadata,
+            )
 
-        # 4) Add exchange_id to payload and create message SECOND
+        # 4) Persist the message against the resolved exchange_id
         payload["exchange_id"] = exid
+        payload[AUTHORING_COLUMN] = authoring_assistant_id()
 
         created_model = Message(**payload)
         entries = created_model.to_post_json()
@@ -1254,6 +1388,163 @@ class TranscriptManager(BaseTranscriptManager):
 
         tm_message_id = int(log.entries.get("message_id", -1))
         return exid, tm_message_id
+
+    def _open_exchange_row(
+        self,
+        *,
+        medium: str,
+        counterparty_contact_id: Optional[int],
+        initial_metadata: Optional[Dict[str, Any]] = None,
+    ) -> int:
+        """Create a fresh ``Exchanges`` row and return its assigned id.
+
+        Stamps ``authoring_assistant_id`` with the opening body's id and
+        pins ``counterparty_contact_id`` so later dedup queries can find
+        this row by ``(medium, counterparty_contact_id)``.
+        """
+        exchange_log = unity_log(
+            context=self._exchanges_ctx,
+            metadata=dict(initial_metadata or {}),
+            medium=medium,
+            counterparty_contact_id=counterparty_contact_id,
+            **{AUTHORING_COLUMN: authoring_assistant_id()},
+            new=True,
+            mutable=True,
+            add_to_all_context=self.include_in_multi_assistant_table,
+        )
+        try:
+            exid = int(exchange_log.entries["exchange_id"])
+        except Exception as exc:  # noqa: BLE001 – precise error context
+            raise RuntimeError(
+                "Created exchange lacks an assigned exchange_id.",
+            ) from exc
+        if exid < 0:
+            raise RuntimeError("Created exchange has an unassigned exchange_id.")
+        return exid
+
+    def _counterparty_contact_id(
+        self,
+        *,
+        sender_id: Optional[int],
+        receiver_ids: List[Optional[int]],
+        self_cid: Optional[int],
+    ) -> Optional[int]:
+        """Return the non-self participant's contact_id, or ``None``.
+
+        Picks the first participant that is not the calling body's own
+        self-contact. Returns ``None`` when every participant is self
+        (degenerate) — the dedup path then falls through to the
+        "open a fresh exchange" branch.
+        """
+        for pid in (sender_id, *receiver_ids):
+            if pid is None:
+                continue
+            if self_cid is not None and pid == self_cid:
+                continue
+            return int(pid)
+        return None
+
+    def _self_contact_id(self) -> Optional[int]:
+        """Return this body's self-contact id via the ContactManager overlay.
+
+        Result is cached on the instance: the overlay row is stamped
+        once at ``provision_self_contact`` time and never mutates for
+        the lifetime of a manager. ``None`` is not cached so a missing
+        overlay is re-probed on the next call.
+        """
+        cached = getattr(self, "_self_contact_id_cache", None)
+        if cached is not None:
+            return cached
+        resolved = _overlay_contact_id_for_relationship(
+            self._contact_manager,
+            RELATIONSHIP_SELF,
+        )
+        if resolved is not None:
+            self._self_contact_id_cache = resolved
+        return resolved
+
+    def _find_hive_mate_exchange_id(
+        self,
+        *,
+        medium: str,
+        counterparty_contact_id: Optional[int],
+        self_contact_id: Optional[int],
+    ) -> Optional[int]:
+        """Return the most recent matching exchange_id for a Hive-mate counterparty.
+
+        Returns ``None`` — meaning "open a fresh exchange" — when any of
+        the following hold:
+        - the calling body is not in a Hive (``SESSION_DETAILS.hive_id``
+          is ``None``);
+        - the counterparty id is ``None``;
+        - the counterparty's shared ``Contact.assistant_id`` is ``None``
+          (external person, not a Hive-mate body).
+
+        The lookup is symmetric: because every writer stamps its *own*
+        counterparty (body A writing to body B stamps ``B``; body B
+        writing back stamps ``A``), the query matches rows whose
+        ``counterparty_contact_id`` is either side's self-contact id.
+        "Most recent" is resolved by descending ``exchange_id`` — each
+        exchange row uses the auto-counting id issued at open time,
+        which is monotonic for a given Hive context.
+        """
+        if SESSION_DETAILS.hive_id is None:
+            return None
+        if counterparty_contact_id is None:
+            return None
+        if not self._counterparty_is_hive_mate(counterparty_contact_id):
+            return None
+        participant_ids = [counterparty_contact_id]
+        if self_contact_id is not None and self_contact_id != counterparty_contact_id:
+            participant_ids.append(self_contact_id)
+        ids_expr = ", ".join(str(pid) for pid in participant_ids)
+        try:
+            rows = unify.get_logs(
+                context=self._exchanges_ctx,
+                filter=(
+                    f"counterparty_contact_id in [{ids_expr}] "
+                    f"and medium == '{medium}'"
+                ),
+                sorting={"exchange_id": "descending"},
+                limit=1,
+                from_fields=["exchange_id"],
+            )
+        except RequestError as exc:
+            logger.warning(
+                "Hive-mate exchange lookup failed (medium=%s, ctx=%s): %s — "
+                "falling back to fresh exchange",
+                medium,
+                self._exchanges_ctx,
+                exc,
+            )
+            return None
+        if not rows:
+            return None
+        return int(rows[0].entries.get("exchange_id"))
+
+    def _counterparty_is_hive_mate(self, counterparty_contact_id: int) -> bool:
+        """Return True when the counterparty's shared Contact row names a body.
+
+        Reads ``Contact.assistant_id`` on the shared Hive-contacts row.
+        Populated ``assistant_id`` means the contact represents a
+        Hive-member body; ``None`` means an external human contact.
+        """
+        try:
+            info = self._contact_manager.get_contact_info(
+                int(counterparty_contact_id),
+                fields=["contact_id", "assistant_id"],
+            )
+        except RequestError as exc:
+            logger.warning(
+                "Hive-mate probe failed for contact_id=%s: %s — treating as external",
+                counterparty_contact_id,
+                exc,
+            )
+            return False
+        row = info.get(int(counterparty_contact_id)) if info else None
+        if not row:
+            return False
+        return row.get("assistant_id") is not None
 
     # Formatting helper: single contacts table + messages
     def _format_contacts_and_messages(self, messages: List[Message]) -> Dict[str, Any]:
