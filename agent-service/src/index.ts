@@ -857,6 +857,13 @@ const MEET_STOP_PRESENT_TASK =
   `Click the "Stop presenting" or "Stop sharing" button to end the presentation.\n` +
   `If there is no stop button visible, look for a "You are presenting" banner or bar and click stop there.`;
 
+const MEET_LEAVE_TASK =
+  `You are in an active Google Meet call.\n` +
+  `Click the red "Leave call" button (the phone-handset icon) in the bottom toolbar.\n` +
+  `If a confirmation dialog appears with options like "Just leave the call" and ` +
+  `"End the call for everyone", click "Just leave the call" — do NOT end for everyone.\n` +
+  `If the meeting has already ended (e.g. "You left the meeting" is visible), do nothing — just stop.`;
+
 const MEET_PREPARE_MAX_ITERATIONS = 3;
 const MEET_JOIN_MAX_ITERATIONS = 3;
 const MEET_PRESENT_MAX_ITERATIONS = 3;
@@ -899,6 +906,52 @@ async function runMagnitudeLoop(
       console.log(`[${label}] LLM signalled task:done.`);
       break;
     }
+  }
+}
+
+/**
+ * Best-effort: drive the LLM to click the in-meeting Leave button before
+ * tearing down the browser session. A graceful click means the meeting
+ * server records a clean exit (vs. the abrupt "connection lost" other
+ * participants see when the browser process is killed mid-call).
+ *
+ * Always safe to call:
+ *   - No-ops if the meeting is already ended / removed / errored.
+ *   - Bounded by an outer timeout so a stuck Magnitude loop cannot block
+ *     teardown.
+ *   - Failures are logged and swallowed; the caller should still run the
+ *     unconditional `agent.stop()` afterwards.
+ */
+async function clickLeaveButton(
+  session: GoogleMeetSessionInfo | TeamsMeetSessionInfo,
+  channel: 'google_meet' | 'teams_meet',
+): Promise<void> {
+  if (
+    session.status === 'ended' ||
+    session.status === 'removed' ||
+    session.status === 'error'
+  ) {
+    return;
+  }
+
+  const isGoogle = channel === 'google_meet';
+  const task = isGoogle ? MEET_LEAVE_TASK : TEAMS_LEAVE_TASK;
+  const label = isGoogle ? 'googlemeet/leave-click' : 'teamsmeet/leave-click';
+  const maxIters = isGoogle ? MEET_PRESENT_MAX_ITERATIONS : TEAMS_PRESENT_MAX_ITERATIONS;
+
+  try {
+    await session.agent.page.bringToFront();
+    await Promise.race([
+      runMagnitudeLoop(session.agent, task, maxIters, label),
+      new Promise<void>((_, reject) =>
+        setTimeout(() => reject(new Error('leave_click_timeout')), 8000),
+      ),
+    ]);
+    // Brief grace so the meeting server registers the leave RPC before we
+    // kill the underlying socket via `agent.stop()`.
+    await sleep(500);
+  } catch (err) {
+    console.warn(`[${label}] best-effort leave click failed: ${err}`);
   }
 }
 
@@ -2020,6 +2073,8 @@ app.post('/googlemeet/leave', auth, async (req: Request, res: Response) => {
       session.pollIntervalId = null;
     }
 
+    await clickLeaveButton(session, 'google_meet');
+
     if (session.desktopTabPage) {
       await session.desktopTabPage.close().catch(() => {});
       session.desktopTabPage = null;
@@ -2339,6 +2394,13 @@ const TEAMS_STOP_PRESENT_TASK =
   `Click the "Stop sharing" or "Stop presenting" button to end the presentation.\n` +
   `If there is no stop button visible, look for a "You are sharing" banner or bar and click stop there.`;
 
+const TEAMS_LEAVE_TASK =
+  `You are in an active Microsoft Teams meeting.\n` +
+  `Click the red "Leave" button (hangup / end-call icon) in the meeting controls bar.\n` +
+  `If a dropdown or confirmation appears with "Leave" and "End meeting" options, ` +
+  `click "Leave" — do NOT click "End meeting" for everyone.\n` +
+  `If the meeting has already ended (e.g. "You left the meeting" is visible), do nothing — just stop.`;
+
 // In-meeting fallback: only used when the pre-join audio configuration failed.
 // Consumer Teams typically exposes audio devices via a caret next to the mic
 // button; business Teams hides them behind "More (…) → Settings → Device settings".
@@ -2606,6 +2668,8 @@ app.post('/teamsmeet/leave', auth, async (req: Request, res: Response) => {
       clearInterval(session.pollIntervalId);
       session.pollIntervalId = null;
     }
+
+    await clickLeaveButton(session, 'teams_meet');
 
     if (session.desktopTabPage) {
       await session.desktopTabPage.close().catch(() => {});
