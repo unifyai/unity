@@ -12,43 +12,40 @@
 
 # Unity
 
-Unity is the runtime behind [Unify's](https://unify.ai) persistent AI colleagues. It is built for assistants you can interrupt mid-task, redirect without restarting, run in parallel, and grow over time through typed, long-lived state.
+Unity is an open-source agent behind [Unify's](https://unify.ai) persistent AI colleagues. It is built for assistants you can onboard like teammates, interrupt and redirect at any depth, talk to in real time, run fully locally by default, and grow over time through typed, long-lived memory.
 
-Unity and [Hermes Agent](https://github.com/NousResearch/hermes-agent) overlap in ambition, but they optimize for different layers. Hermes is a broad personal-agent product with a large end-user surface. Unity is the cognitive runtime for a different bet: steerable nested execution, code-first plans over typed primitives, dual-brain voice, and distributed state managers that consolidate memory into queryable tables instead of keeping everything in one ever-growing loop.
+Instead of one flat tool loop, Unity separates live conversation from action execution. The `ConversationManager` owns the realtime interaction layer and voice orchestration above the `Actor`, which writes code-first plans. Specialized managers own typed state for contacts, transcripts, knowledge, tasks, functions, guidance, secrets, files, images, and more. That state lives in Postgres with pgvector support via [Orchestra](https://github.com/unifyai/orchestra), so memory keeps getting richer without collapsing into one opaque prompt thread. Agents in the same Hive can also share one typed memory layer across all of those managers, so teams learn together instead of starting from scratch body by body.
 
 > **Start here:** [Overview](https://docs.unify.ai/basics/overview) • [Quickstart](https://docs.unify.ai/basics/quickstart) • [Demos](https://docs.unify.ai/basics/demos) • [ARCHITECTURE.md](ARCHITECTURE.md)
 
-## Why Unity
+## What Makes Unity Different
+
+- **`ConversationManager` stays above the `Actor`.** Live conversation, voice, and in-flight coordination stay separate from code-first action execution.
+- **Memory is typed and self-evolving.** Contacts, transcripts, knowledge, tasks, functions, guidance, secrets, files, and images live in dedicated managers backed by Postgres + pgvector.
+- **Teams can share a Hive mind.** Agents in the same Hive build up the same typed memory across state managers, so a team of agents can learn together instead of each one relearning the same context alone.
+- **Steering is recursive and bidirectional.** Top-down control (`ask`, `interject`, `pause`, `resume`, `stop`) propagates downward, while bottom-up `next_notification` and `next_clarification` flow back upward.
+- **Voice is first-class.** A fast realtime process handles sub-second conversation while a slower orchestration layer keeps planning, using tools, and steering concurrent work.
+- **It is easy to try.** Unity starts from a one-command install, takes seconds to kick off, and runs fully locally by default.
+
+Unity is designed to feel less like "prompt, then execute" and more like working with a colleague that can stay in the loop, ask for clarification, be redirected mid-flight, and continuously consolidate experience into reusable structure.
+
+## Core Capabilities
 
 <table>
-<tr><td><b>Steerable nested execution</b></td><td>Every operation returns a live handle. Pause, resume, interject, or ask questions at any depth without restarting the work.</td></tr>
-<tr><td><b>Code plans, not flat tool menus</b></td><td>The Actor writes Python programs over typed primitives with variables, loops, and control flow, so multi-step work becomes one coherent plan.</td></tr>
-<tr><td><b>Dual-brain voice</b></td><td>A real-time voice process handles sub-second conversation while a slower orchestration layer keeps planning and using tools in the background.</td></tr>
-<tr><td><b>Distributed state managers</b></td><td>Contacts, knowledge, tasks, transcripts, guidance, files, images, and more each live behind a dedicated manager with its own async LLM tool loop.</td></tr>
-<tr><td><b>Structured memory consolidation</b></td><td>Documents, calls, screenshares, tasks, and follow-up corrections get distilled into typed, queryable state instead of one opaque transcript summary.</td></tr>
-<tr><td><b>Concurrent steerable actions</b></td><td>Multiple actions can run at once, each with its own inspection and steering surface.</td></tr>
-<tr><td><b>Persistent identity across channels</b></td><td>Messages, SMS, email, phone calls, and meetings all feed the same long-term memory and task state.</td></tr>
+<tr><td><b>Typed, self-evolving memory</b></td><td>Contacts, transcripts, knowledge, tasks, functions, guidance, secrets, files, images, and more live in dedicated typed stores, backed by Postgres + pgvector through Orchestra rather than one freeform memory blob.</td></tr>
+<tr><td><b>Hive-shared team memory</b></td><td>Agents in the same Hive share one typed, self-evolving memory layer across state managers, so teams can coordinate around the same growing knowledge instead of maintaining separate memories per agent.</td></tr>
+<tr><td><b>Fully nested steering</b></td><td>Every operation returns a live handle. Top-down control (<code>ask</code>, <code>interject</code>, <code>pause</code>, <code>resume</code>, <code>stop</code>) propagates downward through the full tree, while bottom-up notifications and clarification requests flow back upward.</td></tr>
+<tr><td><b>Clear realtime boundary</b></td><td><code>ConversationManager</code> owns live conversation, voice, and in-flight coordination above the <code>Actor</code>, which focuses on code-first execution over typed primitives.</td></tr>
+<tr><td><b>Realtime voice, not just chat</b></td><td>A fast voice process handles sub-second conversation while a slower orchestration layer keeps planning, using tools, and steering concurrent work in the background.</td></tr>
+<tr><td><b>Code-first execution</b></td><td>The Actor writes Python programs with variables, loops, and real control flow instead of emitting one JSON tool call at a time.</td></tr>
+<tr><td><b>Distributed state managers</b></td><td>Each domain manager owns its slice of state and runs its own async LLM tool loop, so memory and capabilities stay inspectable instead of melting into one monolithic agent.</td></tr>
+<tr><td><b>Concurrent multi-task execution</b></td><td>Multiple actions can run at once, each with its own steering surface, notification flow, and transcript lineage.</td></tr>
+<tr><td><b>Computer-native workflows</b></td><td>Unity can layer desktop and browser control on top of the same steering, memory, and orchestration model rather than treating GUI work as a separate subsystem.</td></tr>
 </table>
-
-## Unity vs Hermes Agent
-
-If you're comparing the two directly, the clearest distinction is the layer each project emphasizes:
-
-| If you want... | Better fit |
-|------|------|
-| A polished personal-agent product with a wide messaging/gateway surface, remote deployment paths, and a large end-user docs surface out of the box | [Hermes Agent](https://github.com/NousResearch/hermes-agent) |
-| A runtime you can study, embed, or extend around interruptible execution, nested steering, code-first planning, and typed long-lived state | Unity |
-
-Unity's distinctive bets are:
-
-- **Every public operation returns a live handle.** Steering is a first-class protocol, not an afterthought.
-- **The Actor writes Python over `primitives.*`.** Multi-step composition happens inside one generated program, not one JSON tool call at a time.
-- **Memory is split across managers.** Contacts, knowledge, tasks, transcripts, guidance, files, and images remain queryable and inspectable as separate domains.
-- **Voice runs as two coordinated brains.** A fast real-time process keeps up with speech while a slower brain continues reasoning and tool use.
 
 ## Quick Start
 
-By default, Unity's open-core quickstart is fully local: the runtime, the LLM client, and the persistence backend ([Orchestra](https://github.com/unifyai/orchestra), via Docker) all run on your machine. Hosted backend at [unify.ai](https://unify.ai) is optional.
+By default, Unity's open-core quickstart is fully local: the agent, the LLM client, and the persistence backend ([Orchestra](https://github.com/unifyai/orchestra), via Docker) all run on your machine. Hosted backend at [unify.ai](https://unify.ai) is optional.
 
 ### Fastest path
 
@@ -67,7 +64,7 @@ Install:
 curl -fsSL https://raw.githubusercontent.com/unifyai/unity/main/scripts/install.sh | bash
 ```
 
-The installer clones `unity`, `unify`, `unillm`, and `orchestra` as siblings under `~/.unity/`, installs dependencies, creates a `unity` CLI shim in `~/.local/bin/`, boots a local Orchestra in Docker, and writes the local `UNIFY_KEY` / `ORCHESTRA_URL` into `~/.unity/unity/.env`.
+The install is a single shell command and takes seconds to kick off. On first run, Unity then clones `unity`, `unify`, `unillm`, and `orchestra` as siblings under `~/.unity/`, installs dependencies, creates a `unity` CLI shim in `~/.local/bin/`, boots a local Orchestra in Docker, and writes the local `UNIFY_KEY` / `ORCHESTRA_URL` into `~/.unity/unity/.env`.
 
 Then add one model provider key to `~/.unity/unity/.env`:
 
@@ -88,10 +85,10 @@ At the configuration prompt:
 | Option | What it gives you |
 |------|------|
 | `1` | ConversationManager orchestration without CodeAct — useful if you want to isolate the top-level brain |
-| `2` | The full runtime: ConversationManager + CodeAct + simulated managers |
+| `2` | The full agent: ConversationManager + CodeAct + simulated managers |
 | `3` | Option 2 plus desktop/browser control through `agent-service` |
 
-If you're evaluating Unity as a runtime, start with **option 2**.
+If you're evaluating Unity as an agent, start with **option 2**.
 
 Example session:
 
@@ -154,13 +151,35 @@ The installer copies `.env.example` to `.env`. That file is intentionally minima
 
 For the full sandbox matrix — voice mode, live voice calls, local comms, hosted comms, and GUI mode — see [`sandboxes/conversation_manager/README.md`](sandboxes/conversation_manager/README.md).
 
+## Migrating from Hermes Agent or OpenClaw
+
+Unity does not have a one-shot importer yet. The clean migration path is to move data into Unity's native surfaces instead of trying to preserve another agent's prompt layout verbatim.
+
+The rough mapping is:
+
+- long-lived people data → `ContactManager`
+- past conversations and raw chat history → `TranscriptManager`
+- durable facts and semantic memory → `KnowledgeManager`
+- active commitments and background work → `TaskScheduler`
+- reusable procedures and learned workflows → `GuidanceManager`
+- callable code utilities → `FunctionManager`
+- credentials and tokens → `SecretManager`
+- supporting documents and screenshots → `FileManager` / `ImageManager`
+
+A practical migration flow looks like:
+
+1. Export the parts of the old system that are actually durable: contacts, key transcripts, docs, procedures, tasks, and reusable code.
+2. Move procedures into guidance and code helpers into functions rather than keeping everything in one undifferentiated memory or skill layer.
+3. Recreate channel and agent configuration in Unity natively instead of trying to translate every config field 1:1.
+4. Start with the option 2 sandbox, re-onboard the assistant with the same docs, screenshares, calls, and voice notes you would use for a human teammate, and let Unity consolidate new experience back into typed memory over time.
+
 ## What's open and what isn't
 
-Unity is the **open core** of the Unify platform. This repository contains the agent runtime: the managers, async tool loops, CodeAct actor, dual-brain voice coordination, event backbone, and memory consolidation.
+Unity is the **open core** of the Unify platform. This repository contains the agent itself: the managers, async tool loops, CodeAct actor, dual-brain voice coordination, event backbone, and memory consolidation.
 
 The persistence backend is open-source too: [Orchestra](https://github.com/unifyai/orchestra) runs locally by default in the quickstart. The supporting client libraries [Unify](https://github.com/unifyai/unify) and [UniLLM](https://github.com/unifyai/unillm) are open-source as well.
 
-**Not open-sourced** is the managed platform layer around the runtime: hosted communication routing, telephony and SIP infrastructure, Microsoft 365 tenant integration, assistant session control plane, billing, and identity. You can point Unity at Unify's hosted backend instead of a local Orchestra, but features that depend on the managed platform layer only work against the hosted service.
+**Not open-sourced** is the managed platform layer around the agent: hosted communication routing, telephony and SIP infrastructure, Microsoft 365 tenant integration, assistant session control plane, billing, and identity. You can point Unity at Unify's hosted backend instead of a local Orchestra, but features that depend on the managed platform layer only work against the hosted service.
 
 ---
 
@@ -298,7 +317,7 @@ State Managers (each runs its own async LLM tool loop)
 
 | Repo | Role |
 |------|------|
-| **unity** (this) | The agent runtime — managers, tool loops, CodeAct, voice, orchestration |
+| **unity** (this) | The agent — managers, tool loops, CodeAct, voice, orchestration |
 | **[orchestra](https://github.com/unifyai/orchestra)** | Persistence backend — FastAPI + Postgres + pgvector. Installer spins it up locally in Docker |
 | **[unify](https://github.com/unifyai/unify)** | Python SDK — the client Unity uses to talk to Orchestra |
 | **[unillm](https://github.com/unifyai/unillm)** | LLM access layer — OpenAI, Anthropic, or any compatible endpoint |
