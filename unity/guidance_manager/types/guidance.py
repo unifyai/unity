@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import List
+from typing import List, Optional
 from pydantic import BaseModel, Field, field_validator, model_validator
 from ...image_manager.types import AnnotatedImageRefs
 
@@ -34,6 +34,14 @@ class Guidance(BaseModel):
         description=(
             "List of Function.function_id values that this guidance is relevant for. "
             "Represents a many-to-many relationship between Guidance and Functions."
+        ),
+    )
+    authoring_assistant_id: Optional[int] = Field(
+        default=None,
+        description=(
+            "Assistant id of the body that authored this guidance. Stamped "
+            "once at create time and preserved across updates so reviewers "
+            "can attribute shared rows inside a Hive."
         ),
     )
 

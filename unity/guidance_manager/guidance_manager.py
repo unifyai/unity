@@ -7,6 +7,7 @@ import re
 
 import unify
 
+from ..common.authoring import authoring_assistant_id
 from ..common.log_utils import log as unity_log
 from ..common.tool_outcome import ToolOutcome
 from ..common.model_to_fields import model_to_fields
@@ -559,6 +560,7 @@ class GuidanceManager(BaseGuidanceManager):
                 images if images is not None else AnnotatedImageRefs.model_validate([])
             ),
             function_ids=function_ids or [],
+            authoring_assistant_id=authoring_assistant_id(),
         )
         payload = g.to_post_json()
         log = unity_log(
