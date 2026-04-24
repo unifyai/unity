@@ -1,6 +1,8 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone, timedelta, UTC
+
+import unify
 
 from unity.transcript_manager.transcript_manager import TranscriptManager
 from unity.transcript_manager.types.message import Message
@@ -90,3 +92,51 @@ def test_rewrites_sender_and_receivers():
         assert len(msg.receiver_ids) == len(
             set(msg.receiver_ids),
         ), "receiver_ids not deduplicated"
+
+
+@_handle_project
+def test_rewrites_exchange_counterparty_contact_id():
+    """``update_contact_id`` rewrites ``Exchanges.counterparty_contact_id``.
+
+    A merge retires ``original_contact_id``. Without the Exchanges
+    rewrite, the next body-to-body dedup query (which filters on
+    ``counterparty_contact_id``) would still route to the retired row
+    and the ``ON DELETE SET NULL`` cascade would later strip the
+    counterparty pointer off the surviving exchange.
+    """
+    tm = TranscriptManager()
+
+    OLD_CID = 7777
+    NEW_CID = 8888
+
+    exid, _ = tm.log_first_message_in_new_exchange(
+        {
+            "medium": "email",
+            "sender_id": OLD_CID,
+            "receiver_ids": [OLD_CID + 1],
+            "timestamp": datetime.now(UTC),
+            "content": "seed",
+        },
+    )
+    tm.join_published()
+
+    rows = unify.get_logs(
+        context=tm._exchanges_ctx,
+        filter=f"exchange_id == {exid}",
+        limit=1,
+    )
+    assert rows and rows[0].entries.get("counterparty_contact_id") == OLD_CID
+
+    outcome = tm.update_contact_id(
+        original_contact_id=OLD_CID,
+        new_contact_id=NEW_CID,
+    )
+
+    assert outcome["details"]["updated_exchanges"] >= 1
+
+    rows = unify.get_logs(
+        context=tm._exchanges_ctx,
+        filter=f"exchange_id == {exid}",
+        limit=1,
+    )
+    assert rows and rows[0].entries.get("counterparty_contact_id") == NEW_CID
