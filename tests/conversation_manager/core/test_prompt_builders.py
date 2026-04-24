@@ -238,3 +238,63 @@ class TestDemoModeAdapts:
             assistant_has_email=False,
         )
         assert "emails" not in prompt.split("CAN do")[1].split("CANNOT do")[0]
+
+
+# ---------------------------------------------------------------------------
+# Tests – None-safe boss_contact_id
+# ---------------------------------------------------------------------------
+
+
+class TestNoneSafeBossContactId:
+    """``boss_contact_id=None`` must omit the Contact ID line from the
+    boss-details block and suppress the ``(contact_id=...)`` interpolation
+    inside demo-mode and tool-instruction examples — otherwise the LLM
+    reads ``Contact ID: None`` and invokes tools with the literal ``None``.
+    """
+
+    def test_none_contact_id_omits_contact_id_line(self) -> None:
+        prompt = _build(contact_id=None)
+        # Neither literal nor magic-number leakage.
+        assert "Contact ID: None" not in prompt
+        assert "Contact ID: 1" not in prompt
+        assert "Contact ID: 0" not in prompt
+        # First-name / surname still flow through — only the id is
+        # elided.
+        assert "First Name: Alice" in prompt
+        assert "Surname: Smith" in prompt
+
+    def test_none_contact_id_in_demo_mode_never_interpolates_none(
+        self,
+    ) -> None:
+        """Demo mode must not interpolate the literal ``None`` into the
+        ``make_call(...)`` instruction, the boss-id phrase, or the ack
+        example. Any remaining ``make_call(contact_id=...)`` must use
+        a human-readable placeholder like ``<boss_id>`` rather than
+        the Python ``None`` string.
+        """
+
+        prompt = _build(
+            contact_id=None,
+            demo_mode=True,
+            assistant_has_phone=True,
+            assistant_has_email=True,
+        )
+        assert "contact_id=None" not in prompt
+        # "(contact_id=...)" in the demo-mode intro phrase must also
+        # not render the literal None.
+        assert " (contact_id=None)" not in prompt
+
+    def test_concrete_contact_id_still_renders(self) -> None:
+        """Happy-path sanity check: a resolved id still appears in the
+        boss block."""
+
+        prompt = _build(contact_id=42)
+        assert "Contact ID: 42" in prompt
+
+    def test_concrete_contact_id_renders_in_demo_mode(self) -> None:
+        prompt = _build(
+            contact_id=42,
+            demo_mode=True,
+            assistant_has_phone=True,
+        )
+        assert "contact_id=42" in prompt

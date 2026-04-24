@@ -1011,6 +1011,8 @@ def bind_body(
     agent_id: int,
     user_id: str | None = None,
     solo_base: str | None = None,
+    self_contact_id: int | None = None,
+    boss_contact_id: int | None = None,
 ) -> None:
     """Pin the active session at one body for a Hive live-backend test.
 
@@ -1020,6 +1022,13 @@ def bind_body(
     ``solo_base`` is only honoured when the session is solo (``hive_id`` is
     ``None``) and pins the fallback base that non-Hive-scoped tables
     resolve to.
+
+    ``self_contact_id`` / ``boss_contact_id`` mirror the bootstrap-resolved
+    ``ContactMembership`` ids production delivers via ``StartupEvent``.
+    Tests that exercise code paths which read them (renderer, comms
+    primitives, prompt builders, etc.) should pass them explicitly; tests
+    that only exercise context-routing behavior can leave them ``None`` and
+    repopulate afterward via :func:`set_resolved_contact_ids`.
     """
     from unity.common.context_registry import ContextRegistry
     from unity.manager_registry import ManagerRegistry
@@ -1031,10 +1040,26 @@ def bind_body(
     SESSION_DETAILS.populate(
         agent_id=agent_id,
         user_id=user_id if user_id is not None else f"body-{agent_id}",
+        self_contact_id=self_contact_id,
+        boss_contact_id=boss_contact_id,
     )
     SESSION_DETAILS.hive_id = hive_id
     if solo_base is not None and hive_id is None:
         ContextRegistry._base_context = solo_base
+
+
+def set_resolved_contact_ids(
+    *,
+    self_contact_id: int | None = None,
+    boss_contact_id: int | None = None,
+) -> None:
+    """Populate ``SESSION_DETAILS.{assistant,user}.contact_id`` from resolved ids."""
+    from unity.session_details import SESSION_DETAILS
+
+    if self_contact_id is not None:
+        SESSION_DETAILS.assistant.contact_id = int(self_contact_id)
+    if boss_contact_id is not None:
+        SESSION_DETAILS.user.contact_id = int(boss_contact_id)
 
 
 def pin_hive_body_base(hive_id: int, agent_id: int) -> None:
@@ -1090,4 +1115,9 @@ def bootstrap_hive_body(
     SESSION_DETAILS.assistant.number = f"+{hive_id}{agent_id}"
     cm = ContactManager()
     tm = TranscriptManager(contact_manager=cm)
-    return tm, self_contact_id_for_body(hive_id, agent_id)
+    self_cid = self_contact_id_for_body(hive_id, agent_id)
+    # Mirror the bootstrap-delivered contact ids onto SESSION_DETAILS so
+    # runtime paths that read ``SESSION_DETAILS.assistant.contact_id`` see
+    # the same resolved overlay ContactManager just provisioned.
+    set_resolved_contact_ids(self_contact_id=self_cid)
+    return tm, self_cid

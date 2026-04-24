@@ -141,13 +141,13 @@ def test_merge_preserves_authoring_assistant_id(monkeypatch):
     """
     cm = ContactManager()
 
-    monkeypatch.setattr(ops, "_get_assistant_id", lambda: 101)
+    monkeypatch.setattr(ops, "authoring_assistant_id", lambda: 101)
     keep_id = cm._create_contact(
         first_name="Original",
         email_address=f"orig.{uuid.uuid4().hex[:8]}@example.com",
     )["details"]["contact_id"]
 
-    monkeypatch.setattr(ops, "_get_assistant_id", lambda: 202)
+    monkeypatch.setattr(ops, "authoring_assistant_id", lambda: 202)
     delete_id = cm._create_contact(
         first_name="Other",
         email_address=f"other.{uuid.uuid4().hex[:8]}@example.com",
@@ -155,7 +155,7 @@ def test_merge_preserves_authoring_assistant_id(monkeypatch):
 
     # Merge runs under a third body to prove the survivor's stamp is
     # anchored to the authoring body, not to whoever invokes the merge.
-    monkeypatch.setattr(ops, "_get_assistant_id", lambda: 303)
+    monkeypatch.setattr(ops, "authoring_assistant_id", lambda: 303)
     cm._merge_contacts(
         contact_id_1=keep_id,
         contact_id_2=delete_id,

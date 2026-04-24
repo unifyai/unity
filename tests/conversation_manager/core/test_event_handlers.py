@@ -2625,10 +2625,14 @@ class TestAssistantUpdateEventHandler:
 
     @pytest.mark.asyncio
     async def test_update_session_contacts_updates_both_contacts(self, mock_cm):
-        """update_session_contacts updates both assistant (0) and boss (1) contacts."""
+        """update_session_contacts updates both self and boss contacts."""
         from unity.conversation_manager.domains.managers_utils import (
             update_session_contacts,
         )
+        from unity.session_details import SESSION_DETAILS
+
+        SESSION_DETAILS.assistant.contact_id = 0
+        SESSION_DETAILS.user.contact_id = 1
 
         mock_cm.contact_manager.update_contact = MagicMock()
 
@@ -2670,6 +2674,10 @@ class TestAssistantUpdateEventHandler:
         from unity.conversation_manager.domains.managers_utils import (
             update_session_contacts,
         )
+        from unity.session_details import SESSION_DETAILS
+
+        SESSION_DETAILS.assistant.contact_id = 0
+        SESSION_DETAILS.user.contact_id = 1
 
         mock_cm.contact_manager.update_contact = MagicMock(
             side_effect=Exception("Update failed"),

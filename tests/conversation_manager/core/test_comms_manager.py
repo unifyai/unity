@@ -156,7 +156,9 @@ def mock_session_details():
     """Mock SESSION_DETAILS for testing."""
     with patch("unity.conversation_manager.comms_manager.SESSION_DETAILS") as mock:
         mock.assistant.agent_id = 42
+        mock.assistant.contact_id = 0
         mock.assistant.email = "assistant@test.com"
+        mock.user.contact_id = 1
         mock.user.first_name = "Test User"
         mock.user.surname = ""
         mock.user.number = "+15555550000"

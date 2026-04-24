@@ -78,7 +78,7 @@ def _install_sync_stubs(monkeypatch):
         "unity.contact_manager.backend_sync.sync_assistant_job_title",
         fake_assistant_job_title,
     )
-    monkeypatch.setattr(ops, "_get_assistant_id", lambda: 7)
+    monkeypatch.setattr(ops, "authoring_assistant_id", lambda: 7)
     return calls
 
 

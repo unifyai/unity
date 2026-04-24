@@ -26,7 +26,28 @@ from unity.conversation_manager.events import (
     InboundPhoneUtterance,
     OutboundPhoneUtterance,
 )
+from unity.session_details import SESSION_DETAILS
 from unity.transcript_manager.simulated import SimulatedTranscriptManager
+
+
+@pytest.fixture
+def resolved_session_contact_ids():
+    """Populate the session self/boss contact ids for ``log_message`` tests.
+
+    ``log_message`` short-circuits when ``SESSION_DETAILS.assistant.contact_id``
+    is ``None`` (bootstrap has not resolved the self-contact yet). Exchange-id
+    caching lives past that guard, so these tests need resolved ids to exercise
+    the caching path.
+    """
+    prev_self = SESSION_DETAILS.assistant.contact_id
+    prev_boss = SESSION_DETAILS.user.contact_id
+    SESSION_DETAILS.assistant.contact_id = 42
+    SESSION_DETAILS.user.contact_id = 43
+    try:
+        yield
+    finally:
+        SESSION_DETAILS.assistant.contact_id = prev_self
+        SESSION_DETAILS.user.contact_id = prev_boss
 
 
 async def _wait_for_condition(
@@ -131,7 +152,9 @@ def _make_cm_for_log_message() -> MagicMock:
 
 
 @pytest.mark.asyncio
-async def test_log_message_caches_unify_meet_exchange_id_synchronously():
+async def test_log_message_caches_unify_meet_exchange_id_synchronously(
+    resolved_session_contact_ids,
+):
     """
     Regression test for the exchange_id race condition.
 
@@ -171,7 +194,9 @@ async def test_log_message_caches_unify_meet_exchange_id_synchronously():
 
 
 @pytest.mark.asyncio
-async def test_log_message_caches_call_exchange_id_synchronously():
+async def test_log_message_caches_call_exchange_id_synchronously(
+    resolved_session_contact_ids,
+):
     """Same as above but for phone calls (call_exchange_id)."""
     cm = _make_cm_for_log_message()
     contact = {"contact_id": 1}
@@ -201,7 +226,9 @@ async def test_log_message_caches_call_exchange_id_synchronously():
 
 
 @pytest.mark.asyncio
-async def test_log_message_does_not_overwrite_existing_exchange_id():
+async def test_log_message_does_not_overwrite_existing_exchange_id(
+    resolved_session_contact_ids,
+):
     """
     If the exchange_id is already set (e.g. from a prior utterance),
     log_message must not overwrite it.

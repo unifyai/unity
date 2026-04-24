@@ -503,6 +503,21 @@ class TestNotificationBar:
 class TestRenderer:
     """Tests for Renderer class."""
 
+    @pytest.fixture(autouse=True)
+    def _session_contact_ids(self):
+        """Pin ``SESSION_DETAILS`` so the renderer can identify the boss row."""
+        from unity.session_details import SESSION_DETAILS
+
+        prev_self = SESSION_DETAILS.assistant.contact_id
+        prev_boss = SESSION_DETAILS.user.contact_id
+        SESSION_DETAILS.assistant.contact_id = 0
+        SESSION_DETAILS.user.contact_id = 1
+        try:
+            yield
+        finally:
+            SESSION_DETAILS.assistant.contact_id = prev_self
+            SESSION_DETAILS.user.contact_id = prev_boss
+
     @pytest.fixture
     def renderer(self):
         return Renderer()
