@@ -12,6 +12,7 @@ from typing import Any, Dict, List, Optional
 
 import unify
 
+from unity.common.authoring import AUTHORING_COLUMN, authoring_assistant_id
 from unity.common.filter_utils import normalize_filter_expr
 from unity.common.log_utils import log as unify_log, create_logs as unify_create_logs
 
@@ -53,9 +54,15 @@ def insert_rows_impl(
 
     logger.debug("Inserting %d rows into %s (batched=%s)", len(rows), context, batched)
 
+    stamp = authoring_assistant_id()
+    stamped_rows = [
+        {**row, AUTHORING_COLUMN: row.get(AUTHORING_COLUMN, stamp)}
+        for row in rows
+    ]
+
     result = unify_create_logs(
         context=context,
-        entries=rows,
+        entries=stamped_rows,
         add_to_all_context=add_to_all_context,
         batched=batched,
     )
@@ -104,6 +111,11 @@ def update_rows_impl(
     if not logs:
         return 0
 
+    # The authoring stamp is immutable after creation: strip it from the
+    # caller-supplied update so the delete+insert cycle keeps the original
+    # authoring body on the resurrected row.
+    safe_updates = {k: v for k, v in updates.items() if k != AUTHORING_COLUMN}
+
     # Update each matching row (delete + insert pattern)
     # Note: This is the current pattern used elsewhere in the codebase
     updated = 0
@@ -121,8 +133,9 @@ def update_rows_impl(
         if log_id:
             unify.delete_logs(context=context, logs=[log_id])
 
-        # Merge updates
-        new_entries = {**existing, **updates}
+        # Merge updates; existing authoring_assistant_id survives because
+        # safe_updates no longer carries the column.
+        new_entries = {**existing, **safe_updates}
 
         # Insert updated row
         unify_log(context=context, **new_entries)
