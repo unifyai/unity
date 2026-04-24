@@ -3,8 +3,8 @@
 # Unity Installer
 # ============================================================================
 # Installs Unity (https://github.com/unifyai/unity) locally on macOS / Linux /
-# WSL2. Clones unity, unify, and unillm as siblings under $UNITY_HOME and
-# editable-installs them with uv.
+# WSL2. Clones unity, unify, unillm, and orchestra as siblings under
+# $UNITY_HOME and editable-installs the Python repos with uv.
 #
 # Quick install:
 #   curl -fsSL https://raw.githubusercontent.com/unifyai/unity/main/scripts/install.sh | bash

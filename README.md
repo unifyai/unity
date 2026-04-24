@@ -4,6 +4,7 @@
 
 <p align="center">
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-blue.svg?style=for-the-badge" alt="MIT License"></a>
+  <a href="https://docs.unify.ai/basics/overview"><img src="https://img.shields.io/badge/Docs-docs.unify.ai-4A67FF?style=for-the-badge" alt="Docs"></a>
   <a href="https://github.com/unifyai/unity/actions"><img src="https://img.shields.io/github/actions/workflow/status/unifyai/unity/tests.yml?branch=staging&style=for-the-badge" alt="CI"></a>
   <a href="https://discord.com/invite/sXyFF8tDtm"><img src="https://img.shields.io/badge/Discord-5865F2?style=for-the-badge&logo=discord&logoColor=white" alt="Discord"></a>
   <a href="https://unify.ai"><img src="https://img.shields.io/badge/Built%20by-Unify-black?style=for-the-badge" alt="Built by Unify"></a>
@@ -11,60 +12,117 @@
 
 # Unity
 
-Unity is the cognitive architecture behind [Unify's](https://unify.ai) persistent AI colleagues. It implements steerable nested execution, code-first planning, dual-brain voice, and distributed state managers, and runs in production as the agent runtime inside every assistant Unify hosts.
+Unity is the runtime behind [Unify's](https://unify.ai) persistent AI colleagues. It is built for assistants you can interrupt mid-task, redirect without restarting, run in parallel, and grow over time through typed, long-lived state.
 
-> **Demo:** [Launch video](https://youtu.be/qjSWiCd8Bq8?si=8eM0XnHH842_pbgo) • [Longer-form screenshares](https://youtube.com/playlist?list=PLwNuX3xB_tv-AsywAKYnGVv8X5AaEUc2Z)
->
-> **Technical overview:** [ARCHITECTURE.md](ARCHITECTURE.md)
+Unity and [Hermes Agent](https://github.com/NousResearch/hermes-agent) overlap in ambition, but they optimize for different layers. Hermes is a broad personal-agent product with a large end-user surface. Unity is the cognitive runtime for a different bet: steerable nested execution, code-first plans over typed primitives, dual-brain voice, and distributed state managers that consolidate memory into queryable tables instead of keeping everything in one ever-growing loop.
 
-## What's open and what isn't
+> **Start here:** [Overview](https://docs.unify.ai/basics/overview) • [Quickstart](https://docs.unify.ai/basics/quickstart) • [Demos](https://docs.unify.ai/basics/demos) • [ARCHITECTURE.md](ARCHITECTURE.md)
 
-Unity is the **open core** of the Unify platform. This repository contains the full agent runtime — the managers, tool loops, CodeAct, dual-brain voice coordination, event backbone, memory consolidation. All MIT-licensed.
-
-The persistence backend is also open-source: [Orchestra](https://github.com/unifyai/orchestra) (FastAPI + Postgres + pgvector) runs as a Docker container on your machine by default. The [Quick Start](#quick-start) `curl | bash` installer spins it up for you. **No Unify account required** to run the full open core locally.
-
-**Not open-sourced** — the managed platform layer. External communication routing, the hosted communication edge (telephony, WhatsApp Business Solution Provider, Microsoft 365 tenant integration, SIP trunking), the assistant session control plane, the billing layer, and the identity layer run as part of the hosted service at [unify.ai](https://unify.ai). You can point the runtime at Unify's hosted Orchestra instead of a local one, but features that depend on the managed platform layer only work against the hosted backend.
-
-If you're here to **study the runtime**, start with [ARCHITECTURE.md](ARCHITECTURE.md). If you're here to **run it**, the [Quick Start](#quick-start) gets you a full local install (runtime + Orchestra) in under 5 minutes.
-
-## What the runtime does
+## Why Unity
 
 <table>
-<tr><td><b>Steerable nested execution</b></td><td>Every operation returns a live handle — pause, resume, interject, or query at any depth without restarting. Handles nest: steering at one level propagates through the whole tree.</td></tr>
-<tr><td><b>Code plans, not tool menus</b></td><td>The Actor writes Python programs over typed primitives with variables, loops, and real control flow — not one JSON tool call at a time.</td></tr>
-<tr><td><b>Dual-brain voice</b></td><td>A real-time voice process (sub-second latency) runs alongside a slower orchestration layer that continues tool use and planning in the background. They coordinate over IPC.</td></tr>
-<tr><td><b>Distributed state managers</b></td><td>Contacts, knowledge, tasks, transcripts, guidance, files, and more — each owned by a specialized manager running its own async LLM tool loop, composed via English-language APIs.</td></tr>
-<tr><td><b>Structured memory consolidation</b></td><td>Documents, screenshares, calls, tasks, and follow-up corrections get consolidated into typed, queryable state.</td></tr>
-<tr><td><b>Concurrent steerable actions</b></td><td>Multiple tasks run at once. Each gets its own steering surface for inspection, interruption, and redirection.</td></tr>
-<tr><td><b>Persistent identity across channels</b></td><td>Messages, SMS, email, phone calls, and meetings all update the same identity, memory, and task state.</td></tr>
+<tr><td><b>Steerable nested execution</b></td><td>Every operation returns a live handle. Pause, resume, interject, or ask questions at any depth without restarting the work.</td></tr>
+<tr><td><b>Code plans, not flat tool menus</b></td><td>The Actor writes Python programs over typed primitives with variables, loops, and control flow, so multi-step work becomes one coherent plan.</td></tr>
+<tr><td><b>Dual-brain voice</b></td><td>A real-time voice process handles sub-second conversation while a slower orchestration layer keeps planning and using tools in the background.</td></tr>
+<tr><td><b>Distributed state managers</b></td><td>Contacts, knowledge, tasks, transcripts, guidance, files, images, and more each live behind a dedicated manager with its own async LLM tool loop.</td></tr>
+<tr><td><b>Structured memory consolidation</b></td><td>Documents, calls, screenshares, tasks, and follow-up corrections get distilled into typed, queryable state instead of one opaque transcript summary.</td></tr>
+<tr><td><b>Concurrent steerable actions</b></td><td>Multiple actions can run at once, each with its own inspection and steering surface.</td></tr>
+<tr><td><b>Persistent identity across channels</b></td><td>Messages, SMS, email, phone calls, and meetings all feed the same long-term memory and task state.</td></tr>
 </table>
+
+## Unity vs Hermes Agent
+
+If you're comparing the two directly, the clearest distinction is the layer each project emphasizes:
+
+| If you want... | Better fit |
+|------|------|
+| A polished personal-agent product with a wide messaging/gateway surface, remote deployment paths, and a large end-user docs surface out of the box | [Hermes Agent](https://github.com/NousResearch/hermes-agent) |
+| A runtime you can study, embed, or extend around interruptible execution, nested steering, code-first planning, and typed long-lived state | Unity |
+
+Unity's distinctive bets are:
+
+- **Every public operation returns a live handle.** Steering is a first-class protocol, not an afterthought.
+- **The Actor writes Python over `primitives.*`.** Multi-step composition happens inside one generated program, not one JSON tool call at a time.
+- **Memory is split across managers.** Contacts, knowledge, tasks, transcripts, guidance, files, and images remain queryable and inspectable as separate domains.
+- **Voice runs as two coordinated brains.** A fast real-time process keeps up with speech while a slower brain continues reasoning and tool use.
 
 ## Quick Start
 
-Get a fully local sandbox running in under 5 minutes. The runtime, the LLM client, and the persistence backend ([Orchestra](https://github.com/unifyai/orchestra), via Docker) all run on your machine. Hosted backend at [unify.ai](https://unify.ai) is an opt-in alternative.
+By default, Unity's open-core quickstart is fully local: the runtime, the LLM client, and the persistence backend ([Orchestra](https://github.com/unifyai/orchestra), via Docker) all run on your machine. Hosted backend at [unify.ai](https://unify.ai) is optional.
 
-### Prerequisites
+### Fastest path
 
-- **Python 3.12+** (the installer will fetch it via `uv` if you don't have it)
-- **Docker** (runs the local Orchestra backend — Postgres + pgvector in a container)
-- **PortAudio** (audio support)
+Prerequisites:
+
+- **Python 3.12+** (the installer will fetch it with `uv` if needed)
+- **Docker** (runs the local Orchestra backend)
+- **PortAudio** for audio support
   - macOS: `brew install portaudio`
   - Ubuntu/Debian: `sudo apt-get install portaudio19-dev python3-dev`
-- **An LLM provider key** — [OpenAI](https://platform.openai.com/api-keys) or [Anthropic](https://console.anthropic.com/) are the simplest paths from this README
+- **One LLM provider key** — [OpenAI](https://platform.openai.com/api-keys) or [Anthropic](https://console.anthropic.com/) are the simplest paths from this README
 
-> If you don't want a local Orchestra and would rather point at Unify's hosted backend, install with `--skip-setup` and fill in `UNIFY_KEY` / `ORCHESTRA_URL` manually.
-
-### Install
-
-One command:
+Install:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/unifyai/unity/main/scripts/install.sh | bash
 ```
 
-This clones `unity`, `unify`, `unillm`, and `orchestra` as siblings under `~/.unity/`, installs `uv` and `poetry` if you don't have them, syncs dependencies, drops a `unity` command into `~/.local/bin/`, then spins up a local Orchestra (Docker Postgres + FastAPI) and wires your `.env` with the local `UNIFY_KEY` and `ORCHESTRA_URL`. Works on macOS, Linux, and WSL2.
+The installer clones `unity`, `unify`, `unillm`, and `orchestra` as siblings under `~/.unity/`, installs dependencies, creates a `unity` CLI shim in `~/.local/bin/`, boots a local Orchestra in Docker, and writes the local `UNIFY_KEY` / `ORCHESTRA_URL` into `~/.unity/unity/.env`.
 
-Flags: `--skip-setup` (don't spin up Orchestra — just install the code), `--no-cli` (don't install the `unity` shim), `--dir PATH` (install somewhere other than `~/.unity`), `--branch NAME`.
+Then add one model provider key to `~/.unity/unity/.env`:
+
+```bash
+OPENAI_API_KEY=sk-...
+# or
+ANTHROPIC_API_KEY=...
+```
+
+Run the sandbox:
+
+```bash
+unity --project_name Sandbox --overwrite
+```
+
+At the configuration prompt:
+
+| Option | What it gives you |
+|------|------|
+| `1` | ConversationManager orchestration without CodeAct — useful if you want to isolate the top-level brain |
+| `2` | The full runtime: ConversationManager + CodeAct + simulated managers |
+| `3` | Option 2 plus desktop/browser control through `agent-service` |
+
+If you're evaluating Unity as a runtime, start with **option 2**.
+
+Example session:
+
+```text
+> msg Hey, can you help me organize my upcoming week?
+> sms I need to reschedule my meeting with Sarah to Thursday
+> email Project Update | Here are the Q3 numbers you asked for...
+```
+
+Other `unity` subcommands:
+
+- `unity setup` — re-bootstrap local Orchestra
+- `unity status` — show local Orchestra status
+- `unity stop` — stop local Orchestra
+- `unity restart` — stop + start (wipes the local DB)
+- `unity help`
+
+### Full local open-core path
+
+The local open-core path is the default. You do **not** need a Unify account to run Unity locally with Orchestra in Docker.
+
+If you want to install the code without starting a local Orchestra, use:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/unifyai/unity/main/scripts/install.sh | bash -s -- --skip-setup
+```
+
+That leaves the code installed but expects you to point Unity at either:
+
+- your own Orchestra deployment via `ORCHESTRA_URL`, or
+- Unify's hosted backend via `UNIFY_KEY` + `ORCHESTRA_URL`
 
 <details>
 <summary>Manual install</summary>
@@ -82,62 +140,27 @@ uv sync
 cd ~/.unity/orchestra
 poetry install
 ORCHESTRA_INACTIVITY_TIMEOUT_SECONDS=0 scripts/local.sh start
-# Copy the UNIFY_BASE_URL and UNIFY_KEY it prints into ~/.unity/unity/.env
+# Copy the ORCHESTRA_URL and UNIFY_KEY it prints into ~/.unity/unity/.env
 ```
 
 </details>
 
-### Configure
+### Configuration files
 
-After `install.sh`, `~/.unity/unity/.env` already has `ORCHESTRA_URL` and `UNIFY_KEY` set to your local Orchestra. All you need to add is an LLM provider key:
+The installer copies `.env.example` to `.env`. That file is intentionally minimal for the public quickstart.
 
-```bash
-OPENAI_API_KEY=sk-...        # or ANTHROPIC_API_KEY=...
-```
+- Use `.env.example` if you want the smallest working sandbox config.
+- Use `.env.advanced.example` if you want local comms, hosted comms, LiveKit, Tavily, voice integrations, visual caching, or test-infra settings.
 
-`unillm` can also be pointed at other supported providers and compatible local endpoints.
+For the full sandbox matrix — voice mode, live voice calls, local comms, hosted comms, and GUI mode — see [`sandboxes/conversation_manager/README.md`](sandboxes/conversation_manager/README.md).
 
-### Run
+## What's open and what isn't
 
-```bash
-unity --project_name Sandbox --overwrite
-```
+Unity is the **open core** of the Unify platform. This repository contains the agent runtime: the managers, async tool loops, CodeAct actor, dual-brain voice coordination, event backbone, and memory consolidation.
 
-Other `unity` subcommands:
-- `unity setup` — re-bootstrap local Orchestra (useful if Docker wasn't running the first time)
-- `unity status` — show local Orchestra status
-- `unity stop` — stop local Orchestra
-- `unity restart` — stop + start (wipes DB)
-- `unity help`
+The persistence backend is open-source too: [Orchestra](https://github.com/unifyai/orchestra) runs locally by default in the quickstart. The supporting client libraries [Unify](https://github.com/unifyai/unify) and [UniLLM](https://github.com/unifyai/unillm) are open-source as well.
 
-<details>
-<summary>Without the CLI shim</summary>
-
-```bash
-cd ~/.unity/unity
-source .venv/bin/activate
-python -m sandboxes.conversation_manager.sandbox --project_name Sandbox --overwrite
-```
-
-</details>
-
-At the configuration prompt, **select option 2** (CodeAct + Simulated Managers). This runs the full architecture: ConversationManager orchestrates CodeActActor, which writes and executes Python plans against the manager APIs, with simulated backends for the managers themselves.
-
-Option 1 is a simpler view that shows ConversationManager's orchestration without CodeAct — useful to focus on the brain and steering layer in isolation.
-
-### Interact
-
-```
-> msg Hey, can you help me organize my upcoming week?
-> sms I need to reschedule my meeting with Sarah to Thursday
-> email Project Update | Here are the Q3 numbers you asked for...
-```
-
-Commands: `msg` (Unify message), `sms`, `email`, `call`, `meet`. Type `help` for the full list.
-
-### Going deeper
-
-Option 3 at the configuration prompt adds a real computer interface (virtual desktop + browser via agent-service) on top of the CodeAct architecture. See [`sandboxes/conversation_manager/README.md`](sandboxes/conversation_manager/README.md) for the full matrix — voice mode, live voice calls, local comms, hosted comms, GUI mode.
+**Not open-sourced** is the managed platform layer around the runtime: hosted communication routing, telephony and SIP infrastructure, Microsoft 365 tenant integration, assistant session control plane, billing, and identity. You can point Unity at Unify's hosted backend instead of a local Orchestra, but features that depend on the managed platform layer only work against the hosted service.
 
 ---
 
