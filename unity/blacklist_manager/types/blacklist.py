@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import ClassVar
+from typing import ClassVar, Optional
 from pydantic import (
     BaseModel,
     Field,
@@ -43,6 +43,14 @@ class BlackList(BaseModel):
     )
     reason: str = Field(
         description="Why this contact detail is blacklisted (short context).",
+    )
+    authoring_assistant_id: Optional[int] = Field(
+        default=None,
+        description=(
+            "Assistant id of the body that added this blacklist entry. "
+            "Stamped once at create time and preserved across updates so "
+            "reviewers can attribute Hive-shared rows to their authoring body."
+        ),
     )
 
     @model_validator(mode="before")

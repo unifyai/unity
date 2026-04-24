@@ -5,6 +5,7 @@ import functools
 
 import unify
 
+from ..common.authoring import authoring_assistant_id
 from ..common.log_utils import log as unity_log
 from ..common.data_store import DataStore
 from ..common.model_to_fields import model_to_fields
@@ -112,6 +113,7 @@ class BlackListManager(BaseBlackListManager):
             medium=medium,
             contact_detail=contact_detail,
             reason=reason,
+            authoring_assistant_id=authoring_assistant_id(),
         ).to_post_json()
         log = unity_log(
             context=self._ctx,
