@@ -43,7 +43,12 @@ if not _root_logger_early.handlers:
 
 from tests.helpers import PRECREATED_CONTEXTS, set_session_tags
 from tests.settings import SETTINGS
-from unity.session_details import UNASSIGNED_ASSISTANT_CONTEXT, UNASSIGNED_USER_CONTEXT
+from unity.common.context_registry import ContextRegistry
+from unity.session_details import (
+    SESSION_DETAILS,
+    UNASSIGNED_ASSISTANT_CONTEXT,
+    UNASSIGNED_USER_CONTEXT,
+)
 
 
 # --------------------------------------------------------------------------- #
@@ -821,3 +826,26 @@ def pytest_collection_finish(session):
 @pytest.fixture(autouse=True)
 def _set_random_seed():
     random.seed(42)
+
+
+# --------------------------------------------------------------------------- #
+# 10. Hive-routing isolation                                                  #
+# --------------------------------------------------------------------------- #
+# Pin SESSION_DETAILS and ContextRegistry to a deterministic single-body
+# shape so routing assertions do not leak state between tests. Opt in with
+# ``pytestmark = pytest.mark.usefixtures("pinned_hive_body")``; tests that
+# need Hive membership flip ``SESSION_DETAILS.hive_id`` inside the test.
+_PINNED_BODY_BASE = "u7/7"
+
+
+@pytest.fixture
+def pinned_hive_body():
+    SESSION_DETAILS.reset()
+    SESSION_DETAILS.populate(agent_id=7, user_id="u7")
+    previous_base = ContextRegistry._base_context
+    ContextRegistry._base_context = _PINNED_BODY_BASE
+    try:
+        yield _PINNED_BODY_BASE
+    finally:
+        SESSION_DETAILS.reset()
+        ContextRegistry._base_context = previous_base

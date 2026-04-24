@@ -960,3 +960,64 @@ def rebuild_task_id_mapping(
         except Exception:
             pass
     return id_list
+
+
+# --------------------------------------------------------------------------- #
+# Hive live-backend helpers                                                   #
+# --------------------------------------------------------------------------- #
+# Shared utilities for integration tests that exercise Hive-scoped context
+# routing against a real Orchestra backend. Collecting them here keeps
+# per-manager test files focused on the behaviour they assert.
+
+
+def unique_hive_id() -> int:
+    """Return a random hive id large enough to avoid collisions between runs."""
+    import random as _random
+
+    return _random.randint(10_000_000, 99_999_999)
+
+
+def cleanup_hive_context(hive_id: int) -> None:
+    """Best-effort delete of ``Hives/{hive_id}`` and all descendants.
+
+    The call is swallowed when Orchestra already returned 404 for the root —
+    concurrent cleanup or a failed bootstrap both look like "not there" and
+    neither should mask the primary test failure in the surrounding
+    ``try/finally``.
+    """
+    try:
+        unify.delete_context(context=f"Hives/{int(hive_id)}", include_children=True)
+    except Exception:
+        pass
+
+
+def bind_body(
+    *,
+    hive_id: int | None,
+    agent_id: int,
+    user_id: str | None = None,
+    solo_base: str | None = None,
+) -> None:
+    """Pin the active session at one body for a Hive live-backend test.
+
+    Clears both manager and context registries so managers reinstantiate
+    against the freshly pinned session, then populates
+    :data:`SESSION_DETAILS`. ``user_id`` defaults to ``"body-{agent_id}"``.
+    ``solo_base`` is only honoured when the session is solo (``hive_id`` is
+    ``None``) and pins the fallback base that non-Hive-scoped tables
+    resolve to.
+    """
+    from unity.common.context_registry import ContextRegistry
+    from unity.manager_registry import ManagerRegistry
+    from unity.session_details import SESSION_DETAILS
+
+    ManagerRegistry.clear()
+    ContextRegistry.clear()
+    SESSION_DETAILS.reset()
+    SESSION_DETAILS.populate(
+        agent_id=agent_id,
+        user_id=user_id if user_id is not None else f"body-{agent_id}",
+    )
+    SESSION_DETAILS.hive_id = hive_id
+    if solo_base is not None and hive_id is None:
+        ContextRegistry._base_context = solo_base
