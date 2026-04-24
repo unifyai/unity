@@ -52,6 +52,33 @@ def _is_assistant_populated() -> bool:
     return bool(SESSION_DETAILS.assistant.first_name)
 
 
+def _shared_contact_row_by_assistant_id(self, agent_id: int) -> Optional[Any]:
+    """Return the shared ``Contacts`` row whose ``assistant_id`` names *agent_id*.
+
+    Both ``provision_assistant_contact`` and ``provision_self_contact``
+    need this lookup to decide whether the current body already owns a
+    row in the shared Hive-contacts table — without it, a second body
+    joining a Hive would mint a duplicate self contact alongside the
+    first body's row.
+    """
+    try:
+        rows = unify.get_logs(
+            context=self._ctx,
+            filter=f"assistant_id == {int(agent_id)}",
+            limit=1,
+            from_fields=["contact_id", "assistant_id"],
+        )
+    except RequestError as exc:
+        _log.warning(
+            "assistant_id lookup failed on %s for agent_id=%s: %s",
+            self._ctx,
+            agent_id,
+            exc,
+        )
+        return None
+    return rows[0] if rows else None
+
+
 def _resolve_user_details(self) -> Dict[str, Any]:
     """Resolve user details from SESSION_DETAILS, API, or defaults.
 
@@ -173,6 +200,21 @@ def provision_assistant_contact(self, assistant_log) -> None:
     base_fields["_relationship"] = RELATIONSHIP_SELF
     if ast.agent_id is not None:
         base_fields["_assistant_id"] = int(ast.agent_id)
+
+        # The caller only probed ``contact_id == 0`` — which belongs to
+        # the Hive's first body. Every subsequent body must find its own
+        # row by ``assistant_id`` and reject the seeded row when it is
+        # already owned by a Hive-mate, otherwise the placeholder update
+        # below would leave a duplicate self contact behind.
+        own_row = _shared_contact_row_by_assistant_id(self, ast.agent_id)
+        if own_row is not None:
+            assistant_log = own_row
+        elif assistant_log is not None:
+            seeded_assistant_id = assistant_log.entries.get("assistant_id")
+            if seeded_assistant_id is not None and seeded_assistant_id != int(
+                ast.agent_id,
+            ):
+                assistant_log = None
 
     if assistant_log is not None:
         try:
@@ -527,23 +569,16 @@ def provision_self_contact(self) -> None:
     shared_contact_id: Optional[int] = None
 
     if agent_id is not None:
-        try:
-            existing = unify.get_logs(
-                context=self._ctx,
-                filter=f"assistant_id == {int(agent_id)}",
-                limit=1,
-                from_fields=["contact_id", "assistant_id"],
-            )
-            if existing:
-                shared_contact_id = int(existing[0].entries.get("contact_id"))
-        except Exception:
-            shared_contact_id = None
+        existing = _shared_contact_row_by_assistant_id(self, agent_id)
+        if existing is not None:
+            shared_contact_id = int(existing.entries.get("contact_id"))
 
     if shared_contact_id is None:
-        # Fall back to the seeded ``contact_id == 0`` row from
-        # ``provision_assistant_contact`` when no ``assistant_id`` match
-        # exists yet, and stamp it so readers looking up Hive-mate
-        # bodies by ``assistant_id`` can find this body.
+        # Claim the seeded ``contact_id == 0`` row only when it is
+        # genuinely unstamped (legacy / freshly provisioned) or already
+        # belongs to this body. A row stamped with a different
+        # ``assistant_id`` represents a Hive-mate body's self row — this
+        # body must mint its own shared row instead.
         try:
             seeded = unify.get_logs(
                 context=self._ctx,
@@ -554,22 +589,25 @@ def provision_self_contact(self) -> None:
         except Exception:
             seeded = []
         if seeded:
-            try:
-                shared_contact_id = int(seeded[0].entries.get("contact_id"))
-            except Exception:
-                shared_contact_id = None
-            if (
-                shared_contact_id is not None
-                and agent_id is not None
-                and seeded[0].entries.get("assistant_id") != int(agent_id)
-            ):
+            seeded_assistant_id = seeded[0].entries.get("assistant_id")
+            same_body = agent_id is not None and seeded_assistant_id == int(agent_id)
+            if seeded_assistant_id is None or same_body:
                 try:
-                    self.update_contact(
-                        contact_id=shared_contact_id,
-                        assistant_id=int(agent_id),
-                    )
+                    shared_contact_id = int(seeded[0].entries.get("contact_id"))
                 except Exception:
-                    pass
+                    shared_contact_id = None
+                if (
+                    shared_contact_id is not None
+                    and seeded_assistant_id is None
+                    and agent_id is not None
+                ):
+                    try:
+                        self.update_contact(
+                            contact_id=shared_contact_id,
+                            assistant_id=int(agent_id),
+                        )
+                    except Exception:
+                        pass
 
     if shared_contact_id is None:
         create_kwargs: Dict[str, Any] = {
