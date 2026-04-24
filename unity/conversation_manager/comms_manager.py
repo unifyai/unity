@@ -172,6 +172,7 @@ _TEAMS_BR_RE = re.compile(r"<br\s*/?>", re.IGNORECASE)
 _TEAMS_BLOCK_END_RE = re.compile(r"</(p|div|li|h[1-6]|tr)>", re.IGNORECASE)
 _TEAMS_TAG_RE = re.compile(r"<[^>]+>")
 _TEAMS_INLINE_WS_RE = re.compile(r"[ \t]+")
+_TEAMS_BLANK_RUN_RE = re.compile(r"\n{3,}")
 
 
 def _teams_html_to_text(raw: str) -> str:
@@ -194,7 +195,13 @@ def _teams_html_to_text(raw: str) -> str:
     s = _TEAMS_TAG_RE.sub("", s)
     s = html.unescape(s)
     lines = [_TEAMS_INLINE_WS_RE.sub(" ", line).strip() for line in s.splitlines()]
-    return "\n".join(line for line in lines).strip()
+    joined = "\n".join(line for line in lines).strip()
+    # An empty paragraph (e.g. ``<p><br></p>``) emits both a ``<br>`` newline and
+    # a closing-tag newline on top of the surrounding paragraphs' own breaks,
+    # which adds up to 3+ consecutive newlines. Collapse runs to a single blank
+    # line so empty paragraphs render as one visual gap, matching how Teams
+    # itself displays them.
+    return _TEAMS_BLANK_RUN_RE.sub("\n\n", joined)
 
 
 def _task_due_event_from_payload(
