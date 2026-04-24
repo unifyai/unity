@@ -104,6 +104,13 @@ class BrainSpec:
                 "call, showing the meeting view as you see it. They are paired "
                 "with what was said at each moment and are in chronological order."
             )
+        elif "teams_meet" in sources:
+            header = (
+                "The following screenshots were captured from the Microsoft "
+                "Teams meeting, showing the meeting view as you see it. They "
+                "are paired with what was said at each moment and are in "
+                "chronological order."
+            )
         elif "user" in sources:
             header = (
                 "The following screenshots were captured from the user's screen "
@@ -138,6 +145,7 @@ class BrainSpec:
             "user": "User's Screen",
             "webcam": "User's Webcam",
             "google_meet": "Google Meet",
+            "teams_meet": "Microsoft Teams",
         }
         for i, entry in enumerate(self.screenshots, 1):
             label = source_labels.get(entry.source, "Screenshot")
