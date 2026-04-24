@@ -116,7 +116,14 @@ def mock_cm(mock_session_logger, mock_event_broker, sample_contacts):
     cm._voice_pipeline_quiescent = asyncio.Event()
     cm._voice_pipeline_quiescent.set()
     cm.assistant_screen_share_active = False
+    cm.call_manager.has_active_call = False
     cm.call_manager.has_active_google_meet = False
+    cm.call_manager.has_active_teams_meet = False
+    cm.call_manager.has_gmeet_presenting = False
+    cm.call_manager.has_teams_presenting = False
+    cm.call_manager._meet_joining = False
+    cm.call_manager._whatsapp_call_joining = False
+    cm.assistant_has_teams = False
 
     # Create SimulatedContactManager and populate with sample contacts
     contact_manager = SimulatedContactManager()
