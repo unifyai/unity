@@ -118,6 +118,16 @@ class FileRecordFields(BaseModel):
         description="Short summary extracted from the document.",
     )
 
+    authoring_assistant_id: Optional[int] = Field(
+        default=None,
+        description=(
+            "Assistant id of the body that published this catalog row. "
+            "File bytes stay on the authoring body's local disk; this field "
+            "only records which body first indexed the file so reviewers can "
+            "attribute Hive-shared catalog rows to their origin body."
+        ),
+    )
+
 
 class FileRecordRow(FileRecordFields):
     """
@@ -203,6 +213,8 @@ class FileRecord(FileRecordFields):
         if not summary_val and document_summary:
             summary_val = str(document_summary).strip()
 
+        from unity.common.authoring import authoring_assistant_id
+
         return FileRecordRow(
             file_path=file_path,
             source_uri=source_uri,
@@ -228,6 +240,7 @@ class FileRecord(FileRecordFields):
             ),
             storage_id=storage_id,
             table_ingest=bool(table_ingest),
+            authoring_assistant_id=authoring_assistant_id(),
         )
 
 
