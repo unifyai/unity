@@ -977,6 +977,20 @@ def unique_hive_id() -> int:
     return _random.randint(10_000_000, 99_999_999)
 
 
+def fresh_hive_id() -> int:
+    """Return a hive id keyed on monotonic wall time.
+
+    :func:`unique_hive_id` seeds ``random`` from ``random.randint`` which
+    pytest pins to a deterministic seed via an autouse fixture. Tests that
+    need two different Hive roots within the same session (e.g. bodies
+    bootstrapped twice across parametrised runs) must not collide; this
+    helper keys off ``time.time_ns()`` so each call returns a fresh value.
+    """
+    import time as _time
+
+    return 10_000_000 + (_time.time_ns() % 89_999_999)
+
+
 def cleanup_hive_context(hive_id: int) -> None:
     """Best-effort delete of ``Hives/{hive_id}`` and all descendants.
 
@@ -1021,3 +1035,59 @@ def bind_body(
     SESSION_DETAILS.hive_id = hive_id
     if solo_base is not None and hive_id is None:
         ContextRegistry._base_context = solo_base
+
+
+def pin_hive_body_base(hive_id: int, agent_id: int) -> None:
+    """Pin a unique ``_base_context`` for a Hive body under test.
+
+    Production bodies derive their per-body context prefix from
+    ``{user_id}/{agent_id}``. Tests leave ``_base_context`` pointing at a
+    shared project root, so two Hive-mate bodies inside the same test
+    would collapse their per-body overlays (``ContactMembership`` et al.)
+    onto one context. Pinning a distinct base per body keeps the overlays
+    isolated while Hive-scoped tables still land on ``Hives/{hive_id}/...``.
+    """
+    from unity.common.context_registry import ContextRegistry
+
+    ContextRegistry._base_context = f"hive-{hive_id}-body-{agent_id}"
+
+
+def self_contact_id_for_body(hive_id: int, agent_id: int) -> int:
+    """Return the shared-contact id whose ``assistant_id`` names this body."""
+    rows = unify.get_logs(
+        context=f"Hives/{hive_id}/Contacts",
+        filter=f"assistant_id == {agent_id}",
+        limit=1,
+        from_fields=["contact_id", "assistant_id"],
+    )
+    assert rows, (
+        f"Hive-mate body {agent_id} has no shared Contacts row under "
+        f"Hives/{hive_id}/Contacts — ContactManager.__init__ should have "
+        "provisioned its self row."
+    )
+    return int(rows[0].entries.get("contact_id"))
+
+
+def bootstrap_hive_body(
+    hive_id: int,
+    agent_id: int,
+) -> tuple["TranscriptManager", int]:  # type: ignore[name-defined]
+    """Bind the session to a Hive body, provision its contacts, return (tm, self_cid).
+
+    Populates ``SESSION_DETAILS.assistant`` with values unique to this
+    ``(hive_id, agent_id)`` pair so each body's shared ``Contacts`` row is
+    created with distinct email/phone fields — the uniqueness constraints
+    would otherwise collide two placeholder rows onto one ``contact_id``.
+    """
+    from unity.contact_manager.contact_manager import ContactManager
+    from unity.session_details import SESSION_DETAILS
+    from unity.transcript_manager.transcript_manager import TranscriptManager
+
+    bind_body(hive_id=hive_id, agent_id=agent_id)
+    pin_hive_body_base(hive_id, agent_id)
+    SESSION_DETAILS.assistant.first_name = "Body"
+    SESSION_DETAILS.assistant.email = f"body-{hive_id}-{agent_id}@example.com"
+    SESSION_DETAILS.assistant.number = f"+{hive_id}{agent_id}"
+    cm = ContactManager()
+    tm = TranscriptManager(contact_manager=cm)
+    return tm, self_contact_id_for_body(hive_id, agent_id)
