@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING, List, Optional, Sequence, Union
 
 import unify
 
+from unity.common.authoring import authoring_assistant_id
 from unity.common.context_registry import ContextRegistry
 from unity.common.join_utils import rewrite_join_paths
 from unity.dashboard_manager.types.tile import (
@@ -249,6 +250,7 @@ def build_tile_record_row(
         data_bindings_json=bindings_json,
         created_at=now,
         updated_at=now,
+        authoring_assistant_id=authoring_assistant_id(),
     )
 
 

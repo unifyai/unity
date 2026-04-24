@@ -9,6 +9,7 @@ import json
 from datetime import datetime, timezone
 from typing import List, Optional
 
+from unity.common.authoring import authoring_assistant_id
 from unity.dashboard_manager.types.dashboard import (
     DashboardRecordRow,
     TilePosition,
@@ -31,6 +32,7 @@ def build_dashboard_record_row(
         tile_count=len(tiles),
         created_at=now,
         updated_at=now,
+        authoring_assistant_id=authoring_assistant_id(),
     )
 
 

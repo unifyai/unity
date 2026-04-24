@@ -63,6 +63,14 @@ class DashboardRecordRow(BaseModel):
         default=None,
         description="ISO-8601 last-update timestamp",
     )
+    authoring_assistant_id: Optional[int] = Field(
+        default=None,
+        description=(
+            "Assistant id of the body that authored this dashboard. Stamped "
+            "once at create time and preserved across updates so reviewers "
+            "can attribute Hive-shared rows to their authoring body."
+        ),
+    )
 
 
 class DashboardRecord(DashboardRecordRow):
