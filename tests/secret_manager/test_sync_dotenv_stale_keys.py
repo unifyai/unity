@@ -22,6 +22,9 @@ import os
 import pathlib
 import tempfile
 
+import pytest
+import unify
+
 from unity.secret_manager.secret_manager import SecretManager
 from unity.session_details import SESSION_DETAILS
 from unity.settings import SETTINGS
@@ -221,3 +224,42 @@ def test_exported_env_keys_tracking_survives_reinstantiation(
 
         assert os.environ.get("gamma") is None
         assert "gamma" not in _read_dotenv(dotenv_path)
+
+
+@pytest.mark.parametrize(
+    "failing_context_attr",
+    ["_binding_ctx", "_default_ctx", "_ctx"],
+)
+def test_transient_hive_read_failure_preserves_exported_credentials(
+    secret_manager_context,
+    monkeypatch,
+    failing_context_attr,
+):
+    """Backend read failures must not evict previously exported credentials."""
+    with tempfile.TemporaryDirectory() as td:
+        dotenv_path = str(pathlib.Path(td) / ".env")
+        monkeypatch.setattr(SETTINGS.secret, "DOTENV_PATH", dotenv_path)
+        monkeypatch.delenv("durable_key", raising=False)
+
+        sm = SecretManager()
+        sm._create_secret(name="durable_key", value="tok-durable", description="d")
+
+        monkeypatch.setattr(SESSION_DETAILS, "hive_id", 77, raising=False)
+        sm._bind_secret(integration="service", secret_name="durable_key")
+        assert "durable_key=tok-durable" in _read_dotenv(dotenv_path)
+        assert os.environ.get("durable_key") == "tok-durable"
+
+        failing_context = getattr(sm, failing_context_attr)
+        real_get_logs = unify.get_logs
+
+        def fail_selected_context(*args, **kwargs):
+            if kwargs.get("context") == failing_context:
+                raise RuntimeError("backend unavailable")
+            return real_get_logs(*args, **kwargs)
+
+        monkeypatch.setattr(unify, "get_logs", fail_selected_context)
+        sm._sync_dotenv()
+
+        assert "durable_key=tok-durable" in _read_dotenv(dotenv_path)
+        assert os.environ.get("durable_key") == "tok-durable"
+        assert sm._exported_env_keys == {"durable_key"}

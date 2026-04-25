@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import functools
+import logging
 import os
 from typing import Any, Callable, Dict, List, Optional, Type
 from pydantic import BaseModel
@@ -38,6 +39,13 @@ from .settings import (
     SECRET_DEFAULT_TABLE,
     SECRETS_TABLE,
 )
+
+
+class SecretBackendReadError(RuntimeError):
+    """Raised when SecretManager cannot read an authoritative backend slice."""
+
+
+logger = logging.getLogger(__name__)
 
 
 class SecretManager(BaseSecretManager):
@@ -451,8 +459,10 @@ class SecretManager(BaseSecretManager):
                 context=self._binding_ctx,
                 from_fields=["integration", "secret_id"],
             )
-        except Exception:
-            binding_rows = []
+        except Exception as exc:
+            raise SecretBackendReadError(
+                f"Failed to read SecretBinding rows from {self._binding_ctx!r}.",
+            ) from exc
         bound_integrations: set[str] = set()
         for row in binding_rows:
             entries = row.entries or {}
@@ -468,8 +478,10 @@ class SecretManager(BaseSecretManager):
                 context=self._default_ctx,
                 from_fields=["integration", "secret_id"],
             )
-        except Exception:
-            default_rows = []
+        except Exception as exc:
+            raise SecretBackendReadError(
+                f"Failed to read SecretDefault rows from {self._default_ctx!r}.",
+            ) from exc
         for row in default_rows:
             entries = row.entries or {}
             integration = entries.get("integration")
@@ -488,8 +500,10 @@ class SecretManager(BaseSecretManager):
         """Return every ``{name: value}`` from the shared vault (solo path)."""
         try:
             rows = unify.get_logs(context=self._ctx)
-        except Exception:
-            rows = []
+        except Exception as exc:
+            raise SecretBackendReadError(
+                f"Failed to read Secret rows from {self._ctx!r}.",
+            ) from exc
         out: Dict[str, str] = {}
         for lg in rows:
             entries = lg.entries or {}
@@ -510,8 +524,10 @@ class SecretManager(BaseSecretManager):
                 filter=f"secret_id in [{id_list}]",
                 from_fields=["secret_id", "name", "value"],
             )
-        except Exception:
-            rows = []
+        except Exception as exc:
+            raise SecretBackendReadError(
+                f"Failed to read Secret rows from {self._ctx!r}.",
+            ) from exc
         out: Dict[str, str] = {}
         for lg in rows:
             entries = lg.entries or {}
@@ -528,8 +544,10 @@ class SecretManager(BaseSecretManager):
                 context=self._oauth_ctx,
                 from_fields=["name", "value"],
             )
-        except Exception:
-            rows = []
+        except Exception as exc:
+            raise SecretBackendReadError(
+                f"Failed to read OAuth token rows from {self._oauth_ctx!r}.",
+            ) from exc
         out: Dict[str, str] = {}
         for lg in rows:
             entries = lg.entries or {}
@@ -556,9 +574,19 @@ class SecretManager(BaseSecretManager):
         spawned after the next invalidation pass don't inherit a
         stale credential.
         """
+        try:
+            vault_entries = self._resolved_vault_entries()
+            oauth_entries = self._oauth_entries()
+        except SecretBackendReadError as exc:
+            logger.warning(
+                "Skipping credential export after backend read failure: %s",
+                exc,
+            )
+            return
+
         combined: Dict[str, str] = {}
-        combined.update(self._resolved_vault_entries())
-        combined.update(self._oauth_entries())
+        combined.update(vault_entries)
+        combined.update(oauth_entries)
 
         stale = sorted(self._exported_env_keys - combined.keys())
         if not combined and not stale:
@@ -801,8 +829,10 @@ class SecretManager(BaseSecretManager):
                 limit=1,
                 from_fields=["integration", "secret_id"],
             )
-        except Exception:
-            binding_rows = []
+        except Exception as exc:
+            raise SecretBackendReadError(
+                f"Failed to read SecretBinding rows from {self._binding_ctx!r}.",
+            ) from exc
         if binding_rows:
             secret_id = (binding_rows[0].entries or {}).get("secret_id")
             if isinstance(secret_id, int) and secret_id >= 0:
@@ -818,8 +848,10 @@ class SecretManager(BaseSecretManager):
                     limit=1,
                     from_fields=["integration", "secret_id"],
                 )
-            except Exception:
-                default_rows = []
+            except Exception as exc:
+                raise SecretBackendReadError(
+                    f"Failed to read SecretDefault rows from {self._default_ctx!r}.",
+                ) from exc
             if default_rows:
                 secret_id = (default_rows[0].entries or {}).get("secret_id")
                 if isinstance(secret_id, int) and secret_id >= 0:
@@ -848,9 +880,10 @@ class SecretManager(BaseSecretManager):
         Callers pass a single-row Unify filter expression against
         :attr:`_ctx` (for example ``"secret_id == 7"`` or
         ``"name == 'Salesforce Admin'"``) and get back the full
-        credential row — or ``None`` when the backend read fails or
-        returns no match. Surfaces only the fields the manager's
-        public resolvers rely on.
+        credential row — or ``None`` when the backend returns no match.
+        Backend read failures raise :class:`SecretBackendReadError` so
+        callers do not mistake a transient outage for a missing
+        credential configuration.
         """
         try:
             rows = unify.get_logs(
@@ -865,8 +898,10 @@ class SecretManager(BaseSecretManager):
                     "authoring_assistant_id",
                 ],
             )
-        except Exception:
-            return None
+        except Exception as exc:
+            raise SecretBackendReadError(
+                f"Failed to read Secret rows from {self._ctx!r}.",
+            ) from exc
         if not rows:
             return None
         entries = rows[0].entries or {}

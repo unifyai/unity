@@ -25,8 +25,9 @@ branch logic without having to stand up a real ``Hives/{id}`` root.
 from __future__ import annotations
 
 import pytest
+import unify
 
-from unity.secret_manager.secret_manager import SecretManager
+from unity.secret_manager.secret_manager import SecretBackendReadError, SecretManager
 from unity.session_details import SESSION_DETAILS
 
 # ─────────────────────────── Solo body paths ────────────────────────────
@@ -114,6 +115,25 @@ def test_empty_integration_name_raises_value_error(secret_manager_context):
 
     with pytest.raises(ValueError):
         sm.get_secret_for_integration("")
+
+
+def test_backend_read_failure_surfaces_distinct_error(
+    secret_manager_context,
+    monkeypatch,
+):
+    """Transient backend failures are not reported as missing configuration."""
+    sm = SecretManager()
+    real_get_logs = unify.get_logs
+
+    def fail_binding_read(*args, **kwargs):
+        if kwargs.get("context") == sm._binding_ctx:
+            raise RuntimeError("backend unavailable")
+        return real_get_logs(*args, **kwargs)
+
+    monkeypatch.setattr(unify, "get_logs", fail_binding_read)
+
+    with pytest.raises(SecretBackendReadError, match="SecretBinding"):
+        sm.get_secret_for_integration("salesforce")
 
 
 # ─────────────────────────── Hive body paths ────────────────────────────
