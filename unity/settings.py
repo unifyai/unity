@@ -67,7 +67,7 @@ class ProductionSettings(BaseSettings):
     # ─────────────────────────────────────────────────────────────────────────
     # Core LLM Settings
     # ─────────────────────────────────────────────────────────────────────────
-    UNIFY_MODEL: str = "claude-4.6-opus@anthropic"
+    UNIFY_MODEL: str = "gpt-5.5@openai"
 
     # ─────────────────────────────────────────────────────────────────────────
     # LLM Provider Credentials
