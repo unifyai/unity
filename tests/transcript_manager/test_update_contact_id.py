@@ -31,6 +31,7 @@ def test_rewrites_sender_and_receivers():
             content="Sender uses OLD_ID",
             exchange_id=EX_ID,
         ),
+        synchronous=True,
     )
 
     # 2) Old id appears inside *receiver_ids*
@@ -43,6 +44,7 @@ def test_rewrites_sender_and_receivers():
             content="Receiver uses OLD_ID",
             exchange_id=EX_ID,
         ),
+        synchronous=True,
     )
 
     # 3) Old id appears multiple times in receiver_ids → should deduplicate
@@ -55,6 +57,7 @@ def test_rewrites_sender_and_receivers():
             content="Duplicate OLD_ID receivers",
             exchange_id=EX_ID,
         ),
+        synchronous=True,
     )
 
     # Flush logs to storage
