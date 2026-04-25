@@ -1569,8 +1569,7 @@ class CodeActActor(BaseCodeActActor):
                 loop after the main task completes — the main loop never
                 exposes storage tools.
             timeout: Maximum seconds for individual code execution in sessions.
-            model: Optional LLM model identifier (e.g. "claude-4.5-opus@anthropic").
-                If None, uses SETTINGS.UNIFY_MODEL (default: "claude-4.5-opus@anthropic").
+            model: Optional LLM model identifier. If None, uses SETTINGS.UNIFY_MODEL.
             preprocess_msgs: Optional callback to modify messages before each LLM call.
                 Receives a list of message dicts and returns a modified list.
                 Useful for pruning old messages, adding context, or transforming content.

@@ -67,10 +67,9 @@ class TestSpeechDeduplicationCheckerUnit:
         an LLM call and returns a valid SpeechDedup result.
 
         Uses FAST_BRAIN_MODEL for a cheaper round-trip in default CI.
-        Production ``SpeechDeduplicationChecker()`` uses ``UNIFY_MODEL``
-        (Anthropic); see ``test_evaluate_sends_user_role_message`` for the
-        message-shape contract Anthropic requires, and the eval test for a
-        full default-model call.
+        Production ``SpeechDeduplicationChecker()`` uses ``UNIFY_MODEL``;
+        see ``test_evaluate_sends_user_role_message`` for the message-shape
+        contract, and the eval test for a full default-model call.
         """
         from unity.settings import SETTINGS
 
@@ -105,9 +104,9 @@ class TestSpeechDeduplicationCheckerUnit:
     async def test_evaluate_sends_user_role_message(self):
         """LiteLLM/Anthropic reject chat completions with only ``system`` messages.
 
-        ``SpeechDeduplicationChecker()`` defaults to ``UNIFY_MODEL`` (Anthropic in
-        prod). This test does not call the API: it asserts we always include at
-        least one non-system message so provider transforms do not empty the payload.
+        ``SpeechDeduplicationChecker()`` defaults to ``UNIFY_MODEL`` in prod.
+        This test does not call the API: it asserts we always include at least
+        one non-system message so provider transforms do not empty the payload.
         """
         captured: dict = {}
 
@@ -463,7 +462,7 @@ class TestSpeechDedupEval:
     fast brain has already covered the slow brain's proposed speech."""
 
     async def test_default_model_structured_completion_roundtrip(self):
-        """Production path: no ``model=`` → ``UNIFY_MODEL`` (Anthropic).
+        """Production path: no ``model=`` uses ``UNIFY_MODEL``.
 
         Catches provider-specific request-shape or schema issues that mocks miss.
         """
