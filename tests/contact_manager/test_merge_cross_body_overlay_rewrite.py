@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import uuid
 
+import pytest
 import unify
 
 from unity.common.model_to_fields import model_to_fields
@@ -98,6 +99,18 @@ def _overlay_rows(context: str, *, contact_id: int) -> list:
             context=context,
             filter=f"contact_id == {int(contact_id)}",
             limit=50,
+        )
+        or []
+    )
+
+
+def _shared_contact_rows(cm: ContactManager, *, contact_id: int) -> list:
+    """Read shared Contact rows for ``contact_id`` from the manager context."""
+    return (
+        unify.get_logs(
+            context=cm._ctx,
+            filter=f"contact_id == {int(contact_id)}",
+            limit=10,
         )
         or []
     )
@@ -333,3 +346,90 @@ def test_hive_merge_skips_peer_without_matching_overlay(monkeypatch):
         assert rows_delete == []
     finally:
         _cleanup_peer_overlay_context(peer_ctx)
+
+
+@_handle_project
+def test_hive_merge_member_enumeration_failure_keeps_losing_contact(monkeypatch):
+    """A Hive merge aborts before deleting when member enumeration fails."""
+    cm = ContactManager()
+
+    keep_id = cm._create_contact(
+        first_name="EnumKeep",
+        email_address=f"enum.keep.{uuid.uuid4().hex[:8]}@example.com",
+    )["details"]["contact_id"]
+    delete_id = cm._create_contact(
+        first_name="EnumDupe",
+        email_address=f"enum.dupe.{uuid.uuid4().hex[:8]}@example.com",
+    )["details"]["contact_id"]
+
+    monkeypatch.setattr(SESSION_DETAILS, "hive_id", 42, raising=False)
+    monkeypatch.setattr(
+        "unity.contact_manager.backend_sync.list_hive_assistants",
+        lambda _hid: (_ for _ in ()).throw(RuntimeError("orchestra unavailable")),
+    )
+    survivor_updates: list[dict] = []
+    monkeypatch.setattr(
+        ops,
+        "update_contact",
+        lambda *args, **kwargs: survivor_updates.append(kwargs),
+    )
+
+    with pytest.raises(ops.ContactMergeOverlayRewriteError):
+        cm._merge_contacts(
+            contact_id_1=keep_id,
+            contact_id_2=delete_id,
+            overrides={"contact_id": 1},
+        )
+
+    assert _shared_contact_rows(cm, contact_id=delete_id), (
+        "Losing shared Contact row was deleted even though Hive member "
+        "enumeration failed"
+    )
+    assert survivor_updates == []
+
+
+@_handle_project
+def test_hive_merge_peer_overlay_failure_keeps_losing_contact(monkeypatch):
+    """A peer overlay rewrite failure aborts before shared-row deletion."""
+    cm = ContactManager()
+
+    keep_id = cm._create_contact(
+        first_name="PeerKeep",
+        email_address=f"peer.keep.{uuid.uuid4().hex[:8]}@example.com",
+    )["details"]["contact_id"]
+    delete_id = cm._create_contact(
+        first_name="PeerDupe",
+        email_address=f"peer.dupe.{uuid.uuid4().hex[:8]}@example.com",
+    )["details"]["contact_id"]
+
+    monkeypatch.setattr(SESSION_DETAILS, "hive_id", 42, raising=False)
+    monkeypatch.setattr(
+        "unity.contact_manager.backend_sync.list_hive_assistants",
+        lambda _hid: [("peer-user", 99)],
+    )
+    monkeypatch.setattr(
+        ops,
+        "_rewrite_single_overlay",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            RuntimeError("overlay write failed"),
+        ),
+    )
+    survivor_updates: list[dict] = []
+    monkeypatch.setattr(
+        ops,
+        "update_contact",
+        lambda *args, **kwargs: survivor_updates.append(kwargs),
+    )
+
+    with pytest.raises(ops.ContactMergeOverlayRewriteError):
+        cm._merge_contacts(
+            contact_id_1=keep_id,
+            contact_id_2=delete_id,
+            overrides={"contact_id": 1},
+        )
+
+    assert _shared_contact_rows(cm, contact_id=delete_id), (
+        "Losing shared Contact row was deleted even though a peer overlay "
+        "rewrite failed"
+    )
+    assert survivor_updates == []

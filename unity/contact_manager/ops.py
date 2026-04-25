@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from typing import Any, Dict, Final, Optional
 
 import unify
@@ -22,6 +23,11 @@ from .custom_columns import sanitize_custom_columns
 _AUDIT_FIELDS: Final[frozenset[str]] = frozenset(
     {"assistant_id", "authoring_assistant_id", "is_system"},
 )
+logger = logging.getLogger(__name__)
+
+
+class ContactMergeOverlayRewriteError(RuntimeError):
+    """Raised when a contact merge cannot safely rewrite membership overlays."""
 
 
 def _relationship_for(self, contact_id: int) -> Optional[str]:
@@ -650,13 +656,16 @@ def _rewrite_membership_overlays_for_merge(
             from .backend_sync import list_hive_assistants
 
             members = list_hive_assistants(int(hive_id))
-        except Exception:
-            members = []
+        except Exception as exc:
+            logger.exception(
+                "Failed to enumerate Hive members before contact merge overlay rewrite.",
+            )
+            raise ContactMergeOverlayRewriteError(
+                "Unable to enumerate Hive members before merging contacts.",
+            ) from exc
 
-    # Solo body or Orchestra call failed → at minimum rewrite this
-    # body's overlay so the merge is locally consistent. The overlay
-    # table is per-body, so the context path rewrite applies cleanly
-    # either way.
+    # Solo bodies rewrite only their own overlay. Hive bodies rely on
+    # Orchestra's member list; if that lookup fails the merge aborts above.
     if not members:
         _rewrite_single_overlay(
             self,
@@ -675,12 +684,18 @@ def _rewrite_membership_overlays_for_merge(
                 delete_id=delete_id,
                 keep_id=keep_id,
             )
-        except Exception:
-            # A single body's overlay failure must not block the
-            # merge — the shared row still lands, and the failing
-            # body will rematerialize its overlay on the next
-            # interaction boundary.
-            continue
+        except Exception as exc:
+            logger.exception(
+                "Failed to rewrite ContactMembership overlay during contact merge.",
+                extra={
+                    "overlay_context": overlay_ctx,
+                    "delete_id": delete_id,
+                    "keep_id": keep_id,
+                },
+            )
+            raise ContactMergeOverlayRewriteError(
+                "Unable to rewrite every Hive member's contact membership overlay.",
+            ) from exc
 
 
 def _rewrite_single_overlay(
@@ -698,14 +713,11 @@ def _rewrite_single_overlay(
     violate the unique-key invariant) or rewrites its ``contact_id``
     to point at the surviving row.
     """
-    try:
-        rows = unify.get_logs(
-            context=context,
-            filter=f"contact_id in [{int(delete_id)}, {int(keep_id)}]",
-            from_fields=["contact_id"],
-        )
-    except Exception:
-        return
+    rows = unify.get_logs(
+        context=context,
+        filter=f"contact_id in [{int(delete_id)}, {int(keep_id)}]",
+        from_fields=["contact_id"],
+    )
 
     losing_ids: list[int] = []
     surviving_present = False
@@ -721,18 +733,15 @@ def _rewrite_single_overlay(
     if not losing_ids:
         return
 
-    try:
-        if surviving_present:
-            unify.delete_logs(context=context, logs=losing_ids)
-        else:
-            unify.update_logs(
-                logs=losing_ids,
-                context=context,
-                entries={"contact_id": int(keep_id)},
-                overwrite=True,
-            )
-    except Exception:
-        pass
+    if surviving_present:
+        unify.delete_logs(context=context, logs=losing_ids)
+    else:
+        unify.update_logs(
+            logs=losing_ids,
+            context=context,
+            entries={"contact_id": int(keep_id)},
+            overwrite=True,
+        )
 
 
 def merge_contacts(
@@ -785,6 +794,17 @@ def merge_contacts(
             "Flip 'contact_id' in overrides to keep the system row instead.",
         )
 
+    # Rewrite every Hive body's ContactMembership overlay before mutating
+    # the survivor or deleting the losing shared row. Because the FK from
+    # ContactMembership to Contacts is ``ON DELETE SET NULL``, any overlay
+    # still pointing at ``delete_id`` at delete-time would be silently
+    # nulled out, losing that body's policy for the merged contact.
+    _rewrite_membership_overlays_for_merge(
+        self,
+        delete_id=delete_id,
+        keep_id=keep_id,
+    )
+
     entries1 = log1.entries
     entries2 = log2.entries
     all_cols = set(entries1.keys()) | set(entries2.keys())
@@ -831,17 +851,6 @@ def merge_contacts(
             },
             **(custom_updates or {}),
         )
-
-    # Rewrite every Hive body's ContactMembership overlay before we
-    # delete the losing shared row. Because the FK from ContactMembership
-    # to Contacts is ``ON DELETE SET NULL``, any overlay still pointing
-    # at ``delete_id`` at delete-time would be silently nulled out —
-    # losing that body's policy for the merged contact.
-    _rewrite_membership_overlays_for_merge(
-        self,
-        delete_id=delete_id,
-        keep_id=keep_id,
-    )
 
     # Rewrite every TranscriptManager reference to the merged contact
     # BEFORE deleting the losing row, so the shared FK ``ON DELETE SET
