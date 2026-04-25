@@ -20,6 +20,7 @@ from typing import Callable, Dict, Union, List, Optional
 from ..contact_manager.types.contact import Contact
 from .types.message import Message
 from unity.conversation_manager.cm_types import Medium
+from unity.session_details import SESSION_DETAILS
 from ..common.prompt_helpers import (
     clarification_guidance,
     sig_dict,
@@ -85,6 +86,24 @@ def _render_two_table_info(
         )
 
     return "\n".join(lines)
+
+
+def _team_history_block() -> str | None:
+    """Return Hive transcript authorship guidance for the active body."""
+
+    current_assistant_id = SESSION_DETAILS.assistant.agent_id
+    if SESSION_DETAILS.hive_id is None or current_assistant_id is None:
+        return None
+
+    return textwrap.dedent(
+        f"""
+        Shared transcript authorship:
+        - This body is assistant id {current_assistant_id}.
+        - When a retrieved message has `auth_aid` / `authoring_assistant_id` different from {current_assistant_id}, treat that row as team history.
+          Phrase it as "my colleague ..." or "another body on my team ..." rather than as something you personally remember saying.
+        - When `auth_aid` matches {current_assistant_id} or is absent, keep the normal first-person framing.
+        """,
+    ).strip()
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -292,6 +311,11 @@ def build_ask_prompt(
         ("Message field shorthand (shorthand → full)", Message.shorthand_inverse_map()),
     ]
 
+    special_blocks = [two_table_info]
+    team_history = _team_history_block()
+    if team_history:
+        special_blocks.append(team_history)
+
     spec = PromptSpec(
         manager="TranscriptManager",
         method="ask",
@@ -315,7 +339,7 @@ def build_ask_prompt(
         images_extras_block=images_extras or None,
         include_parallelism=True,
         schemas=schemas,
-        special_blocks=[two_table_info],  # Custom two-table info block
+        special_blocks=special_blocks,  # Custom transcript context blocks
         include_clarification_footer=True,
         include_time_footer=True,
     )

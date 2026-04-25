@@ -73,6 +73,10 @@ class BaseKnowledgeManager(BaseStateManager, metaclass=SingletonABCMeta):
         --------------------
         • `ask` is ONLY for inspecting/locating knowledge that ALREADY EXISTS
           (e.g., to verify stored facts or locate relevant records).
+        • Before saving new knowledge, run `search` against the shared Knowledge
+          pool to check for near-duplicates. If a similar entry exists, prefer
+          merging, updating, or specializing it in place; create a new entry
+          only when nothing similar is already there.
         • Do NOT use `ask` to ask the human for details about NEW knowledge
           being created/changed in this update request; call
           ``request_clarification`` when a clarification channel is available.

@@ -6,6 +6,7 @@ from typing import Any, Dict, List, Optional, TYPE_CHECKING
 from .base import BaseGuidanceManager
 from .types.guidance import Guidance
 from ..image_manager.types import AnnotatedImageRefs
+from ..common.tool_outcome import details_with_near_duplicates
 from ..common.simulated import (
     maybe_tool_log_scheduled,
     maybe_tool_log_completed,
@@ -75,6 +76,7 @@ class SimulatedGuidanceManager(BaseGuidanceManager):
         content: Optional[str] = None,
         images: Optional[AnnotatedImageRefs] = None,
         function_ids: Optional[List[int]] = None,
+        _near_duplicates: Optional[List[Dict[str, Any]]] = None,
     ) -> "ToolOutcome":
         if not title and not content and not images:
             raise ValueError(
@@ -91,7 +93,10 @@ class SimulatedGuidanceManager(BaseGuidanceManager):
         )
         return {
             "outcome": "guidance created successfully",
-            "details": {"guidance_id": gid},
+            "details": details_with_near_duplicates(
+                {"guidance_id": gid},
+                _near_duplicates,
+            ),
         }
 
     @functools.wraps(BaseGuidanceManager.update_guidance, updated=())
@@ -103,6 +108,7 @@ class SimulatedGuidanceManager(BaseGuidanceManager):
         content: Optional[str] = None,
         images: Optional[AnnotatedImageRefs] = None,
         function_ids: Optional[List[int]] = None,
+        _near_duplicates: Optional[List[Dict[str, Any]]] = None,
     ) -> "ToolOutcome":
         existing = self._entries.get(guidance_id)
         if existing is None:
@@ -121,7 +127,13 @@ class SimulatedGuidanceManager(BaseGuidanceManager):
         if not updates:
             raise ValueError("At least one field must be provided for an update.")
         self._entries[guidance_id] = existing.model_copy(update=updates)
-        return {"outcome": "guidance updated", "details": {"guidance_id": guidance_id}}
+        return {
+            "outcome": "guidance updated",
+            "details": details_with_near_duplicates(
+                {"guidance_id": guidance_id},
+                _near_duplicates,
+            ),
+        }
 
     @functools.wraps(BaseGuidanceManager.delete_guidance, updated=())
     def delete_guidance(

@@ -1600,6 +1600,15 @@ class FileManager(BaseFileManager):
         """
         Save bytes into the Attachments directory and return the saved path.
 
+        Files saved with this tool are stored on this body's local disk. Hive
+        mates can discover the shared catalog row, but they cannot read the
+        bytes from this body's disk. When a file is intended for another body
+        in the Hive or for cross-body retrieval, send it through an outbound
+        channel such as a Unify message, WhatsApp media, email attachment, or
+        API response; those paths upload the bytes to GCS so the file can be
+        read Hive-wide. Local saves remain appropriate for working-memory
+        drafts that only this body needs.
+
         Parameters
         ----------
         attachment_id : str

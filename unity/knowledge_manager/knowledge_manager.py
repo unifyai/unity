@@ -13,7 +13,7 @@ if TYPE_CHECKING:
 import json
 from unity.logger import LOGGER
 from unity.common.hierarchical_logger import DEFAULT_ICON
-from unity.common.tool_outcome import ToolOutcome
+from unity.common.tool_outcome import ToolOutcome, details_with_near_duplicates
 from unity.common.token_utils import count_tokens_per_utf_byte
 from unity.common import token_utils as _tok
 from unity.common.grouping_helpers import build_grouped_dump_payload
@@ -1321,12 +1321,19 @@ class KnowledgeManager(BaseKnowledgeManager):
         *,
         table: str,
         rows: List[Dict[str, Any]],
+        _near_duplicates: Optional[List[Dict[str, Any]]] = None,
     ) -> ToolOutcome:
         """
         **Insert** one or many rows into *table*.
 
         Missing columns are auto-created (type inferred via JSON schema
         rules) before the insert.
+
+        Before saving new knowledge, run ``search`` against the shared Knowledge
+        pool to check for near-duplicates. If a similar entry exists, prefer
+        merging, updating, or specializing it in place. Create a new row only
+        when nothing similar is already there. This keeps the team's shared
+        memory clean and searchable.
 
         Parameters
         ----------
@@ -1344,13 +1351,20 @@ class KnowledgeManager(BaseKnowledgeManager):
             res = _op_add_rows(self, table=table, rows=rows)
         except Exception as e:
             return {"outcome": "error", "details": {"error": str(e)}}
-        return {"outcome": "rows added successfully", "details": {"length": len(res)}}
+        return {
+            "outcome": "rows added successfully",
+            "details": details_with_near_duplicates(
+                {"length": len(res)},
+                _near_duplicates,
+            ),
+        }
 
     def _update_rows(
         self,
         *,
         table: str,
         updates: Dict[int, Dict[str, Any]],
+        _near_duplicates: Optional[List[Dict[str, Any]]] = None,
     ) -> ToolOutcome:
         """
         Update existing rows identified by their table‑specific unique id.
@@ -1372,7 +1386,10 @@ class KnowledgeManager(BaseKnowledgeManager):
             res = _op_update_rows(self, table=table, updates=updates)
         except Exception as e:
             return {"outcome": "error", "details": {"error": str(e)}}
-        return {"outcome": "rows updated successfully", "details": res}
+        return {
+            "outcome": "rows updated successfully",
+            "details": details_with_near_duplicates(res, _near_duplicates),
+        }
 
     # File ingestion / deprecation
 

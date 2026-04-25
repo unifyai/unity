@@ -109,6 +109,12 @@ class BaseGuidanceManager(BaseStateManager, metaclass=SingletonABCMeta):
         software usage walkthroughs, composition strategies for combining
         functions, or any other actionable "how to do X" content.
 
+        Before authoring new guidance, search existing Guidance for a rule that
+        covers the same situation. If one exists, update that entry instead of
+        adding a parallel rule. If the new guidance contradicts an existing
+        rule, reconcile them while writing by specializing the conditions or
+        replacing the outdated rule.
+
         At least one of ``title``, ``content``, or ``images`` must be provided.
 
         Parameters
@@ -147,7 +153,9 @@ class BaseGuidanceManager(BaseStateManager, metaclass=SingletonABCMeta):
         """Update fields of an existing guidance entry by id.
 
         Use this to revise procedural instructions, operating procedures,
-        or compositional strategies that are already stored.
+        or compositional strategies that are already stored. When resolving a
+        contradiction or near-duplicate, prefer editing the existing guidance
+        so the shared rule set stays coherent.
 
         Parameters
         ----------

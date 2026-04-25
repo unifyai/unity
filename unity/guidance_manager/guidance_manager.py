@@ -9,7 +9,7 @@ import unify
 
 from ..common.authoring import authoring_assistant_id
 from ..common.log_utils import log as unity_log
-from ..common.tool_outcome import ToolOutcome
+from ..common.tool_outcome import ToolOutcome, details_with_near_duplicates
 from ..common.model_to_fields import model_to_fields
 from ..common.context_store import TableStore
 from ..common.search_utils import table_search_top_k
@@ -546,6 +546,7 @@ class GuidanceManager(BaseGuidanceManager):
         content: Optional[str] = None,
         images: AnnotatedImageRefs | None = None,
         function_ids: Optional[List[int]] = None,
+        _near_duplicates: Optional[List[Dict[str, Any]]] = None,
     ) -> ToolOutcome:
         if not title and not content and not images:
             raise ValueError(
@@ -572,7 +573,10 @@ class GuidanceManager(BaseGuidanceManager):
         )
         return {
             "outcome": "guidance created successfully",
-            "details": {"guidance_id": log.entries["guidance_id"]},
+            "details": details_with_near_duplicates(
+                {"guidance_id": log.entries["guidance_id"]},
+                _near_duplicates,
+            ),
         }
 
     @functools.wraps(BaseGuidanceManager.update_guidance, updated=())
@@ -584,6 +588,7 @@ class GuidanceManager(BaseGuidanceManager):
         content: Optional[str] = None,
         images: AnnotatedImageRefs | None = None,
         function_ids: Optional[List[int]] = None,
+        _near_duplicates: Optional[List[Dict[str, Any]]] = None,
     ) -> ToolOutcome:
         updates: Dict[str, Any] = {}
         if title is not None:
@@ -630,7 +635,13 @@ class GuidanceManager(BaseGuidanceManager):
             entries=updates,
             overwrite=True,
         )
-        return {"outcome": "guidance updated", "details": {"guidance_id": guidance_id}}
+        return {
+            "outcome": "guidance updated",
+            "details": details_with_near_duplicates(
+                {"guidance_id": guidance_id},
+                _near_duplicates,
+            ),
+        }
 
     # ─────────────────────────── Functions helpers ───────────────────────────
     def _functions_context(self) -> str:
