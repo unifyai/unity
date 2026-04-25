@@ -30,9 +30,12 @@ def test_hive_transcript_prompt_frames_peer_authored_rows_as_team_history():
 
         assert "team history" in prompt
         assert "my colleague" in prompt
+        assert "another assistant on my team" in prompt
         assert "auth_aid" in prompt
         assert "different from 101" in prompt
         assert "normal first-person framing" in prompt
+        assert "This body" not in prompt
+        assert "another body" not in prompt
     finally:
         SESSION_DETAILS.reset()
 

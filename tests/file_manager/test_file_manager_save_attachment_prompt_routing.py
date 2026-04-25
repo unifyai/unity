@@ -14,3 +14,7 @@ def test_save_attachment_tool_description_mentions_outbound_routing():
     assert "outbound channel" in description
     assert "upload the bytes to GCS" in description
     assert "working-memory drafts" in description
+    assert "this assistant" in description
+    assert "teammates" in description
+    assert "Hive" not in description
+    assert "body" not in description

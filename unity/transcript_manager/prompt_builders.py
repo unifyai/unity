@@ -89,7 +89,7 @@ def _render_two_table_info(
 
 
 def _team_history_block() -> str | None:
-    """Return Hive transcript authorship guidance for the active body."""
+    """Return shared transcript authorship guidance for team assistants."""
 
     current_assistant_id = SESSION_DETAILS.assistant.agent_id
     if SESSION_DETAILS.hive_id is None or current_assistant_id is None:
@@ -98,9 +98,9 @@ def _team_history_block() -> str | None:
     return textwrap.dedent(
         f"""
         Shared transcript authorship:
-        - This body is assistant id {current_assistant_id}.
+        - You are assistant id {current_assistant_id}.
         - When a retrieved message has `auth_aid` / `authoring_assistant_id` different from {current_assistant_id}, treat that row as team history.
-          Phrase it as "my colleague ..." or "another body on my team ..." rather than as something you personally remember saying.
+          Phrase it as "my colleague ..." or "another assistant on my team ..." rather than as something you personally remember saying.
         - When `auth_aid` matches {current_assistant_id} or is absent, keep the normal first-person framing.
         """,
     ).strip()
