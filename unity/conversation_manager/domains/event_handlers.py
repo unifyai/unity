@@ -15,6 +15,9 @@ from unity.conversation_manager import assistant_jobs
 from unity.conversation_manager.events import *
 from unity.conversation_manager.domains import managers_utils
 from unity.conversation_manager.domains.comms_utils import publish_system_error
+from unity.conversation_manager.domains.inactivity import (
+    _handle_inactivity_followup_event,
+)
 from unity.conversation_manager.domains.task_activation import (
     _consume_startup_wake_reasons,
     _handle_task_due_event,
@@ -454,9 +457,7 @@ async def _(
     )
     contact = boss
 
-    contact_id = (
-        contact.get("contact_id") if contact else boss_contact_id
-    )
+    contact_id = contact.get("contact_id") if contact else boss_contact_id
     sender_name = _get_sender_name(contact)
 
     joined = await cm.call_manager.start_google_meet(
@@ -634,9 +635,7 @@ async def _(
         contact = event.contact
 
     contact_id = (
-        contact.get("contact_id")
-        if contact
-        else SESSION_DETAILS.user.contact_id
+        contact.get("contact_id") if contact else SESSION_DETAILS.user.contact_id
     )
     sender_name = _get_sender_name(contact)
 
@@ -778,9 +777,7 @@ async def _(
         contact = event.contact
 
     contact_id = (
-        contact.get("contact_id")
-        if contact
-        else SESSION_DETAILS.user.contact_id
+        contact.get("contact_id") if contact else SESSION_DETAILS.user.contact_id
     )
     sender_name = _get_sender_name(contact)
     reason = event.reason or "no-answer"
@@ -849,9 +846,7 @@ async def _(
         contact = event.contact
 
     contact_id = (
-        contact.get("contact_id")
-        if contact
-        else SESSION_DETAILS.user.contact_id
+        contact.get("contact_id") if contact else SESSION_DETAILS.user.contact_id
     )
     sender_name = _get_sender_name(contact)
     reason = event.reason or "no-answer"
@@ -905,9 +900,7 @@ async def _(
     """Handle call permission grant/rejection from a WhatsApp contact."""
     contact = event.contact
     contact_id = (
-        contact.get("contact_id")
-        if contact
-        else SESSION_DETAILS.user.contact_id
+        contact.get("contact_id") if contact else SESSION_DETAILS.user.contact_id
     )
     sender_name = _get_sender_name(contact)
 
@@ -986,9 +979,7 @@ async def _(
     """Log the invite template send in the conversation thread."""
     contact = event.contact
     contact_id = (
-        contact.get("contact_id")
-        if contact
-        else SESSION_DETAILS.user.contact_id
+        contact.get("contact_id") if contact else SESSION_DETAILS.user.contact_id
     )
     sender_name = _get_sender_name(contact)
 
@@ -2075,6 +2066,17 @@ async def _(
         await cm.request_llm_run(delay=0)
 
 
+@EventHandler.register(InactivityFollowup)
+async def _(
+    event: InactivityFollowup,
+    cm: "ConversationManager",
+    *args,
+    **kwargs,
+):
+    if await _handle_inactivity_followup_event(event, cm):
+        await cm.request_llm_run(delay=0)
+
+
 @EventHandler.register(NotificationUnpinnedEvent)
 async def _(
     event: NotificationUnpinnedEvent,
@@ -2676,9 +2678,7 @@ async def _(event: DirectMessageEvent, cm: "ConversationManager", *args, **kwarg
 
     contact = cm.get_active_contact()
     contact_id = (
-        contact.get("contact_id")
-        if contact
-        else SESSION_DETAILS.user.contact_id
+        contact.get("contact_id") if contact else SESSION_DETAILS.user.contact_id
     )
     sender_name = _get_sender_name(contact)
 

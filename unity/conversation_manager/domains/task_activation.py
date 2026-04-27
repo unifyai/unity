@@ -353,6 +353,11 @@ async def _handle_task_due_event(event: TaskDue, cm: "ConversationManager") -> b
 async def _consume_startup_wake_reasons(cm: "ConversationManager") -> None:
     """Replay startup wake reasons once managers are initialized."""
 
+    from unity.conversation_manager.domains.inactivity import (
+        _handle_inactivity_followup_event,
+        _inactivity_followup_event_from_wake_reason,
+    )
+
     wake_reasons = list(getattr(cm, "_startup_wake_reasons", []) or [])
     cm._startup_wake_reasons = []
     if not wake_reasons:
@@ -363,13 +368,19 @@ async def _consume_startup_wake_reasons(cm: "ConversationManager") -> None:
     )
     for wake_reason in wake_reasons:
         task_due_event = _task_due_event_from_wake_reason(wake_reason)
-        if task_due_event is None:
-            cm._session_logger.info(
-                "task_due",
-                f"Ignoring unparseable startup wake reason: {wake_reason!r}",
-            )
+        if task_due_event is not None:
+            await _handle_task_due_event(task_due_event, cm)
             continue
-        await _handle_task_due_event(task_due_event, cm)
+
+        inactivity_event = _inactivity_followup_event_from_wake_reason(wake_reason)
+        if inactivity_event is not None:
+            await _handle_inactivity_followup_event(inactivity_event, cm)
+            continue
+
+        cm._session_logger.info(
+            "task_due",
+            f"Ignoring unparseable startup wake reason: {wake_reason!r}",
+        )
 
 
 def _filter_trigger_candidates(

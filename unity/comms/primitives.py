@@ -108,6 +108,8 @@ class CommsPrimitives:
         "send_teams_message",
         "create_teams_channel",
         "create_teams_meet",
+        "terminate_self",
+        "cancel_self_termination",
     )
 
     def __init__(
@@ -3656,4 +3658,62 @@ class CommsPrimitives:
                 "Because this send ran without a live assistant session, the callback "
                 "was not queued with your briefing context."
             ),
+        }
+
+    # ------------------------------------------------------------------
+    # Inactivity-followup lifecycle primitives
+    # ------------------------------------------------------------------
+
+    async def terminate_self(self) -> dict:
+        """Mark this assistant for auto-cleanup after orchestra's grace period.
+
+        Call this when the boss explicitly declines further engagement
+        (e.g. "no longer interested", "take me off your list", "stop
+        contacting me"). Orchestra stamps ``termination_initiated_at``
+        and the daily inactivity-followup cron deprovisions contacts
+        and hard-deletes the assistant once the grace period elapses
+        (see ``settings.inactivity_auto_cleanup_days`` in orchestra).
+
+        Sticky: subsequent casual chatter does NOT cancel termination.
+        Use :meth:`cancel_self_termination` if the boss later
+        contradicts the rejection.
+
+        Returns:
+            ``{"success": bool, "assistant_id": int | None}``
+        """
+        from unity.transcript_manager.activity_sync import (
+            terminate_assistant_via_orchestra,
+        )
+
+        agent_id = getattr(SESSION_DETAILS.assistant, "agent_id", None)
+        success = terminate_assistant_via_orchestra(agent_id)
+        return {
+            "success": bool(success),
+            "assistant_id": int(agent_id) if agent_id is not None else None,
+        }
+
+    async def cancel_self_termination(self) -> dict:
+        """Cancel an in-flight termination because the boss re-engaged.
+
+        Call this only when termination was previously initiated (via
+        :meth:`terminate_self`) and the boss has now contradicted that
+        rejection in conversation (e.g. "actually wait, let's keep
+        going"). Orchestra clears ``termination_initiated_at`` and the
+        assistant is no longer on the auto-cleanup path.
+
+        Safe to call when no termination is in flight — orchestra
+        treats the clear as a no-op.
+
+        Returns:
+            ``{"success": bool, "assistant_id": int | None}``
+        """
+        from unity.transcript_manager.activity_sync import (
+            cancel_assistant_termination_via_orchestra,
+        )
+
+        agent_id = getattr(SESSION_DETAILS.assistant, "agent_id", None)
+        success = cancel_assistant_termination_via_orchestra(agent_id)
+        return {
+            "success": bool(success),
+            "assistant_id": int(agent_id) if agent_id is not None else None,
         }

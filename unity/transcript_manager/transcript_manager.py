@@ -665,6 +665,30 @@ class TranscriptManager(BaseTranscriptManager):
             # Non-fatal: do not break message logging if exchanges upsert fails
             pass
 
+        # ── 6. Inactivity-followup activity sync (best-effort, async) ──────
+        # Tell orchestra that the assistant just exchanged a message so its
+        # inactivity-followup routine sees fresh ``last_correspondence_at``
+        # and clears any pending ``last_followup_sent_at``. Skipped for
+        # internal/system-bus-only writes. Dispatched to a daemon thread so
+        # the network round-trip never blocks message logging; failures are
+        # swallowed inside ``touch_assistant_activity``.
+        if not _skip_event_bus and created_messages:
+            try:
+                import threading
+
+                from .activity_sync import touch_assistant_activity
+
+                agent_id = getattr(SESSION_DETAILS.assistant, "agent_id", None)
+                if agent_id is not None:
+                    threading.Thread(
+                        target=touch_assistant_activity,
+                        args=(agent_id,),
+                        daemon=True,
+                        name="touch_assistant_activity",
+                    ).start()
+            except Exception:
+                pass
+
         return created_messages
 
     def join_published(self):

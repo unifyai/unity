@@ -54,6 +54,9 @@ from unity.conversation_manager.domains.comms_utils import (
     add_unify_message_attachments,
     publish_system_error,
 )
+from unity.conversation_manager.domains.inactivity import (
+    _inactivity_followup_event_from_payload,
+)
 from unity.conversation_manager.events import *
 from unity.conversation_manager.metrics import pubsub_e2e_latency
 from unity.session_details import SESSION_DETAILS
@@ -709,6 +712,10 @@ class CommsManager:
                         reason=r or "Contact sync requested via system event.",
                     ),
                     "task_due": lambda r: _task_due_event_from_payload(
+                        event,
+                        reason=r,
+                    ),
+                    "inactivity_followup": lambda r: _inactivity_followup_event_from_payload(
                         event,
                         reason=r,
                     ),
