@@ -11,11 +11,13 @@ Three system-contact helpers cover ``self`` and ``boss`` provisioning:
   overlay against whichever shared row represents the boss.
 
 ``ContactManager.__init__`` calls ``_provision_system_overlays``, which
-fans out to these helpers plus the shared ``contact_id == 0 / 1``
-seeding still consumed by external readers outside ``contact_manager/``.
+fans out to these helpers and reconciles the resolved ids into the
+runtime session.
 """
 
 from __future__ import annotations
+
+import os
 
 from unity.contact_manager import system_contacts
 from unity.contact_manager.contact_manager import ContactManager
@@ -95,6 +97,45 @@ def test_boss_overlay_points_at_is_system_row():
     )
     assert shared
     assert shared[0].entries.get("is_system") is True
+
+
+@_handle_project
+def test_system_overlay_provisioning_reconciles_session_contact_ids(monkeypatch):
+    """First-boot overlay provisioning refreshes stale session anchors."""
+    import unify
+    from unity.session_details import SESSION_DETAILS
+
+    monkeypatch.delenv("SELF_CONTACT_ID", raising=False)
+    monkeypatch.delenv("BOSS_CONTACT_ID", raising=False)
+
+    SESSION_DETAILS.reset()
+    SESSION_DETAILS.populate(
+        agent_id=5151,
+        user_id="u-reconcile",
+        assistant_first_name="Megan",
+        assistant_surname="Richardson",
+        user_first_name="Yusha",
+        user_surname="Arif",
+        user_email="boss-reconcile@example.com",
+    )
+    assert SESSION_DETAILS.assistant.contact_id is None
+    assert SESSION_DETAILS.user.contact_id is None
+
+    cm = ContactManager()
+
+    overlays = unify.get_logs(
+        context=cm._membership_ctx,
+        filter="relationship == 'self' or relationship == 'boss'",
+        limit=10,
+    )
+    ids_by_relationship = {
+        row.entries["relationship"]: int(row.entries["contact_id"]) for row in overlays
+    }
+
+    assert SESSION_DETAILS.assistant.contact_id == ids_by_relationship["self"]
+    assert SESSION_DETAILS.user.contact_id == ids_by_relationship["boss"]
+    assert os.environ["SELF_CONTACT_ID"] == str(ids_by_relationship["self"])
+    assert os.environ["BOSS_CONTACT_ID"] == str(ids_by_relationship["boss"])
 
 
 def _unique_hive_id() -> int:

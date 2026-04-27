@@ -535,6 +535,47 @@ def _boss_contact_id_for_body(self) -> Optional[int]:
     return _overlay_contact_id_for_relationship(self, RELATIONSHIP_BOSS)
 
 
+def reconcile_session_system_contact_ids(self) -> None:
+    """Refresh session contact anchors from this body's membership overlay.
+
+    Bootstrap can arrive before the ContactMembership rows exist. The
+    ContactManager owns materializing those rows, so it also reconciles the
+    in-process session once the overlay is readable. Missing rows leave the
+    current session untouched because transient backend failures should not
+    clear a previously resolved anchor.
+    """
+    from ..session_details import SESSION_DETAILS
+
+    if not SESSION_DETAILS.is_initialized:
+        return
+
+    self_contact_id = _overlay_contact_id_for_relationship(self, RELATIONSHIP_SELF)
+    boss_contact_id = _overlay_contact_id_for_relationship(self, RELATIONSHIP_BOSS)
+
+    changed = False
+    if (
+        self_contact_id is not None
+        and SESSION_DETAILS.assistant.contact_id != self_contact_id
+    ):
+        SESSION_DETAILS.assistant.contact_id = self_contact_id
+        changed = True
+    if (
+        boss_contact_id is not None
+        and SESSION_DETAILS.user.contact_id != boss_contact_id
+    ):
+        SESSION_DETAILS.user.contact_id = boss_contact_id
+        changed = True
+
+    if changed:
+        SESSION_DETAILS.export_to_env()
+        _log.info(
+            "Resolved session system contact ids from ContactMembership: "
+            "self_contact_id=%s boss_contact_id=%s",
+            SESSION_DETAILS.assistant.contact_id,
+            SESSION_DETAILS.user.contact_id,
+        )
+
+
 def _self_overlay_exists(self) -> bool:
     """Return True when this body already has a ``"self"`` overlay."""
     return _overlay_contact_id_for_relationship(self, RELATIONSHIP_SELF) is not None
@@ -778,6 +819,7 @@ def provision_system_overlays(self) -> None:
         provision_boss_overlay(self)
     except Exception:
         pass
+    reconcile_session_system_contact_ids(self)
 
 
 def provision_org_member_contacts(self) -> None:
