@@ -34,7 +34,12 @@ from .tools_utils import (
     create_tool_call_message,
     ToolCallMetadata,
 )
-from ..llm_helpers import method_to_schema, _dumps, short_id
+from ..llm_helpers import (
+    DEFAULT_TOOL_SCHEMA_STRICT,
+    method_to_schema,
+    _dumps,
+    short_id,
+)
 from .loop_config import (
     LoopConfig,
     TOOL_LOOP_LINEAGE,
@@ -2145,7 +2150,7 @@ async def async_tool_loop_inner(
                     visible_base_tools_schema.append(
                         {
                             "type": "function",
-                            "strict": True,
+                            "strict": DEFAULT_TOOL_SCHEMA_STRICT,
                             "function": {
                                 "name": _response_tool_name,
                                 "description": _response_tool_desc,
@@ -2169,6 +2174,7 @@ async def async_tool_loop_inner(
                 visible_base_tools_schema.append(
                     {
                         "type": "function",
+                        "strict": DEFAULT_TOOL_SCHEMA_STRICT,
                         "function": {
                             "name": "final_response",
                             "description": (
@@ -2197,6 +2203,7 @@ async def async_tool_loop_inner(
                 visible_base_tools_schema.append(
                     {
                         "type": "function",
+                        "strict": DEFAULT_TOOL_SCHEMA_STRICT,
                         "function": {
                             "name": "ask_user_clarification",
                             "description": (
