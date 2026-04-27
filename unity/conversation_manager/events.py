@@ -1224,6 +1224,24 @@ class TaskDue(Event):
 
 
 @dataclass
+class InactivityFollowup(Event):
+    """Orchestra signalled that the assistant has been silent across all
+    contacts for ``settings.inactivity_followup_days`` and should compose
+    a re-engagement message to the boss.
+
+    Communication publishes this either as a ``unity_system_event`` to a
+    hot pod's Pub/Sub topic or, on a cold start, as an entry in
+    ``StartupEvent.wake_reasons``. The event itself carries no extra
+    fields — the brain decides the variant (never-spoke vs spoke-before)
+    by inspecting transcript history when the handler runs.
+    """
+
+    topic: ClassVar[str | None] = "app:comms:inactivity_followup"
+
+    reason: str = ""
+
+
+@dataclass
 class FileSyncComplete(Event):
     """The initial rclone bisync between the container and the managed VM has
     finished.  All files from the assistant's persistent disk are now available
