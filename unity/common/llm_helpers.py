@@ -30,6 +30,7 @@ def short_id(length=4):
 
 
 TYPE_MAP = {str: "string", int: "integer", float: "number", bool: "boolean"}
+DEFAULT_TOOL_SCHEMA_STRICT = False
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Image-handling helpers
@@ -554,6 +555,7 @@ def method_to_schema(
     expose_context_control: bool = False,
     has_parent_context: bool = False,
     expose_context_cont_control: bool = False,
+    strict: bool = DEFAULT_TOOL_SCHEMA_STRICT,
 ):
     """Convert a bound method into an OpenAI-compatible function-tool schema.
 
@@ -580,6 +582,11 @@ def method_to_schema(
         This is for steering methods (ask, interject) on in-flight tools
         that originally opted into context. The LLM can control whether context
         continuations are forwarded on each steering call.
+    strict : bool
+        Whether the provider should enforce the declared JSON schema exactly.
+        Unity's tool loop keeps Python defaults, open mappings, and argument
+        normalization available at execution time, so generated tools are
+        non-strict unless a caller explicitly opts into provider enforcement.
     """
 
     sig = inspect.signature(bound_method)
@@ -698,7 +705,7 @@ def method_to_schema(
 
     schema: dict = {
         "type": "function",
-        "strict": True,
+        "strict": strict,
         "function": {
             "name": tool_name,
             "description": cleaned_doc.strip(),

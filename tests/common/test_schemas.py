@@ -277,6 +277,27 @@ def test_schema_includes_enum():
     assert params["col"]["enum"] == ["str", "int"]
 
 
+def test_method_to_schema_marks_tools_non_strict_by_default():
+    def current_mode() -> str:
+        """Return the current mode."""
+        return "text"
+
+    schema = llmh.method_to_schema(current_mode, "cm_get_mode")
+
+    assert schema["strict"] is False
+    assert schema["function"]["parameters"] == {
+        "type": "object",
+        "properties": {},
+        "required": [],
+    }
+
+
+def test_method_to_schema_allows_explicit_strict_opt_in():
+    schema = llmh.method_to_schema(_demo_func, strict=True)
+
+    assert schema["strict"] is True
+
+
 async def _wrapped_schema_target(
     thought: str,
     code: str | None = None,
