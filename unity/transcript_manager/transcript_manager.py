@@ -1411,6 +1411,29 @@ class TranscriptManager(BaseTranscriptManager):
         )
 
         tm_message_id = int(log.entries.get("message_id", -1))
+
+        # ── Inactivity-followup activity sync (best-effort, async) ─────────
+        # Mirrors the hook at the end of log_messages so first-message writes
+        # — which use unity_log directly and bypass log_messages — also bump
+        # last_correspondence_at on the assistant row. Dispatched to a daemon
+        # thread so the network round-trip never blocks the caller; failures
+        # are swallowed inside ``touch_assistant_activity``.
+        try:
+            import threading
+
+            from .activity_sync import touch_assistant_activity
+
+            agent_id = getattr(SESSION_DETAILS.assistant, "agent_id", None)
+            if agent_id is not None:
+                threading.Thread(
+                    target=touch_assistant_activity,
+                    args=(agent_id,),
+                    daemon=True,
+                    name="touch_assistant_activity",
+                ).start()
+        except Exception:
+            pass
+
         return exid, tm_message_id
 
     def _open_exchange_row(
