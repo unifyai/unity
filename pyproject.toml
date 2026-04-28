@@ -13,7 +13,6 @@ dependencies = [
     "aiohttp>=3.8.0",
     "anticaptchaofficial>=1.0.69",
     "browser-use>=0.1.4",
-    "browserbase>=1.4.0",
     "deepgram-sdk>=4",
     "fastapi>=0.104.0",
     "google-api-python-client==2.70.0",
