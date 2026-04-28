@@ -91,7 +91,11 @@ steps:
     docker push ${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPOSITORY}/unity-base-staging:preview-$${SLUG}-${SHORT_SHA}
   waitFor: ['build-image']
 
-  # Trigger overlay build in unity-deploy on the same feature branch.
+  # Trigger overlay build in unity-deploy.  The overlay's source isn't
+  # part of the feature-branch story (only the base image is), so we
+  # invoke against ``staging`` source and pass the per-branch slug,
+  # base image, and unity tag as substitutions.  This avoids requiring
+  # a pass-through ``feature/<slug>`` ref on the unity-deploy origin.
   # The overlay build uploads ``image_hash_staging_<slug>.txt`` so the
   # preview-environment Comms App revision picks up this image.
 - name: 'gcr.io/cloud-builders/gcloud'
@@ -106,7 +110,7 @@ steps:
     BASE_IMAGE="${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPOSITORY}/unity-base-staging:$${UNITY_TAG}"
     gcloud builds triggers run unity-deploy-preview \
       --project=${PROJECT_ID} \
-      --branch=${BRANCH_NAME} \
+      --branch=staging \
       --substitutions=_BASE_IMAGE=$${BASE_IMAGE},_UNITY_TAG=$${UNITY_TAG},_SLUG=$${SLUG}
   waitFor: ['push-image']
 
