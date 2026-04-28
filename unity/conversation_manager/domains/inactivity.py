@@ -65,9 +65,11 @@ def _inactivity_notification_text(event: InactivityFollowup) -> str:
         "Pick the variant by inspecting transcript history with your "
         "transcripts primitives: if you have never spoken before, frame "
         "the message around the hire date. If you have, follow up on the "
-        "most recent topic. Send via the boss's preferred channel "
-        "(WhatsApp if available, otherwise email) and include your own "
-        "WhatsApp number so the boss can text or call you back."
+        "most recent topic. Send the message via email using your "
+        "existing send_email primitive — the inactivity follow-up "
+        "channel is email for now. If you have your own WhatsApp number "
+        "assigned, include it in the email body so the boss has a "
+        "callback option; if you do not, just send email-only."
     )
     lifecycle_guidance = (
         "When the boss replies: if they explicitly decline further "

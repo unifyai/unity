@@ -110,6 +110,28 @@ class TestInactivityHandler:
         assert "terminate_self" in text
         assert "cancel_self_termination" in text
 
+    def test_notification_text_directs_email_send(self):
+        """Inactivity follow-ups are email-only for V0."""
+        text = _inactivity_notification_text(InactivityFollowup(reason="hi"))
+        text_lower = text.lower()
+        assert "send_email" in text
+        assert "email" in text_lower
+        # No primary-channel branching: brain must NOT be told to pick WhatsApp
+        # over email based on availability.
+        assert "whatsapp if available" not in text_lower
+        assert "preferred channel" not in text_lower
+
+    def test_notification_text_keeps_whatsapp_as_callback(self):
+        """If the assistant has its own WhatsApp number, it goes in the body
+        as a callback option only — never as the sending channel."""
+        text = _inactivity_notification_text(InactivityFollowup(reason="hi"))
+        text_lower = text.lower()
+        assert "whatsapp" in text_lower
+        assert "callback" in text_lower
+        # Conditional phrasing ("if you have ...") must be present so the brain
+        # only includes the number when one is provisioned.
+        assert "if you have" in text_lower
+
 
 # ===========================================================================
 # 3. Registration
