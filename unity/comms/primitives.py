@@ -337,10 +337,18 @@ class CommsPrimitives:
         return self._get_contact(contact_id=_coerce_contact_id(contact_id))
 
     def _check_outbound_allowed(self, contact: dict | None) -> str | None:
-        """Check whether a contact may receive assistant-owned outbound comms."""
+        """Check whether a contact may receive assistant-owned outbound comms.
+
+        ``should_respond`` lives on the per-body :class:`ContactMembership`
+        overlay and defaults to ``True`` on the model. When the contact dict
+        does not carry the key (e.g. because it was sourced from a
+        shared-row read that did not compose the overlay), absence of the
+        key means "no per-body policy override" and we allow the send. An
+        explicit ``False`` on the dict still blocks.
+        """
         if not contact:
             return "Contact not found"
-        should_respond = contact.get("should_respond", False)
+        should_respond = contact.get("should_respond", True)
         if should_respond:
             return None
         contact_name = _get_contact_display_name(contact)
