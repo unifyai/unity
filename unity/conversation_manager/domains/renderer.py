@@ -973,7 +973,10 @@ class Renderer:
         bio = contact_info.get("bio") or ""
         rolling_summary = contact_info.get("rolling_summary") or ""
         response_policy = contact_info.get("response_policy") or ""
-        should_respond = contact_info.get("should_respond", True)
+        if contact_index is not None and contact_index.is_contact_manager_initialized:
+            should_respond = contact_index.contact_manager.should_respond_to(contact_id)
+        else:
+            should_respond = True
         from unity.session_details import SESSION_DETAILS
 
         is_boss = (
