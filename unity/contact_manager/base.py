@@ -204,6 +204,17 @@ class BaseContactManager(BaseStateManager, metaclass=SingletonABCMeta):
         """
         raise NotImplementedError
 
+    def should_respond_to(self, contact_id: int) -> bool:
+        """Return whether this body may proactively message *contact_id*.
+
+        The contract is "absent an explicit per-body policy override,
+        the assistant is permitted to respond". Concrete subclasses
+        override to consult their actual policy store; the base
+        implementation returns ``True`` so subclasses without per-body
+        policy still satisfy the contract.
+        """
+        return True
+
     @abstractmethod
     def update_contact(
         self,

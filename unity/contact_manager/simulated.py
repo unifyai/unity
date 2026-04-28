@@ -652,6 +652,17 @@ class SimulatedContactManager(BaseContactManager):
             return {g: _scalar(keys) for g in groups}
         return {g: {k: _scalar(k) for k in key_list} for g in groups}
 
+    def should_respond_to(self, contact_id: int) -> bool:
+        """Return whether this body may proactively message *contact_id*.
+
+        Reads ``should_respond`` from the in-memory contact store. See
+        the base class for the full contract.
+        """
+        contact = self._contacts.get(contact_id)
+        if contact is None:
+            return True
+        return bool(contact.get("should_respond", True))
+
     # --------------------------------------------------------------------- #
     # get_contact_info - deterministic lookup from internal store           #
     # --------------------------------------------------------------------- #

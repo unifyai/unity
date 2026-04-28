@@ -579,6 +579,17 @@ class ContactManager(BaseContactManager):
 
         return HydratedContact(shared=shared, membership=membership)
 
+    def should_respond_to(self, contact_id: int) -> bool:
+        """Return whether this body may proactively message *contact_id*.
+
+        Reads the per-body :class:`ContactMembership` overlay via
+        :meth:`_hydrate`. See the base class for the full contract.
+        """
+        hydrated = self._hydrate(contact_id)
+        if hydrated is None or hydrated.membership is None:
+            return True
+        return bool(hydrated.membership.should_respond)
+
     def get_contact_info(
         self,
         contact_id: Union[int, List[int]],
