@@ -439,23 +439,6 @@ wheels = [
 ]
 
 [[package]]
-name = "browserbase"
-version = "1.8.0"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "anyio" },
-    { name = "distro" },
-    { name = "httpx" },
-    { name = "pydantic" },
-    { name = "sniffio" },
-    { name = "typing-extensions" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/4b/07/4ab4b91921833d0fb1731940d74141396d83120821f4c85482ed80bb2457/browserbase-1.8.0.tar.gz", hash = "sha256:dc62910c2f1fab3e944f338af9fbf82f53bbffcb3aeb6382b4e435a752383011", size = 147213, upload-time = "2026-04-06T19:31:26.848Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/6d/c3/a29e57566c52fdb24712dcbb93a9bc97937c0c75874d8880a41a651daa5c/browserbase-1.8.0-py3-none-any.whl", hash = "sha256:4c4215973cc99f2f6d34550ae105c3f1f83b5fe22df2845bea0920b10f809526", size = 110012, upload-time = "2026-04-06T19:31:25.765Z" },
-]
-
-[[package]]
 name = "bubus"
 version = "1.5.6"
 source = { registry = "https://pypi.org/simple" }
@@ -8888,7 +8871,6 @@ dependencies = [
     { name = "aiohttp" },
     { name = "anticaptchaofficial" },
     { name = "browser-use" },
-    { name = "browserbase" },
     { name = "deepgram-sdk" },
     { name = "docling" },
     { name = "en-core-web-sm" },
@@ -8964,7 +8946,6 @@ requires-dist = [
     { name = "aiohttp", specifier = ">=3.8.0" },
     { name = "anticaptchaofficial", specifier = ">=1.0.69" },
     { name = "browser-use", specifier = ">=0.1.4" },
-    { name = "browserbase", specifier = ">=1.4.0" },
     { name = "deepgram-sdk", specifier = ">=4" },
     { name = "docling", specifier = ">=2.82.0" },
     { name = "en-core-web-sm", url = "https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl" },
