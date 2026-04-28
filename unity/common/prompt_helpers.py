@@ -10,6 +10,7 @@ __all__ = [
     "sig_dict",
     "unwrap_tool_callable",
     "now",
+    "read_self_contact_timezone",
     "tool_name",
     "require_tools",
     "parallelism_guidance",
@@ -95,13 +96,53 @@ def sig_dict(tools: Dict[str, Callable]) -> Dict[str, str]:
     }
 
 
+def read_self_contact_timezone() -> str | None:
+    """Return the assistant's IANA timezone string, or ``None`` if unavailable.
+
+    The assistant's ``self_contact_id`` is delivered by the bootstrap and
+    lives on ``SESSION_DETAILS.assistant.contact_id``; this helper reads
+    the ``timezone`` field on that body's self-contact row from the
+    Hive-aware ``Contacts`` table (``Hives/{hive_id}/Contacts`` for Hive
+    members, the per-body root for solo bodies — resolved by
+    :meth:`ContextRegistry.base_for`).
+
+    Returns ``None`` when bootstrap has not resolved the self-contact
+    overlay yet, when the row carries no ``timezone``, or when the read
+    raises. Callers should fall back to UTC in those cases.
+    """
+    import unify as _unify
+    from unity.common.context_registry import ContextRegistry
+    from unity.session_details import SESSION_DETAILS
+
+    self_contact_id = SESSION_DETAILS.assistant.contact_id
+    if self_contact_id is None:
+        return None
+
+    try:
+        rows = _unify.get_logs(
+            context=f"{ContextRegistry.base_for('Contacts')}/Contacts",
+            filter=f"contact_id == {int(self_contact_id)}",
+            limit=1,
+            from_fields=["timezone"],
+        )
+    except Exception:
+        return None
+
+    if not rows:
+        return None
+    val = rows[0].entries.get("timezone")
+    if isinstance(val, str) and val.strip():
+        return val.strip()
+    return None
+
+
 def now(time_only: bool = False, as_string: bool = True) -> "str | datetime":
     """Return the current timestamp in the assistant's timezone.
 
-    The assistant's ``self_contact_id`` is delivered by the bootstrap and
-    lives on ``SESSION_DETAILS.assistant.contact_id``; we read the matching
-    Contacts row's ``timezone`` field (an IANA timezone identifier like
-    "America/New_York") and convert UTC to local time.
+    Uses :func:`read_self_contact_timezone` to discover the assistant's
+    IANA timezone (e.g. ``"America/New_York"``); when that returns
+    ``None`` (bootstrap pending, no row, or read failure) the result is
+    rendered in UTC.
 
     Args:
         time_only: If True and as_string=True, return only the time portion.
@@ -116,43 +157,15 @@ def now(time_only: bool = False, as_string: bool = True) -> "str | datetime":
     """
     from datetime import datetime, timezone as dt_timezone
     from zoneinfo import ZoneInfo
-    import unify as _unify
-    from unity.session_details import SESSION_DETAILS
 
-    _contacts_ctx = (
-        f"{SESSION_DETAILS.user_context}/{SESSION_DETAILS.assistant_context}/Contacts"
-    )
+    tz_name = read_self_contact_timezone() or "UTC"
 
-    # Default to UTC if assistant row/field is unavailable
-    tz_name: str = "UTC"
-    self_contact_id = SESSION_DETAILS.assistant.contact_id
-    if self_contact_id is None:
-        # Bootstrap has not yet resolved the self-contact overlay; UTC is the
-        # correct conservative default until Orchestra materializes it.
-        pass
-    else:
-        try:
-            rows = _unify.get_logs(
-                context=_contacts_ctx,
-                filter=f"contact_id == {int(self_contact_id)}",
-                limit=1,
-                from_fields=["timezone"],
-            )
-            if rows:
-                val = rows[0].entries.get("timezone")
-                if isinstance(val, str) and val.strip():
-                    tz_name = val.strip()
-        except Exception:
-            tz_name = "UTC"
-
-    # Convert UTC now to the target timezone
     utc_now = datetime.now(dt_timezone.utc)
     try:
         tz_info = ZoneInfo(tz_name)
         local_dt = utc_now.astimezone(tz_info)
         label = tz_name
     except Exception:
-        # Invalid timezone identifier; fall back to UTC
         local_dt = utc_now
         label = "UTC"
 
