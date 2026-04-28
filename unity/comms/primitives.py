@@ -336,20 +336,22 @@ class CommsPrimitives:
             return None
         return self._get_contact(contact_id=_coerce_contact_id(contact_id))
 
-    def _check_outbound_allowed(self, contact: dict | None) -> str | None:
-        """Check whether a contact may receive assistant-owned outbound comms.
+    def _check_outbound_allowed(
+        self,
+        contact: dict | None,
+        *,
+        contact_id: int,
+    ) -> str | None:
+        """Return a block reason if outbound comms are not allowed, else ``None``.
 
-        ``should_respond`` lives on the per-body :class:`ContactMembership`
-        overlay and defaults to ``True`` on the model. When the contact dict
-        does not carry the key (e.g. because it was sourced from a
-        shared-row read that did not compose the overlay), absence of the
-        key means "no per-body policy override" and we allow the send. An
-        explicit ``False`` on the dict still blocks.
+        Delegates the policy decision to
+        :meth:`ContactManager.should_respond_to`. The *contact* dict is
+        used only for the "not found" guard and for the display name in
+        the block message.
         """
         if not contact:
             return "Contact not found"
-        should_respond = contact.get("should_respond", True)
-        if should_respond:
+        if self._contact_manager().should_respond_to(contact_id):
             return None
         contact_name = _get_contact_display_name(contact)
         return (
@@ -539,7 +541,7 @@ class CommsPrimitives:
         offline_reservation = None
         contact = self._get_contact(contact_id=contact_id)
 
-        outbound_error = self._check_outbound_allowed(contact)
+        outbound_error = self._check_outbound_allowed(contact, contact_id=contact_id)
         if outbound_error:
             return await self._surface_comms_error(
                 outbound_error,
@@ -717,7 +719,7 @@ class CommsPrimitives:
         contact = self._get_contact(contact_id=contact_id)
 
         topic = "app:comms:whatsapp_sent"
-        outbound_error = self._check_outbound_allowed(contact)
+        outbound_error = self._check_outbound_allowed(contact, contact_id=contact_id)
         if outbound_error:
             return await self._surface_comms_error(
                 outbound_error,
@@ -1047,7 +1049,7 @@ class CommsPrimitives:
         contact = self._get_contact(contact_id=contact_id)
         topic = "app:comms:discord_message_sent"
 
-        outbound_error = self._check_outbound_allowed(contact)
+        outbound_error = self._check_outbound_allowed(contact, contact_id=contact_id)
         if outbound_error:
             return await self._surface_comms_error(
                 outbound_error,
@@ -1210,7 +1212,10 @@ class CommsPrimitives:
         offline_reservation = None
         resolved_contact = self._normalize_optional_contact(normalized_contact_id)
         if resolved_contact is not None:
-            outbound_error = self._check_outbound_allowed(resolved_contact)
+            outbound_error = self._check_outbound_allowed(
+                resolved_contact,
+                contact_id=normalized_contact_id,
+            )
             if outbound_error:
                 return await self._surface_comms_error(
                     outbound_error,
@@ -1523,7 +1528,10 @@ class CommsPrimitives:
                 history_metadata=_history_metadata(),
             )
 
-        outbound_error = self._check_outbound_allowed(contact)
+        outbound_error = self._check_outbound_allowed(
+            contact,
+            contact_id=anchor_contact_id,
+        )
         if outbound_error:
             return await self._surface_comms_error(
                 outbound_error,
@@ -2251,7 +2259,10 @@ class CommsPrimitives:
         topic = "app:comms:unify_message_sent"
 
         if contact:
-            outbound_error = self._check_outbound_allowed(contact)
+            outbound_error = self._check_outbound_allowed(
+                contact,
+                contact_id=contact_id,
+            )
             if outbound_error:
                 return await self._surface_comms_error(
                     outbound_error,
@@ -3277,7 +3288,7 @@ class CommsPrimitives:
             }
 
         contact = self._get_contact(contact_id=contact_id)
-        outbound_error = self._check_outbound_allowed(contact)
+        outbound_error = self._check_outbound_allowed(contact, contact_id=contact_id)
         if outbound_error:
             return await self._surface_comms_error(
                 outbound_error,
@@ -3467,7 +3478,7 @@ class CommsPrimitives:
             }
 
         contact = self._get_contact(contact_id=contact_id)
-        outbound_error = self._check_outbound_allowed(contact)
+        outbound_error = self._check_outbound_allowed(contact, contact_id=contact_id)
         if outbound_error:
             return await self._surface_comms_error(
                 outbound_error,

@@ -1,70 +1,83 @@
-"""Regression tests for the outbound-comms ``should_respond`` gate.
+"""Outbound-comms response-policy gate.
 
-``CommsPrimitives._check_outbound_allowed`` is the single chokepoint that
-decides whether an assistant-owned send (SMS / email / WhatsApp / Unify
-message / call / Discord / Teams) is permitted for a given contact. The
-policy field is ``ContactMembership.should_respond``, which lives on the
-per-body overlay and defaults to ``True`` on the model.
+``CommsPrimitives._check_outbound_allowed`` is the single chokepoint
+through which every assistant-owned outbound communication flows. The
+gate must:
 
-Because many call sites resolve the contact through a shared-row read
-that does not compose the overlay, the dict the gate sees often does
-*not* carry ``should_respond`` at all. Treat that absence as "no
-per-body policy override" and allow the send; only an explicit
-``False`` blocks.
+- block sends to contacts the assistant has been told not to respond
+  to (``ContactMembership.should_respond == False``);
+- allow sends when ``ContactManager.should_respond_to`` returns
+  ``True``;
+- reject sends to unknown contacts with a "Contact not found" reason.
+
+Policy is fetched from
+:meth:`ContactManager.should_respond_to`, so these tests stub that
+method to express each contract clearly.
 """
 
 from __future__ import annotations
 
+from typing import Any
+
+import pytest
+
 from unity.comms.primitives import CommsPrimitives
 
 
-def _make_gate() -> CommsPrimitives:
-    return CommsPrimitives()
+class _StubContactManager:
+    """Minimal ContactManager stand-in that returns a fixed verdict."""
+
+    def __init__(self, verdict: bool) -> None:
+        self._verdict = verdict
+        self.calls: list[int] = []
+
+    def should_respond_to(self, contact_id: int) -> bool:
+        self.calls.append(contact_id)
+        return self._verdict
 
 
-def test_allows_when_should_respond_key_absent() -> None:
-    """Shared-row reads omit ``should_respond``; the gate must default-allow.
-
-    Reproduces the production regression where every outbound was
-    blocked because the gate defaulted a missing key to ``False``.
-    """
-    gate = _make_gate()
-    contact = {"contact_id": 7, "first_name": "Yusha", "surname": "Arif"}
-
-    assert gate._check_outbound_allowed(contact) is None
+def _gate_with(verdict: bool) -> tuple[CommsPrimitives, _StubContactManager]:
+    gate = CommsPrimitives.__new__(CommsPrimitives)
+    cm = _StubContactManager(verdict)
+    gate._contact_manager = lambda: cm  # type: ignore[method-assign]
+    return gate, cm
 
 
-def test_allows_when_should_respond_is_true() -> None:
-    gate = _make_gate()
-    contact = {
-        "contact_id": 7,
-        "first_name": "Yusha",
-        "surname": "Arif",
-        "should_respond": True,
-    }
-
-    assert gate._check_outbound_allowed(contact) is None
+def _make_contact(**overrides: Any) -> dict[str, Any]:
+    base: dict[str, Any] = {"first_name": "Alex", "surname": "Doe"}
+    base.update(overrides)
+    return base
 
 
-def test_blocks_when_should_respond_is_false() -> None:
-    """Explicit ``should_respond=False`` is honored when the dict carries it."""
-    gate = _make_gate()
-    contact = {
-        "contact_id": 7,
-        "first_name": "Yusha",
-        "surname": "Arif",
-        "should_respond": False,
-    }
+def test_allows_when_policy_says_yes() -> None:
+    gate, cm = _gate_with(verdict=True)
+    assert gate._check_outbound_allowed(_make_contact(), contact_id=7) is None
+    assert cm.calls == [7]
 
-    reason = gate._check_outbound_allowed(contact)
 
+def test_blocks_when_policy_says_no() -> None:
+    """Explicit ``should_respond=False`` on the overlay must block."""
+    gate, cm = _gate_with(verdict=False)
+    reason = gate._check_outbound_allowed(_make_contact(), contact_id=7)
     assert reason is not None
-    assert "Yusha Arif" in reason
+    assert "Alex Doe" in reason
     assert "should_respond is False" in reason
+    assert cm.calls == [7]
 
 
-def test_rejects_unknown_contact() -> None:
-    gate = _make_gate()
+def test_ignores_should_respond_in_shared_row_dict() -> None:
+    """The gate ignores any ``should_respond`` on the shared-row dict;
+    only the ContactManager policy decides.
+    """
+    gate, cm = _gate_with(verdict=False)
+    contact = _make_contact(should_respond=True)
+    assert gate._check_outbound_allowed(contact, contact_id=7) is not None
+    assert cm.calls == [7]
 
-    assert gate._check_outbound_allowed(None) == "Contact not found"
-    assert gate._check_outbound_allowed({}) == "Contact not found"
+
+@pytest.mark.parametrize("contact", [None, {}])
+def test_rejects_unknown_contact(contact: dict | None) -> None:
+    """Unknown contact short-circuits before the policy lookup."""
+    gate, cm = _gate_with(verdict=True)
+    assert gate._check_outbound_allowed(contact, contact_id=7) == "Contact not found"
+    assert cm.calls == []
