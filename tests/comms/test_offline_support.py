@@ -302,6 +302,9 @@ async def test_send_sms_offline_success_reserves_and_finalizes(monkeypatch):
         "phone_number": "+15555550123",
         "should_respond": True,
     }
+    comms._contact_manager = lambda: SimpleNamespace(
+        should_respond_to=lambda _cid: True,
+    )
     comms._event_broker.publish = AsyncMock()
 
     async def _fake_send_sms_message_via_number(*, to_number: str, content: str):
@@ -391,6 +394,7 @@ async def test_send_sms_offline_reservation_uses_normalized_phone_number(monkeyp
     comms._get_contact = _fake_get_contact
     comms._contact_manager = lambda: SimpleNamespace(
         update_contact=_fake_update_contact,
+        should_respond_to=lambda _cid: True,
     )
     comms._event_broker.publish = AsyncMock()
 
@@ -433,6 +437,9 @@ async def test_send_sms_offline_duplicate_skips_transport(monkeypatch):
         "phone_number": "+15555550123",
         "should_respond": True,
     }
+    comms._contact_manager = lambda: SimpleNamespace(
+        should_respond_to=lambda _cid: True,
+    )
     comms._event_broker.publish = AsyncMock()
 
     monkeypatch.setattr(
@@ -535,6 +542,9 @@ async def test_send_whatsapp_template_offline_does_not_claim_pending_resend(
         "whatsapp_number": "+15555550123",
         "should_respond": True,
     }
+    comms._contact_manager = lambda: SimpleNamespace(
+        should_respond_to=lambda _cid: True,
+    )
     comms._event_broker.publish = AsyncMock()
 
     async def _fake_send_whatsapp_message(**kwargs):
@@ -576,6 +586,9 @@ async def test_make_whatsapp_call_invite_offline_does_not_claim_pending_callback
         "whatsapp_number": "+15555550123",
         "should_respond": True,
     }
+    comms._contact_manager = lambda: SimpleNamespace(
+        should_respond_to=lambda _cid: True,
+    )
     comms._event_broker.publish = AsyncMock()
 
     monkeypatch.setattr(

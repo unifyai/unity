@@ -12,6 +12,7 @@ primitive-side dispatch and validation logic:
 No LLM calls are involved — these tests lock in the symbolic contract.
 """
 
+from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
@@ -35,6 +36,9 @@ def _make_comms_with_teams(monkeypatch) -> CommsPrimitives:
             reservation=None,
             response=None,
         ),
+    )
+    comms._contact_manager = lambda: SimpleNamespace(
+        should_respond_to=lambda _cid: True,
     )
     comms._event_broker.publish = AsyncMock()
     return comms
