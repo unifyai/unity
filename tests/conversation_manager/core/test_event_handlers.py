@@ -2624,6 +2624,85 @@ class TestAssistantUpdateEventHandler:
         mock_cm.set_details.assert_called_once()
 
     @pytest.mark.asyncio
+    async def test_membership_update_rebinds_space_roots_without_restart(self, mock_cm):
+        """Membership updates refresh reachable roots without running config side effects."""
+        from unity.common.context_registry import (
+            PERSONAL_ROOT_IDENTITY,
+            SPACE_CONTEXT_PREFIX,
+            ContextRegistry,
+        )
+        from unity.session_details import SESSION_DETAILS
+
+        SESSION_DETAILS.space_ids = [3, 7]
+        ContextRegistry._registry = {
+            ("TaskScheduler", "Tasks", PERSONAL_ROOT_IDENTITY): "user456/123/Tasks",
+            ("TaskScheduler", "Tasks", f"{SPACE_CONTEXT_PREFIX}3"): "Spaces/3/Tasks",
+            ("TaskScheduler", "Tasks", f"{SPACE_CONTEXT_PREFIX}7"): "Spaces/7/Tasks",
+        }
+        mock_cm.set_details = MagicMock()
+        mock_cm.get_call_config = MagicMock(return_value={})
+
+        event = AssistantUpdateEvent(
+            api_key="test_key",
+            medium="assistant_update",
+            assistant_id="asst_123",
+            user_id="user_456",
+            assistant_first_name="Updated",
+            assistant_surname="Assistant",
+            assistant_age="25",
+            assistant_nationality="US",
+            assistant_about="Test assistant",
+            assistant_number="+15555550001",
+            assistant_email="assistant@updated.com",
+            user_first_name="Updated",
+            user_surname="Boss",
+            user_number="+15555550002",
+            user_email="boss@updated.com",
+            voice_id="voice_123",
+            voice_provider="cartesia",
+            update_kind="membership",
+            space_ids=[7, 11],
+        )
+
+        with patch(
+            "unity.conversation_manager.domains.event_handlers.managers_utils",
+        ) as mock_utils:
+            mock_utils.queue_operation = AsyncMock()
+            try:
+                await EventHandler.handle_event(event, mock_cm)
+
+                assert SESSION_DETAILS.space_ids == [7, 11]
+                assert mock_cm.space_ids == [7, 11]
+                assert (
+                    ContextRegistry._registry[
+                        ("TaskScheduler", "Tasks", PERSONAL_ROOT_IDENTITY)
+                    ]
+                    == "user456/123/Tasks"
+                )
+                assert (
+                    ContextRegistry._registry[
+                        ("TaskScheduler", "Tasks", f"{SPACE_CONTEXT_PREFIX}7")
+                    ]
+                    == "Spaces/7/Tasks"
+                )
+                assert (
+                    "TaskScheduler",
+                    "Tasks",
+                    f"{SPACE_CONTEXT_PREFIX}3",
+                ) not in ContextRegistry._registry
+                assert (
+                    "TaskScheduler",
+                    "Tasks",
+                    f"{SPACE_CONTEXT_PREFIX}11",
+                ) not in ContextRegistry._registry
+                mock_cm.set_details.assert_not_called()
+                mock_cm.call_manager.set_config.assert_not_called()
+                mock_utils.queue_operation.assert_not_called()
+            finally:
+                ContextRegistry.clear()
+                SESSION_DETAILS.reset()
+
+    @pytest.mark.asyncio
     async def test_update_session_contacts_updates_both_contacts(self, mock_cm):
         """update_session_contacts updates both assistant (0) and boss (1) contacts."""
         from unity.conversation_manager.domains.managers_utils import (

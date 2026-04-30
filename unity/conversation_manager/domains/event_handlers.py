@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Union
 
 from unity.contact_manager.types.contact import UNASSIGNED
+from unity.common.context_registry import ContextRegistry
 from unity.common.hierarchical_logger import DEFAULT_ICON
 from unity.conversation_manager import assistant_jobs
 from unity.conversation_manager.events import *
@@ -457,9 +458,7 @@ async def _(
     )
     contact = boss
 
-    contact_id = (
-        contact.get("contact_id") if contact else boss_contact_id
-    )
+    contact_id = contact.get("contact_id") if contact else boss_contact_id
     sender_name = _get_sender_name(contact)
 
     joined = await cm.call_manager.start_google_meet(
@@ -637,9 +636,7 @@ async def _(
         contact = event.contact
 
     contact_id = (
-        contact.get("contact_id")
-        if contact
-        else SESSION_DETAILS.user.contact_id
+        contact.get("contact_id") if contact else SESSION_DETAILS.user.contact_id
     )
     sender_name = _get_sender_name(contact)
 
@@ -781,9 +778,7 @@ async def _(
         contact = event.contact
 
     contact_id = (
-        contact.get("contact_id")
-        if contact
-        else SESSION_DETAILS.user.contact_id
+        contact.get("contact_id") if contact else SESSION_DETAILS.user.contact_id
     )
     sender_name = _get_sender_name(contact)
     reason = event.reason or "no-answer"
@@ -852,9 +847,7 @@ async def _(
         contact = event.contact
 
     contact_id = (
-        contact.get("contact_id")
-        if contact
-        else SESSION_DETAILS.user.contact_id
+        contact.get("contact_id") if contact else SESSION_DETAILS.user.contact_id
     )
     sender_name = _get_sender_name(contact)
     reason = event.reason or "no-answer"
@@ -908,9 +901,7 @@ async def _(
     """Handle call permission grant/rejection from a WhatsApp contact."""
     contact = event.contact
     contact_id = (
-        contact.get("contact_id")
-        if contact
-        else SESSION_DETAILS.user.contact_id
+        contact.get("contact_id") if contact else SESSION_DETAILS.user.contact_id
     )
     sender_name = _get_sender_name(contact)
 
@@ -989,9 +980,7 @@ async def _(
     """Log the invite template send in the conversation thread."""
     contact = event.contact
     contact_id = (
-        contact.get("contact_id")
-        if contact
-        else SESSION_DETAILS.user.contact_id
+        contact.get("contact_id") if contact else SESSION_DETAILS.user.contact_id
     )
     sender_name = _get_sender_name(contact)
 
@@ -1994,6 +1983,14 @@ async def _(event: StartupEvent, cm: "ConversationManager", *args, **kwargs):
 @EventHandler.register(AssistantUpdateEvent)
 async def _(event: AssistantUpdateEvent, cm: "ConversationManager", *args, **kwargs):
     cm._session_logger.info("assistant_update", "Received assistant update event")
+    if event.update_kind == "membership":
+        space_ids = sorted(set(event.space_ids or []))
+        SESSION_DETAILS.space_ids = space_ids
+        SESSION_DETAILS.export_space_ids_to_env()
+        cm.space_ids = space_ids
+        ContextRegistry.forget_departed_space_roots(space_ids)
+        return
+
     payload = event.to_dict()["payload"]
     old_key = SESSION_DETAILS.unify_key
     cm.set_details(payload)
@@ -2690,9 +2687,7 @@ async def _(event: DirectMessageEvent, cm: "ConversationManager", *args, **kwarg
 
     contact = cm.get_active_contact()
     contact_id = (
-        contact.get("contact_id")
-        if contact
-        else SESSION_DETAILS.user.contact_id
+        contact.get("contact_id") if contact else SESSION_DETAILS.user.contact_id
     )
     sender_name = _get_sender_name(contact)
 
