@@ -17,6 +17,7 @@ from functools import cached_property
 
 import unify
 
+from unity.common.context_registry import SPACE_CONTEXT_PREFIX
 from unity.settings import SETTINGS
 from unify.utils.http import RequestError as _UnifyRequestError
 from unity.common.context_store import _PRIVATE_FIELDS
@@ -136,6 +137,8 @@ class TasksStore:
 
         Returns empty list if context doesn't have user_id/assistant_id prefix.
         """
+        if self._ctx.startswith(SPACE_CONTEXT_PREFIX):
+            return []
         parts = self._ctx.split("/")
         if len(parts) < 3:
             return []

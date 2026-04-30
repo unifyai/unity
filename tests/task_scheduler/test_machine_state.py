@@ -76,14 +76,47 @@ def test_validate_task_due_activation_rejects_revision_mismatch(monkeypatch):
     assert stale_reason == "activation_revision_mismatch"
 
 
+def test_validate_task_due_activation_rejects_departed_space(monkeypatch):
+    activation = TaskActivationSnapshot(
+        assistant_id="42",
+        activation_key="42:101",
+        task_id=101,
+        destination="space:7",
+        source_task_log_id=555,
+        activation_kind="scheduled",
+        execution_mode="live",
+        next_due_at="2026-04-10T09:00:00+00:00",
+        activation_revision="rev-1",
+    )
+    monkeypatch.setattr(
+        machine_state,
+        "get_task_activation",
+        lambda **_: activation,
+    )
+    monkeypatch.setattr(machine_state.SESSION_DETAILS, "space_ids", [8])
+
+    current_activation, stale_reason = validate_task_due_activation(
+        assistant_id="42",
+        task_id=101,
+        activation_revision="rev-1",
+        source_task_log_id=555,
+        scheduled_for="2026-04-10T09:00:00+00:00",
+        destination="space:7",
+    )
+
+    assert current_activation is None
+    assert stale_reason == "destination_membership_revoked"
+
+
 def test_get_task_activation_queries_assistants_machine_state_project(monkeypatch):
     captured: dict[str, object] = {}
 
     class _FakeRow:
         entries = {
             "assistant_id": "42",
-            "activation_key": "42:101",
+            "activation_key": "42:space:7:101",
             "task_id": 101,
+            "destination": "space:7",
             "activation_kind": "scheduled",
             "execution_mode": "live",
             "activation_revision": "rev-1",
@@ -97,10 +130,15 @@ def test_get_task_activation_queries_assistants_machine_state_project(monkeypatc
     monkeypatch.setattr(machine_state.SESSION_DETAILS.user, "id", "user-1")
     monkeypatch.setattr(machine_state.SESSION_DETAILS.assistant, "agent_id", 42)
 
-    activation = get_task_activation(assistant_id="42", task_id=101)
+    activation = get_task_activation(
+        assistant_id="42",
+        task_id=101,
+        destination="space:7",
+    )
 
     assert activation is not None
     assert activation.task_id == 101
+    assert captured["filter"] == "activation_key == '42:space:7:101'"
     assert captured["project"] == TASK_MACHINE_STATE_PROJECT
     assert captured["context"] == build_task_activation_context_name(
         user_context="user-1",
@@ -211,6 +249,24 @@ def test_build_task_run_key_ignores_trigger_attempt_token():
 
     assert build_task_run_key(with_attempt) == expected
     assert build_task_run_key(without_attempt) == expected
+
+    with_attempt = TaskRunProvenance(
+        assistant_id="42",
+        task_id=301,
+        source_type="triggered",
+        execution_mode="live",
+        activation_revision="rev-1",
+        destination="space:7",
+        source_medium="sms_message",
+        source_ref="message-1",
+        source_contact_id="2",
+        attempt_token="attempt-a",
+    )
+    expected = (
+        f"live:triggered:42:space-7:301:{revision_digest}:"
+        f"contact-2-sms-message-{source_ref_digest}"
+    )
+    assert build_task_run_key(with_attempt) == expected
 
 
 def test_create_or_adopt_live_task_run_persists_display_fields(monkeypatch):

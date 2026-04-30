@@ -24,6 +24,7 @@ from unity.conversation_manager.domains.task_activation import (
     _handle_task_due_event,
     _surface_trigger_task_candidates,
 )
+from unity.task_scheduler.machine_state import invalidate_task_machine_state_reads
 from unity.conversation_manager.cm_types import Medium, Mode
 from unity.common.startup_timing import log_startup_timing
 from unity.logger import LOGGER
@@ -2019,6 +2020,7 @@ async def _(event: AssistantUpdateEvent, cm: "ConversationManager", *args, **kwa
         SESSION_DETAILS.export_space_ids_to_env()
         cm.space_ids = space_ids
         ContextRegistry.forget_departed_space_roots(space_ids)
+        invalidate_task_machine_state_reads()
         return
 
     payload = event.to_dict()["payload"]

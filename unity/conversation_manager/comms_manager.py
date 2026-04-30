@@ -200,6 +200,7 @@ def _task_due_event_from_payload(
         source_task_log_id=source_task_log_id,
         activation_revision=activation_revision,
         scheduled_for=scheduled_for,
+        destination=payload.get("destination"),
         execution_mode=str(payload.get("execution_mode") or "live"),
         source_type=str(payload.get("source_type") or "scheduled"),
         task_label=task_label,

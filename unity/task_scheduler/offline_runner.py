@@ -64,6 +64,7 @@ class OfflineTaskConfig:
     source_type: str
     source_task_log_id: int
     activation_revision: str
+    destination: str = ""
     task_name: str = ""
     task_description: str = ""
     scheduled_for: str = ""
@@ -93,6 +94,7 @@ def _load_config_from_env() -> OfflineTaskConfig:
         source_type=os.environ.get("UNITY_OFFLINE_TASK_SOURCE_TYPE", "scheduled"),
         source_task_log_id=int(_require_env("UNITY_OFFLINE_TASK_SOURCE_TASK_LOG_ID")),
         activation_revision=_require_env("UNITY_OFFLINE_TASK_ACTIVATION_REVISION"),
+        destination=os.environ.get("TASK_DESTINATION", ""),
         task_name=os.environ.get("UNITY_OFFLINE_TASK_NAME", ""),
         task_description=os.environ.get("UNITY_OFFLINE_TASK_DESCRIPTION", ""),
         scheduled_for=os.environ.get("UNITY_OFFLINE_TASK_SCHEDULED_FOR", ""),
@@ -171,6 +173,7 @@ def _build_result_summary(config: OfflineTaskConfig, execution_result: Any) -> s
         "function_id": config.function_id,
         "task_name": config.task_name,
         "source_type": config.source_type,
+        "destination": config.destination or None,
         "scheduled_for": config.scheduled_for or None,
         "source_medium": config.source_medium or None,
         "source_contact_id": config.source_contact_id or None,
