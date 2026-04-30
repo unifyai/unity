@@ -580,6 +580,8 @@ class CommsManager:
                     "org_id": event.get("org_id"),
                     "org_name": event.get("org_name", ""),
                     "team_ids": event.get("team_ids") or [],
+                    "space_ids": event.get("space_ids") or [],
+                    "update_kind": event.get("update_kind", "general"),
                     "demo_id": event.get("demo_id"),
                 }
                 await publish(
@@ -1722,6 +1724,7 @@ class CommsManager:
                     "org_id": event.get("org_id"),
                     "org_name": event.get("org_name", ""),
                     "team_ids": event.get("team_ids") or [],
+                    "space_ids": event.get("space_ids") or [],
                     "wake_reasons": event.get("wake_reasons") or [],
                     "demo_id": event.get("demo_id"),
                 }
