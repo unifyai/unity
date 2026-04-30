@@ -13,6 +13,14 @@ from datetime import datetime
 
 
 class TaskBase(BaseModel):
+    assistant_id: Optional[str] = Field(
+        default=None,
+        description="Assistant that owns execution state for this task.",
+    )
+    destination: Optional[str] = Field(
+        default=None,
+        description="Shared-space destination for routed task writes, if any.",
+    )
     # Top-level queue identifier for tasks that are members of a runnable queue.
     # When a task is queued/scheduled, this must be populated. The schedule
     # object never carries a queue_id field; use this top-level column solely.

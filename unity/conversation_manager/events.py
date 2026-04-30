@@ -1216,6 +1216,7 @@ class TaskDue(Event):
     source_task_log_id: int
     activation_revision: str
     scheduled_for: str
+    destination: str | None = None
     execution_mode: str = "live"
     source_type: str = "scheduled"
     task_label: str = ""

@@ -275,6 +275,7 @@ def _task_due_event_from_wake_reason(reason: Any) -> TaskDue | None:
             source_task_log_id=int(source_task_log_id),
             activation_revision=activation_revision,
             scheduled_for=scheduled_for,
+            destination=reason.get("destination"),
             execution_mode=str(reason.get("execution_mode") or "live"),
             source_type=str(reason.get("source_type") or "scheduled"),
             task_label=str(reason.get("task_label") or ""),
@@ -303,6 +304,7 @@ async def _handle_task_due_event(event: TaskDue, cm: "ConversationManager") -> b
         activation_revision=event.activation_revision,
         source_task_log_id=event.source_task_log_id,
         scheduled_for=event.scheduled_for,
+        destination=event.destination,
     )
     if stale_reason is not None:
         cm._session_logger.info(
@@ -323,6 +325,7 @@ async def _handle_task_due_event(event: TaskDue, cm: "ConversationManager") -> b
                 execution_mode="live",
                 source_task_log_id=event.source_task_log_id,
                 activation_revision=event.activation_revision,
+                destination=event.destination,
                 scheduled_for=event.scheduled_for,
                 task_name=(activation.task_name if activation is not None else None),
                 task_description=(
@@ -592,6 +595,7 @@ async def _surface_trigger_task_candidates(
                 execution_mode="live",
                 source_task_log_id=candidate.source_task_log_id,
                 activation_revision=candidate.activation_revision,
+                destination=candidate.destination,
                 source_medium=medium.value,
                 source_ref=source_ref,
                 source_contact_id=(str(contact_id) if contact_id is not None else None),

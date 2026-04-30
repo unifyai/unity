@@ -14,6 +14,8 @@ import unillm
 import asyncio
 import functools
 import json
+import os
+from contextlib import contextmanager
 from datetime import datetime
 from typing import Dict, List, Any, Optional, Type, Union, Callable, Tuple
 from typing import Literal, overload
@@ -85,7 +87,13 @@ from .queue_engine import plan_reorder_queue, derive_status_after_queue_edit
 from ..common.llm_client import new_llm_client
 from ..common.read_only_ask_guard import ReadOnlyAskGuardHandle
 from ..common.sentinels import _UnsetSentinel
-from ..common.context_registry import ContextRegistry, TableContext
+from ..common.context_registry import (
+    ContextRegistry,
+    PERSONAL_DESTINATION,
+    SPACE_CONTEXT_PREFIX,
+    SPACE_DESTINATION_PREFIX,
+    TableContext,
+)
 from .machine_state import (
     consume_live_task_run_provenance,
     source_type_from_activation_reason,
@@ -256,6 +264,10 @@ class TaskScheduler(BaseTaskScheduler):
         # active task
         self.__actor = actor
         self._ctx = ContextRegistry.get_context(self, "Tasks")
+        self._personal_tasks_context = self._ctx
+        self._root_views: Dict[str, LocalTaskView] = {}
+        self._root_stores: Dict[str, TasksStore] = {}
+        self._active_task_root_context: Optional[str] = None
 
         # Install storage adapter and ensure context/fields exist
         self._provision_storage()
@@ -323,6 +335,81 @@ class TaskScheduler(BaseTaskScheduler):
 
         # Centralised local view for queue membership, allocator and light caching.
         self._view = LocalTaskView(self._store)
+        self._root_stores[self._ctx] = self._store
+        self._root_views[self._ctx] = self._view
+
+    def _task_context_from_root(self, root_context: str) -> str:
+        """Return the concrete Tasks context under one registry root."""
+
+        return f"{root_context.strip('/')}/Tasks"
+
+    def _destination_from_task_context(self, context_name: str) -> str | None:
+        """Return the public destination represented by a concrete Tasks context."""
+
+        if context_name.startswith(SPACE_CONTEXT_PREFIX):
+            raw_space_id = context_name[len(SPACE_CONTEXT_PREFIX) :].split("/", 1)[0]
+            return f"{SPACE_DESTINATION_PREFIX}{raw_space_id}"
+        return None
+
+    def _view_for_task_context(self, context_name: str) -> LocalTaskView:
+        """Return a per-root local view for a concrete Tasks context."""
+
+        if context_name in self._root_views:
+            return self._root_views[context_name]
+        store = TasksStore(
+            context_name,
+            add_to_all_context=(
+                self.include_in_multi_assistant_table
+                and not context_name.startswith(SPACE_CONTEXT_PREFIX)
+            ),
+        )
+        view = LocalTaskView(store)
+        self._root_stores[context_name] = store
+        self._root_views[context_name] = view
+        return view
+
+    def _task_context_for_destination(self, destination: str | None) -> str:
+        """Resolve a write destination into a concrete Tasks context."""
+
+        destination = destination or os.environ.get("TASK_DESTINATION") or None
+        if destination in (None, PERSONAL_DESTINATION):
+            return self._personal_tasks_context
+        root_context = ContextRegistry.write_root(
+            self,
+            "Tasks",
+            destination=destination,
+        )
+        return self._task_context_from_root(root_context)
+
+    def _read_task_contexts(self) -> list[str]:
+        """Return ordered concrete Tasks contexts visible to this assistant."""
+
+        if self._active_task_root_context is not None:
+            return [self._active_task_root_context]
+        root_contexts = ContextRegistry.read_roots(self, "Tasks")
+        contexts = [self._task_context_from_root(root) for root in root_contexts]
+        return list(dict.fromkeys(contexts))
+
+    @contextmanager
+    def _use_task_destination(self, destination: str | None):
+        """Temporarily scope scheduler storage to one task destination."""
+
+        context_name = self._task_context_for_destination(destination)
+        previous_context = self._ctx
+        previous_store = self._store
+        previous_view = self._view
+        previous_active_root = self._active_task_root_context
+        self._ctx = context_name
+        self._view = self._view_for_task_context(context_name)
+        self._store = self._root_stores[context_name]
+        self._active_task_root_context = context_name
+        try:
+            yield context_name
+        finally:
+            self._ctx = previous_context
+            self._store = previous_store
+            self._view = previous_view
+            self._active_task_root_context = previous_active_root
 
     @functools.wraps(BaseTaskScheduler.clear, updated=())
     def clear(self) -> None:
@@ -343,6 +430,9 @@ class TaskScheduler(BaseTaskScheduler):
 
         # Re-create the context with proper schema and fields
         self._ctx = ContextRegistry.get_context(self, "Tasks")
+        self._personal_tasks_context = self._ctx
+        self._root_views.clear()
+        self._root_stores.clear()
 
         # Re-provision storage (schema, local view)
         self._provision_storage()
@@ -749,6 +839,7 @@ class TaskScheduler(BaseTaskScheduler):
             task_id=task_id,
             source_type=task_run_source_type,
             source_task_log_id=source_task_log_id,
+            destination=task.destination,
             trigger_attempt_token=trigger_attempt_token,
         )
 
@@ -893,7 +984,13 @@ class TaskScheduler(BaseTaskScheduler):
         )
         return handle
 
-    def create_task(self, *, name: str, description: str) -> ToolOutcome:
+    def create_task(
+        self,
+        *,
+        name: str,
+        description: str,
+        destination: str | None = None,
+    ) -> ToolOutcome:
         """
         Create a brand‑new task with minimal inputs (name and description only).
 
@@ -912,7 +1009,11 @@ class TaskScheduler(BaseTaskScheduler):
         description : str
             A short description of the task.
         """
-        return self._create_task(name=name, description=description)
+        return self._create_task(
+            name=name,
+            description=description,
+            destination=destination,
+        )
 
     # (Removed LLM-driven outer loop – execution is strictly by id)
 
@@ -1167,10 +1268,36 @@ class TaskScheduler(BaseTaskScheduler):
         list[int] | list[unify.Log]
             The matching log identifiers or objects.
         """
-        return self._view.get_log_ids_by_task_ids(
-            task_ids=task_ids,
-            return_ids_only=return_ids_only,
-        )
+        task_id_list = task_ids if isinstance(task_ids, list) else [task_ids]
+        matches: list[unify.Log] = []
+        for context_name in self._read_task_contexts():
+            view = self._view_for_task_context(context_name)
+            rows = view.get_log_ids_by_task_ids(
+                task_ids=task_id_list,
+                return_ids_only=False,
+            )
+            destination = self._destination_from_task_context(context_name)
+            for row in rows:
+                row.entries.setdefault("destination", destination)
+                row.entries.setdefault(
+                    "assistant_id",
+                    SESSION_DETAILS.assistant_context,
+                )
+                matches.append(row)
+
+        if isinstance(task_ids, int):
+            root_destinations = {
+                row.entries.get("destination") or PERSONAL_DESTINATION
+                for row in matches
+            }
+            if len(root_destinations) > 1:
+                raise ValueError(
+                    f"Task id {task_ids} exists in multiple task roots; provide destination.",
+                )
+
+        if return_ids_only:
+            return [row.id for row in matches]
+        return matches
 
     # Private Tools #
     # --------------#
@@ -1192,6 +1319,8 @@ class TaskScheduler(BaseTaskScheduler):
         response_policy: Optional[str] = None,
         entrypoint: Optional[int] = None,
         offline: bool = False,
+        destination: str | None = None,
+        _root_applied: bool = False,
     ) -> ToolOutcome:
         """
         Create a **brand-new task** and, depending on its attributes, place it
@@ -1255,6 +1384,28 @@ class TaskScheduler(BaseTaskScheduler):
         To avoid mistakes, prefer omitting ``status`` and let the scheduler infer
         the correct lifecycle value from the ``schedule`` you supply.
         """
+        if not _root_applied:
+            effective_destination = (
+                destination or os.environ.get("TASK_DESTINATION") or None
+            )
+            with self._use_task_destination(effective_destination):
+                return self._create_task(
+                    name=name,
+                    description=description,
+                    queue_id=queue_id,
+                    status=status,
+                    schedule=schedule,
+                    trigger=trigger,
+                    deadline=deadline,
+                    repeat=repeat,
+                    priority=priority,
+                    response_policy=response_policy,
+                    entrypoint=entrypoint,
+                    offline=offline,
+                    destination=effective_destination,
+                    _root_applied=True,
+                )
+
         # ----------------  helper: iso-8601 → datetime  ---------------- #
         from datetime import datetime, timezone
 
@@ -1394,6 +1545,10 @@ class TaskScheduler(BaseTaskScheduler):
                 derived_qid = self._allocate_new_queue_id()
 
         task_details = TaskBase(
+            assistant_id=SESSION_DETAILS.assistant_context,
+            destination=(
+                destination if destination not in (None, PERSONAL_DESTINATION) else None
+            ),
             name=name,
             description=description,
             status=status,
@@ -1470,6 +1625,8 @@ class TaskScheduler(BaseTaskScheduler):
         *,
         tasks: List[Dict[str, Any]],
         queue_ordering: Optional[List[Union[List[int], Dict[str, Any]]]] = None,
+        destination: str | None = None,
+        _root_applied: bool = False,
     ) -> ToolOutcome:
         """
         Batch‑create tasks with ascending ids and (optionally) materialise one
@@ -1502,7 +1659,9 @@ class TaskScheduler(BaseTaskScheduler):
         tasks : list[dict]
             One dict per task mirroring the arguments of ``_create_task``.
             Typical usage is to provide just ``name`` and ``description`` for
-            each task and rely on ``queue_ordering`` for ordering.
+            each task and rely on ``queue_ordering`` for ordering. Destination
+            is batch-scoped; pass ``destination`` to this method rather than
+            per task item.
         queue_ordering : list[dict] | None
             Optional declaration of one or more queues using RELATIVE indices
             into the ``tasks`` list (0‑based; distinct from backend ``queue_id``).
@@ -1536,6 +1695,18 @@ class TaskScheduler(BaseTaskScheduler):
           dedicated queue tools. When both creation and ordering are requested
           together, prefer this batched tool.
         """
+
+        if not _root_applied:
+            effective_destination = (
+                destination or os.environ.get("TASK_DESTINATION") or None
+            )
+            with self._use_task_destination(effective_destination):
+                return self._create_tasks(
+                    tasks=tasks,
+                    queue_ordering=queue_ordering,
+                    destination=effective_destination,
+                    _root_applied=True,
+                )
 
         # Fast path: nothing to do
         if not tasks:
@@ -1582,6 +1753,7 @@ class TaskScheduler(BaseTaskScheduler):
                 "priority",
                 "response_policy",
                 "entrypoint",
+                "offline",
             ):
                 if key in spec:
                     payload[key] = spec[key]
@@ -1591,7 +1763,11 @@ class TaskScheduler(BaseTaskScheduler):
             if queue_ordering is not None and "status" not in payload:
                 payload["status"] = Status.queued
 
-            out = self._create_task(**payload)
+            out = self._create_task(
+                **payload,
+                destination=destination,
+                _root_applied=True,
+            )
             created_ids.append(int(out["details"]["task_id"]))
 
         queues_report: List[Dict[str, Any]] = []
@@ -1721,7 +1897,13 @@ class TaskScheduler(BaseTaskScheduler):
 
     # Delete
 
-    def _delete_task(self, *, task_id: int) -> ToolOutcome:
+    def _delete_task(
+        self,
+        *,
+        task_id: int,
+        destination: str | None = None,
+        _root_applied: bool = False,
+    ) -> ToolOutcome:
         """
         Permanently **remove** a task from storage.
 
@@ -1740,6 +1922,21 @@ class TaskScheduler(BaseTaskScheduler):
         RuntimeError
             If the task is currently *active* (active tasks cannot be deleted).
         """
+        if not _root_applied:
+            resolved_destination = (
+                destination or os.environ.get("TASK_DESTINATION") or None
+            )
+            if resolved_destination is None:
+                resolved_destination = (
+                    self._get_task_or_raise(task_id).destination or PERSONAL_DESTINATION
+                )
+            with self._use_task_destination(resolved_destination):
+                return self._delete_task(
+                    task_id=task_id,
+                    destination=resolved_destination,
+                    _root_applied=True,
+                )
+
         self._ensure_not_active_task(task_id)
         # Fast path: if we know the backing log id for this task, delete directly
         # Resolve the log id via a single lookup then delete (LocalTaskView manages memoization)
@@ -3386,6 +3583,8 @@ class TaskScheduler(BaseTaskScheduler):
         trigger: Any = _UNSET,
         entrypoint: Any = _UNSET,
         offline: Any = _UNSET,
+        destination: str | None = None,
+        _root_applied: bool = False,
     ) -> Dict[str, Any]:
         """
         Update one or more fields of an existing task.
@@ -3420,6 +3619,31 @@ class TaskScheduler(BaseTaskScheduler):
         dict
             Confirmation payload from the write operation.
         """
+
+        if not _root_applied:
+            resolved_destination = (
+                destination or os.environ.get("TASK_DESTINATION") or None
+            )
+            if resolved_destination is None:
+                resolved_destination = (
+                    self._get_task_or_raise(task_id).destination or PERSONAL_DESTINATION
+                )
+            with self._use_task_destination(resolved_destination):
+                return self._update_task(
+                    task_id=task_id,
+                    name=name,
+                    description=description,
+                    status=status,
+                    start_at=start_at,
+                    deadline=deadline,
+                    repeat=repeat,
+                    priority=priority,
+                    trigger=trigger,
+                    entrypoint=entrypoint,
+                    offline=offline,
+                    destination=resolved_destination,
+                    _root_applied=True,
+                )
 
         # Forbid edits on the currently active task via scheduler APIs
         self._ensure_not_active_task(task_id)
@@ -3938,9 +4162,14 @@ class TaskScheduler(BaseTaskScheduler):
 
     def _get_task_or_raise(self, task_id: int) -> Task:
         """Fetch exactly one task by id or raise ValueError."""
-        tasks = self._filter_tasks(filter=f"task_id == {task_id}", limit=1)
+        tasks = self._filter_tasks(filter=f"task_id == {task_id}", limit=1000)
         if not tasks:
             raise ValueError(f"No task found with id={task_id}")
+        destinations = {task.destination or PERSONAL_DESTINATION for task in tasks}
+        if len(destinations) > 1:
+            raise ValueError(
+                f"Task id {task_id} exists in multiple task roots; provide destination.",
+            )
         return tasks[0]
 
     # Reinstate a previously isolated-and-activated task back to its prior queue position
@@ -4109,17 +4338,27 @@ class TaskScheduler(BaseTaskScheduler):
 
         include_fields = list(Task.model_fields.keys())
 
-        rows = [
-            lg.entries
-            for lg in self._view.get_rows(
-                filter=normalized_filter,
-                offset=offset,
-                limit=limit,
-                # Avoid an extra backend call here by deriving private fields from the
-                # cached schema instead of calling get_fields() again.
-                include_fields=include_fields,
-            )
-        ]
+        rows: list[dict[str, Any]] = []
+        root_contexts = self._read_task_contexts()
+        for context_name in root_contexts:
+            view = self._view_for_task_context(context_name)
+            destination = self._destination_from_task_context(context_name)
+            root_rows = [
+                lg.entries
+                for lg in view.get_rows(
+                    filter=normalized_filter,
+                    offset=0,
+                    limit=max(limit + offset, 1000 if limit >= 1000 else limit),
+                    # Avoid an extra backend call here by deriving private fields from the
+                    # cached schema instead of calling get_fields() again.
+                    include_fields=include_fields,
+                )
+            ]
+            for row in root_rows:
+                row.setdefault("assistant_id", SESSION_DETAILS.assistant_context)
+                row["destination"] = destination
+            rows.extend(root_rows)
+        rows = rows[offset : offset + limit]
 
         # Rehydrate Enum values inside repetition patterns so callers see
         # the same structure as produced by `RepeatPattern.model_dump()`.
