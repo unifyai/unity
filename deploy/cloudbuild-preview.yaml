@@ -110,6 +110,7 @@ steps:
     BASE_IMAGE="${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPOSITORY}/unity-base-staging:$${UNITY_TAG}"
     gcloud builds triggers run unity-deploy-preview \
       --project=${PROJECT_ID} \
+      --region=${_REGION} \
       --branch=staging \
       --substitutions=_BASE_IMAGE=$${BASE_IMAGE},_UNITY_TAG=$${UNITY_TAG},_SLUG=$${SLUG}
   waitFor: ['push-image']
