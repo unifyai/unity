@@ -33,12 +33,15 @@ from typing import (
 
 from unity.common.pipeline import (
     ArtifactWorkItem,
+    IngestCheckpoint,
     IngestPlan,
     ParsedFileBundle,
+    PipelineCancelled,
     PipelineInstrumentation,
     ingest_artifacts,
     run_with_retry,
 )
+from unity.common.pipeline._utils import utc_now_iso
 from unity.file_manager.file_parsers.types.contracts import FileParseResult
 from unity.file_manager.types.ingest import (
     BaseIngestedFile,
@@ -52,6 +55,105 @@ if TYPE_CHECKING:
     from .progress import ProgressReporter
 
 logger = logging.getLogger(__name__)
+
+
+def _make_checkpoint_callback(
+    artifact_store: Any,
+    job_id: str,
+    artifact_id: str,
+    *,
+    initial_rows: int = 0,
+    initial_chunks: int = 0,
+    total_rows: int | None = None,
+    file_path: str = "",
+    chunk_size: int | None = None,
+    log_every_chunks: int = 10,
+    is_cancelled: Any | None = None,
+):
+    """Return a pipeline callback that persists ingest checkpoints."""
+
+    state = {
+        "rows": initial_rows,
+        "chunks": initial_chunks,
+        "last_rows": initial_rows,
+        "last_logged_at": time.perf_counter(),
+    }
+    log_every = max(int(log_every_chunks), 1)
+
+    def _on_task_complete(task, result):
+        if not getattr(task, "task_type", "").startswith("insert_chunk"):
+            return
+        value = getattr(result, "value", None) or {}
+        row_count = (
+            int(value.get("row_count", 0) or 0) if isinstance(value, dict) else 0
+        )
+        state["rows"] += row_count
+        state["chunks"] += 1
+        checkpoint = IngestCheckpoint(
+            job_id=job_id,
+            artifact_id=artifact_id,
+            chunks_committed=state["chunks"],
+            rows_committed=state["rows"],
+            last_updated=utc_now_iso(),
+        )
+        try:
+            checkpoint_started = time.perf_counter()
+            artifact_store.write_checkpoint(job_id, artifact_id, checkpoint)
+            checkpoint_write_ms = (time.perf_counter() - checkpoint_started) * 1000
+        except Exception:
+            checkpoint_write_ms = -1.0
+            logger.warning(
+                "[fm][ingest] Failed to write checkpoint job=%s artifact=%s",
+                job_id,
+                artifact_id,
+                exc_info=True,
+            )
+
+        should_log = (
+            state["chunks"] == initial_chunks + 1
+            or state["chunks"] % log_every == 0
+            or (total_rows is not None and state["rows"] >= total_rows)
+        )
+        if should_log:
+            now = time.perf_counter()
+            elapsed_since_log = max(now - state["last_logged_at"], 1e-6)
+            rows_since_log = max(state["rows"] - state["last_rows"], 0)
+            rows_per_second = rows_since_log / elapsed_since_log
+            remaining_rows = (
+                max(total_rows - state["rows"], 0) if total_rows is not None else None
+            )
+            eta_seconds = (
+                remaining_rows / rows_per_second
+                if remaining_rows is not None and rows_per_second > 0
+                else None
+            )
+            percent = (state["rows"] / total_rows) * 100 if total_rows else None
+            logger.info(
+                "[fm][ingest][progress] job=%s file=%s artifact=%s chunks=%d "
+                "rows=%d/%s chunk_size=%s pct=%s rows_per_s=%.1f "
+                "checkpoint_ms=%.1f eta_s=%s",
+                job_id,
+                file_path or "-",
+                artifact_id,
+                state["chunks"],
+                state["rows"],
+                total_rows if total_rows is not None else "?",
+                chunk_size if chunk_size is not None else "?",
+                f"{percent:.1f}" if percent is not None else "?",
+                rows_per_second,
+                checkpoint_write_ms,
+                f"{eta_seconds:.0f}" if eta_seconds is not None else "?",
+            )
+            state["last_logged_at"] = now
+            state["last_rows"] = state["rows"]
+
+        if is_cancelled and is_cancelled():
+            raise PipelineCancelled(
+                f"Job {job_id} cancelled during file ingestion "
+                f"(after {state['chunks']} chunks, {state['rows']} rows)",
+            )
+
+    return _on_task_complete
 
 
 # ---------------------------------------------------------------------------
@@ -1016,10 +1118,6 @@ def fm_process_plan(
                 if _ckpt_skip:
                     _prev = artifact_store.read_checkpoint(job_id, _art_id)
                     _ckpt_initial = _prev.chunks_committed if _prev else 0
-
-                from unity_deploy.infra.workers.ingest_worker import (
-                    _make_checkpoint_callback,
-                )
 
                 payload["on_task_complete"] = _make_checkpoint_callback(
                     artifact_store,
