@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Union
 
 from unity.contact_manager.types.contact import UNASSIGNED
+from unity.common.context_registry import ContextRegistry
 from unity.common.hierarchical_logger import DEFAULT_ICON
 from unity.conversation_manager import assistant_jobs
 from unity.conversation_manager.events import *
@@ -2012,6 +2013,14 @@ async def _(event: StartupEvent, cm: "ConversationManager", *args, **kwargs):
 @EventHandler.register(AssistantUpdateEvent)
 async def _(event: AssistantUpdateEvent, cm: "ConversationManager", *args, **kwargs):
     cm._session_logger.info("assistant_update", "Received assistant update event")
+    if event.update_kind == "membership":
+        space_ids = sorted(set(event.space_ids or []))
+        SESSION_DETAILS.space_ids = space_ids
+        SESSION_DETAILS.export_space_ids_to_env()
+        cm.space_ids = space_ids
+        ContextRegistry.forget_departed_space_roots(space_ids)
+        return
+
     payload = event.to_dict()["payload"]
     old_key = SESSION_DETAILS.unify_key
     cm.set_details(payload)

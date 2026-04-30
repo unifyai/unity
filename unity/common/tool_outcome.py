@@ -1,4 +1,4 @@
-from typing import TypedDict, Any
+from typing import Any, TypedDict
 
 
 class ToolOutcome(TypedDict, total=False):
@@ -16,3 +16,29 @@ class ToolOutcome(TypedDict, total=False):
 
     outcome: str
     details: Any
+
+
+class ToolError(TypedDict):
+    """Structured error payload returned by tools that can self-correct.
+
+    Keys
+    ----
+    error_kind : str
+        Stable discriminator for the failure class.
+    message : str
+        Human-friendly explanation safe to surface to the model.
+    details : Any
+        Optional machine-readable context for the rejected operation.
+    """
+
+    error_kind: str
+    message: str
+    details: Any
+
+
+class ToolErrorException(Exception):
+    """Exception wrapper for code paths that need to carry a tool error payload."""
+
+    def __init__(self, payload: ToolError) -> None:
+        self.payload = payload
+        super().__init__(payload["message"])

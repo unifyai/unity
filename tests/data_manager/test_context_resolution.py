@@ -206,7 +206,7 @@ def test_get_context_uses_stashed_base_after_clear():
         with patch("unity.common.context_registry.create_fields"):
             ContextRegistry.setup()
 
-    cached = ContextRegistry._registry.get(("FileManager", "FileRecords"))
+    cached = ContextRegistry._registry.get(("FileManager", "FileRecords", "Personal"))
     assert cached == f"{base}/FileRecords"
 
     # clear() resets _registry, _setup_complete, and _base_context
