@@ -26,7 +26,8 @@ class TestEmailProvider:
         sd.populate()
         assert sd.assistant.email_provider == "google_workspace"
 
-    def test_export_and_populate_from_env_round_trips(self):
+    def test_export_and_populate_from_env_round_trips(self, monkeypatch):
+        monkeypatch.delenv("ASSISTANT_EMAIL_PROVIDER", raising=False)
         sd = SessionDetails()
         sd.populate(assistant_email_provider="microsoft_365")
         sd.export_to_env()
@@ -37,9 +38,6 @@ class TestEmailProvider:
         sd2.populate_from_env()
         assert sd2.assistant.email_provider == "microsoft_365"
 
-        # Cleanup
-        os.environ.pop("ASSISTANT_EMAIL_PROVIDER", None)
-
     def test_reset_restores_default(self):
         sd = SessionDetails()
         sd.populate(assistant_email_provider="microsoft_365")
@@ -47,3 +45,35 @@ class TestEmailProvider:
 
         sd.reset()
         assert sd.assistant.email_provider == "google_workspace"
+
+
+class TestSpaceIds:
+    def test_export_and_populate_from_env_round_trips(self, monkeypatch):
+        monkeypatch.delenv("SPACE_IDS", raising=False)
+        sd = SessionDetails()
+        sd.populate(space_ids=[3, 7])
+        sd.export_to_env()
+
+        assert os.environ["SPACE_IDS"] == "3,7"
+
+        sd2 = SessionDetails()
+        sd2.populate_from_env()
+        assert sd2.space_ids == [3, 7]
+        assert sd2.assistant.space_ids == [3, 7]
+
+        sd.populate(space_ids=[])
+        sd.export_to_env()
+        assert os.environ["SPACE_IDS"] == ""
+
+        sd3 = SessionDetails()
+        sd3.populate_from_env()
+        assert sd3.space_ids == []
+
+    def test_reset_restores_empty_memberships(self):
+        sd = SessionDetails()
+        sd.populate(space_ids=[3, 7])
+        assert sd.space_ids == [3, 7]
+
+        sd.reset()
+        assert sd.space_ids == []
+        assert sd.assistant.space_ids == []
