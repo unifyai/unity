@@ -34,6 +34,8 @@ UNASSIGNED_USER_ID = "default"
 # Placeholder Contact Details
 # Used in tests/offline mode when no real profile exists.
 # ─────────────────────────────────────────────────────────────────────────────
+DEFAULT_SELF_CONTACT_ID = 0
+DEFAULT_BOSS_CONTACT_ID = 1
 PLACEHOLDER_ASSISTANT_FIRST_NAME = "Default"
 PLACEHOLDER_ASSISTANT_SURNAME = "Assistant"
 PLACEHOLDER_ASSISTANT_EMAIL = "assistant@unify.ai"
@@ -69,7 +71,11 @@ def _decode_int_csv(value: str) -> list[int]:
 
 @dataclass
 class AssistantDetails:
-    """Details about the assistant."""
+    """Details about the assistant.
+
+    ``self_contact_id`` is the current resolved assistant-self contact id for
+    runtime routing. ``0`` is the default when no resolved value is supplied.
+    """
 
     agent_id: int | None = None
     binding_id: str = ""
@@ -86,6 +92,7 @@ class AssistantDetails:
     whatsapp_number: str = ""
     discord_bot_id: str = ""
     contact_id: int = 0  # Contact ID in Contacts table
+    self_contact_id: int = 0
     desktop_mode: str = "ubuntu"  # "ubuntu" or "windows" - determines VM type
     desktop_url: str | None = None  # URL for managed VM desktop access
     user_desktop_mode: str | None = (
@@ -104,7 +111,11 @@ class AssistantDetails:
 
 @dataclass
 class UserDetails:
-    """Details about the user (boss)."""
+    """Details about the user (boss).
+
+    ``boss_contact_id`` is the current resolved boss contact id for runtime
+    routing. ``1`` is the default when no resolved value is supplied.
+    """
 
     id: str = UNASSIGNED_USER_ID
     first_name: str = ""
@@ -113,6 +124,7 @@ class UserDetails:
     email: str = ""
     whatsapp_number: str = ""
     contact_id: int = 1  # Contact ID in Contacts table
+    boss_contact_id: int = 1
 
     @property
     def name(self) -> str:
@@ -257,6 +269,26 @@ class SessionDetails:
         self.assistant.space_ids = value
 
     @property
+    def self_contact_id(self) -> int:
+        """Shortcut to assistant.self_contact_id for convenient access."""
+        return self.assistant.self_contact_id
+
+    @self_contact_id.setter
+    def self_contact_id(self, value: int) -> None:
+        self.assistant.self_contact_id = value
+        self.assistant.contact_id = value
+
+    @property
+    def boss_contact_id(self) -> int:
+        """Shortcut to user.boss_contact_id for convenient access."""
+        return self.user.boss_contact_id
+
+    @boss_contact_id.setter
+    def boss_contact_id(self, value: int) -> None:
+        self.user.boss_contact_id = value
+        self.user.contact_id = value
+
+    @property
     def unify_key(self) -> str:
         """API key for Unify services.
 
@@ -302,12 +334,14 @@ class SessionDetails:
         assistant_whatsapp_number: str = "",
         assistant_discord_bot_id: str = "",
         assistant_contact_id: int = 0,
+        assistant_self_contact_id: int = DEFAULT_SELF_CONTACT_ID,
         user_id: str = "",
         user_first_name: str = "",
         user_surname: str = "",
         user_number: str = "",
         user_email: str = "",
         user_whatsapp_number: str = "",
+        user_boss_contact_id: int = DEFAULT_BOSS_CONTACT_ID,
         org_id: int | None = None,
         org_name: str = "",
         team_ids: list[int] | None = None,
@@ -338,6 +372,7 @@ class SessionDetails:
         self.assistant.whatsapp_number = assistant_whatsapp_number
         self.assistant.discord_bot_id = assistant_discord_bot_id
         self.assistant.contact_id = assistant_contact_id
+        self.self_contact_id = assistant_self_contact_id
         self.assistant.binding_id = binding_id
         self.assistant.desktop_mode = desktop_mode
         self.assistant.user_desktop_mode = user_desktop_mode
@@ -349,6 +384,7 @@ class SessionDetails:
         self.user.number = user_number
         self.user.email = user_email
         self.user.whatsapp_number = user_whatsapp_number
+        self.boss_contact_id = user_boss_contact_id
         self.org.id = org_id
         self.org.name = org_name
         self.team.ids = team_ids or []
@@ -398,6 +434,7 @@ class SessionDetails:
             self.assistant.user_desktop_filesys_sync,
         )
         os.environ["ASSISTANT_USER_DESKTOP_URL"] = self.assistant.user_desktop_url or ""
+        self.export_contact_ids_to_env()
         os.environ["USER_ID"] = self.user.id
         os.environ["USER_FIRST_NAME"] = self.user.first_name
         os.environ["USER_SURNAME"] = self.user.surname
@@ -422,6 +459,11 @@ class SessionDetails:
     def export_space_ids_to_env(self) -> None:
         """Export current shared-space memberships to the subprocess env shape."""
         os.environ["SPACE_IDS"] = _encode_int_csv(self.assistant.space_ids)
+
+    def export_contact_ids_to_env(self) -> None:
+        """Export resolved self and boss contact ids to the subprocess env shape."""
+        os.environ["SELF_CONTACT_ID"] = str(self.assistant.self_contact_id)
+        os.environ["BOSS_CONTACT_ID"] = str(self.user.boss_contact_id)
 
     def populate_from_env(self) -> None:
         """Populate from environment variables.
@@ -463,6 +505,11 @@ class SessionDetails:
                 self.assistant.contact_id = int(val)
             except ValueError:
                 pass
+        if val := os.environ.get("SELF_CONTACT_ID"):
+            try:
+                self.self_contact_id = int(val)
+            except ValueError:
+                pass
         if val := os.environ.get("ASSISTANT_DESKTOP_MODE"):
             self.assistant.desktop_mode = val
         if val := os.environ.get("ASSISTANT_DESKTOP_URL"):
@@ -485,6 +532,11 @@ class SessionDetails:
             self.user.email = val
         if val := os.environ.get("USER_WHATSAPP_NUMBER"):
             self.user.whatsapp_number = val
+        if val := os.environ.get("BOSS_CONTACT_ID"):
+            try:
+                self.boss_contact_id = int(val)
+            except ValueError:
+                pass
         if val := os.environ.get("ORG_ID"):
             try:
                 self.org.id = int(val)
