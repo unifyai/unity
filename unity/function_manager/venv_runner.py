@@ -240,6 +240,61 @@ class ComputerPrimitivesProxy:
         return self._make_method(name)
 
 
+def _response_format_for_rpc(response_format: Any) -> tuple[Any, Any]:
+    if response_format is None:
+        return None, None
+
+    try:
+        from pydantic import BaseModel
+
+        if isinstance(response_format, type) and issubclass(response_format, BaseModel):
+            return (
+                {
+                    "type": "json_schema",
+                    "json_schema": {
+                        "name": response_format.__name__,
+                        "schema": response_format.model_json_schema(),
+                        "strict": True,
+                    },
+                },
+                response_format,
+            )
+    except ImportError:
+        pass
+
+    return response_format, None
+
+
+async def reason(
+    prompt: str,
+    *,
+    system: str = None,
+    response_format: Any = None,
+    model: str = None,
+    origin: str = "CodeActActor.reason",
+    temperature: float = 0.0,
+    **generate_kwargs: Any,
+) -> Any:
+    """Proxy a semantic reasoning call to the parent Unity process."""
+
+    rpc_response_format, response_model = _response_format_for_rpc(response_format)
+    result = await rpc_call_async(
+        "runtime.reason",
+        {
+            "prompt": prompt,
+            "system": system,
+            "response_format": rpc_response_format,
+            "model": model,
+            "origin": origin,
+            "temperature": temperature,
+            **generate_kwargs,
+        },
+    )
+    if response_model is not None:
+        return response_model.model_validate(result)
+    return result
+
+
 # ────────────────────────────────────────────────────────────────────────────
 # Execution Environment
 # ────────────────────────────────────────────────────────────────────────────
@@ -357,6 +412,7 @@ def create_safe_globals(is_async: bool = True):
         "Literal": typing.Literal,
         # Primitives proxy (computer and actor accessible via primitives.computer.* etc.)
         "primitives": PrimitivesProxy(is_async=is_async),
+        "reason": reason,
     }
 
     # Try to add pydantic if available in this venv
@@ -495,6 +551,13 @@ def make_json_serializable(obj):
         return [make_json_serializable(item) for item in obj]
     if isinstance(obj, dict):
         return {str(k): make_json_serializable(v) for k, v in obj.items()}
+    try:
+        from pydantic import BaseModel
+
+        if isinstance(obj, BaseModel):
+            return make_json_serializable(obj.model_dump())
+    except ImportError:
+        pass
     # For other types, convert to string
     return str(obj)
 

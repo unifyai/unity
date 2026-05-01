@@ -495,6 +495,17 @@ class _VenvConnection:
             parts = path.split(".")
             if len(parts) == 2:
                 namespace, method = parts
+                if namespace == "runtime" and method == "reason":
+                    from unity.common.reasoning import reason
+
+                    result = await reason(**kwargs)
+                    return {
+                        "type": "rpc_result",
+                        "id": request_id,
+                        "result": self._function_manager._make_json_serializable(
+                            result,
+                        ),
+                    }
                 if namespace == "computer" and computer_primitives is not None:
                     fn = getattr(computer_primitives, method, None)
                 elif primitives is not None:
@@ -4544,6 +4555,11 @@ class FunctionManager(BaseFunctionManager):
             raise ValueError(f"Invalid RPC path: {path}")
 
         manager_name, method_name = parts
+
+        if manager_name == "runtime" and method_name == "reason":
+            from unity.common.reasoning import reason
+
+            return self._make_json_serializable(await reason(**kwargs))
 
         # Handle computer primitives
         if manager_name == "computer":
