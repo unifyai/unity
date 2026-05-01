@@ -167,6 +167,32 @@ print(r.model_dump_json())
 
 @pytest.mark.asyncio
 @pytest.mark.timeout(30)
+async def test_sandbox_exposes_reason_helper_for_generated_code():
+    """Generated Python sessions should expose the semantic reasoning helper."""
+    sandbox = PythonExecutionSession()
+
+    assert "reason" in sandbox.global_state
+
+    async def fake_reason(prompt: str, **kwargs):
+        assert "reply" in prompt
+        return "yes"
+
+    sandbox.global_state["reason"] = fake_reason
+    result = await sandbox.execute(
+        """
+decision = await reason("Does this email need a reply?")
+print(decision)
+decision
+""",
+    )
+
+    assert result["error"] is None
+    assert parts_to_text(result["stdout"]).strip() == "yes"
+    assert result["result"] == "yes"
+
+
+@pytest.mark.asyncio
+@pytest.mark.timeout(30)
 async def test_sandbox_computer_tool_execution(mock_computer_primitives):
     """
     Tests that the sandbox can execute code that calls computer tools via
