@@ -515,6 +515,15 @@ _EXTERNAL_APP_INTEGRATION = textwrap.dedent("""
     | `teams`      | Microsoft Teams (Microsoft only)                    |
     | `sharepoint` | SharePoint (Microsoft only)                         |
 
+    If the expected feature token is absent, check the raw provider
+    OAuth scopes as a fallback before denying access. Use the scopes
+    required for the specific API call, not a separate feature catalog in
+    this prompt. For example, Microsoft `sharepoint` read/write calls may
+    correspond to `Sites.Read.All` / `Sites.ReadWrite.All` in
+    `MICROSOFT_GRANTED_SCOPES`. Raw Microsoft scopes may appear as
+    fully-qualified Graph scope URLs such as
+    `https://graph.microsoft.com/Sites.Read.All`.
+
     If the granted-scopes secret is not found at all, proceed normally
     with the API call.  If it is present but the needed feature is
     absent, do not attempt the API call.  Instead, tell the user that
