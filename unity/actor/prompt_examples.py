@@ -62,6 +62,111 @@ async def extract_structured(query: str) -> ContactInfo:
 """
 
 
+def get_reasoning_helper_examples() -> str:
+    """Examples: choosing direct logic vs semantic reasoning."""
+
+    return r"""
+# Example: direct deterministic work should stay direct
+#
+# If the user asks "Count unread emails from Alice", do not call reason(...).
+# Use the mail primitive/API to fetch unread messages, filter sender exactly,
+# and count the results. The hard part is exact data retrieval, not meaning.
+async def count_unread_from_alice(messages: list[dict]) -> int:
+    return sum(
+        1
+        for message in messages
+        if message["from"].lower() == "alice@example.com"
+        and message["read"] is False
+    )
+
+
+# Anti-pattern: broad semantic classification via substring rules
+async def brittle_inbox_triage(messages: list[dict]) -> dict[str, list[dict]]:
+    buckets = {"urgent": [], "billing": [], "other": []}
+    for message in messages:
+        text = (message["subject"] + "\n" + message["body"]).lower()
+        if "urgent" in text:
+            buckets["urgent"].append(message)
+        elif "invoice" in text or "payment" in text:
+            buckets["billing"].append(message)
+        else:
+            buckets["other"].append(message)
+    return buckets
+    # This misses meaning: "Can you handle this today?", "renewal quote",
+    # "budget approval", and many other messages won't match the right words.
+
+
+# Pattern: symbolic loop + semantic judgment + structured control flow
+from pydantic import BaseModel, Field
+
+
+class EmailClassification(BaseModel):
+    category: str = Field(description="billing, scheduling, hiring, personal, or other")
+    needs_reply: bool
+    confidence: float = Field(ge=0.0, le=1.0)
+    needs_user_review: bool
+    rationale: str
+
+
+EmailClassification.model_rebuild()
+
+
+async def classify_inbox(messages: list[dict]) -> dict[str, list[dict]]:
+    buckets: dict[str, list[dict]] = {}
+    rubric = (
+        "Classify emails for inbox triage. Prefer needs_user_review=True when "
+        "the message is ambiguous or consequential."
+    )
+
+    for message in messages:
+        text = f"Subject: {message['subject']}\nFrom: {message['from']}\n\n{message['body']}"
+        classification = await reason(
+            text,
+            system=rubric,
+            response_format=EmailClassification,
+        )
+        if classification.needs_user_review or classification.confidence < 0.65:
+            category = "review"
+        else:
+            category = classification.category
+        buckets.setdefault(category, []).append(message)
+
+    return buckets
+
+
+# Pattern: deterministic pre-filter, semantic reasoning only for the hard subset
+async def find_certificate_followups(certificates: list[dict], today) -> list[dict]:
+    followups = []
+    for cert in certificates:
+        days_until_expiry = (cert["expires_on"] - today).days
+        if days_until_expiry > 90:
+            continue
+
+        decision = await reason(
+            "Decide whether this expiring certificate needs a human follow-up. "
+            "Consider owner, environment, business impact, and notes.\n"
+            f"Certificate: {cert}",
+            response_format={
+                "type": "json_object",
+            },
+        )
+        if decision["needs_followup"]:
+            followups.append({**cert, "reason": decision["rationale"]})
+
+    return followups
+
+
+# Advanced options: use model overrides sparingly
+async def classify_with_small_model(email_text: str):
+    return await reason(
+        email_text,
+        system="Return a compact category and confidence for email triage.",
+        model="gpt-4.1-nano@openai",
+        temperature=0.0,
+    )
+"""
+
+
 def get_error_handling_example() -> str:
     """Example: graceful error handling with fallbacks."""
 
@@ -2051,6 +2156,7 @@ def get_code_act_pattern_examples() -> str:
     examples = [
         get_error_handling_example().strip(),
         get_handle_mode_selection_example().strip(),
+        get_reasoning_helper_examples().strip(),
         get_clarification_example().strip(),
         get_notify_web_search_example().strip(),
         get_notify_multistep_workflow_example().strip(),

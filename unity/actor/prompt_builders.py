@@ -325,6 +325,43 @@ _EXECUTION_RULES = textwrap.dedent("""
          side of asking.
 """).strip()
 
+_SEMANTIC_REASONING_SELECTION = textwrap.dedent("""
+    ### Deterministic Code With Semantic Reasoning
+
+    The execution sandbox includes a `reason(...)` helper for focused,
+    billable UniLLM reasoning calls inside generated Python. Do not treat it
+    as a separate execution mode that competes with primitives or stored
+    functions. A good `execute_code` block may fetch data through several
+    primitives/functions, reshape it deterministically, call `reason(...)` for
+    the meaning-based judgment, and then continue with normal Python control
+    flow.
+
+    **Deterministic substeps stay deterministic:** Exact lookups, primitive
+    calls, API calls, deterministic filters, arithmetic, date comparisons,
+    dedupe, schema reshaping, and format conversion do not need semantic
+    reasoning. Keep those parts as ordinary Python or direct primitive/function
+    calls, even inside a larger workflow that uses `reason(...)` elsewhere.
+
+    **Semantic substeps use `reason(...)`:** Sprinkle focused reasoning calls
+    into the generated Python when a decision depends on meaning rather than
+    exact values. This is the right shape for judgment-heavy loops: inbox
+    triage, broad categorization, relevance judgment, priority, whether
+    something needs a reply, document/ticket routing, or ambiguous
+    user-preference inference.
+
+    Ask yourself at each decision point: is this substep exact data
+    manipulation, or interpreting meaning? If exact manipulation is enough,
+    keep it deterministic. If interpreting meaning is central, do not replace
+    semantic judgment with brittle substring checks. Lexical signals can
+    cheaply pre-filter or support a decision, but they should not be the whole
+    classifier for semantic work.
+
+    A comment that says "using reasoning" above keyword conditions is not
+    semantic reasoning. When the generated code reaches a meaning-based
+    classification or judgment substep, it should actually call `reason(...)`
+    for that substep and then branch on the returned judgment.
+""").strip()
+
 _INCREMENTAL_EXECUTION = textwrap.dedent("""
     ### Incremental Execution
 
@@ -776,6 +813,10 @@ def build_code_act_prompt(
         parts.append(tools_section)
 
         parts.append(_EXECUTION_RULES)
+        parts.append(_SEMANTIC_REASONING_SELECTION)
+        from unity.common.reasoning import get_reasoning_prompt_context
+
+        parts.append(get_reasoning_prompt_context())
         parts.append(_INCREMENTAL_EXECUTION)
         parts.append(_EXTERNAL_APP_INTEGRATION)
 

@@ -172,6 +172,68 @@ def test_python_first_principle_present():
 
 
 @pytest.mark.timeout(30)
+def test_code_act_prompt_includes_reasoning_helper_decision_guidance():
+    actor = CodeActActor()
+    prompt = build_code_act_prompt(
+        environments=_real_envs_mixed(),
+        tools=dict(actor.get_tools("act")),
+    )
+
+    assert "### Deterministic Code With Semantic Reasoning" in prompt
+    assert "Semantic Reasoning Helper: `reason(...)`" in prompt
+    assert "billable UniLLM" in prompt
+    assert "competes with primitives or stored" in prompt
+    assert "fetch data through several" in prompt
+    assert "Deterministic substeps stay deterministic" in prompt
+    assert "Semantic substeps use `reason(...)`" in prompt
+    assert "If exact manipulation is enough" in prompt
+    assert "do not replace" in prompt
+    assert "semantic judgment with brittle substring checks" in prompt
+    assert "A comment that says" in prompt
+    assert "actually call `reason(...)`" in prompt
+    assert "brittle substring checks" in prompt
+
+
+@pytest.mark.timeout(30)
+def test_code_act_prompt_includes_reasoning_examples_and_antipatterns():
+    actor = CodeActActor()
+    prompt = build_code_act_prompt(
+        environments=_real_envs_mixed(),
+        tools=dict(actor.get_tools("act")),
+    )
+
+    assert "direct deterministic work should stay direct" in prompt
+    assert "broad semantic classification via substring rules" in prompt
+    assert "symbolic loop + semantic judgment + structured control flow" in prompt
+    assert "EmailClassification" in prompt
+    assert "response_format=EmailClassification" in prompt
+    assert (
+        "deterministic pre-filter, semantic reasoning only for the hard subset"
+        in prompt
+    )
+    assert 'model="gpt-4.1-nano@openai"' in prompt
+
+
+@pytest.mark.timeout(30)
+def test_code_act_prompt_does_not_make_reason_mandatory_for_every_loop():
+    actor = CodeActActor()
+    prompt = build_code_act_prompt(
+        environments=_real_envs_mixed(),
+        tools=dict(actor.get_tools("act")),
+    )
+
+    assert "use" in prompt
+    assert (
+        "``reason(...)`` only where meaning-based judgment is doing real work" in prompt
+    )
+    assert "exact logic is enough" in prompt
+    assert "freely mix deterministic substeps and semantic substeps" in prompt
+    assert "do not call reason(...)" in prompt
+    assert "Use reason(...) for every loop" not in prompt
+    assert "Always call reason(...)" not in prompt
+
+
+@pytest.mark.timeout(30)
 def test_discovery_first_guidance_separates_search_from_execution_choice():
     """Discovery-first should not imply that a missing library hit means execute_code."""
     actor = CodeActActor()
@@ -332,7 +394,7 @@ def test_external_app_integration_present():
     assert "primitives.secrets.ask" in prompt
     assert "install_python_packages" in prompt
     assert "Prefer Python SDKs over CLI tools" in prompt
-    assert "Resources → Secrets" in prompt
+    assert "console's Secrets page" in prompt
 
 
 @pytest.mark.timeout(30)
