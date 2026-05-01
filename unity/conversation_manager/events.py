@@ -912,6 +912,8 @@ class _SessionConfigBase(Event):
     )
     assistant_job_title: str = ""
     assistant_email_provider: str = "google_workspace"
+    self_contact_id: int = 0
+    boss_contact_id: int = 1
     desktop_mode: str = "ubuntu"
     desktop_url: str | None = None
     user_whatsapp_number: str = ""

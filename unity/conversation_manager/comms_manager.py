@@ -556,6 +556,8 @@ class CommsManager:
                         "assistant_email_provider",
                         "google_workspace",
                     ),
+                    "self_contact_id": event.get("self_contact_id", 0),
+                    "boss_contact_id": event.get("boss_contact_id", 1),
                     "assistant_whatsapp_number": event.get(
                         "assistant_whatsapp_number",
                         "",
@@ -1700,6 +1702,8 @@ class CommsManager:
                         "assistant_email_provider",
                         "google_workspace",
                     ),
+                    "self_contact_id": event.get("self_contact_id", 0),
+                    "boss_contact_id": event.get("boss_contact_id", 1),
                     "assistant_whatsapp_number": event.get(
                         "assistant_whatsapp_number",
                         "",

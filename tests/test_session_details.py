@@ -77,3 +77,55 @@ class TestSpaceIds:
         sd.reset()
         assert sd.space_ids == []
         assert sd.assistant.space_ids == []
+
+
+class TestContactIds:
+    def test_defaults_and_shortcuts_use_subcontainer_storage(self):
+        sd = SessionDetails()
+
+        assert sd.self_contact_id == 0
+        assert sd.boss_contact_id == 1
+
+        sd.self_contact_id = 5
+        sd.boss_contact_id = 6
+
+        assert sd.assistant.self_contact_id == 5
+        assert sd.assistant.contact_id == 5
+        assert sd.user.boss_contact_id == 6
+        assert sd.user.contact_id == 6
+
+    def test_populate_sets_resolved_contact_ids(self):
+        sd = SessionDetails()
+
+        sd.populate(assistant_self_contact_id=42, user_boss_contact_id=43)
+
+        assert sd.self_contact_id == 42
+        assert sd.assistant.self_contact_id == 42
+        assert sd.assistant.contact_id == 42
+        assert sd.boss_contact_id == 43
+        assert sd.user.boss_contact_id == 43
+        assert sd.user.contact_id == 43
+
+    def test_export_and_populate_from_env_round_trips(self, monkeypatch):
+        monkeypatch.delenv("SELF_CONTACT_ID", raising=False)
+        monkeypatch.delenv("BOSS_CONTACT_ID", raising=False)
+        sd = SessionDetails()
+        sd.populate(assistant_self_contact_id=42, user_boss_contact_id=43)
+        sd.export_to_env()
+
+        assert os.environ["SELF_CONTACT_ID"] == "42"
+        assert os.environ["BOSS_CONTACT_ID"] == "43"
+
+        sd2 = SessionDetails()
+        sd2.populate_from_env()
+        assert sd2.self_contact_id == 42
+        assert sd2.boss_contact_id == 43
+
+    def test_reset_restores_contact_id_defaults(self):
+        sd = SessionDetails()
+        sd.populate(assistant_self_contact_id=42, user_boss_contact_id=43)
+
+        sd.reset()
+
+        assert sd.self_contact_id == 0
+        assert sd.boss_contact_id == 1

@@ -14,6 +14,7 @@ Tests cover:
 
 from __future__ import annotations
 
+import os
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -2624,7 +2625,11 @@ class TestAssistantUpdateEventHandler:
         mock_cm.set_details.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_membership_update_rebinds_space_roots_without_restart(self, mock_cm):
+    async def test_membership_update_rebinds_space_roots_without_restart(
+        self,
+        mock_cm,
+        monkeypatch,
+    ):
         """Membership updates refresh reachable roots without running config side effects."""
         from unity.common.context_registry import (
             PERSONAL_ROOT_IDENTITY,
@@ -2634,6 +2639,10 @@ class TestAssistantUpdateEventHandler:
         from unity.session_details import SESSION_DETAILS
 
         SESSION_DETAILS.space_ids = [3, 7]
+        SESSION_DETAILS.self_contact_id = 0
+        SESSION_DETAILS.boss_contact_id = 1
+        monkeypatch.delenv("SELF_CONTACT_ID", raising=False)
+        monkeypatch.delenv("BOSS_CONTACT_ID", raising=False)
         ContextRegistry._registry = {
             ("TaskScheduler", "Tasks", PERSONAL_ROOT_IDENTITY): "user456/123/Tasks",
             ("TaskScheduler", "Tasks", f"{SPACE_CONTEXT_PREFIX}3"): "Spaces/3/Tasks",
@@ -2662,6 +2671,8 @@ class TestAssistantUpdateEventHandler:
             voice_provider="cartesia",
             update_kind="membership",
             space_ids=[7, 11],
+            self_contact_id=42,
+            boss_contact_id=43,
         )
 
         with patch(
@@ -2672,7 +2683,15 @@ class TestAssistantUpdateEventHandler:
                 await EventHandler.handle_event(event, mock_cm)
 
                 assert SESSION_DETAILS.space_ids == [7, 11]
+                assert SESSION_DETAILS.self_contact_id == 42
+                assert SESSION_DETAILS.boss_contact_id == 43
+                assert SESSION_DETAILS.assistant.contact_id == 42
+                assert SESSION_DETAILS.user.contact_id == 43
+                assert os.environ["SELF_CONTACT_ID"] == "42"
+                assert os.environ["BOSS_CONTACT_ID"] == "43"
                 assert mock_cm.space_ids == [7, 11]
+                assert mock_cm.self_contact_id == 42
+                assert mock_cm.boss_contact_id == 43
                 assert (
                     ContextRegistry._registry[
                         ("TaskScheduler", "Tasks", PERSONAL_ROOT_IDENTITY)

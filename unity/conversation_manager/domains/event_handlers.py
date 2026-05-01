@@ -1987,8 +1987,13 @@ async def _(event: AssistantUpdateEvent, cm: "ConversationManager", *args, **kwa
     if event.update_kind == "membership":
         space_ids = sorted(set(event.space_ids or []))
         SESSION_DETAILS.space_ids = space_ids
+        SESSION_DETAILS.self_contact_id = event.self_contact_id
+        SESSION_DETAILS.boss_contact_id = event.boss_contact_id
         SESSION_DETAILS.export_space_ids_to_env()
+        SESSION_DETAILS.export_contact_ids_to_env()
         cm.space_ids = space_ids
+        cm.self_contact_id = event.self_contact_id
+        cm.boss_contact_id = event.boss_contact_id
         ContextRegistry.forget_departed_space_roots(space_ids)
         invalidate_task_machine_state_reads()
         return
