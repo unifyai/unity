@@ -27,6 +27,10 @@ class Secret(BaseModel):
         default="",
         description="Human-readable description of the secret's purpose.",
     )
+    destination: str = Field(
+        default="personal",
+        description="Vault that owns the credential metadata, such as personal or space:<id>.",
+    )
     description_emb: List[float] = Field(
         default_factory=list,
         description="Vector embedding of the description for semantic search.",

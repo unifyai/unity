@@ -1,4 +1,4 @@
-"""Tests for aggregation context mirroring and private field injection."""
+"""Tests for secret row privacy and private field injection."""
 
 from __future__ import annotations
 
@@ -21,8 +21,8 @@ def _get_raw_log_by_secret_id(ctx: str, secret_id: int):
 
 
 @_handle_project
-def test_log_creates_all_secrets_entries():
-    """Creating a secret should mirror to both aggregation contexts."""
+def test_log_does_not_mirror_secrets_to_aggregation_contexts():
+    """Creating a secret keeps the raw credential in its owning vault only."""
     sm = SecretManager()
 
     # Create a secret
@@ -42,13 +42,12 @@ def test_log_creates_all_secrets_entries():
     all_ctxs = _derive_all_contexts(sm._ctx)
     assert len(all_ctxs) == 2, "Should have user-level and global aggregation contexts"
 
-    # Verify it was mirrored to both aggregation contexts
     for all_ctx in all_ctxs:
         all_logs = unify.get_logs(
             context=all_ctx,
             filter=f"secret_id == {secret_id}",
         )
-        assert len(all_logs) >= 1, f"Secret should be mirrored to {all_ctx}"
+        assert all_logs == [], f"Secret should not be mirrored to {all_ctx}"
 
 
 @_handle_project
@@ -212,8 +211,8 @@ def test_private_fields_excluded_from_filter_secrets():
 
 
 @_handle_project
-def test_deleting_secret_removes_from_all_ctxs():
-    """Deleting a secret should also remove it from all aggregation contexts."""
+def test_deleting_secret_keeps_aggregation_contexts_empty():
+    """Deleting a secret does not require touching aggregation contexts."""
     sm = SecretManager()
 
     # Create a secret
@@ -232,33 +231,27 @@ def test_deleting_secret_removes_from_all_ctxs():
     all_ctxs = _derive_all_contexts(sm._ctx)
     assert len(all_ctxs) == 2, "Should have user-level and global aggregation contexts"
 
-    # Verify it exists in all aggregation contexts before deletion
     for all_ctx in all_ctxs:
         all_logs_before = unify.get_logs(
             context=all_ctx,
             filter=f"secret_id == {secret_id}",
         )
-        assert (
-            len(all_logs_before) >= 1
-        ), f"Secret should exist in {all_ctx} before deletion"
+        assert all_logs_before == [], f"Secret should not exist in {all_ctx}"
 
     # Delete the secret
     sm._delete_secret(name="delete_test_secret")
 
-    # Verify it's removed from all aggregation contexts after deletion
     for all_ctx in all_ctxs:
         all_logs_after = unify.get_logs(
             context=all_ctx,
             filter=f"secret_id == {secret_id}",
         )
-        assert (
-            len(all_logs_after) == 0
-        ), f"Secret should be removed from {all_ctx} after deletion"
+        assert all_logs_after == [], f"Secret should not exist in {all_ctx}"
 
 
 @_handle_project
-def test_update_syncs_to_all_aggregation_contexts():
-    """Updating a secret should be immediately visible in all aggregation contexts."""
+def test_update_stays_in_owning_vault():
+    """Updating a secret changes only the owning vault row."""
     sm = SecretManager()
 
     # Create a secret with initial values
@@ -277,25 +270,20 @@ def test_update_syncs_to_all_aggregation_contexts():
     all_ctxs = _derive_all_contexts(sm._ctx)
     assert len(all_ctxs) == 2, "Should have user-level and global aggregation contexts"
 
-    # Verify initial description in all contexts
-    for ctx in [sm._ctx, *all_ctxs]:
-        log = _get_raw_log_by_secret_id(ctx, secret_id)
-        assert log is not None, f"Log should exist in {ctx}"
-        assert (
-            log.entries.get("description") == "Original description"
-        ), f"Initial description in {ctx}"
+    log = _get_raw_log_by_secret_id(sm._ctx, secret_id)
+    assert log is not None
+    assert log.entries.get("description") == "Original description"
+    for all_ctx in all_ctxs:
+        assert _get_raw_log_by_secret_id(all_ctx, secret_id) is None
 
     # Update the secret's description
     sm._update_secret(name="update_sync_secret", description="Updated description")
 
-    # Verify the update is immediately visible in ALL contexts (primary + aggregations)
-    for ctx in [sm._ctx, *all_ctxs]:
-        log = _get_raw_log_by_secret_id(ctx, secret_id)
-        assert log is not None, f"Log should exist in {ctx} after update"
-        assert log.entries.get("description") == "Updated description", (
-            f"Updated description should be visible in {ctx}. "
-            f"Expected 'Updated description', got '{log.entries.get('description')}'"
-        )
+    log = _get_raw_log_by_secret_id(sm._ctx, secret_id)
+    assert log is not None
+    assert log.entries.get("description") == "Updated description"
+    for all_ctx in all_ctxs:
+        assert _get_raw_log_by_secret_id(all_ctx, secret_id) is None
 
 
 @_handle_project
@@ -328,12 +316,3 @@ def test_log_id_unchanged_after_update():
         f"Log ID should be unchanged after update. "
         f"Original: {original_log_id}, After update: {updated_log.id}"
     )
-
-    # Verify all aggregation contexts still reference the same log ID
-    all_ctxs = _derive_all_contexts(sm._ctx)
-    for all_ctx in all_ctxs:
-        agg_log = _get_raw_log_by_secret_id(all_ctx, secret_id)
-        assert agg_log.id == original_log_id, (
-            f"Aggregation context {all_ctx} should still reference the same log. "
-            f"Expected {original_log_id}, got {agg_log.id}"
-        )

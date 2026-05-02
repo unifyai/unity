@@ -97,6 +97,28 @@ def test_all_update_tools_have_sufficient_docstrings():
 
 
 @_handle_project
+def test_secret_write_tools_expose_destination_guidance():
+    sm = SecretManager()
+    tools = sm.get_tools("update")
+
+    for tool_name in ("create_secret", "update_secret", "delete_secret"):
+        fn = _unwrap_callable(tools[tool_name])
+        doc = (getattr(fn, "__doc__", None) or "").strip()
+
+        assert "destination : str | None" in doc
+        assert "Accessible shared" in doc
+        assert "spaces" in doc
+        assert "space:<id>" in doc
+        assert "personal" in doc
+
+    create_doc = (
+        getattr(_unwrap_callable(tools["create_secret"]), "__doc__", None) or ""
+    )
+    assert "sharing a credential is harder to undo" in create_doc
+    assert "request_clarification" in create_doc
+
+
+@_handle_project
 def test_ask_tool_schemas_are_stable_across_python_sessions():
     # Build a test-specific context path matching _handle_project pattern
     test_ctx = f"tests/secret_manager/test_tool_docstrings/test_ask_tool_schemas_are_stable_across_python_sessions/{UNASSIGNED_USER_CONTEXT}/{UNASSIGNED_ASSISTANT_CONTEXT}"

@@ -19,7 +19,9 @@ PERSONAL_DESTINATION: Final[str] = "personal"
 SPACE_DESTINATION_PREFIX: Final[str] = "space:"
 INVALID_DESTINATION_ERROR: Final[str] = "invalid_destination"
 
-_SHARED_SCOPED_TABLES: Final[frozenset[str]] = frozenset({"Tasks", "Contacts"})
+_SHARED_SCOPED_TABLES: Final[frozenset[str]] = frozenset(
+    {"Tasks", "Contacts", "Secrets"},
+)
 
 
 class TableContext(BaseModel):

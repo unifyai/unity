@@ -9,7 +9,6 @@ from pydantic import BaseModel
 import unify
 from unity.common.llm_client import new_llm_client
 from unity.common.log_utils import log as unity_log
-import functools
 from ..common.llm_helpers import methods_to_tool_dict
 from ..common.tool_spec import ToolSpec
 from ..common.async_tool_loop import (
@@ -21,7 +20,7 @@ from ..settings import SETTINGS
 from ..common.read_only_ask_guard import ReadOnlyAskGuardHandle
 from ..events.event_bus import EVENT_BUS, Event
 from ..events.manager_event_logging import log_manager_call
-from ..common.tool_outcome import ToolOutcome
+from ..common.tool_outcome import ToolError, ToolErrorException, ToolOutcome
 from ..common.embed_utils import ensure_vector_column
 from ..common.context_store import TableStore
 from ..common.model_to_fields import model_to_fields
@@ -30,13 +29,28 @@ from .base import BaseSecretManager
 from .prompt_builders import build_ask_prompt, build_update_prompt
 from ..common.filter_utils import normalize_filter_expr
 from ..common.search_utils import table_search_top_k, is_plain_identifier
-from ..common.context_registry import ContextRegistry, TableContext
+from ..common.context_registry import (
+    ContextRegistry,
+    PERSONAL_DESTINATION,
+    SPACE_CONTEXT_PREFIX,
+    TableContext,
+)
+
+SECRETS_TABLE = "Secrets"
+DESTINATION_FILTER_PATTERN = (
+    r"destination\s*==\s*(?P<quote>['\"])(?P<destination>[^'\"]+)(?P=quote)"
+)
 
 
 class SecretManager(BaseSecretManager):
     """
-    Manages a fixed-schema table of secrets. Ensures secrets are never exposed
-    to LLMs directly. Public methods mirror other managers' design.
+    Manage personal and shared credentials without exposing raw values to LLMs.
+
+    LLM-facing reads merge the assistant's personal vault with every reachable
+    shared-space vault. Writes accept a destination and persist to exactly one
+    vault. Runtime credential lookups also read exactly one vault; a missing
+    credential in the requested destination raises instead of falling back to
+    another scope.
     """
 
     class Config:
@@ -52,8 +66,7 @@ class SecretManager(BaseSecretManager):
 
     def __init__(self) -> None:
         super().__init__()
-        self.include_in_multi_assistant_table = True
-        self._ctx = ContextRegistry.get_context(self, "Secrets")
+        self._ctx = ContextRegistry.get_context(self, SECRETS_TABLE)
 
         # Ensure storage/schema exists deterministically (idempotent)
         self._provision_storage()
@@ -105,7 +118,6 @@ class SecretManager(BaseSecretManager):
     # --------------------- Storage provisioning helper --------------------- #
     def _provision_storage(self) -> None:
         """Ensure Secrets context and schema exist and required vectors are present."""
-        # Fixed schema derived from Secret model
         self._store = TableStore(
             self._ctx,
             unique_keys={"secret_id": "int", "name": "str"},
@@ -115,14 +127,84 @@ class SecretManager(BaseSecretManager):
         )
 
     def warm_embeddings(self) -> None:
-        self._ensure_description_vector()
+        for context in self._read_secret_contexts():
+            self._ensure_description_vector(context)
+
+    def _secret_context_for_root(self, root_context: str) -> str:
+        """Return the concrete Secrets context under a registry root."""
+        return f"{root_context.strip('/')}/{SECRETS_TABLE}"
+
+    def _effective_destination(self, destination: str | None) -> str | None:
+        """Resolve implicit task-scoped credential routing."""
+        return destination or os.environ.get("TASK_DESTINATION") or None
+
+    def _secret_context_for_destination(self, destination: str | None) -> str:
+        """Resolve a public destination into one concrete Secrets context."""
+        destination = self._effective_destination(destination)
+        root_context = ContextRegistry.write_root(
+            self,
+            SECRETS_TABLE,
+            destination=destination,
+        )
+        return self._secret_context_for_root(root_context)
+
+    def _destination_for_context(self, context: str) -> str:
+        """Return the public destination label for a concrete Secrets context."""
+        if context.startswith(SPACE_CONTEXT_PREFIX):
+            parts = context.split("/")
+            if len(parts) >= 2:
+                return f"space:{parts[1]}"
+        return PERSONAL_DESTINATION
+
+    def _split_destination_filter(
+        self,
+        filter_expr: str | None,
+    ) -> tuple[str | None, set[str]]:
+        """Extract destination equality predicates from a public filter."""
+        if not filter_expr:
+            return filter_expr, set()
+
+        import re
+
+        destinations = {
+            match.group("destination")
+            for match in re.finditer(DESTINATION_FILTER_PATTERN, filter_expr)
+        }
+        if not destinations:
+            return filter_expr, set()
+
+        cleaned = re.sub(
+            rf"\s+and\s+{DESTINATION_FILTER_PATTERN}",
+            "",
+            filter_expr,
+        )
+        cleaned = re.sub(
+            rf"{DESTINATION_FILTER_PATTERN}\s+and\s+",
+            "",
+            cleaned,
+        )
+        cleaned = re.sub(DESTINATION_FILTER_PATTERN, "", cleaned).strip()
+        return cleaned or None, destinations
+
+    def _read_secret_contexts(self) -> list[str]:
+        """Return personal-first concrete Secrets contexts visible to the assistant."""
+        return list(
+            dict.fromkeys(
+                self._secret_context_for_root(root)
+                for root in ContextRegistry.read_roots(self, SECRETS_TABLE)
+            ),
+        )
+
+    def _is_personal_context(self, context: str) -> bool:
+        """Return whether a concrete Secrets context is the personal vault."""
+        return context == self._ctx
 
     @functools.cache
-    def _ensure_description_vector(self) -> None:
-        # Ensure vector for description (best-effort)
+    def _ensure_description_vector(self, context: str) -> None:
+        """Ensure the description embedding exists for one Secrets context."""
         try:
             ensure_vector_column(
-                self._ctx,
+                context,
                 embed_column="description_emb",
                 source_column="description",
                 derived_expr=None,
@@ -135,7 +217,7 @@ class SecretManager(BaseSecretManager):
         unify.delete_context(self._ctx)
 
         # Force re-provisioning even if previously ensured
-        ContextRegistry.refresh(self, "Secrets")
+        self._ctx = ContextRegistry.refresh(self, SECRETS_TABLE)
 
         # Re-create schema and vectors
         self._provision_storage()
@@ -262,7 +344,7 @@ class SecretManager(BaseSecretManager):
                         description=description,
                         new=True,
                         mutable=True,
-                        add_to_all_context=self.include_in_multi_assistant_table,
+                        add_to_all_context=False,
                     )
                 self._env_set(name, value)
             except Exception:
@@ -402,20 +484,28 @@ class SecretManager(BaseSecretManager):
         self._env_merge_and_write(add_or_update=None, remove_keys=[name])
 
     # --------------------- Public API --------------------- #
-    async def from_placeholder(self, text: str) -> str:
+    async def from_placeholder(
+        self,
+        text: str,
+        *,
+        destination: str | None = None,
+    ) -> str:
         """Resolve ${name} placeholders in text to raw secret values (no LLM).
 
         Parameters
         ----------
         text : str
             Input string that may contain placeholders like "${api_key}".
+        destination : str | None, default None
+            Credential vault to read from. Defaults to the active task
+            destination when one is set, otherwise to the personal vault.
 
         Returns
         -------
         str
             String with placeholders substituted with their secret values.
         """
-        return self._resolve_placeholders(text)
+        return self._resolve_placeholders(text, destination=destination)
 
     async def to_placeholder(self, text: str) -> str:
         """Convert secret values in text to placeholders.
@@ -430,31 +520,28 @@ class SecretManager(BaseSecretManager):
         str
             The text with secret values converted to placeholders.
         """
-        # Build a mapping from raw value → name using current storage
-        try:
-            rows = unify.get_logs(
-                context=self._ctx,
-                from_fields=["name", "value"],
-            )
-            if not rows:
-                rows = unify.get_logs(context=self._ctx)
-        except Exception:
-            rows = []
-
         value_to_name: Dict[str, str] = {}
-        for lg in rows:
+        for context in self._read_secret_contexts():
             try:
-                nm = (lg.entries or {}).get("name")
-                val = (lg.entries or {}).get("value")
-                if isinstance(nm, str) and nm and isinstance(val, str) and val:
-                    # If duplicate values exist, prefer lexicographically smallest name
-                    if val in value_to_name:
-                        if nm < value_to_name[val]:
-                            value_to_name[val] = nm
-                    else:
-                        value_to_name[val] = nm
+                rows = unify.get_logs(
+                    context=context,
+                    from_fields=["name", "value"],
+                )
             except Exception:
-                continue
+                rows = []
+
+            for lg in rows:
+                try:
+                    nm = (lg.entries or {}).get("name")
+                    val = (lg.entries or {}).get("value")
+                    if isinstance(nm, str) and nm and isinstance(val, str) and val:
+                        if val in value_to_name:
+                            if nm < value_to_name[val]:
+                                value_to_name[val] = nm
+                        else:
+                            value_to_name[val] = nm
+                except Exception:
+                    continue
 
         # Replace longer values first to avoid partial overlaps
         import re
@@ -685,7 +772,56 @@ class SecretManager(BaseSecretManager):
         return handle
 
     # --------------------- Tools (read-only) --------------------- #
-    def _resolve_placeholders(self, text: str) -> str:
+    def get_credential(
+        self,
+        integration: str,
+        *,
+        destination: str | None = None,
+    ) -> str:
+        """Return one raw credential from the vault named by destination.
+
+        Parameters
+        ----------
+        integration : str
+            Secret name to resolve.
+        destination : str | None, default None
+            ``"personal"`` or ``"space:<id>"``. ``None`` inherits the active
+            task destination when one is set, otherwise personal.
+
+        Raises
+        ------
+        KeyError
+            If the credential is not stored in the resolved vault.
+        """
+        context = self._secret_context_for_destination(destination)
+        rows = unify.get_logs(
+            context=context,
+            filter=f"name == {integration!r}",
+            limit=1,
+        )
+        if not rows:
+            resolved_destination = (
+                self._effective_destination(destination) or PERSONAL_DESTINATION
+            )
+            raise KeyError(
+                f"No credential named {integration!r} in {resolved_destination!r}.",
+            )
+        value = (rows[0].entries or {}).get("value")
+        if not isinstance(value, str):
+            resolved_destination = (
+                self._effective_destination(destination) or PERSONAL_DESTINATION
+            )
+            raise KeyError(
+                f"No credential named {integration!r} in {resolved_destination!r}.",
+            )
+        return value
+
+    def _resolve_placeholders(
+        self,
+        text: str,
+        *,
+        destination: str | None = None,
+    ) -> str:
         """Return a copy of text with ${name} placeholders replaced by values.
 
         This helper performs direct Unify reads and never emits logs/events.
@@ -696,16 +832,8 @@ class SecretManager(BaseSecretManager):
         def repl(match: "re.Match[str]") -> str:
             name = match.group(1)
             try:
-                rows = unify.get_logs(
-                    context=self._ctx,
-                    filter=f"name == {name!r}",
-                    limit=1,
-                )
-                if rows:
-                    val = (rows[0].entries or {}).get("value")
-                    if isinstance(val, str):
-                        return val
-            except Exception:
+                return self.get_credential(name, destination=destination)
+            except KeyError:
                 pass
             return match.group(0)  # leave placeholder as-is when missing
 
@@ -791,22 +919,32 @@ class SecretManager(BaseSecretManager):
         List[Secret]
             Up to ``k`` redacted Secret models (``value`` is never populated).
         """
-        self._ensure_description_vector()
         # Sanitize references to avoid embedding sensitive fields like "value"
         safe_refs = self._sanitize_secret_references(references)
 
-        rows = table_search_top_k(
-            context=self._ctx,
-            references=safe_refs,
-            k=k,
-            allowed_fields=[
-                "secret_id",
-                "name",
-                "description",
-            ],  # Never return the secret value
-            row_filter=None,
-            unique_id_field="name",
-        )
+        rows: list[dict[str, Any]] = []
+        remaining = k
+        for context in self._read_secret_contexts():
+            if remaining <= 0:
+                break
+            self._ensure_description_vector(context)
+            context_rows = table_search_top_k(
+                context=context,
+                references=safe_refs,
+                k=remaining,
+                allowed_fields=[
+                    "secret_id",
+                    "name",
+                    "description",
+                ],  # Never return the secret value
+                row_filter=None,
+                unique_id_field="name",
+            )
+            destination = self._destination_for_context(context)
+            for row in context_rows:
+                row["destination"] = destination
+            rows.extend(context_rows)
+            remaining = k - len(rows)
         return [
             Secret(
                 secret_id=(
@@ -815,6 +953,7 @@ class SecretManager(BaseSecretManager):
                 name=r.get("name"),
                 value="",
                 description=r.get("description") or "",
+                destination=r.get("destination") or PERSONAL_DESTINATION,
             )
             for r in rows
         ]
@@ -844,13 +983,22 @@ class SecretManager(BaseSecretManager):
             Matching Secret models with ``value`` redacted.
         """
         normalized = normalize_filter_expr(filter)
-        logs = unify.get_logs(
-            context=self._ctx,
-            filter=normalized,
-            offset=offset,
-            limit=limit,
-            from_fields=["secret_id", "name", "description"],
-        )
+        normalized, destination_filter = self._split_destination_filter(normalized)
+        logs: list[tuple[Any, str]] = []
+        fetch_limit = offset + limit
+        for context in self._read_secret_contexts():
+            destination = self._destination_for_context(context)
+            if destination_filter and destination not in destination_filter:
+                continue
+            context_logs = unify.get_logs(
+                context=context,
+                filter=normalized,
+                offset=0,
+                limit=fetch_limit,
+                from_fields=["secret_id", "name", "description"],
+            )
+            logs.extend((log, destination) for log in context_logs)
+        logs = logs[offset : offset + limit]
         # Never expose values in read tools
         return [
             Secret(
@@ -862,8 +1010,9 @@ class SecretManager(BaseSecretManager):
                 name=lg.entries.get("name"),
                 value="",
                 description=lg.entries.get("description") or "",
+                destination=destination,
             )
-            for lg in logs
+            for lg, destination in logs
         ]
 
     def _list_secret_keys(self) -> List[str]:
@@ -874,25 +1023,36 @@ class SecretManager(BaseSecretManager):
         List[str]
             Sorted, unique list of secret names currently present in storage.
         """
-        try:
-            rows = unify.get_logs(context=self._ctx)
-        except Exception:
-            rows = []
         names: set[str] = set()
-        for lg in rows:
-            nm = (lg.entries or {}).get("name")
-            if isinstance(nm, str) and nm:
-                names.add(nm)
+        for context in self._read_secret_contexts():
+            try:
+                rows = unify.get_logs(
+                    context=context,
+                    from_fields=["name"],
+                )
+            except Exception:
+                rows = []
+            for lg in rows:
+                nm = (lg.entries or {}).get("name")
+                if isinstance(nm, str) and nm:
+                    names.add(nm)
         return sorted(names)
 
     # --------------------- Tools (mutations) --------------------- #
+    def _invalidate_credential_processes(self) -> None:
+        """Drop stateful execution pools so subprocesses reopen with fresh env."""
+        from unity.function_manager.function_manager import VenvPool
+
+        VenvPool.invalidate_all_pools()
+
     def _create_secret(
         self,
         *,
         name: str,
         value: str,
         description: Optional[str] = None,
-    ) -> ToolOutcome:
+        destination: str | None = None,
+    ) -> ToolOutcome | ToolError:
         """Create and persist a new secret.
 
         Parameters
@@ -903,16 +1063,43 @@ class SecretManager(BaseSecretManager):
             Raw secret value to store (never exposed to LLMs).
         description : str | None, default None
             Optional human-readable description.
+        destination : str | None, default None
+            Where the credential is stored. Pass ``"personal"`` (the default)
+            for credentials only you should use: your own personal API key,
+            your individual OAuth tokens, anything tied to your identity. Pass
+            ``"space:<id>"`` for a team service account or shared credential
+            that every member of the space should be able to use: the team
+            Slack bot token, the shared SendGrid API key, the team's
+            integration service account. Personal credentials never leak into
+            a space; space credentials never leak into your local ``.env``
+            mirror. The set of available ``space:<id>`` values, each with a
+            name and a description naming the team / domain the credential
+            pool belongs to, is rendered in the *Accessible shared spaces*
+            block of your system prompt; read that block before choosing.
+            The privacy floor: when in doubt between personal and a space,
+            pick personal, because sharing a credential is harder to undo than
+            re-sharing later. When confidence is low and the credential would
+            land in a space, call ``request_clarification`` instead of
+            guessing toward the wider audience.
+            When running inside a task, omitting this argument inherits the
+            task destination so task-owned credentials stay with the task's
+            vault.
 
         Returns
         -------
-        ToolOutcome
-            A standard outcome dict: ``{"outcome": "secret created", "details": {"name": <str>}}``.
+        ToolOutcome | ToolError
+            A standard outcome dict, or a structured tool error for invalid
+            destinations.
         """
         assert name and value, "Both name and value are required."
+        try:
+            context = self._secret_context_for_destination(destination)
+        except ToolErrorException as exc:
+            return exc.payload
+
         # Enforce uniqueness of name
         existing = unify.get_logs(
-            context=self._ctx,
+            context=context,
             filter=f"name == {name!r}",
             limit=1,
             return_ids_only=True,
@@ -925,19 +1112,21 @@ class SecretManager(BaseSecretManager):
             "value": value,
             "description": description or "",
         }
-        log = unity_log(
-            context=self._ctx,
+        unity_log(
+            context=context,
             **entries,
             new=True,
             mutable=True,
-            add_to_all_context=self.include_in_multi_assistant_table,
+            add_to_all_context=False,
         )
 
-        # .env sync (best-effort)
         try:
-            self._env_set(name, value)
+            if self._is_personal_context(context):
+                self._env_set(name, value)
         except Exception:
             pass
+        finally:
+            self._invalidate_credential_processes()
 
         return {"outcome": "secret created", "details": {"name": name}}
 
@@ -947,7 +1136,8 @@ class SecretManager(BaseSecretManager):
         name: str,
         value: Optional[str] = None,
         description: Optional[str] = None,
-    ) -> ToolOutcome:
+        destination: str | None = None,
+    ) -> ToolOutcome | ToolError:
         """Update fields of an existing secret.
 
         Parameters
@@ -958,15 +1148,28 @@ class SecretManager(BaseSecretManager):
             New raw value (optional). When provided it overwrites the existing value.
         description : str | None, default None
             New description (optional).
+        destination : str | None, default None
+            Which copy of the credential to update. Defaults to ``"personal"``
+            (your private credential). Passing ``"space:<id>"`` rotates the
+            shared credential in that space and is visible to every member;
+            pooled subprocesses pick up the new value on next invocation. See
+            the *Accessible shared spaces* block in your system prompt for
+            the available spaces and their descriptions. Inside a task, an
+            omitted destination inherits the task destination.
 
         Returns
         -------
-        ToolOutcome
-            Outcome dict: ``{"outcome": "secret updated", "details": {"name": <str>}}``.
+        ToolOutcome | ToolError
+            Outcome dict or structured tool error for invalid destinations.
         """
+        try:
+            context = self._secret_context_for_destination(destination)
+        except ToolErrorException as exc:
+            return exc.payload
+
         # Find target log id
         ids = unify.get_logs(
-            context=self._ctx,
+            context=context,
             filter=f"name == {name!r}",
             limit=2,
             return_ids_only=True,
@@ -988,35 +1191,54 @@ class SecretManager(BaseSecretManager):
 
         unify.update_logs(
             logs=[log_id],
-            context=self._ctx,
+            context=context,
             entries=updates,
             overwrite=True,
         )
 
-        # .env sync when value provided (best-effort)
         try:
-            if value is not None:
+            if value is not None and self._is_personal_context(context):
                 self._env_set(name, value)
         except Exception:
             pass
+        finally:
+            self._invalidate_credential_processes()
 
         return {"outcome": "secret updated", "details": {"name": name}}
 
-    def _delete_secret(self, *, name: str) -> ToolOutcome:
+    def _delete_secret(
+        self,
+        *,
+        name: str,
+        destination: str | None = None,
+    ) -> ToolOutcome | ToolError:
         """Delete a secret by name.
 
         Parameters
         ----------
         name : str
             The secret name to remove.
+        destination : str | None, default None
+            Which copy of the credential to remove. Defaults to ``"personal"``.
+            Passing ``"space:<id>"`` removes the shared credential from the
+            space for every member, breaking any team integration that depends
+            on it; do not delete a shared credential unless the team decision
+            is to rotate or retire the integration. See the *Accessible shared
+            spaces* block in your system prompt. Inside a task, an omitted
+            destination inherits the task destination.
 
         Returns
         -------
-        ToolOutcome
-            Outcome dict: ``{"outcome": "secret deleted", "details": {"name": <str>}}``.
+        ToolOutcome | ToolError
+            Outcome dict or structured tool error for invalid destinations.
         """
+        try:
+            context = self._secret_context_for_destination(destination)
+        except ToolErrorException as exc:
+            return exc.payload
+
         ids = unify.get_logs(
-            context=self._ctx,
+            context=context,
             filter=f"name == {name!r}",
             limit=2,
             return_ids_only=True,
@@ -1025,10 +1247,12 @@ class SecretManager(BaseSecretManager):
             raise ValueError(f"No secret found with name '{name}'.")
         if len(ids) > 1:
             raise RuntimeError(f"Multiple secrets found with name '{name}'.")
-        unify.delete_logs(context=self._ctx, logs=ids[0])
-        # .env sync (best-effort)
+        unify.delete_logs(context=context, logs=ids[0])
         try:
-            self._env_remove(name)
+            if self._is_personal_context(context):
+                self._env_remove(name)
         except Exception:
             pass
+        finally:
+            self._invalidate_credential_processes()
         return {"outcome": "secret deleted", "details": {"name": name}}

@@ -22,6 +22,8 @@ from ..common.prompt_helpers import (
     PromptParts,
     compose_system_prompt,
 )
+from ..common.accessible_spaces_block import build_accessible_spaces_block
+from ..session_details import SESSION_DETAILS
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Internal helpers
@@ -138,6 +140,9 @@ Anti‑patterns to avoid
             "• All writes must keep raw values out of messages – only tool I/O may carry them internally.",
         ],
     )
+    accessible_spaces_block = build_accessible_spaces_block(
+        SESSION_DETAILS.space_summaries,
+    )
 
     # Build using standardized composer
     spec = PromptSpec(
@@ -164,7 +169,7 @@ Anti‑patterns to avoid
         images_extras_block=None,
         include_parallelism=True,
         schemas=[],
-        special_blocks=[security_block],
+        special_blocks=[accessible_spaces_block, security_block],
         include_clarification_footer=True,
         include_time_footer=True,
     )
@@ -275,6 +280,9 @@ Anti‑patterns to avoid
             "• Do not reference external stores like .env – Unify is the single source of truth.",
         ],
     )
+    accessible_spaces_block = build_accessible_spaces_block(
+        SESSION_DETAILS.space_summaries,
+    )
 
     # Compose using standardized composer
     spec = PromptSpec(
@@ -302,7 +310,7 @@ Anti‑patterns to avoid
         images_extras_block=None,
         include_parallelism=True,
         schemas=[],
-        special_blocks=[security_block],
+        special_blocks=[accessible_spaces_block, security_block],
         include_clarification_footer=True,
         include_time_footer=True,
     )
