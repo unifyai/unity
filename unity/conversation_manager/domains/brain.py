@@ -237,6 +237,7 @@ def build_brain_spec(
         assistant_has_discord=bool(cm.assistant_discord_bot_id),
         assistant_has_teams=bool(cm.assistant_has_teams),
         user_desktop_control=SETTINGS.conversation.USER_DESKTOP_CONTROL_ENABLED,
+        space_summaries=getattr(cm, "space_summaries", []),
     )
 
     response_model = _RESPONSE_MODELS[cm.mode]

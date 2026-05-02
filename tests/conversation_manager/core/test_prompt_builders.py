@@ -10,6 +10,7 @@ from __future__ import annotations
 
 
 from unity.conversation_manager.prompt_builders import build_system_prompt
+from unity.session_details import SpaceSummary
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -64,6 +65,32 @@ class TestCommsToolListing:
         assert "`send_email`: Send an email" not in prompt
         assert "`make_call`: Start an outbound" not in prompt
         assert "`send_unify_message`" in prompt
+
+
+class TestAccessibleSpacesBlock:
+    """The system prompt contains shared-space routing guidance."""
+
+    def test_block_renders_after_bio(self):
+        prompt = _build(
+            bio="Assistant biography.",
+            space_summaries=[
+                SpaceSummary(
+                    space_id=3,
+                    name="Repairs",
+                    description="South-East repairs patch daily operations.",
+                ),
+            ],
+        )
+
+        assert "Bio\n---\nAssistant biography." in prompt
+        assert "Accessible shared spaces" in prompt
+        assert (
+            '- space:3 "Repairs" - South-East repairs patch daily operations.' in prompt
+        )
+        assert prompt.index("Bio\n---") < prompt.index("Accessible shared spaces")
+        assert prompt.index("Accessible shared spaces") < prompt.index(
+            "Onboarding reference",
+        )
 
 
 # ---------------------------------------------------------------------------
