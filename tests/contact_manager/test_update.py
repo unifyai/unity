@@ -2,12 +2,18 @@ from __future__ import annotations
 
 import asyncio
 import pytest
+import time
+import unify
 from typing import Dict, Any
+from unify.utils.http import RequestError
 
 from unity.contact_manager.contact_manager import ContactManager
 from unity.contact_manager.types.contact import Contact
 from unity.blacklist_manager.blacklist_manager import BlackListManager
 from unity.conversation_manager.cm_types import Medium
+from unity.common.context_registry import ContextRegistry
+from unity.memory_manager import broader_context
+from unity.session_details import SESSION_DETAILS, SpaceSummary
 from tests.helpers import _handle_project
 from tests.async_helpers import _wait_for_next_assistant_response_event
 
@@ -46,6 +52,120 @@ def _programmatic_contact_check(
     return actual_contact
 
 
+def _contacts_with_email(context: str, email: str) -> list:
+    try:
+        return unify.get_logs(
+            context=context,
+            filter=f"email_address == '{email}'",
+            limit=10,
+        )
+    except RequestError:
+        return []
+
+
+def _configure_contact_routing_space(space_id: int) -> None:
+    SESSION_DETAILS.space_ids = [space_id]
+    SESSION_DETAILS.space_summaries = [
+        SpaceSummary(
+            space_id=space_id,
+            name="Repairs Dispatch",
+            description=(
+                "South-East repairs dispatch operations, contractor scheduling, "
+                "field support vendors, and shared customer coordination."
+            ),
+        ),
+    ]
+    ContextRegistry.clear()
+    broader_context.reset()
+
+
+def _reset_contact_routing_space(space_id: int) -> None:
+    try:
+        unify.delete_context(f"Spaces/{space_id}/Contacts")
+    except Exception:
+        pass
+    SESSION_DETAILS.space_ids = []
+    SESSION_DETAILS.space_summaries = []
+    ContextRegistry.clear()
+    broader_context.reset()
+
+
+@_handle_project
+@pytest.mark.asyncio
+async def test_update_routes_explicit_team_contact_to_shared_space():
+    space_id = time.time_ns()
+    _configure_contact_routing_space(space_id)
+    email = f"nora.shared.{space_id}@example.com"
+
+    try:
+        cm = ContactManager()
+        handle = await cm.update(
+            "Add Nora Shared, email "
+            f"{email}, as a Repairs Dispatch field support vendor for the "
+            "shared repairs dispatch workspace. This contact belongs to that "
+            "team's shared operational memory, not my private contacts.",
+        )
+        await handle.result()
+
+        personal_rows = _contacts_with_email(cm._ctx, email)
+        shared_rows = _contacts_with_email(f"Spaces/{space_id}/Contacts", email)
+        assert personal_rows == []
+        assert len(shared_rows) == 1
+        assert shared_rows[0].entries["first_name"] == "Nora"
+    finally:
+        _reset_contact_routing_space(space_id)
+
+
+@_handle_project
+@pytest.mark.asyncio
+async def test_update_routes_private_contact_to_personal_memory():
+    space_id = time.time_ns()
+    _configure_contact_routing_space(space_id)
+    email = f"pia.private.{space_id}@example.com"
+
+    try:
+        cm = ContactManager()
+        handle = await cm.update(
+            "Add Pia Private, email "
+            f"{email}, as my personal friend from yoga. This is private to me "
+            "and should go in personal memory, not the Repairs Dispatch space.",
+        )
+        await handle.result()
+
+        personal_rows = _contacts_with_email(cm._ctx, email)
+        shared_rows = _contacts_with_email(f"Spaces/{space_id}/Contacts", email)
+        assert len(personal_rows) == 1
+        assert shared_rows == []
+        assert personal_rows[0].entries["first_name"] == "Pia"
+    finally:
+        _reset_contact_routing_space(space_id)
+
+
+@_handle_project
+@pytest.mark.asyncio
+async def test_update_defaults_ambiguous_contact_to_personal_memory():
+    space_id = time.time_ns()
+    _configure_contact_routing_space(space_id)
+    email = f"owen.neighbor.{space_id}@example.com"
+
+    try:
+        cm = ContactManager()
+        handle = await cm.update(
+            "Add Owen Neighbor, email "
+            f"{email}. I met him at a neighborhood dinner and may want to "
+            "message him later.",
+        )
+        await handle.result()
+
+        personal_rows = _contacts_with_email(cm._ctx, email)
+        shared_rows = _contacts_with_email(f"Spaces/{space_id}/Contacts", email)
+        assert len(personal_rows) == 1
+        assert shared_rows == []
+        assert personal_rows[0].entries["first_name"] == "Owen"
+    finally:
+        _reset_contact_routing_space(space_id)
+
+
 @_handle_project
 @pytest.mark.asyncio
 @pytest.mark.parametrize("identify_by", ["name", "email", "id"])
@@ -66,9 +186,14 @@ async def test_selects_move_to_blacklist(identify_by: str):
         email_address="zed.quill@example.org",
         phone_number="+15550100200",
     )
-    # Get the created contact (exclude system contacts 0 and 1)
+    system_contact_ids = {
+        int(SESSION_DETAILS.self_contact_id),
+        int(SESSION_DETAILS.boss_contact_id),
+    }
     created = [
-        c for c in cm.filter_contacts()["contacts"] if c.contact_id not in (0, 1)
+        c
+        for c in cm.filter_contacts()["contacts"]
+        if c.contact_id not in system_contact_ids
     ][0]
 
     reason = "policy violation"

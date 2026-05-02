@@ -15,6 +15,10 @@ class RegistryExampleManager:
                 name="Tasks",
                 description="Scheduled work items.",
             ),
+            TableContext(
+                name="Contacts",
+                description="People and organizations the assistant knows.",
+            ),
         ]
 
 
@@ -52,7 +56,7 @@ def test_write_root_resolves_personal_and_space_destinations():
         assert (
             ContextRegistry.write_root(
                 RegistryExampleManager,
-                "Tasks",
+                "Contacts",
                 destination="space:7",
             )
             == "Spaces/7"
@@ -78,9 +82,11 @@ def test_read_roots_returns_personal_then_sorted_spaces():
     SESSION_DETAILS.space_ids = [7, 3]
 
     with patch("unity.common.context_registry._create_context_with_retry"):
-        roots = ContextRegistry.read_roots(RegistryExampleManager, "Tasks")
+        task_roots = ContextRegistry.read_roots(RegistryExampleManager, "Tasks")
+        contact_roots = ContextRegistry.read_roots(RegistryExampleManager, "Contacts")
 
-    assert roots == ["user123/42", "Spaces/3", "Spaces/7"]
+    assert task_roots == ["user123/42", "Spaces/3", "Spaces/7"]
+    assert contact_roots == ["user123/42", "Spaces/3", "Spaces/7"]
 
 
 def test_lazy_provisioning_is_cached_per_root():
