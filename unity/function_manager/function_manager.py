@@ -13,6 +13,7 @@ import sys
 import tempfile
 import logging
 from pathlib import Path
+from weakref import WeakSet
 
 from unity.logger import LOGGER
 from unity.common.hierarchical_logger import ICONS
@@ -627,6 +628,8 @@ class VenvPool:
     stateful sessions per venv. Each session has its own subprocess and globals.
     """
 
+    _instances = WeakSet()
+
     def __init__(self, *, max_total_sessions: int = 20) -> None:
         # Key: (venv_id, session_id) -> _VenvConnection
         self._connections: Dict[Tuple[int, int], _VenvConnection] = {}
@@ -634,6 +637,44 @@ class VenvPool:
         self._lock = asyncio.Lock()
         self._closed = False
         self._max_total_sessions = int(max_total_sessions)
+        self._invalidation_generation = 0
+        self.__class__._instances.add(self)
+
+    @classmethod
+    def invalidate_all_pools(cls) -> int:
+        """Drop every live pool connection so future executions reload credentials."""
+        invalidated = 0
+        for pool in list(cls._instances):
+            invalidated += pool.invalidate_sessions()
+        return invalidated
+
+    def invalidate_sessions(self) -> int:
+        """Retire pooled sessions while keeping the pool reusable."""
+        self._invalidation_generation += 1
+        connections = list(self._connections.values())
+        self._connections.clear()
+        self._metadata.clear()
+        if not connections:
+            return 0
+
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            asyncio.run(self._shutdown_retired_connections(connections))
+        else:
+            loop.create_task(self._shutdown_retired_connections(connections))
+        return len(connections)
+
+    async def _shutdown_retired_connections(
+        self,
+        connections: List["_VenvConnection"],
+    ) -> None:
+        """Close retired connections through the normal subprocess lifecycle."""
+        for conn in connections:
+            try:
+                await conn.shutdown()
+            except Exception:
+                pass
 
     async def get_or_create_connection(
         self,
@@ -655,46 +696,54 @@ class VenvPool:
             A _VenvConnection instance.
         """
         key = (venv_id, session_id)
-        async with self._lock:
-            if self._closed:
-                raise RuntimeError("VenvPool has been closed")
+        while True:
+            async with self._lock:
+                if self._closed:
+                    raise RuntimeError("VenvPool has been closed")
 
-            if key in self._connections:
-                conn = self._connections[key]
-                if conn.is_alive():
-                    md = self._metadata.get(key)
-                    if md is not None:
-                        md.last_used = datetime.now(timezone.utc)
-                    return conn
-                # Connection died, remove it and create a new one
-                logger.warning(
-                    f"VenvPool: connection for venv {venv_id} session {session_id} died, creating new one",
+                if key in self._connections:
+                    conn = self._connections[key]
+                    if conn.is_alive():
+                        md = self._metadata.get(key)
+                        if md is not None:
+                            md.last_used = datetime.now(timezone.utc)
+                        return conn
+                    # Connection died, remove it and create a new one
+                    logger.warning(
+                        f"VenvPool: connection for venv {venv_id} session {session_id} died, creating new one",
+                    )
+                    del self._connections[key]
+                    self._metadata.pop(key, None)
+
+                # Enforce global session cap (across all venv_id/session_id combinations).
+                active = sum(1 for c in self._connections.values() if c.is_alive())
+                if active >= self._max_total_sessions:
+                    raise SessionLimitError(
+                        message=f"Maximum sessions reached for python ({active}/{self._max_total_sessions})",
+                    )
+
+                generation = self._invalidation_generation
+                # Create new connection
+                conn = await _VenvConnection.create(
+                    venv_id=venv_id,
+                    function_manager=function_manager,
+                    timeout=timeout,
                 )
-                del self._connections[key]
-                self._metadata.pop(key, None)
-
-            # Enforce global session cap (across all venv_id/session_id combinations).
-            active = sum(1 for c in self._connections.values() if c.is_alive())
-            if active >= self._max_total_sessions:
-                raise SessionLimitError(
-                    message=f"Maximum sessions reached for python ({active}/{self._max_total_sessions})",
+                if generation != self._invalidation_generation:
+                    try:
+                        await conn.shutdown()
+                    except Exception:
+                        pass
+                    continue
+                self._connections[key] = conn
+                now = datetime.now(timezone.utc)
+                self._metadata[key] = SessionMetadata(
+                    venv_id=int(venv_id),
+                    session_id=int(session_id),
+                    created_at=now,
+                    last_used=now,
                 )
-
-            # Create new connection
-            conn = await _VenvConnection.create(
-                venv_id=venv_id,
-                function_manager=function_manager,
-                timeout=timeout,
-            )
-            self._connections[key] = conn
-            now = datetime.now(timezone.utc)
-            self._metadata[key] = SessionMetadata(
-                venv_id=int(venv_id),
-                session_id=int(session_id),
-                created_at=now,
-                last_used=now,
-            )
-            return conn
+                return conn
 
     async def execute_in_venv(
         self,

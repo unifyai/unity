@@ -126,6 +126,29 @@ def function_manager_factory():
             pass
 
 
+class _RetiredConnection:
+    def __init__(self) -> None:
+        self.shutdown_called = False
+
+    async def shutdown(self) -> None:
+        self.shutdown_called = True
+
+
+def test_venv_pool_invalidation_retires_connections_without_closing_pool():
+    """Invalidation removes pooled sessions and shuts them down through lifecycle hooks."""
+    pool = VenvPool()
+    connection = _RetiredConnection()
+    pool._connections[(1, 0)] = connection  # type: ignore[assignment]
+
+    invalidated = pool.invalidate_sessions()
+
+    assert invalidated == 1
+    assert pool._connections == {}
+    assert pool._metadata == {}
+    assert connection.shutdown_called is True
+    assert pool._closed is False
+
+
 # ────────────────────────────────────────────────────────────────────────────
 # Helper Functions
 # ────────────────────────────────────────────────────────────────────────────
