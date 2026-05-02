@@ -1552,6 +1552,7 @@ class ConversationManager(metaclass=SingletonABCMeta):
         self.org_name: str = payload.get("org_name", "")
         self.team_ids: list[int] = payload.get("team_ids") or []
         self.space_ids: list[int] = payload.get("space_ids") or []
+        space_summaries = payload.get("space_summaries") or []
         # Set API key on SESSION_DETAILS for runtime access
         if payload.get("api_key"):
             SESSION_DETAILS.unify_key = payload["api_key"]
@@ -1582,6 +1583,7 @@ class ConversationManager(metaclass=SingletonABCMeta):
             org_name=self.org_name,
             team_ids=self.team_ids,
             space_ids=self.space_ids,
+            space_summaries=space_summaries,
             voice_provider=self.voice_provider,
             voice_id=self.voice_id,
             binding_id=self.binding_id,
@@ -1590,6 +1592,7 @@ class ConversationManager(metaclass=SingletonABCMeta):
             user_desktop_filesys_sync=self.user_desktop_filesys_sync,
             user_desktop_url=self.user_desktop_url,
         )
+        self.space_summaries = SESSION_DETAILS.space_summaries
         # Export to env vars for subprocess inheritance
         SESSION_DETAILS.export_to_env()
 

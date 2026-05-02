@@ -24,6 +24,7 @@ from unity.conversation_manager.domains.task_activation import (
     _handle_task_due_event,
     _surface_trigger_task_candidates,
 )
+from unity.memory_manager import broader_context
 from unity.task_scheduler.machine_state import invalidate_task_machine_state_reads
 from unity.conversation_manager.cm_types import Medium, Mode
 from unity.logger import LOGGER
@@ -1987,14 +1988,18 @@ async def _(event: AssistantUpdateEvent, cm: "ConversationManager", *args, **kwa
     if event.update_kind == "membership":
         space_ids = sorted(set(event.space_ids or []))
         SESSION_DETAILS.space_ids = space_ids
+        SESSION_DETAILS.space_summaries = event.space_summaries or []
         SESSION_DETAILS.self_contact_id = event.self_contact_id
         SESSION_DETAILS.boss_contact_id = event.boss_contact_id
         SESSION_DETAILS.export_space_ids_to_env()
+        SESSION_DETAILS.export_space_summaries_to_env()
         SESSION_DETAILS.export_contact_ids_to_env()
         cm.space_ids = space_ids
+        cm.space_summaries = SESSION_DETAILS.space_summaries
         cm.self_contact_id = event.self_contact_id
         cm.boss_contact_id = event.boss_contact_id
         ContextRegistry.forget_departed_space_roots(space_ids)
+        broader_context.reset()
         invalidate_task_machine_state_reads()
         return
 

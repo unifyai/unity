@@ -7,8 +7,11 @@ and its plumbing through populate / export_to_env / populate_from_env.
 """
 
 import os
+import json
 
-from unity.session_details import SessionDetails
+import pytest
+
+from unity.session_details import SessionDetails, SpaceSummary
 
 
 class TestEmailProvider:
@@ -77,6 +80,50 @@ class TestSpaceIds:
         sd.reset()
         assert sd.space_ids == []
         assert sd.assistant.space_ids == []
+
+
+class TestSpaceSummaries:
+    def test_export_and_populate_from_env_round_trips(self, monkeypatch):
+        monkeypatch.delenv("SPACE_SUMMARIES", raising=False)
+        summaries = [
+            {
+                "space_id": 3,
+                "name": "Repairs",
+                "description": "South-East repairs patch daily operations.",
+            },
+        ]
+        sd = SessionDetails()
+        sd.populate(space_summaries=summaries)
+        sd.export_to_env()
+
+        assert json.loads(os.environ["SPACE_SUMMARIES"]) == summaries
+
+        sd2 = SessionDetails()
+        sd2.populate_from_env()
+        assert sd2.space_summaries == [
+            SpaceSummary(
+                space_id=3,
+                name="Repairs",
+                description="South-East repairs patch daily operations.",
+            ),
+        ]
+
+        sd.reset()
+        assert sd.space_summaries == []
+
+    @pytest.mark.parametrize(
+        "summary",
+        [
+            {"space_id": True, "name": "Repairs", "description": "Valid text"},
+            {"space_id": 3, "name": "", "description": "Valid text"},
+            {"space_id": 3, "name": "Repairs", "description": None},
+        ],
+    )
+    def test_rejects_malformed_space_summaries(self, summary):
+        sd = SessionDetails()
+
+        with pytest.raises(ValueError):
+            sd.populate(space_summaries=[summary])
 
 
 class TestContactIds:

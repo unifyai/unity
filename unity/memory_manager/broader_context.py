@@ -4,6 +4,7 @@ from typing import Optional
 
 __all__ = [
     "get_broader_context",
+    "reset",
     "set_broader_context",
 ]
 
@@ -54,6 +55,10 @@ def get_broader_context(
         from unity.memory_manager.memory_manager import (
             MemoryManager,
         )  # noqa: WPS433  – runtime import
+        from unity.common.accessible_spaces_block import (
+            build_accessible_spaces_block,
+        )  # noqa: WPS433  – runtime import
+        from unity.session_details import SESSION_DETAILS  # noqa: WPS433
 
         # ------------------------------------------------------------------
         # 1.  Gather assistant & user bios (robust to missing data) ---------
@@ -104,6 +109,9 @@ def get_broader_context(
             parts.append(f"\nA bit about {user_name}, who you assist:")
             parts.append(user_bio)
 
+        parts.append("")
+        parts.append(build_accessible_spaces_block(SESSION_DETAILS.space_summaries))
+
         if rolling_activity:
             parts.append(
                 f"\nYour activity logs explain broadly what you've been working on and how you've been assisting {user_name}.",
@@ -128,3 +136,11 @@ def set_broader_context(value: str) -> None:  # noqa: D401 – imperative helper
     global _BROADER_CONTEXT  # noqa: PLW0603 – intentional global write
     with _LOCK:
         _BROADER_CONTEXT = value
+
+
+def reset() -> None:
+    """Clear the cached broader-context snippet."""
+
+    global _BROADER_CONTEXT  # noqa: PLW0603 – intentional global write
+    with _LOCK:
+        _BROADER_CONTEXT = None
