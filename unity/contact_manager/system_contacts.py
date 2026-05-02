@@ -8,6 +8,11 @@ from unify.utils.http import RequestError
 
 _log = logging.getLogger(__name__)
 
+_CONTACT_MEMBERSHIP_PATH = "/admin/assistant/{assistant_id}/contact-memberships"
+_PERSONAL_SCOPE = "personal"
+_SELF_RELATIONSHIP = "self"
+_BOSS_RELATIONSHIP = "boss"
+
 from ..knowledge_manager.types import ColumnType
 from ..session_details import (
     PLACEHOLDER_ASSISTANT_BIO,
@@ -38,6 +43,51 @@ def _ensure_columns_exist(self, extra_fields: Dict[str, Any]) -> None:
             pass
 
 
+def _upsert_personal_contact_membership(
+    *,
+    contact_id: int,
+    relationship: str,
+    response_policy: str,
+    can_edit: bool,
+) -> None:
+    """Ensure the assistant has a personal relationship overlay for a contact."""
+
+    from ..session_details import SESSION_DETAILS
+    from ..settings import SETTINGS
+
+    if not SESSION_DETAILS.is_initialized or SESSION_DETAILS.assistant.agent_id is None:
+        return
+
+    admin_key = SETTINGS.ORCHESTRA_ADMIN_KEY.get_secret_value()
+    if not admin_key:
+        raise RuntimeError(
+            "ORCHESTRA_ADMIN_KEY is required to provision contact memberships.",
+        )
+
+    from unify.utils import http
+
+    assistant_id = int(SESSION_DETAILS.assistant.agent_id)
+    url = (
+        f"{SETTINGS.ORCHESTRA_URL.rstrip('/')}"
+        f"{_CONTACT_MEMBERSHIP_PATH.format(assistant_id=assistant_id)}"
+    )
+    response = http.post(
+        url,
+        headers={"Authorization": f"Bearer {admin_key}"},
+        json={
+            "contact_id": int(contact_id),
+            "target_scope": _PERSONAL_SCOPE,
+            "target_space_id": None,
+            "relationship": relationship,
+            "should_respond": True,
+            "response_policy": response_policy,
+            "can_edit": can_edit,
+        },
+        timeout=15,
+    )
+    response.raise_for_status()
+
+
 def _is_assistant_populated() -> bool:
     """Return True if SESSION_DETAILS has real assistant profile data."""
     from ..session_details import SESSION_DETAILS
@@ -53,9 +103,9 @@ def _resolve_user_details(self) -> Dict[str, Any]:
     When SESSION_DETAILS has not been initialized (e.g., during tests),
     returns default user info to avoid calling real APIs.
 
-    In DEMO_MODE, returns empty details because the boss (contact_id==1)
-    is the prospect being demoed to — their details are unknown at startup
-    and will be learned organically during the demo conversation.
+    In DEMO_MODE, returns empty details because the boss is the prospect being
+    demoed to. Their details are unknown at startup and will be learned
+    organically during the demo conversation.
 
     Returns
     -------
@@ -65,7 +115,7 @@ def _resolve_user_details(self) -> Dict[str, Any]:
     from ..session_details import SESSION_DETAILS
     from ..settings import SETTINGS
 
-    # In demo mode, there is no real user account backing contact_id==1.
+    # In demo mode, there is no real user account backing the boss contact.
     # The prospect's details will be populated during the demo via
     # set_boss_details / inline communication tools.
     if SETTINGS.DEMO_MODE:
@@ -123,14 +173,20 @@ def _resolve_user_details(self) -> Dict[str, Any]:
     }
 
 
-def provision_assistant_contact(self, assistant_log) -> None:
-    """Provision the assistant system contact (id == 0).
+def provision_assistant_contact(
+    self,
+    assistant_log,
+    *,
+    contact_id: int | None = None,
+) -> None:
+    """Provision the assistant system contact.
 
     Creates or updates the assistant contact using details from
     SESSION_DETAILS or default values.
     """
     from ..session_details import SESSION_DETAILS
 
+    resolved_contact_id = int(contact_id or SESSION_DETAILS.self_contact_id)
     populated = _is_assistant_populated()
     ast = SESSION_DETAILS.assistant
 
@@ -207,7 +263,7 @@ def provision_assistant_contact(self, assistant_log) -> None:
                 or needs_surname
             ):
                 update_kwargs: Dict[str, Any] = {
-                    "contact_id": 0,
+                    "contact_id": resolved_contact_id,
                     "_log_id": assistant_log.id,
                 }
                 if needs_timezone:
@@ -234,12 +290,21 @@ def provision_assistant_contact(self, assistant_log) -> None:
                 self._data_store.put(entries)
         except Exception:
             pass
+        _upsert_personal_contact_membership(
+            contact_id=resolved_contact_id,
+            relationship=_SELF_RELATIONSHIP,
+            response_policy="",
+            can_edit=True,
+        )
         return
 
     # Insert the assistant row. Race conditions are handled by Orchestra's
     # field-level uniqueness enforcement on email_address / phone_number.
     try:
-        self._create_contact(**base_fields)
+        outcome = self._create_contact(contact_id=resolved_contact_id, **base_fields)
+        if int(outcome["details"]["contact_id"]) != resolved_contact_id:
+            raise RuntimeError("Assistant self contact was created with the wrong id.")
+        resolved_contact_id = int(outcome["details"]["contact_id"])
     except RequestError as e:
         if e.response is not None and e.response.status_code in (400, 500):
             detail = ""
@@ -250,10 +315,16 @@ def provision_assistant_contact(self, assistant_log) -> None:
             if "unique" in detail.lower():
                 return
         raise
+    _upsert_personal_contact_membership(
+        contact_id=resolved_contact_id,
+        relationship=_SELF_RELATIONSHIP,
+        response_policy="",
+        can_edit=True,
+    )
 
 
-def provision_user_contact(self, user_log) -> None:
-    """Provision the user system contact (id == 1).
+def provision_user_contact(self, user_log, *, contact_id: int | None = None) -> None:
+    """Provision the user system contact.
 
     Creates or updates the user (boss) contact using details resolved from
     SESSION_DETAILS, the Unify API, or default values.
@@ -265,6 +336,9 @@ def provision_user_contact(self, user_log) -> None:
     with should_respond=True so communication tools work immediately.
     """
     from ..settings import SETTINGS
+    from ..session_details import SESSION_DETAILS
+
+    resolved_contact_id = int(contact_id or SESSION_DETAILS.boss_contact_id)
 
     if SETTINGS.DEMO_MODE:
         if user_log is not None:
@@ -274,7 +348,7 @@ def provision_user_contact(self, user_log) -> None:
                 entries = user_log.entries
                 if entries.get("is_system") is not True:
                     self.update_contact(
-                        contact_id=1,
+                        contact_id=resolved_contact_id,
                         _log_id=user_log.id,
                         is_system=True,
                     )
@@ -285,14 +359,24 @@ def provision_user_contact(self, user_log) -> None:
             return
         # No existing contact — create a minimal placeholder.
         try:
-            self._create_contact(
+            outcome = self._create_contact(
+                contact_id=resolved_contact_id,
                 should_respond=True,
                 is_system=True,
                 response_policy=self.USER_MANAGER_RESPONSE_POLICY,
                 timezone="UTC",
             )
+            if int(outcome["details"]["contact_id"]) != resolved_contact_id:
+                raise RuntimeError("Boss contact was created with the wrong id.")
+            resolved_contact_id = int(outcome["details"]["contact_id"])
         except (ValueError, RequestError):
             pass
+        _upsert_personal_contact_membership(
+            contact_id=resolved_contact_id,
+            relationship=_BOSS_RELATIONSHIP,
+            response_policy=self.USER_MANAGER_RESPONSE_POLICY,
+            can_edit=True,
+        )
         return
 
     user_info = _resolve_user_details(self)
@@ -371,7 +455,7 @@ def provision_user_contact(self, user_log) -> None:
                 or needs_is_system
             ):
                 update_kwargs: Dict[str, Any] = {
-                    "contact_id": 1,
+                    "contact_id": resolved_contact_id,
                     "_log_id": user_log.id,
                 }
                 if needs_timezone:
@@ -392,12 +476,24 @@ def provision_user_contact(self, user_log) -> None:
                 self._data_store.put(entries)
         except Exception:
             pass
+        _upsert_personal_contact_membership(
+            contact_id=resolved_contact_id,
+            relationship=_BOSS_RELATIONSHIP,
+            response_policy=self.USER_MANAGER_RESPONSE_POLICY,
+            can_edit=True,
+        )
         return
 
     # Insert the user row. Race conditions are handled by Orchestra's
     # field-level uniqueness enforcement on email_address / phone_number.
     try:
-        self._create_contact(**{k: v for k, v in base_fields.items() if v is not None})
+        outcome = self._create_contact(
+            contact_id=resolved_contact_id,
+            **{k: v for k, v in base_fields.items() if v is not None},
+        )
+        if int(outcome["details"]["contact_id"]) != resolved_contact_id:
+            raise RuntimeError("Boss contact was created with the wrong id.")
+        resolved_contact_id = int(outcome["details"]["contact_id"])
     except RequestError as e:
         if e.response is not None and e.response.status_code in (400, 500):
             detail = ""
@@ -408,6 +504,12 @@ def provision_user_contact(self, user_log) -> None:
             if "unique" in detail.lower():
                 return
         raise
+    _upsert_personal_contact_membership(
+        contact_id=resolved_contact_id,
+        relationship=_BOSS_RELATIONSHIP,
+        response_policy=self.USER_MANAGER_RESPONSE_POLICY,
+        can_edit=True,
+    )
 
 
 def _fetch_org_members() -> List[Dict[str, Any]]:
@@ -451,18 +553,20 @@ def provision_org_member_contacts(self) -> None:
     - If contact with email exists: ensure is_system=True
     - If no contact exists: create with is_system=True
 
-    Skips the primary user (id=1) to avoid duplicates.
+    Skips the primary user to avoid duplicates.
     """
     members = _fetch_org_members()
     if not members:
         return
+
+    from ..session_details import SESSION_DETAILS
 
     # Get primary user email to skip
     primary_user_email = None
     try:
         primary_user_rows = unify.get_logs(
             context=self._ctx,
-            filter="contact_id == 1",
+            filter=f"contact_id == {SESSION_DETAILS.boss_contact_id}",
             limit=1,
             from_fields=["email_address"],
         )
@@ -476,7 +580,7 @@ def provision_org_member_contacts(self) -> None:
         if not email:
             continue
 
-        # Skip primary user (already synced as id=1)
+        # Skip primary user because it is already synced as the boss contact.
         if primary_user_email and email.lower() == primary_user_email.lower():
             continue
 

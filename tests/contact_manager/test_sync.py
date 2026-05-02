@@ -14,7 +14,7 @@ def _clear_cached_assistant(monkeypatch):
     """Force *unity* to behave as if no real assistant were configured.
 
     We reset assistant details so that every time a ``ContactManager``
-    instance synchronises the assistant (id 0) it sees no populated name
+    instance synchronises the assistant self contact it sees no populated name
     and therefore falls back to the dummy placeholder record.
 
     The fixture is *autouse* and therefore applies to every test in this
@@ -27,7 +27,7 @@ def _clear_cached_assistant(monkeypatch):
 
 @_handle_project
 def test_dummy_assistant(monkeypatch):
-    """When the account has no assistants, a default assistant with ID 0 should be created."""
+    """When the account has no assistants, default system contacts are created."""
     from unity.session_details import (
         PLACEHOLDER_ASSISTANT_EMAIL,
         PLACEHOLDER_ASSISTANT_FIRST_NAME,
@@ -37,8 +37,10 @@ def test_dummy_assistant(monkeypatch):
 
     cm = ContactManager()
 
-    assistants = cm.filter_contacts(filter="contact_id == 0")["contacts"]
-    assert len(assistants) == 1, "Exactly one assistant contact (ID 0) should exist"
+    assistants = cm.filter_contacts(
+        filter=f"contact_id == {SESSION_DETAILS.self_contact_id}",
+    )["contacts"]
+    assert len(assistants) == 1, "Exactly one assistant self contact should exist"
 
     a = assistants[0]
     assert a.first_name == PLACEHOLDER_ASSISTANT_FIRST_NAME
@@ -48,15 +50,17 @@ def test_dummy_assistant(monkeypatch):
     # System contact timezone should be hard-coded to UTC for now
     assert a.timezone == "UTC"
 
-    # Default user (id 1) should also have UTC for now
-    users = cm.filter_contacts(filter="contact_id == 1")["contacts"]
+    # Default user should also have UTC for now
+    users = cm.filter_contacts(
+        filter=f"contact_id == {SESSION_DETAILS.boss_contact_id}",
+    )["contacts"]
     assert users, "Default user should exist"
     assert users[0].timezone == "UTC"
 
 
 @_handle_project
 def test_real_assistant(monkeypatch):
-    """If a real assistant is configured, its details should populate contact ID 0."""
+    """If a real assistant is configured, its details should populate the self contact."""
     from unity.session_details import SESSION_DETAILS
 
     from unity.session_details import AssistantDetails
@@ -67,7 +71,7 @@ def test_real_assistant(monkeypatch):
         SESSION_DETAILS,
         "assistant",
         AssistantDetails(
-            id="123",
+            agent_id=123,
             first_name="Alice",
             surname="Smith",
             number="+15551234567",
@@ -76,10 +80,16 @@ def test_real_assistant(monkeypatch):
             timezone="America/New_York",
         ),
     )
+    monkeypatch.setattr(
+        "unity.contact_manager.system_contacts._upsert_personal_contact_membership",
+        lambda **_: None,
+    )
 
     cm = ContactManager()
 
-    assistants = cm.filter_contacts(filter="contact_id == 0")["contacts"]
+    assistants = cm.filter_contacts(
+        filter=f"contact_id == {SESSION_DETAILS.self_contact_id}",
+    )["contacts"]
     assert len(assistants) == 1
 
     a = assistants[0]
@@ -91,7 +101,9 @@ def test_real_assistant(monkeypatch):
     # Timezone should be synced from the assistant record
     assert a.timezone == "America/New_York"
 
-    users = cm.filter_contacts(filter="contact_id == 1")["contacts"]
+    users = cm.filter_contacts(
+        filter=f"contact_id == {SESSION_DETAILS.boss_contact_id}",
+    )["contacts"]
     assert users, "Default user should exist"
 
 
@@ -100,16 +112,18 @@ def test_system_contacts_have_is_system_flag(monkeypatch):
     """Assistant and user contacts should have is_system=True."""
     cm = ContactManager()
 
-    # Assistant (id=0) should have is_system=True
-    assistants = cm.filter_contacts(filter="contact_id == 0")["contacts"]
-    assert len(assistants) == 1, "Exactly one assistant contact (ID 0) should exist"
+    assistants = cm.filter_contacts(
+        filter=f"contact_id == {SESSION_DETAILS.self_contact_id}",
+    )["contacts"]
+    assert len(assistants) == 1, "Exactly one assistant self contact should exist"
     assert (
         assistants[0].is_system is True
     ), "Assistant contact should have is_system=True"
 
-    # User (id=1) should have is_system=True
-    users = cm.filter_contacts(filter="contact_id == 1")["contacts"]
-    assert len(users) == 1, "Exactly one user contact (ID 1) should exist"
+    users = cm.filter_contacts(
+        filter=f"contact_id == {SESSION_DETAILS.boss_contact_id}",
+    )["contacts"]
+    assert len(users) == 1, "Exactly one boss contact should exist"
     assert users[0].is_system is True, "User contact should have is_system=True"
 
 
@@ -158,7 +172,7 @@ def test_org_members_provisioned_as_system_contacts(monkeypatch):
 
 @_handle_project
 def test_org_member_skips_primary_user_email(monkeypatch):
-    """Org member with same email as primary user (id=1) should be skipped."""
+    """Org member with same email as the primary user should be skipped."""
     from unity.session_details import PLACEHOLDER_USER_EMAIL
 
     # Include the primary user's email in org members list
@@ -173,8 +187,9 @@ def test_org_member_skips_primary_user_email(monkeypatch):
 
     cm = ContactManager()
 
-    # Primary user should still be id=1, not duplicated
-    primary_users = cm.filter_contacts(filter="contact_id == 1")["contacts"]
+    primary_users = cm.filter_contacts(
+        filter=f"contact_id == {SESSION_DETAILS.boss_contact_id}",
+    )["contacts"]
     assert len(primary_users) == 1
     # The name should NOT be overwritten to "Primary User Duplicate"
     assert primary_users[0].first_name != "Primary"
@@ -233,12 +248,11 @@ def test_no_org_members_when_personal_api_key(monkeypatch):
 
     cm = ContactManager()
 
-    # Should only have assistant (0) and user (1)
     all_contacts = cm.filter_contacts()["contacts"]
     contact_ids = {c.contact_id for c in all_contacts}
 
     # Only system contacts should exist
-    assert 0 in contact_ids, "Assistant should exist"
-    assert 1 in contact_ids, "User should exist"
+    assert SESSION_DETAILS.self_contact_id in contact_ids, "Assistant should exist"
+    assert SESSION_DETAILS.boss_contact_id in contact_ids, "User should exist"
     # No other contacts created from org members
     assert len(contact_ids) == 2, "Only assistant and user should exist"

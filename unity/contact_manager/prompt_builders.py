@@ -17,6 +17,8 @@ from ..common.prompt_helpers import (
     compose_system_prompt,
     special_contacts_block as _special_contacts_block,
 )
+from ..common.accessible_spaces_block import build_accessible_spaces_block
+from ..session_details import SESSION_DETAILS
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Internal helpers
@@ -166,6 +168,9 @@ Anti‑patterns to avoid
 
     # Special contacts via shared helper
     special_block = _special_contacts_block()
+    accessible_spaces_block = build_accessible_spaces_block(
+        SESSION_DETAILS.space_summaries,
+    )
 
     # Early exit policy for mutation-intent requests reaching ask() is handled by composer toggle
 
@@ -196,7 +201,7 @@ Anti‑patterns to avoid
         images_extras_block=None,
         include_parallelism=True,
         schemas=[("Contact", Contact)],
-        special_blocks=[special_block],
+        special_blocks=[accessible_spaces_block, special_block],
         include_clarification_footer=True,
         include_time_footer=True,
     )
@@ -269,7 +274,7 @@ Ask vs Clarification
 • For human clarifications about prospective/new contacts (e.g., name spelling, missing numbers, preferred channel), call `{request_clar_fname}` when available.
 • If the schema lacks a field the user wants to set, create it with `{create_custom_fname}` (typically `column_type='str'`) before updating.
 • Use `{merge_fname}` only when the user explicitly asks to combine two known contacts or when duplicates are clearly identified.
-• Use `{delete_fname}` only on explicit deletion requests. Never delete system contacts with id 0 or 1.
+• Use `{delete_fname}` only on explicit deletion requests. Never delete assistant self or boss system contacts.
 
 Realistic find-then-update flows
 --------------------------------
@@ -302,9 +307,9 @@ Schema evolution and custom columns
 
 Merge and delete
 ----------------
-• Merge two contacts when instructed. Use the `overrides` map to choose winners; include "contact_id" set to 1 or 2 to select the surviving id. For each field, use 1 or 2 to select from the corresponding source (never literal ids). Protect ids 0 and 1 from deletion:
+• Merge two contacts when instructed. Use the `overrides` map to choose winners; include "contact_id" set to 1 or 2 to select the surviving id. For each field, use 1 or 2 to select from the corresponding source (never literal ids). Protect assistant self and boss system contacts from deletion:
   `{merge_fname}(contact_id_1=12, contact_id_2=34, overrides={{'contact_id': 1, 'email_address': 2}})`
-• Delete a contact only when clearly requested (never ids 0 or 1):
+• Delete a contact only when clearly requested (never assistant self or boss system contacts):
   `{delete_fname}(contact_id=77)`
 
 Basic create/update
@@ -349,6 +354,9 @@ Anti‑patterns to avoid
 
     # Compose using standardized composer with schema-based table info
     special_block = _special_contacts_block()
+    accessible_spaces_block = build_accessible_spaces_block(
+        SESSION_DETAILS.space_summaries,
+    )
 
     # Schemas: Contact for table columns, ColumnType for custom column creation
     schemas = [
@@ -389,6 +397,7 @@ Anti‑patterns to avoid
         include_parallelism=True,
         schemas=schemas,
         special_blocks=[
+            accessible_spaces_block,
             special_block,
             "Do not create new columns if an alias already exists.",
         ],

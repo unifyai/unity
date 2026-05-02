@@ -47,6 +47,20 @@ def test_update_tools_docstrings():
             len(doc) >= 100
         ), f"Docstring for tool '{name}' is too short (len={len(doc)})"
 
+    write_tools = {
+        "create_contact",
+        "update_contact",
+        "delete_contact",
+        "merge_contacts",
+    }
+    for name in write_tools:
+        fn = _unwrap_callable(tools[name])
+        doc = (getattr(fn, "__doc__", None) or "").strip()
+        schema = getattr(fn, "__annotations__", {})
+        assert "destination" in schema
+        assert "space:<id>" in doc
+        assert "Accessible shared spaces" in doc
+
 
 def _build_tools_schema_in_subprocess(method: str, test_context: str) -> str:
     """

@@ -1,9 +1,13 @@
 from __future__ import annotations
 
 import pytest
+import time
+import unify
 
 from unity.contact_manager.contact_manager import ContactManager
+from unity.common.context_registry import ContextRegistry
 from unity.common.data_store import DataStore
+from unity.session_details import SESSION_DETAILS
 from tests.helpers import _handle_project
 
 
@@ -115,8 +119,8 @@ def test_system_present_after_init():
     ds = DataStore.for_context(cm._ctx, key_fields=("contact_id",))
 
     # Assistant and default user should be cached
-    a = ds.get(0)
-    u = ds.get(1)
+    a = ds.get(SESSION_DETAILS.self_contact_id)
+    u = ds.get(SESSION_DETAILS.boss_contact_id)
     assert a is not None and a.get("should_respond") is True
     assert u is not None and u.get("should_respond") is True
 
@@ -234,3 +238,47 @@ def test_get_info_cache_fallback():
     )
     assert info_multi[cid1] == {"surname": "Read"}
     assert info_multi[cid2] == {"surname": "Record"}
+
+
+@_handle_project
+def test_get_info_cache_fallback_reads_accessible_space_roots():
+    space_id = time.time_ns()
+    SESSION_DETAILS.space_ids = [space_id]
+
+    try:
+        cm = ContactManager()
+        personal_ds = DataStore.for_context(cm._ctx, key_fields=("contact_id",))
+        shared_context = f"Spaces/{space_id}/Contacts"
+        shared_ds = DataStore.for_context(shared_context, key_fields=("contact_id",))
+
+        personal_max_id = max(
+            contact.contact_id for contact in cm.filter_contacts(limit=1000)["contacts"]
+        )
+        for _ in range(personal_max_id + 2):
+            out = cm._create_contact(
+                first_name="Shared Info",
+                bio=f"space-info-marker-{space_id}",
+                destination=f"space:{space_id}",
+            )
+        cid = out["details"]["contact_id"]
+
+        personal_ds.clear()
+        shared_ds.clear()
+        info = cm.get_contact_info(
+            cid,
+            fields=["first_name", "bio"],
+            search_local_storage=True,
+        )
+        assert info == {
+            cid: {"first_name": "Shared Info", "bio": f"space-info-marker-{space_id}"},
+        }
+        assert shared_ds[cid]["first_name"] == "Shared Info"
+        with pytest.raises(KeyError):
+            personal_ds[cid]
+    finally:
+        try:
+            unify.delete_context(f"Spaces/{space_id}/Contacts")
+        except Exception:
+            pass
+        SESSION_DETAILS.space_ids = []
+        ContextRegistry.clear()

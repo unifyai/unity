@@ -24,12 +24,15 @@ def _maybe_sync_timezone_to_backend(
     self,
     contact_id: int,
     timezone: str,
+    *,
+    context: str | None = None,
+    data_store: Any = None,
 ) -> None:
     """
     Fire-and-forget sync of timezone to backend for system contacts.
 
-    - contact_id=0 → sync to assistant
-    - contact_id=1 or other is_system=True → sync to user via email
+    - assistant self contact → sync to assistant
+    - boss or other system contact → sync to user via email
     """
     from .backend_sync import sync_assistant_timezone, sync_user_timezone
 
@@ -37,20 +40,25 @@ def _maybe_sync_timezone_to_backend(
     if assistant_id is None:
         return
 
-    if contact_id == 0:
+    from ..session_details import SESSION_DETAILS
+
+    if contact_id == SESSION_DETAILS.self_contact_id:
         sync_assistant_timezone(assistant_id, timezone)
         return
 
+    store = data_store or self._data_store
+    context_name = context or self._ctx
+
     # User or org member - need email and is_system check
     try:
-        row = self._data_store.get(contact_id)
+        row = store.get(contact_id)
     except KeyError:
         row = None
 
     if row is None:
         try:
             rows = unify.get_logs(
-                context=self._ctx,
+                context=context_name,
                 filter=f"contact_id == {contact_id}",
                 limit=1,
                 from_fields=["contact_id", "is_system", "email_address"],
@@ -67,12 +75,15 @@ def _maybe_sync_bio_to_backend(
     self,
     contact_id: int,
     bio: str,
+    *,
+    context: str | None = None,
+    data_store: Any = None,
 ) -> None:
     """
     Fire-and-forget sync of bio to backend for system contacts.
 
-    - contact_id=0 → sync to assistant (as 'about')
-    - contact_id=1 or other is_system=True → sync to user (as 'bio')
+    - assistant self contact → sync to assistant (as 'about')
+    - boss or other system contact → sync to user (as 'bio')
     """
     from .backend_sync import sync_assistant_about, sync_user_bio
 
@@ -80,20 +91,25 @@ def _maybe_sync_bio_to_backend(
     if assistant_id is None:
         return
 
-    if contact_id == 0:
+    from ..session_details import SESSION_DETAILS
+
+    if contact_id == SESSION_DETAILS.self_contact_id:
         sync_assistant_about(assistant_id, bio)
         return
 
+    store = data_store or self._data_store
+    context_name = context or self._ctx
+
     # User or org member - need email and is_system check
     try:
-        row = self._data_store.get(contact_id)
+        row = store.get(contact_id)
     except KeyError:
         row = None
 
     if row is None:
         try:
             rows = unify.get_logs(
-                context=self._ctx,
+                context=context_name,
                 filter=f"contact_id == {contact_id}",
                 limit=1,
                 from_fields=["contact_id", "is_system", "email_address"],
@@ -115,13 +131,14 @@ def _maybe_sync_job_title_to_backend(
     Fire-and-forget sync of ``job_title`` to backend for the assistant contact.
 
     Mirrors :func:`_maybe_sync_bio_to_backend` but for the free-text job title
-    / specialization. Only contact_id == 0 (the assistant itself) flows back
-    to the Assistant table; for any other contact the value is purely local
-    metadata.
+    / specialization. Only the assistant's self contact flows back to the
+    Assistant table; for any other contact the value is purely local metadata.
     """
     from .backend_sync import sync_assistant_job_title
 
-    if contact_id != 0:
+    from ..session_details import SESSION_DETAILS
+
+    if contact_id != SESSION_DETAILS.self_contact_id:
         return
     assistant_id = _get_assistant_id()
     if assistant_id is None:
@@ -142,8 +159,12 @@ def create_contact(
     rolling_summary: Optional[str] = None,
     should_respond: bool = True,
     response_policy: Optional[str] = None,
+    context: str | None = None,
+    data_store: Any = None,
     **kwargs: Any,
 ) -> ToolOutcome:
+    context_name = context or self._ctx
+    store = data_store or self._data_store
     if "kwargs" in kwargs:
         kwargs = {**kwargs, **kwargs.pop("kwargs")}
 
@@ -194,14 +215,17 @@ def create_contact(
         raise ValueError(msg) from e
 
     log = unity_log(
-        context=self._ctx,
+        context=context_name,
         **contact_details,
         new=True,
         mutable=True,
-        add_to_all_context=self.include_in_multi_assistant_table,
+        add_to_all_context=(
+            self.include_in_multi_assistant_table
+            and not context_name.startswith("Spaces/")
+        ),
     )
     try:
-        self._data_store.put(log.entries)
+        store.put(log.entries)
     except Exception:
         pass
     return {
@@ -226,8 +250,12 @@ def update_contact(
     should_respond: Optional[bool] = None,
     response_policy: Optional[str] = None,
     _log_id: Optional[int] = None,
+    context: str | None = None,
+    data_store: Any = None,
     **kwargs: Any,
 ) -> ToolOutcome:
+    context_name = context or self._ctx
+    store = data_store or self._data_store
     if "kwargs" in kwargs:
         kwargs = {**kwargs, **kwargs.pop("kwargs")}
 
@@ -284,7 +312,7 @@ def update_contact(
 
     if _log_id is None:
         target_ids = unify.get_logs(
-            context=self._ctx,
+            context=context_name,
             filter=f"contact_id == {contact_id}",
             return_ids_only=True,
         )
@@ -302,31 +330,43 @@ def update_contact(
 
     unify.update_logs(
         logs=[log_to_update_id],
-        context=self._ctx,
+        context=context_name,
         entries=updates_dict,
         overwrite=True,
     )
     try:
         rows = unify.get_logs(
-            context=self._ctx,
+            context=context_name,
             filter=f"contact_id == {contact_id}",
             limit=1,
             from_fields=self._allowed_fields(),
         )
         if rows:
-            self._data_store.put(rows[0].entries)
+            store.put(rows[0].entries)
     except Exception:
         pass
 
     # Fire-and-forget sync to backend for system contacts
     if timezone is not None:
         try:
-            _maybe_sync_timezone_to_backend(self, contact_id, timezone)
+            _maybe_sync_timezone_to_backend(
+                self,
+                contact_id,
+                timezone,
+                context=context_name,
+                data_store=store,
+            )
         except Exception:
             pass
     if bio is not None:
         try:
-            _maybe_sync_bio_to_backend(self, contact_id, bio)
+            _maybe_sync_bio_to_backend(
+                self,
+                contact_id,
+                bio,
+                context=context_name,
+                data_store=store,
+            )
         except Exception:
             pass
     if job_title is not None:
@@ -343,15 +383,24 @@ def delete_contact(
     *,
     contact_id: int,
     _log_id: Optional[int] = None,
+    context: str | None = None,
+    data_store: Any = None,
 ) -> ToolOutcome:
-    # Fast path: hard-coded protection for assistant and primary user
-    if contact_id in (0, 1):
-        raise RuntimeError("Cannot delete system contacts with id 0 or 1.")
+    context_name = context or self._ctx
+    store = data_store or self._data_store
+    from ..session_details import SESSION_DETAILS
+
+    protected_contact_ids = {
+        int(SESSION_DETAILS.self_contact_id),
+        int(SESSION_DETAILS.boss_contact_id),
+    }
+    if contact_id in protected_contact_ids:
+        raise RuntimeError("Cannot delete assistant self or boss system contacts.")
 
     if _log_id is None:
         # Fetch with is_system to check for org member protection
         rows = unify.get_logs(
-            context=self._ctx,
+            context=context_name,
             filter=f"contact_id == {contact_id}",
             limit=2,
             from_fields=["contact_id", "is_system"],
@@ -374,9 +423,9 @@ def delete_contact(
     else:
         resolved_id = _log_id
 
-    unify.delete_logs(context=self._ctx, logs=resolved_id)
+    unify.delete_logs(context=context_name, logs=resolved_id)
     try:
-        self._data_store.delete(contact_id)
+        store.delete(contact_id)
     except Exception:
         pass
     return {"outcome": "contact deleted", "details": {"contact_id": contact_id}}
@@ -388,7 +437,11 @@ def merge_contacts(
     contact_id_1: int,
     contact_id_2: int,
     overrides: Optional[Dict[str, int]] = None,
+    context: str | None = None,
+    data_store: Any = None,
 ) -> ToolOutcome:
+    context_name = context or self._ctx
+    store = data_store or self._data_store
     if contact_id_1 == contact_id_2:
         raise ValueError("contact_id_1 and contact_id_2 must be distinct.")
     if overrides is not None and any(v not in (1, 2) for v in overrides.values()):
@@ -398,7 +451,7 @@ def merge_contacts(
     overrides = overrides or {}
 
     rows = unify.get_logs(
-        context=self._ctx,
+        context=context_name,
         filter=f"contact_id in [{contact_id_1}, {contact_id_2}]",
         limit=2,
         from_fields=self._allowed_fields(),
@@ -424,8 +477,16 @@ def merge_contacts(
 
     keep_id = contact_id_1 if overrides.get("contact_id", 1) == 1 else contact_id_2
     delete_id = contact_id_2 if keep_id == contact_id_1 else contact_id_1
-    if delete_id in (0, 1):
-        raise RuntimeError("Cannot delete system contacts with id 0 or 1 during merge.")
+    from ..session_details import SESSION_DETAILS
+
+    protected_contact_ids = {
+        int(SESSION_DETAILS.self_contact_id),
+        int(SESSION_DETAILS.boss_contact_id),
+    }
+    if delete_id in protected_contact_ids:
+        raise RuntimeError(
+            "Cannot delete assistant self or boss system contacts during merge.",
+        )
 
     entries1 = log1.entries
     entries2 = log2.entries
@@ -461,6 +522,8 @@ def merge_contacts(
             self,
             contact_id=keep_id,
             _log_id=kept_log_id,
+            context=context_name,
+            data_store=store,
             **{
                 k: builtin_updates.get(k)
                 for k in self._BUILTIN_FIELDS
@@ -494,7 +557,13 @@ def merge_contacts(
 
     # Finally, delete the merged contact (FK SET NULL won't fire since no references remain)
     delete_log_id = getattr(by_id[delete_id], "id", None)
-    delete_contact(self, contact_id=delete_id, _log_id=delete_log_id)
+    delete_contact(
+        self,
+        contact_id=delete_id,
+        _log_id=delete_log_id,
+        context=context_name,
+        data_store=store,
+    )
 
     return {
         "outcome": "contacts merged successfully",

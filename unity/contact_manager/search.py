@@ -29,6 +29,8 @@ def filter_contacts(
     filter: Optional[str] = None,
     offset: int = 0,
     limit: int = 100,
+    context: Optional[str] = None,
+    data_store: Any = None,
 ) -> Dict[str, Any]:
     eff_limit = limit
     if isinstance(filter, str):
@@ -58,15 +60,16 @@ def filter_contacts(
         from_fields.extend(sorted(self._known_custom_fields))  # type: ignore[attr-defined]
     normalized = normalize_filter_expr(filter)
     logs = unify.get_logs(
-        context=self._ctx,
+        context=context or self._ctx,
         filter=normalized,
         offset=offset,
         limit=eff_limit,
         from_fields=from_fields,
     )
+    store = data_store or self._data_store
     try:
         for lg in logs:
-            self._data_store.put(lg.entries)
+            store.put(lg.entries)
     except Exception:
         pass
     rows = [lg.entries for lg in logs]
@@ -78,23 +81,31 @@ def search_contacts(
     *,
     references: Optional[Dict[str, str]] = None,
     k: int = 10,
+    context: Optional[str] = None,
+    data_store: Any = None,
 ) -> Dict[str, Any]:
     allowed_fields = list(self._BUILTIN_FIELDS)
     if getattr(self, "_known_custom_fields", None):  # type: ignore[attr-defined]
         allowed_fields.extend(sorted(self._known_custom_fields))  # type: ignore[attr-defined]
 
-    system_filter = "contact_id != 0 and contact_id != 1"
+    from ..session_details import SESSION_DETAILS
+
+    system_filter = (
+        f"contact_id != {int(SESSION_DETAILS.self_contact_id)} "
+        f"and contact_id != {int(SESSION_DETAILS.boss_contact_id)}"
+    )
     filled = table_search_top_k(
-        self._ctx,
+        context or self._ctx,
         references,
         k=k,
         allowed_fields=allowed_fields,
         row_filter=system_filter,
         unique_id_field="contact_id",
     )
+    store = data_store or self._data_store
     try:
         for r in filled:
-            self._data_store.put(r)
+            store.put(r)
     except Exception:
         pass
     return _pack_contacts_result(filled)
