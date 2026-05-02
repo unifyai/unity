@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import pytest
+import unify
 
 pytestmark = [pytest.mark.eval, pytest.mark.llm_call]
 
@@ -76,3 +77,32 @@ async def test_update_creates_two_secrets(secret_manager_context):
     # Verify both were created
     keys = sm._list_secret_keys()  # type: ignore[attr-defined]
     assert "alpha_token" in keys and "beta_token" in keys
+
+
+@pytest.mark.asyncio
+async def test_update_routes_team_credential_to_shared_space(
+    secret_manager_context,
+    secret_manager_spaces,
+):
+    """Natural-language updates choose the named shared-space destination."""
+    patch_space_id, _ = secret_manager_spaces
+    manager = SecretManager()
+
+    handle = await manager.update(
+        "Create a credential named patch_ops_slack_bot with value xoxb-routing-eval. "
+        "It is the Slack bot token for the Patch Team workspace and should be shared "
+        "with that team, not kept as my personal credential.",
+    )
+    await handle.result()
+
+    personal_matches = unify.get_logs(
+        context=manager._ctx,
+        filter="name == 'patch_ops_slack_bot'",
+    )
+    shared_matches = unify.get_logs(
+        context=f"Spaces/{patch_space_id}/Secrets",
+        filter="name == 'patch_ops_slack_bot'",
+    )
+
+    assert personal_matches == []
+    assert [row.entries["value"] for row in shared_matches] == ["xoxb-routing-eval"]

@@ -93,6 +93,7 @@ def test_ask_system_prompt_formatting():
     assert "Tools (name" in prompt
     # SecretManager doesn't have counts/columns block (fixed schema)
     assert "Parallelism and single" in prompt  # header starts with this substring
+    assert "Accessible shared spaces" in prompt
     assert "Security (CRITICAL)" in prompt
     # Clarification top sentence (no clarification tool provided → else-policy)
     assert re.search(
@@ -109,6 +110,7 @@ def test_ask_system_prompt_formatting():
             "Tools (name",
             "Examples",
             "Parallelism and single",
+            "Accessible shared spaces",
             "Security (CRITICAL)",
             "Current UTC time is ",
         ],
@@ -118,6 +120,7 @@ def test_ask_system_prompt_formatting():
         prompt,
         [
             "Examples",
+            "Accessible shared spaces",
             "Security (CRITICAL)",
         ],
     )
@@ -135,6 +138,7 @@ def test_update_system_prompt_formatting():
     tools_json = extract_tools_dict(prompt)
     assert set(tools_json.keys()) == set(tools.keys())
     assert "Parallelism and single" in prompt
+    assert "Accessible shared spaces" in prompt
     assert "Security (CRITICAL)" in prompt
     # Clarification top sentence (no clarification tool provided → else-policy)
     assert re.search(
@@ -151,6 +155,7 @@ def test_update_system_prompt_formatting():
             "Tools (name",
             "Tool selection",
             "Parallelism and single",
+            "Accessible shared spaces",
             "Security (CRITICAL)",
             "Current UTC time is ",
         ],
@@ -160,6 +165,7 @@ def test_update_system_prompt_formatting():
         prompt,
         [
             "Tool selection",
+            "Accessible shared spaces",
             "Security (CRITICAL)",
         ],
     )

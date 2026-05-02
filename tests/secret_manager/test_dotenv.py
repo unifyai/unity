@@ -58,6 +58,36 @@ def test_updates_on_create_update_delete(monkeypatch, secret_manager_context):
         assert "api_key=" not in content
 
 
+def test_dotenv_mirror_includes_personal_only(
+    monkeypatch,
+    secret_manager_context,
+    secret_manager_spaces,
+):
+    with tempfile.TemporaryDirectory() as td:
+        dotenv_path = str(pathlib.Path(td) / ".env")
+        monkeypatch.setattr(SETTINGS.secret, "DOTENV_PATH", dotenv_path)
+
+        space_id, _ = secret_manager_spaces
+        manager = SecretManager()
+
+        manager._create_secret(
+            name="personal_openai_key",
+            value="sk-personal",
+            description="Personal OpenAI key",
+        )
+        manager._create_secret(
+            name="team_slack_bot",
+            value="xoxb-team",
+            description="Patch team Slack bot",
+            destination=f"space:{space_id}",
+        )
+        manager._sync_dotenv()
+
+        content = _read(dotenv_path)
+        assert "personal_openai_key=sk-personal" in content
+        assert "team_slack_bot" not in content
+
+
 def test_externally_added_secret_synced_on_ask(monkeypatch, secret_manager_context):
     """Secrets added outside SecretManager (e.g. via Console UI → Orchestra)
     should reach .env when ask() is called, not only on init."""
