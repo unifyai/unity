@@ -260,6 +260,7 @@ def build_brain_spec(
         assistant_has_teams=bool(cm.assistant_has_teams),
         user_desktop_control=SETTINGS.conversation.USER_DESKTOP_CONTROL_ENABLED,
         runtime_setup_note=runtime_setup_note,
+        space_summaries=getattr(cm, "space_summaries", []),
     )
     _system_prompt_ms = _mark_step()
 
