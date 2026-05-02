@@ -1113,6 +1113,13 @@ class TestStartupEvents:
                     "voice_provider": "cartesia",
                     "voice_id": "voice_1",
                     "space_ids": [3, 7],
+                    "space_summaries": [
+                        {
+                            "space_id": 3,
+                            "name": "Ops",
+                            "description": "Operations workspace for customer support.",
+                        },
+                    ],
                     "self_contact_id": 42,
                     "boss_contact_id": 43,
                     "update_kind": "membership",
@@ -1128,6 +1135,13 @@ class TestStartupEvents:
             event = Event.from_json(msg["data"])
             assert isinstance(event, AssistantUpdateEvent)
             assert event.space_ids == [3, 7]
+            assert event.space_summaries == [
+                {
+                    "space_id": 3,
+                    "name": "Ops",
+                    "description": "Operations workspace for customer support.",
+                },
+            ]
             assert event.self_contact_id == 42
             assert event.boss_contact_id == 43
             assert event.update_kind == "membership"

@@ -2643,6 +2643,7 @@ class TestAssistantUpdateEventHandler:
         SESSION_DETAILS.boss_contact_id = 1
         monkeypatch.delenv("SELF_CONTACT_ID", raising=False)
         monkeypatch.delenv("BOSS_CONTACT_ID", raising=False)
+        monkeypatch.delenv("SPACE_SUMMARIES", raising=False)
         ContextRegistry._registry = {
             ("TaskScheduler", "Tasks", PERSONAL_ROOT_IDENTITY): "user456/123/Tasks",
             ("TaskScheduler", "Tasks", f"{SPACE_CONTEXT_PREFIX}3"): "Spaces/3/Tasks",
@@ -2671,6 +2672,18 @@ class TestAssistantUpdateEventHandler:
             voice_provider="cartesia",
             update_kind="membership",
             space_ids=[7, 11],
+            space_summaries=[
+                {
+                    "space_id": 7,
+                    "name": "Ops",
+                    "description": "Operations workspace for customer support.",
+                },
+                {
+                    "space_id": 11,
+                    "name": "Repairs",
+                    "description": "South-East repairs patch daily operations.",
+                },
+            ],
             self_contact_id=42,
             boss_contact_id=43,
         )
@@ -2689,7 +2702,15 @@ class TestAssistantUpdateEventHandler:
                 assert SESSION_DETAILS.user.contact_id == 43
                 assert os.environ["SELF_CONTACT_ID"] == "42"
                 assert os.environ["BOSS_CONTACT_ID"] == "43"
+                assert (
+                    "South-East repairs patch daily operations."
+                    in os.environ["SPACE_SUMMARIES"]
+                )
                 assert mock_cm.space_ids == [7, 11]
+                assert [summary.space_id for summary in mock_cm.space_summaries] == [
+                    7,
+                    11,
+                ]
                 assert mock_cm.self_contact_id == 42
                 assert mock_cm.boss_contact_id == 43
                 assert (

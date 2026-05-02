@@ -584,6 +584,7 @@ class CommsManager:
                     "org_name": event.get("org_name", ""),
                     "team_ids": event.get("team_ids") or [],
                     "space_ids": event.get("space_ids") or [],
+                    "space_summaries": event.get("space_summaries") or [],
                     "update_kind": event.get("update_kind", "general"),
                     "demo_id": event.get("demo_id"),
                 }
@@ -1730,6 +1731,7 @@ class CommsManager:
                     "org_name": event.get("org_name", ""),
                     "team_ids": event.get("team_ids") or [],
                     "space_ids": event.get("space_ids") or [],
+                    "space_summaries": event.get("space_summaries") or [],
                     "wake_reasons": event.get("wake_reasons") or [],
                     "demo_id": event.get("demo_id"),
                 }
