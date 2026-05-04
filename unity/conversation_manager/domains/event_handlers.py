@@ -457,9 +457,7 @@ async def _(
     )
     contact = boss
 
-    contact_id = (
-        contact.get("contact_id") if contact else boss_contact_id
-    )
+    contact_id = contact.get("contact_id") if contact else boss_contact_id
     sender_name = _get_sender_name(contact)
 
     joined = await cm.call_manager.start_google_meet(
@@ -637,9 +635,7 @@ async def _(
         contact = event.contact
 
     contact_id = (
-        contact.get("contact_id")
-        if contact
-        else SESSION_DETAILS.user.contact_id
+        contact.get("contact_id") if contact else SESSION_DETAILS.user.contact_id
     )
     sender_name = _get_sender_name(contact)
 
@@ -781,9 +777,7 @@ async def _(
         contact = event.contact
 
     contact_id = (
-        contact.get("contact_id")
-        if contact
-        else SESSION_DETAILS.user.contact_id
+        contact.get("contact_id") if contact else SESSION_DETAILS.user.contact_id
     )
     sender_name = _get_sender_name(contact)
     reason = event.reason or "no-answer"
@@ -852,9 +846,7 @@ async def _(
         contact = event.contact
 
     contact_id = (
-        contact.get("contact_id")
-        if contact
-        else SESSION_DETAILS.user.contact_id
+        contact.get("contact_id") if contact else SESSION_DETAILS.user.contact_id
     )
     sender_name = _get_sender_name(contact)
     reason = event.reason or "no-answer"
@@ -908,9 +900,7 @@ async def _(
     """Handle call permission grant/rejection from a WhatsApp contact."""
     contact = event.contact
     contact_id = (
-        contact.get("contact_id")
-        if contact
-        else SESSION_DETAILS.user.contact_id
+        contact.get("contact_id") if contact else SESSION_DETAILS.user.contact_id
     )
     sender_name = _get_sender_name(contact)
 
@@ -989,9 +979,7 @@ async def _(
     """Log the invite template send in the conversation thread."""
     contact = event.contact
     contact_id = (
-        contact.get("contact_id")
-        if contact
-        else SESSION_DETAILS.user.contact_id
+        contact.get("contact_id") if contact else SESSION_DETAILS.user.contact_id
     )
     sender_name = _get_sender_name(contact)
 
@@ -2690,9 +2678,7 @@ async def _(event: DirectMessageEvent, cm: "ConversationManager", *args, **kwarg
 
     contact = cm.get_active_contact()
     contact_id = (
-        contact.get("contact_id")
-        if contact
-        else SESSION_DETAILS.user.contact_id
+        contact.get("contact_id") if contact else SESSION_DETAILS.user.contact_id
     )
     sender_name = _get_sender_name(contact)
 
