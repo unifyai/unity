@@ -86,19 +86,21 @@ def _match_context(path: str, base: str, known: set[str]) -> str:
 
 def resolve_binding_contexts(
     bindings: List[AnyBinding],
+    *,
+    base_context: Optional[str] = None,
 ) -> List[AnyBinding]:
     """Resolve all context paths in *bindings* to fully qualified form.
 
-    Fetches all contexts scoped to the current user/assistant prefix via
+    Fetches all contexts scoped to the requested root via
     ``unify.get_contexts(prefix=base)`` and resolves each binding's context
-    path(s) through :func:`_match_context`.  For join bindings, table
+    path(s) through :func:`_match_context`. For join bindings, table
     references embedded in ``join_expr`` and ``select`` keys are rewritten
     to match the resolved table names.
 
     Falls through gracefully (returning *bindings* unchanged) when no base
     context is available (offline / test scenarios).
     """
-    base = ContextRegistry._base_context
+    base = base_context or ContextRegistry._base_context
     if not base:
         active = unify.get_active_context()
         base = (active or {}).get("read", "")
@@ -225,6 +227,7 @@ def build_tile_record_row(
     description: Optional[str] = None,
     data_bindings: Optional[Sequence[AnyBinding]] = None,
     on_data: Optional[str] = None,
+    data_scope: str = "dashboard",
 ) -> TileRecordRow:
     """Build a TileRecordRow ready for insertion into the Unify context."""
     has_bindings = bool(data_bindings)
@@ -244,6 +247,7 @@ def build_tile_record_row(
         description=description,
         html_content=html,
         has_data_bindings=has_bindings,
+        data_scope=data_scope,
         data_binding_contexts=binding_contexts,
         on_data_script=on_data,
         data_bindings_json=bindings_json,

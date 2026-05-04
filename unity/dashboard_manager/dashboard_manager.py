@@ -14,15 +14,22 @@ import logging
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
-from unity.common.context_registry import ContextRegistry, TableContext
+from unity.common.context_registry import (
+    ContextRegistry,
+    INVALID_DESTINATION_ERROR,
+    SPACE_DESTINATION_PREFIX,
+    TableContext,
+)
 from unity.common.model_to_fields import model_to_fields
-from unity.dashboard_manager.base import BaseDashboardManager
+from unity.common.tool_outcome import ToolErrorException
+from unity.dashboard_manager.base import DASHBOARD_DATA_SCOPE, BaseDashboardManager
 from unity.dashboard_manager.ops.dashboard_ops import (
     build_dashboard_record_row,
     deserialize_layout,
     serialize_layout,
 )
 from unity.dashboard_manager.ops.tile_ops import (
+    _contexts_for_binding,
     build_tile_record_row,
     ensure_binding_aliases,
     resolve_binding_contexts,
@@ -48,9 +55,13 @@ from unity.dashboard_manager.types.tile import (
     TileRecordRow,
     TileResult,
 )
+from unity.session_details import SESSION_DETAILS
 from unity.settings import SETTINGS
 
 logger = logging.getLogger(__name__)
+
+TILES_TABLE = "Dashboards/Tiles"
+LAYOUTS_TABLE = "Dashboards/Layouts"
 
 
 def _get_active_project() -> str:
@@ -114,27 +125,80 @@ class DashboardManager(BaseDashboardManager):
     def __init__(self) -> None:
         super().__init__()
         self.include_in_multi_assistant_table = True
-        try:
-            self._tiles_ctx = ContextRegistry.get_context(self, "Dashboards/Tiles")
-        except Exception:
-            self._tiles_ctx = "Dashboards/Tiles"
-        try:
-            self._layouts_ctx = ContextRegistry.get_context(
-                self,
-                "Dashboards/Layouts",
-            )
-        except Exception:
-            self._layouts_ctx = "Dashboards/Layouts"
-        logger.debug(
-            "DashboardManager initialized: tiles=%s layouts=%s",
-            self._tiles_ctx,
-            self._layouts_ctx,
-        )
+        logger.debug("DashboardManager initialized")
 
     def _get_dm(self):
         from unity.manager_registry import ManagerRegistry
 
         return ManagerRegistry.get_data_manager()
+
+    def _table_context_for_root(self, root_context: str, table_name: str) -> str:
+        """Return the concrete dashboard context under one registry root."""
+        return f"{root_context.strip('/')}/{table_name}"
+
+    def _table_context_for_destination(
+        self,
+        table_name: str,
+        destination: str | None,
+    ) -> str:
+        """Resolve a dashboard row destination into a concrete table context."""
+        root_context = ContextRegistry.write_root(
+            self,
+            table_name,
+            destination=destination,
+        )
+        return self._table_context_for_root(root_context, table_name)
+
+    def _read_table_contexts(self, table_name: str) -> list[str]:
+        """Return ordered concrete dashboard table contexts visible to this assistant."""
+        return [
+            self._table_context_for_root(root_context, table_name)
+            for root_context in ContextRegistry.read_roots(self, table_name)
+        ]
+
+    def _resolved_root_context(
+        self,
+        table_name: str,
+        destination: str | None,
+    ) -> str:
+        """Return the root context for a destination without provisioning."""
+        _, _, root_context = ContextRegistry.resolve_root(
+            self,
+            table_name,
+            destination=destination,
+        )
+        return root_context
+
+    def _data_binding_root(
+        self,
+        table_name: str,
+        *,
+        destination: str | None,
+        data_scope: str,
+    ) -> str:
+        """Resolve which root live tile data bindings should read from."""
+        if data_scope == DASHBOARD_DATA_SCOPE:
+            return self._resolved_root_context(table_name, destination)
+        if not data_scope.startswith(SPACE_DESTINATION_PREFIX):
+            raise ToolErrorException(
+                {
+                    "error_kind": INVALID_DESTINATION_ERROR,
+                    "message": (
+                        "data_scope must be 'dashboard' or an accessible "
+                        "'space:<id>' destination."
+                    ),
+                    "details": {
+                        "destination": data_scope,
+                        "space_ids": SESSION_DETAILS.space_ids,
+                        "table_name": table_name,
+                    },
+                },
+            )
+        return self._resolved_root_context(table_name, data_scope)
+
+    def _tool_error_message(self, exc: ToolErrorException) -> str:
+        """Convert structured tool errors into Dashboard result errors."""
+        return f"{exc.payload['error_kind']}: {exc.payload['message']}"
 
     # ──────────────────────────────────────────────────────────────────────────
     # Tiles
@@ -149,19 +213,42 @@ class DashboardManager(BaseDashboardManager):
         description: Optional[str] = None,
         data_bindings: Optional[List[DataBinding]] = None,
         on_data: Optional[str] = None,
+        destination: str | None = None,
+        data_scope: str = DASHBOARD_DATA_SCOPE,
     ) -> TileResult:
         try:
+            tile_context = self._table_context_for_destination(
+                TILES_TABLE,
+                destination,
+            )
+            dm = self._get_dm()
             token = generate_token()
             bindings = validate_data_bindings(data_bindings)
 
             validate_on_data(on_data, bindings)
 
+            if data_scope != DASHBOARD_DATA_SCOPE and not bindings:
+                return TileResult(
+                    error=(
+                        "data_scope can only be set when fresh "
+                        "data_bindings are supplied."
+                    ),
+                )
+
             if bindings and on_data is not None:
                 bindings = ensure_binding_aliases(bindings)
 
             if bindings:
-                bindings = resolve_binding_contexts(bindings)
-                verify_data_bindings(bindings, self._get_dm())
+                binding_root = self._data_binding_root(
+                    TILES_TABLE,
+                    destination=destination,
+                    data_scope=data_scope,
+                )
+                bindings = resolve_binding_contexts(
+                    bindings,
+                    base_context=binding_root,
+                )
+                verify_data_bindings(bindings, dm)
 
             row = build_tile_record_row(
                 token=token,
@@ -170,18 +257,20 @@ class DashboardManager(BaseDashboardManager):
                 description=description,
                 data_bindings=bindings,
                 on_data=on_data,
+                data_scope=data_scope,
             )
 
-            dm = self._get_dm()
-            dm.insert_rows(self._tiles_ctx, [row.model_dump()])
+            dm.insert_rows(tile_context, [row.model_dump()])
 
-            register_token(token, "tile", self._tiles_ctx, _get_active_project())
+            register_token(token, "tile", tile_context, _get_active_project())
 
             return TileResult(
                 url=_build_tile_url(token),
                 token=token,
                 title=title,
             )
+        except ToolErrorException as e:
+            return TileResult(error=self._tool_error_message(e))
         except Exception as e:
             logger.exception("create_tile failed")
             return TileResult(error=str(e))
@@ -189,14 +278,15 @@ class DashboardManager(BaseDashboardManager):
     @functools.wraps(BaseDashboardManager.get_tile, updated=())
     def get_tile(self, token: str) -> Optional[TileRecord]:
         dm = self._get_dm()
-        rows = dm.filter(
-            self._tiles_ctx,
-            filter=f"token == '{token}'",
-            limit=1,
-        )
-        if not rows:
-            return None
-        return TileRecord(**rows[0])
+        for context in self._read_table_contexts(TILES_TABLE):
+            rows = dm.filter(
+                context,
+                filter=f"token == '{token}'",
+                limit=1,
+            )
+            if rows:
+                return TileRecord(**rows[0])
+        return None
 
     @functools.wraps(BaseDashboardManager.update_tile, updated=())
     def update_tile(
@@ -208,8 +298,22 @@ class DashboardManager(BaseDashboardManager):
         description: Optional[str] = None,
         data_bindings: Optional[List[DataBinding]] = None,
         on_data: Optional[str] = None,
+        destination: str | None = None,
+        data_scope: Optional[str] = None,
     ) -> TileResult:
         try:
+            if data_scope is not None and not data_bindings:
+                return TileResult(
+                    error=(
+                        "data_scope can only be changed when fresh "
+                        "data_bindings are supplied."
+                    ),
+                )
+            tile_context = self._table_context_for_destination(
+                TILES_TABLE,
+                destination,
+            )
+            dm = self._get_dm()
             updates: Dict[str, Any] = {
                 "updated_at": datetime.now(timezone.utc).isoformat(),
             }
@@ -223,14 +327,33 @@ class DashboardManager(BaseDashboardManager):
             if data_bindings is not None:
                 bindings = validate_data_bindings(data_bindings)
                 if bindings:
+                    effective_data_scope = data_scope
+                    if effective_data_scope is None:
+                        existing_rows = dm.filter(
+                            tile_context,
+                            filter=f"token == '{token}'",
+                            limit=1,
+                        )
+                        existing_scope = (
+                            existing_rows[0].get("data_scope")
+                            if existing_rows
+                            else None
+                        )
+                        effective_data_scope = existing_scope or DASHBOARD_DATA_SCOPE
+                    binding_root = self._data_binding_root(
+                        TILES_TABLE,
+                        destination=destination,
+                        data_scope=effective_data_scope,
+                    )
                     if on_data is not None and on_data != "":
                         bindings = ensure_binding_aliases(bindings)
-                    bindings = resolve_binding_contexts(bindings)
-                    verify_data_bindings(bindings, self._get_dm())
-                    updates["has_data_bindings"] = True
-                    from unity.dashboard_manager.ops.tile_ops import (
-                        _contexts_for_binding,
+                    bindings = resolve_binding_contexts(
+                        bindings,
+                        base_context=binding_root,
                     )
+                    verify_data_bindings(bindings, dm)
+                    updates["has_data_bindings"] = True
+                    updates["data_scope"] = effective_data_scope
 
                     all_ctxs: list[str] = []
                     for b in bindings:
@@ -241,6 +364,7 @@ class DashboardManager(BaseDashboardManager):
                     updates["data_bindings_json"] = serialize_bindings(bindings)
                 else:
                     updates["has_data_bindings"] = False
+                    updates["data_scope"] = DASHBOARD_DATA_SCOPE
                     updates["data_binding_contexts"] = None
                     updates["data_bindings_json"] = None
 
@@ -250,38 +374,51 @@ class DashboardManager(BaseDashboardManager):
                 else:
                     has_bindings = bool(data_bindings)
                     if not has_bindings:
-                        existing = self.get_tile(token)
-                        has_bindings = existing.has_data_bindings if existing else False
+                        existing_rows = dm.filter(
+                            tile_context,
+                            filter=f"token == '{token}'",
+                            limit=1,
+                        )
+                        has_bindings = bool(
+                            existing_rows and existing_rows[0].get("has_data_bindings"),
+                        )
                     if not has_bindings:
                         validate_on_data(on_data, data_bindings)
                     updates["on_data_script"] = on_data
 
-            dm = self._get_dm()
-            dm.update_rows(
-                self._tiles_ctx,
+            updated_count = dm.update_rows(
+                tile_context,
                 updates,
                 filter=f"token == '{token}'",
             )
+            if updated_count == 0:
+                return TileResult(error=f"Tile '{token}' not found")
 
             return TileResult(
                 url=_build_tile_url(token),
                 token=token,
                 title=title,
             )
+        except ToolErrorException as e:
+            return TileResult(error=self._tool_error_message(e))
         except Exception as e:
             logger.exception("update_tile failed")
             return TileResult(error=str(e))
 
     @functools.wraps(BaseDashboardManager.delete_tile, updated=())
-    def delete_tile(self, token: str) -> bool:
-        dm = self._get_dm()
-        deleted = dm.delete_rows(
-            self._tiles_ctx,
-            filter=f"token == '{token}'",
-        )
-        if deleted:
-            delete_token(token)
-        return deleted > 0
+    def delete_tile(self, token: str, *, destination: str | None = None) -> bool:
+        try:
+            context = self._table_context_for_destination(TILES_TABLE, destination)
+            dm = self._get_dm()
+            deleted = dm.delete_rows(
+                context,
+                filter=f"token == '{token}'",
+            )
+            if deleted:
+                delete_token(token)
+            return deleted > 0
+        except ToolErrorException:
+            return False
 
     @functools.wraps(BaseDashboardManager.list_tiles, updated=())
     def list_tiles(
@@ -291,16 +428,22 @@ class DashboardManager(BaseDashboardManager):
         limit: int = 50,
     ) -> List[TileRecord]:
         dm = self._get_dm()
-        rows = dm.filter(
-            self._tiles_ctx,
-            filter=filter,
-            exclude_columns=["html_content"],
-            limit=limit,
-        )
         result = []
-        for row in rows:
-            row.setdefault("html_content", "")
-            result.append(TileRecord(**row))
+        for context in self._read_table_contexts(TILES_TABLE):
+            remaining = limit - len(result)
+            if remaining <= 0:
+                break
+            rows = dm.filter(
+                context,
+                filter=filter,
+                exclude_columns=["html_content"],
+                limit=remaining,
+            )
+            for row in rows:
+                row.setdefault("html_content", "")
+                result.append(TileRecord(**row))
+                if len(result) >= limit:
+                    return result
         return result
 
     # ──────────────────────────────────────────────────────────────────────────
@@ -314,8 +457,13 @@ class DashboardManager(BaseDashboardManager):
         *,
         description: Optional[str] = None,
         tiles: Optional[List[TilePosition]] = None,
+        destination: str | None = None,
     ) -> DashboardResult:
         try:
+            layout_context = self._table_context_for_destination(
+                LAYOUTS_TABLE,
+                destination,
+            )
             token = generate_token()
             tile_list = tiles or []
             row = build_dashboard_record_row(
@@ -326,9 +474,9 @@ class DashboardManager(BaseDashboardManager):
             )
 
             dm = self._get_dm()
-            dm.insert_rows(self._layouts_ctx, [row.model_dump()])
+            dm.insert_rows(layout_context, [row.model_dump()])
 
-            register_token(token, "dashboard", self._layouts_ctx, _get_active_project())
+            register_token(token, "dashboard", layout_context, _get_active_project())
 
             return DashboardResult(
                 url=_build_dashboard_url(token),
@@ -336,6 +484,8 @@ class DashboardManager(BaseDashboardManager):
                 title=title,
                 tiles=tile_list,
             )
+        except ToolErrorException as e:
+            return DashboardResult(error=self._tool_error_message(e))
         except Exception as e:
             logger.exception("create_dashboard failed")
             return DashboardResult(error=str(e))
@@ -343,21 +493,22 @@ class DashboardManager(BaseDashboardManager):
     @functools.wraps(BaseDashboardManager.get_dashboard, updated=())
     def get_dashboard(self, token: str) -> Optional[DashboardResult]:
         dm = self._get_dm()
-        rows = dm.filter(
-            self._layouts_ctx,
-            filter=f"token == '{token}'",
-            limit=1,
-        )
-        if not rows:
-            return None
-        record = rows[0]
-        tile_positions = deserialize_layout(record.get("layout", "[]"))
-        return DashboardResult(
-            url=_build_dashboard_url(token),
-            token=token,
-            title=record.get("title"),
-            tiles=tile_positions,
-        )
+        for context in self._read_table_contexts(LAYOUTS_TABLE):
+            rows = dm.filter(
+                context,
+                filter=f"token == '{token}'",
+                limit=1,
+            )
+            if rows:
+                record = rows[0]
+                tile_positions = deserialize_layout(record.get("layout", "[]"))
+                return DashboardResult(
+                    url=_build_dashboard_url(token),
+                    token=token,
+                    title=record.get("title"),
+                    tiles=tile_positions,
+                )
+        return None
 
     @functools.wraps(BaseDashboardManager.update_dashboard, updated=())
     def update_dashboard(
@@ -367,8 +518,13 @@ class DashboardManager(BaseDashboardManager):
         title: Optional[str] = None,
         description: Optional[str] = None,
         tiles: Optional[List[TilePosition]] = None,
+        destination: str | None = None,
     ) -> DashboardResult:
         try:
+            layout_context = self._table_context_for_destination(
+                LAYOUTS_TABLE,
+                destination,
+            )
             updates: Dict[str, Any] = {
                 "updated_at": datetime.now(timezone.utc).isoformat(),
             }
@@ -381,16 +537,24 @@ class DashboardManager(BaseDashboardManager):
                 updates["tile_count"] = len(tiles)
 
             dm = self._get_dm()
-            dm.update_rows(
-                self._layouts_ctx,
+            updated_count = dm.update_rows(
+                layout_context,
                 updates,
                 filter=f"token == '{token}'",
             )
+            if updated_count == 0:
+                return DashboardResult(error=f"Dashboard '{token}' not found")
 
             final_tiles = tiles
             if final_tiles is None:
-                existing = self.get_dashboard(token)
-                final_tiles = existing.tiles if existing else []
+                rows = dm.filter(
+                    layout_context,
+                    filter=f"token == '{token}'",
+                    limit=1,
+                )
+                final_tiles = (
+                    deserialize_layout(rows[0].get("layout", "[]")) if rows else []
+                )
 
             return DashboardResult(
                 url=_build_dashboard_url(token),
@@ -398,20 +562,26 @@ class DashboardManager(BaseDashboardManager):
                 title=title,
                 tiles=final_tiles,
             )
+        except ToolErrorException as e:
+            return DashboardResult(error=self._tool_error_message(e))
         except Exception as e:
             logger.exception("update_dashboard failed")
             return DashboardResult(error=str(e))
 
     @functools.wraps(BaseDashboardManager.delete_dashboard, updated=())
-    def delete_dashboard(self, token: str) -> bool:
-        dm = self._get_dm()
-        deleted = dm.delete_rows(
-            self._layouts_ctx,
-            filter=f"token == '{token}'",
-        )
-        if deleted:
-            delete_token(token)
-        return deleted > 0
+    def delete_dashboard(self, token: str, *, destination: str | None = None) -> bool:
+        try:
+            context = self._table_context_for_destination(LAYOUTS_TABLE, destination)
+            dm = self._get_dm()
+            deleted = dm.delete_rows(
+                context,
+                filter=f"token == '{token}'",
+            )
+            if deleted:
+                delete_token(token)
+            return deleted > 0
+        except ToolErrorException:
+            return False
 
     @functools.wraps(BaseDashboardManager.list_dashboards, updated=())
     def list_dashboards(
@@ -421,9 +591,18 @@ class DashboardManager(BaseDashboardManager):
         limit: int = 50,
     ) -> List[DashboardRecord]:
         dm = self._get_dm()
-        rows = dm.filter(
-            self._layouts_ctx,
-            filter=filter,
-            limit=limit,
-        )
-        return [DashboardRecord(**row) for row in rows]
+        result: list[DashboardRecord] = []
+        for context in self._read_table_contexts(LAYOUTS_TABLE):
+            remaining = limit - len(result)
+            if remaining <= 0:
+                break
+            rows = dm.filter(
+                context,
+                filter=filter,
+                limit=remaining,
+            )
+            for row in rows:
+                result.append(DashboardRecord(**row))
+                if len(result) >= limit:
+                    return result
+        return result

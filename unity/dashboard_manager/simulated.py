@@ -12,7 +12,13 @@ import functools
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
-from unity.dashboard_manager.base import BaseDashboardManager
+from unity.common.context_registry import (
+    PERSONAL_DESTINATION,
+    SPACE_CONTEXT_PREFIX,
+    SPACE_DESTINATION_PREFIX,
+)
+from unity.common.join_utils import rewrite_join_paths
+from unity.dashboard_manager.base import DASHBOARD_DATA_SCOPE, BaseDashboardManager
 from unity.dashboard_manager.ops.dashboard_ops import (
     serialize_layout,
     deserialize_layout,
@@ -31,9 +37,14 @@ from unity.dashboard_manager.ops.tile_ops import (
 )
 from unity.dashboard_manager.types.tile import (
     DataBinding,
+    FilterBinding,
+    JoinBinding,
+    JoinReduceBinding,
+    ReduceBinding,
     TileRecord,
     TileResult,
 )
+from unity.session_details import SESSION_DETAILS
 
 
 class SimulatedDashboardManager(BaseDashboardManager):
@@ -59,6 +70,101 @@ class SimulatedDashboardManager(BaseDashboardManager):
         self._tile_counter = 0
         self._dashboard_counter = 0
 
+    def _validate_data_scope(self, data_scope: str) -> None:
+        """Validate the tile data-source scope used by simulated primitives."""
+        if data_scope == DASHBOARD_DATA_SCOPE:
+            return
+        self._normalize_destination(data_scope)
+
+    def _normalize_destination(self, destination: str | None) -> str:
+        """Return the canonical row destination for simulated storage."""
+        if destination in (None, PERSONAL_DESTINATION):
+            return PERSONAL_DESTINATION
+        if (
+            destination.startswith(SPACE_DESTINATION_PREFIX)
+            and destination[len(SPACE_DESTINATION_PREFIX) :].isdigit()
+        ):
+            space_id = int(destination[len(SPACE_DESTINATION_PREFIX) :])
+            if space_id in SESSION_DETAILS.space_ids:
+                return destination
+        raise ValueError(
+            "invalid_destination: destination must be personal or space:<id>.",
+        )
+
+    def _visible_destinations(self) -> set[str]:
+        """Return the destinations readable by the simulated assistant."""
+        return {
+            PERSONAL_DESTINATION,
+            *[
+                f"{SPACE_DESTINATION_PREFIX}{space_id}"
+                for space_id in SESSION_DETAILS.space_ids
+            ],
+        }
+
+    def _binding_base_context(
+        self,
+        *,
+        row_destination: str,
+        data_scope: str,
+    ) -> str | None:
+        """Return the shared root that fresh simulated bindings should use."""
+        binding_destination = (
+            row_destination if data_scope == DASHBOARD_DATA_SCOPE else data_scope
+        )
+        if binding_destination.startswith(SPACE_DESTINATION_PREFIX):
+            space_id = binding_destination[len(SPACE_DESTINATION_PREFIX) :]
+            return f"Spaces/{space_id}"
+        return None
+
+    def _resolve_binding_contexts(
+        self,
+        bindings: List[DataBinding],
+        *,
+        row_destination: str,
+        data_scope: str,
+    ) -> List[DataBinding]:
+        """Resolve simulated bindings against the same shared root policy."""
+        base_context = self._binding_base_context(
+            row_destination=row_destination,
+            data_scope=data_scope,
+        )
+        try:
+            resolved = resolve_binding_contexts(bindings, base_context=base_context)
+        except Exception:
+            resolved = bindings
+        if not base_context:
+            return resolved
+
+        def scoped(path: str) -> str:
+            path = path.strip().lstrip("/")
+            if path.startswith(SPACE_CONTEXT_PREFIX):
+                return path
+            return f"{base_context}/{path}"
+
+        scoped_bindings: List[DataBinding] = []
+        for binding in resolved:
+            if isinstance(binding, (FilterBinding, ReduceBinding)):
+                binding = binding.model_copy(
+                    update={"context": scoped(binding.context)},
+                )
+            elif isinstance(binding, (JoinBinding, JoinReduceBinding)):
+                scoped_tables = [scoped(table) for table in binding.tables]
+                join_expr, select = rewrite_join_paths(
+                    list(binding.tables),
+                    scoped_tables,
+                    binding.join_expr,
+                    dict(binding.select),
+                )
+                binding = binding.model_copy(
+                    update={
+                        "tables": scoped_tables,
+                        "join_expr": join_expr,
+                        "select": select,
+                    },
+                )
+            scoped_bindings.append(binding)
+        return scoped_bindings
+
     def clear(self) -> None:
         """Reset all in-memory storage."""
         self._tiles.clear()
@@ -79,8 +185,19 @@ class SimulatedDashboardManager(BaseDashboardManager):
         description: Optional[str] = None,
         data_bindings: Optional[List[DataBinding]] = None,
         on_data: Optional[str] = None,
+        destination: str | None = None,
+        data_scope: str = DASHBOARD_DATA_SCOPE,
     ) -> TileResult:
-        validate_on_data(on_data, data_bindings)
+        try:
+            row_destination = self._normalize_destination(destination)
+            validate_on_data(on_data, data_bindings)
+            if data_scope != DASHBOARD_DATA_SCOPE and not data_bindings:
+                raise ValueError(
+                    "data_scope can only be set when fresh data_bindings are supplied.",
+                )
+            self._validate_data_scope(data_scope)
+        except Exception as exc:
+            return TileResult(error=str(exc))
 
         self._tile_counter += 1
         token = f"sim_tile_{self._tile_counter:04d}"
@@ -92,7 +209,11 @@ class SimulatedDashboardManager(BaseDashboardManager):
             if on_data is not None:
                 data_bindings = ensure_binding_aliases(data_bindings)
             try:
-                data_bindings = resolve_binding_contexts(data_bindings)
+                data_bindings = self._resolve_binding_contexts(
+                    data_bindings,
+                    row_destination=row_destination,
+                    data_scope=data_scope,
+                )
             except Exception:
                 pass
             all_ctxs: list[str] = []
@@ -109,7 +230,9 @@ class SimulatedDashboardManager(BaseDashboardManager):
             "title": title,
             "description": description,
             "html_content": html,
+            "destination": row_destination,
             "has_data_bindings": has_bindings,
+            "data_scope": data_scope,
             "data_binding_contexts": binding_contexts,
             "on_data_script": on_data,
             "data_bindings_json": bindings_json,
@@ -126,7 +249,10 @@ class SimulatedDashboardManager(BaseDashboardManager):
     @functools.wraps(BaseDashboardManager.get_tile, updated=())
     def get_tile(self, token: str) -> Optional[TileRecord]:
         data = self._tiles.get(token)
-        if data is None:
+        if (
+            data is None
+            or data.get("destination", "personal") not in self._visible_destinations()
+        ):
             return None
         return TileRecord(**data)
 
@@ -140,9 +266,30 @@ class SimulatedDashboardManager(BaseDashboardManager):
         description: Optional[str] = None,
         data_bindings: Optional[List[DataBinding]] = None,
         on_data: Optional[str] = None,
+        destination: str | None = None,
+        data_scope: Optional[str] = None,
     ) -> TileResult:
-        if token not in self._tiles:
+        try:
+            row_destination = self._normalize_destination(destination)
+        except Exception as exc:
+            return TileResult(error=str(exc))
+        if (
+            token not in self._tiles
+            or self._tiles[token].get("destination", "personal") != row_destination
+        ):
             return TileResult(error=f"Tile '{token}' not found")
+        if data_scope is not None and not data_bindings:
+            return TileResult(
+                error=(
+                    "data_scope can only be changed when fresh data_bindings "
+                    "are supplied."
+                ),
+            )
+        if data_scope is not None:
+            try:
+                self._validate_data_scope(data_scope)
+            except Exception as exc:
+                return TileResult(error=str(exc))
 
         tile_data = self._tiles[token]
         if html is not None:
@@ -154,16 +301,25 @@ class SimulatedDashboardManager(BaseDashboardManager):
 
         if data_bindings is not None:
             if data_bindings:
+                effective_data_scope = data_scope or tile_data.get(
+                    "data_scope",
+                    DASHBOARD_DATA_SCOPE,
+                )
                 if on_data is not None and on_data != "":
                     data_bindings = ensure_binding_aliases(data_bindings)
                 try:
-                    data_bindings = resolve_binding_contexts(data_bindings)
+                    data_bindings = self._resolve_binding_contexts(
+                        data_bindings,
+                        row_destination=row_destination,
+                        data_scope=effective_data_scope,
+                    )
                 except Exception:
                     pass
                 all_ctxs: list[str] = []
                 for b in data_bindings:
                     all_ctxs.extend(_contexts_for_binding(b))
                 tile_data["has_data_bindings"] = True
+                tile_data["data_scope"] = effective_data_scope
                 tile_data["data_binding_contexts"] = ",".join(
                     dict.fromkeys(all_ctxs),
                 )
@@ -172,6 +328,7 @@ class SimulatedDashboardManager(BaseDashboardManager):
                 )
             else:
                 tile_data["has_data_bindings"] = False
+                tile_data["data_scope"] = DASHBOARD_DATA_SCOPE
                 tile_data["data_binding_contexts"] = None
                 tile_data["data_bindings_json"] = None
 
@@ -196,8 +353,16 @@ class SimulatedDashboardManager(BaseDashboardManager):
         )
 
     @functools.wraps(BaseDashboardManager.delete_tile, updated=())
-    def delete_tile(self, token: str) -> bool:
-        return self._tiles.pop(token, None) is not None
+    def delete_tile(self, token: str, *, destination: str | None = None) -> bool:
+        try:
+            row_destination = self._normalize_destination(destination)
+        except ValueError:
+            return False
+        data = self._tiles.get(token)
+        if data is None or data.get("destination", "personal") != row_destination:
+            return False
+        self._tiles.pop(token)
+        return True
 
     @functools.wraps(BaseDashboardManager.list_tiles, updated=())
     def list_tiles(
@@ -206,7 +371,12 @@ class SimulatedDashboardManager(BaseDashboardManager):
         filter: Optional[str] = None,
         limit: int = 50,
     ) -> List[TileRecord]:
-        tiles = list(self._tiles.values())[:limit]
+        visible = self._visible_destinations()
+        tiles = [
+            tile
+            for tile in self._tiles.values()
+            if tile.get("destination", "personal") in visible
+        ][:limit]
         result = []
         for t in tiles:
             row = {**t, "html_content": ""}
@@ -224,7 +394,12 @@ class SimulatedDashboardManager(BaseDashboardManager):
         *,
         description: Optional[str] = None,
         tiles: Optional[List[TilePosition]] = None,
+        destination: str | None = None,
     ) -> DashboardResult:
+        try:
+            row_destination = self._normalize_destination(destination)
+        except Exception as exc:
+            return DashboardResult(error=str(exc))
         self._dashboard_counter += 1
         token = f"sim_dash_{self._dashboard_counter:04d}"
         tile_list = tiles or []
@@ -235,6 +410,7 @@ class SimulatedDashboardManager(BaseDashboardManager):
             "token": token,
             "title": title,
             "description": description,
+            "destination": row_destination,
             "layout": serialize_layout(tile_list),
             "tile_count": len(tile_list),
             "created_at": now,
@@ -251,7 +427,10 @@ class SimulatedDashboardManager(BaseDashboardManager):
     @functools.wraps(BaseDashboardManager.get_dashboard, updated=())
     def get_dashboard(self, token: str) -> Optional[DashboardResult]:
         data = self._dashboards.get(token)
-        if data is None:
+        if (
+            data is None
+            or data.get("destination", "personal") not in self._visible_destinations()
+        ):
             return None
         tile_positions = deserialize_layout(data.get("layout", "[]"))
         return DashboardResult(
@@ -269,8 +448,16 @@ class SimulatedDashboardManager(BaseDashboardManager):
         title: Optional[str] = None,
         description: Optional[str] = None,
         tiles: Optional[List[TilePosition]] = None,
+        destination: str | None = None,
     ) -> DashboardResult:
-        if token not in self._dashboards:
+        try:
+            row_destination = self._normalize_destination(destination)
+        except Exception as exc:
+            return DashboardResult(error=str(exc))
+        if (
+            token not in self._dashboards
+            or self._dashboards[token].get("destination", "personal") != row_destination
+        ):
             return DashboardResult(error=f"Dashboard '{token}' not found")
 
         data = self._dashboards[token]
@@ -293,8 +480,16 @@ class SimulatedDashboardManager(BaseDashboardManager):
         )
 
     @functools.wraps(BaseDashboardManager.delete_dashboard, updated=())
-    def delete_dashboard(self, token: str) -> bool:
-        return self._dashboards.pop(token, None) is not None
+    def delete_dashboard(self, token: str, *, destination: str | None = None) -> bool:
+        try:
+            row_destination = self._normalize_destination(destination)
+        except ValueError:
+            return False
+        data = self._dashboards.get(token)
+        if data is None or data.get("destination", "personal") != row_destination:
+            return False
+        self._dashboards.pop(token)
+        return True
 
     @functools.wraps(BaseDashboardManager.list_dashboards, updated=())
     def list_dashboards(
@@ -303,5 +498,10 @@ class SimulatedDashboardManager(BaseDashboardManager):
         filter: Optional[str] = None,
         limit: int = 50,
     ) -> List[DashboardRecord]:
-        dashboards = list(self._dashboards.values())[:limit]
+        visible = self._visible_destinations()
+        dashboards = [
+            dashboard
+            for dashboard in self._dashboards.values()
+            if dashboard.get("destination", "personal") in visible
+        ][:limit]
         return [DashboardRecord(**d) for d in dashboards]

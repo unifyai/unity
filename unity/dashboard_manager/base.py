@@ -25,6 +25,8 @@ from unity.dashboard_manager.types.dashboard import (
     TilePosition,
 )
 
+DASHBOARD_DATA_SCOPE = "dashboard"
+
 
 class BaseDashboardManager(BaseStateManager):
     """
@@ -133,6 +135,8 @@ class BaseDashboardManager(BaseStateManager):
         description: Optional[str] = None,
         data_bindings: Optional[List[DataBinding]] = None,
         on_data: Optional[str] = None,
+        destination: str | None = None,
+        data_scope: str = DASHBOARD_DATA_SCOPE,
     ) -> TileResult:
         """
         Create a new visualization tile from an HTML string.
@@ -351,6 +355,36 @@ class BaseDashboardManager(BaseStateManager):
             - Binding alias is not a valid JS identifier ->
               ``ValueError``
             - Duplicate aliases across bindings -> ``ValueError``
+
+        destination : str | None, default ``None``
+            Where this tile row lives -- i.e., which dashboard pool this
+            tile belongs to. Pass ``"personal"`` (the default) for tiles
+            on private dashboards. Pass ``"space:<id>"`` for a tile on a
+            shared team dashboard every member of the space sees. The set
+            of available ``space:<id>`` values, each with a name and
+            description, is rendered in the *Accessible shared spaces*
+            block of your system prompt; read that block before choosing.
+            ``destination`` controls where the tile row lives. The data
+            the tile renders is governed separately by ``data_scope``. The
+            privacy floor: when in doubt between personal and a space,
+            pick personal. If a clarification channel is available, ask a
+            targeted question when the user appears to want a wider audience
+            but the target space is ambiguous.
+
+        data_scope : str, default ``"dashboard"``
+            Which root this tile's live-data bindings read from when they
+            are resolved. Pass ``"dashboard"`` to inherit the tile row's
+            destination root. Pass ``"space:<id>"`` to bind this tile's
+            data to a specific shared space even when the tile row itself
+            lives somewhere else. The available spaces are listed in the
+            *Accessible shared spaces* block. This parameter matters only
+            for live tiles with ``data_bindings``.
+
+            Use ``"dashboard"`` when the live data should come from the
+            same place the tile lives, including shared team dashboards.
+            Use ``"space:<id>"`` when the tile's audience and data source
+            intentionally differ, for example a private watch tile that
+            reads Patch-1 operations data.
 
         Returns
         -------
@@ -657,6 +691,8 @@ class BaseDashboardManager(BaseStateManager):
         description: Optional[str] = None,
         data_bindings: Optional[List[DataBinding]] = None,
         on_data: Optional[str] = None,
+        destination: str | None = None,
+        data_scope: Optional[str] = None,
     ) -> TileResult:
         """
         Update an existing tile's content, metadata, or data logic.
@@ -725,6 +761,23 @@ class BaseDashboardManager(BaseStateManager):
             To **clear** a tile's ``on_data_script``, pass ``on_data=""``.
             An empty string signals "remove the script"; ``None`` signals
             "don't change it".
+
+        destination : str | None, default ``None``
+            Which tile pool to update. Pass ``"personal"`` for your private
+            tiles or ``"space:<id>"`` for a shared team tile listed in the
+            *Accessible shared spaces* block. The privacy floor and
+            clarification rule are the same as ``create_tile``.
+
+        data_scope : str | None, default ``None``
+            Optional replacement for the root used to resolve fresh
+            ``data_bindings``. Pass ``"dashboard"`` to inherit the tile
+            row's destination root, or ``"space:<id>"`` to bind the tile's
+            data reads to a specific shared space. This can only be changed
+            together with fresh ``data_bindings`` because stored tiles keep
+            resolved binding paths rather than an unresolved binding recipe.
+            Use ``"dashboard"`` when the tile and data source belong to the
+            same dashboard root; use ``"space:<id>"`` for intentional
+            cross-root bindings.
 
         Returns
         -------
@@ -821,7 +874,7 @@ class BaseDashboardManager(BaseStateManager):
         """
 
     @abstractmethod
-    def delete_tile(self, token: str) -> bool:
+    def delete_tile(self, token: str, *, destination: str | None = None) -> bool:
         """
         Delete a tile and its token registration.
 
@@ -840,6 +893,13 @@ class BaseDashboardManager(BaseStateManager):
             The 12-character URL-safe token of the tile to delete.
 
             Example: ``"Ab3xK9mP2qLz"``
+
+        destination : str | None, default ``None``
+            Which tile pool to delete from. Pass ``"personal"`` for a
+            private tile or ``"space:<id>"`` for a shared team tile. Read
+            the *Accessible shared spaces* block before choosing a shared
+            destination, and choose personal or ask for clarification when
+            the user is ambiguous.
 
         Returns
         -------
@@ -1032,6 +1092,7 @@ class BaseDashboardManager(BaseStateManager):
         *,
         description: Optional[str] = None,
         tiles: Optional[List[TilePosition]] = None,
+        destination: str | None = None,
     ) -> DashboardResult:
         """
         Create a new dashboard layout composed of existing tiles.
@@ -1097,6 +1158,18 @@ class BaseDashboardManager(BaseStateManager):
 
             When ``None``, an empty dashboard is created (no tiles).  Tiles
             can be added later via ``update_dashboard()``.
+
+        destination : str | None, default ``None``
+            Where this dashboard lives. Pass ``"personal"`` (the default)
+            for private dashboards only you see. Pass ``"space:<id>"`` for
+            a team dashboard every member of the space sees -- operational
+            overview boards, team KPI dashboards, and shared monitoring
+            views. The set of available ``space:<id>`` values is rendered
+            in the *Accessible shared spaces* block of your system prompt;
+            read that block before choosing. Pick personal when in doubt;
+            if a clarification channel is available, ask a targeted question
+            when the user appears to want a wider audience but the target
+            space is ambiguous.
 
         Returns
         -------
@@ -1290,6 +1363,7 @@ class BaseDashboardManager(BaseStateManager):
         title: Optional[str] = None,
         description: Optional[str] = None,
         tiles: Optional[List[TilePosition]] = None,
+        destination: str | None = None,
     ) -> DashboardResult:
         """
         Update an existing dashboard's metadata or layout.
@@ -1334,6 +1408,13 @@ class BaseDashboardManager(BaseStateManager):
             When ``None``, the existing layout is preserved.
 
             Pass an empty list ``[]`` to clear all tiles from the dashboard.
+
+        destination : str | None, default ``None``
+            Which dashboard pool to update. Pass ``"personal"`` for a
+            private dashboard or ``"space:<id>"`` for a shared team
+            dashboard listed in the *Accessible shared spaces* block. The
+            privacy floor and clarification rule are the same as
+            ``create_dashboard``.
 
         Returns
         -------
@@ -1425,7 +1506,7 @@ class BaseDashboardManager(BaseStateManager):
         """
 
     @abstractmethod
-    def delete_dashboard(self, token: str) -> bool:
+    def delete_dashboard(self, token: str, *, destination: str | None = None) -> bool:
         """
         Delete a dashboard and its token registration.
 
@@ -1439,6 +1520,12 @@ class BaseDashboardManager(BaseStateManager):
             The 12-character URL-safe token of the dashboard to delete.
 
             Example: ``"Xy7mN2pQ9rLz"``
+
+        destination : str | None, default ``None``
+            Which dashboard pool to delete from. Pass ``"personal"`` for a
+            private dashboard or ``"space:<id>"`` for a shared dashboard.
+            Read the *Accessible shared spaces* block before choosing a
+            shared destination.
 
         Returns
         -------
