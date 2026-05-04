@@ -36,6 +36,9 @@ _SHARED_SCOPED_TABLES: Final[frozenset[str]] = frozenset(
         "BlackList",
         "Dashboards/Tiles",
         "Dashboards/Layouts",
+        "Transcripts",
+        "Exchanges",
+        "Images",
     },
 )
 
@@ -426,30 +429,14 @@ class ContextRegistry:
         destination: str | None,
     ) -> str:
         """Resolve and provision the root a write should target."""
-        manager_name, root_identity, root_context = cls.resolve_root(
-            manager,
-            table_name,
-            destination=destination,
-        )
-        cls._ensure_context(manager, table_name, root_identity, root_context)
-        return root_context
-
-    @classmethod
-    def resolve_root(
-        cls,
-        manager: Union[BaseStateManager, Type[BaseStateManager]],
-        table_name: str,
-        *,
-        destination: str | None,
-    ) -> tuple[str, str, str]:
-        """Resolve a public destination string without provisioning contexts."""
         manager_name = cls._get_manager_name(manager)
         root_identity, root_context = cls._parse_destination(
             manager_name,
             table_name,
             destination,
         )
-        return manager_name, root_identity, root_context
+        cls._ensure_context(manager, table_name, root_identity, root_context)
+        return root_context
 
     @classmethod
     def read_roots(
