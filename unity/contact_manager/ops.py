@@ -394,8 +394,6 @@ def delete_contact(
         int(SESSION_DETAILS.self_contact_id),
         int(SESSION_DETAILS.boss_contact_id),
     }
-    if contact_id in protected_contact_ids:
-        raise RuntimeError("Cannot delete assistant self or boss system contacts.")
 
     if _log_id is None:
         # Fetch with is_system to check for org member protection
@@ -419,8 +417,12 @@ def delete_contact(
                 f"Cannot delete system contact with id {contact_id}. "
                 "System contacts include the assistant, primary user, and org members.",
             )
+        if context_name == self._ctx and contact_id in protected_contact_ids:
+            raise RuntimeError("Cannot delete assistant self or boss system contacts.")
         resolved_id = row.id
     else:
+        if context_name == self._ctx and contact_id in protected_contact_ids:
+            raise RuntimeError("Cannot delete assistant self or boss system contacts.")
         resolved_id = _log_id
 
     unify.delete_logs(context=context_name, logs=resolved_id)
