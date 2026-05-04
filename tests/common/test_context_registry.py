@@ -11,19 +11,39 @@ from unity.session_details import SESSION_DETAILS
 class RegistryExampleManager:
     class Config:
         required_contexts = [
-            TableContext(
-                name="Tasks",
-                description="Scheduled work items.",
-            ),
+            TableContext(name="Tasks", description="Scheduled work items."),
             TableContext(
                 name="Contacts",
                 description="People and organizations the assistant knows.",
             ),
-            TableContext(name="Secrets", description="Credentials."),
-            TableContext(name="FileRecords", description="File indexes."),
-            TableContext(name="Files", description="File content."),
-            TableContext(name="Data", description="Datasets."),
-            TableContext(name="BlackList", description="Blocked contacts."),
+            TableContext(name="Secrets", description="Private credentials."),
+            TableContext(name="Knowledge", description="Structured knowledge tables."),
+            TableContext(name="Guidance", description="Assistant guidance rules."),
+            TableContext(
+                name="Functions/Compositional",
+                description="Compositional functions.",
+            ),
+            TableContext(name="Functions/Meta", description="Function metadata."),
+            TableContext(
+                name="Functions/Primitives",
+                description="Primitive functions.",
+            ),
+            TableContext(
+                name="Functions/VirtualEnvs",
+                description="Function virtual environments.",
+            ),
+            TableContext(name="FileRecords", description="File metadata records."),
+            TableContext(name="Files", description="File payload rows."),
+            TableContext(name="Data", description="User data tables."),
+            TableContext(name="BlackList", description="Blocked contact details."),
+            TableContext(name="Dashboards/Tiles", description="Dashboard tile rows."),
+            TableContext(
+                name="Dashboards/Layouts",
+                description="Dashboard layout rows.",
+            ),
+            TableContext(name="Transcripts", description="Conversation messages."),
+            TableContext(name="Exchanges", description="Conversation exchanges."),
+            TableContext(name="Images", description="Stored images."),
         ]
 
 
@@ -190,6 +210,34 @@ def test_resolve_root_supports_dashboard_tables_without_provisioning():
     assert ContextRegistry._registry == {}
 
 
+@pytest.mark.parametrize("table_name", ["Transcripts", "Exchanges", "Images"])
+def test_media_tables_are_shared_scoped(table_name: str):
+    SESSION_DETAILS.space_ids = [7, 3]
+
+    with patch("unity.common.context_registry._create_context_with_retry"):
+        assert (
+            ContextRegistry.write_root(
+                RegistryExampleManager,
+                table_name,
+                destination=None,
+            )
+            == "user123/42"
+        )
+        assert (
+            ContextRegistry.write_root(
+                RegistryExampleManager,
+                table_name,
+                destination="space:7",
+            )
+            == "Spaces/7"
+        )
+        assert ContextRegistry.read_roots(RegistryExampleManager, table_name) == [
+            "user123/42",
+            "Spaces/3",
+            "Spaces/7",
+        ]
+
+
 def test_lazy_provisioning_is_cached_per_root():
     SESSION_DETAILS.space_ids = [7]
 
@@ -213,3 +261,40 @@ def test_lazy_provisioning_is_cached_per_root():
         ContextRegistry._registry[("RegistryExampleManager", "Tasks", "Spaces/7")]
         == "Spaces/7/Tasks"
     )
+
+
+@pytest.mark.parametrize(
+    "table_name",
+    [
+        "Tasks",
+        "Contacts",
+        "Secrets",
+        "Knowledge",
+        "Guidance",
+        "Functions/Compositional",
+        "Functions/Meta",
+        "Functions/Primitives",
+        "Functions/VirtualEnvs",
+        "FileRecords",
+        "Files",
+        "Data",
+        "BlackList",
+        "Dashboards/Tiles",
+        "Dashboards/Layouts",
+        "Transcripts",
+        "Exchanges",
+        "Images",
+    ],
+)
+def test_landed_shared_tables_accept_space_destinations(table_name: str):
+    SESSION_DETAILS.space_ids = [7]
+
+    with patch("unity.common.context_registry._create_context_with_retry"):
+        assert (
+            ContextRegistry.write_root(
+                RegistryExampleManager,
+                table_name,
+                destination="space:7",
+            )
+            == "Spaces/7"
+        )
