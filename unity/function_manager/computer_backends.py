@@ -317,7 +317,7 @@ class _LowLevelActionsMixin:
 
     async def press_tab(self) -> dict:
         """
-        Press the Tab key.
+        Press the Tab key once.
 
         Sends a single Tab keypress, which typically moves focus to the
         next form field or interactive element on the page.
@@ -880,7 +880,13 @@ class ComputerBackend(_LowLevelActionsMixin, ABC):
 
     @abstractmethod
     async def execute_actions(self, actions: list[dict]) -> dict:
-        """Execute low-level actions directly (see _LowLevelActionsMixin)."""
+        """Execute low-level computer actions directly.
+
+        Parameters
+        ----------
+        actions : list[dict]
+            Action dictionaries to execute in sequence.
+        """
 
     @abstractmethod
     def stop(self):
