@@ -29,6 +29,28 @@ def test_all_ask_tools_have_sufficient_docstrings(file_manager):
         ), f"Docstring for tool '{name}' is too short (len={len(doc)})"
 
 
+def test_file_write_tools_expose_destination_guidance():
+    from unity.file_manager.managers.base import BaseFileManager
+
+    for method_name in (
+        "ingest_files",
+        "rename_file",
+        "move_file",
+        "delete_file",
+        "clear",
+        "sync",
+    ):
+        doc = (getattr(BaseFileManager, method_name).__doc__ or "").strip()
+
+        assert "destination : str | None" in doc
+        assert "Accessible" in doc
+        assert "shared" in doc
+        assert "spaces" in doc
+        assert "space:<id>" in doc
+        assert "personal" in doc
+        assert "request_clarification" in doc
+
+
 def _build_tools_schema_in_subprocess(method: str, test_context: str) -> str:
     """
     Build tools→schema JSON in a fresh Python process to catch cross-session drift.
@@ -66,6 +88,7 @@ def _build_tools_schema_in_subprocess(method: str, test_context: str) -> str:
     )
     env = os.environ.copy()
     env["_TEST_CONTEXT"] = test_context
+    env["ORCHESTRA_URL"] = "https://api.unify.ai/v0"
     proc = subprocess.run(
         [sys.executable, "-c", code],
         stdout=subprocess.PIPE,
