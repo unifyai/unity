@@ -116,9 +116,17 @@ class GuidanceManager(BaseGuidanceManager):
 
     def _function_contexts_for_read(self) -> list[str]:
         """Return compositional function contexts visible to guidance reads."""
+        from ..function_manager.function_manager import (
+            FUNCTIONS_COMPOSITIONAL_TABLE as FUNCTION_MANAGER_COMPOSITIONAL_TABLE,
+            FunctionManager,
+        )
+
         return [
-            f"{root.strip('/')}/{FUNCTIONS_COMPOSITIONAL_TABLE}"
-            for root in ContextRegistry.read_roots(self, FUNCTIONS_COMPOSITIONAL_TABLE)
+            f"{root.strip('/')}/{FUNCTION_MANAGER_COMPOSITIONAL_TABLE}"
+            for root in ContextRegistry.read_roots(
+                FunctionManager,
+                FUNCTION_MANAGER_COMPOSITIONAL_TABLE,
+            )
         ]
 
     # ------------------------------- Helpers ---------------------------------
