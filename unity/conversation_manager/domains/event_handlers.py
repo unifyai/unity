@@ -24,6 +24,7 @@ from unity.conversation_manager.domains.task_activation import (
     _surface_trigger_task_candidates,
 )
 from unity.conversation_manager.cm_types import Medium, Mode
+from unity.common.startup_timing import log_startup_timing
 from unity.logger import LOGGER
 from unity.session_details import SESSION_DETAILS
 
@@ -1653,6 +1654,12 @@ async def _(event, cm: "ConversationManager", *args, **kwargs):
                 "unify_message_received",
                 f"Message from {sender_name}: {event.content}",
             )
+            log_startup_timing(
+                LOGGER,
+                "⏱️ [StartupTiming] first_reply.message_received medium=unify_message contact_id=%s sender=%s",
+                contact_id,
+                sender_name,
+            )
         case ApiMessageSent():
             medium = Medium.API_MESSAGE
             message_content = event.content
@@ -1795,6 +1802,7 @@ async def _(event, cm: "ConversationManager", *args, **kwargs):
         )
     cm.notifications_bar.push_notif("comms", notif_content, event.timestamp)
     if role == "user":
+        _t0 = time.perf_counter()
         await _surface_trigger_task_candidates(
             cm=cm,
             event=event,
@@ -1803,13 +1811,35 @@ async def _(event, cm: "ConversationManager", *args, **kwargs):
             sender_name=sender_name,
             timestamp=event.timestamp,
         )
+        log_startup_timing(
+            LOGGER,
+            "⏱️ [StartupTiming] first_reply.surface_trigger_candidates duration=%.2fs medium=%s contact_id=%s",
+            time.perf_counter() - _t0,
+            medium.value,
+            contact_id,
+        )
 
     if role == "user":
+        _t0 = time.perf_counter()
         await cm.cancel_proactive_speech()
+        log_startup_timing(
+            LOGGER,
+            "⏱️ [StartupTiming] first_reply.cancel_proactive_speech duration=%.2fs medium=%s",
+            time.perf_counter() - _t0,
+            medium.value,
+        )
 
     if role == "user" or cm._outbound_suppress_gen != cm._llm_gen:
+        _t0 = time.perf_counter()
         await cm.request_llm_run(
             triggering_contact_id=contact_id,
+        )
+        log_startup_timing(
+            LOGGER,
+            "⏱️ [StartupTiming] first_reply.request_llm_run_call duration=%.2fs medium=%s role=%s",
+            time.perf_counter() - _t0,
+            medium.value,
+            role,
         )
 
 
@@ -2324,16 +2354,28 @@ async def _(
         "desktop_ready",
         f"VM ready: {event.vm_type} at {desktop_url}",
     )
+    log_startup_timing(
+        LOGGER,
+        "⏱️ [StartupTiming] desktop_ready.received vm_type=%s desktop_url_present=%s",
+        event.vm_type,
+        bool(desktop_url),
+    )
 
     if desktop_url:
         SESSION_DETAILS.assistant.desktop_url = desktop_url
 
     liveview_url = f"{desktop_url.rstrip('/')}/desktop/custom.html"
+    _t0 = time.perf_counter()
     await asyncio.to_thread(
         assistant_jobs.update_liveview_url,
         cm.assistant_id,
         cm.user_id,
         liveview_url,
+    )
+    log_startup_timing(
+        LOGGER,
+        "⏱️ [StartupTiming] desktop_ready.update_liveview_url duration=%.2fs",
+        time.perf_counter() - _t0,
     )
 
     _vm_ready.set()
@@ -2345,9 +2387,15 @@ async def _(
 
         cp = ManagerRegistry.get_instance(ComputerPrimitives)
         if cp is not None and cp._backend is not None:
+            _t0 = time.perf_counter()
             parsed = urlparse(desktop_url)
             cp._backend.update_container_url(
                 f"{parsed.scheme}://{parsed.netloc}/api",
+            )
+            log_startup_timing(
+                LOGGER,
+                "⏱️ [StartupTiming] desktop_ready.update_computer_backend_url duration=%.2fs",
+                time.perf_counter() - _t0,
             )
 
     cm.vm_ready = True
@@ -2358,21 +2406,45 @@ async def _(
     )
 
     asyncio.ensure_future(_ensure_desktop_session(cm))
+    _t0 = time.perf_counter()
     await managers_utils._start_file_sync()
+    log_startup_timing(
+        LOGGER,
+        "⏱️ [StartupTiming] desktop_ready.start_file_sync duration=%.2fs",
+        time.perf_counter() - _t0,
+    )
 
+    _t0 = time.perf_counter()
     await cm.event_broker.publish(
         FileSyncComplete.topic,
         FileSyncComplete().to_json(),
     )
+    log_startup_timing(
+        LOGGER,
+        "⏱️ [StartupTiming] desktop_ready.publish_file_sync_complete duration=%.2fs",
+        time.perf_counter() - _t0,
+    )
 
+    _t0 = time.perf_counter()
     await comms_utils.publish_assistant_desktop_ready(
         resolved_binding_id,
         desktop_url,
         liveview_url,
         event.vm_type,
     )
+    log_startup_timing(
+        LOGGER,
+        "⏱️ [StartupTiming] desktop_ready.publish_assistant_ready duration=%.2fs",
+        time.perf_counter() - _t0,
+    )
 
+    _t0 = time.perf_counter()
     await cm.request_llm_run(delay=0)
+    log_startup_timing(
+        LOGGER,
+        "⏱️ [StartupTiming] desktop_ready.request_llm_run duration=%.2fs",
+        time.perf_counter() - _t0,
+    )
 
 
 @EventHandler.register((FileSyncComplete,))

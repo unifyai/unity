@@ -4,6 +4,7 @@ import contextlib
 
 from unity.logger import LOGGER
 from unity.common.hierarchical_logger import DEFAULT_ICON
+from unity.common.startup_timing import log_startup_timing
 from unity.session_details import SESSION_DETAILS
 from unity.settings import SETTINGS
 from unity.manager_registry import SingletonABCMeta
@@ -183,12 +184,16 @@ class ConversationManager(metaclass=SingletonABCMeta):
         self.chat_history = []
         self.contact_index = ContactIndex()
         self.notifications_bar = NotificationBar()
-        self.in_flight_actions: dict[int, dict] = (
+        self.in_flight_actions: dict[
+            int,
+            dict,
+        ] = (
             {}
         )  # dict[int, {"handle": "SteerableTool", "query": "str", "handle_actions": []}]
-        self.completed_actions: dict[int, dict] = (
-            {}
-        )  # Finished actions, kept for post-completion ask() queries
+        self.completed_actions: dict[
+            int,
+            dict,
+        ] = {}  # Finished actions, kept for post-completion ask() queries
         self._pending_steering_tasks: set[asyncio.Task] = (
             set()
         )  # Background tasks from async steering ops (e.g., ask_*)
@@ -990,6 +995,21 @@ class ConversationManager(metaclass=SingletonABCMeta):
         }
         self._pending_llm_requests.append((delay, cancel_running, is_user_origin))
         self._pending_llm_request_meta.append(request_meta)
+        log_startup_timing(
+            LOGGER,
+            (
+                "⏱️ [StartupTiming] first_reply.request_llm_run queued "
+                "request_id=%s origin_event=%s delay=%s cancel_running=%s "
+                "is_user_origin=%s pending=%d ready_for_brain=%s"
+            ),
+            request_id,
+            request_meta["origin_event_name"] or "-",
+            delay,
+            cancel_running,
+            is_user_origin,
+            len(self._pending_llm_requests),
+            self.ready_for_brain,
+        )
         self._session_logger.debug(
             "llm_queue",
             (
@@ -1029,6 +1049,21 @@ class ConversationManager(metaclass=SingletonABCMeta):
         run_id = f"llmrun-{self._llm_run_seq:06d}"
         selected_meta["run_id"] = run_id
         selected_meta["dropped_requests"] = str(dropped_requests)
+        log_startup_timing(
+            LOGGER,
+            (
+                "⏱️ [StartupTiming] first_reply.flush_llm_requests dispatch "
+                "run_id=%s request_id=%s origin_event=%s dropped=%d delay=%s "
+                "cancel_running=%s is_user_origin=%s"
+            ),
+            run_id,
+            selected_meta.get("request_id", "-"),
+            selected_meta.get("origin_event_name", "-") or "-",
+            dropped_requests,
+            delay,
+            cancel_running,
+            is_user_origin,
+        )
 
         self._session_logger.debug(
             "llm_thinking",
@@ -1040,6 +1075,18 @@ class ConversationManager(metaclass=SingletonABCMeta):
                 f"dropped_requests={dropped_requests} delay={delay} "
                 f"cancel_running={cancel_running} is_user_origin={is_user_origin}"
             ),
+        )
+        log_startup_timing(
+            LOGGER,
+            (
+                "⏱️ [StartupTiming] first_reply.run_llm_submitted "
+                "run_id=%s request_id=%s origin_event=%s was_queued=%s mode=%s"
+            ),
+            run_id,
+            selected_meta.get("request_id", "-") or "-",
+            selected_meta.get("origin_event_name", "-") or "-",
+            self.debouncer.was_queued,
+            self.mode,
         )
         await self.run_llm(
             delay=delay,
@@ -1247,6 +1294,22 @@ class ConversationManager(metaclass=SingletonABCMeta):
                 f"calling single_shot_tool_decision ({len(tools)} tools, {len(messages)} msgs)"
             ),
         )
+        log_startup_timing(
+            LOGGER,
+            (
+                "⏱️ [StartupTiming] first_reply.llm_preamble "
+                "run_id=%s duration=%s render_state=%.0fms brain_spec=%.0fms "
+                "tools=%.0fms client=%.0fms tool_count=%d message_count=%d"
+            ),
+            run_id,
+            _ms_since_start(),
+            _render_ms,
+            _brain_spec_ms,
+            _tools_ms,
+            _client_ms,
+            len(tools),
+            len(messages),
+        )
         try:
             result = await single_shot_tool_decision(
                 client,
@@ -1269,6 +1332,13 @@ class ConversationManager(metaclass=SingletonABCMeta):
         self._session_logger.debug(
             "perf",
             f"[_run_llm +{_rl_ms()}] single_shot returned tools={tool_names}",
+        )
+        log_startup_timing(
+            LOGGER,
+            "⏱️ [StartupTiming] first_reply.single_shot duration=%s run_id=%s tools=%s",
+            _rl_ms(),
+            run_id,
+            tool_names,
         )
 
         # Extract structured output (thoughts)
@@ -1337,6 +1407,12 @@ class ConversationManager(metaclass=SingletonABCMeta):
             f"[_run_llm +{_rl_ms()}] voice notification done, committing",
         )
         self.commit()
+        log_startup_timing(
+            LOGGER,
+            "⏱️ [StartupTiming] first_reply.commit completed run_id=%s elapsed=%s",
+            run_id,
+            _rl_ms(),
+        )
         self._session_logger.debug("state_update", "Committing state")
 
         # Clear the temporary state snapshots now that tools have executed
@@ -1380,6 +1456,12 @@ class ConversationManager(metaclass=SingletonABCMeta):
         self._session_logger.debug(
             "perf",
             f"[_run_llm +{_rl_ms()}] post-processing done",
+        )
+        log_startup_timing(
+            LOGGER,
+            "⏱️ [StartupTiming] first_reply.post_processing completed run_id=%s elapsed=%s",
+            run_id,
+            _rl_ms(),
         )
         self._session_logger.debug(
             "llm_response",
@@ -1430,11 +1512,28 @@ class ConversationManager(metaclass=SingletonABCMeta):
                         ),
                     )
                 try:
+                    _event_t0 = self.loop.time()
                     await EventHandler.handle_event(
                         event,
                         self,
                     )
+                    log_startup_timing(
+                        LOGGER,
+                        "⏱️ [StartupTiming] event.handle_event duration=%.2fs event_id=%s event=%s channel=%s",
+                        self.loop.time() - _event_t0,
+                        event_id,
+                        event_name,
+                        channel or "-",
+                    )
+                    _flush_t0 = self.loop.time()
                     await self.flush_llm_requests()
+                    log_startup_timing(
+                        LOGGER,
+                        "⏱️ [StartupTiming] event.flush_llm_requests duration=%.2fs event_id=%s event=%s",
+                        self.loop.time() - _flush_t0,
+                        event_id,
+                        event_name,
+                    )
                 except Exception as exc:
                     LOGGER.error(
                         f"⚠️ [EventLoop] Unhandled error processing "

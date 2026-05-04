@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING
 import unity
 
 from unity.logger import LOGGER
+from unity.common.startup_timing import log_startup_timing
 from unity.common.hierarchical_logger import DEFAULT_ICON, ICONS
 from unity.settings import SETTINGS
 from unity.session_details import SESSION_DETAILS
@@ -38,9 +39,16 @@ _pre_hire_exchange_id: int | None = None
 
 # EVENT BUS
 async def get_last_store_chat_history() -> StoreChatHistory:
+    _t0 = perf_counter()
     bus_events = await EVENT_BUS.search(
         filter='type == "Comms" and payload_cls == "StoreChatHistory"',
         limit=1,
+    )
+    log_startup_timing(
+        LOGGER,
+        "⏱️ [StartupTiming] managers.get_last_store_chat_history duration=%.2fs events=%d",
+        perf_counter() - _t0,
+        len(bus_events),
     )
     if len(bus_events):
         return Event.from_bus_event(bus_events[0])
@@ -127,9 +135,17 @@ async def hydrate_global_thread(cm: "ConversationManager") -> None:
         cm.contact_index.global_thread.maxlen or ContactIndex.DEFAULT_GLOBAL_THREAD_SIZE
     )
 
+    _t0 = perf_counter()
     bus_events = await EVENT_BUS.search(
         filter='type == "Comms"',
         limit=deque_size,
+    )
+    log_startup_timing(
+        LOGGER,
+        "⏱️ [StartupTiming] managers.hydrate_global_thread.search duration=%.2fs events=%d limit=%d",
+        perf_counter() - _t0,
+        len(bus_events),
+        deque_size,
     )
 
     if not bus_events:
@@ -147,6 +163,7 @@ async def hydrate_global_thread(cm: "ConversationManager") -> None:
     hydrated_entries: list = []
 
     restored = 0
+    _t0 = perf_counter()
     for bus_event in bus_events:
         payload_cls = bus_event.payload_cls
         # Strip module prefix if present (e.g., "unity.conversation_manager.events.SMSReceived")
@@ -653,6 +670,13 @@ async def hydrate_global_thread(cm: "ConversationManager") -> None:
     # Prepend hydrated entries so historical messages appear before any
     # messages that arrived during initialization.
     cm.contact_index.prepend_entries(hydrated_entries)
+    log_startup_timing(
+        LOGGER,
+        "⏱️ [StartupTiming] managers.hydrate_global_thread.render duration=%.2fs restored=%d events=%d",
+        perf_counter() - _t0,
+        restored,
+        len(bus_events),
+    )
 
     LOGGER.info(
         f"{ICONS['managers_worker']} [Hydration] Restored {restored} messages from {len(bus_events)} Comms events",
@@ -1775,9 +1799,14 @@ async def _start_file_sync() -> None:
         LOGGER.debug(
             f"{ICONS['managers_worker']} [ManagersWorker] No desktop_url configured, skipping file sync",
         )
+        log_startup_timing(
+            LOGGER,
+            "⏱️ [StartupTiming] managers.file_sync skipped reason=no_desktop_url",
+        )
         return
 
     try:
+        _file_sync_t0 = perf_counter()
         from unity.file_manager.managers.local import LocalFileManager
 
         # Get LocalFileManager singleton (may already exist from manager init)
@@ -1796,6 +1825,12 @@ async def _start_file_sync() -> None:
                 f"{ICONS['managers_worker']} [ManagersWorker] Starting file sync with managed VM...",
             )
             success = await adapter.start_sync()
+            log_startup_timing(
+                LOGGER,
+                "⏱️ [StartupTiming] managers.file_sync.start_sync duration=%.2fs success=%s",
+                perf_counter() - _file_sync_t0,
+                success,
+            )
             if success:
                 LOGGER.debug(
                     f"{ICONS['managers_worker']} [ManagersWorker] File sync started successfully",
@@ -1808,6 +1843,11 @@ async def _start_file_sync() -> None:
             LOGGER.debug(
                 f"{ICONS['managers_worker']} [ManagersWorker] File sync disabled by configuration",
             )
+            log_startup_timing(
+                LOGGER,
+                "⏱️ [StartupTiming] managers.file_sync skipped reason=adapter_disabled duration=%.2fs",
+                perf_counter() - _file_sync_t0,
+            )
 
     except Exception as e:
         # File sync failure should not block manager initialization
@@ -1817,6 +1857,13 @@ async def _start_file_sync() -> None:
         import traceback
 
         traceback.print_exc()
+    finally:
+        if SESSION_DETAILS.assistant.desktop_url:
+            log_startup_timing(
+                LOGGER,
+                "⏱️ [StartupTiming] managers.file_sync.total duration=%.2fs",
+                perf_counter() - _file_sync_t0,
+            )
 
 
 async def _register_computer_act_completed_callback(cm: "ConversationManager") -> None:
@@ -1886,22 +1933,40 @@ async def init_conv_manager(
             # copy of the caller's context — changes don't propagate back.
             # Re-apply the context afterwards so any lazily-created managers
             # in the main async context see the correct values.
+            _t0 = perf_counter()
             await asyncio.to_thread(_init_managers, cm, loop, actor)
+            log_startup_timing(
+                LOGGER,
+                "⏱️ [StartupTiming] managers.init_conv_manager.to_thread duration=%.2fs",
+                perf_counter() - _t0,
+            )
 
             import unify as _unify
 
             full_ctx = (
                 f"{SESSION_DETAILS.user_context}/{SESSION_DETAILS.assistant_context}"
             )
+            _t0 = perf_counter()
             _unify.set_context(full_ctx, skip_create=True)
+            log_startup_timing(
+                LOGGER,
+                "⏱️ [StartupTiming] managers.init_conv_manager.reapply_context duration=%.2fs",
+                perf_counter() - _t0,
+            )
 
             store_chat_history = await get_last_store_chat_history()
             if store_chat_history:
+                _t0 = perf_counter()
                 await cm.event_broker.publish(
                     "app:comms:chat_history",
                     GetChatHistory(
                         chat_history=store_chat_history.chat_history,
                     ).to_json(),
+                )
+                log_startup_timing(
+                    LOGGER,
+                    "⏱️ [StartupTiming] managers.init_conv_manager.publish_chat_history duration=%.2fs",
+                    perf_counter() - _t0,
                 )
 
             cm.initialized = True
@@ -1913,7 +1978,13 @@ async def init_conv_manager(
             hydration_future = getattr(cm, "_hydration_future", None)
             if hydration_future is not None:
                 try:
+                    _t0 = perf_counter()
                     await asyncio.wrap_future(hydration_future)
+                    log_startup_timing(
+                        LOGGER,
+                        "⏱️ [StartupTiming] managers.init_conv_manager.await_hydration duration=%.2fs",
+                        perf_counter() - _t0,
+                    )
                     LOGGER.info(
                         f"{ICONS['managers_worker']} [ManagersWorker] "
                         "Concurrent hydration completed",
@@ -1929,16 +2000,28 @@ async def init_conv_manager(
                 finally:
                     cm._hydration_future = None
 
+            _t0 = perf_counter()
             await _register_computer_act_completed_callback(cm)
+            log_startup_timing(
+                LOGGER,
+                "⏱️ [StartupTiming] managers.init_conv_manager.register_callbacks duration=%.2fs",
+                perf_counter() - _t0,
+            )
 
             os.environ["UNITY_CM_INITIALIZED"] = "1"
 
             # Publish initialization complete event.  The registered
             # InitializationComplete handler pushes a notification and
             # triggers a brain turn so it can follow up on deferred requests.
+            _t0 = perf_counter()
             await event_broker.publish(
                 "app:comms:initialization_complete",
                 InitializationComplete().to_json(),
+            )
+            log_startup_timing(
+                LOGGER,
+                "⏱️ [StartupTiming] managers.init_conv_manager.publish_initialization_complete duration=%.2fs",
+                perf_counter() - _t0,
             )
 
             _init_dur = perf_counter() - start_time
