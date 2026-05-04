@@ -22,6 +22,7 @@ import json
 import time as _time
 import pytest
 from dataclasses import dataclass
+from types import SimpleNamespace
 from unittest.mock import Mock, MagicMock, patch
 
 from unity.conversation_manager.in_memory_event_broker import (
@@ -173,6 +174,7 @@ def mock_settings():
     with patch("unity.conversation_manager.comms_manager.SETTINGS") as mock:
         mock.DEPLOY_ENV = "production"
         mock.ENV_SUFFIX = ""
+        mock.conversation.JOB_NAME = "unity-job-test"
         yield mock
 
 
@@ -978,6 +980,140 @@ class TestStartupEvents:
             assert isinstance(event, AssistantUpdateEvent)
             assert event.assistant_first_name == "Updated"
             assert event.assistant_surname == "Assistant"
+            assert event.is_coordinator is False
+
+    @pytest.mark.asyncio
+    async def test_assistant_update_propagates_coordinator_role(
+        self,
+        broker,
+        mock_session_details,
+        mock_settings,
+    ):
+        """assistant_update carries the Coordinator role flag."""
+        from unity.conversation_manager.comms_manager import CommsManager
+
+        cm = CommsManager(broker)
+        cm.loop = asyncio.get_event_loop()
+
+        async with broker.pubsub() as pubsub:
+            await pubsub.psubscribe("app:comms:*")
+
+            message = create_pubsub_message(
+                "assistant_update",
+                {
+                    "api_key": "key",
+                    "assistant_id": "1",
+                    "user_id": "user_1",
+                    "assistant_first_name": "Coord",
+                    "assistant_surname": "Inator",
+                    "assistant_age": "25",
+                    "assistant_nationality": "US",
+                    "assistant_about": "test",
+                    "assistant_number": "+15555551234",
+                    "assistant_email": "coord@unify.ai",
+                    "user_first_name": "Test",
+                    "user_surname": "User",
+                    "user_number": "+15555550000",
+                    "user_email": "user@test.com",
+                    "voice_provider": "cartesia",
+                    "voice_id": "voice_1",
+                    "is_coordinator": True,
+                },
+            )
+
+            cm.handle_message(message)
+            await _wait_for_condition(lambda: message._acked)
+
+            msg = await pubsub.get_message(timeout=1.0, ignore_subscribe_messages=True)
+            assert msg is not None
+
+            event = Event.from_json(msg["data"])
+            assert isinstance(event, AssistantUpdateEvent)
+            assert event.is_coordinator is True
+
+    @pytest.mark.asyncio
+    async def test_bootstrap_startup_propagates_coordinator_role(
+        self,
+        broker,
+        mock_session_details,
+        mock_settings,
+    ):
+        """AssistantSession bootstrap payload carries the Coordinator role flag."""
+        from unity.conversation_manager.comms_manager import CommsManager
+        from unity.conversation_manager.events import StartupEvent
+
+        startup_payload = {
+            "api_key": "key",
+            "assistant_id": "7",
+            "user_id": "user_7",
+            "assistant_first_name": "Coord",
+            "assistant_surname": "Inator",
+            "assistant_age": "25",
+            "assistant_nationality": "US",
+            "assistant_timezone": "UTC",
+            "assistant_about": "test",
+            "assistant_number": "+15555551234",
+            "assistant_email": "coord@unify.ai",
+            "user_first_name": "Test",
+            "user_surname": "User",
+            "user_number": "+15555550000",
+            "user_email": "user@test.com",
+            "voice_provider": "cartesia",
+            "voice_id": "voice_1",
+            "is_coordinator": True,
+        }
+
+        cm = CommsManager(broker)
+        cm.subscribe_to_topic = MagicMock()
+
+        async with broker.pubsub() as pubsub:
+            await pubsub.psubscribe("app:comms:*")
+
+            with (
+                patch(
+                    "unity.conversation_manager.comms_manager.wait_for_assistant_session_name",
+                    return_value="session-a",
+                ),
+                patch(
+                    "unity.conversation_manager.comms_manager.read_job_assignment_record",
+                    return_value=SimpleNamespace(
+                        session_name="session-a",
+                        binding_id="binding-a",
+                    ),
+                ),
+                patch(
+                    "unity.conversation_manager.comms_manager.read_assistant_session",
+                    return_value={
+                        "spec": {
+                            "assistantId": "7",
+                            "activationId": "activation-a",
+                            "startupSecretRef": "secret-a",
+                        },
+                        "status": {"binding": {"id": "binding-a"}},
+                    },
+                ),
+                patch(
+                    "unity.conversation_manager.comms_manager.read_session_bootstrap_secret_record",
+                    return_value=SimpleNamespace(
+                        name="secret-a",
+                        payload=startup_payload,
+                        owner_session_name="session-a",
+                        owner_activation_id="activation-a",
+                    ),
+                ),
+                patch(
+                    "unity.conversation_manager.comms_manager.mark_job_container_ready",
+                ),
+            ):
+                await cm._poll_for_assignment()
+
+            msg = await pubsub.get_message(timeout=1.0, ignore_subscribe_messages=True)
+            assert msg is not None
+            assert msg["channel"] == "app:comms:startup"
+
+            event = Event.from_json(msg["data"])
+            assert isinstance(event, StartupEvent)
+            assert event.is_coordinator is True
 
     @pytest.mark.asyncio
     async def test_assistant_update_propagates_email_provider(

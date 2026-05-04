@@ -82,6 +82,51 @@ class TestSpaceIds:
         assert sd.assistant.space_ids == []
 
 
+class TestCoordinatorFlag:
+    def test_defaults_to_non_coordinator(self):
+        sd = SessionDetails()
+
+        assert sd.is_coordinator is False
+        assert sd.assistant.is_coordinator is False
+
+    def test_populate_sets_coordinator_shortcut(self):
+        sd = SessionDetails()
+
+        sd.populate(is_coordinator=True)
+
+        assert sd.is_coordinator is True
+        assert sd.assistant.is_coordinator is True
+
+    def test_export_and_populate_from_env_round_trips(self, monkeypatch):
+        monkeypatch.delenv("ASSISTANT_IS_COORDINATOR", raising=False)
+        sd = SessionDetails()
+        sd.populate(is_coordinator=True)
+        sd.export_to_env()
+
+        assert os.environ["ASSISTANT_IS_COORDINATOR"] == "True"
+
+        sd2 = SessionDetails()
+        sd2.populate_from_env()
+        assert sd2.is_coordinator is True
+
+        sd.populate(is_coordinator=False)
+        sd.export_to_env()
+        assert os.environ["ASSISTANT_IS_COORDINATOR"] == "False"
+
+        sd3 = SessionDetails()
+        sd3.populate_from_env()
+        assert sd3.is_coordinator is False
+
+    def test_reset_restores_non_coordinator(self):
+        sd = SessionDetails()
+        sd.populate(is_coordinator=True)
+
+        sd.reset()
+
+        assert sd.is_coordinator is False
+        assert sd.assistant.is_coordinator is False
+
+
 class TestSpaceSummaries:
     def test_export_and_populate_from_env_round_trips(self, monkeypatch):
         monkeypatch.delenv("SPACE_SUMMARIES", raising=False)

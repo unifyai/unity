@@ -185,6 +185,7 @@ class AssistantDetails:
     user_desktop_url: str | None = (
         None  # URL for user's own desktop (not the managed VM)
     )
+    is_coordinator: bool = False
     space_ids: list[int] = field(default_factory=list)
     space_summaries: list[SpaceSummary] = field(default_factory=list)
 
@@ -362,6 +363,15 @@ class SessionDetails:
         self.assistant.space_summaries = normalize_space_summaries(value)
 
     @property
+    def is_coordinator(self) -> bool:
+        """Shortcut to assistant.is_coordinator for role-gated runtime behavior."""
+        return self.assistant.is_coordinator
+
+    @is_coordinator.setter
+    def is_coordinator(self, value: bool) -> None:
+        self.assistant.is_coordinator = value
+
+    @property
     def self_contact_id(self) -> int:
         """Shortcut to assistant.self_contact_id for convenient access."""
         return self.assistant.self_contact_id
@@ -447,6 +457,7 @@ class SessionDetails:
         user_desktop_mode: str | None = None,
         user_desktop_filesys_sync: bool = False,
         user_desktop_url: str | None = None,
+        is_coordinator: bool = False,
     ) -> None:
         """Populate the session with runtime values.
 
@@ -472,6 +483,7 @@ class SessionDetails:
         self.assistant.user_desktop_mode = user_desktop_mode
         self.assistant.user_desktop_filesys_sync = user_desktop_filesys_sync
         self.assistant.user_desktop_url = user_desktop_url
+        self.assistant.is_coordinator = is_coordinator
         self.user.id = user_id
         self.user.first_name = user_first_name
         self.user.surname = user_surname
@@ -529,6 +541,7 @@ class SessionDetails:
             self.assistant.user_desktop_filesys_sync,
         )
         os.environ["ASSISTANT_USER_DESKTOP_URL"] = self.assistant.user_desktop_url or ""
+        os.environ["ASSISTANT_IS_COORDINATOR"] = str(self.assistant.is_coordinator)
         self.export_contact_ids_to_env()
         os.environ["USER_ID"] = self.user.id
         os.environ["USER_FIRST_NAME"] = self.user.first_name
@@ -622,6 +635,8 @@ class SessionDetails:
             self.assistant.user_desktop_filesys_sync = val == "True"
         if val := os.environ.get("ASSISTANT_USER_DESKTOP_URL"):
             self.assistant.user_desktop_url = val if val else None
+        if val := os.environ.get("ASSISTANT_IS_COORDINATOR"):
+            self.assistant.is_coordinator = val == "True"
         if val := os.environ.get("USER_ID"):
             self.user.id = val
         if val := os.environ.get("USER_FIRST_NAME"):

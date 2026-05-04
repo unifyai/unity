@@ -925,6 +925,7 @@ class _SessionConfigBase(Event):
     team_ids: list[int] = field(default_factory=list)
     space_ids: list[int] = field(default_factory=list)
     space_summaries: list[dict[str, Any]] = field(default_factory=list)
+    is_coordinator: bool = False
     update_kind: str = "general"
     wake_reasons: list[dict[str, Any]] = field(default_factory=list)
     # Demo assistant metadata ID. If set, this is a demo session.
