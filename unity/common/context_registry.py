@@ -30,6 +30,10 @@ _SHARED_SCOPED_TABLES: Final[frozenset[str]] = frozenset(
         "Functions/Meta",
         "Functions/Primitives",
         "Functions/VirtualEnvs",
+        "FileRecords",
+        "Files",
+        "Data",
+        "BlackList",
     },
 )
 

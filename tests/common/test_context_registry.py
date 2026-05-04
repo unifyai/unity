@@ -19,6 +19,11 @@ class RegistryExampleManager:
                 name="Contacts",
                 description="People and organizations the assistant knows.",
             ),
+            TableContext(name="Secrets", description="Credentials."),
+            TableContext(name="FileRecords", description="File indexes."),
+            TableContext(name="Files", description="File content."),
+            TableContext(name="Data", description="Datasets."),
+            TableContext(name="BlackList", description="Blocked contacts."),
         ]
 
 
@@ -138,6 +143,32 @@ def test_read_roots_returns_personal_then_sorted_spaces():
 
     assert task_roots == ["user123/42", "Spaces/3", "Spaces/7"]
     assert contact_roots == ["user123/42", "Spaces/3", "Spaces/7"]
+
+
+def test_files_data_and_blacklist_are_shared_scoped():
+    SESSION_DETAILS.space_ids = [7]
+
+    with patch("unity.common.context_registry._create_context_with_retry"):
+        assert ContextRegistry.read_roots(RegistryExampleManager, "Secrets") == [
+            "user123/42",
+            "Spaces/7",
+        ]
+        assert ContextRegistry.read_roots(RegistryExampleManager, "FileRecords") == [
+            "user123/42",
+            "Spaces/7",
+        ]
+        assert ContextRegistry.read_roots(RegistryExampleManager, "Files") == [
+            "user123/42",
+            "Spaces/7",
+        ]
+        assert ContextRegistry.read_roots(RegistryExampleManager, "Data") == [
+            "user123/42",
+            "Spaces/7",
+        ]
+        assert ContextRegistry.read_roots(RegistryExampleManager, "BlackList") == [
+            "user123/42",
+            "Spaces/7",
+        ]
 
 
 def test_lazy_provisioning_is_cached_per_root():
