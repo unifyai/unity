@@ -13,14 +13,16 @@ registration.
 Each test gets a fresh, isolated Unify context that is cleaned up after the test.
 """
 
-from __future__ import annotations
-
+from unity.dashboard_manager.dashboard_manager import DashboardManager
 import json
 
-from unity.dashboard_manager.dashboard_manager import DashboardManager
 from unity.dashboard_manager.types.dashboard import TilePosition
 from unity.dashboard_manager.types.tile import FilterBinding
-from unity.manager_registry import ManagerRegistry
+from tests.dashboard_manager.helpers import (
+    active_read_root,
+    create_context_if_missing,
+    fresh_dashboard_manager,
+)
 from tests.helpers import _handle_project
 
 # ────────────────────────────────────────────────────────────────────────────
@@ -30,8 +32,7 @@ from tests.helpers import _handle_project
 
 def _fresh_dm() -> DashboardManager:
     """Create a fresh DashboardManager instance (clears registry singleton)."""
-    ManagerRegistry.clear()
-    return DashboardManager()
+    return fresh_dashboard_manager()
 
 
 # ────────────────────────────────────────────────────────────────────────────
@@ -61,6 +62,9 @@ def test_create_tile_basic():
 def test_create_tile_with_data_bindings():
     """create_tile should accept data_bindings for live-data tiles."""
     dm = _fresh_dm()
+    personal_root = active_read_root()
+    create_context_if_missing(f"{personal_root}/Data/monthly_stats")
+    create_context_if_missing(f"{personal_root}/Data/revenue")
 
     result = dm.create_tile(
         "<div id='chart'>Loading...</div>",
@@ -203,6 +207,8 @@ def test_list_tiles_with_limit():
 def test_create_tile_with_on_data():
     """create_tile with on_data should store on_data_script and data_bindings_json."""
     dm = _fresh_dm()
+    personal_root = active_read_root()
+    create_context_if_missing(f"{personal_root}/Data/monthly_stats")
 
     result = dm.create_tile(
         "<div id='tbl'>Loading...</div>",
@@ -233,6 +239,8 @@ def test_create_tile_with_on_data():
 def test_update_tile_with_on_data():
     """update_tile should update on_data_script field."""
     dm = _fresh_dm()
+    personal_root = active_read_root()
+    create_context_if_missing(f"{personal_root}/Data/monthly_stats")
 
     created = dm.create_tile(
         "<div id='v'>Loading...</div>",

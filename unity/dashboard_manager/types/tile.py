@@ -125,6 +125,14 @@ class TileRecordRow(BaseModel):
         default=False,
         description="Whether the tile uses the live data bridge",
     )
+    data_scope: str = Field(
+        default="dashboard",
+        description=(
+            "Root used to resolve live data bindings: 'dashboard' inherits "
+            "the tile row destination, while 'space:<id>' pins reads to a "
+            "specific shared space."
+        ),
+    )
     data_binding_contexts: Optional[str] = Field(
         default=None,
         description="Comma-separated Unify context paths for data bindings",

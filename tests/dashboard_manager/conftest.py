@@ -1,8 +1,12 @@
 """Fixtures for DashboardManager tests."""
 
+import time
+
 import pytest
 
+from unity.common.context_registry import ContextRegistry
 from unity.dashboard_manager.simulated import SimulatedDashboardManager
+from unity.session_details import SESSION_DETAILS
 
 
 @pytest.fixture
@@ -34,3 +38,18 @@ def seeded_dm(simulated_dm):
         ],
     )
     return simulated_dm
+
+
+@pytest.fixture
+def dashboard_manager_spaces():
+    """Assign unique shared-space memberships for dashboard routing tests."""
+    base_id = time.time_ns() % 1_000_000_000
+    space_ids = (base_id, base_id + 1)
+    original_space_ids = list(SESSION_DETAILS.space_ids)
+    SESSION_DETAILS.space_ids = list(space_ids)
+    ContextRegistry.clear()
+    try:
+        yield space_ids
+    finally:
+        SESSION_DETAILS.space_ids = original_space_ids
+        ContextRegistry.clear()

@@ -39,6 +39,7 @@ class TestTileTypes:
         )
         assert row.token == "abc123abc123"
         assert row.has_data_bindings is False
+        assert row.data_scope == "dashboard"
         assert row.data_binding_contexts is None
 
     def test_tile_record_with_bindings(self):
@@ -574,6 +575,29 @@ class TestResolveBindingContexts:
             assert len(result) == 1
             assert result[0].context == f"{BASE}/Data/Sales/Monthly"
             assert result[0].alias == "sales"
+
+    def test_filter_binding_resolved_against_explicit_root(self):
+        space_base = "Spaces/7"
+        known_contexts = {
+            f"{space_base}/Data/Sales/Monthly",
+            f"{BASE}/Data/Sales/Monthly",
+        }
+        with (
+            patch(
+                "unity.dashboard_manager.ops.tile_ops.ContextRegistry",
+            ) as mock_reg,
+            patch(
+                "unity.dashboard_manager.ops.tile_ops.unify",
+            ) as mock_unify,
+        ):
+            mock_reg._base_context = BASE
+            mock_unify.get_contexts.return_value = {k: "" for k in known_contexts}
+
+            bindings = [FilterBinding(context="Data/Sales/Monthly", alias="sales")]
+            result = resolve_binding_contexts(bindings, base_context=space_base)
+
+            assert result[0].context == f"{space_base}/Data/Sales/Monthly"
+            mock_unify.get_contexts.assert_called_once_with(prefix=space_base)
 
     def test_reduce_binding_resolved(self):
         with (
