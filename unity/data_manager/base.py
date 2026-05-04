@@ -108,6 +108,7 @@ class BaseDataManager(BaseStateManager):
         fields: Optional[Dict[str, Any]] = None,
         unique_keys: Optional[Dict[str, str]] = None,
         auto_counting: Optional[Dict[str, Optional[str]]] = None,
+        destination: str | None = None,
     ) -> str:
         """
         Create a new table context in Unify.
@@ -163,6 +164,19 @@ class BaseDataManager(BaseStateManager):
 
             Example: ``{"row_id": None}`` → row_id auto-increments globally
             Example: ``{"instance_id": "task_id"}`` → instance_id auto-increments per task_id
+
+        destination : str | None, default ``None``
+            Where this data table lives. Pass ``"personal"`` (the default)
+            for working datasets, scratch tables, and data tied only to your
+            individual analysis. Pass ``"space:<id>"`` for team-shared
+            datasets every member of the space should see, such as operational
+            data, team KPIs, shared reference tables, and datasets every member
+            queries. Read the *Accessible shared spaces* block in your system
+            prompt before choosing. Schema operations operate within one
+            destination at a time; cross-destination schema migrations are not
+            supported. The privacy floor is personal: when confidence is low
+            and the data would land in a space, call ``request_clarification``
+            instead of guessing toward the wider audience.
 
         Returns
         -------
@@ -487,6 +501,7 @@ class BaseDataManager(BaseStateManager):
         context: str,
         *,
         dangerous_ok: bool = False,
+        destination: str | None = None,
     ) -> None:
         """
         Delete a table context and all its data.
@@ -502,6 +517,15 @@ class BaseDataManager(BaseStateManager):
         dangerous_ok : bool, default ``False``
             Safety flag that MUST be set to ``True`` to confirm the deletion.
             This prevents accidental data loss.
+
+        destination : str | None, default ``None``
+            Which Data root contains the table. Pass ``"personal"`` (the
+            default) for working datasets, scratch tables, and data tied only
+            to your individual analysis. Pass ``"space:<id>"`` for
+            team-shared datasets every member of the space should see. Read
+            the *Accessible shared spaces* block before choosing. The privacy
+            floor is personal; call ``request_clarification`` for
+            ambiguity-going-wider.
 
         Raises
         ------
@@ -538,6 +562,8 @@ class BaseDataManager(BaseStateManager):
         self,
         old_context: str,
         new_context: str,
+        *,
+        destination: str | None = None,
     ) -> Dict[str, str]:
         """
         Rename a table context.
@@ -553,6 +579,15 @@ class BaseDataManager(BaseStateManager):
 
         new_context : str
             New full context path for the table.
+
+        destination : str | None, default ``None``
+            Which Data root contains the source and destination tables. Pass
+            ``"personal"`` (the default) for working datasets, scratch tables,
+            and data tied only to your individual analysis. Pass
+            ``"space:<id>"`` for team-shared datasets every member of the
+            space should see. Schema operations operate within one destination
+            at a time. Read the *Accessible shared spaces* block before
+            choosing; call ``request_clarification`` for ambiguity-going-wider.
 
         Returns
         -------
@@ -602,6 +637,7 @@ class BaseDataManager(BaseStateManager):
         column_type: str,
         mutable: bool = True,
         backfill_logs: bool = False,
+        destination: str | None = None,
     ) -> Dict[str, str]:
         """
         Add a new column to a table.
@@ -630,6 +666,13 @@ class BaseDataManager(BaseStateManager):
         backfill_logs : bool, default ``False``
             Whether to backfill existing rows with ``None`` values.
             Usually not needed for new columns.
+
+        destination : str | None, default ``None``
+            Which Data root contains the table. Pass ``"personal"`` (the
+            default) for working datasets and scratch tables. Pass
+            ``"space:<id>"`` for a team-shared dataset every member of the
+            space should see. Read the *Accessible shared spaces* block before
+            choosing; call ``request_clarification`` for ambiguity-going-wider.
 
         Returns
         -------
@@ -680,6 +723,7 @@ class BaseDataManager(BaseStateManager):
         context: str,
         *,
         column_name: str,
+        destination: str | None = None,
     ) -> Dict[str, str]:
         """
         Remove a column from a table.
@@ -693,6 +737,13 @@ class BaseDataManager(BaseStateManager):
 
         column_name : str
             Name of the column to delete.
+
+        destination : str | None, default ``None``
+            Which Data root contains the table. Pass ``"personal"`` (the
+            default) for working datasets and scratch tables. Pass
+            ``"space:<id>"`` for a team-shared dataset every member of the
+            space should see. Read the *Accessible shared spaces* block before
+            choosing; call ``request_clarification`` for ambiguity-going-wider.
 
         Returns
         -------
@@ -736,6 +787,7 @@ class BaseDataManager(BaseStateManager):
         *,
         old_name: str,
         new_name: str,
+        destination: str | None = None,
     ) -> Dict[str, str]:
         """
         Rename a column in a table.
@@ -751,6 +803,13 @@ class BaseDataManager(BaseStateManager):
         new_name : str
             New name for the column. Must be a valid identifier.
             The name ``id`` is reserved and cannot be used.
+
+        destination : str | None, default ``None``
+            Which Data root contains the table. Pass ``"personal"`` (the
+            default) for working datasets and scratch tables. Pass
+            ``"space:<id>"`` for a team-shared dataset every member of the
+            space should see. Read the *Accessible shared spaces* block before
+            choosing; call ``request_clarification`` for ambiguity-going-wider.
 
         Returns
         -------
@@ -796,6 +855,7 @@ class BaseDataManager(BaseStateManager):
         *,
         column_name: str,
         equation: str,
+        destination: str | None = None,
     ) -> Dict[str, str]:
         """
         Create a computed column based on an equation.
@@ -821,6 +881,13 @@ class BaseDataManager(BaseStateManager):
             - ``"{price} * {quantity}"`` - multiplication
             - ``"{first_name} + ' ' + {last_name}"`` - string concatenation
             - ``"({score1} + {score2}) / 2"`` - average
+
+        destination : str | None, default ``None``
+            Which Data root contains the table. Pass ``"personal"`` (the
+            default) for working datasets and scratch tables. Pass
+            ``"space:<id>"`` for a team-shared dataset every member of the
+            space should see. Read the *Accessible shared spaces* block before
+            choosing; call ``request_clarification`` for ambiguity-going-wider.
 
         Returns
         -------
@@ -1329,6 +1396,7 @@ class BaseDataManager(BaseStateManager):
         mode: str = "inner",
         left_where: Optional[str] = None,
         right_where: Optional[str] = None,
+        destination: str | None = None,
     ) -> str:
         """
         Join two tables and write results to a destination table.
@@ -1385,6 +1453,14 @@ class BaseDataManager(BaseStateManager):
             Optional filter expression applied to right table BEFORE joining.
             Uses column names without table prefix.
             Example: ``"created_at >= '2024-01-01'"``
+
+        destination : str | None, default ``None``
+            Which Data root should receive ``dest_table``. Pass
+            ``"personal"`` (the default) for working datasets and scratch
+            tables. Pass ``"space:<id>"`` for a team-shared dataset every
+            member of the space should see. Read the *Accessible shared
+            spaces* block before choosing; call ``request_clarification`` for
+            ambiguity-going-wider.
 
         Returns
         -------
@@ -2037,6 +2113,7 @@ class BaseDataManager(BaseStateManager):
         *,
         add_to_all_context: bool = False,
         batched: bool = True,
+        destination: str | None = None,
     ) -> List[int]:
         """
         Insert rows into a table.
@@ -2068,6 +2145,15 @@ class BaseDataManager(BaseStateManager):
             When ``True`` (recommended), uses batched log creation for better
             performance. Set to ``False`` only for special cases requiring
             sequential insertion.
+
+        destination : str | None, default ``None``
+            Where Data-owned rows should be stored. Pass ``"personal"`` (the
+            default) for working datasets, scratch tables, and data tied only
+            to your individual analysis. Pass ``"space:<id>"`` for
+            team-shared operational data, team KPIs, shared reference tables,
+            and datasets every member queries. Read the *Accessible shared
+            spaces* block before choosing. The privacy floor is personal; call
+            ``request_clarification`` for ambiguity-going-wider.
 
         Returns
         -------
@@ -2111,6 +2197,7 @@ class BaseDataManager(BaseStateManager):
         updates: Dict[str, Any],
         *,
         filter: str,
+        destination: str | None = None,
     ) -> int:
         """
         Update rows matching a filter.
@@ -2132,6 +2219,15 @@ class BaseDataManager(BaseStateManager):
         filter : str
             Filter expression to match rows for update. **Required** to prevent
             accidental mass updates. Same syntax as ``filter()`` method.
+
+        destination : str | None, default ``None``
+            Which Data root contains the rows. Pass ``"personal"`` (the
+            default) for working datasets, scratch tables, and data tied only
+            to your individual analysis. Pass ``"space:<id>"`` for
+            team-shared operational data, team KPIs, shared reference tables,
+            and datasets every member queries. Read the *Accessible shared
+            spaces* block before choosing; call ``request_clarification`` for
+            ambiguity-going-wider.
 
         Returns
         -------
@@ -2178,6 +2274,7 @@ class BaseDataManager(BaseStateManager):
         log_ids: Optional[List[int]] = None,
         dangerous_ok: bool = False,
         delete_empty_rows: bool = False,
+        destination: str | None = None,
     ) -> int:
         """
         Delete rows matching a filter or by specific log IDs.
@@ -2202,6 +2299,15 @@ class BaseDataManager(BaseStateManager):
 
         delete_empty_rows : bool, default ``False``
             When ``True``, also deletes rows that have no data (empty logs).
+
+        destination : str | None, default ``None``
+            Which Data root contains the rows. Pass ``"personal"`` (the
+            default) for working datasets, scratch tables, and data tied only
+            to your individual analysis. Pass ``"space:<id>"`` for
+            team-shared operational data, team KPIs, shared reference tables,
+            and datasets every member queries. Read the *Accessible shared
+            spaces* block before choosing; call ``request_clarification`` for
+            ambiguity-going-wider.
 
         Returns
         -------
@@ -2270,6 +2376,7 @@ class BaseDataManager(BaseStateManager):
         coerce_types: bool = True,
         storage_client: Optional[Any] = None,
         skip_rows: int = 0,
+        destination: str | None = None,
     ) -> "IngestResult":
         """
         Create a table, insert rows, and optionally embed -- in one call.
@@ -2359,6 +2466,15 @@ class BaseDataManager(BaseStateManager):
         add_to_all_context : bool, default ``False``
             Whether to also add inserted rows to aggregation contexts.
             Used by FileManager to populate cross-assistant shared tables.
+
+        destination : str | None, default ``None``
+            Where Data-owned rows should be stored. Pass ``"personal"`` (the
+            default) for working datasets, scratch tables, and data tied only
+            to your individual analysis. Pass ``"space:<id>"`` for
+            team-shared operational data, team KPIs, shared reference tables,
+            and datasets every member queries. Read the *Accessible shared
+            spaces* block before choosing. The privacy floor is personal; call
+            ``request_clarification`` for ambiguity-going-wider.
 
         execution : IngestExecutionConfig | None, default ``None``
             Advanced pipeline knobs (max_workers, retries, backoff,
@@ -2473,6 +2589,7 @@ class BaseDataManager(BaseStateManager):
         source_column: str,
         target_column: Optional[str] = None,
         async_embeddings: bool = False,
+        destination: str | None = None,
     ) -> str:
         """
         Ensure an embedding column exists for a source column.
@@ -2496,7 +2613,7 @@ class BaseDataManager(BaseStateManager):
             When ``True``, the backend computes embeddings asynchronously.
             The call returns immediately but vector values are populated in
             the background, so a subsequent ``search`` may return zero
-            semantic results until processing completes.
+            results until indexing completes.
 
             When ``False`` (the default), embedding computation blocks until
             vectors are fully materialised.  This is the correct choice for
@@ -2506,6 +2623,13 @@ class BaseDataManager(BaseStateManager):
             Bulk ingestion pipelines (``DataManager.ingest``,
             ``FileManager`` parsing) set this to ``True`` internally because
             throughput matters more than immediate availability.
+
+        destination : str | None, default ``None``
+            Which Data root contains the table. Pass ``"personal"`` (the
+            default) for working datasets and scratch tables. Pass
+            ``"space:<id>"`` for a team-shared dataset every member of the
+            space should see. Read the *Accessible shared spaces* block before
+            choosing; call ``request_clarification`` for ambiguity-going-wider.
 
         Returns
         -------
@@ -2542,6 +2666,7 @@ class BaseDataManager(BaseStateManager):
         row_ids: Optional[List[int]] = None,
         batch_size: int = 100,
         async_embeddings: bool = False,
+        destination: str | None = None,
     ) -> int:
         """
         Generate embeddings for rows.
@@ -2572,6 +2697,13 @@ class BaseDataManager(BaseStateManager):
             When ``True``, the backend computes embeddings asynchronously and
             the call returns immediately.  See ``ensure_vector_column`` for
             the full trade-off discussion.
+
+        destination : str | None, default ``None``
+            Which Data root contains the table. Pass ``"personal"`` (the
+            default) for working datasets and scratch tables. Pass
+            ``"space:<id>"`` for a team-shared dataset every member of the
+            space should see. Read the *Accessible shared spaces* block before
+            choosing; call ``request_clarification`` for ambiguity-going-wider.
 
         Returns
         -------

@@ -165,6 +165,7 @@ class SimulatedDataManager(BaseDataManager):
         fields: Optional[Dict[str, Any]] = None,
         unique_keys: Optional[Dict[str, str]] = None,
         auto_counting: Optional[Dict[str, Optional[str]]] = None,
+        destination: str | None = None,
     ) -> str:
         resolved = self._resolve_context(context)
         if fields:
@@ -253,6 +254,7 @@ class SimulatedDataManager(BaseDataManager):
         context: str,
         *,
         dangerous_ok: bool = False,
+        destination: str | None = None,
     ) -> None:
         if not dangerous_ok:
             raise ValueError(
@@ -271,6 +273,8 @@ class SimulatedDataManager(BaseDataManager):
         self,
         old_context: str,
         new_context: str,
+        *,
+        destination: str | None = None,
     ) -> Dict[str, str]:
         old_resolved = self._resolve_context(old_context)
         new_resolved = self._resolve_context(new_context)
@@ -309,6 +313,7 @@ class SimulatedDataManager(BaseDataManager):
         column_type: str,
         mutable: bool = True,
         backfill_logs: bool = False,
+        destination: str | None = None,
     ) -> Dict[str, str]:
         if column_name == "id":
             raise ValueError("Cannot create a column with reserved name 'id'.")
@@ -326,6 +331,7 @@ class SimulatedDataManager(BaseDataManager):
         context: str,
         *,
         column_name: str,
+        destination: str | None = None,
     ) -> Dict[str, str]:
         resolved = self._resolve_context(context)
         if resolved in self._schemas and column_name in self._schemas[resolved]:
@@ -345,6 +351,7 @@ class SimulatedDataManager(BaseDataManager):
         *,
         old_name: str,
         new_name: str,
+        destination: str | None = None,
     ) -> Dict[str, str]:
         if old_name == new_name:
             return {"info": "no-op: old and new names are identical"}
@@ -377,6 +384,7 @@ class SimulatedDataManager(BaseDataManager):
         *,
         column_name: str,
         equation: str,
+        destination: str | None = None,
     ) -> Dict[str, str]:
         resolved = self._resolve_context(context)
 
@@ -630,6 +638,7 @@ class SimulatedDataManager(BaseDataManager):
         mode: str = "inner",
         left_where: Optional[str] = None,
         right_where: Optional[str] = None,
+        destination: str | None = None,
     ) -> str:
         left_ctx = self._resolve_context(left_table)
         right_ctx = self._resolve_context(right_table)
@@ -877,6 +886,7 @@ class SimulatedDataManager(BaseDataManager):
         *,
         add_to_all_context: bool = False,
         batched: bool = True,
+        destination: str | None = None,
     ) -> List[int]:
         if not rows:
             return []
@@ -900,6 +910,7 @@ class SimulatedDataManager(BaseDataManager):
         updates: Dict[str, Any],
         *,
         filter: str,
+        destination: str | None = None,
     ) -> int:
         resolved = self._resolve_context(context)
         updated = 0
@@ -926,6 +937,7 @@ class SimulatedDataManager(BaseDataManager):
         log_ids: Optional[List[int]] = None,
         dangerous_ok: bool = False,
         delete_empty_rows: bool = False,
+        destination: str | None = None,
     ) -> int:
         if not dangerous_ok:
             raise ValueError(
@@ -990,6 +1002,7 @@ class SimulatedDataManager(BaseDataManager):
         coerce_types: bool = True,
         storage_client=None,
         skip_rows: int = 0,
+        destination: str | None = None,
     ) -> IngestResult:
         if table_input_handle is not None:
             from unity.common.pipeline.row_streaming import (
@@ -1058,6 +1071,7 @@ class SimulatedDataManager(BaseDataManager):
         source_column: str,
         target_column: Optional[str] = None,
         async_embeddings: bool = False,
+        destination: str | None = None,
     ) -> str:
         target = target_column or f"_{source_column}_emb"
         resolved = self._resolve_context(context)
@@ -1075,6 +1089,7 @@ class SimulatedDataManager(BaseDataManager):
         row_ids: Optional[List[int]] = None,
         batch_size: int = 100,
         async_embeddings: bool = False,
+        destination: str | None = None,
     ) -> int:
         # Simulated: just count rows that would be embedded
         resolved = self._resolve_context(context)
@@ -1087,7 +1102,7 @@ class SimulatedDataManager(BaseDataManager):
     # Utility Methods
     # ──────────────────────────────────────────────────────────────────────────
 
-    def clear(self) -> None:
+    def clear(self, *, destination: str | None = None) -> None:
         """Clear all in-memory tables and reset the simulated manager."""
         self._tables.clear()
         self._schemas.clear()
