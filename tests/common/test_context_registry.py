@@ -171,6 +171,25 @@ def test_files_data_and_blacklist_are_shared_scoped():
         ]
 
 
+def test_resolve_root_supports_dashboard_tables_without_provisioning():
+    SESSION_DETAILS.space_ids = [7]
+
+    with patch(
+        "unity.common.context_registry._create_context_with_retry",
+    ) as create_context:
+        manager_name, root_identity, root_context = ContextRegistry.resolve_root(
+            RegistryExampleManager,
+            "Dashboards/Tiles",
+            destination="space:7",
+        )
+
+    assert manager_name == "RegistryExampleManager"
+    assert root_identity == "Spaces/7"
+    assert root_context == "Spaces/7"
+    create_context.assert_not_called()
+    assert ContextRegistry._registry == {}
+
+
 def test_lazy_provisioning_is_cached_per_root():
     SESSION_DETAILS.space_ids = [7]
 

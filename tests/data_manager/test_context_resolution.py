@@ -103,6 +103,27 @@ def test_fully_qualified_foreign_path_not_double_prefixed():
         )
 
 
+def test_shared_space_path_not_double_prefixed():
+    """Spaces/* contexts are absolute roots, not Data/* children."""
+    from unity.data_manager.data_manager import DataManager
+
+    dm = DataManager.__new__(DataManager)
+    dm._base_ctx = "org123/42/Data"
+
+    assert (
+        dm._resolve_context("Spaces/7/Dashboards/Tiles") == "Spaces/7/Dashboards/Tiles"
+    )
+
+
+def test_simulated_shared_space_path_not_double_prefixed():
+    """SimulatedDataManager follows the same Spaces/* absolute-root contract."""
+    dm = SimulatedDataManager()
+
+    assert (
+        dm._resolve_context("Spaces/7/Dashboards/Tiles") == "Spaces/7/Dashboards/Tiles"
+    )
+
+
 def test_context_resolution_for_reduce():
     """Context resolution should work for reduce operations."""
     dm = SimulatedDataManager()
