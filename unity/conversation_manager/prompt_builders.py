@@ -86,6 +86,127 @@ def _build_boss_details_block(
     return "\n".join(lines)
 
 
+def _build_authorized_humans_block(
+    *,
+    contact_id: int,
+    first_name: str,
+    surname: str,
+    phone_number: str | None = None,
+    email_address: str | None = None,
+    authorized_humans: list[dict[str, Any]] | None = None,
+) -> str:
+    """Build the Coordinator's human-roster block."""
+
+    if not authorized_humans:
+        authorized_humans = [
+            {
+                "contact_id": contact_id,
+                "first_name": first_name,
+                "surname": surname,
+                "phone_number": phone_number,
+                "email_address": email_address,
+            },
+        ]
+
+    lines: list[str] = []
+    for human in authorized_humans:
+        name = " ".join(
+            str(human.get(part) or "").strip() for part in ("first_name", "surname")
+        ).strip()
+        if not name:
+            name = str(human.get("name") or human.get("email") or "Unknown")
+        details = [f"- {name}"]
+        email = human.get("email") or human.get("email_address")
+        if email:
+            details.append(f"email: {email}")
+        phone = human.get("phone_number") or human.get("phone")
+        if phone:
+            details.append(f"phone: {phone}")
+        contact_id = human.get("contact_id")
+        if contact_id is not None:
+            details.append(f"contact_id: {contact_id}")
+        user_id = human.get("user_id") or human.get("id")
+        if user_id:
+            details.append(f"user_id: {user_id}")
+        lines.append("; ".join(details))
+    return "\n".join(lines)
+
+
+def _build_coordinator_role_block(voice_note: str) -> str:
+    """Build the Coordinator-specific role block."""
+    return f"""Role
+----
+I am the Coordinator, a remote teammate responsible for helping an organization get its Unify assistant workforce set up. I onboard the authorized humans, understand what colleagues they need, and create or configure assistants only when the request is clearly authorized.
+
+I communicate directly through the normal conversation mediums. I can speak with several authorized humans at the same time, but I treat assistant lifecycle changes as privileged workspace operations.{voice_note}"""
+
+
+def _build_coordinator_onboarding_reference(desktop_access_faq: str) -> str:
+    """Build the Coordinator-specific onboarding reference block."""
+    return f"""Coordinator onboarding reference
+--------------------------------
+My setup goal is to move the organization from "getting started" to "ready to go." The current Coordinator state and checklist are shown in `<coordinator_goal>` when they are available.
+
+I should learn who the authorized humans are, what roles or workflows they want assistants for, and what communication channels or workspace details those assistants need. I can create assistants, list existing assistants, update assistant configuration, delete assistants when explicitly requested, and list organization members.
+
+I should not promise workspace administration outside the current lifecycle/member surface. If someone asks for capabilities outside the five Coordinator lifecycle/member tools, I explain what I can do now and route the rest through normal assistance or follow-up.
+
+{desktop_access_faq}"""
+
+
+def _build_coordinator_authorized_humans_section(
+    authorized_humans_details: str,
+) -> str:
+    """Build the Coordinator authorized-humans prompt section."""
+    return f"""Authorized humans
+-----------------
+The following people are authorized to work with me in this setup flow:
+{authorized_humans_details}"""
+
+
+def _build_coordinator_output_format(
+    *,
+    voice_output_block: str,
+    comms_tool_listing: str,
+    coordinator_lifecycle_tool_listing: str,
+    coordinator_knowledge_tool_listing: str,
+    action_steering_tool_listing: str,
+    sms_call_note: str,
+) -> str:
+    """Build the Coordinator-specific output format and tool listing."""
+    return f"""Output format
+-------------
+My output will be in the following format:
+{{
+    "thoughts": [my concise thoughts before taking actions]
+}}
+
+{voice_output_block}
+
+All actions are performed by calling the available tools. The tools I have access to include:
+
+**Communication tools:**
+{comms_tool_listing}
+
+**Coordinator lifecycle tools:**
+{coordinator_lifecycle_tool_listing}
+
+**Knowledge and action tools:**
+{coordinator_knowledge_tool_listing}
+
+**Action steering tools** (`ask_*` also works for completed actions):
+{action_steering_tool_listing}
+
+For communication tools, provide the contact_id when the contact is in the active conversations.{sms_call_note}"""
+
+
+def _build_coordinator_disposition_block() -> str:
+    """Build the Coordinator-specific disposition block."""
+    return """Coordinator disposition
+-----------------------
+I am calm, explicit, and careful with workspace authority. I ask short clarifying questions before creating, changing, or deleting assistants when ownership, purpose, or authorization is unclear. I keep onboarding moving through concise next steps, but I do not pressure users into configuring everything at once."""
+
+
 def _build_voice_output_block(*, is_internal_call: bool = False) -> str:
     """Build the voice call output format guidance block."""
     if is_internal_call:
@@ -292,6 +413,46 @@ def _build_comms_tool_listing(
     return "\n".join(lines)
 
 
+def _build_coordinator_lifecycle_tool_listing() -> str:
+    """Build the Coordinator lifecycle tools block for the output format section."""
+    return "\n".join(
+        [
+            "- `create_assistant`: Create a new assistant for an authorized human or workspace need.",
+            "- `delete_assistant`: Delete an existing assistant when the authorized requester explicitly wants it removed.",
+            "- `update_assistant_config`: Update configuration for an existing assistant.",
+            "- `list_assistants`: List assistants visible to this Coordinator.",
+            "- `list_org_members`: List the authorized humans in this organization. Personal Coordinators may return an empty roster.",
+        ],
+    )
+
+
+def _build_coordinator_knowledge_tool_listing() -> str:
+    """Build the Coordinator's supporting knowledge/action tools block."""
+    return "\n".join(
+        [
+            "- `act`: Engage with knowledge, resources, and the world for supporting work. Do not use it to invent lifecycle capabilities outside the Coordinator tool set.",
+            "- `ask_about_contacts`: Query contact records directly (lookup, search, filter, compare). Faster than `act` for purely contact-related questions.",
+            "- `update_contacts`: Mutate contact records directly (create, edit, delete, merge). Faster than `act` for purely contact-related changes.",
+            "- `query_past_transcripts`: Search and analyse past messages and conversation history directly. Faster than `act` for purely transcript-related questions.",
+            "- `wait(delay=None)`: Wait for more input. Use this instead of sending another message - prefer silence over extra communication. Optionally pass `delay=<seconds>` to wake up after that many seconds for another thinking turn. Omit `delay` to wait indefinitely until the next event.",
+        ],
+    )
+
+
+def _build_action_steering_tool_listing() -> str:
+    """Build the shared action steering tools block for the output format section."""
+    return "\n".join(
+        [
+            "- `ask_*`: Ask about a running action's progress, or a completed action's process/methodology",
+            "- `interject_*`: Provide new information or instructions to a running action",
+            "- `stop_*`: Cancel a running action entirely",
+            "- `pause_*`: Temporarily halt a running action",
+            "- `resume_*`: Continue a paused running action",
+            "- `answer_clarification_*`: Respond to a question from a running action",
+        ],
+    )
+
+
 def _build_input_format_example() -> str:
     """Build the input format example block."""
     return """Example input structure:
@@ -343,6 +504,8 @@ def build_system_prompt(
     assistant_has_teams: bool = False,
     user_desktop_control: bool = False,
     space_summaries: list[SpaceSummary] | None = None,
+    is_coordinator: bool = False,
+    authorized_humans: list[dict[str, Any]] | None = None,
 ) -> PromptParts:
     """Build the system prompt for the ConversationManager LLM.
 
@@ -375,6 +538,10 @@ def build_system_prompt(
         tool listing and adds a missing-capability notice when False).
     space_summaries : list[SpaceSummary] | None
         Shared spaces available to the assistant for memory routing.
+    is_coordinator : bool
+        Whether to render the Coordinator onboarding persona and lifecycle tool block.
+    authorized_humans : list[dict[str, Any]] | None
+        Organization members the Coordinator is authorized to help onboard.
 
     Returns
     -------
@@ -388,6 +555,14 @@ def build_system_prompt(
         surname=surname,
         phone_number=phone_number,
         email_address=email_address,
+    )
+    authorized_humans_details = _build_authorized_humans_block(
+        contact_id=contact_id,
+        first_name=first_name,
+        surname=surname,
+        phone_number=phone_number,
+        email_address=email_address,
+        authorized_humans=authorized_humans,
     )
     voice_output_block = _build_voice_output_block(is_internal_call=is_internal_call)
     voice_calls_guide = _build_voice_calls_guide(is_internal_call=is_internal_call)
@@ -412,6 +587,9 @@ def build_system_prompt(
         else " I cannot make a call and join a Google Meet or Microsoft Teams meeting at the same time."
     )
     input_format_example = _build_input_format_example()
+    coordinator_lifecycle_tool_listing = _build_coordinator_lifecycle_tool_listing()
+    coordinator_knowledge_tool_listing = _build_coordinator_knowledge_tool_listing()
+    action_steering_tool_listing = _build_action_steering_tool_listing()
 
     # Voice call note for role section
     voice_note = (
@@ -424,13 +602,16 @@ def build_system_prompt(
     parts = PromptParts()
 
     # Role
-    parts.add(
-        f"""Role
+    if is_coordinator:
+        parts.add(_build_coordinator_role_block(voice_note))
+    else:
+        parts.add(
+            f"""Role
 ----
 I am a fully remote virtual employee. I am not a chatbot or an AI assistant — I am a remote team member who works for my boss. I should conduct myself the way a competent, self-sufficient remote colleague would.
 
 I communicate with my boss and their contacts directly through different mediums. I can communicate with several people at the same time — more details in the Input format and Output format sections.{voice_note}""",
-    )
+        )
 
     # Bio
     parts.add(
@@ -449,8 +630,11 @@ A: Yes — just install a quick remote access tool from unify.ai and I can work 
         else """**Q: Can you access my computer directly?**
 A: Not directly — but you can view and control *my* computer through the Meet window ("Show assistant screen" → "Enable mouse and keyboard control"). If you need me to do something on my machine, just ask and I'll do it. If you need something done on *your* machine, share your screen so I can see it and walk you through the steps."""
     )
-    parts.add(
-        f"""Onboarding reference
+    if is_coordinator:
+        parts.add(_build_coordinator_onboarding_reference(desktop_access_faq))
+    else:
+        parts.add(
+            f"""Onboarding reference
 --------------------
 When my boss or their contacts ask what I can do, how to get started, or how I work, I draw from the following naturally and briefly — answering only what was asked, never reciting a list.
 
@@ -485,10 +669,14 @@ A: Yes. The easiest way to get started is for us to share screens — I can walk
 
 **Q: What can't you do?**
 A: I can't be physically present. Everything else a remote worker can do — communicate, research, use software, manage files, handle tasks — I can do.""",
-    )
+        )
 
     # Boss details
-    if demo_mode and not first_name:
+    if is_coordinator:
+        parts.add(
+            _build_coordinator_authorized_humans_section(authorized_humans_details),
+        )
+    elif demo_mode and not first_name:
         parts.add(
             """Boss details
 ------------
@@ -522,7 +710,18 @@ Messages from the current turn have **NEW** tag prepended:
     )
 
     # Output format
-    if demo_mode:
+    if is_coordinator:
+        parts.add(
+            _build_coordinator_output_format(
+                voice_output_block=voice_output_block,
+                comms_tool_listing=comms_tool_listing,
+                coordinator_lifecycle_tool_listing=coordinator_lifecycle_tool_listing,
+                coordinator_knowledge_tool_listing=coordinator_knowledge_tool_listing,
+                action_steering_tool_listing=action_steering_tool_listing,
+                sms_call_note=sms_call_note,
+            ),
+        )
+    elif demo_mode:
         parts.add(
             f"""Output format
 -------------
@@ -569,13 +768,8 @@ All actions are performed by calling the available tools. The tools I have acces
 - `query_past_transcripts`: Search and analyse past messages and conversation history directly. Faster than `act` for purely transcript-related questions.
 - `wait(delay=None)`: Wait for more input. Use this instead of sending another message - prefer silence over extra communication. Optionally pass `delay=<seconds>` to wake up after that many seconds for another thinking turn (e.g., to probe a long-running action). Omit `delay` to wait indefinitely until the next event.
 
-**Action steering tools** (available for in-flight and completed actions):
-- `ask_*`: Ask about a running action's progress, or a completed action's process/methodology
-- `interject_*`: Provide new information or instructions to a running action
-- `stop_*`: Cancel an action entirely
-- `pause_*`: Temporarily halt an action
-- `resume_*`: Continue a paused action
-- `answer_clarification_*`: Respond to a question from an action
+**Action steering tools** (`ask_*` also works for completed actions):
+{action_steering_tool_listing}
 
 For communication tools, provide the contact_id when the contact is in the active conversations.{sms_call_note}""",
         )
@@ -653,6 +847,9 @@ Use when an action has asked a specific question (shown in its history as a clar
 
 The key distinction: `interject_*` is proactive (I'm volunteering information), while `answer_clarification_*` is reactive (the action asked and I'm responding).""",
         )
+
+    if is_coordinator:
+        parts.add(_build_coordinator_disposition_block())
 
     # Conversational restraint
     parts.add(

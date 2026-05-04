@@ -1,6 +1,7 @@
 import asyncio
 from typing import Any, Optional
 import contextlib
+from datetime import datetime
 
 from unity.logger import LOGGER
 from unity.common.hierarchical_logger import DEFAULT_ICON
@@ -24,6 +25,7 @@ from unity.conversation_manager.domains.brain_action_tools import (
     ConversationManagerBrainActionTools,
 )
 from unity.conversation_manager.domains.brain_tools import ConversationManagerBrainTools
+from unity.conversation_manager.domains.coordinator_tools import CoordinatorTools
 from unity.conversation_manager.domains.comms_utils import publish_system_error
 from unity.conversation_manager.domains.event_handlers import EventHandler
 from unity.conversation_manager.domains.renderer import Renderer
@@ -316,6 +318,26 @@ class ConversationManager(metaclass=SingletonABCMeta):
         ``act(persist=True)`` session when one isn't already running.
         """
         return self.assistant_screen_share_active
+
+    def get_coordinator_goal_context(
+        self,
+    ) -> tuple[dict[str, Any] | None, list[dict[str, Any]] | None]:
+        """Return Coordinator onboarding state for prompt rendering."""
+
+        if not self.initialized:
+            return None, None
+        if not SESSION_DETAILS.is_coordinator:
+            return None, None
+
+        from unity.coordinator_manager.coordinator_manager import (
+            CoordinatorOnboardingManager,
+        )
+
+        manager = CoordinatorOnboardingManager()
+        state = manager.get_state()
+        if state is None:
+            return None, None
+        return state, manager.get_checklist()
 
     def get_active_contact(self) -> dict | None:
         """Get the contact for the current active call, or fall back to the boss contact."""
@@ -1147,6 +1169,7 @@ class ConversationManager(metaclass=SingletonABCMeta):
 
         _t0 = _rl_time.perf_counter()
         _has_desktop = SESSION_DETAILS.assistant.desktop_mode in ("ubuntu", "windows")
+        coordinator_state, coordinator_checklist = self.get_coordinator_goal_context()
         snapshot_state = self.prompt_renderer.render_state(
             self.contact_index,
             self.notifications_bar,
@@ -1160,6 +1183,8 @@ class ConversationManager(metaclass=SingletonABCMeta):
             google_meet_active=self.call_manager.has_active_google_meet,
             teams_meet_active=self.call_manager.has_active_teams_meet,
             active_web_sessions=web_sessions,
+            coordinator_state=coordinator_state,
+            coordinator_checklist=coordinator_checklist,
             managers_initialized=self.initialized,
             vm_ready=self.vm_ready,
             file_sync_complete=self.file_sync_complete,
@@ -1205,6 +1230,9 @@ class ConversationManager(metaclass=SingletonABCMeta):
             **action_tools.build_action_steering_tools(),
             **action_tools.build_completed_action_tools(),
         }
+        if SESSION_DETAILS.is_coordinator:
+            coordinator_tools = CoordinatorTools(self)
+            tools = {**tools, **coordinator_tools.as_tools()}
 
         if self.computer_fast_path_eligible:
             tools["desktop_act"] = action_tools.desktop_act
@@ -1553,6 +1581,7 @@ class ConversationManager(metaclass=SingletonABCMeta):
         self.team_ids: list[int] = payload.get("team_ids") or []
         self.space_ids: list[int] = payload.get("space_ids") or []
         space_summaries = payload.get("space_summaries") or []
+        is_coordinator = payload.get("is_coordinator", False)
         # Set API key on SESSION_DETAILS for runtime access
         if payload.get("api_key"):
             SESSION_DETAILS.unify_key = payload["api_key"]
@@ -1591,6 +1620,7 @@ class ConversationManager(metaclass=SingletonABCMeta):
             user_desktop_mode=self.user_desktop_mode,
             user_desktop_filesys_sync=self.user_desktop_filesys_sync,
             user_desktop_url=self.user_desktop_url,
+            is_coordinator=is_coordinator,
         )
         self.space_summaries = SESSION_DETAILS.space_summaries
         # Export to env vars for subprocess inheritance
@@ -1821,6 +1851,9 @@ class ConversationManager(metaclass=SingletonABCMeta):
                 "ubuntu",
                 "windows",
             )
+            coordinator_state, coordinator_checklist = (
+                self.get_coordinator_goal_context()
+            )
             snapshot_state = self.prompt_renderer.render_state(
                 self.contact_index,
                 self.notifications_bar,
@@ -1833,6 +1866,8 @@ class ConversationManager(metaclass=SingletonABCMeta):
                 user_remote_control_active=self.user_remote_control_active,
                 google_meet_active=self.call_manager.has_active_google_meet,
                 teams_meet_active=self.call_manager.has_active_teams_meet,
+                coordinator_state=coordinator_state,
+                coordinator_checklist=coordinator_checklist,
                 vm_ready=self.vm_ready,
                 file_sync_complete=self.file_sync_complete,
                 has_desktop=_has_desktop,

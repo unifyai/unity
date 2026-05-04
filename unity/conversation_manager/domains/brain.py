@@ -9,6 +9,7 @@ from pydantic import BaseModel, Field, create_model
 from unity.common.prompt_helpers import PromptParts
 from unity.conversation_manager.prompt_builders import build_system_prompt
 from unity.conversation_manager.cm_types import Mode, ScreenshotEntry
+from unity.session_details import SESSION_DETAILS
 
 if TYPE_CHECKING:
     from unity.conversation_manager.conversation_manager import ConversationManager
@@ -210,6 +211,15 @@ def build_brain_spec(
     is_internal_call = cm.mode.is_voice and bool(
         (cm.get_active_contact() or {}).get("is_system", False),
     )
+    authorized_humans: list[dict] | None = None
+    if SESSION_DETAILS.is_coordinator and cm.initialized:
+        from unity.coordinator_manager.coordinator_manager import (
+            CoordinatorOnboardingManager,
+        )
+
+        coordinator_manager = CoordinatorOnboardingManager()
+        authorized_humans = coordinator_manager.get_org_members()
+
     # Prepend the assistant's job title / specialization (if set) to the bio
     # so the voice-call system prompt also reflects what the assistant is
     # specialized for. Keeping this here (rather than threading a new param
@@ -238,6 +248,8 @@ def build_brain_spec(
         assistant_has_teams=bool(cm.assistant_has_teams),
         user_desktop_control=SETTINGS.conversation.USER_DESKTOP_CONTROL_ENABLED,
         space_summaries=getattr(cm, "space_summaries", []),
+        is_coordinator=SESSION_DETAILS.is_coordinator,
+        authorized_humans=authorized_humans,
     )
 
     response_model = _RESPONSE_MODELS[cm.mode]
