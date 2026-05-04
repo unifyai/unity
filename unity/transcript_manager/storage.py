@@ -47,14 +47,16 @@ def list_columns(
 
 def num_messages(self) -> int:
     """Return the total number of messages in transcripts."""
-    ret = unify.get_logs_metric(
-        metric="count",
-        key="message_id",
-        context=self._transcripts_ctx,
-    )
-    if ret is None:
-        return 0
-    return int(ret)
+    total = 0
+    for context in self._read_transcript_contexts():
+        ret = unify.get_logs_metric(
+            metric="count",
+            key="message_id",
+            context=context,
+        )
+        if ret is not None:
+            total += int(ret)
+    return total
 
 
 def clear(self) -> None:
@@ -102,16 +104,18 @@ def ensure_exchanges_records(
     exchange_ids: Set[int],
     *,
     eid_to_medium: Optional[Dict[int, str]] = None,
+    context: str | None = None,
 ) -> None:
     """Idempotently create rows in the Exchanges context for given ids."""
     if not exchange_ids:
         return
+    exchanges_context = context or self._exchanges_ctx
     try:
         ids_expr = ", ".join(str(i) for i in sorted(exchange_ids))
         existing: set[int] = set()
         try:
             rows = unify.get_logs(
-                context=self._exchanges_ctx,
+                context=exchanges_context,
                 filter=f"exchange_id in [{ids_expr}]",
                 from_fields=["exchange_id"],
                 limit=len(exchange_ids),
@@ -128,13 +132,15 @@ def ensure_exchanges_records(
         for eid in missing:
             try:
                 unity_log(
-                    context=self._exchanges_ctx,
+                    context=exchanges_context,
                     exchange_id=int(eid),
                     metadata={},
                     medium=(eid_to_medium or {}).get(int(eid), ""),
                     new=True,
                     mutable=True,
-                    add_to_all_context=self.include_in_multi_assistant_table,
+                    add_to_all_context=self._should_add_to_all_context(
+                        exchanges_context,
+                    ),
                 )
             except Exception:
                 # Ignore duplicates or backend races

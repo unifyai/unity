@@ -9,14 +9,28 @@ from ..manager_registry import ManagerRegistry
 from .types.message import Message
 
 
+def _image_destination_for_transcript_context(context: str) -> str:
+    """Return the Images destination that matches a concrete Transcripts context."""
+
+    if context.startswith("Spaces/"):
+        return f"space:{context.split('/')[1]}"
+    return "personal"
+
+
 def get_images_for_message(self, *, message_id: int) -> List[Dict[str, Any]]:
     """Return image metadata (no raw data) for a message's image references."""
-    logs = unify.get_logs(
-        context=self._transcripts_ctx,
-        filter=f"message_id == {int(message_id)}",
-        limit=1,
-        from_fields=list(Message.model_fields.keys()),
-    )
+    logs = []
+    transcript_context = self._transcripts_ctx
+    for context in self._read_transcript_contexts():
+        logs = unify.get_logs(
+            context=context,
+            filter=f"message_id == {int(message_id)}",
+            limit=1,
+            from_fields=list(Message.model_fields.keys()),
+        )
+        if logs:
+            transcript_context = context
+            break
     if not logs:
         return []
     try:
@@ -33,7 +47,13 @@ def get_images_for_message(self, *, message_id: int) -> List[Dict[str, Any]]:
                 image_ids.append(int(ref.raw_image_ref.image_id))
         except Exception:
             continue
-    handles = self._image_manager.get_images(image_ids)
+    handles = self._image_manager.get_images(
+        image_ids,
+        destination=_image_destination_for_transcript_context(transcript_context),
+    )
+    image_destination = _image_destination_for_transcript_context(transcript_context)
+    for image_id in image_ids:
+        self._image_destinations_by_id[int(image_id)] = image_destination
     by_id = {h.image_id: h for h in handles}
     out: List[Dict[str, Any]] = []
     for ref in refs:
@@ -61,9 +81,21 @@ def get_images_for_message(self, *, message_id: int) -> List[Dict[str, Any]]:
     return out
 
 
-async def ask_image(self, *, image_id: int, question: str) -> str:
+async def ask_image(
+    self,
+    *,
+    image_id: int,
+    question: str,
+    destination: str | None = None,
+) -> str:
     """Ask a one‑off question about a specific stored image and return text."""
-    handles = self._image_manager.get_images([int(image_id)])
+    resolved_destination = destination or self._image_destinations_by_id.get(
+        int(image_id),
+    )
+    handles = self._image_manager.get_images(
+        [int(image_id)],
+        destination=resolved_destination,
+    )
     if not handles:
         raise ValueError(f"No image found with image_id {image_id}")
     handle = handles[0]
@@ -78,9 +110,16 @@ def attach_image_to_context(
     *,
     image_id: int,
     note: Optional[str] = None,
+    destination: str | None = None,
 ) -> Dict[str, Any]:
     """Attach a single image (raw base64) as persistent context payload."""
-    handles = self._image_manager.get_images([int(image_id)])
+    resolved_destination = destination or self._image_destinations_by_id.get(
+        int(image_id),
+    )
+    handles = self._image_manager.get_images(
+        [int(image_id)],
+        destination=resolved_destination,
+    )
     if not handles:
         raise ValueError(f"No image found with image_id {image_id}")
     h = handles[0]
@@ -104,12 +143,18 @@ def attach_message_images_to_context(
     limit: int = 3,
 ) -> Dict[str, Any]:
     """Attach multiple images referenced by a message into the loop context."""
-    logs = unify.get_logs(
-        context=self._transcripts_ctx,
-        filter=f"message_id == {int(message_id)}",
-        limit=1,
-        from_fields=list(Message.model_fields.keys()),
-    )
+    logs = []
+    transcript_context = self._transcripts_ctx
+    for context in self._read_transcript_contexts():
+        logs = unify.get_logs(
+            context=context,
+            filter=f"message_id == {int(message_id)}",
+            limit=1,
+            from_fields=list(Message.model_fields.keys()),
+        )
+        if logs:
+            transcript_context = context
+            break
     if not logs:
         return {"attached_count": 0, "images": []}
     try:
@@ -139,7 +184,10 @@ def attach_message_images_to_context(
             ids_to_attach = ids_to_attach[:limit]
             annotations_by_index = annotations_by_index[:limit]
 
-    handles = self._image_manager.get_images(ids_to_attach)
+    handles = self._image_manager.get_images(
+        ids_to_attach,
+        destination=_image_destination_for_transcript_context(transcript_context),
+    )
     images: List[Dict[str, Any]] = []
     for idx, h in enumerate(handles):
         try:

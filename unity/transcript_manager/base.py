@@ -116,6 +116,7 @@ class BaseTranscriptManager(BaseStateManager, metaclass=SingletonABCMeta):
             List[Union[Dict[str, Any], Message]],
         ],
         synchronous: bool = False,
+        destination: Optional[str] = None,
     ) -> List[Message]:
         """
         Insert one or more transcript messages.
@@ -184,6 +185,8 @@ class BaseTranscriptManager(BaseStateManager, metaclass=SingletonABCMeta):
         self,
         message_id: int,
         images: list[dict],
+        *,
+        destination: Optional[str] = None,
     ) -> None:
         """
         Attach or replace the images on an already-logged transcript message.
@@ -202,6 +205,8 @@ class BaseTranscriptManager(BaseStateManager, metaclass=SingletonABCMeta):
         self,
         exchange_id: int,
         metadata: Dict[str, Any],
+        *,
+        destination: Optional[str] = None,
     ) -> Exchange:
         """
         Update (or create) metadata for the specified exchange and return the updated Exchange.
@@ -213,6 +218,7 @@ class BaseTranscriptManager(BaseStateManager, metaclass=SingletonABCMeta):
         message: Union[Dict[str, Any], Message],
         *,
         exchange_initial_metadata: Optional[Dict[str, Any]] = None,
+        destination: Optional[str] = None,
     ) -> tuple[int, int]:
         """
         Log the first message of a new exchange and set initial exchange metadata.

@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import asyncio
 import functools
+from collections import Counter
+from statistics import mean, median, pvariance, pstdev
 from typing import List, Dict, Optional, Type, Union, Any, Callable, Literal
 
 import unify
@@ -56,9 +58,17 @@ from .images import (
     attach_image_to_context as _attach_image_to_context_impl,
     attach_message_images_to_context as _attach_message_images_to_context_impl,
 )
-from ..common.context_registry import ContextRegistry, TableContext
+from ..common.context_registry import (
+    ContextRegistry,
+    SPACE_CONTEXT_PREFIX,
+    TableContext,
+)
 from ..common.model_to_fields import model_to_fields
 from ..common.metrics_utils import reduce_logs
+from ..common.tool_outcome import ToolErrorException, ToolOutcome
+
+TRANSCRIPTS_TABLE = "Transcripts"
+EXCHANGES_TABLE = "Exchanges"
 
 
 class TranscriptManager(BaseTranscriptManager):
@@ -73,7 +83,7 @@ class TranscriptManager(BaseTranscriptManager):
     class Config:
         required_contexts = [
             TableContext(
-                name="Transcripts",
+                name=TRANSCRIPTS_TABLE,
                 description="List of all timestamped messages sent between all contacts across all mediums.",
                 fields=model_to_fields(Message),
                 unique_keys={"message_id": "int"},
@@ -106,7 +116,7 @@ class TranscriptManager(BaseTranscriptManager):
                 ],
             ),
             TableContext(
-                name="Exchanges",
+                name=EXCHANGES_TABLE,
                 description="One row per conversation exchange/thread with optional metadata.",
                 fields=model_to_fields(Exchange),
                 unique_keys={"exchange_id": "int"},
@@ -156,8 +166,9 @@ class TranscriptManager(BaseTranscriptManager):
             ),
         }
 
-        self._transcripts_ctx = ContextRegistry.get_context(self, "Transcripts")
-        self._exchanges_ctx = ContextRegistry.get_context(self, "Exchanges")
+        self._transcripts_ctx = ContextRegistry.get_context(self, TRANSCRIPTS_TABLE)
+        self._exchanges_ctx = ContextRegistry.get_context(self, EXCHANGES_TABLE)
+        self._image_destinations_by_id: dict[int, str] = {}
 
         # Image support: lazy-safe image manager and image-aware tools
         _ensure_image_manager(self)
@@ -185,9 +196,74 @@ class TranscriptManager(BaseTranscriptManager):
         # Using a dedicated logger means log_create() returns immediately,
         # leaving the actual network I/O to an internal worker thread.
         self._rolling_summary_in_prompts = rolling_summary_in_prompts
+        self._pending_async_log_fallbacks: list[dict[str, Any]] = []
 
         # Provision storage (contexts, fields, columns)
         self._provision_storage()
+
+    def _context_for_root(self, root_context: str, table_name: str) -> str:
+        """Return one concrete transcript-manager table context under a root."""
+
+        return f"{root_context.strip('/')}/{table_name}"
+
+    def _transcripts_context_for_destination(self, destination: str | None) -> str:
+        """Resolve a public destination into one concrete Transcripts context."""
+
+        root_context = ContextRegistry.write_root(
+            self,
+            TRANSCRIPTS_TABLE,
+            destination=destination,
+        )
+        return self._context_for_root(root_context, TRANSCRIPTS_TABLE)
+
+    def _exchanges_context_for_destination(self, destination: str | None) -> str:
+        """Resolve a public destination into one concrete Exchanges context."""
+
+        root_context = ContextRegistry.write_root(
+            self,
+            EXCHANGES_TABLE,
+            destination=destination,
+        )
+        return self._context_for_root(root_context, EXCHANGES_TABLE)
+
+    def _read_transcript_contexts(self) -> list[str]:
+        """Return ordered concrete Transcripts contexts visible to this assistant."""
+
+        return list(
+            dict.fromkeys(
+                self._context_for_root(root, TRANSCRIPTS_TABLE)
+                for root in ContextRegistry.read_roots(self, TRANSCRIPTS_TABLE)
+            ),
+        )
+
+    def _read_exchange_contexts(self) -> list[str]:
+        """Return ordered concrete Exchanges contexts visible to this assistant."""
+
+        return list(
+            dict.fromkeys(
+                self._context_for_root(root, EXCHANGES_TABLE)
+                for root in ContextRegistry.read_roots(self, EXCHANGES_TABLE)
+            ),
+        )
+
+    def _root_context_for_move(self, table_name: str, from_root: str) -> str:
+        """Resolve a move source root label into a concrete root context."""
+
+        if from_root == "personal":
+            return ContextRegistry.write_root(self, table_name, destination=None)
+        if from_root.startswith("space:"):
+            return ContextRegistry.write_root(self, table_name, destination=from_root)
+        if from_root.startswith(SPACE_CONTEXT_PREFIX):
+            destination = f"space:{from_root.split('/')[1]}"
+            return ContextRegistry.write_root(self, table_name, destination=destination)
+        return from_root.rstrip("/")
+
+    def _should_add_to_all_context(self, context: str) -> bool:
+        """Return whether writes to this context should mirror into All/* contexts."""
+
+        return self.include_in_multi_assistant_table and not context.startswith(
+            SPACE_CONTEXT_PREFIX,
+        )
 
     # ──────────────────────────────────────────────────────────────────────
     #  Public API (English-only entrypoints for the LLM)
@@ -329,6 +405,7 @@ class TranscriptManager(BaseTranscriptManager):
         ],
         synchronous: bool = False,
         _skip_event_bus: bool = False,
+        destination: str | None = None,
     ) -> List[Message]:
         """
         Insert one or more messages into the backing store.
@@ -353,6 +430,9 @@ class TranscriptManager(BaseTranscriptManager):
         synchronous : bool, default=False
             If True, messages will be logged in order synchronously. If False,
             messages may be logged asynchronously in any order.
+        destination : str | None, default None
+            Internal routing destination for the transcript rows. Omitted means
+            personal. Session synthesis owns this value for implicit writes.
 
         Notes
         -----
@@ -375,6 +455,12 @@ class TranscriptManager(BaseTranscriptManager):
 
         if not isinstance(messages, list):
             messages = [messages]
+
+        try:
+            transcripts_context = self._transcripts_context_for_destination(destination)
+            exchanges_context = self._exchanges_context_for_destination(destination)
+        except ToolErrorException as exc:
+            return exc.payload  # type: ignore[return-value]
 
         # ── 1. Helper to ensure we have a numeric contact-id ───────────────
         # Derive the built-in (canonical) Contact fields *dynamically* from the
@@ -424,7 +510,10 @@ class TranscriptManager(BaseTranscriptManager):
                     create_kwargs[k] = v
 
             # Synchronously create the new contact
-            outcome = self._contact_manager._create_contact(**create_kwargs)
+            outcome = self._contact_manager._create_contact(
+                **create_kwargs,
+                destination=destination,
+            )
             try:
                 new_cid = int(outcome["details"]["contact_id"])
             except Exception:
@@ -481,6 +570,19 @@ class TranscriptManager(BaseTranscriptManager):
             # Re-instantiate Message model for validation
             normalised_messages.append(Message(**payload))
 
+        initial_exchange_ids: set[int] = set()
+        initial_eid_to_medium: Dict[int, str] = {}
+        for message in normalised_messages:
+            exchange_id = int(message.exchange_id)
+            initial_exchange_ids.add(exchange_id)
+            initial_eid_to_medium.setdefault(exchange_id, str(message.medium))
+        if initial_exchange_ids:
+            self._ensure_exchanges_records(
+                initial_exchange_ids,
+                eid_to_medium=initial_eid_to_medium,
+                context=exchanges_context,
+            )
+
         # ── 3. Dump POST-ready JSON for each message ──────────────────────
         msg_entries = [m.to_post_json() for m in normalised_messages]
 
@@ -509,11 +611,13 @@ class TranscriptManager(BaseTranscriptManager):
             if synchronous:
                 # Sync path: block until backend responds, get assigned IDs
                 log = unity_log(
-                    context=self._transcripts_ctx,
+                    context=transcripts_context,
                     **entries,
                     new=True,
                     mutable=True,
-                    add_to_all_context=self.include_in_multi_assistant_table,
+                    add_to_all_context=self._should_add_to_all_context(
+                        transcripts_context,
+                    ),
                 )
 
                 # Build a Message directly from the POST response
@@ -531,22 +635,43 @@ class TranscriptManager(BaseTranscriptManager):
                 # Async path: fire-and-forget, don't block on network I/O
                 # Inject private fields (same as sync path via unity_log)
                 entries_with_private = _inject_private_fields(entries)
+                entries_with_private["explicit_types"] = {
+                    key: {"mutable": True}
+                    for key in entries_with_private
+                    if key not in {"explicit_types", "infer_untyped_fields"}
+                }
                 future = self._get_logger().log_create(
                     project=unify.active_project(),
-                    context=self._transcripts_ctx,
+                    context={"name": transcripts_context},
                     entries=entries_with_private,
                 )
                 # Add callback to mirror to aggregation contexts when log is created
-                if self.include_in_multi_assistant_table and future is not None:
-                    ctx = self._transcripts_ctx
+                # and to preserve the write if the async worker fails after enqueue.
+                if future is not None:
+                    ctx = transcripts_context
+                    should_add_to_all = self._should_add_to_all_context(ctx)
+                    fallback_entries = dict(entries)
+                    fallback_state: dict[str, Any] = {
+                        "future": future,
+                        "context": ctx,
+                        "entries": fallback_entries,
+                        "add_to_all": should_add_to_all,
+                        "handled": False,
+                    }
+                    self._pending_async_log_fallbacks.append(fallback_state)
 
-                    def _on_log_created(fut, context=ctx):
+                    def _on_log_created(
+                        fut,
+                        state=fallback_state,
+                    ):
                         try:
                             log_id = fut.result()
                             if log_id:
-                                _add_to_all([log_id], context)
+                                if state["add_to_all"]:
+                                    _add_to_all([log_id], state["context"])
+                                state["handled"] = True
                         except Exception:
-                            pass  # Best-effort
+                            self._fallback_async_log_create(state)
 
                     future.add_done_callback(_on_log_created)
                 # In async mode, we don't wait for the response, so use the
@@ -564,30 +689,7 @@ class TranscriptManager(BaseTranscriptManager):
                     # … otherwise create a *temporary* loop so the event isn't lost.
                     asyncio.run(_publish_message(created_msg))
 
-        # ── 5. Ensure Exchanges rows exist for any newly seen exchange_ids ──
-        try:
-            eids: set[int] = set()
-            eid_to_medium: Dict[int, str] = {}
-            for m in created_messages:
-                try:
-                    if getattr(m, "exchange_id", UNASSIGNED) is not None:
-                        exid = int(getattr(m, "exchange_id", UNASSIGNED))
-                        if exid != UNASSIGNED and exid >= 0:
-                            eids.add(exid)
-                            if exid not in eid_to_medium:
-                                try:
-                                    eid_to_medium[exid] = str(getattr(m, "medium"))
-                                except Exception:
-                                    pass
-                except Exception:
-                    continue
-            if eids:
-                self._ensure_exchanges_records(eids, eid_to_medium=eid_to_medium)
-        except Exception:
-            # Non-fatal: do not break message logging if exchanges upsert fails
-            pass
-
-        # ── 6. Inactivity-followup activity sync (best-effort, async) ──────
+        # ── 5. Inactivity-followup activity sync (best-effort, async) ──────
         # Tell orchestra that the assistant just exchanged a message so its
         # inactivity-followup routine sees fresh ``last_correspondence_at``
         # and clears any pending ``last_followup_sent_at``. Skipped for
@@ -615,6 +717,36 @@ class TranscriptManager(BaseTranscriptManager):
 
     def join_published(self):
         self._get_logger().join()
+        for state in list(self._pending_async_log_fallbacks):
+            future = state["future"]
+            if state.get("handled") or not future.done():
+                continue
+            try:
+                future.result()
+            except Exception:
+                self._fallback_async_log_create(state)
+        self._pending_async_log_fallbacks = [
+            state
+            for state in self._pending_async_log_fallbacks
+            if not state.get("handled")
+        ]
+
+    def _fallback_async_log_create(self, state: dict[str, Any]) -> None:
+        """Synchronously persist a row if the async logger dropped it."""
+
+        if state.get("handled"):
+            return
+        try:
+            unity_log(
+                context=state["context"],
+                **state["entries"],
+                new=True,
+                mutable=True,
+                add_to_all_context=state["add_to_all"],
+            )
+            state["handled"] = True
+        except Exception:
+            pass
 
     @staticmethod
     def build_plain_transcript(
@@ -774,13 +906,100 @@ class TranscriptManager(BaseTranscriptManager):
             * Multiple keys, no grouping → ``dict[key -> scalar]``.
             * With grouping             → nested ``dict`` keyed by group values.
         """
-        return reduce_logs(
-            context=self._transcripts_ctx,
-            metric=metric,
-            keys=keys,
-            filter=filter,
-            group_by=group_by,
+        metric_name = metric.strip().lower()
+        key_names = [keys] if isinstance(keys, str) else list(keys)
+        group_fields = (
+            []
+            if group_by is None
+            else ([group_by] if isinstance(group_by, str) else list(group_by))
         )
+
+        def _metric_value(rows: list[dict[str, Any]], key: str) -> Any:
+            values = [row.get(key) for row in rows if row.get(key) is not None]
+            if metric_name == "count":
+                return len(values)
+            if not values:
+                return None
+            if metric_name == "mode":
+                return Counter(values).most_common(1)[0][0]
+
+            numeric_values = [float(value) for value in values]
+            if metric_name == "sum":
+                return sum(numeric_values)
+            if metric_name == "mean":
+                return mean(numeric_values)
+            if metric_name == "var":
+                return pvariance(numeric_values)
+            if metric_name == "std":
+                return pstdev(numeric_values)
+            if metric_name == "min":
+                return min(numeric_values)
+            if metric_name == "max":
+                return max(numeric_values)
+            if metric_name == "median":
+                return median(numeric_values)
+            return reduce_logs(
+                context=self._transcripts_ctx,
+                metric=metric,
+                keys=key,
+                filter=filter,
+                group_by=group_by,
+            )
+
+        def _nest_grouped_values(grouped_values: dict[tuple[Any, ...], Any]) -> dict:
+            nested: dict[Any, Any] = {}
+            for group_key, value in grouped_values.items():
+                cursor = nested
+                for part in group_key[:-1]:
+                    cursor = cursor.setdefault(part, {})
+                cursor[group_key[-1]] = value
+            return nested
+
+        def _rows_for_key(key: str) -> list[dict[str, Any]]:
+            if isinstance(filter, dict):
+                filter_expr = filter.get(key)
+            else:
+                filter_expr = filter
+            normalized_filter = normalize_filter_expr(filter_expr)
+            fields = list(dict.fromkeys([key, *group_fields]))
+            rows: list[dict[str, Any]] = []
+            for context in self._read_transcript_contexts():
+                offset = 0
+                batch_size = 1000
+                while True:
+                    logs = unify.get_logs(
+                        context=context,
+                        filter=normalized_filter,
+                        offset=offset,
+                        limit=batch_size,
+                        from_fields=fields,
+                    )
+                    if not logs:
+                        break
+                    rows.extend(dict(log.entries) for log in logs)
+                    if len(logs) < batch_size:
+                        break
+                    offset += batch_size
+            return rows
+
+        def _reduce_key(key: str) -> Any:
+            rows = _rows_for_key(key)
+            if not group_fields:
+                return _metric_value(rows, key)
+
+            buckets: dict[tuple[Any, ...], list[dict[str, Any]]] = {}
+            for row in rows:
+                group_key = tuple(row.get(field) for field in group_fields)
+                buckets.setdefault(group_key, []).append(row)
+            return _nest_grouped_values(
+                {
+                    group_key: _metric_value(bucket_rows, key)
+                    for group_key, bucket_rows in buckets.items()
+                },
+            )
+
+        result_by_key = {key: _reduce_key(key) for key in key_names}
+        return result_by_key[keys] if isinstance(keys, str) else result_by_key
 
     @read_only
     def _filter_messages(
@@ -843,51 +1062,53 @@ class TranscriptManager(BaseTranscriptManager):
         total_updates = 0
 
         # ── 1.  Bulk update all *sender_id* occurrences ────────────────────
-        sender_log_ids = unify.get_logs(
-            context=self._transcripts_ctx,
-            filter=f"sender_id is not None and sender_id == {original_contact_id}",
-            return_ids_only=True,
-        )
-        if sender_log_ids:
-            unify.update_logs(
-                logs=sender_log_ids,
-                context=self._transcripts_ctx,
-                entries={"sender_id": new_contact_id},
-                overwrite=True,
+        for context in self._read_transcript_contexts():
+            sender_log_ids = unify.get_logs(
+                context=context,
+                filter=f"sender_id is not None and sender_id == {original_contact_id}",
+                return_ids_only=True,
             )
-            total_updates += len(sender_log_ids)
-
-        # ── 2.  Update all *receiver_ids* lists containing the old id ──────
-        receiver_logs = unify.get_logs(
-            context=self._transcripts_ctx,
-            filter=f"{original_contact_id} in receiver_ids",
-            return_ids_only=False,
-        )
-        for lg in receiver_logs:
-            rids = lg.entries.get("receiver_ids", [])
-            if not isinstance(rids, list):  # defensive – should always be list
-                continue
-
-            updated_rids = [
-                (new_contact_id if rid == original_contact_id else rid) for rid in rids
-            ]
-            # Optional: remove duplicates while preserving order
-            seen: set[int] = set()
-            deduped_rids: list[int] = []
-            for rid in updated_rids:
-                if rid not in seen:
-                    seen.add(rid)
-                    deduped_rids.append(rid)
-
-            # Only write when the list actually changed
-            if deduped_rids != rids:
+            if sender_log_ids:
                 unify.update_logs(
-                    logs=lg.id if hasattr(lg, "id") else lg,
-                    context=self._transcripts_ctx,
-                    entries={"receiver_ids": deduped_rids},
+                    logs=sender_log_ids,
+                    context=context,
+                    entries={"sender_id": new_contact_id},
                     overwrite=True,
                 )
-                total_updates += 1
+                total_updates += len(sender_log_ids)
+
+            # ── 2.  Update all *receiver_ids* lists containing the old id ──────
+            receiver_logs = unify.get_logs(
+                context=context,
+                filter=f"{original_contact_id} in receiver_ids",
+                return_ids_only=False,
+            )
+            for lg in receiver_logs:
+                rids = lg.entries.get("receiver_ids", [])
+                if not isinstance(rids, list):  # defensive – should always be list
+                    continue
+
+                updated_rids = [
+                    (new_contact_id if rid == original_contact_id else rid)
+                    for rid in rids
+                ]
+                # Optional: remove duplicates while preserving order
+                seen: set[int] = set()
+                deduped_rids: list[int] = []
+                for rid in updated_rids:
+                    if rid not in seen:
+                        seen.add(rid)
+                        deduped_rids.append(rid)
+
+                # Only write when the list actually changed
+                if deduped_rids != rids:
+                    unify.update_logs(
+                        logs=lg.id if hasattr(lg, "id") else lg,
+                        context=context,
+                        entries={"receiver_ids": deduped_rids},
+                        overwrite=True,
+                    )
+                    total_updates += 1
 
         return {
             "outcome": "contact ids updated",
@@ -902,17 +1123,23 @@ class TranscriptManager(BaseTranscriptManager):
         self,
         message_id: int,
         images: list[dict],
+        *,
+        destination: str | None = None,
     ) -> None:
         """Attach or replace images on an already-logged transcript message."""
+        try:
+            context = self._transcripts_context_for_destination(destination)
+        except ToolErrorException as exc:
+            return exc.payload  # type: ignore[return-value]
         log_ids = unify.get_logs(
-            context=self._transcripts_ctx,
+            context=context,
             filter=f"message_id == {message_id}",
             return_ids_only=True,
         )
         if log_ids:
             unify.update_logs(
                 logs=log_ids,
-                context=self._transcripts_ctx,
+                context=context,
                 entries={"images": images},
                 overwrite=True,
             )
@@ -933,7 +1160,13 @@ class TranscriptManager(BaseTranscriptManager):
         return _get_images_for_message_impl(self, message_id=message_id)
 
     @read_only
-    async def _ask_image(self, *, image_id: int, question: str) -> str:
+    async def _ask_image(
+        self,
+        *,
+        image_id: int,
+        question: str,
+        destination: str | None = None,
+    ) -> str:
         """Ask a one‑off question about a specific stored image.
 
         This helper mirrors the behaviour of :pyfunc:`ImageHandle.ask` but is
@@ -950,6 +1183,10 @@ class TranscriptManager(BaseTranscriptManager):
             a ``data:image/...;base64,`` URL.
         question : str
             Natural‑language question to ask about the image.
+        destination : str | None
+            Root containing the image metadata. When omitted, the manager uses
+            the most recent message-image lookup for the image id, falling back
+            to personal memory.
 
         Returns
         -------
@@ -960,13 +1197,19 @@ class TranscriptManager(BaseTranscriptManager):
         -----
             This method does not persist the visual context for follow‑up turns.
         """
-        return await _ask_image_impl(self, image_id=image_id, question=question)
+        return await _ask_image_impl(
+            self,
+            image_id=image_id,
+            question=question,
+            destination=destination,
+        )
 
     def _attach_image_to_context(
         self,
         *,
         image_id: int,
         note: Optional[str] = None,
+        destination: str | None = None,
     ) -> Dict[str, Any]:
         """Attach a single image (by id) as raw base64 for persistent context.
 
@@ -984,6 +1227,10 @@ class TranscriptManager(BaseTranscriptManager):
             Identifier of the image to attach.
         note : str | None
             Optional human‑readable note describing why the image is attached.
+        destination : str | None
+            Root containing the image metadata. When omitted, the manager uses
+            the most recent message-image lookup for the image id, falling back
+            to personal memory.
 
         Returns
         -------
@@ -993,7 +1240,12 @@ class TranscriptManager(BaseTranscriptManager):
             where ``image`` is the raw bytes of the image encoded as base64
             (PNG or JPEG). Downstream should render this as an image block.
         """
-        return _attach_image_to_context_impl(self, image_id=image_id, note=note)
+        return _attach_image_to_context_impl(
+            self,
+            image_id=image_id,
+            note=note,
+            destination=destination,
+        )
 
     def _attach_message_images_to_context(
         self,
@@ -1076,14 +1328,15 @@ class TranscriptManager(BaseTranscriptManager):
 
     # Internal provisioning helper
     def warm_embeddings(self) -> None:
-        try:
-            ensure_vector_column(
-                self._transcripts_ctx,
-                embed_column="_content_emb",
-                source_column="content",
-            )
-        except Exception:
-            pass
+        for context in self._read_transcript_contexts():
+            try:
+                ensure_vector_column(
+                    context,
+                    embed_column="_content_emb",
+                    source_column="content",
+                )
+            except Exception:
+                pass
 
     def _provision_storage(self) -> None:
         _storage_provision(self)
@@ -1094,16 +1347,35 @@ class TranscriptManager(BaseTranscriptManager):
         exchange_ids: set[int],
         *,
         eid_to_medium: Optional[Dict[int, str]] = None,
+        context: str | None = None,
     ) -> None:
-        _storage_ensure_exchanges(self, exchange_ids, eid_to_medium=eid_to_medium)
-
-    def get_exchange_metadata(self, exchange_id: int) -> Exchange:
-        """Fetch the Exchanges row for ``exchange_id`` as an Exchange model."""
-        rows = unify.get_logs(
-            context=self._exchanges_ctx,
-            filter=f"exchange_id == {int(exchange_id)}",
-            limit=1,
+        _storage_ensure_exchanges(
+            self,
+            exchange_ids,
+            eid_to_medium=eid_to_medium,
+            context=context,
         )
+
+    def get_exchange_metadata(
+        self,
+        exchange_id: int,
+        *,
+        destination: str | None = None,
+    ) -> Exchange:
+        """Fetch the Exchanges row for ``exchange_id`` as an Exchange model."""
+        if destination is None:
+            contexts = self._read_exchange_contexts()
+        else:
+            contexts = [self._exchanges_context_for_destination(destination)]
+        rows = []
+        for context in contexts:
+            rows = unify.get_logs(
+                context=context,
+                filter=f"exchange_id == {int(exchange_id)}",
+                limit=1,
+            )
+            if rows:
+                break
         if not rows:
             raise ValueError(f"No exchange found for exchange_id={exchange_id}.")
 
@@ -1123,35 +1395,41 @@ class TranscriptManager(BaseTranscriptManager):
         self,
         exchange_id: int,
         metadata: Dict[str, Any],
+        *,
+        destination: str | None = None,
     ) -> Exchange:
-        """Update (or create) the Exchanges row's metadata and return the updated Exchange."""
+        """Update or create exchange metadata in one routed root."""
+        try:
+            context = self._exchanges_context_for_destination(destination)
+        except ToolErrorException as exc:
+            return exc.payload  # type: ignore[return-value]
         # Try update first
         row_ids = unify.get_logs(
-            context=self._exchanges_ctx,
+            context=context,
             filter=f"exchange_id == {int(exchange_id)}",
             return_ids_only=True,
         )
         if row_ids:
             unify.update_logs(
                 logs=row_ids,
-                context=self._exchanges_ctx,
+                context=context,
                 entries={"metadata": dict(metadata or {})},
                 overwrite=True,
             )
         else:
             # Upsert behaviour – create a new row with empty medium if missing
             unity_log(
-                context=self._exchanges_ctx,
+                context=context,
                 exchange_id=int(exchange_id),
                 metadata=dict(metadata or {}),
                 medium="",
                 new=True,
                 mutable=True,
-                add_to_all_context=self.include_in_multi_assistant_table,
+                add_to_all_context=self._should_add_to_all_context(context),
             )
 
         # Read back and return canonical shape
-        return self.get_exchange_metadata(exchange_id)
+        return self.get_exchange_metadata(exchange_id, destination=destination)
 
     @functools.wraps(BaseTranscriptManager.filter_exchanges, updated=())
     def filter_exchanges(
@@ -1162,15 +1440,20 @@ class TranscriptManager(BaseTranscriptManager):
         limit: int | None = 100,
     ) -> Dict[str, Any]:
         normalized = normalize_filter_expr(filter)
-        logs = unify.get_logs(
-            context=self._exchanges_ctx,
-            filter=normalized,
-            offset=offset,
-            limit=limit,
-            from_fields=list(Exchange.model_fields.keys()),
-        )
+        logs = []
+        fetch_limit = (offset + limit) if limit is not None else 1000
+        for context in self._read_exchange_contexts():
+            logs.extend(
+                unify.get_logs(
+                    context=context,
+                    filter=normalized,
+                    offset=0,
+                    limit=fetch_limit,
+                    from_fields=list(Exchange.model_fields.keys()),
+                ),
+            )
         exchanges: list[Exchange] = []
-        for lg in logs:
+        for lg in logs[offset : (offset + limit) if limit is not None else None]:
             try:
                 exchanges.append(Exchange(**lg.entries))
             except Exception:
@@ -1182,11 +1465,18 @@ class TranscriptManager(BaseTranscriptManager):
         message: Union[Dict[str, Any], Message],
         *,
         exchange_initial_metadata: Optional[Dict[str, Any]] = None,
+        destination: str | None = None,
     ) -> tuple[int, int]:
         """Log the first message of a brand-new exchange and set initial metadata.
 
         Returns (exchange_id, message_id) for the newly created exchange and message.
+        The destination is managed internally by session synthesis for implicit writes.
         """
+        try:
+            transcripts_context = self._transcripts_context_for_destination(destination)
+            exchanges_context = self._exchanges_context_for_destination(destination)
+        except ToolErrorException as exc:
+            return exc.payload  # type: ignore[return-value]
 
         # 1) Validate no exchange_id is provided by the caller
         if isinstance(message, dict):
@@ -1220,7 +1510,10 @@ class TranscriptManager(BaseTranscriptManager):
             # Create via ContactManager and return id
             full_data = c.model_dump(exclude_none=True)
             create_kwargs = {k: v for k, v in full_data.items() if k != "contact_id"}
-            outcome = self._contact_manager._create_contact(**create_kwargs)
+            outcome = self._contact_manager._create_contact(
+                **create_kwargs,
+                destination=destination,
+            )
             return int(outcome["details"]["contact_id"])  # type: ignore[index]
 
         if isinstance(message, Message):
@@ -1244,12 +1537,12 @@ class TranscriptManager(BaseTranscriptManager):
 
         # 3) Create Exchange row FIRST to satisfy FK constraint
         exchange_log = unity_log(
-            context=self._exchanges_ctx,
+            context=exchanges_context,
             metadata=dict(exchange_initial_metadata or {}),
             medium=str(payload.get("medium", "")),
             new=True,
             mutable=True,
-            add_to_all_context=self.include_in_multi_assistant_table,
+            add_to_all_context=self._should_add_to_all_context(exchanges_context),
         )
 
         # Extract the assigned exchange_id
@@ -1269,11 +1562,11 @@ class TranscriptManager(BaseTranscriptManager):
         entries = created_model.to_post_json()
 
         log = unity_log(
-            context=self._transcripts_ctx,
+            context=transcripts_context,
             **entries,
             new=True,
             mutable=True,
-            add_to_all_context=self.include_in_multi_assistant_table,
+            add_to_all_context=self._should_add_to_all_context(transcripts_context),
         )
 
         tm_message_id = int(log.entries.get("message_id", -1))
@@ -1301,6 +1594,122 @@ class TranscriptManager(BaseTranscriptManager):
             pass
 
         return exid, tm_message_id
+
+    def _move_row(
+        self,
+        *,
+        table_name: str,
+        id_field: str,
+        row_id: int,
+        from_root: str,
+        to_destination: str | None,
+        model: type[BaseModel],
+    ) -> ToolOutcome:
+        source_root = self._root_context_for_move(table_name, from_root)
+        target_root = ContextRegistry.write_root(
+            self,
+            table_name,
+            destination=to_destination,
+        )
+        source_context = self._context_for_root(source_root, table_name)
+        target_context = self._context_for_root(target_root, table_name)
+
+        rows = unify.get_logs(
+            context=source_context,
+            filter=f"{id_field} == {int(row_id)}",
+            limit=2,
+        )
+        if not rows:
+            raise ValueError(
+                f"No {table_name} row found with {id_field}={int(row_id)} in {source_context}.",
+            )
+        if len(rows) > 1:
+            raise RuntimeError(
+                f"Multiple {table_name} rows found with {id_field}={int(row_id)} in {source_context}.",
+            )
+
+        record = model(**rows[0].entries)
+        if hasattr(record, "to_post_json"):
+            payload = record.to_post_json()
+        else:
+            payload = record.model_dump(mode="json")
+        target_ids = unify.get_logs(
+            context=target_context,
+            filter=f"{id_field} == {int(row_id)}",
+            return_ids_only=True,
+            limit=2,
+        )
+        if len(target_ids) > 1:
+            raise RuntimeError(
+                f"Multiple {table_name} rows found with {id_field}={int(row_id)} in {target_context}.",
+            )
+        if target_ids:
+            unify.update_logs(
+                context=target_context,
+                logs=[target_ids[0]],
+                entries=payload,
+                overwrite=True,
+            )
+        else:
+            unity_log(
+                context=target_context,
+                **payload,
+                new=True,
+                mutable=True,
+                add_to_all_context=self._should_add_to_all_context(target_context),
+            )
+
+        unify.delete_logs(context=source_context, logs=rows[0].id)
+        return {
+            "outcome": f"{table_name} row moved",
+            "details": {
+                id_field: int(row_id),
+                "from_context": source_context,
+                "to_context": target_context,
+            },
+        }
+
+    def move_message(
+        self,
+        message_id: int,
+        *,
+        from_root: str,
+        to_destination: str | None,
+    ) -> ToolOutcome:
+        """Move one transcript message row between personal/shared roots."""
+
+        try:
+            return self._move_row(
+                table_name=TRANSCRIPTS_TABLE,
+                id_field="message_id",
+                row_id=message_id,
+                from_root=from_root,
+                to_destination=to_destination,
+                model=Message,
+            )
+        except ToolErrorException as exc:
+            return exc.payload  # type: ignore[return-value]
+
+    def move_exchange(
+        self,
+        exchange_id: int,
+        *,
+        from_root: str,
+        to_destination: str | None,
+    ) -> ToolOutcome:
+        """Move one exchange row between personal/shared roots."""
+
+        try:
+            return self._move_row(
+                table_name=EXCHANGES_TABLE,
+                id_field="exchange_id",
+                row_id=exchange_id,
+                from_root=from_root,
+                to_destination=to_destination,
+                model=Exchange,
+            )
+        except ToolErrorException as exc:
+            return exc.payload  # type: ignore[return-value]
 
     # Formatting helper: single contacts table + messages
     def _format_contacts_and_messages(self, messages: List[Message]) -> Dict[str, Any]:
