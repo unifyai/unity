@@ -145,6 +145,7 @@ class ConversationManager(metaclass=SingletonABCMeta):
         self.ready_for_brain: bool = True
         self.vm_ready: bool = False
         self.file_sync_complete: bool = False
+        self.deployment_runtime_reconcile_status: Any | None = None
         # logging
         self.loop = asyncio.get_event_loop()
         self.project_name = project_name

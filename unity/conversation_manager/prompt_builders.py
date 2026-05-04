@@ -339,6 +339,7 @@ def build_system_prompt(
     assistant_has_discord: bool = False,
     assistant_has_teams: bool = False,
     user_desktop_control: bool = False,
+    runtime_setup_note: str | None = None,
 ) -> PromptParts:
     """Build the system prompt for the ConversationManager LLM.
 
@@ -369,6 +370,8 @@ def build_system_prompt(
     assistant_has_email : bool
         Whether the assistant has an email address configured (gates email
         tool listing and adds a missing-capability notice when False).
+    runtime_setup_note : str | None
+        Optional guidance about background setup/readiness.
 
     Returns
     -------
@@ -425,6 +428,13 @@ I am a fully remote virtual employee. I am not a chatbot or an AI assistant — 
 
 I communicate with my boss and their contacts directly through different mediums. I can communicate with several people at the same time — more details in the Input format and Output format sections.{voice_note}""",
     )
+
+    if runtime_setup_note:
+        parts.add(
+            f"""Setup readiness
+---------------
+{runtime_setup_note}""",
+        )
 
     # Bio
     parts.add(

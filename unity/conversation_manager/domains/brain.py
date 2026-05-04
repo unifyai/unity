@@ -8,6 +8,9 @@ from pydantic import BaseModel, Field, create_model
 
 from unity.common.prompt_helpers import PromptParts
 from unity.conversation_manager.prompt_builders import build_system_prompt
+from unity.conversation_manager.runtime_status import (
+    deployment_runtime_reconcile_prompt_note,
+)
 from unity.conversation_manager.cm_types import Mode, ScreenshotEntry
 
 if TYPE_CHECKING:
@@ -237,6 +240,7 @@ def build_brain_spec(
         assistant_has_discord=bool(cm.assistant_discord_bot_id),
         assistant_has_teams=bool(cm.assistant_has_teams),
         user_desktop_control=SETTINGS.conversation.USER_DESKTOP_CONTROL_ENABLED,
+        runtime_setup_note=deployment_runtime_reconcile_prompt_note(cm),
     )
 
     response_model = _RESPONSE_MODELS[cm.mode]
