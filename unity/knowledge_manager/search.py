@@ -7,7 +7,7 @@ from ..common.filter_utils import normalize_filter_expr
 from ..common.search_utils import table_search_top_k
 from ..common.grouping_helpers import maybe_group_rows
 from ..common.embed_utils import list_private_fields
-from .storage import ctx_for_table
+from .storage import contexts_for_table, table_contexts_for_read, ctx_for_table
 
 if TYPE_CHECKING:
     from unity.knowledge_manager.knowledge_manager import KnowledgeManager
@@ -53,14 +53,8 @@ def filter(
 
     dm = knowledge_manager._data_manager
 
-    # Resolve target tables without triggering per-table field reads
     if tables is None:
-        km_prefix = f"{knowledge_manager._ctx}/"
-        ctx_list = dm.list_tables(prefix=km_prefix, include_column_info=False)
-        if isinstance(ctx_list, dict):
-            resolved_tables = [k[len(km_prefix) :] for k in ctx_list.keys()]
-        else:
-            resolved_tables = [k[len(km_prefix) :] for k in ctx_list]
+        resolved_tables = list(table_contexts_for_read(knowledge_manager).keys())
 
         # Optionally expose root-level Contacts when linkage is enabled
         if (
@@ -73,32 +67,36 @@ def filter(
     else:
         resolved_tables = list(tables)
 
-    def _fetch_one(table_name: str) -> tuple[str, List[Dict[str, Any]]]:
-        ctx = ctx_for_table(knowledge_manager, table_name)
+    def _fetch_one(table_name: str, ctx: str) -> tuple[str, List[Dict[str, Any]], str]:
         excl = list_private_fields(ctx)
         normalized = normalize_filter_expr(filter)
         # Delegate to DataManager.filter
         rows = dm.filter(
             ctx,
             filter=normalized,
-            limit=limit,
-            offset=offset,
+            limit=limit + offset,
+            offset=0,
         )
         # Exclude private fields from results
         filtered_rows = [
             {k: v for k, v in row.items() if k not in excl} for row in rows
         ]
-        return table_name, filtered_rows
+        return table_name, filtered_rows, ctx
 
     results: Dict[str, List[Dict[str, Any]]] = {}
 
     # Parallelise when scanning multiple tables to reduce wall-clock time
     if len(resolved_tables) <= 1 and resolved_tables:
-        name, rows = _fetch_one(resolved_tables[0])
-        ctx = ctx_for_table(knowledge_manager, name)
+        name = resolved_tables[0]
+        merged_rows: List[Dict[str, Any]] = []
+        exclude_fields: set[str] = set()
+        for ctx in contexts_for_table(knowledge_manager, name):
+            _, rows, row_context = _fetch_one(name, ctx)
+            merged_rows.extend(rows)
+            exclude_fields.update(list_private_fields(row_context))
         results[name] = maybe_group_rows(
-            rows=rows,
-            exclude_fields=list_private_fields(ctx),
+            rows=merged_rows[offset : offset + limit],
+            exclude_fields=exclude_fields,
             enabled=getattr(knowledge_manager, "_group_results", False),
         )
         return results
@@ -106,19 +104,28 @@ def filter(
     max_workers = min(8, max(1, len(resolved_tables)))
     with ThreadPoolExecutor(max_workers=max_workers) as pool:
         futures = {
-            pool.submit(_fetch_one, table_name): table_name
+            pool.submit(_fetch_one, table_name, context): table_name
             for table_name in resolved_tables
+            for context in contexts_for_table(knowledge_manager, table_name)
         }
         for fut in as_completed(futures):
-            name, rows = fut.result()
-            ctx = ctx_for_table(knowledge_manager, name)
-            results[name] = maybe_group_rows(
-                rows=rows,
-                exclude_fields=list_private_fields(ctx),
-                enabled=getattr(knowledge_manager, "_group_results", False),
-            )
+            name, rows, row_context = fut.result()
+            existing = results.setdefault(name, [])
+            existing.extend(rows)
 
-    return dict(sorted(results.items()))
+    return {
+        name: maybe_group_rows(
+            rows=rows[offset : offset + limit],
+            exclude_fields=set().union(
+                *(
+                    set(list_private_fields(ctx))
+                    for ctx in contexts_for_table(knowledge_manager, name)
+                ),
+            ),
+            enabled=getattr(knowledge_manager, "_group_results", False),
+        )
+        for name, rows in sorted(results.items())
+    }
 
 
 def search(
@@ -158,19 +165,27 @@ def search(
     if k > 1000 or k < 1:
         raise ValueError("k must be between 1 and 1000")
 
-    context = ctx_for_table(knowledge_manager, table)
     normalized = normalize_filter_expr(filter)
 
-    # Use common search utility (already delegates appropriately)
-    rows: List[Dict[str, Any]] = table_search_top_k(
-        context=context,
-        references=references,
-        k=k,
-        row_filter=normalized,
-    )
+    rows: List[Dict[str, Any]] = []
+    exclude_fields: set[str] = set()
+    for context in contexts_for_table(knowledge_manager, table):
+        rows.extend(
+            table_search_top_k(
+                context=context,
+                references=references,
+                k=k,
+                row_filter=normalized,
+            ),
+        )
+        exclude_fields.update(list_private_fields(context))
+    sort_key = next((key for row in rows for key in row if key.startswith("_")), None)
+    if sort_key:
+        rows.sort(key=lambda row: row.get(sort_key, float("inf")))
+
     return maybe_group_rows(
-        rows=rows,
-        exclude_fields=list_private_fields(context),
+        rows=rows[:k],
+        exclude_fields=exclude_fields,
         enabled=getattr(knowledge_manager, "_group_results", False),
     )
 
@@ -182,6 +197,8 @@ def _resolve_and_rewrite(
     select: Dict[str, str],
     left_where: Optional[str],
     right_where: Optional[str],
+    *,
+    namespace: str | None = None,
 ) -> tuple[
     List[str],
     str,
@@ -195,8 +212,16 @@ def _resolve_and_rewrite(
         raise ValueError("Exactly TWO tables are required.")
 
     left, right = tables_list
-    left_ctx = ctx_for_table(knowledge_manager, left)
-    right_ctx = ctx_for_table(knowledge_manager, right)
+    left_ctx = (
+        f"{namespace}/{left}"
+        if namespace is not None
+        else ctx_for_table(knowledge_manager, left)
+    )
+    right_ctx = (
+        f"{namespace}/{right}"
+        if namespace is not None
+        else ctx_for_table(knowledge_manager, right)
+    )
 
     join_expr = join_expr.replace(left, left_ctx).replace(right, right_ctx)
     select = {
@@ -214,6 +239,8 @@ def _resolve_and_rewrite(
 def _resolve_joins(
     knowledge_manager: "KnowledgeManager",
     joins: List[Dict[str, Any]],
+    *,
+    namespace: str | None = None,
 ) -> List[Dict[str, Any]]:
     """Resolve KM table names in multi-join steps, rewriting expressions."""
     _PREV = {"$prev", "__prev__", "_"}
@@ -226,7 +253,11 @@ def _resolve_joins(
         mapping: Dict[str, str] = {}
         for t in tables:
             if t not in _PREV:
-                mapping[t] = ctx_for_table(knowledge_manager, t)
+                mapping[t] = (
+                    f"{namespace}/{t}"
+                    if namespace is not None
+                    else ctx_for_table(knowledge_manager, t)
+                )
 
         s["tables"] = [mapping.get(t, t) for t in tables]
 
@@ -254,6 +285,29 @@ def _resolve_joins(
 def _private_field_names(rows: List[Dict[str, Any]]) -> set[str]:
     """Derive private (``_``-prefixed) field names directly from row data."""
     return {k for row in rows for k in row if k.startswith("_")}
+
+
+def _read_knowledge_namespaces(knowledge_manager: "KnowledgeManager") -> list[str]:
+    """Return readable Knowledge namespaces for join-style read tools."""
+    if hasattr(knowledge_manager, "_read_knowledge_namespaces"):
+        return knowledge_manager._read_knowledge_namespaces()  # type: ignore[attr-defined]
+    return [knowledge_manager._ctx]
+
+
+def _namespace_has_tables(
+    knowledge_manager: "KnowledgeManager",
+    namespace: str,
+    tables: list[str],
+) -> bool:
+    """Return whether every joined table exists under a Knowledge namespace."""
+    prefix = f"{namespace}/"
+    ctx_info = knowledge_manager._data_manager.list_tables(
+        prefix=prefix,
+        include_column_info=False,
+    )
+    available = ctx_info.keys() if isinstance(ctx_info, dict) else ctx_info
+    available_set = set(available)
+    return all(f"{namespace}/{table}" in available_set for table in tables)
 
 
 def search_join(
@@ -308,26 +362,41 @@ def search_join(
     ValueError
         If k is not between 1 and 1000.
     """
-    resolved_tables, join_expr, select, left_where, right_where = _resolve_and_rewrite(
-        knowledge_manager,
-        tables,
-        join_expr,
-        select,
-        left_where,
-        right_where,
-    )
+    rows: List[Dict[str, Any]] = []
+    joined_tables = [tables] if isinstance(tables, str) else list(tables)
+    for namespace in _read_knowledge_namespaces(knowledge_manager):
+        if not _namespace_has_tables(knowledge_manager, namespace, joined_tables):
+            continue
+        (
+            resolved_tables,
+            resolved_join_expr,
+            resolved_select,
+            resolved_left_where,
+            resolved_right_where,
+        ) = _resolve_and_rewrite(
+            knowledge_manager,
+            tables,
+            join_expr,
+            select,
+            left_where,
+            right_where,
+            namespace=namespace,
+        )
 
-    rows = knowledge_manager._data_manager.search_join(
-        tables=resolved_tables,
-        join_expr=join_expr,
-        select=select,
-        mode=mode,
-        left_where=left_where,
-        right_where=right_where,
-        references=references or {},
-        k=k,
-        filter=filter,
-    )
+        rows.extend(
+            knowledge_manager._data_manager.search_join(
+                tables=resolved_tables,
+                join_expr=resolved_join_expr,
+                select=resolved_select,
+                mode=mode,
+                left_where=resolved_left_where,
+                right_where=resolved_right_where,
+                references=references or {},
+                k=k,
+                filter=filter,
+            ),
+        )
+    rows = rows[:k]
     return maybe_group_rows(
         rows=rows,
         exclude_fields=_private_field_names(rows),
@@ -372,14 +441,32 @@ def search_multi_join(
     ValueError
         If joins is empty or k is out of range.
     """
-    resolved_joins = _resolve_joins(knowledge_manager, joins)
-
-    rows = knowledge_manager._data_manager.search_multi_join(
-        joins=resolved_joins,
-        references=references or {},
-        k=k,
-        filter=filter,
+    rows: List[Dict[str, Any]] = []
+    join_tables = sorted(
+        {
+            table
+            for join in joins
+            for table in (
+                [join.get("tables")]
+                if isinstance(join.get("tables"), str)
+                else list(join.get("tables", []))
+            )
+            if table not in {"$prev", "__prev__", "_"}
+        },
     )
+    for namespace in _read_knowledge_namespaces(knowledge_manager):
+        if not _namespace_has_tables(knowledge_manager, namespace, join_tables):
+            continue
+        resolved_joins = _resolve_joins(knowledge_manager, joins, namespace=namespace)
+        rows.extend(
+            knowledge_manager._data_manager.search_multi_join(
+                joins=resolved_joins,
+                references=references or {},
+                k=k,
+                filter=filter,
+            ),
+        )
+    rows = rows[:k]
     return maybe_group_rows(
         rows=rows,
         exclude_fields=_private_field_names(rows),
@@ -440,26 +527,41 @@ def filter_join(
     ValueError
         If result_limit exceeds 1000 or result_where references invalid columns.
     """
-    resolved_tables, join_expr, select, left_where, right_where = _resolve_and_rewrite(
-        knowledge_manager,
-        tables,
-        join_expr,
-        select,
-        left_where,
-        right_where,
-    )
+    rows: List[Dict[str, Any]] = []
+    joined_tables = [tables] if isinstance(tables, str) else list(tables)
+    for namespace in _read_knowledge_namespaces(knowledge_manager):
+        if not _namespace_has_tables(knowledge_manager, namespace, joined_tables):
+            continue
+        (
+            resolved_tables,
+            resolved_join_expr,
+            resolved_select,
+            resolved_left_where,
+            resolved_right_where,
+        ) = _resolve_and_rewrite(
+            knowledge_manager,
+            tables,
+            join_expr,
+            select,
+            left_where,
+            right_where,
+            namespace=namespace,
+        )
 
-    rows = knowledge_manager._data_manager.filter_join(
-        tables=resolved_tables,
-        join_expr=join_expr,
-        select=select,
-        mode=mode,
-        left_where=left_where,
-        right_where=right_where,
-        result_where=result_where,
-        result_limit=result_limit,
-        result_offset=result_offset,
-    )
+        rows.extend(
+            knowledge_manager._data_manager.filter_join(
+                tables=resolved_tables,
+                join_expr=resolved_join_expr,
+                select=resolved_select,
+                mode=mode,
+                left_where=resolved_left_where,
+                right_where=resolved_right_where,
+                result_where=result_where,
+                result_limit=result_limit + result_offset,
+                result_offset=0,
+            ),
+        )
+    rows = rows[result_offset : result_offset + result_limit]
     return maybe_group_rows(
         rows=rows,
         exclude_fields=_private_field_names(rows),
@@ -504,14 +606,32 @@ def filter_multi_join(
     ValueError
         If joins is empty or result_limit exceeds 1000.
     """
-    resolved_joins = _resolve_joins(knowledge_manager, joins)
-
-    rows = knowledge_manager._data_manager.filter_multi_join(
-        joins=resolved_joins,
-        result_where=result_where,
-        result_limit=result_limit,
-        result_offset=result_offset,
+    rows: List[Dict[str, Any]] = []
+    join_tables = sorted(
+        {
+            table
+            for join in joins
+            for table in (
+                [join.get("tables")]
+                if isinstance(join.get("tables"), str)
+                else list(join.get("tables", []))
+            )
+            if table not in {"$prev", "__prev__", "_"}
+        },
     )
+    for namespace in _read_knowledge_namespaces(knowledge_manager):
+        if not _namespace_has_tables(knowledge_manager, namespace, join_tables):
+            continue
+        resolved_joins = _resolve_joins(knowledge_manager, joins, namespace=namespace)
+        rows.extend(
+            knowledge_manager._data_manager.filter_multi_join(
+                joins=resolved_joins,
+                result_where=result_where,
+                result_limit=result_limit + result_offset,
+                result_offset=0,
+            ),
+        )
+    rows = rows[result_offset : result_offset + result_limit]
     return maybe_group_rows(
         rows=rows,
         exclude_fields=_private_field_names(rows),

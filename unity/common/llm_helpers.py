@@ -429,7 +429,16 @@ def _resolve_doc_with_mro_fallback(bound_method) -> str:
     """
     import inspect as _inspect  # local import to avoid polluting global scope
 
-    # 1) Prefer the method's own docstring (after unwrap)
+    # 1) Prefer the callable as exposed to the LLM. Runtime wrappers may append
+    # routing guidance to the visible docstring while preserving __wrapped__.
+    try:
+        doc = _inspect.getdoc(bound_method)
+        if isinstance(doc, str) and doc.strip():
+            return doc.strip()
+    except Exception:
+        pass
+
+    # 2) Then inspect the underlying implementation.
     try:
         unwrapped = _inspect.unwrap(bound_method)
     except Exception:
@@ -441,7 +450,7 @@ def _resolve_doc_with_mro_fallback(bound_method) -> str:
     except Exception:
         pass
 
-    # 2) MRO fallback for bound methods: find an ancestor method with a docstring
+    # 3) MRO fallback for bound methods: find an ancestor method with a docstring
     try:
         name = getattr(unwrapped, "__name__", None) or getattr(
             bound_method,

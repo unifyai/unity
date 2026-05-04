@@ -20,7 +20,17 @@ SPACE_DESTINATION_PREFIX: Final[str] = "space:"
 INVALID_DESTINATION_ERROR: Final[str] = "invalid_destination"
 
 _SHARED_SCOPED_TABLES: Final[frozenset[str]] = frozenset(
-    {"Tasks", "Contacts", "Secrets"},
+    {
+        "Tasks",
+        "Contacts",
+        "Secrets",
+        "Knowledge",
+        "Guidance",
+        "Functions/Compositional",
+        "Functions/Meta",
+        "Functions/Primitives",
+        "Functions/VirtualEnvs",
+    },
 )
 
 

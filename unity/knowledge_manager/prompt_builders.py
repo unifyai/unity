@@ -13,7 +13,7 @@ import textwrap
 from typing import Callable, Dict, List
 
 from .types import column_type_schema
-from ..memory_manager.broader_context import get_broader_context
+from ..common.accessible_spaces_block import build_accessible_spaces_block
 from ..common.prompt_helpers import (
     sig_dict,
     tool_name as _shared_tool_name,
@@ -22,6 +22,7 @@ from ..common.prompt_helpers import (
     PromptParts,
     compose_system_prompt,
 )
+from ..session_details import SESSION_DETAILS
 
 # ────────────────────────────────────────────────────────────────────────────
 # helpers
@@ -48,28 +49,13 @@ def _require_tools(pairs: Dict[str, str | None], tools: Dict[str, Callable]) -> 
 # ────────────────────────────────────────────────────────────────────────────
 
 
-def _rolling_activity_section() -> str:
-    """Return a markdown summary of the agent's historic activity from cache."""
+def _accessible_spaces_section() -> str:
+    """Return shared-space routing guidance for destination-aware tools."""
 
     try:
-        overview = get_broader_context()
+        return build_accessible_spaces_block(SESSION_DETAILS.space_summaries)
     except Exception:  # pragma: no cover
         return ""
-
-    if not overview:
-        return ""
-
-    return "\n".join(
-        [
-            "Historic Activity Overview",
-            "---------------------------",
-            "Below is a summary of the agent's historic activity (tasks, contacts, knowledge, transcripts, etc.).",
-            "Some parts may be useful context for the current task while others might not – use your judgement.",
-            "",
-            overview,
-            "",
-        ],
-    )
 
 
 # ────────────────────────────────────────────────────────────────────────────
@@ -263,6 +249,7 @@ Tool availability groups (for reference)
             table_schemas_json,
         ],
     )
+    accessible_spaces_block = _accessible_spaces_section() if include_activity else ""
 
     spec = PromptSpec(
         manager="KnowledgeManager",
@@ -288,9 +275,8 @@ Tool availability groups (for reference)
         images_extras_block=None,
         include_parallelism=True,
         schemas=[],
-        special_blocks=(
-            [case_specific_instructions.strip()] if case_specific_instructions else []
-        ),
+        special_blocks=[accessible_spaces_block]
+        + ([case_specific_instructions.strip()] if case_specific_instructions else []),
         include_clarification_footer=True,
         include_time_footer=True,
         time_footer_prefix="Current UTC time is ",
@@ -456,6 +442,7 @@ Anti-patterns to avoid
     usage_examples = textwrap.dedent(usage_examples_base).strip()
     if clarification_block:
         usage_examples = f"{usage_examples}\n\n{clarification_block}"
+    accessible_spaces_block = _accessible_spaces_section() if include_activity else ""
 
     # Build workflow instructions
     workflow = textwrap.dedent(
@@ -519,7 +506,11 @@ Use the `{ask_fname}` method to see if you can find any missing context *before*
         images_extras_block=None,
         include_parallelism=True,
         schemas=[],
-        special_blocks=[column_schema_block, table_schema_block]
+        special_blocks=[
+            column_schema_block,
+            table_schema_block,
+            accessible_spaces_block,
+        ]
         + ([case_specific_instructions.strip()] if case_specific_instructions else []),
         include_clarification_footer=True,
         include_time_footer=True,
