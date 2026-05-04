@@ -5,6 +5,7 @@ from unify.logs import CONTEXT_READ, CONTEXT_WRITE
 
 from unity.common.context_registry import ContextRegistry, TableContext
 from unity.common.tool_outcome import ToolErrorException
+from unity.coordinator_manager.coordinator_manager import CoordinatorOnboardingManager
 from unity.session_details import SESSION_DETAILS
 
 
@@ -169,6 +170,24 @@ def test_files_data_and_blacklist_are_shared_scoped():
             "user123/42",
             "Spaces/7",
         ]
+
+
+def test_coordinator_manager_is_registered_for_startup_provisioning():
+    assert CoordinatorOnboardingManager in ContextRegistry._get_managers()
+
+
+def test_coordinator_contexts_do_not_fan_out_to_spaces():
+    SESSION_DETAILS.space_ids = [7]
+
+    with patch("unity.common.context_registry._create_context_with_retry"):
+        assert ContextRegistry.read_roots(
+            CoordinatorOnboardingManager,
+            "Coordinator/State",
+        ) == ["user123/42"]
+        assert ContextRegistry.read_roots(
+            CoordinatorOnboardingManager,
+            "Coordinator/Checklist",
+        ) == ["user123/42"]
 
 
 def test_resolve_root_supports_dashboard_tables_without_provisioning():

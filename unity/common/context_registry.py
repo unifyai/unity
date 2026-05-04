@@ -224,6 +224,9 @@ class ContextRegistry:
         from unity.blacklist_manager.blacklist_manager import BlackListManager
         from unity.data_manager.data_manager import DataManager
         from unity.file_manager.managers.file_manager import FileManager
+        from unity.coordinator_manager.coordinator_manager import (
+            CoordinatorOnboardingManager,
+        )
 
         return [
             ContactManager,
@@ -239,6 +242,7 @@ class ContextRegistry:
             BlackListManager,
             DataManager,
             FileManager,
+            CoordinatorOnboardingManager,
         ]
 
     @classmethod
