@@ -63,6 +63,57 @@ def test_write_root_resolves_personal_and_space_destinations():
         )
 
 
+def test_write_root_resolves_all_manager_destination_tables_to_shared_spaces():
+    class DestinationAwareManager:
+        class Config:
+            required_contexts = [
+                TableContext(
+                    name="Knowledge",
+                    description="Structured assistant memory.",
+                ),
+                TableContext(
+                    name="Guidance",
+                    description="Assistant behavior guidance.",
+                ),
+                TableContext(
+                    name="Functions/Compositional",
+                    description="Assistant-authored functions.",
+                ),
+                TableContext(
+                    name="Functions/VirtualEnvs",
+                    description="Custom function environments.",
+                ),
+                TableContext(
+                    name="Functions/Primitives",
+                    description="Runtime-provided primitive functions.",
+                ),
+                TableContext(
+                    name="Functions/Meta",
+                    description="Function synchronization metadata.",
+                ),
+            ]
+
+    SESSION_DETAILS.space_ids = [37]
+
+    with patch("unity.common.context_registry._create_context_with_retry"):
+        for table_name in (
+            "Knowledge",
+            "Guidance",
+            "Functions/Compositional",
+            "Functions/VirtualEnvs",
+            "Functions/Primitives",
+            "Functions/Meta",
+        ):
+            assert (
+                ContextRegistry.write_root(
+                    DestinationAwareManager,
+                    table_name,
+                    destination="space:37",
+                )
+                == "Spaces/37"
+            )
+
+
 def test_invalid_destination_raises_structured_error():
     SESSION_DETAILS.space_ids = [3, 7]
 
