@@ -27,6 +27,7 @@ class BaseImageManager(BaseStateManager, metaclass=SingletonABCMeta):
         filter: Optional[str] = None,
         offset: int = 0,
         limit: int = 100,
+        destination: Optional[str] = None,
     ) -> List["Image"]:
         """
         Return images that satisfy a Python expression filter.
@@ -54,6 +55,7 @@ class BaseImageManager(BaseStateManager, metaclass=SingletonABCMeta):
         *,
         reference_text: str,
         k: int = 10,
+        destination: Optional[str] = None,
     ) -> List["Image"]:
         """
         Semantic search over image captions using the provided free‑form text.
@@ -72,12 +74,22 @@ class BaseImageManager(BaseStateManager, metaclass=SingletonABCMeta):
         """
 
     @abstractmethod
-    def get_images(self, image_ids: List[int]) -> List["ImageHandle"]:
+    def get_images(
+        self,
+        image_ids: List[int],
+        *,
+        destination: Optional[str] = None,
+    ) -> List["ImageHandle"]:
         """Return handles for the given image ids (missing ids are skipped)."""
 
     # ------------------------------ Writes --------------------------------
     @abstractmethod
-    def add_images(self, items: List[Dict[str, Any]]) -> List[int]:
+    def add_images(
+        self,
+        items: List[Dict[str, Any]],
+        *,
+        destination: Optional[str] = None,
+    ) -> List[int]:
         """
         Add new images. Each item may include ``timestamp``, ``caption``, ``data``,
         and ``filepath``.
@@ -85,7 +97,12 @@ class BaseImageManager(BaseStateManager, metaclass=SingletonABCMeta):
         """
 
     @abstractmethod
-    def update_images(self, updates: List[Dict[str, Any]]) -> List[int]:
+    def update_images(
+        self,
+        updates: List[Dict[str, Any]],
+        *,
+        destination: Optional[str] = None,
+    ) -> List[int]:
         """
         Update existing images. Each update dict must include ``image_id`` and may
         set ``timestamp``, ``caption``, ``data``, and/or ``filepath``.
@@ -94,7 +111,12 @@ class BaseImageManager(BaseStateManager, metaclass=SingletonABCMeta):
 
     # ------------------------------ Resolution ------------------------------
     @abstractmethod
-    def resolve_filepath(self, filepath: str) -> int:
+    def resolve_filepath(
+        self,
+        filepath: str,
+        *,
+        destination: Optional[str] = None,
+    ) -> int:
         """Get-or-create an image by its filesystem path, returning ``image_id``.
 
         If an image with the given ``filepath`` already exists in the Images
