@@ -3,6 +3,9 @@ from __future__ import annotations
 import json
 import functools
 import logging
+from contextlib import contextmanager
+from contextvars import ContextVar
+from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Optional, Union, TYPE_CHECKING
 
 logger = logging.getLogger(__name__)
@@ -42,7 +45,12 @@ from unity.settings import SETTINGS
 from unity.common.read_only_ask_guard import ReadOnlyAskGuardHandle
 from unity.events.manager_event_logging import log_manager_call
 from unity.common.context_store import TableStore
-from unity.common.context_registry import ContextRegistry, TableContext
+from unity.common.context_registry import (
+    SPACE_CONTEXT_PREFIX,
+    ContextRegistry,
+    TableContext,
+)
+from unity.common.tool_outcome import ToolErrorException
 from unity.common.model_to_fields import model_to_fields
 from unity.common.llm_client import new_llm_client
 from .utils.search import (
@@ -63,6 +71,15 @@ from unity.file_manager.file_parsers.types.formats import (
 if TYPE_CHECKING:
     from unity.file_manager.types.describe import FileStorageMap
     from unity.data_manager.base import BaseDataManager
+
+
+@dataclass(frozen=True)
+class _FileContextBinding:
+    """Concrete FileRecords/Files layout for one destination."""
+
+    index_context: str
+    files_root: str
+    store: TableStore
 
 
 # ---------------------------------------------------------------------------
@@ -193,20 +210,17 @@ class FileManager(BaseFileManager):
 
         file_records_base = ContextRegistry.get_context(FileManager, "FileRecords")
         files_base = ContextRegistry.get_context(FileManager, "Files")
-        self._ctx = f"{file_records_base}/{self._fs_alias}"
-        self._per_file_root = f"{files_base}/{self._fs_alias}"
+        self._stores_by_context: Dict[str, TableStore] = {}
+        self._context_binding: ContextVar[_FileContextBinding | None] = ContextVar(
+            f"file_context_binding_{id(self)}",
+            default=None,
+        )
+        self._default_index_context = f"{file_records_base}/{self._fs_alias}"
+        self._default_files_root = f"{files_base}/{self._fs_alias}"
 
         # Ensure context and fields exist
-        self._store = TableStore(
-            self._ctx,
-            unique_keys={"file_id": "int"},
-            auto_counting={"file_id": None},
-            description=(
-                "FileRecords index for a single filesystem; per-file content lives under Files/<alias>/<safe_filepath>/Tables/<table>."
-            ),
-            fields=model_to_fields(FileRecord),
-        )
-        self._store.ensure_context()
+        self._default_store = self._store_for_context(self._default_index_context)
+        self._default_store.ensure_context()
         self._provision_storage()
 
         # Public tool dictionaries, mirroring other managers
@@ -242,6 +256,39 @@ class FileManager(BaseFileManager):
         return self.__parser
 
     @property
+    def _ctx(self) -> str:
+        """Current FileRecords index context."""
+
+        binding = self._context_binding.get()
+        return binding.index_context if binding else self._default_index_context
+
+    @_ctx.setter
+    def _ctx(self, context: str) -> None:
+        self._default_index_context = context
+
+    @property
+    def _per_file_root(self) -> str:
+        """Current Files content root."""
+
+        binding = self._context_binding.get()
+        return binding.files_root if binding else self._default_files_root
+
+    @_per_file_root.setter
+    def _per_file_root(self, context: str) -> None:
+        self._default_files_root = context
+
+    @property
+    def _store(self) -> TableStore:
+        """Current FileRecords table store."""
+
+        binding = self._context_binding.get()
+        return binding.store if binding else self._default_store
+
+    @_store.setter
+    def _store(self, store: TableStore) -> None:
+        self._default_store = store
+
+    @property
     def _data_manager(self) -> "BaseDataManager":
         """
         Lazily instantiated DataManager for data operations delegation.
@@ -259,6 +306,135 @@ class FileManager(BaseFileManager):
 
             self.__data_manager = ManagerRegistry.get_data_manager()
         return self.__data_manager
+
+    def _store_for_context(self, context: str) -> TableStore:
+        """Return the FileRecords TableStore for a concrete index context."""
+
+        store = self._stores_by_context.get(context)
+        if store is None:
+            store = TableStore(
+                context,
+                unique_keys={"file_id": "int"},
+                auto_counting={"file_id": None},
+                description=(
+                    "FileRecords index for a single filesystem; per-file "
+                    "content lives under Files/<alias>/<storage_id>/..."
+                ),
+                fields=model_to_fields(FileRecord),
+            )
+            self._stores_by_context[context] = store
+        return store
+
+    def _file_records_context_from_root(self, root_context: str) -> str:
+        """Return this adapter's FileRecords context under one registry root."""
+
+        return f"{root_context.strip('/')}/FileRecords/{self._fs_alias}"
+
+    def _files_root_from_root(self, root_context: str) -> str:
+        """Return this adapter's Files root under one registry root."""
+
+        return f"{root_context.strip('/')}/Files/{self._fs_alias}"
+
+    def _file_contexts_for_destination(
+        self,
+        destination: str | None,
+    ) -> tuple[str, str]:
+        """Resolve a write destination into FileRecords and Files contexts."""
+
+        file_records_root = ContextRegistry.write_root(
+            FileManager,
+            "FileRecords",
+            destination=destination,
+        )
+        files_root = ContextRegistry.write_root(
+            FileManager,
+            "Files",
+            destination=destination,
+        )
+        return (
+            self._file_records_context_from_root(file_records_root),
+            self._files_root_from_root(files_root),
+        )
+
+    def _read_file_records_contexts(self) -> list[str]:
+        """Return ordered FileRecords contexts visible to this assistant."""
+
+        try:
+            roots = ContextRegistry.read_roots(FileManager, "FileRecords")
+            contexts = [self._file_records_context_from_root(root) for root in roots]
+        except RuntimeError as exc:
+            if "no base context available" not in str(exc):
+                raise
+            from unity.session_details import SESSION_DETAILS
+
+            contexts = [self._ctx]
+            contexts.extend(
+                f"{SPACE_CONTEXT_PREFIX}{space_id}/FileRecords/{self._fs_alias}"
+                for space_id in sorted(set(SESSION_DETAILS.space_ids))
+            )
+        return list(dict.fromkeys(contexts))
+
+    def _read_files_roots(self) -> list[str]:
+        """Return ordered Files roots visible to this assistant."""
+
+        try:
+            roots = ContextRegistry.read_roots(FileManager, "Files")
+            contexts = [self._files_root_from_root(root) for root in roots]
+        except RuntimeError as exc:
+            if "no base context available" not in str(exc):
+                raise
+            from unity.session_details import SESSION_DETAILS
+
+            contexts = [self._per_file_root]
+            contexts.extend(
+                f"{SPACE_CONTEXT_PREFIX}{space_id}/Files/{self._fs_alias}"
+                for space_id in sorted(set(SESSION_DETAILS.space_ids))
+            )
+        return list(dict.fromkeys(contexts))
+
+    @contextmanager
+    def _using_file_destination(self, destination: str | None):
+        """Temporarily bind helper code to one concrete file destination."""
+
+        if destination is None:
+            yield
+            return
+
+        index_context, files_root = self._file_contexts_for_destination(
+            destination,
+        )
+        store = self._store_for_context(index_context)
+        store.ensure_context()
+        token = self._context_binding.set(
+            _FileContextBinding(index_context, files_root, store),
+        )
+        self._provision_storage()
+        try:
+            yield
+        finally:
+            self._context_binding.reset(token)
+
+    @contextmanager
+    def _using_file_contexts(self, index_context: str, files_root: str):
+        """Temporarily bind helper code to exact FileRecords and Files contexts."""
+
+        token = self._context_binding.set(
+            _FileContextBinding(
+                index_context,
+                files_root,
+                self._store_for_context(index_context),
+            ),
+        )
+        try:
+            yield
+        finally:
+            self._context_binding.reset(token)
+
+    @staticmethod
+    def _tool_error(exc: ToolErrorException) -> Dict[str, Any]:
+        """Return the structured tool-error payload carried by *exc*."""
+
+        return dict(exc.payload)
 
     def _resolve_table_refs(
         self,
@@ -357,10 +533,25 @@ class FileManager(BaseFileManager):
     ) -> "FileStorageMap":
         from .utils.storage import describe_file as _storage_describe_file
 
-        return _storage_describe_file(self, file_path=file_path)
+        last_storage = None
+        for index_context, files_root in zip(
+            self._read_file_records_contexts(),
+            self._read_files_roots(),
+        ):
+            with self._using_file_contexts(index_context, files_root):
+                storage = _storage_describe_file(self, file_path=file_path)
+            if storage.indexed_exists:
+                return storage
+            last_storage = storage
+        return last_storage or _storage_describe_file(self, file_path=file_path)
 
     # ------------------------- Sync helper ---------------------------------- #
-    def _sync(self, *, file_path: str) -> Dict[str, Any]:
+    def _sync(
+        self,
+        *,
+        file_path: str,
+        destination: str | None = None,
+    ) -> Dict[str, Any]:
         """
         Synchronize a previously ingested file with the underlying filesystem.
 
@@ -378,8 +569,11 @@ class FileManager(BaseFileManager):
         dict
             Outcome with details about purge counts and the new ingest status.
         """
-        # Resolve identity and layout via describe()
-        storage = self.describe(file_path=file_path)
+        from .utils.storage import describe_file as _storage_describe_file
+
+        # The public describe() fans out across readable roots; mutators must
+        # stay pinned to the destination-bound FileRecords/Files layout.
+        storage = _storage_describe_file(self, file_path=file_path)
         if not storage.indexed_exists:
             return {"outcome": "sync skipped", "reason": "file not indexed"}
 
@@ -420,7 +614,7 @@ class FileManager(BaseFileManager):
         try:
             cfg = _FilePipelineConfig()
             cfg.output.return_mode = "none"
-            self.ingest_files(file_path, config=cfg)
+            self.ingest_files(file_path, config=cfg, destination=destination)
         except Exception as e:
             return {"outcome": "sync failed", "error": str(e), "purged": purged}
 
@@ -428,8 +622,17 @@ class FileManager(BaseFileManager):
 
     # Public wrapper (exposed under organize)
     @functools.wraps(BaseFileManager.sync, updated=())
-    def sync(self, *, file_path: str) -> Dict[str, Any]:
-        return self._sync(file_path=file_path)
+    def sync(
+        self,
+        *,
+        file_path: str,
+        destination: str | None = None,
+    ) -> Dict[str, Any]:
+        try:
+            with self._using_file_destination(destination):
+                return self._sync(file_path=file_path, destination=destination)
+        except ToolErrorException as exc:
+            return self._tool_error(exc)
 
     # ------ Public accessors for cross-module use (attachment ingestion) ----- #
 
@@ -471,16 +674,17 @@ class FileManager(BaseFileManager):
         # file_id lookup via DataManager
         try:
             fid = int(s)
-            rows = self._data_manager.filter(
-                context=self._ctx,
-                filter=f"file_id == {fid}",
-                limit=1,
-                columns=["source_uri"],
-            )
-            if rows:
-                uri = rows[0].get("source_uri")
-                if isinstance(uri, str) and uri:
-                    return uri
+            for context in self._read_file_records_contexts():
+                rows = self._data_manager.filter(
+                    context=context,
+                    filter=f"file_id == {fid}",
+                    limit=1,
+                    columns=["source_uri"],
+                )
+                if rows:
+                    uri = rows[0].get("source_uri")
+                    if isinstance(uri, str) and uri:
+                        return uri
         except Exception:
             pass
         # Adapter lookup
@@ -707,14 +911,19 @@ class FileManager(BaseFileManager):
         *,
         file_id_or_path: Union[str, int],
         new_name: str,
+        destination: str | None = None,
     ) -> Dict[str, Any]:
         from .utils.ops import rename_file as _ops_rename
 
-        return _ops_rename(
-            self,
-            file_id_or_path=file_id_or_path,
-            new_name=str(new_name),
-        )
+        try:
+            with self._using_file_destination(destination):
+                return _ops_rename(
+                    self,
+                    file_id_or_path=file_id_or_path,
+                    new_name=str(new_name),
+                )
+        except ToolErrorException as exc:
+            return self._tool_error(exc)
 
     @functools.wraps(BaseFileManager.move_file, updated=())
     def move_file(
@@ -722,24 +931,34 @@ class FileManager(BaseFileManager):
         *,
         file_id_or_path: Union[str, int],
         new_parent_path: str,
+        destination: str | None = None,
     ) -> Dict[str, Any]:
         from .utils.ops import move_file as _ops_move
 
-        return _ops_move(
-            self,
-            file_id_or_path=file_id_or_path,
-            new_parent_path=str(new_parent_path),
-        )
+        try:
+            with self._using_file_destination(destination):
+                return _ops_move(
+                    self,
+                    file_id_or_path=file_id_or_path,
+                    new_parent_path=str(new_parent_path),
+                )
+        except ToolErrorException as exc:
+            return self._tool_error(exc)
 
     @functools.wraps(BaseFileManager.delete_file, updated=())
     def delete_file(
         self,
         *,
         file_id_or_path: Union[str, int],
+        destination: str | None = None,
     ) -> Dict[str, Any]:
         from .utils.ops import delete_file as _ops_delete
 
-        return _ops_delete(self, file_id_or_path=file_id_or_path)
+        try:
+            with self._using_file_destination(destination):
+                return _ops_delete(self, file_id_or_path=file_id_or_path)
+        except ToolErrorException as exc:
+            return self._tool_error(exc)
 
     @functools.wraps(BaseFileManager.exists, updated=())
     def exists(self, file_path: str) -> bool:  # type: ignore[override]
@@ -763,7 +982,25 @@ class FileManager(BaseFileManager):
         return list(items or [])
 
     @functools.wraps(BaseFileManager.ingest_files, updated=())
-    def ingest_files(self, file_paths: Union[str, List[str]], *, config: Optional[_FilePipelineConfig] = None) -> "IngestPipelineResult":  # type: ignore[override]
+    def ingest_files(
+        self,
+        file_paths: Union[str, List[str]],
+        *,
+        config: Optional[_FilePipelineConfig] = None,
+        destination: str | None = None,
+    ) -> "IngestPipelineResult":  # type: ignore[override]
+        try:
+            with self._using_file_destination(destination):
+                return self._ingest_files(file_paths, config=config)
+        except ToolErrorException as exc:
+            return self._tool_error(exc)  # type: ignore[return-value]
+
+    def _ingest_files(
+        self,
+        file_paths: Union[str, List[str]],
+        *,
+        config: Optional[_FilePipelineConfig] = None,
+    ) -> "IngestPipelineResult":
         cfg = config or _FilePipelineConfig()
 
         if isinstance(file_paths, str):
@@ -1257,16 +1494,40 @@ class FileManager(BaseFileManager):
         group_by: Optional[Union[str, List[str]]] = None,
     ) -> Any:
         # Resolve context - default to FileRecords index
-        ctx = context if context else self._ctx
+        if context:
+            return self._data_manager.reduce(
+                context=context,
+                metric=metric,
+                columns=columns,
+                filter=filter,
+                group_by=group_by,
+            )
 
-        # Delegate to DataManager for the actual reduction
-        return self._data_manager.reduce(
-            context=ctx,
-            metric=metric,
-            columns=columns,
-            filter=filter,
-            group_by=group_by,
-        )
+        metric_norm = metric.strip().lower()
+        values = []
+        for ctx in self._read_file_records_contexts():
+            try:
+                values.append(
+                    self._data_manager.reduce(
+                        context=ctx,
+                        metric=metric,
+                        columns=columns,
+                        filter=filter,
+                        group_by=group_by,
+                    ),
+                )
+            except Exception:
+                continue
+        if not values:
+            return 0 if metric_norm in {"count", "sum"} else None
+        if group_by is not None or metric_norm not in {"count", "sum", "min", "max"}:
+            return values[0]
+        if metric_norm in {"count", "sum"}:
+            return sum(value or 0 for value in values)
+        filtered_values = [value for value in values if value is not None]
+        if not filtered_values:
+            return None
+        return min(filtered_values) if metric_norm == "min" else max(filtered_values)
 
     @functools.wraps(BaseFileManager.list_columns, updated=())
     @read_only
@@ -1295,16 +1556,42 @@ class FileManager(BaseFileManager):
         columns: Optional[List[str]] = None,
     ) -> List[Dict[str, Any]]:
         # Resolve context - default to FileRecords index
-        ctx = context if context else self._ctx
+        if context:
+            return self._data_manager.filter(
+                context=context,
+                filter=filter,
+                columns=columns,
+                limit=limit,
+                offset=offset,
+            )
 
-        # Delegate to DataManager for the actual filtering
-        return self._data_manager.filter(
-            context=ctx,
-            filter=filter,
-            columns=columns,
-            limit=limit,
-            offset=offset,
-        )
+        rows: List[Dict[str, Any]] = []
+        target_count = offset + limit
+        last_error: Exception | None = None
+        for ctx in self._read_file_records_contexts():
+            context_offset = 0
+            context_rows: list[dict[str, Any]] = []
+            try:
+                while len(context_rows) < target_count:
+                    page_limit = min(1000, target_count - len(context_rows))
+                    page = self._data_manager.filter(
+                        context=ctx,
+                        filter=filter,
+                        columns=columns,
+                        limit=page_limit,
+                        offset=context_offset,
+                    )
+                    context_rows.extend(page)
+                    if len(page) < page_limit:
+                        break
+                    context_offset += page_limit
+            except Exception as exc:
+                last_error = exc
+                continue
+            rows.extend(context_rows)
+        if not rows and last_error is not None:
+            raise last_error
+        return rows[offset:target_count]
 
     @functools.wraps(BaseFileManager.search_files, updated=())
     @read_only
@@ -1318,16 +1605,34 @@ class FileManager(BaseFileManager):
         columns: Optional[List[str]] = None,
     ) -> List[Dict[str, Any]]:
         # Resolve context - default to FileRecords index
-        ctx = context if context else self._ctx
+        if context:
+            return self._data_manager.search(
+                context=context,
+                references=references or {},
+                k=limit,
+                filter=filter,
+                columns=columns,
+            )
 
-        # Delegate to DataManager for the actual search
-        return self._data_manager.search(
-            context=ctx,
-            references=references or {},
-            k=limit,
-            filter=filter,
-            columns=columns,
-        )
+        rows: List[Dict[str, Any]] = []
+        last_error: Exception | None = None
+        for ctx in self._read_file_records_contexts():
+            try:
+                rows.extend(
+                    self._data_manager.search(
+                        context=ctx,
+                        references=references or {},
+                        k=limit,
+                        filter=filter,
+                        columns=columns,
+                    ),
+                )
+            except Exception as exc:
+                last_error = exc
+                continue
+        if not rows and last_error is not None:
+            raise last_error
+        return rows[:limit]
 
     # ---------- Per-file join and multi-join tools (read-only) -------------- #
     @functools.wraps(BaseFileManager.filter_join, updated=())
@@ -1596,6 +1901,7 @@ class FileManager(BaseFileManager):
         filename: str,
         contents: bytes,
         auto_ingest: Optional[bool] = None,
+        destination: str | None = None,
     ) -> str:
         """
         Save bytes into the Attachments directory and return the saved path.
@@ -1611,12 +1917,26 @@ class FileManager(BaseFileManager):
         auto_ingest : bool | None, default None
             Whether to run immediate inline ingestion after saving.
             ``None`` follows ``SETTINGS.file.IMPLICIT_INGESTION``.
+        destination : str | None, default None
+            Where auto-ingested FileRecords metadata and parsed Files content
+            should live. Pass ``"personal"`` (the default) for private
+            attachments, personal screenshots, and drafts. Pass
+            ``"space:<id>"`` for shared media artifacts the team needs. Read
+            the *Accessible shared spaces* block before choosing; call
+            ``request_clarification`` instead of guessing toward a wider
+            audience. When ``auto_ingest`` is false this method only saves bytes
+            through the adapter, so the destination is validated but no metadata
+            row is written.
 
         Returns
         -------
         str
             Relative path to the saved file (e.g. ``"Attachments/abc123_report.pdf"``).
         """
+        try:
+            self._file_contexts_for_destination(destination)
+        except ToolErrorException as exc:
+            return self._tool_error(exc)  # type: ignore[return-value]
         if self._adapter is None:
             raise NotImplementedError(
                 "No adapter configured for save_attachment",
@@ -1632,7 +1952,7 @@ class FileManager(BaseFileManager):
         )
 
         if should_auto_ingest:
-            result = self.ingest_files(display_name)
+            result = self.ingest_files(display_name, destination=destination)
 
             # ingest_files only creates FileRecords entries for successfully
             # parsed files.  When parsing fails (corrupt file, unknown format,
@@ -1642,18 +1962,19 @@ class FileManager(BaseFileManager):
             if file_result and getattr(file_result, "status", None) == "error":
                 from .utils.ops import add_or_replace_file_row
 
-                add_or_replace_file_row(
-                    self,
-                    entry={
-                        "file_path": display_name,
-                        "source_uri": self._resolve_to_uri(display_name),
-                        "source_provider": getattr(self._adapter, "name", None),
-                        "status": "error",
-                        "error": getattr(file_result, "error", None)
-                        or "file could not be parsed",
-                        "storage_id": "",
-                    },
-                )
+                with self._using_file_destination(destination):
+                    add_or_replace_file_row(
+                        self,
+                        entry={
+                            "file_path": display_name,
+                            "source_uri": self._resolve_to_uri(display_name),
+                            "source_provider": getattr(self._adapter, "name", None),
+                            "status": "error",
+                            "error": getattr(file_result, "error", None)
+                            or "file could not be parsed",
+                            "storage_id": "",
+                        },
+                    )
 
         return display_name
 
@@ -1870,7 +2191,14 @@ class FileManager(BaseFileManager):
         )
 
     @functools.wraps(BaseFileManager.clear, updated=())
-    def clear(self) -> None:  # type: ignore[override]
+    def clear(self, *, destination: str | None = None) -> None:  # type: ignore[override]
+        try:
+            with self._using_file_destination(destination):
+                self._clear_current_contexts()
+        except ToolErrorException as exc:
+            return self._tool_error(exc)  # type: ignore[return-value]
+
+    def _clear_current_contexts(self) -> None:
         # 1) Delete all per-file contexts under the alias root via DataManager
         dm = self._data_manager
         try:
