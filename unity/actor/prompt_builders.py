@@ -500,35 +500,44 @@ _EXTERNAL_APP_INTEGRATION = textwrap.dedent("""
 
     #### Checking OAuth Scope Before API Calls
 
-    Before making Google or Microsoft API calls using platform-managed
-    OAuth tokens, check `GOOGLE_GRANTED_SCOPES` or
-    `MICROSOFT_GRANTED_SCOPES` to verify the needed feature is
-    authorized.  These secrets contain space-separated feature names:
+    Before making Google or Microsoft API calls that rely on
+    platform-managed OAuth tokens, check whether the scope you need
+    has been granted.  `GOOGLE_GRANTED_SCOPES` and
+    `MICROSOFT_GRANTED_SCOPES` hold space-separated raw OAuth scope
+    strings — not feature names.  Examples of what you will see:
 
-    | Feature      | Covers                                              |
-    |--------------|-----------------------------------------------------|
-    | `email`      | Gmail / Outlook Mail                                |
-    | `calendar`   | Google Calendar / Outlook Calendar                  |
-    | `drive`      | Google Drive / OneDrive                             |
-    | `contacts`   | Google People / Outlook Contacts                    |
-    | `tasks`      | Google Tasks / Microsoft To Do                      |
-    | `teams`      | Microsoft Teams (Microsoft only)                    |
-    | `sharepoint` | SharePoint (Microsoft only)                         |
+    - Google: full URLs such as
+      `https://www.googleapis.com/auth/drive` and
+      `https://www.googleapis.com/auth/gmail.send`.
+    - Microsoft: Graph URLs such as
+      `https://graph.microsoft.com/Sites.Read.All`, plus the bare base
+      scope `offline_access`.
 
-    If the expected feature token is absent, check the raw provider
-    OAuth scopes as a fallback before denying access. Use the scopes
-    required for the specific API call, not a separate feature catalog in
-    this prompt. For example, Microsoft `sharepoint` read/write calls may
-    correspond to `Sites.Read.All` / `Sites.ReadWrite.All` in
-    `MICROSOFT_GRANTED_SCOPES`. Raw Microsoft scopes may appear as
-    fully-qualified Graph scope URLs such as
-    `https://graph.microsoft.com/Sites.Read.All`.
+    **Workflow.** Look up the scope(s) the specific API call requires
+    from the provider's official docs or SDK at call time, then check
+    membership against the granted-scopes secret.  Do not rely on a
+    per-feature catalog in this prompt — there isn't one.
 
-    If the granted-scopes secret is not found at all, proceed normally
-    with the API call.  If it is present but the needed feature is
-    absent, do not attempt the API call.  Instead, tell the user that
-    access to that service is not currently enabled and they can add it
-    by editing their connected account in the console.
+    **Microsoft normalization.** Provider docs list Microsoft scopes
+    as short names (e.g. `Sites.Read.All`); the stored secret holds
+    them URL-prefixed.  Prefix the short name with
+    `https://graph.microsoft.com/` before searching.  The only
+    exception is `offline_access`, which is stored bare.  Example:
+    SharePoint reads need `Sites.Read.All` per Graph docs, so search
+    `MICROSOFT_GRANTED_SCOPES` for
+    `https://graph.microsoft.com/Sites.Read.All` (or
+    `.../Sites.ReadWrite.All` for writes).
+
+    **Decision rules.**
+
+    - Secret missing entirely → proceed normally.  This is expected
+      for Microsoft enterprise (admin-consented) tenants and for
+      self-managed (BYO) tokens not registered through the Console.
+    - Secret present, required scope present → proceed.
+    - Secret present, required scope absent → do not attempt the
+      call.  Tell the user that access to that service is not
+      currently enabled and they can add it by editing their connected
+      account in the console.
 """).strip()
 
 
