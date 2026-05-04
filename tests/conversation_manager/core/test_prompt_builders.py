@@ -8,8 +8,11 @@ capability-gated sections (assistant phone / email).
 
 from __future__ import annotations
 
+import pytest
 
 from unity.conversation_manager.prompt_builders import build_system_prompt
+
+pytestmark = pytest.mark.no_unify_context
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -147,8 +150,8 @@ class TestExternalAppIntegration:
     def test_onboarding_has_app_integration_qa(self):
         prompt = _build()
         assert "Can you help me manage my apps and online services?" in prompt
-        assert "Resources → Secrets" in prompt
-        assert "service's SDK" in prompt
+        assert "secure page on the console" in prompt
+        assert "API credentials or access tokens" in prompt
 
     def test_act_capabilities_has_external_apps_bullet(self):
         prompt = _build()
@@ -193,13 +196,12 @@ class TestConsoleKnowledge:
     def test_console_knowledge_present(self):
         prompt = _build()
         assert "Console knowledge" in prompt
-        assert "Resources" in prompt
         assert "Secrets" in prompt
         assert "Contact Details" in prompt
 
     def test_console_knowledge_has_navigation_paths(self):
         prompt = _build()
-        assert "Resources → Secrets" in prompt
+        assert "Hover over my name in the assistant list → ⋮ → Secrets" in prompt
         assert "Profile menu" in prompt
 
     def test_console_knowledge_absent_in_demo_mode(self):

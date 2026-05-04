@@ -135,6 +135,12 @@ def _set_unify_context_for_test(item: pytest.Item) -> None:
         pass
 
 
+def _uses_unify_context(item: pytest.Item) -> bool:
+    """Return whether this test needs the default per-test Unify context."""
+
+    return item.get_closest_marker("no_unify_context") is None
+
+
 def _unset_unify_context_for_test(item: pytest.Item) -> None:
     """Unset (and optionally delete) the per-test Unify context after fixture teardown."""
     ctx = getattr(item, "_unity_unify_test_ctx", None)
@@ -553,6 +559,11 @@ _hf_home_set_by_us: bool = False
 
 
 def pytest_configure(config):
+    config.addinivalue_line(
+        "markers",
+        "no_unify_context: skip automatic per-test Unify context setup for pure unit tests",
+    )
+
     # ------------------------------------------------------------------
     # Isolate HOME so that tests never touch the real home directory.
     # get_local_root() defaults to ~/Unity/Local, and the process cwd
@@ -635,7 +646,7 @@ def pytest_configure(config):
 # Skip tests marked with requires_orchestra when Orchestra is not available
 def pytest_runtest_setup(item):
     test_name_log_filter.set_test_name(item.nodeid)
-    if not os.environ.get("SKIP_UNITY_TEST_INIT"):
+    if not os.environ.get("SKIP_UNITY_TEST_INIT") and _uses_unify_context(item):
         _set_unify_context_for_test(item)
 
     # Skip requires_orchestra tests if Orchestra is not running
@@ -720,7 +731,7 @@ def pytest_report_teststatus(report, config):
 
 
 def pytest_runtest_teardown(item, nextitem=None):
-    if not os.environ.get("SKIP_UNITY_TEST_INIT"):
+    if not os.environ.get("SKIP_UNITY_TEST_INIT") and _uses_unify_context(item):
         _unset_unify_context_for_test(item)
     test_name_log_filter.reset_test_name()
 
