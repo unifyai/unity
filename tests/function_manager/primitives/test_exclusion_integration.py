@@ -183,6 +183,26 @@ def test_filter_functions_excludes_tagged_primitive_ids(fm_factory):
     assert "primitives.contacts.update" in names_excl
 
 
+@_handle_project
+def test_filter_functions_handles_production_sized_primitive_exclusions(fm_factory):
+    """Large primitive exclusion sets should not trigger backend recursion."""
+    production_like_ids = frozenset(range(1000, 1120))
+
+    fm = fm_factory(
+        primitive_scope=PrimitiveScope.all_managers(),
+        exclude_primitive_ids=production_like_ids,
+    )
+    fm.sync_primitives()
+
+    hits = fm.filter_functions(
+        filter="is_primitive == True",
+        limit=5,
+        include_implementations=False,
+    )
+
+    assert isinstance(hits, list)
+
+
 # ────────────────────────────────────────────────────────────────────────────
 # 5. Multiple IDs excluded at once
 # ────────────────────────────────────────────────────────────────────────────

@@ -34,7 +34,7 @@ def test_build_id_exclusion_single_id():
 
 def test_build_id_exclusion_multiple_ids_sorted():
     result = GuidanceManager._build_id_exclusion(frozenset({30, 10, 20}))
-    assert result == "guidance_id != 10 and guidance_id != 20 and guidance_id != 30"
+    assert result == "guidance_id not in [10, 20, 30]"
 
 
 # ────────────────────────────────────────────────────────────────────────────

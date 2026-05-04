@@ -1756,14 +1756,17 @@ class FunctionManager(BaseFunctionManager):
 
     @staticmethod
     def _build_id_exclusion(ids: Optional[FrozenSet[int]]) -> Optional[str]:
-        """Build a ``function_id != X and ...`` filter clause from a set of IDs.
+        """Build a filter clause excluding a set of function IDs.
 
         Returns ``None`` when *ids* is empty or ``None``.
         """
         if not ids:
             return None
-        clauses = [f"function_id != {fid}" for fid in sorted(ids)]
-        return " and ".join(clauses)
+        sorted_ids = sorted(ids)
+        if len(sorted_ids) == 1:
+            return f"function_id != {sorted_ids[0]}"
+        joined_ids = ", ".join(str(fid) for fid in sorted_ids)
+        return f"function_id not in [{joined_ids}]"
 
     def _scoped_filter(self, caller_filter: Optional[str]) -> Optional[str]:
         """Compose *caller_filter* with ``_filter_scope`` and compositional exclusions.
