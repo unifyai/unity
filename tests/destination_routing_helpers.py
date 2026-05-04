@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 import json
 import textwrap
 import uuid
@@ -9,14 +10,50 @@ from typing import Any
 
 import pytest
 import unify
+from pydantic import BaseModel, Field
 from unify.utils.http import RequestError
 
 from tests.async_tool_loop.conftest import LLM_CONFIGS
+from unity.blacklist_manager.base import BaseBlackListManager
 from unity.common.accessible_spaces_block import build_accessible_spaces_block
 from unity.common.async_tool_loop import start_async_tool_loop
 from unity.common.context_registry import ContextRegistry
 from unity.common.llm_client import new_llm_client
+from unity.data_manager.base import BaseDataManager
+from unity.file_manager.managers.base import BaseFileManager
 from unity.session_details import SESSION_DETAILS, SpaceSummary
+
+PATCH_SPACE_DESTINATION = "space:41001"
+FAMILY_SPACE_DESTINATION = "space:41002"
+PERSONAL_DESTINATIONS = {None, "", "personal"}
+
+EVAL_SPACE_SUMMARIES = [
+    SpaceSummary(
+        space_id=41001,
+        name="South-East repairs patch",
+        description=(
+            "Daily operations for Patch-1 supervisors and operatives. Carries "
+            "operational data like open work orders, KPIs, and lateness logs; "
+            "shared reference files like SOPs and customer briefs; and "
+            "team-level blacklist entries the patch has agreed to refuse."
+        ),
+    ),
+    SpaceSummary(
+        space_id=41002,
+        name="Family logistics",
+        description=(
+            "Household scheduling, school logistics, family reference files, "
+            "and a household-level blacklist of robocallers and scammers that "
+            "every adult's phone should refuse."
+        ),
+    ),
+]
+
+ROUTING_TOOL_METHODS = (
+    ("FileManager", BaseFileManager.ingest_files),
+    ("DataManager", BaseDataManager.insert_rows),
+    ("BlackListManager", BaseBlackListManager.create_blacklist_entry),
+)
 
 
 @pytest.fixture(scope="function")
@@ -105,6 +142,58 @@ class RoutingScenario:
     @property
     def research_destination(self) -> str:
         return f"space:{self.research_space_id}"
+
+
+class DestinationRoutingDecision(BaseModel):
+    """LLM-selected manager, tool, and destination for a state write."""
+
+    manager: str = Field(description="The manager surface to use.")
+    tool: str = Field(description="The write tool to call, or request_clarification.")
+    destination: str | None = Field(
+        default=None,
+        description='The chosen destination argument, such as "personal" or "space:<id>".',
+    )
+    clarification_requested: bool = Field(
+        default=False,
+        description="Whether the model would ask the user to clarify before writing.",
+    )
+    rationale: str = Field(description="Brief reason for the routing choice.")
+
+
+def routing_decision_prompt(user_request: str) -> str:
+    """Build the shared prompt context for destination-routing evals."""
+
+    tool_descriptions = "\n\n".join(
+        f"{manager_name}.{method.__name__}\n"
+        f"{inspect.signature(method)}\n"
+        f"{inspect.cleandoc(method.__doc__ or '')}"
+        for manager_name, method in ROUTING_TOOL_METHODS
+    )
+
+    return (
+        f"{build_accessible_spaces_block(EVAL_SPACE_SUMMARIES)}\n\n"
+        f"Available write tools from the live manager docstrings:\n{tool_descriptions}\n\n"
+        "request_clarification(question): ask before a write that would go to a "
+        "wider audience when the user intent is ambiguous.\n\n"
+        f"User request: {user_request}\n\n"
+        "Return the manager, tool, destination argument, whether clarification is "
+        "needed, and a short rationale."
+    )
+
+
+def assert_personal_or_clarification(decision: DestinationRoutingDecision) -> None:
+    """Assert that an ambiguous write did not widen to a shared destination."""
+
+    assert (
+        decision.clarification_requested
+        or decision.destination in PERSONAL_DESTINATIONS
+    )
+
+
+def tool_name(decision: DestinationRoutingDecision) -> str:
+    """Return the unqualified tool name chosen by the model."""
+
+    return decision.tool.rsplit(".", 1)[-1]
 
 
 def delete_context_tree(root: str) -> None:
