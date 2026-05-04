@@ -101,6 +101,7 @@ steps:
   - 'run'
   - 'unity-deploy'
   - '--project=${PROJECT_ID}'
+  - '--region=${_REGION}'
   - '--branch=main'
   - '--substitutions=_BASE_IMAGE=${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPOSITORY}/unity-base:${SHORT_SHA}'
   waitFor: ['push-sha-tag', 'push-latest-tag']
