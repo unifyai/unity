@@ -229,9 +229,8 @@ def test_primitive_row_filter():
     registry = get_registry()
     scope = PrimitiveScope(scoped_managers=frozenset({"files", "contacts"}))
     filter_expr = registry.primitive_row_filter(scope)
-    # Filter uses OR clauses with primitive_class
-    assert "primitive_class ==" in filter_expr
-    assert " or " in filter_expr
+    assert "primitive_class in [" in filter_expr
+    assert " or " not in filter_expr
     assert "unity.contact_manager.contact_manager.ContactManager" in filter_expr
     assert "unity.file_manager.managers.file_manager.FileManager" in filter_expr
     # Should NOT include unscoped managers
@@ -243,11 +242,9 @@ def test_primitive_row_filter_single_manager():
     registry = get_registry()
     scope = PrimitiveScope.single("contacts")
     filter_expr = registry.primitive_row_filter(scope)
-    # Single manager should have a single clause (no "or")
-    assert "primitive_class ==" in filter_expr
+    assert "primitive_class in [" in filter_expr
     assert "ContactManager" in filter_expr
     assert "FileManager" not in filter_expr
-    # No OR needed for single manager
     assert " or " not in filter_expr
 
 

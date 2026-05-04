@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import hashlib
 import inspect
+import json
 import logging
 import re
 from dataclasses import dataclass, field
@@ -1323,7 +1324,7 @@ class ToolSurfaceRegistry:
             primitive_scope: The scope defining which managers to include.
 
         Returns:
-            Filter expression using OR clauses for string equality.
+            Filter expression using membership over primitive class paths.
         """
         # Collect class paths for scoped managers
         class_paths = []
@@ -1332,9 +1333,10 @@ class ToolSurfaceRegistry:
             if spec:
                 class_paths.append(spec.primitive_class_path)
 
-        # Use OR clauses for string filtering (in [] syntax may not work for strings)
-        clauses = [f'primitive_class == "{cp}"' for cp in sorted(class_paths)]
-        return " or ".join(clauses) if clauses else "False"
+        if not class_paths:
+            return "False"
+        class_list = ", ".join(json.dumps(cp) for cp in sorted(class_paths))
+        return f"primitive_class in [{class_list}]"
 
 
 # =============================================================================
