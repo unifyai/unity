@@ -28,6 +28,7 @@ from unity.data_manager.types.ingest import (
     IngestResult,
     PostIngestConfig,
 )
+from unity.common.context_registry import SPACE_CONTEXT_PREFIX
 
 logger = logging.getLogger(__name__)
 
@@ -148,7 +149,19 @@ class SimulatedDataManager(BaseDataManager):
         context = context.lstrip("/")
         if not context:
             raise ValueError("Empty context path")
-        if context.startswith(("Data/", "Files/", "Knowledge/")):
+        if context.startswith(
+            (
+                "Data/",
+                "Files/",
+                "FileRecords/",
+                "Contacts",
+                "Knowledge/",
+                "Tasks",
+                "Messages",
+                "Exchanges",
+                SPACE_CONTEXT_PREFIX,
+            ),
+        ):
             return context
         return f"{self._base_ctx}/{context}"
 
