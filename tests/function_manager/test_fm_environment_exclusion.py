@@ -198,9 +198,9 @@ def test_build_id_exclusion_single_id():
 
 
 def test_build_id_exclusion_multiple_ids_sorted():
-    """_build_id_exclusion builds sorted expression for multiple IDs."""
+    """_build_id_exclusion builds compact sorted expression for multiple IDs."""
     result = FunctionManager._build_id_exclusion(frozenset({30, 10, 20}))
-    assert result == "function_id != 10 and function_id != 20 and function_id != 30"
+    assert result == "function_id not in [10, 20, 30]"
 
 
 # ── _scoped_filter (compositional context) ───────────────────────────────
