@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from unity.common._async_tool.utils import get_handle_paused_state
 from unity.conversation_manager.domains.contact_index import (
@@ -463,6 +463,16 @@ def _get_assistant_email_role(message: EmailMessage) -> str | None:
     return None
 
 
+def _format_coordinator_datetime(value: Any) -> str:
+    """Return a stable ISO string for Coordinator state timestamps."""
+
+    if value is None:
+        return ""
+    if isinstance(value, datetime):
+        return value.isoformat()
+    return str(value)
+
+
 class Renderer:
 
     def render_state(
@@ -484,6 +494,8 @@ class Renderer:
         google_meet_active: bool = False,
         teams_meet_active: bool = False,
         active_web_sessions: list | None = None,
+        coordinator_state: dict[str, Any] | None = None,
+        coordinator_checklist: list[dict[str, Any]] | None = None,
         managers_initialized: bool = True,
         vm_ready: bool = True,
         file_sync_complete: bool = True,
@@ -519,6 +531,12 @@ class Renderer:
         web_sessions_render = self.render_active_web_sessions(
             active_web_sessions or [],
         )
+        coordinator_render = ""
+        if SESSION_DETAILS.is_coordinator:
+            coordinator_render = self.render_coordinator_goal_state(
+                coordinator_state=coordinator_state,
+                coordinator_checklist=coordinator_checklist,
+            )
 
         notif_render = self.render_notification_bar(
             notification_bar,
@@ -549,6 +567,7 @@ class Renderer:
                 infra_render,
                 meet_render,
                 web_sessions_render,
+                coordinator_render,
                 notif_render,
                 actions_render,
                 completed_render,
@@ -565,6 +584,48 @@ class Renderer:
             actions=action_elements,
             snapshot_time=prompt_now(as_string=False),
         )
+
+    @staticmethod
+    def render_coordinator_goal_state(
+        *,
+        coordinator_state: dict[str, Any] | None = None,
+        coordinator_checklist: list[dict[str, Any]] | None = None,
+    ) -> str:
+        """Render the Coordinator's onboarding goal state for the slow brain."""
+
+        if not coordinator_state:
+            return ""
+
+        lines = ["<coordinator_goal>"]
+        mode = coordinator_state.get("mode")
+        if mode:
+            lines.append(f"mode: {mode}")
+
+        started_at = _format_coordinator_datetime(coordinator_state.get("started_at"))
+        if started_at:
+            lines.append(f"started_at: {started_at}")
+
+        ready_at = _format_coordinator_datetime(coordinator_state.get("ready_at"))
+        if ready_at:
+            lines.append(f"ready_at: {ready_at}")
+
+        if coordinator_checklist:
+            lines.append("checklist:")
+            for item in coordinator_checklist:
+                item_id = item.get("item_id", "?")
+                title = item.get("title", "")
+                status = item.get("status", "pending")
+                kind = item.get("kind")
+                description = item.get("description")
+                line = f"- [{status}] #{item_id}: {title}"
+                if kind:
+                    line += f" ({kind})"
+                lines.append(line)
+                if description:
+                    lines.append(f"  {description}")
+
+        lines.append("</coordinator_goal>")
+        return "\n".join(lines)
 
     @staticmethod
     def render_infrastructure_state(

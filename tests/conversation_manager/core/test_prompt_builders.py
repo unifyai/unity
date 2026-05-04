@@ -9,6 +9,7 @@ capability-gated sections (assistant phone / email).
 from __future__ import annotations
 
 
+from unity.conversation_manager.domains.coordinator_tools import CoordinatorTools
 from unity.conversation_manager.prompt_builders import build_system_prompt
 from unity.session_details import SpaceSummary
 
@@ -91,6 +92,41 @@ class TestAccessibleSpacesBlock:
         assert prompt.index("Accessible shared spaces") < prompt.index(
             "Onboarding reference",
         )
+
+
+class TestCoordinatorPrompt:
+    """Coordinator sessions get privileged onboarding guidance."""
+
+    def test_coordinator_persona_lists_only_lifecycle_tools(self):
+        prompt = _build(
+            is_coordinator=True,
+            authorized_humans=[
+                {"first_name": "Dana", "surname": "Owner", "email": "dana@acme.com"},
+            ],
+        )
+
+        assert "I am the Coordinator" in prompt
+        assert "Authorized humans" in prompt
+        assert "Dana Owner" in prompt
+        assert "Coordinator lifecycle tools" in prompt
+        for tool_name in CoordinatorTools(cm=object()).as_tools():
+            assert f"`{tool_name}`" in prompt
+        assert "space-management" not in prompt
+
+    def test_coordinator_authorized_humans_fallback_uses_roster_shape(self):
+        prompt = _build(is_coordinator=True)
+
+        assert "Authorized humans" in prompt
+        assert "- Alice Smith; email:" not in prompt
+        assert "- Alice Smith; contact_id: 1" in prompt
+        assert "Contact ID: 1" not in prompt
+
+    def test_regular_assistant_does_not_get_coordinator_persona(self):
+        prompt = _build()
+
+        assert "I am the Coordinator" not in prompt
+        assert "Coordinator lifecycle tools" not in prompt
+        assert "`create_assistant`" not in prompt
 
 
 # ---------------------------------------------------------------------------
