@@ -18,14 +18,25 @@ import unify
 
 from ..common.model_to_fields import model_to_fields
 from ..common.embed_utils import ensure_vector_column
-from ..common.semantic_search import backfill_rows, fetch_top_k_by_references
+from ..common.semantic_search import (
+    backfill_rows,
+    ensure_vector_for_source,
+    fetch_top_k_by_terms_with_score,
+)
 from .base import BaseImageManager
 from .prompt_builders import build_image_ask_prompt
 from .types.image import Image
 from ..common.filter_utils import normalize_filter_expr
 from ..common.data_store import DataStore
-from ..common.context_registry import ContextRegistry, TableContext
+from ..common.context_registry import (
+    ContextRegistry,
+    SPACE_CONTEXT_PREFIX,
+    TableContext,
+)
+from ..common.tool_outcome import ToolErrorException, ToolOutcome
 import itertools
+
+IMAGES_TABLE = "Images"
 
 
 class ImageHandle:
@@ -36,11 +47,13 @@ class ImageHandle:
         *,
         manager: "ImageManager",
         image: Image,
+        context: str,
         annotation: Optional[str] = None,
         auto_caption: bool = True,
     ) -> None:
         self._manager = manager
         self._image = image
+        self._context = context
         # Handle-local, non-persistent annotation. This is NOT written to the
         # backend Images table or the local DataStore; it is specific to this
         # handle instance only.
@@ -215,11 +228,12 @@ class ImageHandle:
 
         # Update local DataStore (create row if missing)
         try:
+            data_store = self._manager._data_store_for_context(self._context)
             try:
-                self._manager._data_store.update(self.image_id, updates)
+                data_store.update(self.image_id, updates)
             except KeyError:
                 row = {"image_id": self.image_id, **updates}
-                self._manager._data_store.put(row)
+                data_store.put(row)
         except Exception:
             pass
 
@@ -230,7 +244,7 @@ class ImageHandle:
                 if k in updates:
                     payload[k] = updates[k]
             try:
-                self._manager.update_images([payload])
+                self._manager.update_images([payload], _context=self._context)
             except Exception:
                 pass
             return
@@ -259,7 +273,9 @@ class ImageHandle:
         """
         # Prefer locally cached base64 data from the DataStore to avoid re-downloading
         try:
-            cached = self._manager._data_store.get(self.image_id)
+            cached = self._manager._data_store_for_context(self._context).get(
+                self.image_id,
+            )
             data_str = cached.get("data") if cached is not None else self._image.data
         except Exception:
             data_str = self._image.data
@@ -283,13 +299,13 @@ class ImageHandle:
                     import base64 as _b64
 
                     try:
-                        self._manager._data_store.update(
+                        self._manager._data_store_for_context(self._context).update(
                             self.image_id,
                             {"data": _b64.b64encode(content).decode("utf-8")},
                         )
                     except KeyError:
                         # If the row isn't present yet, insert a minimal row
-                        self._manager._data_store.put(
+                        self._manager._data_store_for_context(self._context).put(
                             {
                                 "image_id": self.image_id,
                                 "data": _b64.b64encode(content).decode("utf-8"),
@@ -550,7 +566,7 @@ class ImageHandle:
 
                 payload: Dict[str, Any] = {"image_id": int(rid), **payload_body}
                 try:
-                    self._manager.update_images([payload])
+                    self._manager.update_images([payload], _context=self._context)
                 except Exception:
                     # Tolerate backend failure; local cache already updated
                     pass
@@ -578,7 +594,7 @@ class ImageManager(BaseImageManager):
     class Config:
         required_contexts = [
             TableContext(
-                name="Images",
+                name=IMAGES_TABLE,
                 description="Collection of images with timestamps, captions, and raw base64 data.",
                 fields=model_to_fields(Image),
                 unique_keys={"image_id": "int"},
@@ -588,10 +604,13 @@ class ImageManager(BaseImageManager):
 
     def __init__(self) -> None:
         self.include_in_multi_assistant_table = True
-        self._ctx = ContextRegistry.get_context(self, "Images")
+        self._ctx = ContextRegistry.get_context(self, IMAGES_TABLE)
 
         # Local DataStore mirror for Images (write-through on reads/writes)
         self._data_store = DataStore.for_context(self._ctx, key_fields=("image_id",))
+        self._data_stores_by_context: Dict[str, DataStore] = {
+            self._ctx: self._data_store,
+        }
 
         # Cache built-in fields for fast whitelisting
         self._BUILTIN_FIELDS: tuple[str, ...] = tuple(Image.model_fields.keys())
@@ -608,22 +627,27 @@ class ImageManager(BaseImageManager):
         self._executor = concurrent.futures.ThreadPoolExecutor(max_workers=4)
         # Map of pending_id -> concurrent future that resolves to real_id
         self._pending_uploads: Dict[int, concurrent.futures.Future[int]] = {}
+        self._pending_contexts: Dict[int, str] = {}
 
         # Internal helper ensures we preserve any local-only columns such as
         # temp_image_id when writing backend-fetched rows into the DataStore.
-        def _put_preserve_temp(row: Dict[str, Any]) -> None:
+        def _put_preserve_temp(
+            row: Dict[str, Any],
+            context: Optional[str] = None,
+        ) -> None:
+            store = self._data_store_for_context(context or self._ctx)
             try:
                 iid = int(row.get("image_id"))
             except Exception:
                 # Fallback to raw put if image_id missing/unparseable
                 try:
-                    self._data_store.put(row)
+                    store.put(row)
                 except Exception:
                     pass
                 return
 
             try:
-                existing = self._data_store.get(iid)
+                existing = store.get(iid)
             except Exception:
                 existing = None
             merged: Dict[str, Any] = {}
@@ -637,12 +661,72 @@ class ImageManager(BaseImageManager):
             ):
                 merged["temp_image_id"] = existing["temp_image_id"]
             try:
-                self._data_store.put(merged)
+                store.put(merged)
             except Exception:
                 pass
 
         # Bind helper for reuse
         self._put_preserve_temp = _put_preserve_temp  # type: ignore[attr-defined]
+
+    def _context_for_root(self, root_context: str) -> str:
+        """Return the concrete Images context under a root."""
+
+        return f"{root_context.strip('/')}/{IMAGES_TABLE}"
+
+    def _image_context_for_destination(self, destination: str | None) -> str:
+        """Resolve a public destination into one concrete Images context."""
+
+        root_context = ContextRegistry.write_root(
+            self,
+            IMAGES_TABLE,
+            destination=destination,
+        )
+        return self._context_for_root(root_context)
+
+    def _read_image_contexts(self) -> list[str]:
+        """Return ordered concrete Images contexts visible to this assistant."""
+
+        return list(
+            dict.fromkeys(
+                self._context_for_root(root)
+                for root in ContextRegistry.read_roots(self, IMAGES_TABLE)
+            ),
+        )
+
+    def _data_store_for_context(self, context: str) -> DataStore:
+        """Return the local Images DataStore mirror for one concrete context."""
+
+        store = self._data_stores_by_context.get(context)
+        if store is None:
+            store = DataStore.for_context(context, key_fields=("image_id",))
+            self._data_stores_by_context[context] = store
+        return store
+
+    def _root_context_for_move(self, from_root: str) -> str:
+        """Resolve a move source root label into a concrete root context."""
+
+        if from_root == "personal":
+            return ContextRegistry.write_root(self, IMAGES_TABLE, destination=None)
+        if from_root.startswith("space:"):
+            return ContextRegistry.write_root(
+                self,
+                IMAGES_TABLE,
+                destination=from_root,
+            )
+        if from_root.startswith(SPACE_CONTEXT_PREFIX):
+            return ContextRegistry.write_root(
+                self,
+                IMAGES_TABLE,
+                destination=f"space:{from_root.split('/')[1]}",
+            )
+        return from_root.rstrip("/")
+
+    def _should_add_to_all_context(self, context: str) -> bool:
+        """Return whether writes to this Images context should mirror into All/*."""
+
+        return self.include_in_multi_assistant_table and not context.startswith(
+            SPACE_CONTEXT_PREFIX,
+        )
 
     # ------------------------------ Reads ---------------------------------
     def filter_images(
@@ -651,91 +735,158 @@ class ImageManager(BaseImageManager):
         filter: Optional[str] = None,
         offset: int = 0,
         limit: int = 100,
+        destination: str | None = None,
     ) -> List[Image]:
         normalized = normalize_filter_expr(filter)
-        logs = unify.get_logs(
-            context=self._ctx,
-            filter=normalized,
-            offset=offset,
-            limit=limit,
-            from_fields=list(self._BUILTIN_FIELDS),
+        contexts = (
+            [self._image_context_for_destination(destination)]
+            if destination is not None
+            else self._read_image_contexts()
         )
+        logs = []
+        log_contexts: list[str] = []
+        fetch_limit = (offset + limit) if limit is not None else 1000
+        for context in contexts:
+            context_logs = unify.get_logs(
+                context=context,
+                filter=normalized,
+                offset=0,
+                limit=fetch_limit,
+                from_fields=list(self._BUILTIN_FIELDS),
+            )
+            logs.extend(context_logs)
+            log_contexts.extend([context] * len(context_logs))
         # Write-through to local DataStore mirror (preserve local-only columns)
         try:
-            for lg in logs:
-                self._put_preserve_temp(getattr(lg, "entries", {}) or {})
+            for lg, row_context in zip(logs, log_contexts):
+                self._put_preserve_temp(getattr(lg, "entries", {}) or {}, row_context)
         except Exception:
             pass
-        return [Image(**lg.entries) for lg in logs]
+        return [
+            Image(**lg.entries)
+            for lg in logs[offset : (offset + limit) if limit is not None else None]
+        ]
 
     def search_images(
         self,
         *,
         reference_text: str,
         k: int = 10,
+        destination: str | None = None,
     ) -> List[Image]:
         # Only captions participate in semantic search for images
-        initial = fetch_top_k_by_references(
-            self._ctx,
-            references={"caption": reference_text},
-            k=k,
-            allowed_fields=list(self._BUILTIN_FIELDS),
+        contexts = (
+            [self._image_context_for_destination(destination)]
+            if destination is not None
+            else self._read_image_contexts()
         )
-        filled = backfill_rows(
-            self._ctx,
-            initial,
-            k,
-            unique_id_field="image_id",
-            allowed_fields=list(self._BUILTIN_FIELDS),
-        )
+        ranked_rows: list[tuple[float, dict, str]] = []
+        fetch_limit = k
+        for context in contexts:
+            caption_term = (
+                ensure_vector_for_source(context, "caption"),
+                reference_text,
+            )
+            initial, score_key = fetch_top_k_by_terms_with_score(
+                context,
+                [caption_term],
+                k=fetch_limit,
+                allowed_fields=list(self._BUILTIN_FIELDS),
+            )
+            context_rows = backfill_rows(
+                context,
+                initial,
+                fetch_limit,
+                unique_id_field="image_id",
+                allowed_fields=list(self._BUILTIN_FIELDS),
+            )
+            for row in context_rows:
+                try:
+                    score = float(row.get(score_key, 2.0))
+                except Exception:
+                    score = 2.0
+                ranked_rows.append((score, row, context))
+        ranked_rows.sort(key=lambda item: item[0])
+        selected_rows = ranked_rows[:k]
         # Write-through to local DataStore mirror (preserve local-only columns)
         try:
-            for r in filled:
-                self._put_preserve_temp(r)
+            for _, r, row_context in selected_rows:
+                self._put_preserve_temp(r, row_context)
         except Exception:
             pass
-        return [Image(**r) for r in filled]
+        return [Image(**r) for _, r, _ in selected_rows]
 
-    def get_images(self, image_ids: List[int]) -> List[ImageHandle]:
+    def get_images(
+        self,
+        image_ids: List[int],
+        *,
+        destination: str | None = None,
+    ) -> List[ImageHandle]:
         """Return handles for the given image ids (missing ids are skipped)."""
         if not image_ids:
             return []
+        contexts = (
+            [self._image_context_for_destination(destination)]
+            if destination is not None
+            else self._read_image_contexts()
+        )
         # 1) Try local DataStore first
         by_id: Dict[int, Image] = {}
+        contexts_by_id: Dict[int, str] = {}
         misses: List[int] = []
         for iid in image_ids:
-            try:
-                row = self._data_store.get(int(iid))
-                if row is not None:
-                    by_id[int(iid)] = Image(**row)
-                else:
-                    misses.append(int(iid))
-            except Exception:
+            found = False
+            for context in contexts:
+                try:
+                    row = self._data_store_for_context(context).get(int(iid))
+                    if row is not None:
+                        by_id[int(iid)] = Image(**row)
+                        contexts_by_id[int(iid)] = context
+                        found = True
+                        break
+                except Exception:
+                    continue
+            if not found:
                 misses.append(int(iid))
 
         # 2) Fetch any misses from backend and write-through to DataStore
         if misses:
             id_list = ", ".join(str(int(i)) for i in misses)
-            logs = unify.get_logs(
-                context=self._ctx,
-                filter=f"image_id in [{id_list}]",
-                limit=len(misses),
-                from_fields=list(self._BUILTIN_FIELDS),
-            )
-            for lg in logs:
-                try:
-                    self._put_preserve_temp(getattr(lg, "entries", {}) or {})
-                    img = Image(**lg.entries)
-                    by_id[int(img.image_id)] = img
-                except Exception:
-                    continue
+            for context in contexts:
+                remaining = [iid for iid in misses if iid not in by_id]
+                if not remaining:
+                    break
+                id_list = ", ".join(str(int(i)) for i in remaining)
+                logs = unify.get_logs(
+                    context=context,
+                    filter=f"image_id in [{id_list}]",
+                    limit=len(remaining),
+                    from_fields=list(self._BUILTIN_FIELDS),
+                )
+                for lg in logs:
+                    try:
+                        self._put_preserve_temp(
+                            getattr(lg, "entries", {}) or {},
+                            context,
+                        )
+                        img = Image(**lg.entries)
+                        by_id[int(img.image_id)] = img
+                        contexts_by_id[int(img.image_id)] = context
+                    except Exception:
+                        continue
 
         # Preserve requested order
         handles: List[ImageHandle] = []
         for req_id in image_ids:
             img = by_id.get(int(req_id))
             if img is not None:
-                handles.append(ImageHandle(manager=self, image=img))
+                handles.append(
+                    ImageHandle(
+                        manager=self,
+                        image=img,
+                        context=contexts_by_id.get(int(req_id), contexts[0]),
+                    ),
+                )
         return handles
 
     # ------------------------------ Writes --------------------------------
@@ -766,7 +917,9 @@ class ImageManager(BaseImageManager):
         mapping: Dict[int, int] = {}
         snapshot: Dict[str, Dict[str, Any]]
         try:
-            snapshot = self._data_store.snapshot()
+            snapshot = {}
+            for store in self._data_stores_by_context.values():
+                snapshot.update(store.snapshot())
         except Exception:
             snapshot = {}
         for pid in list(pending_ids):
@@ -839,9 +992,19 @@ class ImageManager(BaseImageManager):
         return mapping
 
     # ------------------------------ Upload scheduling ---------------------
-    def _ensure_upload_started(self, pending_id: int) -> None:
+    def _ensure_upload_started(
+        self,
+        pending_id: int,
+        *,
+        context: str | None = None,
+    ) -> None:
         if int(pending_id) in self._pending_uploads:
             return
+        pending_context = context or self._pending_contexts.get(
+            int(pending_id),
+            self._ctx,
+        )
+        self._pending_contexts[int(pending_id)] = pending_context
         # Submit a background upload job that returns the real_id
         try:
             fut = self._executor.submit(self._upload_one_sync, int(pending_id))
@@ -851,14 +1014,16 @@ class ImageManager(BaseImageManager):
 
     def _upload_one_sync(self, pending_id: int) -> int:
         """Blocking upload of a single pending image; returns real_id."""
+        context = self._pending_contexts.get(int(pending_id), self._ctx)
+        data_store = self._data_store_for_context(context)
         try:
-            row = self._data_store.get(int(pending_id))
+            row = data_store.get(int(pending_id))
         except Exception:
             row = None
         if not isinstance(row, dict):
             # Nothing to upload; try to find resolved id via snapshot
             try:
-                snap = self._data_store.snapshot()
+                snap = data_store.snapshot()
                 for _k, r in snap.items():
                     try:
                         if int(r.get("temp_image_id", -1)) == int(pending_id):
@@ -878,7 +1043,10 @@ class ImageManager(BaseImageManager):
             "data": row.get("data"),
             "filepath": row.get("filepath"),
         }
-        [real_id] = self.add_images([payload])  # reuse existing robust path
+        [real_id] = self.add_images(
+            [payload],
+            _context=context,
+        )  # reuse existing robust path
         try:
             rid = int(real_id)
         except Exception:
@@ -886,7 +1054,7 @@ class ImageManager(BaseImageManager):
 
         # Re-key local DataStore to the resolved id and preserve temp_image_id
         try:
-            src = self._data_store.get(int(pending_id))
+            src = data_store.get(int(pending_id))
         except Exception:
             src = None
         if isinstance(src, dict):
@@ -895,9 +1063,9 @@ class ImageManager(BaseImageManager):
             if "temp_image_id" not in new_row:
                 new_row["temp_image_id"] = int(pending_id)
             try:
-                self._data_store.put(new_row)
+                data_store.put(new_row)
                 try:
-                    self._data_store.delete(int(pending_id))
+                    data_store.delete(int(pending_id))
                 except Exception:
                     pass
             except Exception:
@@ -912,10 +1080,17 @@ class ImageManager(BaseImageManager):
         *,
         synchronous: bool = True,
         return_handles: bool = False,
+        destination: str | None = None,
+        _context: str | None = None,
     ) -> Union[List[int], List[Optional[ImageHandle]]]:
         """
         Add new images. Each item may include ``timestamp``, ``caption``, ``data``,
         and ``filepath``.
+
+        ``destination`` controls where the image metadata row is stored. Omit it
+        or pass ``"personal"`` for the personal Images root; pass
+        ``"space:<id>"`` to write metadata into an accessible shared space. The
+        image blob is not re-keyed by destination.
 
         Extended support
         ----------------
@@ -938,6 +1113,11 @@ class ImageManager(BaseImageManager):
             )
         if not items:
             return []
+        try:
+            context = _context or self._image_context_for_destination(destination)
+        except ToolErrorException as exc:
+            return exc.payload  # type: ignore[return-value]
+        data_store = self._data_store_for_context(context)
 
         # If asynchronous enqueue is requested, create pending rows locally and schedule uploads
         if not synchronous:
@@ -967,22 +1147,24 @@ class ImageManager(BaseImageManager):
                     "filepath": payload.get("filepath"),
                 }
                 try:
-                    self._data_store.put(row_local)
+                    data_store.put(row_local)
                 except Exception:
                     pass
                 handles.append(
                     ImageHandle(
                         manager=self,
                         image=Image(**row_local),
+                        context=context,
                         annotation=ann,
                         auto_caption=ac_flag,
                     ),
                 )
                 pending_ids.append(int(temp_id))
+                self._pending_contexts[int(temp_id)] = context
 
             for pid in pending_ids:
                 try:
-                    self._ensure_upload_started(int(pid))
+                    self._ensure_upload_started(int(pid), context=context)
                 except Exception:
                     pass
 
@@ -1014,16 +1196,16 @@ class ImageManager(BaseImageManager):
         # Fast path: batch create to avoid O(N) round trips and allow parallelism upstream
         try:
             resp = unity_create_logs(
-                context=self._ctx,
+                context=context,
                 entries=prepared,
                 batched=True,
-                add_to_all_context=self.include_in_multi_assistant_table,
+                add_to_all_context=self._should_add_to_all_context(context),
             )
 
             # Helper: write-through to DataStore with a given row payload
             def _put_row(row: Dict[str, Any]) -> None:
                 try:
-                    self._put_preserve_temp(row)
+                    self._put_preserve_temp(row, context)
                 except Exception:
                     pass
 
@@ -1091,7 +1273,7 @@ class ImageManager(BaseImageManager):
                     log_ids = resp.get("log_event_ids") or resp.get("log_ids")
                     if isinstance(log_ids, list) and log_ids:
                         fetched = unify.get_logs(
-                            context=self._ctx,
+                            context=context,
                             from_ids=log_ids,
                             return_ids_only=False,
                         )
@@ -1121,14 +1303,14 @@ class ImageManager(BaseImageManager):
             for i, payload in enumerate(prepared):
                 try:
                     lg = unity_log(
-                        context=self._ctx,
+                        context=context,
                         **payload,
                         new=True,
                         mutable=False,
-                        add_to_all_context=self.include_in_multi_assistant_table,
+                        add_to_all_context=self._should_add_to_all_context(context),
                     )
                     try:
-                        self._put_preserve_temp(lg.entries)
+                        self._put_preserve_temp(lg.entries, context)
                     except Exception:
                         pass
                     try:
@@ -1148,7 +1330,7 @@ class ImageManager(BaseImageManager):
             if isinstance(maybe_id, int):
                 try:
                     # Prefer the row from the local DataStore mirror
-                    row = self._data_store.get(int(maybe_id))
+                    row = data_store.get(int(maybe_id))
                 except Exception:
                     row = None
                 if isinstance(row, dict):
@@ -1157,6 +1339,7 @@ class ImageManager(BaseImageManager):
                             ImageHandle(
                                 manager=self,
                                 image=Image(**row),
+                                context=context,
                                 annotation=(
                                     annotations[i] if i < len(annotations) else None
                                 ),
@@ -1178,6 +1361,7 @@ class ImageManager(BaseImageManager):
                         ImageHandle(
                             manager=self,
                             image=Image(**row_guess),
+                            context=context,
                             annotation=annotations[i] if i < len(annotations) else None,
                             auto_caption=(
                                 auto_caption_flags[i]
@@ -1193,12 +1377,25 @@ class ImageManager(BaseImageManager):
 
         return handles_out
 
-    def update_images(self, updates: List[Dict[str, Any]]) -> List[int]:
+    def update_images(
+        self,
+        updates: List[Dict[str, Any]],
+        *,
+        destination: str | None = None,
+        _context: str | None = None,
+    ) -> List[int]:
         """
         Update existing images. Each update dict must include ``image_id`` and may
         set ``timestamp``, ``caption``, ``data``, and/or ``filepath``.
+        ``destination`` selects the Images root containing the metadata row.
+        Omit it or pass ``"personal"`` for personal metadata; pass
+        ``"space:<id>"`` for an accessible shared-space copy.
         Returns updated ids.
         """
+        try:
+            context = _context or self._image_context_for_destination(destination)
+        except ToolErrorException as exc:
+            return exc.payload  # type: ignore[return-value]
         updated: List[int] = []
         for change in updates or []:
             if not isinstance(change, dict):
@@ -1222,7 +1419,7 @@ class ImageManager(BaseImageManager):
             if not entries:
                 continue
             ids = unify.get_logs(
-                context=self._ctx,
+                context=context,
                 filter=f"image_id == {image_id}",
                 limit=2,
                 return_ids_only=True,
@@ -1235,20 +1432,20 @@ class ImageManager(BaseImageManager):
                 )
             unify.update_logs(
                 logs=[ids[0]],
-                context=self._ctx,
+                context=context,
                 entries=entries,
                 overwrite=True,
             )
             # Refresh from backend and write-through to DataStore (preserve temp id)
             try:
                 rows = unify.get_logs(
-                    context=self._ctx,
+                    context=context,
                     filter=f"image_id == {image_id}",
                     limit=1,
                     from_fields=list(self._BUILTIN_FIELDS),
                 )
                 if rows:
-                    self._put_preserve_temp(rows[0].entries)
+                    self._put_preserve_temp(rows[0].entries, context)
             except Exception:
                 pass
             updated.append(image_id)
@@ -1256,13 +1453,14 @@ class ImageManager(BaseImageManager):
 
     # ------------------------------ Resolution -----------------------------
     @functools.wraps(BaseImageManager.resolve_filepath, updated=())
-    def resolve_filepath(self, filepath: str) -> int:
+    def resolve_filepath(self, filepath: str, *, destination: str | None = None) -> int:
         from pathlib import Path
         from datetime import timezone
 
         existing = self.filter_images(
             filter=f"filepath == '{filepath}'",
             limit=1,
+            destination=destination,
         )
         if existing:
             return existing[0].image_id
@@ -1284,6 +1482,7 @@ class ImageManager(BaseImageManager):
                 },
             ],
             synchronous=True,
+            destination=destination,
         )
         image_id = ids[0] if ids else None
         if image_id is None:
@@ -1293,14 +1492,15 @@ class ImageManager(BaseImageManager):
         return image_id
 
     def warm_embeddings(self) -> None:
-        try:
-            ensure_vector_column(
-                self._ctx,
-                embed_column="_caption_emb",
-                source_column="caption",
-            )
-        except Exception:
-            pass
+        for context in self._read_image_contexts():
+            try:
+                ensure_vector_column(
+                    context,
+                    embed_column="_caption_emb",
+                    source_column="caption",
+                )
+            except Exception:
+                pass
 
     # ------------------------------ Maintenance ---------------------------
     @functools.wraps(BaseImageManager.clear, updated=())
@@ -1308,7 +1508,7 @@ class ImageManager(BaseImageManager):
         unify.delete_context(self._ctx)
 
         # Ensure the schema exists again via shared provisioning helper
-        ContextRegistry.refresh(self, "Images")
+        ContextRegistry.refresh(self, IMAGES_TABLE)
 
         # Clear local DataStore cache for this context
         try:
@@ -1328,3 +1528,80 @@ class ImageManager(BaseImageManager):
                     _time.sleep(0.05)
         except Exception:
             pass
+
+    def move_image(
+        self,
+        image_id: int,
+        *,
+        from_root: str,
+        to_destination: str | None,
+    ) -> ToolOutcome:
+        """Move one Images metadata row between personal/shared roots."""
+
+        try:
+            source_root = self._root_context_for_move(from_root)
+            target_root = ContextRegistry.write_root(
+                self,
+                IMAGES_TABLE,
+                destination=to_destination,
+            )
+        except ToolErrorException as exc:
+            return exc.payload  # type: ignore[return-value]
+
+        source_context = self._context_for_root(source_root)
+        target_context = self._context_for_root(target_root)
+        rows = unify.get_logs(
+            context=source_context,
+            filter=f"image_id == {int(image_id)}",
+            limit=2,
+        )
+        if not rows:
+            raise ValueError(
+                f"No Images row found with image_id={int(image_id)} in {source_context}.",
+            )
+        if len(rows) > 1:
+            raise RuntimeError(
+                f"Multiple Images rows found with image_id={int(image_id)} in {source_context}.",
+            )
+
+        payload = Image(**rows[0].entries).to_post_json()
+        target_ids = unify.get_logs(
+            context=target_context,
+            filter=f"image_id == {int(image_id)}",
+            limit=2,
+            return_ids_only=True,
+        )
+        if len(target_ids) > 1:
+            raise RuntimeError(
+                f"Multiple Images rows found with image_id={int(image_id)} in {target_context}.",
+            )
+        if target_ids:
+            unify.update_logs(
+                context=target_context,
+                logs=[target_ids[0]],
+                entries=payload,
+                overwrite=True,
+            )
+        else:
+            unity_log(
+                context=target_context,
+                **payload,
+                new=True,
+                mutable=False,
+                add_to_all_context=self._should_add_to_all_context(target_context),
+            )
+
+        unify.delete_logs(context=source_context, logs=rows[0].id)
+        try:
+            self._data_store_for_context(target_context).put(payload)
+            self._data_store_for_context(source_context).delete(int(image_id))
+        except Exception:
+            pass
+        return {
+            "outcome": "Images row moved",
+            "details": {
+                "image_id": int(image_id),
+                "from_context": source_context,
+                "to_context": target_context,
+            },
+        }
