@@ -8,7 +8,12 @@ if TYPE_CHECKING:
     from unity.knowledge_manager.knowledge_manager import KnowledgeManager
 
 
-def ctx_for_table(knowledge_manager: "KnowledgeManager", table: str) -> str:
+def ctx_for_table(
+    knowledge_manager: "KnowledgeManager",
+    table: str,
+    *,
+    destination: str | None = None,
+) -> str:
     """
     Return the fully-qualified Unify context path for a table.
 
@@ -40,7 +45,38 @@ def ctx_for_table(knowledge_manager: "KnowledgeManager", table: str) -> str:
                 "include_contacts=False so it cannot access the Contacts table.",
             )
         return knowledge_manager._contacts_ctx  # type: ignore[return-value]
+    if hasattr(knowledge_manager, "_knowledge_context_for_table"):
+        return knowledge_manager._knowledge_context_for_table(  # type: ignore[attr-defined]
+            table,
+            destination=destination,
+        )
     return f"{knowledge_manager._ctx}/{table}"
+
+
+def contexts_for_table(
+    knowledge_manager: "KnowledgeManager",
+    table: str,
+) -> list[str]:
+    """Return personal-first concrete Knowledge contexts for a table."""
+    if table == "Contacts":
+        return [ctx_for_table(knowledge_manager, table)]
+    if hasattr(knowledge_manager, "_read_contexts_for_table"):
+        return knowledge_manager._read_contexts_for_table(table)  # type: ignore[attr-defined]
+    return [ctx_for_table(knowledge_manager, table)]
+
+
+def table_contexts_for_read(knowledge_manager: "KnowledgeManager") -> Dict[str, str]:
+    """Return the first readable concrete context for each visible Knowledge table."""
+    if hasattr(knowledge_manager, "_table_contexts_for_read"):
+        return knowledge_manager._table_contexts_for_read()  # type: ignore[attr-defined]
+
+    prefix = f"{knowledge_manager._ctx}/"
+    ctx_info = knowledge_manager._data_manager.list_tables(
+        prefix=prefix,
+        include_column_info=False,
+    )
+    contexts = ctx_info.keys() if isinstance(ctx_info, dict) else ctx_info
+    return {context[len(prefix) :]: context for context in contexts}
 
 
 def get_columns(
@@ -90,27 +126,19 @@ def tables_overview(
         Mapping ``table_name -> {"description": str, "columns": {...}}``.
     """
     dm = knowledge_manager._data_manager
-    km_prefix = f"{knowledge_manager._ctx}/"
+    table_contexts = table_contexts_for_read(knowledge_manager)
 
-    # Use DataManager to list tables with the Knowledge prefix
-    ctx_info = dm.list_tables(prefix=km_prefix, include_column_info=True)
-
-    # Build tables dict stripping the prefix from names
+    # Build tables dict stripping each Knowledge namespace prefix.
     tables: Dict[str, Dict[str, Any]] = {}
-    if isinstance(ctx_info, dict):
-        for full_path, meta in ctx_info.items():
-            if full_path.startswith(km_prefix):
-                short_name = full_path[len(km_prefix) :]
-                desc = meta.get("description") if isinstance(meta, dict) else None
-                # Keep description as-is (None or string), only normalize empty string to None
-                if desc == "":
-                    desc = None
-                tables[short_name] = {"description": desc}
-    elif isinstance(ctx_info, list):
-        for full_path in ctx_info:
-            if full_path.startswith(km_prefix):
-                short_name = full_path[len(km_prefix) :]
-                tables[short_name] = {"description": None}
+    for table_name, full_path in table_contexts.items():
+        try:
+            meta = unify.get_context(full_path)
+        except Exception:
+            meta = {}
+        desc = meta.get("description") if isinstance(meta, dict) else None
+        if desc == "":
+            desc = None
+        tables[table_name] = {"description": desc}
 
     # Optionally expose root-level Contacts when linkage is enabled
     if (
@@ -137,7 +165,14 @@ def tables_overview(
     columns_by_table: Dict[str, Dict[str, str]] = {}
     with ThreadPoolExecutor(max_workers=min(8, max(1, len(tables)))) as pool:
         futures = {
-            pool.submit(get_columns, knowledge_manager, table=table_name): table_name
+            pool.submit(
+                lambda ctx: {
+                    k: v.get("data_type", "unknown")
+                    for k, v in dm.get_columns(ctx).items()
+                },
+                table_contexts.get(table_name)
+                or ctx_for_table(knowledge_manager, table_name),
+            ): table_name
             for table_name in tables.keys()
         }
         for fut in as_completed(futures):
@@ -162,6 +197,7 @@ def create_table(
     columns: Dict[str, Any] | None = None,
     unique_key_name: str = "row_id",
     auto_counting: Optional[Dict[str, Optional[str]]] = None,
+    destination: str | None = None,
 ) -> Dict[str, str]:
     """
     Create a brand-new table in the knowledge store with optional initial columns.
@@ -187,7 +223,7 @@ def create_table(
         Backend response describing success or failure.
     """
     dm = knowledge_manager._data_manager
-    ctx = f"{knowledge_manager._ctx}/{name}"
+    ctx = ctx_for_table(knowledge_manager, name, destination=destination)
     ac = auto_counting or {}
 
     # Prepare fields dict for DataManager
@@ -209,6 +245,7 @@ def rename_table(
     *,
     old_name: str,
     new_name: str,
+    destination: str | None = None,
 ) -> Dict[str, str]:
     """
     Rename an existing table.
@@ -228,8 +265,16 @@ def rename_table(
         Backend acknowledgement / error message.
     """
     dm = knowledge_manager._data_manager
-    old_name_fq = f"{knowledge_manager._ctx}/{old_name}"
-    new_name_fq = f"{knowledge_manager._ctx}/{new_name}"
+    old_name_fq = ctx_for_table(
+        knowledge_manager,
+        old_name,
+        destination=destination,
+    )
+    new_name_fq = ctx_for_table(
+        knowledge_manager,
+        new_name,
+        destination=destination,
+    )
     return dm.rename_table(old_name_fq, new_name_fq)
 
 
@@ -238,6 +283,7 @@ def delete_tables(
     *,
     tables: Union[str, List[str]],
     startswith: Optional[str] = None,
+    destination: str | None = None,
 ) -> List[Dict[str, str]]:
     """
     Drop one or more tables and all their rows.
@@ -263,13 +309,23 @@ def delete_tables(
 
     if isinstance(tables, str):
         if tables:
-            contexts_to_delete.append(ctx_for_table(knowledge_manager, tables))
+            contexts_to_delete.append(
+                ctx_for_table(knowledge_manager, tables, destination=destination),
+            )
     elif tables:
-        contexts_to_delete.extend(ctx_for_table(knowledge_manager, t) for t in tables)
+        contexts_to_delete.extend(
+            ctx_for_table(knowledge_manager, t, destination=destination) for t in tables
+        )
 
     if startswith:
         # One backend read to expand the prefix
-        prefix = f"{knowledge_manager._ctx}/{startswith}"
+        if hasattr(knowledge_manager, "_knowledge_namespace_for_destination"):
+            prefix = (
+                f"{knowledge_manager._knowledge_namespace_for_destination(destination)}/"  # type: ignore[attr-defined]
+                f"{startswith}"
+            )
+        else:
+            prefix = f"{knowledge_manager._ctx}/{startswith}"
         ctx_list = dm.list_tables(prefix=prefix, include_column_info=False)
         if isinstance(ctx_list, list):
             contexts_to_delete.extend(ctx_list)
