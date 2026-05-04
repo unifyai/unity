@@ -1,5 +1,6 @@
 import ast
 import asyncio
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
 import inspect
@@ -12,6 +13,7 @@ import socket
 import sys
 import tempfile
 import logging
+import threading
 from pathlib import Path
 from weakref import WeakSet
 
@@ -37,6 +39,7 @@ from unify.utils.http import RequestError as _UnifyRequestError
 from ..common.log_utils import create_logs as unity_create_logs
 from ..common.embed_utils import ensure_vector_column, list_private_fields
 from ..common.search_utils import table_search_top_k
+from ..common.tool_outcome import ToolErrorException
 from .execution_env import ENVIRONMENT_MODULES, create_base_globals
 from .dependency_analysis import (
     collect_dependencies_from_function_node,
@@ -60,6 +63,24 @@ from .custom_functions import (
 )
 
 logger = logging.getLogger(__name__)
+
+FUNCTIONS_VENVS_TABLE = "Functions/VirtualEnvs"
+FUNCTIONS_COMPOSITIONAL_TABLE = "Functions/Compositional"
+FUNCTIONS_PRIMITIVES_TABLE = "Functions/Primitives"
+FUNCTIONS_META_TABLE = "Functions/Meta"
+FUNCTIONS_COMPOSITIONAL_DESTINATION_GUIDANCE = """destination : str | None, default None
+    Where this composed function (or set of functions) lives. Pass
+    ``"personal"`` (the default) for one-off helper scripts and private
+    automations. Pass ``"space:<id>"`` for team automation every member of the
+    space should be able to invoke. See the *Accessible shared spaces* block in
+    your system prompt for available spaces and descriptions. Pick personal
+    when in doubt; call ``request_clarification`` when the right audience is
+    unclear."""
+FUNCTIONS_VENV_DESTINATION_GUIDANCE = """destination : str | None, default None
+    Where the virtual env definition lives. Pass ``"personal"`` (the default)
+    for envs only your private functions need. Pass ``"space:<id>"`` to share
+    the env with team-level functions in that space. See the Accessible shared spaces
+    block in your system prompt; pick personal when in doubt."""
 
 if TYPE_CHECKING:  # pragma: no cover
     pass
@@ -1586,14 +1607,14 @@ class FunctionManager(BaseFunctionManager):
     class Config:
         required_contexts = [
             TableContext(
-                name="Functions/VirtualEnvs",
+                name=FUNCTIONS_VENVS_TABLE,
                 description="Virtual environment configurations (pyproject.toml content).",
                 fields=model_to_fields(VirtualEnv),
                 unique_keys={"venv_id": "int"},
                 auto_counting={"venv_id": None},
             ),
             TableContext(
-                name="Functions/Compositional",
+                name=FUNCTIONS_COMPOSITIONAL_TABLE,
                 description="User-defined functions with auto-incrementing IDs.",
                 fields=model_to_fields(Function),
                 unique_keys={"function_id": "int"},
@@ -1607,21 +1628,21 @@ class FunctionManager(BaseFunctionManager):
                     },
                     {
                         "name": "venv_id",
-                        "references": "Functions/VirtualEnvs.venv_id",
+                        "references": f"{FUNCTIONS_VENVS_TABLE}.venv_id",
                         "on_delete": "SET NULL",
                         "on_update": "CASCADE",
                     },
                 ],
             ),
             TableContext(
-                name="Functions/Primitives",
+                name=FUNCTIONS_PRIMITIVES_TABLE,
                 description="System action primitives with stable explicit IDs.",
                 fields=model_to_fields(Function),
                 unique_keys={"function_id": "int"},
                 # No auto_counting - primitives get explicit IDs from collect_primitives()
             ),
             TableContext(
-                name="Functions/Meta",
+                name=FUNCTIONS_META_TABLE,
                 description="Metadata for primitives sync state.",
                 fields=model_to_fields(FunctionsMeta),
                 unique_keys={"meta_id": "int"},
@@ -1665,18 +1686,25 @@ class FunctionManager(BaseFunctionManager):
         # time we create a function.  Initialised lazily on first use.
         self._next_id: Optional[int] = None
 
-        self._venvs_ctx = ContextRegistry.get_context(self, "Functions/VirtualEnvs")
+        self._venvs_ctx = ContextRegistry.get_context(self, FUNCTIONS_VENVS_TABLE)
         self._compositional_ctx = ContextRegistry.get_context(
             self,
-            "Functions/Compositional",
+            FUNCTIONS_COMPOSITIONAL_TABLE,
         )
-        self._primitives_ctx = ContextRegistry.get_context(self, "Functions/Primitives")
-        self._meta_ctx = ContextRegistry.get_context(self, "Functions/Meta")
+        self._primitives_ctx = ContextRegistry.get_context(
+            self,
+            FUNCTIONS_PRIMITIVES_TABLE,
+        )
+        self._meta_ctx = ContextRegistry.get_context(self, FUNCTIONS_META_TABLE)
 
         # Track whether primitives, custom venvs, and custom functions have been synced
         self._primitives_synced = False
         self._custom_venvs_synced = False
         self._custom_functions_synced = False
+        self._custom_venvs_synced_contexts: set[str] = set()
+        self._custom_functions_synced_contexts: set[str] = set()
+        self._destination_context_lock = threading.RLock()
+        self._destination_write_scoped = False
 
         # ------------------------------------------------------------------ #
         #  LocalFileManager reference (for VM sync manager access)           #
@@ -1768,6 +1796,76 @@ class FunctionManager(BaseFunctionManager):
         if not excl:
             return base
         return f"({base}) and ({excl})"
+
+    def _function_context_for_root(self, root_context: str, table_name: str) -> str:
+        """Return a concrete Functions context under a registry root."""
+        return f"{root_context.strip('/')}/{table_name}"
+
+    def _function_context_for_destination(
+        self,
+        table_name: str,
+        *,
+        destination: str | None,
+    ) -> str:
+        """Resolve a public destination into one concrete Functions context."""
+        root_context = ContextRegistry.write_root(
+            self,
+            table_name,
+            destination=destination,
+        )
+        return self._function_context_for_root(root_context, table_name)
+
+    def _read_function_contexts(self, table_name: str) -> list[str]:
+        """Return personal-first concrete contexts for a Functions table."""
+        return list(
+            dict.fromkeys(
+                self._function_context_for_root(root, table_name)
+                for root in ContextRegistry.read_roots(self, table_name)
+            ),
+        )
+
+    def _read_compositional_contexts(self) -> list[str]:
+        """Return function contexts, narrowed during destination-scoped writes."""
+        if self._destination_write_scoped:
+            return [self._compositional_ctx]
+        return self._read_function_contexts(FUNCTIONS_COMPOSITIONAL_TABLE)
+
+    def _read_venv_contexts(self) -> list[str]:
+        """Return venv contexts, narrowed during destination-scoped writes."""
+        if self._destination_write_scoped:
+            return [self._venvs_ctx]
+        return self._read_function_contexts(FUNCTIONS_VENVS_TABLE)
+
+    @contextmanager
+    def _temporary_function_context(self, attr_name: str, context: str):
+        """Temporarily bind an existing storage method to a resolved context."""
+        with self._destination_context_lock:
+            original = getattr(self, attr_name)
+            was_write_scoped = self._destination_write_scoped
+            setattr(self, attr_name, context)
+            self._destination_write_scoped = True
+            try:
+                yield
+            finally:
+                setattr(self, attr_name, original)
+                self._destination_write_scoped = was_write_scoped
+
+    def _sync_destination_contexts(
+        self,
+        table_name: str,
+        destination: str | None,
+    ) -> tuple[str, str, bool]:
+        """Return the destination-scoped data context, meta context, and personal flag."""
+
+        data_context = self._function_context_for_destination(
+            table_name,
+            destination=destination,
+        )
+        meta_context = self._function_context_for_destination(
+            FUNCTIONS_META_TABLE,
+            destination=destination,
+        )
+        return data_context, meta_context, destination in (None, "personal")
 
     @property
     def _dangerous_builtins(self) -> Set[str]:
@@ -1973,6 +2071,8 @@ class FunctionManager(BaseFunctionManager):
             self._primitives_synced = False
             self._custom_venvs_synced = False
             self._custom_functions_synced = False
+            self._custom_venvs_synced_contexts.clear()
+            self._custom_functions_synced_contexts.clear()
             # Clear in-process session state
             self._in_process_sessions.clear()
         except Exception:
@@ -2447,6 +2547,7 @@ class FunctionManager(BaseFunctionManager):
         self,
         *,
         source_venvs: Optional[Dict[str, Dict[str, Any]]] = None,
+        destination: str | None = None,
     ) -> Dict[str, int]:
         """
         Ensure custom venvs in the database match source definitions.
@@ -2456,83 +2557,115 @@ class FunctionManager(BaseFunctionManager):
                 :func:`collect_custom_venvs` or
                 :func:`collect_venvs_from_directories`).  If *None*,
                 an empty set is assumed (no custom venvs).
+            destination: Where the custom venv definitions live. Use
+                ``"personal"`` for private custom environments and
+                ``"space:<id>"`` for team-level environments shared by a
+                space. See the Accessible shared spaces block in your system
+                prompt for available spaces.
 
         Returns:
             Dict mapping venv name to venv_id.
         """
-        if self._custom_venvs_synced:
-            db_venvs = self._get_custom_venvs_from_db()
-            return {name: v["venv_id"] for name, v in db_venvs.items()}
+        try:
+            venv_context, meta_context, is_personal = self._sync_destination_contexts(
+                FUNCTIONS_VENVS_TABLE,
+                destination,
+            )
+        except ToolErrorException as exc:
+            return exc.payload  # type: ignore[return-value]
 
-        if source_venvs is None:
-            source_venvs = {}
-        expected_hash = compute_custom_venvs_hash(source_venvs=source_venvs)
-        current_hash = self._get_stored_custom_venvs_hash()
+        with (
+            self._temporary_function_context(
+                "_venvs_ctx",
+                venv_context,
+            ),
+            self._temporary_function_context("_meta_ctx", meta_context),
+        ):
+            if source_venvs is None:
+                source_venvs = {}
+            expected_hash = compute_custom_venvs_hash(source_venvs=source_venvs)
+            current_hash = self._get_stored_custom_venvs_hash()
+            already_synced = (
+                self._custom_venvs_synced
+                if is_personal
+                else venv_context in self._custom_venvs_synced_contexts
+            )
 
-        # Quick check: if aggregate hash matches, skip detailed sync
-        if current_hash == expected_hash:
-            logger.debug("Custom venvs hash matches, skipping sync")
-            self._custom_venvs_synced = True
-            db_venvs = self._get_custom_venvs_from_db()
-            return {name: v["venv_id"] for name, v in db_venvs.items()}
+            if already_synced and current_hash == expected_hash:
+                db_venvs = self._get_custom_venvs_from_db()
+                return {name: v["venv_id"] for name, v in db_venvs.items()}
 
-        logger.info(
-            f"Custom venvs hash mismatch "
-            f"(current={current_hash}, expected={expected_hash}), syncing...",
-        )
-
-        db_venvs = self._get_custom_venvs_from_db()
-        processed_names: Set[str] = set()
-        name_to_id: Dict[str, int] = {}
-
-        for name, source_data in source_venvs.items():
-            processed_names.add(name)
-
-            if name in db_venvs:
-                db_entry = db_venvs[name]
-                if db_entry.get("custom_hash") != source_data["custom_hash"]:
-                    logger.info(f"Updating custom venv: {name}")
-                    self._update_custom_venv(
-                        venv_id=db_entry["venv_id"],
-                        data=source_data,
-                    )
+            # Quick check: if aggregate hash matches, skip detailed sync
+            if current_hash == expected_hash:
+                logger.debug("Custom venvs hash matches, skipping sync")
+                if is_personal:
+                    self._custom_venvs_synced = True
                 else:
-                    logger.debug(f"Custom venv unchanged: {name}")
-                name_to_id[name] = db_entry["venv_id"]
-            else:
-                # Check for user-added venv with same name
-                existing = unify.get_logs(
-                    context=self._venvs_ctx,
-                    filter=f"name == '{name}'",
-                    limit=1,
-                )
-                if existing:
-                    logger.info(f"Overwriting user-added venv with custom: {name}")
-                    unify.delete_logs(
+                    self._custom_venvs_synced_contexts.add(venv_context)
+                db_venvs = self._get_custom_venvs_from_db()
+                return {name: v["venv_id"] for name, v in db_venvs.items()}
+
+            logger.info(
+                f"Custom venvs hash mismatch "
+                f"(current={current_hash}, expected={expected_hash}), syncing...",
+            )
+
+            db_venvs = self._get_custom_venvs_from_db()
+            processed_names: Set[str] = set()
+            name_to_id: Dict[str, int] = {}
+
+            for name, source_data in source_venvs.items():
+                processed_names.add(name)
+
+                if name in db_venvs:
+                    db_entry = db_venvs[name]
+                    if db_entry.get("custom_hash") != source_data["custom_hash"]:
+                        logger.info(f"Updating custom venv: {name}")
+                        self._update_custom_venv(
+                            venv_id=db_entry["venv_id"],
+                            data=source_data,
+                        )
+                    else:
+                        logger.debug(f"Custom venv unchanged: {name}")
+                    name_to_id[name] = db_entry["venv_id"]
+                else:
+                    # Check for user-added venv with same name
+                    existing = unify.get_logs(
                         context=self._venvs_ctx,
-                        logs=[existing[0].id],
+                        filter=f"name == '{name}'",
+                        limit=1,
                     )
+                    if existing:
+                        logger.info(f"Overwriting user-added venv with custom: {name}")
+                        unify.delete_logs(
+                            context=self._venvs_ctx,
+                            logs=[existing[0].id],
+                        )
 
-                logger.info(f"Inserting custom venv: {name}")
-                new_id = self._insert_custom_venv(source_data)
-                name_to_id[name] = new_id
+                    logger.info(f"Inserting custom venv: {name}")
+                    new_id = self._insert_custom_venv(source_data)
+                    name_to_id[name] = new_id
 
-        # Delete venvs that are in DB but not in source
-        for name in db_venvs:
-            if name not in processed_names:
-                logger.info(f"Deleting removed custom venv: {name}")
-                self._delete_custom_venv_by_name(name)
+            # Delete venvs that are in DB but not in source
+            for name in db_venvs:
+                if name not in processed_names:
+                    logger.info(f"Deleting removed custom venv: {name}")
+                    self._delete_custom_venv_by_name(name)
 
-        self._store_custom_venvs_hash(expected_hash)
-        self._custom_venvs_synced = True
+            self._store_custom_venvs_hash(expected_hash)
+            if is_personal:
+                self._custom_venvs_synced = True
+            else:
+                self._custom_venvs_synced_contexts.add(venv_context)
 
-        return name_to_id
+            return name_to_id
 
     def sync_custom_functions(
         self,
         venv_name_to_id: Optional[Dict[str, int]] = None,
         *,
         source_functions: Optional[Dict[str, Dict[str, Any]]] = None,
+        destination: str | None = None,
     ) -> bool:
         """
         Ensure custom functions in the database match source definitions.
@@ -2544,103 +2677,138 @@ class FunctionManager(BaseFunctionManager):
                 :func:`collect_custom_functions` or
                 :func:`collect_functions_from_directories`).  If *None*,
                 an empty set is assumed (no custom functions).
+            destination: Where the custom functions live. Use ``"personal"``
+                for private helper functions and ``"space:<id>"`` for
+                team-level functions every space member should be able to
+                invoke. See the Accessible shared spaces block in your system
+                prompt for available spaces.
 
         Returns:
             True if sync was performed, False if already up-to-date.
         """
-        if self._custom_functions_synced:
-            return False
-
-        if source_functions is None:
-            source_functions = {}
-        expected_hash = compute_custom_functions_hash(
-            source_functions=source_functions,
-        )
-        current_hash = self._get_stored_custom_functions_hash()
-
-        # Quick check: if aggregate hash matches, skip detailed sync
-        if current_hash == expected_hash:
-            logger.debug("Custom functions hash matches, skipping sync")
-            self._custom_functions_synced = True
-            return False
-
-        logger.info(
-            f"Custom functions hash mismatch "
-            f"(current={current_hash}, expected={expected_hash}), syncing...",
-        )
-
-        venv_name_to_id = venv_name_to_id or {}
-
-        # Get existing custom functions from DB
-        db_functions = self._get_custom_functions_from_db()
-
-        # Track what we've processed
-        processed_names: Set[str] = set()
-
-        # Sync each source function
-        for name, source_data in source_functions.items():
-            processed_names.add(name)
-
-            # Resolve venv_name to venv_id
-            venv_name = source_data.get("venv_name")
-            if venv_name and venv_name in venv_name_to_id:
-                source_data["venv_id"] = venv_name_to_id[venv_name]
-                logger.debug(
-                    f"Resolved venv_name={venv_name} to "
-                    f"venv_id={source_data['venv_id']} for {name}",
+        try:
+            function_context, meta_context, is_personal = (
+                self._sync_destination_contexts(
+                    FUNCTIONS_COMPOSITIONAL_TABLE,
+                    destination,
                 )
-            # Remove venv_name from source_data (not stored in DB)
-            source_data.pop("venv_name", None)
+            )
+        except ToolErrorException as exc:
+            return exc.payload  # type: ignore[return-value]
 
-            if name in db_functions:
-                db_entry = db_functions[name]
-                # Check if hash changed
-                if db_entry.get("custom_hash") != source_data["custom_hash"]:
-                    logger.info(f"Updating custom function: {name}")
-                    self._update_custom_function(
-                        function_id=db_entry["function_id"],
-                        data=source_data,
-                    )
+        with (
+            self._temporary_function_context(
+                "_compositional_ctx",
+                function_context,
+            ),
+            self._temporary_function_context("_meta_ctx", meta_context),
+        ):
+            if source_functions is None:
+                source_functions = {}
+            expected_hash = compute_custom_functions_hash(
+                source_functions=source_functions,
+            )
+            current_hash = self._get_stored_custom_functions_hash()
+            already_synced = (
+                self._custom_functions_synced
+                if is_personal
+                else function_context in self._custom_functions_synced_contexts
+            )
+
+            if already_synced and current_hash == expected_hash:
+                return False
+
+            # Quick check: if aggregate hash matches, skip detailed sync
+            if current_hash == expected_hash:
+                logger.debug("Custom functions hash matches, skipping sync")
+                if is_personal:
+                    self._custom_functions_synced = True
                 else:
-                    logger.debug(f"Custom function unchanged: {name}")
-            else:
-                # Check if there's a user-added function with same name
-                # (no custom_hash) - if so, we need to delete it first
-                existing = unify.get_logs(
-                    context=self._compositional_ctx,
-                    filter=f"name == '{name}'",
-                    limit=1,
-                )
-                if existing:
-                    logger.info(
-                        f"Overwriting user-added function with custom: {name}",
+                    self._custom_functions_synced_contexts.add(function_context)
+                return False
+
+            logger.info(
+                f"Custom functions hash mismatch "
+                f"(current={current_hash}, expected={expected_hash}), syncing...",
+            )
+
+            venv_name_to_id = venv_name_to_id or {}
+
+            # Get existing custom functions from DB
+            db_functions = self._get_custom_functions_from_db()
+
+            # Track what we've processed
+            processed_names: Set[str] = set()
+
+            # Sync each source function
+            for name, source_data in source_functions.items():
+                processed_names.add(name)
+                function_data = dict(source_data)
+
+                # Resolve venv_name to venv_id
+                venv_name = function_data.get("venv_name")
+                if venv_name and venv_name in venv_name_to_id:
+                    function_data["venv_id"] = venv_name_to_id[venv_name]
+                    logger.debug(
+                        f"Resolved venv_name={venv_name} to "
+                        f"venv_id={function_data['venv_id']} for {name}",
                     )
-                    unify.delete_logs(
+                # Remove venv_name from persisted data.
+                function_data.pop("venv_name", None)
+
+                if name in db_functions:
+                    db_entry = db_functions[name]
+                    # Check if hash changed
+                    if db_entry.get("custom_hash") != function_data["custom_hash"]:
+                        logger.info(f"Updating custom function: {name}")
+                        self._update_custom_function(
+                            function_id=db_entry["function_id"],
+                            data=function_data,
+                        )
+                    else:
+                        logger.debug(f"Custom function unchanged: {name}")
+                else:
+                    # Check if there's a user-added function with same name
+                    # (no custom_hash) - if so, we need to delete it first
+                    existing = unify.get_logs(
                         context=self._compositional_ctx,
-                        logs=[existing[0].id],
+                        filter=f"name == '{name}'",
+                        limit=1,
                     )
+                    if existing:
+                        logger.info(
+                            f"Overwriting user-added function with custom: {name}",
+                        )
+                        unify.delete_logs(
+                            context=self._compositional_ctx,
+                            logs=[existing[0].id],
+                        )
 
-                # Insert new custom function
-                logger.info(f"Inserting custom function: {name}")
-                self._insert_custom_function(source_data)
+                    # Insert new custom function
+                    logger.info(f"Inserting custom function: {name}")
+                    self._insert_custom_function(function_data)
 
-        # Delete functions that are in DB but not in source
-        for name in db_functions:
-            if name not in processed_names:
-                logger.info(f"Deleting removed custom function: {name}")
-                self._delete_custom_function_by_name(name)
+            # Delete functions that are in DB but not in source
+            for name in db_functions:
+                if name not in processed_names:
+                    logger.info(f"Deleting removed custom function: {name}")
+                    self._delete_custom_function_by_name(name)
 
-        # Store the new hash
-        self._store_custom_functions_hash(expected_hash)
+            # Store the new hash
+            self._store_custom_functions_hash(expected_hash)
 
-        self._custom_functions_synced = True
-        return True
+            if is_personal:
+                self._custom_functions_synced = True
+            else:
+                self._custom_functions_synced_contexts.add(function_context)
+            return True
 
     def sync_custom(
         self,
         *,
         source_functions: Optional[Dict[str, Dict[str, Any]]] = None,
         source_venvs: Optional[Dict[str, Dict[str, Any]]] = None,
+        destination: str | None = None,
     ) -> bool:
         """
         Sync custom venvs and functions from pre-collected sources.
@@ -2651,21 +2819,38 @@ class FunctionManager(BaseFunctionManager):
         Args:
             source_functions: Pre-collected functions dict.
             source_venvs: Pre-collected venvs dict.
+            destination: Where the custom functions and venvs live.
 
         Returns:
             True if any sync was performed, False if everything up-to-date.
         """
-        venv_name_to_id = self.sync_custom_venvs(source_venvs=source_venvs)
+        try:
+            venv_context, meta_context, _ = self._sync_destination_contexts(
+                FUNCTIONS_VENVS_TABLE,
+                destination,
+            )
+        except ToolErrorException as exc:
+            return exc.payload  # type: ignore[return-value]
+
+        with (
+            self._temporary_function_context(
+                "_venvs_ctx",
+                venv_context,
+            ),
+            self._temporary_function_context("_meta_ctx", meta_context),
+        ):
+            venvs_hash_changed = self._get_stored_custom_venvs_hash() != (
+                compute_custom_venvs_hash(source_venvs=source_venvs or {})
+            )
+
+        venv_name_to_id = self.sync_custom_venvs(
+            source_venvs=source_venvs,
+            destination=destination,
+        )
         functions_changed = self.sync_custom_functions(
             venv_name_to_id,
             source_functions=source_functions,
-        )
-
-        venvs_hash_changed = (
-            self._get_stored_custom_venvs_hash()
-            != compute_custom_venvs_hash(source_venvs=source_venvs)
-            if not self._custom_venvs_synced
-            else False
+            destination=destination,
         )
 
         return venvs_hash_changed or functions_changed
@@ -3143,12 +3328,18 @@ class FunctionManager(BaseFunctionManager):
                 _time.sleep(delay)
             try:
                 _q_t0 = _time.perf_counter()
-                logs = unify.get_logs(
-                    context=self._compositional_ctx,
-                    filter=normalized,
-                    limit=1,
-                    exclude_fields=list_private_fields(self._compositional_ctx),
-                )
+                logs = []
+                for context in self._read_compositional_contexts():
+                    logs.extend(
+                        unify.get_logs(
+                            context=context,
+                            filter=normalized,
+                            limit=1,
+                            exclude_fields=list_private_fields(context),
+                        ),
+                    )
+                    if logs:
+                        break
                 _q_ms = (_time.perf_counter() - _q_t0) * 1000
                 if logs:
                     logger.debug(
@@ -3599,32 +3790,42 @@ class FunctionManager(BaseFunctionManager):
         if _return_callable and _namespace is None:
             raise ValueError("_namespace required when _return_callable=True")
 
-        # Query compositional context, and optionally primitives.
-        compositional_logs = unify.get_logs(
-            context=self._compositional_ctx,
-            filter=self._scoped_filter(None),
-            exclude_fields=list_private_fields(self._compositional_ctx),
-        )
+        compositional_logs = []
+        for context in self._read_compositional_contexts():
+            compositional_logs.extend(
+                unify.get_logs(
+                    context=context,
+                    filter=self._scoped_filter(None),
+                    exclude_fields=list_private_fields(context),
+                ),
+            )
 
         primitive_logs: list = []
         if self._include_primitives:
             self.sync_primitives()
             primitive_filter = self._scoped_primitive_filter()
-            primitive_logs = unify.get_logs(
-                context=self._primitives_ctx,
-                filter=primitive_filter,
-                exclude_fields=list_private_fields(self._primitives_ctx),
-            )
+            for context in self._read_function_contexts(FUNCTIONS_PRIMITIVES_TABLE):
+                primitive_logs.extend(
+                    unify.get_logs(
+                        context=context,
+                        filter=primitive_filter,
+                        exclude_fields=list_private_fields(context),
+                    ),
+                )
 
         all_logs = list(compositional_logs) + list(primitive_logs)
 
         metadata: Dict[str, Dict[str, Any]] = {}
         func_rows: List[Dict[str, Any]] = []
+        seen_names: set[str] = set()
         for log in all_logs:
             ent = log.entries
             name = ent.get("name")
             if not isinstance(name, str):
                 continue
+            if name in seen_names:
+                continue
+            seen_names.add(name)
             func_rows.append(ent)
 
             data: Dict[str, Any] = {
@@ -3667,24 +3868,35 @@ class FunctionManager(BaseFunctionManager):
     @functools.wraps(BaseFunctionManager.get_precondition, updated=())
     def get_precondition(self, *, function_name: str) -> Optional[Dict[str, Any]]:
         # Check compositional first, then optionally primitives.
-        logs = unify.get_logs(
-            context=self._compositional_ctx,
-            filter=self._scoped_filter(f"name == '{function_name}'"),
-            limit=1,
-            exclude_fields=list_private_fields(self._compositional_ctx),
-        )
+        logs = []
+        for context in self._read_compositional_contexts():
+            logs.extend(
+                unify.get_logs(
+                    context=context,
+                    filter=self._scoped_filter(f"name == '{function_name}'"),
+                    limit=1,
+                    exclude_fields=list_private_fields(context),
+                ),
+            )
+            if logs:
+                break
         if not logs and self._include_primitives:
             self.sync_primitives()
             prim_name_filter = f"name == '{function_name}'"
             prim_filter = (
                 f"({prim_name_filter}) and ({self._scoped_primitive_filter()})"
             )
-            logs = unify.get_logs(
-                context=self._primitives_ctx,
-                filter=prim_filter,
-                limit=1,
-                exclude_fields=list_private_fields(self._primitives_ctx),
-            )
+            for context in self._read_function_contexts(FUNCTIONS_PRIMITIVES_TABLE):
+                logs.extend(
+                    unify.get_logs(
+                        context=context,
+                        filter=prim_filter,
+                        limit=1,
+                        exclude_fields=list_private_fields(context),
+                    ),
+                )
+                if logs:
+                    break
         if not logs:
             return None
 
@@ -3903,11 +4115,15 @@ class FunctionManager(BaseFunctionManager):
 
         # Query both contexts with the same limit (yielding up to 2x results).
         per_ctx_limit = limit + offset
-        compositional_rows = self._get_logs_with_retry(
-            self._compositional_ctx,
-            filter=normalized,
-            limit=per_ctx_limit,
-        )
+        compositional_rows: List[Dict[str, Any]] = []
+        for context in self._read_compositional_contexts():
+            compositional_rows.extend(
+                self._get_logs_with_retry(
+                    context,
+                    filter=normalized,
+                    limit=per_ctx_limit,
+                ),
+            )
 
         primitive_rows: List[Dict[str, Any]] = []
         if self._include_primitives:
@@ -3919,11 +4135,14 @@ class FunctionManager(BaseFunctionManager):
                 prim_filter = f"({prim_filter}) and ({primitive_base})"
             else:
                 prim_filter = primitive_base
-            primitive_rows = self._get_logs_with_retry(
-                self._primitives_ctx,
-                filter=prim_filter,
-                limit=per_ctx_limit,
-            )
+            for context in self._read_function_contexts(FUNCTIONS_PRIMITIVES_TABLE):
+                primitive_rows.extend(
+                    self._get_logs_with_retry(
+                        context,
+                        filter=prim_filter,
+                        limit=per_ctx_limit,
+                    ),
+                )
 
         # Stack compositional first, primitives last, then apply offset+limit.
         rows = (compositional_rows + primitive_rows)[offset : offset + limit]
@@ -3973,29 +4192,35 @@ class FunctionManager(BaseFunctionManager):
 
         allowed_fields = list(Function.model_fields.keys())
 
-        # Search compositional context.
-        compositional_rows = table_search_top_k(
-            context=self._compositional_ctx,
-            references={"embedding_text": query},
-            k=n,
-            allowed_fields=allowed_fields,
-            unique_id_field="function_id",
-            row_filter=self._scoped_filter(None),
-        )
+        compositional_rows = []
+        for context in self._read_compositional_contexts():
+            compositional_rows.extend(
+                table_search_top_k(
+                    context=context,
+                    references={"embedding_text": query},
+                    k=n,
+                    allowed_fields=allowed_fields,
+                    unique_id_field="function_id",
+                    row_filter=self._scoped_filter(None),
+                ),
+            )
 
         # Optionally search primitives context.
         primitive_rows: list = []
         if self._include_primitives:
             self.sync_primitives()
             primitive_filter = self._scoped_primitive_filter()
-            primitive_rows = table_search_top_k(
-                context=self._primitives_ctx,
-                references={"embedding_text": query},
-                k=n,
-                allowed_fields=allowed_fields,
-                unique_id_field="function_id",
-                row_filter=primitive_filter,
-            )
+            for context in self._read_function_contexts(FUNCTIONS_PRIMITIVES_TABLE):
+                primitive_rows.extend(
+                    table_search_top_k(
+                        context=context,
+                        references={"embedding_text": query},
+                        k=n,
+                        allowed_fields=allowed_fields,
+                        unique_id_field="function_id",
+                        row_filter=primitive_filter,
+                    ),
+                )
 
         # Merge and sort by the private score column (lower distance = better match)
         all_rows = compositional_rows + primitive_rows
@@ -4297,14 +4522,24 @@ class FunctionManager(BaseFunctionManager):
         Returns:
             Dict with venv_id and venv content, or None if not found.
         """
-        logs = self._safe_get_venv_logs(
-            filter=f"venv_id == {venv_id}",
-            limit=1,
-            exclude_fields=list_private_fields(self._venvs_ctx),
-        )
-        if not logs:
-            return None
-        return logs[0].entries
+        for context in self._read_venv_contexts():
+            logs = (
+                self._safe_get_venv_logs(
+                    filter=f"venv_id == {venv_id}",
+                    limit=1,
+                    exclude_fields=list_private_fields(context),
+                )
+                if context == self._venvs_ctx
+                else unify.get_logs(
+                    context=context,
+                    filter=f"venv_id == {venv_id}",
+                    limit=1,
+                    exclude_fields=list_private_fields(context),
+                )
+            )
+            if logs:
+                return logs[0].entries
+        return None
 
     def list_venvs(self) -> List[Dict[str, Any]]:
         """
@@ -4313,9 +4548,21 @@ class FunctionManager(BaseFunctionManager):
         Returns:
             List of dicts, each with venv_id and venv content.
         """
-        logs = self._safe_get_venv_logs(
-            exclude_fields=list_private_fields(self._venvs_ctx),
-        )
+        logs = []
+        for context in self._read_venv_contexts():
+            logs.extend(
+                (
+                    self._safe_get_venv_logs(
+                        exclude_fields=list_private_fields(context),
+                        from_fields=None,
+                    )
+                    if context == self._venvs_ctx
+                    else unify.get_logs(
+                        context=context,
+                        exclude_fields=list_private_fields(context),
+                    )
+                ),
+            )
         return [lg.entries for lg in logs]
 
     def delete_venv(self, *, venv_id: int) -> bool:
@@ -6119,3 +6366,92 @@ if __name__ == "__main__":
                 # Ensure process is terminated
                 if process.returncode is None:
                     await self._terminate_process_group(process, use_process_group)
+
+
+def _wrap_compositional_write(method_name: str) -> None:
+    original = getattr(FunctionManager, method_name)
+
+    @functools.wraps(original)
+    def wrapped(
+        self: FunctionManager,
+        *args: Any,
+        destination: str | None = None,
+        **kwargs: Any,
+    ):
+        try:
+            context = self._function_context_for_destination(
+                FUNCTIONS_COMPOSITIONAL_TABLE,
+                destination=destination,
+            )
+        except ToolErrorException as exc:
+            return exc.payload
+        with self._temporary_function_context("_compositional_ctx", context):
+            return original(self, *args, **kwargs)
+
+    wrapped.__doc__ = (
+        f"{original.__doc__ or ''}\n\n{FUNCTIONS_COMPOSITIONAL_DESTINATION_GUIDANCE}"
+    )
+    wrapped.__signature__ = _signature_with_destination(original)  # type: ignore[attr-defined]
+    setattr(FunctionManager, method_name, wrapped)
+
+
+def _wrap_venv_write(method_name: str) -> None:
+    original = getattr(FunctionManager, method_name)
+
+    @functools.wraps(original)
+    def wrapped(
+        self: FunctionManager,
+        *args: Any,
+        destination: str | None = None,
+        **kwargs: Any,
+    ):
+        try:
+            context = self._function_context_for_destination(
+                FUNCTIONS_VENVS_TABLE,
+                destination=destination,
+            )
+        except ToolErrorException as exc:
+            return exc.payload
+        with self._temporary_function_context("_venvs_ctx", context):
+            return original(self, *args, **kwargs)
+
+    wrapped.__doc__ = (
+        f"{original.__doc__ or ''}\n\n{FUNCTIONS_VENV_DESTINATION_GUIDANCE}"
+    )
+    wrapped.__signature__ = _signature_with_destination(original)  # type: ignore[attr-defined]
+    setattr(FunctionManager, method_name, wrapped)
+
+
+def _signature_with_destination(method: Callable[..., Any]) -> inspect.Signature:
+    signature = inspect.signature(method)
+    if "destination" in signature.parameters:
+        return signature
+    parameters = list(signature.parameters.values())
+    destination_param = inspect.Parameter(
+        "destination",
+        inspect.Parameter.KEYWORD_ONLY,
+        default=None,
+        annotation=str | None,
+    )
+    insert_at = len(parameters)
+    for index, parameter in enumerate(parameters):
+        if parameter.kind == inspect.Parameter.VAR_KEYWORD:
+            insert_at = index
+            break
+    parameters.insert(insert_at, destination_param)
+    return signature.replace(parameters=parameters)
+
+
+for _method_name in (
+    "add_functions",
+    "delete_function",
+    "set_function_venv",
+):
+    _wrap_compositional_write(_method_name)
+
+for _method_name in (
+    "add_venv",
+    "delete_venv",
+    "update_venv",
+):
+    _wrap_venv_write(_method_name)
