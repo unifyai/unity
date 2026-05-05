@@ -230,13 +230,19 @@ def build_brain_spec(
         (cm.get_active_contact() or {}).get("is_system", False),
     )
     authorized_humans: list[dict] | None = None
-    if SESSION_DETAILS.is_coordinator and cm.initialized:
+    org_coordinator_name: str | None = None
+    if cm.initialized and SESSION_DETAILS.is_coordinator:
         from unity.coordinator_manager.coordinator_manager import (
             CoordinatorOnboardingManager,
         )
 
-        coordinator_manager = CoordinatorOnboardingManager()
-        authorized_humans = coordinator_manager.get_org_members()
+        authorized_humans = CoordinatorOnboardingManager().get_org_members()
+    elif cm.initialized and SESSION_DETAILS.org_id is not None:
+        from unity.coordinator_manager.coordinator_manager import (
+            CoordinatorOnboardingManager,
+        )
+
+        org_coordinator_name = CoordinatorOnboardingManager().get_org_coordinator_name()
 
     _active_contact_ms = _mark_step()
     # Prepend the assistant's job title / specialization (if set) to the bio
@@ -273,6 +279,7 @@ def build_brain_spec(
         space_summaries=getattr(cm, "space_summaries", []),
         is_coordinator=SESSION_DETAILS.is_coordinator,
         authorized_humans=authorized_humans,
+        org_coordinator_name=org_coordinator_name,
     )
     _system_prompt_ms = _mark_step()
 

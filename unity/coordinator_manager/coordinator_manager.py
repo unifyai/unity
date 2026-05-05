@@ -63,24 +63,22 @@ class CoordinatorOnboardingManager(BaseStateManager, metaclass=SingletonABCMeta)
         ]
 
     def __init__(self) -> None:
-        """Resolve assistant-scope contexts and initialize local caches."""
+        """Initialize local caches for Coordinator setup metadata."""
 
         super().__init__()
-        self._state_context = ContextRegistry.get_context(
-            self,
-            COORDINATOR_STATE_CONTEXT,
-        )
-        self._checklist_context = ContextRegistry.get_context(
-            self,
-            COORDINATOR_CHECKLIST_CONTEXT,
-        )
+        self._state_context: str | None = None
+        self._checklist_context: str | None = None
         self._org_members_cache_key: tuple[int | None, str] | object = _CACHE_EMPTY
         self._org_members_cache: list[dict[str, Any]] | object = _CACHE_EMPTY
+        self._org_coordinator_name_cache_key: tuple[int | None, str] | object = (
+            _CACHE_EMPTY
+        )
+        self._org_coordinator_name_cache: str | None | object = _CACHE_EMPTY
 
     def get_state(self) -> dict[str, Any] | None:
         """Return the current Coordinator state row, if one exists."""
 
-        rows = unify.get_logs(context=self._state_context, limit=1)
+        rows = unify.get_logs(context=self._get_state_context(), limit=1)
         if not rows:
             return None
 
@@ -90,7 +88,7 @@ class CoordinatorOnboardingManager(BaseStateManager, metaclass=SingletonABCMeta)
         """Return Coordinator checklist rows ordered by item id."""
 
         rows = unify.get_logs(
-            context=self._checklist_context,
+            context=self._get_checklist_context(),
             sorting={"item_id": "ascending"},
             limit=200,
         )
@@ -99,7 +97,7 @@ class CoordinatorOnboardingManager(BaseStateManager, metaclass=SingletonABCMeta)
     def get_org_members(self) -> list[dict[str, Any]]:
         """Return authorized humans in the Coordinator's organization."""
 
-        cache_key = (SESSION_DETAILS.org_id, SESSION_DETAILS.unify_key)
+        cache_key = _org_cache_key()
         if (
             self._org_members_cache_key == cache_key
             and self._org_members_cache is not _CACHE_EMPTY
@@ -121,6 +119,41 @@ class CoordinatorOnboardingManager(BaseStateManager, metaclass=SingletonABCMeta)
         self._org_members_cache_key = cache_key
         self._org_members_cache = members
         return members
+
+    def get_org_coordinator_name(self) -> str | None:
+        """Return the display name for the Coordinator in the current organization."""
+
+        cache_key = _org_cache_key()
+        if (
+            self._org_coordinator_name_cache_key == cache_key
+            and self._org_coordinator_name_cache is not _CACHE_EMPTY
+        ):
+            return self._org_coordinator_name_cache  # type: ignore[return-value]
+
+        if SESSION_DETAILS.org_id is None:
+            self._org_coordinator_name_cache_key = cache_key
+            self._org_coordinator_name_cache = None
+            return None
+
+        try:
+            assistants = unify.list_assistants(
+                list_all_org=True,
+                api_key=SESSION_DETAILS.unify_key,
+            )
+        except RequestError:
+            return None
+
+        coordinator_name = next(
+            (
+                _assistant_display_name(assistant)
+                for assistant in assistants
+                if assistant.get("is_coordinator") is True
+            ),
+            None,
+        )
+        self._org_coordinator_name_cache_key = cache_key
+        self._org_coordinator_name_cache = coordinator_name
+        return coordinator_name
 
     def set_state(
         self,
@@ -145,7 +178,7 @@ class CoordinatorOnboardingManager(BaseStateManager, metaclass=SingletonABCMeta)
 
         if current is None:
             unity_log(
-                context=self._state_context,
+                context=self._get_state_context(),
                 mode=mode,
                 started_at=now,
                 ready_at=next_ready_at,
@@ -155,7 +188,7 @@ class CoordinatorOnboardingManager(BaseStateManager, metaclass=SingletonABCMeta)
             )
         else:
             ids = unify.get_logs(
-                context=self._state_context,
+                context=self._get_state_context(),
                 limit=1,
                 return_ids_only=True,
             )
@@ -168,7 +201,7 @@ class CoordinatorOnboardingManager(BaseStateManager, metaclass=SingletonABCMeta)
             updates: dict[str, Any] = {"mode": mode, "ready_at": next_ready_at}
             unify.update_logs(
                 logs=[ids[0]],
-                context=self._state_context,
+                context=self._get_state_context(),
                 entries=updates,
                 overwrite=True,
             )
@@ -193,7 +226,7 @@ class CoordinatorOnboardingManager(BaseStateManager, metaclass=SingletonABCMeta)
 
         now = _utc_now()
         row = unity_log(
-            context=self._checklist_context,
+            context=self._get_checklist_context(),
             title=title,
             description=description,
             kind=kind,
@@ -256,7 +289,7 @@ class CoordinatorOnboardingManager(BaseStateManager, metaclass=SingletonABCMeta)
 
         unify.update_logs(
             logs=ids,
-            context=self._checklist_context,
+            context=self._get_checklist_context(),
             entries=updates,
             overwrite=True,
         )
@@ -269,12 +302,12 @@ class CoordinatorOnboardingManager(BaseStateManager, metaclass=SingletonABCMeta)
         if isinstance(ids, dict):
             return ids
 
-        unify.delete_logs(context=self._checklist_context, logs=ids[0])
+        unify.delete_logs(context=self._get_checklist_context(), logs=ids[0])
         return {"outcome": "checklist item deleted", "details": {"item_id": item_id}}
 
     def _checklist_log_ids(self, item_id: int) -> list[int] | ToolError:
         ids = unify.get_logs(
-            context=self._checklist_context,
+            context=self._get_checklist_context(),
             filter=f"item_id == {int(item_id)}",
             limit=2,
             return_ids_only=True,
@@ -293,8 +326,40 @@ class CoordinatorOnboardingManager(BaseStateManager, metaclass=SingletonABCMeta)
             )
         return ids
 
+    def _get_state_context(self) -> str:
+        if self._state_context is None:
+            self._state_context = ContextRegistry.get_context(
+                self,
+                COORDINATOR_STATE_CONTEXT,
+            )
+        return self._state_context
+
+    def _get_checklist_context(self) -> str:
+        if self._checklist_context is None:
+            self._checklist_context = ContextRegistry.get_context(
+                self,
+                COORDINATOR_CHECKLIST_CONTEXT,
+            )
+        return self._checklist_context
+
 
 _CACHE_EMPTY = object()
+
+
+def _org_cache_key() -> tuple[int | None, str]:
+    return SESSION_DETAILS.org_id, SESSION_DETAILS.unify_key
+
+
+def _assistant_display_name(assistant: dict[str, Any]) -> str | None:
+    name = " ".join(
+        part
+        for part in [
+            str(assistant.get("first_name") or "").strip(),
+            str(assistant.get("surname") or "").strip(),
+        ]
+        if part
+    )
+    return name or None
 
 
 def _utc_now() -> datetime:

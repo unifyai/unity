@@ -33,7 +33,7 @@ class CoordinatorTools:
         surname: str | None = None,
         config: dict[str, Any] | None = None,
     ) -> dict[str, Any] | ToolError:
-        """Create a colleague in the Coordinator owner's workspace."""
+        """Create a confirmed colleague after exact setup scope is agreed."""
 
         try:
             result = unify.create_assistant(
@@ -140,7 +140,7 @@ class CoordinatorTools:
         organization_id: int | None = None,
         owner_user_id: str | None = None,
     ) -> dict[str, Any] | ToolError:
-        """Create a team space in the Coordinator owner's workspace."""
+        """Create a confirmed team space after exact setup scope is agreed."""
 
         del organization_id, owner_user_id
         try:
@@ -180,7 +180,7 @@ class CoordinatorTools:
         space_id: int,
         patch: dict[str, Any],
     ) -> dict[str, Any] | ToolError:
-        """Update editable fields on a reachable team space."""
+        """Update a reachable team space after the intended change is agreed."""
 
         reachable = self._space_is_reachable(space_id)
         if isinstance(reachable, dict):
@@ -205,7 +205,7 @@ class CoordinatorTools:
         space_id: int,
         assistant_id: int,
     ) -> dict[str, Any] | ToolError:
-        """Add a reachable assistant to a reachable space."""
+        """Add a reachable assistant to a reachable space after membership is agreed."""
 
         invalid = self._validate_space_and_assistant(space_id, assistant_id)
         if invalid is not None:
@@ -307,7 +307,7 @@ class CoordinatorTools:
         space_id: int,
         assistant_id: int,
     ) -> dict[str, Any] | ToolError:
-        """Invite a reachable assistant's owner to a reachable space."""
+        """Invite a reachable assistant's owner to a space after membership is agreed."""
 
         invalid = self._validate_space_and_assistant(space_id, assistant_id)
         if invalid is not None:
