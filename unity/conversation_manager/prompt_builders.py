@@ -490,9 +490,9 @@ A: I can't be physically present. Everything else a remote worker can do — com
     # Boss details
     if demo_mode and not first_name:
         parts.add(
-            """Boss details
+            f"""Boss details
 ------------
-My boss (contact_id=1) has not signed up yet. Their details are unknown at this point and will be learned during conversation. When I learn their name, phone number, or email address, I should update their record using `set_boss_details`.
+My boss (contact_id={contact_id}) has not signed up yet. Their details are unknown at this point and will be learned during conversation. When I learn their name, phone number, or email address, I should update their record using `set_boss_details`.
 
 Updating my boss's email address is critical — once their email is on file and they sign up at unify.ai, I will be automatically linked to their account.""",
         )
@@ -544,7 +544,7 @@ All actions are performed by calling the available tools. The tools I have acces
 
 For communication tools, provide the contact_id when the contact is in the active conversations.{sms_call_note}
 
-Communication tools can also fill in missing contact details inline (e.g., `make_call(contact_id=1, phone_number="+1234")` saves the number and places the call in one step). Use this for phone numbers and email addresses. For names, use `set_boss_details`.""",
+Communication tools can also fill in missing contact details inline (e.g., `make_call(contact_id={contact_id}, phone_number="+1234")` saves the number and places the call in one step). Use this for phone numbers and email addresses. For names, use `set_boss_details`.""",
         )
     else:
         parts.add(
@@ -859,9 +859,9 @@ When contacts communicate in a non-English language, I match their language in m
     if demo_mode:
         # Demo mode: replace act-related sections with demo-specific guidance
         parts.add(
-            """Demo mode
+            f"""Demo mode
 ---------
-I am currently in **demo mode** — my boss (contact_id=1) has not yet signed up for an account. I was introduced to them by a colleague from Unify (contact_id=2), who is helping set things up.
+I am currently in **demo mode** — my boss (contact_id={contact_id}) has not yet signed up for an account. I was introduced to them by a colleague from Unify (contact_id=2), who is helping set things up.
 
 **My priorities in demo mode:**
 1. Be warm, capable, and impressive — this is the first experience my future boss has with me.
@@ -888,9 +888,9 @@ The Unify colleague (contact_id=2) may call me first to introduce my future boss
 - Be personable and make a great first impression
 - Learn and remember my boss's name"""
             + (
-                """
+                f"""
 - When asked to call my boss directly, I need their phone number — ask for it naturally
-- Use `make_call(contact_id=1, phone_number="...")` to call them, which saves the number automatically"""
+- Use `make_call(contact_id={contact_id}, phone_number="...")` to call them, which saves the number automatically"""
                 if assistant_has_phone
                 else ""
             ),
@@ -1141,7 +1141,7 @@ My boss can update my profile, my contact details, or my secrets through this me
         )
 
         ack_tool = "send_sms" if assistant_has_phone else "send_unify_message"
-        ack_example = f'{ack_tool}(content="Let me check.", contact_id=1)'
+        ack_example = f'{ack_tool}(content="Let me check.", contact_id={contact_id})'
         parts.add(
             f"""Concurrent action and acknowledgment
 ------------------------------------

@@ -320,7 +320,7 @@ class ConversationManager(metaclass=SingletonABCMeta):
     def get_active_contact(self) -> dict | None:
         """Get the contact for the current active call, or fall back to the boss contact."""
         return self.call_manager.call_contact or self.contact_index.get_contact(
-            contact_id=1,
+            contact_id=SESSION_DETAILS.boss_contact_id,
         )
 
     async def capture_assistant_screenshot(
@@ -1532,8 +1532,8 @@ class ConversationManager(metaclass=SingletonABCMeta):
             "assistant_email_provider",
             "google_workspace",
         )
-        self.self_contact_id = payload.get("self_contact_id", 0)
-        self.boss_contact_id = payload.get("boss_contact_id", 1)
+        self.self_contact_id = int(payload["self_contact_id"])
+        self.boss_contact_id = int(payload["boss_contact_id"])
         self.assistant_whatsapp_number = payload.get("assistant_whatsapp_number", "")
         self.assistant_discord_bot_id = payload.get("assistant_discord_bot_id", "")
         self.user_first_name = payload["user_first_name"]

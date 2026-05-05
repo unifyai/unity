@@ -761,6 +761,8 @@ class TestFullLifecycleIntegration:
             "user_email": "live_user@test.com",
             "voice_provider": "cartesia",
             "voice_id": "voice_123",
+            "self_contact_id": 42,
+            "boss_contact_id": 43,
         }
         cm.set_details(startup_payload)
 

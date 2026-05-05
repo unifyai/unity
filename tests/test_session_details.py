@@ -8,10 +8,19 @@ and its plumbing through populate / export_to_env / populate_from_env.
 
 import os
 import json
+from dataclasses import fields
 
 import pytest
 
-from unity.session_details import SessionDetails, SpaceSummary
+from unity.session_details import (
+    SESSION_DETAILS,
+    AssistantDetails,
+    SessionDetails,
+    SpaceSummary,
+    UserDetails,
+    is_boss_contact,
+    is_self_contact,
+)
 
 
 class TestEmailProvider:
@@ -137,9 +146,7 @@ class TestContactIds:
         sd.boss_contact_id = 6
 
         assert sd.assistant.self_contact_id == 5
-        assert sd.assistant.contact_id == 5
         assert sd.user.boss_contact_id == 6
-        assert sd.user.contact_id == 6
 
     def test_populate_sets_resolved_contact_ids(self):
         sd = SessionDetails()
@@ -148,10 +155,15 @@ class TestContactIds:
 
         assert sd.self_contact_id == 42
         assert sd.assistant.self_contact_id == 42
-        assert sd.assistant.contact_id == 42
         assert sd.boss_contact_id == 43
         assert sd.user.boss_contact_id == 43
-        assert sd.user.contact_id == 43
+
+    def test_subcontainers_do_not_expose_ambiguous_contact_id_fields(self):
+        assistant_fields = {field.name for field in fields(AssistantDetails)}
+        user_fields = {field.name for field in fields(UserDetails)}
+
+        assert "contact_id" not in assistant_fields
+        assert "contact_id" not in user_fields
 
     def test_export_and_populate_from_env_round_trips(self, monkeypatch):
         monkeypatch.delenv("SELF_CONTACT_ID", raising=False)
@@ -176,3 +188,18 @@ class TestContactIds:
 
         assert sd.self_contact_id == 0
         assert sd.boss_contact_id == 1
+
+    def test_identity_predicates_use_resolved_session_ids(self):
+        original_self = SESSION_DETAILS.self_contact_id
+        original_boss = SESSION_DETAILS.boss_contact_id
+        try:
+            SESSION_DETAILS.self_contact_id = 42
+            SESSION_DETAILS.boss_contact_id = 43
+
+            assert is_self_contact(42)
+            assert not is_self_contact(43)
+            assert is_boss_contact(43)
+            assert not is_boss_contact(42)
+        finally:
+            SESSION_DETAILS.self_contact_id = original_self
+            SESSION_DETAILS.boss_contact_id = original_boss

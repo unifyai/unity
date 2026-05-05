@@ -36,7 +36,7 @@ from unity.conversation_manager.task_actions import (
     build_action_name,
     safe_call_id_suffix,
 )
-from unity.session_details import SESSION_DETAILS
+from unity.session_details import SESSION_DETAILS, is_boss_contact
 
 if TYPE_CHECKING:
     pass
@@ -73,7 +73,7 @@ _ASSISTANT_TZ_TTL = 300  # 5 minutes — timezone changes are very rare
 
 
 def _get_assistant_timezone() -> str | None:
-    """Get the assistant's timezone from contact_id=0.
+    """Get the assistant's timezone from its resolved self contact row.
 
     Uses a module-level TTL cache to avoid synchronous HTTP round-trips to
     Orchestra on every render_state() call (which runs in the hot path of the
@@ -102,7 +102,7 @@ def _get_assistant_timezone() -> str | None:
     try:
         rows = _unify.get_logs(
             context=_contacts_ctx,
-            filter="contact_id == 0",
+            filter=f"contact_id == {SESSION_DETAILS.self_contact_id}",
             limit=1,
             from_fields=["timezone"],
         )
@@ -972,7 +972,7 @@ class Renderer:
         rolling_summary = contact_info.get("rolling_summary") or ""
         response_policy = contact_info.get("response_policy") or ""
         should_respond = contact_info.get("should_respond", True)
-        is_boss = contact_id == 1
+        is_boss = is_boss_contact(contact_id)
 
         # Compute contact name for timezone display
         contact_name = f"{first_name} {surname}".strip() or f"Contact #{contact_id}"

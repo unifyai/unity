@@ -14,11 +14,13 @@ Covers:
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from types import SimpleNamespace
 
 
 from unity.common.prompt_helpers import PromptParts
+from unity.conversation_manager.cm_types import Mode, ScreenshotEntry
+from unity.conversation_manager.domains import brain as brain_module
 from unity.conversation_manager.domains.brain import BrainSpec
-from unity.conversation_manager.cm_types import ScreenshotEntry
 
 # =============================================================================
 # Helpers
@@ -68,6 +70,56 @@ class TestBrainSpecStateMessage:
         assert isinstance(msg["content"], str)
         assert msg["content"] == "<state>hello</state>"
         assert msg["_cm_state_snapshot"] is True
+
+    def test_build_brain_spec_uses_resolved_boss_contact_id(self, monkeypatch):
+        """The main brain prompt reads boss details from the session contact id."""
+
+        captured_prompt_kwargs = {}
+
+        def fake_build_system_prompt(**kwargs):
+            captured_prompt_kwargs.update(kwargs)
+            parts = PromptParts()
+            parts.add("system")
+            return parts
+
+        monkeypatch.setattr(brain_module.SESSION_DETAILS, "boss_contact_id", 43)
+        monkeypatch.setattr(
+            brain_module,
+            "build_system_prompt",
+            fake_build_system_prompt,
+        )
+
+        contacts = {
+            43: {
+                "first_name": "Resolved",
+                "surname": "Boss",
+                "phone_number": "+123",
+                "email_address": "boss@example.com",
+            },
+        }
+        cm = SimpleNamespace(
+            contact_index=SimpleNamespace(
+                get_contact=lambda contact_id: contacts.get(contact_id),
+            ),
+            mode=Mode.TEXT,
+            get_active_contact=lambda: {},
+            assistant_job_title="",
+            assistant_about="",
+            computer_fast_path_eligible=False,
+            assistant_number="",
+            assistant_email="",
+            assistant_whatsapp_number="",
+            assistant_discord_bot_id="",
+            assistant_has_teams=False,
+            space_summaries=[],
+        )
+        snapshot_state = SimpleNamespace(full_render="<state>ready</state>")
+
+        brain_module.build_brain_spec(cm, snapshot_state)
+
+        assert captured_prompt_kwargs["contact_id"] == 43
+        assert captured_prompt_kwargs["first_name"] == "Resolved"
+        assert captured_prompt_kwargs["surname"] == "Boss"
 
     def test_multimodal_with_screenshots(self):
         """With screenshots the message content becomes a list of parts."""

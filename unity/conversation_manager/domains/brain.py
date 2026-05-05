@@ -9,6 +9,7 @@ from pydantic import BaseModel, Field, create_model
 from unity.common.prompt_helpers import PromptParts
 from unity.conversation_manager.prompt_builders import build_system_prompt
 from unity.conversation_manager.cm_types import Mode, ScreenshotEntry
+from unity.session_details import SESSION_DETAILS
 
 if TYPE_CHECKING:
     from unity.conversation_manager.conversation_manager import ConversationManager
@@ -205,8 +206,8 @@ def build_brain_spec(
 
     prompt = snapshot_state.full_render
 
-    # Get boss contact (contact_id=1) from ContactManager - the source of truth
-    boss_contact = cm.contact_index.get_contact(1) or {}
+    boss_contact_id = SESSION_DETAILS.boss_contact_id
+    boss_contact = cm.contact_index.get_contact(boss_contact_id) or {}
     is_internal_call = cm.mode.is_voice and bool(
         (cm.get_active_contact() or {}).get("is_system", False),
     )
@@ -222,7 +223,7 @@ def build_brain_spec(
         _bio_parts.append(cm.assistant_about)
     system_prompt = build_system_prompt(
         bio="\n".join(_bio_parts),
-        contact_id=1,
+        contact_id=boss_contact_id,
         first_name=boss_contact.get("first_name") or "",
         surname=boss_contact.get("surname") or "",
         phone_number=boss_contact.get("phone_number"),

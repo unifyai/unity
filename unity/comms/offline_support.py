@@ -176,8 +176,8 @@ def _log_outbound_history(
     exchange_id, message_id = transcript_manager.log_first_message_in_new_exchange(
         {
             "medium": medium,
-            "sender_id": SESSION_DETAILS.assistant.contact_id or 0,
-            "receiver_ids": receiver_ids or [SESSION_DETAILS.assistant.contact_id or 0],
+            "sender_id": SESSION_DETAILS.self_contact_id,
+            "receiver_ids": receiver_ids or [SESSION_DETAILS.self_contact_id],
             "timestamp": datetime.now(timezone.utc),
             "content": content,
             "attachments": list(attachments or []),

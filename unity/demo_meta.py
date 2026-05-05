@@ -3,7 +3,7 @@ Demo assistant metadata fetching from Orchestra.
 
 This module provides functionality to fetch prospect details from Orchestra's
 demo assistant metadata endpoint. When a demo session starts with a demo_id,
-Unity can use this to pre-populate the boss contact (contact_id=1) with
+Unity can use this to pre-populate the resolved boss contact with
 prospect information provided during demo creation.
 
 The metadata is fetched once during initialization and cached in SETTINGS.
@@ -115,7 +115,7 @@ def apply_prospect_to_boss_contact(
     prospect: DemoProspectDetails,
 ) -> bool:
     """
-    Apply prospect details to the boss contact (contact_id=1).
+    Apply prospect details to the resolved boss contact.
 
     This updates the boss contact with any available prospect information
     from the demo metadata. Only non-None fields are applied.
@@ -132,7 +132,9 @@ def apply_prospect_to_boss_contact(
         return False
 
     # Build update kwargs with only non-None values
-    update_kwargs = {"contact_id": 1}
+    from unity.session_details import SESSION_DETAILS
+
+    update_kwargs = {"contact_id": SESSION_DETAILS.boss_contact_id}
 
     if prospect.first_name:
         update_kwargs["first_name"] = prospect.first_name
