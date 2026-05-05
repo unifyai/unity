@@ -171,6 +171,41 @@ class ImageHandle:
             # Best-effort; if mutation fails, leave as-is
             pass
 
+    def _update_images_in_handle_context(self, payload: Dict[str, Any]) -> None:
+        """Persist handle metadata in the root where the handle was loaded."""
+
+        if self._context == self._manager._ctx:
+            self._manager.update_images([payload])
+        else:
+            self._manager.update_images([payload], _context=self._context)
+
+    async def _persist_deferred_updates(self, resolved_id: int) -> None:
+        """Flush pending metadata updates after a handle receives its backend id."""
+
+        while True:
+            try:
+                with self._deferred_lock:
+                    pending_updates = dict(self._deferred_updates)
+                    self._deferred_updates.clear()
+            except Exception:
+                pending_updates = {}
+
+            payload_body: Dict[str, Any] = {}
+            for key in ("caption", "timestamp", "data", "filepath"):
+                if key in pending_updates:
+                    payload_body[key] = pending_updates[key]
+
+            if not payload_body:
+                return
+
+            payload: Dict[str, Any] = {"image_id": int(resolved_id), **payload_body}
+            try:
+                self._update_images_in_handle_context(payload)
+            except Exception:
+                pass
+
+            await asyncio.sleep(0)
+
     def update_metadata(
         self,
         *,
@@ -244,7 +279,7 @@ class ImageHandle:
                 if k in updates:
                     payload[k] = updates[k]
             try:
-                self._manager.update_images([payload], _context=self._context)
+                self._update_images_in_handle_context(payload)
             except Exception:
                 pass
             return
@@ -485,6 +520,7 @@ class ImageHandle:
         rid = mapping.get(self.image_id)
         if isinstance(rid, int):
             self.resolve(int(rid))
+            await self._persist_deferred_updates(int(rid))
             return int(rid)
         return self.image_id
 
@@ -546,39 +582,7 @@ class ImageHandle:
             except Exception:
                 return
 
-            # Drain any accumulated updates and persist; loop to catch races
-            while True:
-                try:
-                    with self._deferred_lock:
-                        pending_updates = dict(self._deferred_updates)
-                        self._deferred_updates.clear()
-                except Exception:
-                    pending_updates = {}
-
-                # Filter to supported keys
-                payload_body: Dict[str, Any] = {}
-                for k in ("caption", "timestamp", "data", "filepath"):
-                    if k in pending_updates:
-                        payload_body[k] = pending_updates[k]
-
-                if not payload_body:
-                    break
-
-                payload: Dict[str, Any] = {"image_id": int(rid), **payload_body}
-                try:
-                    self._manager.update_images([payload], _context=self._context)
-                except Exception:
-                    # Tolerate backend failure; local cache already updated
-                    pass
-
-                # If more updates arrived during the write, loop again
-                try:
-                    with self._deferred_lock:
-                        has_more = bool(self._deferred_updates)
-                except Exception:
-                    has_more = False
-                if not has_more:
-                    break
+            await self._persist_deferred_updates(int(rid))
 
         try:
             loop = asyncio.get_running_loop()
