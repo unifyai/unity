@@ -14,11 +14,17 @@ Covers:
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from types import SimpleNamespace
+from unittest.mock import patch
 
+import pytest
 
 from unity.common.prompt_helpers import PromptParts
-from unity.conversation_manager.domains.brain import BrainSpec
-from unity.conversation_manager.cm_types import ScreenshotEntry
+from unity.common.context_registry import ContextRegistry
+from unity.conversation_manager.cm_types import Mode, ScreenshotEntry
+from unity.conversation_manager.domains.brain import BrainSpec, build_brain_spec
+from unity.manager_registry import ManagerRegistry
+from unity.session_details import SESSION_DETAILS
 
 # =============================================================================
 # Helpers
@@ -49,6 +55,47 @@ def _make_brain_spec(
 
 
 FAKE_B64 = "iVBORw0KGgoAAAANSUhEUg=="  # tiny valid-looking base64 stub
+
+
+@pytest.fixture(autouse=True)
+def reset_brain_test_state():
+    ContextRegistry.clear()
+    ManagerRegistry.clear()
+    SESSION_DETAILS.reset()
+    yield
+    ContextRegistry.clear()
+    ManagerRegistry.clear()
+    SESSION_DETAILS.reset()
+
+
+def _make_cm():
+    """Create the smallest ConversationManager-like object needed by build_brain_spec."""
+    return SimpleNamespace(
+        contact_index=SimpleNamespace(
+            get_contact=lambda contact_id: {
+                "first_name": "Dana",
+                "surname": "Owner",
+                "phone_number": "+15551234567",
+                "email_address": "dana@acme.com",
+            },
+        ),
+        mode=Mode.TEXT,
+        get_active_contact=lambda: None,
+        initialized=True,
+        assistant_job_title="",
+        assistant_about="Operations assistant.",
+        computer_fast_path_eligible=False,
+        assistant_number="+15557654321",
+        assistant_email="assistant@acme.com",
+        assistant_whatsapp_number="",
+        assistant_discord_bot_id="",
+        assistant_has_teams=False,
+        space_summaries=[],
+    )
+
+
+def _make_snapshot():
+    return SimpleNamespace(full_render="<state>ready</state>")
 
 
 # =============================================================================
@@ -287,3 +334,68 @@ class TestScreenshotEntryLocalMessageId:
         updated = entry._replace(local_message_id=7)
         assert updated.local_message_id == 7
         assert entry.local_message_id is None  # original unchanged (immutable)
+
+
+class TestBuildBrainSpecCoordinatorPrompt:
+    """BrainSpec prompt construction carries Coordinator awareness."""
+
+    def test_org_assistant_prompt_names_the_org_coordinator(self):
+        SESSION_DETAILS.org_id = 7
+        SESSION_DETAILS.unify_key = "owner-key"
+
+        with patch(
+            "unity.coordinator_manager.coordinator_manager.unify.list_assistants",
+            return_value=[
+                {
+                    "first_name": "Avery",
+                    "surname": "Coordinator",
+                    "is_coordinator": True,
+                },
+            ],
+        ) as list_assistants:
+            spec = build_brain_spec(_make_cm(), _make_snapshot())
+
+        prompt = spec.system_prompt.flatten()
+        assert "Team Coordinator" in prompt
+        assert "Avery Coordinator" in prompt
+        assert "I cannot forward it automatically" in prompt
+        list_assistants.assert_called_once_with(
+            list_all_org=True,
+            api_key="owner-key",
+        )
+
+    def test_coordinator_prompt_does_not_render_reciprocal_block(self):
+        SESSION_DETAILS.org_id = 7
+        SESSION_DETAILS.unify_key = "owner-key"
+        SESSION_DETAILS.assistant.is_coordinator = True
+
+        with patch(
+            "unity.coordinator_manager.coordinator_manager.unify.list_org_members",
+            return_value=[{"first_name": "Dana", "surname": "Owner"}],
+        ) as list_org_members:
+            with patch(
+                "unity.coordinator_manager.coordinator_manager.unify.list_assistants",
+            ) as list_assistants:
+                spec = build_brain_spec(_make_cm(), _make_snapshot())
+
+        prompt = spec.system_prompt.flatten()
+        assert "Authorized humans" in prompt
+        assert "Team Coordinator" not in prompt
+        assert "I cannot forward it automatically" not in prompt
+        list_org_members.assert_called_once_with(7, api_key="owner-key")
+        list_assistants.assert_not_called()
+
+    def test_personal_assistant_does_not_resolve_org_coordinator(self):
+        SESSION_DETAILS.org_id = None
+        SESSION_DETAILS.unify_key = "owner-key"
+        SESSION_DETAILS.assistant.is_coordinator = False
+
+        with patch(
+            "unity.coordinator_manager.coordinator_manager.unify.list_assistants",
+        ) as list_assistants:
+            spec = build_brain_spec(_make_cm(), _make_snapshot())
+
+        prompt = spec.system_prompt.flatten()
+        assert "Team Coordinator" not in prompt
+        assert "I cannot forward it automatically" not in prompt
+        list_assistants.assert_not_called()

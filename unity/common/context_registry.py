@@ -224,11 +224,9 @@ class ContextRegistry:
         from unity.blacklist_manager.blacklist_manager import BlackListManager
         from unity.data_manager.data_manager import DataManager
         from unity.file_manager.managers.file_manager import FileManager
-        from unity.coordinator_manager.coordinator_manager import (
-            CoordinatorOnboardingManager,
-        )
+        from unity.session_details import SESSION_DETAILS
 
-        return [
+        managers = [
             ContactManager,
             DashboardManager,
             KnowledgeManager,
@@ -242,8 +240,16 @@ class ContextRegistry:
             BlackListManager,
             DataManager,
             FileManager,
-            CoordinatorOnboardingManager,
         ]
+
+        if SESSION_DETAILS.is_coordinator:
+            from unity.coordinator_manager.coordinator_manager import (
+                CoordinatorOnboardingManager,
+            )
+
+            managers.append(CoordinatorOnboardingManager)
+
+        return managers
 
     @classmethod
     def _create_context_wrapper(

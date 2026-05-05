@@ -172,14 +172,23 @@ def test_files_data_and_blacklist_are_shared_scoped():
         ]
 
 
-def test_coordinator_manager_is_registered_for_startup_provisioning():
+def test_coordinator_manager_is_registered_for_coordinator_startup_provisioning():
+    assert CoordinatorOnboardingManager not in ContextRegistry._get_managers()
+
+    SESSION_DETAILS.assistant.is_coordinator = True
+
     assert CoordinatorOnboardingManager in ContextRegistry._get_managers()
 
 
 def test_coordinator_contexts_do_not_fan_out_to_spaces():
     SESSION_DETAILS.space_ids = [7]
 
-    with patch("unity.common.context_registry._create_context_with_retry"):
+    with (
+        patch("unity.common.context_registry._create_context_with_retry"),
+        patch(
+            "unity.common.context_registry.create_fields",
+        ),
+    ):
         assert ContextRegistry.read_roots(
             CoordinatorOnboardingManager,
             "Coordinator/State",
