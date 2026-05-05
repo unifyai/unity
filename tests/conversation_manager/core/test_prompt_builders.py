@@ -97,7 +97,7 @@ class TestAccessibleSpacesBlock:
 class TestCoordinatorPrompt:
     """Coordinator sessions get privileged onboarding guidance."""
 
-    def test_coordinator_persona_lists_only_lifecycle_tools(self):
+    def test_coordinator_persona_lists_workspace_tools(self):
         prompt = _build(
             is_coordinator=True,
             authorized_humans=[
@@ -108,10 +108,10 @@ class TestCoordinatorPrompt:
         assert "I am the Coordinator" in prompt
         assert "Authorized humans" in prompt
         assert "Dana Owner" in prompt
-        assert "Coordinator lifecycle tools" in prompt
+        assert "Coordinator workspace tools" in prompt
+        assert "organize colleagues into shared workspaces" in prompt
         for tool_name in CoordinatorTools(cm=object()).as_tools():
             assert f"`{tool_name}`" in prompt
-        assert "space-management" not in prompt
 
     def test_coordinator_authorized_humans_fallback_uses_roster_shape(self):
         prompt = _build(is_coordinator=True)
@@ -125,7 +125,7 @@ class TestCoordinatorPrompt:
         prompt = _build()
 
         assert "I am the Coordinator" not in prompt
-        assert "Coordinator lifecycle tools" not in prompt
+        assert "Coordinator workspace tools" not in prompt
         assert "`create_assistant`" not in prompt
 
 
