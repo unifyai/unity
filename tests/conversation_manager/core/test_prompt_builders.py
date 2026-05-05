@@ -128,6 +128,93 @@ class TestCoordinatorPrompt:
         assert "Coordinator workspace tools" not in prompt
         assert "`create_assistant`" not in prompt
 
+    def test_coordinator_persona_carries_product_literacy_and_boundaries(self):
+        prompt = _build(is_coordinator=True)
+
+        assert "Unify system literacy" in prompt
+        assert "Context taxonomy" in prompt
+        assert "Tasks/Activations" in prompt
+        assert "Tasks/Runs" in prompt
+        assert "Knowledge" in prompt
+        assert "Guidance" in prompt
+        assert "Spaces/<space_id>/..." in prompt
+        assert "Coordinator/State" in prompt
+        assert "Console navigation map" in prompt
+        assert "right-pane Secrets tab" in prompt
+        assert "Integration walkthrough Q&A" in prompt
+        assert "SaaS tools" in prompt
+        assert "Capability boundary" in prompt
+        assert "I never read or accept secret values in chat" in prompt
+        assert "Where available tools expose it" in prompt
+        assert "remove_space_member" in prompt
+        assert "cancel_space_invitation" in prompt
+
+        assert "pre_seed_colleague" not in prompt
+        assert "per-body authoring" not in prompt
+        assert "pre-seed task" not in prompt
+        assert "I will pull" not in prompt
+        assert "I'll pull" not in prompt
+        assert "I will sync" not in prompt
+        assert "I'll sync" not in prompt
+        assert "I will watch" not in prompt
+        assert "I'll watch" not in prompt
+        assert "I will poll" not in prompt
+        assert "I'll poll" not in prompt
+        assert "no manual setup needed" not in prompt
+        assert "access tokens with me" not in prompt
+        assert "⋮ → Secrets" not in prompt
+
+    def test_coordinator_prompt_carries_requirements_discovery_workflow(self):
+        prompt = _build(is_coordinator=True)
+
+        assert "Requirements discovery workflow" in prompt
+        assert "company, its operating model" in prompt
+        assert "workflows that hurt" in prompt
+        assert "tools people use daily" in prompt
+        assert "who owns each handoff" in prompt
+        assert "success criteria" in prompt
+        assert "first validation" in prompt
+        assert "Requirements brief" in prompt
+        assert "Proposed setup" in prompt
+        assert "I ask one high-leverage question per turn" in prompt
+        assert "do not turn discovery into a generic intake form" in prompt
+        assert "When enough is known, I stop interviewing" in prompt
+
+    def test_coordinator_prompt_fingerholds_integration_secret_setup(self):
+        prompt = _build(is_coordinator=True)
+
+        assert "two safe setup paths" in prompt
+        assert "guide them live by screen share" in prompt
+        assert "technical self-serve Secrets path" in prompt
+        assert "user completes OAuth consent in their own browser" in prompt
+        assert "should never paste secret values into chat" in prompt
+        assert "first read-only validation" in prompt
+
+    def test_regular_org_assistant_gets_coordinator_reference_block(self):
+        prompt = _build(org_coordinator_name="Avery Coordinator")
+
+        assert "Team Coordinator" in prompt
+        assert "Avery Coordinator" in prompt
+        assert "your Coordinator" in prompt
+        assert "creating or removing colleagues" in prompt
+        assert "creating or removing team spaces" in prompt
+        assert "handling invitations" in prompt
+        assert "I cannot forward it automatically" in prompt
+        assert "you'll need to bring it to your Coordinator from the sidebar" in prompt
+        assert "`create_assistant`" not in prompt
+
+    def test_coordinator_reference_block_is_absent_without_name_or_on_coordinator(self):
+        personal_prompt = _build(org_coordinator_name=None)
+        coordinator_prompt = _build(
+            is_coordinator=True,
+            org_coordinator_name="Avery Coordinator",
+        )
+
+        assert "Team Coordinator" not in personal_prompt
+        assert "I cannot forward it automatically" not in personal_prompt
+        assert "Team Coordinator" not in coordinator_prompt
+        assert "I cannot forward it automatically" not in coordinator_prompt
+
 
 # ---------------------------------------------------------------------------
 # Tests – missing-capability notices
@@ -210,8 +297,8 @@ class TestExternalAppIntegration:
     def test_onboarding_has_app_integration_qa(self):
         prompt = _build()
         assert "Can you help me manage my apps and online services?" in prompt
-        assert "Resources → Secrets" in prompt
-        assert "service's SDK" in prompt
+        assert "⋮ → Secrets" in prompt
+        assert "service's Python SDK" in prompt
 
     def test_act_capabilities_has_external_apps_bullet(self):
         prompt = _build()
@@ -221,6 +308,16 @@ class TestExternalAppIntegration:
     def test_onboarding_qa_present_in_demo_mode(self):
         prompt = _build(demo_mode=True)
         assert "Can you help me manage my apps and online services?" in prompt
+
+    def test_org_assistant_onboarding_routes_integration_setup_to_coordinator(self):
+        prompt = _build(org_coordinator_name="Avery Coordinator")
+
+        assert "already connected to my work" in prompt
+        assert "Avery Coordinator owns that setup" in prompt
+        assert "route setup decisions to Avery Coordinator" in prompt
+        assert "I cannot forward it automatically" in prompt
+        assert "no manual setup needed" not in prompt
+        assert "access tokens with me" not in prompt
 
     def test_act_capabilities_absent_in_demo_mode(self):
         prompt = _build(demo_mode=True)
@@ -256,13 +353,12 @@ class TestConsoleKnowledge:
     def test_console_knowledge_present(self):
         prompt = _build()
         assert "Console knowledge" in prompt
-        assert "Resources" in prompt
         assert "Secrets" in prompt
         assert "Contact Details" in prompt
 
     def test_console_knowledge_has_navigation_paths(self):
         prompt = _build()
-        assert "Resources → Secrets" in prompt
+        assert "⋮ → Secrets" in prompt
         assert "Profile menu" in prompt
 
     def test_console_knowledge_absent_in_demo_mode(self):
