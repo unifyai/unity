@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import functools
+import threading
 from collections import Counter
 from statistics import mean, median, pvariance, pstdev
 from typing import List, Dict, Optional, Type, Union, Any, Callable, Literal
@@ -657,6 +658,7 @@ class TranscriptManager(BaseTranscriptManager):
                         "entries": fallback_entries,
                         "add_to_all": should_add_to_all,
                         "handled": False,
+                        "fallback_lock": threading.Lock(),
                     }
                     self._pending_async_log_fallbacks.append(fallback_state)
 
@@ -698,8 +700,6 @@ class TranscriptManager(BaseTranscriptManager):
         # swallowed inside ``touch_assistant_activity``.
         if not _skip_event_bus and created_messages:
             try:
-                import threading
-
                 from .activity_sync import touch_assistant_activity
 
                 agent_id = getattr(SESSION_DETAILS.assistant, "agent_id", None)
@@ -731,10 +731,94 @@ class TranscriptManager(BaseTranscriptManager):
             if not state.get("handled")
         ]
 
+    @staticmethod
+    def _async_entry_values_match(expected: Any, actual: Any) -> bool:
+        """Return whether an async fallback candidate already exists."""
+
+        if expected is None:
+            return actual is None
+        if isinstance(expected, list):
+            return list(actual or []) == expected
+        if str(expected) == str(actual):
+            return True
+        expected_text = str(expected).replace("+00:00", "Z")
+        actual_text = str(actual).replace("+00:00", "Z")
+        return expected_text == actual_text
+
+    def _find_existing_async_log_id(self, state: dict[str, Any]) -> Optional[int]:
+        """Find a row written by the async logger before fallback persistence runs."""
+
+        entries = state["entries"]
+        exchange_id = entries.get("exchange_id")
+        if exchange_id is None:
+            return None
+        try:
+            rows = unify.get_logs(
+                context=state["context"],
+                filter=f"exchange_id == {int(exchange_id)}",
+                limit=20,
+            )
+        except Exception:
+            return None
+
+        match_fields = (
+            "medium",
+            "sender_id",
+            "receiver_ids",
+            "timestamp",
+            "content",
+            "exchange_id",
+        )
+        for row in rows:
+            row_entries = getattr(row, "entries", {}) or {}
+            if all(
+                self._async_entry_values_match(
+                    entries.get(field),
+                    row_entries.get(field),
+                )
+                for field in match_fields
+                if field in entries
+            ):
+                try:
+                    return int(row.id)
+                except Exception:
+                    return None
+        return None
+
     def _fallback_async_log_create(self, state: dict[str, Any]) -> None:
         """Synchronously persist a row if the async logger dropped it."""
 
+        fallback_lock = state.get("fallback_lock")
+        if fallback_lock is not None:
+            with fallback_lock:
+                self._fallback_async_log_create_unlocked(state)
+            return
+        self._fallback_async_log_create_unlocked(state)
+
+    def _fallback_async_log_create_unlocked(self, state: dict[str, Any]) -> None:
+        """Persist one async fallback while the caller holds the state lock."""
+
         if state.get("handled"):
+            return
+        existing_log_id = None
+        for delay_seconds in (0.0, 0.25, 0.75, 1.5):
+            if delay_seconds:
+                try:
+                    import time
+
+                    time.sleep(delay_seconds)
+                except Exception:
+                    pass
+            existing_log_id = self._find_existing_async_log_id(state)
+            if existing_log_id is not None:
+                break
+        if existing_log_id is not None:
+            if state["add_to_all"]:
+                try:
+                    _add_to_all([existing_log_id], state["context"])
+                except Exception:
+                    pass
+            state["handled"] = True
             return
         try:
             unity_log(
