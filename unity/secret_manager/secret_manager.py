@@ -181,7 +181,13 @@ class SecretManager(BaseSecretManager):
 
     # --------------------- Internal helpers (assistant secret sync) ---------- #
 
-    OAUTH_SECRET_ALLOWLIST = frozenset(
+    # Built-in OAuth allowlist for Google + Microsoft.  These are always synced
+    # because Communication writes them back to Orchestra independently of the
+    # integration registry (the OAuth callback runs before any deploy-time
+    # registry seeding has had a chance to land).  At runtime, we extend this
+    # set with everything declared by the integration registry — see
+    # ``_resolve_secret_allowlist``.
+    _BUILTIN_OAUTH_SECRET_ALLOWLIST = frozenset(
         {
             "GOOGLE_ACCESS_TOKEN",
             "GOOGLE_REFRESH_TOKEN",
@@ -193,6 +199,30 @@ class SecretManager(BaseSecretManager):
             "MICROSOFT_GRANTED_SCOPES",
         },
     )
+
+    # Backwards-compatible alias.  Existing call sites + tests that read
+    # ``OAUTH_SECRET_ALLOWLIST`` keep working; the value now reflects the
+    # built-in set only and is augmented dynamically via
+    # ``_resolve_secret_allowlist`` at sync time.
+    OAUTH_SECRET_ALLOWLIST = _BUILTIN_OAUTH_SECRET_ALLOWLIST
+
+    @classmethod
+    def _resolve_secret_allowlist(cls) -> frozenset[str]:
+        """Union the built-in OAuth allowlist with the integration registry.
+
+        Falls back to just the built-in set when the registry isn't seeded
+        (first deploy after A1, test environments without a registry context).
+        Adding a new integration package therefore requires no edit to this
+        file.
+        """
+        try:
+            from unity.integration_status import all_known_secret_names
+
+            return frozenset(
+                cls._BUILTIN_OAUTH_SECRET_ALLOWLIST | all_known_secret_names(),
+            )
+        except Exception:
+            return cls._BUILTIN_OAUTH_SECRET_ALLOWLIST
 
     def _sync_assistant_secrets(self) -> None:
         """Pull OAuth tokens from Orchestra's assistant secrets into the Secrets context.
@@ -234,8 +264,14 @@ class SecretManager(BaseSecretManager):
         except Exception:
             return
 
+        # Resolve the active allowlist by unioning the built-in OAuth keys
+        # (Google + Microsoft) with everything declared by the integration
+        # registry.  Adding a new integration package adds its secret names
+        # here automatically, no edit to this module.
+        active_allowlist = self._resolve_secret_allowlist()
+
         for name, value in secrets_dict.items():
-            if name not in self.OAUTH_SECRET_ALLOWLIST:
+            if name not in active_allowlist:
                 continue
             if not isinstance(value, str) or not value:
                 continue
@@ -268,7 +304,7 @@ class SecretManager(BaseSecretManager):
             except Exception:
                 continue
 
-        for stale_name in self.OAUTH_SECRET_ALLOWLIST - secrets_dict.keys():
+        for stale_name in active_allowlist - secrets_dict.keys():
             try:
                 ids = unify.get_logs(
                     context=self._ctx,
@@ -281,6 +317,20 @@ class SecretManager(BaseSecretManager):
                     self._env_remove(stale_name)
             except Exception:
                 continue
+
+        # Recompute integration enablement now that the secret keyset has
+        # changed.  Best-effort; never blocks the secret-sync return.  This
+        # makes a token added mid-session take effect on the next message
+        # without a session restart.  See ``unity.integration_status``.
+        try:
+            from unity.integration_status import recompute_enablement
+
+            recompute_enablement(
+                assistant_id=int(agent_id),
+                secrets=secrets_dict,
+            )
+        except Exception:
+            pass
 
     # --------------------- Internal helpers (.env sync) --------------------- #
     def _dotenv_path(self) -> str:
