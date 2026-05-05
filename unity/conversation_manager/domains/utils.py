@@ -1,5 +1,6 @@
 import asyncio
 
+from unity.common.startup_timing import log_startup_timing
 from unity.logger import LOGGER
 
 
@@ -64,8 +65,16 @@ class Debouncer:
 
         async def wait_for_running_task():
             if delay > 0:
+                log_startup_timing(
+                    LOGGER,
+                    "⏱️ [StartupTiming] debouncer.%s sleeping delay=%.2fs label=%s",
+                    self._name or "unknown",
+                    delay,
+                    label or "-",
+                )
                 await asyncio.sleep(delay)
             queued = self.running_task is not None and not self.running_task.done()
+            wait_t0 = asyncio.get_event_loop().time()
             try:
                 # Wait for any currently running task to complete.
                 # Use asyncio.shield() to protect the running task from being
@@ -88,6 +97,17 @@ class Debouncer:
             self.was_queued = queued
             self.running_task_started_at = asyncio.get_event_loop().time()
             self.running_task_trace_meta = trace_meta or {}
+            log_startup_timing(
+                LOGGER,
+                (
+                    "⏱️ [StartupTiming] debouncer.%s starting_task "
+                    "label=%s queued=%s wait_for_running=%.2fs"
+                ),
+                self._name or "unknown",
+                label or "-",
+                queued,
+                self.running_task_started_at - wait_t0,
+            )
             self.running_task = asyncio.create_task(async_fn(*args, **kwargs))
             self.running_task.add_done_callback(log_task_exc)
             self.pending_task = None

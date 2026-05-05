@@ -99,12 +99,17 @@ class LivekitCallManager:
         self._worker_watchdog_task: asyncio.Task | None = None
         # WhatsApp call joining state
         self._whatsapp_call_joining: bool = False
-        # Google Meet state
-        self._gmeet_session_id: str | None = None
-        self._gmeet_joining: bool = False
-        self._gmeet_presenting: bool = False
+        # Browser-meet shared state (Google Meet / Teams Meet).  Only one
+        # browser meeting can be active at a time; the channel is tracked via
+        # ``self._call_channel`` so per-channel public properties remain stable
+        # while the underlying state is consolidated.
+        self._meet_session_id: str | None = None
+        self._meet_joining: bool = False
+        self._meet_presenting: bool = False
         self.google_meet_start_timestamp = None
         self.google_meet_exchange_id = UNASSIGNED
+        self.teams_meet_start_timestamp = None
+        self.teams_meet_exchange_id = UNASSIGNED
 
     def set_config(self, config: CallConfig):
         self.assistant_id = config.assistant_id
@@ -373,41 +378,79 @@ class LivekitCallManager:
             )
 
     # ------------------------------------------------------------------
-    # Google Meet lifecycle
+    # Browser-meet lifecycle (Google Meet / Teams Meet)
     # ------------------------------------------------------------------
+
+    # Per-channel mapping of agent-service URL prefix and short room suffix.
+    _MEET_PATHS: dict[str, dict[str, str]] = {
+        "google_meet": {"path": "googlemeet", "room": "gmeet"},
+        "teams_meet": {"path": "teamsmeet", "room": "teams"},
+    }
+
+    def has_active_meet(self, channel: str | None = None) -> bool:
+        """Whether a browser meeting is active.
+
+        With ``channel`` omitted, returns True for any active meeting.  When a
+        specific channel is passed, returns True only if the active meeting
+        matches that channel.
+        """
+        active = self._meet_session_id is not None or self._meet_joining
+        if not active:
+            return False
+        if channel is None:
+            return True
+        return self._call_channel == channel
 
     @property
     def has_active_google_meet(self) -> bool:
-        return self._gmeet_session_id is not None or self._gmeet_joining
+        return self.has_active_meet("google_meet")
+
+    @property
+    def has_active_teams_meet(self) -> bool:
+        return self.has_active_meet("teams_meet")
+
+    @property
+    def has_meet_presenting(self) -> bool:
+        return self._meet_presenting
 
     @property
     def has_gmeet_presenting(self) -> bool:
-        return self._gmeet_presenting
+        return self._meet_presenting and self._call_channel == "google_meet"
 
-    async def start_google_meet(
+    @property
+    def has_teams_presenting(self) -> bool:
+        return self._meet_presenting and self._call_channel == "teams_meet"
+
+    async def _start_meet(
         self,
+        channel: str,
         meet_url: str,
         contact: dict,
         boss: dict,
         display_name: str = "",
     ) -> bool:
-        """Join a Google Meet via agent-service browser and start the audio bridge.
+        """Join a browser meeting (Google Meet or Teams) via agent-service.
 
-        1. POST /googlemeet/join on agent-service to launch browser + automation.
+        1. POST /{path}/join on agent-service to launch browser + automation.
         2. Start audio bridge (PulseAudio <-> LiveKit).
         3. Dispatch a fast brain job into the same LiveKit room.
-        4. Kick off a background monitor that polls /googlemeet/state and
-           publishes GoogleMeetEnded when the meeting terminates.
+        4. Kick off a background monitor that polls /{path}/state and
+           publishes the channel-specific *Ended event when the meeting
+           terminates.
         """
-        if self.has_active_call or self.has_active_google_meet:
+        if self.has_active_call or self.has_active_meet():
             LOGGER.warning(
-                f"{ICONS['ipc']} [LivekitCallManager] start_google_meet ignored: "
+                f"{ICONS['ipc']} [LivekitCallManager] _start_meet ignored: "
                 "session already active",
             )
             return False
 
-        self._gmeet_joining = True
-        self._call_channel = "google_meet"
+        path_info = self._MEET_PATHS[channel]
+        meet_path = path_info["path"]
+        room_suffix = path_info["room"]
+
+        self._meet_joining = True
+        self._call_channel = channel
         self._disconnect_contact = contact
 
         display_name = display_name or self.assistant_name or "Unity Assistant"
@@ -417,13 +460,18 @@ class LivekitCallManager:
         base_url = "http://localhost:3000"
         auth_key = SESSION_DETAILS.unify_key
 
-        room_name = make_room_name(self.assistant_id, "gmeet")
+        room_name = make_room_name(self.assistant_id, room_suffix)
         self.room_name = room_name
 
-        # Pre-create the LiveKit room with a long empty_timeout.  Google Meet
-        # audio flows through sounddevice/PulseAudio — no "real" LiveKit
-        # participant ever joins, so the server's default empty_timeout (300s)
-        # would auto-delete the room after 5 minutes.
+        # Pre-create the LiveKit room with long empty_timeout and departure_timeout.
+        # Browser-meet audio flows through sounddevice/PulseAudio — no "real"
+        # LiveKit participant ever joins, so:
+        #   - empty_timeout (default 300s) would auto-delete the room after 5
+        #     minutes of it being empty.
+        #   - departure_timeout (default 20s) would auto-delete the room 20s
+        #     after the agent participant disconnects, making recovery into the
+        #     same room impossible if the child process is respawned.
+        # Both are raised to 3h so the room survives for the full session.
         from livekit.api import CreateRoomRequest
 
         lk = LiveKitAPI(
@@ -433,7 +481,11 @@ class LivekitCallManager:
         )
         try:
             await lk.room.create_room(
-                CreateRoomRequest(name=room_name, empty_timeout=10800),
+                CreateRoomRequest(
+                    name=room_name,
+                    empty_timeout=10800,
+                    departure_timeout=3600,
+                ),
             )
         finally:
             await lk.aclose()
@@ -447,36 +499,36 @@ class LivekitCallManager:
         if contact.get("is_system", False):
             self._start_boss_notification_rendering()
 
-        gmeet_extra = {
-            "gmeet_session_id": "",
-            "gmeet_meet_url": meet_url,
-            "gmeet_display_name": display_name,
+        meet_extra = {
+            "meet_session_id": "",
+            "meet_url": meet_url,
+            "meet_display_name": display_name,
             "agent_service_url": "http://localhost:3000",
         }
 
         if self._worker_proc is not None and self._worker_proc.poll() is None:
             await self._dispatch_job(
                 room_name,
-                "google_meet",
+                channel,
                 contact,
                 boss,
                 False,
-                extra_metadata=gmeet_extra,
+                extra_metadata=meet_extra,
             )
         else:
             await self._start_call_subprocess(
                 room_name,
-                "google_meet",
+                channel,
                 contact,
                 boss,
                 False,
-                extra_env=gmeet_extra,
+                extra_env=meet_extra,
             )
 
         # Browser join runs after dispatch — fast brain initializes in parallel.
         async with aiohttp.ClientSession() as session:
             resp = await session.post(
-                f"{base_url}/googlemeet/join",
+                f"{base_url}/{meet_path}/join",
                 json={"meetUrl": meet_url, "displayName": display_name},
                 headers={"authorization": f"Bearer {auth_key}"},
                 timeout=aiohttp.ClientTimeout(total=300),
@@ -485,38 +537,45 @@ class LivekitCallManager:
 
         if resp.status != 200:
             LOGGER.error(
-                f"{ICONS['ipc']} [LivekitCallManager] Google Meet join failed: {body}",
+                f"{ICONS['ipc']} [LivekitCallManager] {channel} join failed: {body}",
             )
-            self._gmeet_joining = False
-            await self.cleanup_google_meet()
+            self._meet_joining = False
+            await self._cleanup_meet(channel)
             return False
 
-        self._gmeet_session_id = body.get("sessionId")
-        self._gmeet_joining = False
+        self._meet_session_id = body.get("sessionId")
+        self._meet_joining = False
         LOGGER.info(
-            f"{ICONS['ipc']} [LivekitCallManager] Google Meet joined "
-            f"(session={self._gmeet_session_id})",
+            f"{ICONS['ipc']} [LivekitCallManager] {channel} joined "
+            f"(session={self._meet_session_id})",
         )
 
-        if self._socket_server and self._gmeet_session_id:
+        if self._socket_server and self._meet_session_id:
             await self._socket_server.queue_for_clients(
                 "app:call:status",
                 json.dumps(
-                    {"type": "gmeet_session_id", "session_id": self._gmeet_session_id},
+                    {"type": "meet_session_id", "session_id": self._meet_session_id},
                 ),
             )
 
         return True
 
-    async def cleanup_google_meet(self) -> None:
-        """Leave the Google Meet session and tear down the audio bridge."""
-        session_id = self._gmeet_session_id
+    async def _cleanup_meet(self, channel: str) -> None:
+        """Leave the browser meeting and tear down the audio bridge."""
+        path_info = self._MEET_PATHS[channel]
+        meet_path = path_info["path"]
+
+        session_id = self._meet_session_id
         room_name = self.room_name
-        self._gmeet_session_id = None
-        self._gmeet_joining = False
-        self._gmeet_presenting = False
-        self.google_meet_start_timestamp = None
-        self.google_meet_exchange_id = UNASSIGNED
+        self._meet_session_id = None
+        self._meet_joining = False
+        self._meet_presenting = False
+        if channel == "google_meet":
+            self.google_meet_start_timestamp = None
+            self.google_meet_exchange_id = UNASSIGNED
+        elif channel == "teams_meet":
+            self.teams_meet_start_timestamp = None
+            self.teams_meet_exchange_id = UNASSIGNED
 
         if session_id:
             from unity.session_details import SESSION_DETAILS
@@ -526,7 +585,7 @@ class LivekitCallManager:
             try:
                 async with aiohttp.ClientSession() as session:
                     await session.post(
-                        f"{base_url}/googlemeet/leave",
+                        f"{base_url}/{meet_path}/leave",
                         json={"sessionId": session_id},
                         headers={"authorization": f"Bearer {auth_key}"},
                         timeout=aiohttp.ClientTimeout(total=30),
@@ -534,7 +593,7 @@ class LivekitCallManager:
             except Exception as exc:
                 LOGGER.warning(
                     f"{ICONS['ipc']} [LivekitCallManager] "
-                    f"Error leaving Google Meet: {exc}",
+                    f"Error leaving {channel}: {exc}",
                 )
 
         if room_name:
@@ -546,10 +605,10 @@ class LivekitCallManager:
 
         await self.cleanup_call_proc()
 
-    async def start_gmeet_screenshare(self) -> bool:
-        """Start presenting the assistant desktop in the active Google Meet."""
-        session_id = self._gmeet_session_id
-        if not session_id:
+    async def _start_meet_screenshare(self, channel: str) -> bool:
+        """Start presenting the assistant desktop in the active browser meeting."""
+        session_id = self._meet_session_id
+        if not session_id or self._call_channel != channel:
             return False
 
         from unity.session_details import SESSION_DETAILS
@@ -566,63 +625,115 @@ class LivekitCallManager:
             f"?password={SESSION_DETAILS.unify_key}"
         )
 
+        meet_path = self._MEET_PATHS[channel]["path"]
         base_url = "http://localhost:3000"
         auth_key = SESSION_DETAILS.unify_key
         try:
             async with aiohttp.ClientSession() as session:
                 resp = await session.post(
-                    f"{base_url}/googlemeet/present",
+                    f"{base_url}/{meet_path}/present",
                     json={"sessionId": session_id, "desktopUrl": liveview_url},
                     headers={"authorization": f"Bearer {auth_key}"},
                     timeout=aiohttp.ClientTimeout(total=120),
                 )
                 if resp.status == 200:
-                    self._gmeet_presenting = True
+                    self._meet_presenting = True
                     return True
                 body = await resp.json()
                 LOGGER.warning(
                     f"{ICONS['ipc']} [LivekitCallManager] "
-                    f"Google Meet present failed: {body}",
+                    f"{channel} present failed: {body}",
                 )
         except Exception as exc:
             LOGGER.warning(
                 f"{ICONS['ipc']} [LivekitCallManager] "
-                f"Error starting Google Meet screenshare: {exc}",
+                f"Error starting {channel} screenshare: {exc}",
             )
         return False
 
-    async def stop_gmeet_screenshare(self) -> bool:
-        """Stop presenting the assistant desktop in Google Meet."""
-        session_id = self._gmeet_session_id
-        if not session_id:
+    async def _stop_meet_screenshare(self, channel: str) -> bool:
+        """Stop presenting the assistant desktop in the active browser meeting."""
+        session_id = self._meet_session_id
+        if not session_id or self._call_channel != channel:
             return False
 
         from unity.session_details import SESSION_DETAILS
 
+        meet_path = self._MEET_PATHS[channel]["path"]
         base_url = "http://localhost:3000"
         auth_key = SESSION_DETAILS.unify_key
         try:
             async with aiohttp.ClientSession() as session:
                 resp = await session.post(
-                    f"{base_url}/googlemeet/stop-present",
+                    f"{base_url}/{meet_path}/stop-present",
                     json={"sessionId": session_id},
                     headers={"authorization": f"Bearer {auth_key}"},
                     timeout=aiohttp.ClientTimeout(total=60),
                 )
                 if resp.status == 200:
-                    self._gmeet_presenting = False
+                    self._meet_presenting = False
                     return True
                 body = await resp.json()
                 LOGGER.warning(
                     f"{ICONS['ipc']} [LivekitCallManager] "
-                    f"Google Meet stop-present failed: {body}",
+                    f"{channel} stop-present failed: {body}",
                 )
         except Exception as exc:
             LOGGER.warning(
                 f"{ICONS['ipc']} [LivekitCallManager] "
-                f"Error stopping Google Meet screenshare: {exc}",
+                f"Error stopping {channel} screenshare: {exc}",
             )
         return False
+
+    # Channel-specific public wrappers (kept for call-site stability).
+
+    async def start_google_meet(
+        self,
+        meet_url: str,
+        contact: dict,
+        boss: dict,
+        display_name: str = "",
+    ) -> bool:
+        return await self._start_meet(
+            "google_meet",
+            meet_url,
+            contact,
+            boss,
+            display_name,
+        )
+
+    async def cleanup_google_meet(self) -> None:
+        await self._cleanup_meet("google_meet")
+
+    async def start_gmeet_screenshare(self) -> bool:
+        return await self._start_meet_screenshare("google_meet")
+
+    async def stop_gmeet_screenshare(self) -> bool:
+        return await self._stop_meet_screenshare("google_meet")
+
+    async def start_teams_meet(
+        self,
+        meet_url: str,
+        contact: dict,
+        boss: dict,
+        display_name: str = "",
+    ) -> bool:
+        return await self._start_meet(
+            "teams_meet",
+            meet_url,
+            contact,
+            boss,
+            display_name,
+        )
+
+    async def cleanup_teams_meet(self) -> None:
+        await self._cleanup_meet("teams_meet")
+
+    async def start_teams_meet_screenshare(self) -> bool:
+        return await self._start_meet_screenshare("teams_meet")
+
+    async def stop_teams_meet_screenshare(self) -> bool:
+        return await self._stop_meet_screenshare("teams_meet")
 
     async def _start_call_subprocess(
         self,
@@ -687,6 +798,8 @@ class LivekitCallManager:
             event = WhatsAppCallEnded(contact=contact)
         elif channel == "google_meet":
             event = GoogleMeetEnded(contact=contact)
+        elif channel == "teams_meet":
+            event = TeamsMeetEnded(contact=contact)
         elif channel == "phone_call":
             event = PhoneCallEnded(contact=contact)
         else:

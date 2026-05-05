@@ -12,7 +12,7 @@ class ScreenshotEntry(NamedTuple):
     b64: str
     utterance: str
     timestamp: datetime
-    source: str  # "assistant" | "user" (screen share) | "webcam" | "google_meet"
+    source: str  # "assistant" | "user" (screen share) | "webcam" | "google_meet" | "teams_meet"
     local_message_id: int | None = None
     filepath: str | None = None
 
@@ -22,6 +22,7 @@ _SOURCE_SUBFOLDER = {
     "user": "User",
     "webcam": "Webcam",
     "google_meet": "GoogleMeet",
+    "teams_meet": "TeamsMeet",
 }
 
 

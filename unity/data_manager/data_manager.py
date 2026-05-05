@@ -100,7 +100,12 @@ class DataManager(BaseDataManager):
     def __init__(self) -> None:
         """Initialize DataManager with context registration."""
         super().__init__()
-        self.include_in_multi_assistant_table = True
+        # TODO: Re-enable once the backend stops incrementing auto_counting
+        # counters on add_logs_to_context reference writes to All/ aggregation
+        # contexts.  Same root cause as the FileManager file_id gap — row_id
+        # values get non-sequential when rows are mirrored to aggregation
+        # contexts, and DM tables default to auto_counting={"row_id": None}.
+        self.include_in_multi_assistant_table = False
 
         # Resolve owned base context via ContextRegistry
         # This gives us the fully-qualified path like "User/Assistant/Data"
@@ -635,6 +640,8 @@ class DataManager(BaseDataManager):
         post_ingest: Optional["PostIngestConfig"] = None,
         on_task_complete=None,
         coerce_types: bool = True,
+        storage_client=None,
+        skip_rows: int = 0,
     ) -> "IngestResult":
         resolved = self._resolve_context(context)
         unique_keys, auto_counting = self._resolve_unique_keys_and_auto_counting(
@@ -660,6 +667,8 @@ class DataManager(BaseDataManager):
             post_ingest=post_ingest,
             on_task_complete=on_task_complete,
             coerce_types=coerce_types,
+            storage_client=storage_client,
+            skip_rows=skip_rows,
         )
 
     # ──────────────────────────────────────────────────────────────────────────

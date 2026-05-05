@@ -15,12 +15,16 @@ from unity.conversation_manager import assistant_jobs
 from unity.conversation_manager.events import *
 from unity.conversation_manager.domains import managers_utils
 from unity.conversation_manager.domains.comms_utils import publish_system_error
+from unity.conversation_manager.domains.inactivity import (
+    _handle_inactivity_followup_event,
+)
 from unity.conversation_manager.domains.task_activation import (
     _consume_startup_wake_reasons,
     _handle_task_due_event,
     _surface_trigger_task_candidates,
 )
 from unity.conversation_manager.cm_types import Medium, Mode
+from unity.common.startup_timing import log_startup_timing
 from unity.logger import LOGGER
 from unity.session_details import SESSION_DETAILS
 
@@ -204,6 +208,8 @@ def _active_voice_thread_medium(cm: "ConversationManager") -> Medium:
 
     if cm.call_manager.has_active_google_meet:
         return Medium.GOOGLE_MEET
+    if cm.call_manager.has_active_teams_meet:
+        return Medium.TEAMS_MEET
     if cm.mode == Mode.MEET:
         return Medium.UNIFY_MEET
     if cm.call_manager._call_channel == "whatsapp_call":
@@ -325,7 +331,12 @@ async def _(event: CallInitEvents, cm: "ConversationManager", *args, **kwargs):
     if cm.mode.is_voice:
         return
 
-    boss = cm.contact_index.get_contact(contact_id=1)
+    boss_contact_id = SESSION_DETAILS.user.contact_id
+    boss = (
+        cm.contact_index.get_contact(contact_id=int(boss_contact_id))
+        if boss_contact_id is not None
+        else None
+    )
     if isinstance(event, UnifyMeetReceived):
         contact = boss
     elif isinstance(event, (WhatsAppCallReceived, WhatsAppCallSent)):
@@ -435,13 +446,19 @@ async def _(
         cm.mode.is_voice
         or cm.call_manager.has_active_call
         or cm.call_manager.has_active_google_meet
+        or cm.call_manager.has_active_teams_meet
     ):
         return
 
-    boss = cm.contact_index.get_contact(contact_id=1) or {}
+    boss_contact_id = SESSION_DETAILS.user.contact_id
+    boss = (
+        cm.contact_index.get_contact(contact_id=int(boss_contact_id)) or {}
+        if boss_contact_id is not None
+        else {}
+    )
     contact = boss
 
-    contact_id = contact.get("contact_id") if contact else 1
+    contact_id = contact.get("contact_id") if contact else boss_contact_id
     sender_name = _get_sender_name(contact)
 
     joined = await cm.call_manager.start_google_meet(
@@ -497,12 +514,102 @@ async def _(
         )
 
 
+@EventHandler.register(TeamsMeetReceived)
+async def _(
+    event: TeamsMeetReceived,
+    cm: "ConversationManager",
+    *args,
+    **kwargs,
+):
+    """Handle request to join a Microsoft Teams meeting — spawn browser + audio bridge."""
+    if (
+        cm.mode.is_voice
+        or cm.call_manager.has_active_call
+        or cm.call_manager.has_active_google_meet
+        or cm.call_manager.has_active_teams_meet
+    ):
+        return
+
+    boss_contact_id = SESSION_DETAILS.user.contact_id
+    boss = (
+        cm.contact_index.get_contact(contact_id=int(boss_contact_id)) or {}
+        if boss_contact_id is not None
+        else {}
+    )
+    contact = boss
+
+    contact_id = contact.get("contact_id") if contact else boss_contact_id
+    sender_name = _get_sender_name(contact)
+
+    joined = await cm.call_manager.start_teams_meet(
+        meet_url=event.meet_url,
+        contact=contact,
+        boss=boss,
+    )
+
+    if joined:
+        cm.notifications_bar.push_notif(
+            "Comms",
+            f"Joining Teams meeting...",
+            event.timestamp,
+        )
+        cm.contact_index.push_message(
+            contact_id=contact_id,
+            sender_name=sender_name,
+            thread_name=Medium.TEAMS_MEET,
+            message_content="<Joining Teams meeting...>",
+            role="assistant",
+            timestamp=event.timestamp,
+        )
+        if await _surface_trigger_task_candidates(
+            cm=cm,
+            event=event,
+            medium=Medium.TEAMS_MEET,
+            contact_id=contact_id,
+            sender_name=sender_name,
+            timestamp=event.timestamp,
+        ):
+            await cm.request_llm_run(
+                delay=0,
+                triggering_contact_id=contact_id,
+            )
+    else:
+        await _surface_trigger_task_candidates(
+            cm=cm,
+            event=event,
+            medium=Medium.TEAMS_MEET,
+            contact_id=contact_id,
+            sender_name=sender_name,
+            timestamp=event.timestamp,
+        )
+        cm.notifications_bar.push_notif(
+            "Comms",
+            "Failed to join Teams meeting. You may retry by calling join_teams_meet again.",
+            event.timestamp,
+        )
+        await cm.request_llm_run(
+            delay=0,
+            cancel_running=True,
+            triggering_contact_id=contact_id,
+        )
+
+
 @EventHandler.register(
-    (PhoneCallStarted, UnifyMeetStarted, GoogleMeetStarted, WhatsAppCallStarted),
+    (
+        PhoneCallStarted,
+        UnifyMeetStarted,
+        GoogleMeetStarted,
+        TeamsMeetStarted,
+        WhatsAppCallStarted,
+    ),
 )
 async def _(
     event: (
-        PhoneCallStarted | UnifyMeetStarted | GoogleMeetStarted | WhatsAppCallStarted
+        PhoneCallStarted
+        | UnifyMeetStarted
+        | GoogleMeetStarted
+        | TeamsMeetStarted
+        | WhatsAppCallStarted
     ),
     cm: "ConversationManager",
     *args,
@@ -516,7 +623,7 @@ async def _(
         cm.mode = Mode.CALL
         phone_number = event.contact["phone_number"]
         contact = cm.contact_index.get_contact(phone_number=phone_number)
-    elif isinstance(event, GoogleMeetStarted):
+    elif isinstance(event, (GoogleMeetStarted, TeamsMeetStarted)):
         cm.mode = Mode.MEET
         contact_id = event.contact.get("contact_id")
         contact = cm.contact_index.get_contact(contact_id=contact_id)
@@ -528,7 +635,9 @@ async def _(
     if contact is None:
         contact = event.contact
 
-    contact_id = contact.get("contact_id") if contact else 1
+    contact_id = (
+        contact.get("contact_id") if contact else SESSION_DETAILS.user.contact_id
+    )
     sender_name = _get_sender_name(contact)
 
     cm.call_manager.call_contact = contact
@@ -538,6 +647,9 @@ async def _(
     elif isinstance(event, GoogleMeetStarted):
         cm.call_manager.google_meet_start_timestamp = event.timestamp
         label = "Google Meet"
+    elif isinstance(event, TeamsMeetStarted):
+        cm.call_manager.teams_meet_start_timestamp = event.timestamp
+        label = "Teams Meeting"
     elif isinstance(event, UnifyMeetStarted):
         cm.call_manager.unify_meet_start_timestamp = event.timestamp
         label = "Unify Meet"
@@ -551,6 +663,8 @@ async def _(
     )
     if isinstance(event, GoogleMeetStarted):
         medium = Medium.GOOGLE_MEET
+    elif isinstance(event, TeamsMeetStarted):
+        medium = Medium.TEAMS_MEET
     elif isinstance(event, PhoneCallStarted):
         medium = Medium.PHONE_CALL
     elif isinstance(event, WhatsAppCallStarted):
@@ -595,19 +709,38 @@ async def _(
     # - SMSReceived/EmailReceived while on call
 
 
-@EventHandler.register((GoogleMeetParticipantJoined, GoogleMeetParticipantLeft))
+@EventHandler.register(
+    (
+        GoogleMeetParticipantJoined,
+        GoogleMeetParticipantLeft,
+        TeamsMeetParticipantJoined,
+        TeamsMeetParticipantLeft,
+    ),
+)
 async def _(
-    event: GoogleMeetParticipantJoined | GoogleMeetParticipantLeft,
+    event: (
+        GoogleMeetParticipantJoined
+        | GoogleMeetParticipantLeft
+        | TeamsMeetParticipantJoined
+        | TeamsMeetParticipantLeft
+    ),
     cm: "ConversationManager",
     *args,
     **kwargs,
 ):
-    """Surface Google Meet roster changes as notifications so the LLM is aware."""
+    """Surface browser-meet roster changes as notifications so the LLM is aware."""
     name = event.participant_name
-    if isinstance(event, GoogleMeetParticipantJoined):
-        label = f"{name} joined the Google Meet"
+    if isinstance(event, (GoogleMeetParticipantJoined, GoogleMeetParticipantLeft)):
+        meeting_label = "Google Meet"
+        medium = Medium.GOOGLE_MEET
     else:
-        label = f"{name} left the Google Meet"
+        meeting_label = "Teams meeting"
+        medium = Medium.TEAMS_MEET
+
+    if isinstance(event, (GoogleMeetParticipantJoined, TeamsMeetParticipantJoined)):
+        label = f"{name} joined the {meeting_label}"
+    else:
+        label = f"{name} left the {meeting_label}"
 
     cm.notifications_bar.push_notif("Comms", label, event.timestamp)
 
@@ -615,7 +748,7 @@ async def _(
     cm.contact_index.push_message(
         contact_id=contact_id,
         sender_name=name,
-        thread_name=Medium.GOOGLE_MEET,
+        thread_name=medium,
         message_content=f"<{label}>",
         role="system",
         timestamp=event.timestamp,
@@ -644,7 +777,9 @@ async def _(
     if contact is None:
         contact = event.contact
 
-    contact_id = contact.get("contact_id") if contact else 1
+    contact_id = (
+        contact.get("contact_id") if contact else SESSION_DETAILS.user.contact_id
+    )
     sender_name = _get_sender_name(contact)
     reason = event.reason or "no-answer"
 
@@ -668,9 +803,11 @@ async def _(
     cm.call_manager.call_start_timestamp = None
     cm.call_manager.unify_meet_start_timestamp = None
     cm.call_manager.google_meet_start_timestamp = None
+    cm.call_manager.teams_meet_start_timestamp = None
     cm.call_manager.call_exchange_id = UNASSIGNED
     cm.call_manager.unify_meet_exchange_id = UNASSIGNED
     cm.call_manager.google_meet_exchange_id = UNASSIGNED
+    cm.call_manager.teams_meet_exchange_id = UNASSIGNED
 
     # Build display content
     reason_display = _call_not_answered_reason_text(reason)
@@ -709,7 +846,9 @@ async def _(
     if contact is None:
         contact = event.contact
 
-    contact_id = contact.get("contact_id") if contact else 1
+    contact_id = (
+        contact.get("contact_id") if contact else SESSION_DETAILS.user.contact_id
+    )
     sender_name = _get_sender_name(contact)
     reason = event.reason or "no-answer"
 
@@ -761,7 +900,9 @@ async def _(
 ):
     """Handle call permission grant/rejection from a WhatsApp contact."""
     contact = event.contact
-    contact_id = contact.get("contact_id") if contact else 1
+    contact_id = (
+        contact.get("contact_id") if contact else SESSION_DETAILS.user.contact_id
+    )
     sender_name = _get_sender_name(contact)
 
     has_pending_context = contact_id in cm._pending_whatsapp_call_contexts
@@ -838,7 +979,9 @@ async def _(
 ):
     """Log the invite template send in the conversation thread."""
     contact = event.contact
-    contact_id = contact.get("contact_id") if contact else 1
+    contact_id = (
+        contact.get("contact_id") if contact else SESSION_DETAILS.user.contact_id
+    )
     sender_name = _get_sender_name(contact)
 
     cm.notifications_bar.push_notif(
@@ -867,6 +1010,8 @@ async def _(
         OutboundWhatsAppCallUtterance,
         InboundGoogleMeetUtterance,
         OutboundGoogleMeetUtterance,
+        InboundTeamsMeetUtterance,
+        OutboundTeamsMeetUtterance,
     ),
 )
 async def _(event: Event, cm: "ConversationManager", *args, **kwargs):
@@ -890,12 +1035,18 @@ async def _(event: Event, cm: "ConversationManager", *args, **kwargs):
         event,
         (InboundGoogleMeetUtterance, OutboundGoogleMeetUtterance),
     )
+    is_teams_meet = isinstance(
+        event,
+        (InboundTeamsMeetUtterance, OutboundTeamsMeetUtterance),
+    )
     is_unify_meet = isinstance(
         event,
         (InboundUnifyMeetUtterance, OutboundUnifyMeetUtterance),
     )
     if is_google_meet:
         medium = Medium.GOOGLE_MEET
+    elif is_teams_meet:
+        medium = Medium.TEAMS_MEET
     elif is_unify_meet:
         medium = Medium.UNIFY_MEET
     elif is_whatsapp_call:
@@ -903,8 +1054,12 @@ async def _(event: Event, cm: "ConversationManager", *args, **kwargs):
     else:
         medium = Medium.PHONE_CALL
 
-    # For diarized Meet utterances, prefer the speaker_label from the event
-    if isinstance(event, InboundGoogleMeetUtterance) and event.speaker_label:
+    # For diarized browser-meet utterances, prefer the speaker_label from
+    # the event so we attribute speech to the right participant.
+    if (
+        isinstance(event, (InboundGoogleMeetUtterance, InboundTeamsMeetUtterance))
+        and event.speaker_label
+    ):
         sender_name = event.speaker_label
 
     message_id = cm.contact_index.push_message(
@@ -971,10 +1126,22 @@ async def _(
 
 
 @EventHandler.register(
-    (PhoneCallEnded, UnifyMeetEnded, GoogleMeetEnded, WhatsAppCallEnded),
+    (
+        PhoneCallEnded,
+        UnifyMeetEnded,
+        GoogleMeetEnded,
+        TeamsMeetEnded,
+        WhatsAppCallEnded,
+    ),
 )
 async def _(
-    event: PhoneCallEnded | UnifyMeetEnded | GoogleMeetEnded | WhatsAppCallEnded,
+    event: (
+        PhoneCallEnded
+        | UnifyMeetEnded
+        | GoogleMeetEnded
+        | TeamsMeetEnded
+        | WhatsAppCallEnded
+    ),
     cm: "ConversationManager",
     *args,
     **kwargs,
@@ -997,6 +1164,14 @@ async def _(
                 {"room_name": cm.call_manager.room_name},
             )
             cm._recording_exchange_ids[cm.call_manager.room_name] = exchange_id
+    elif isinstance(event, TeamsMeetEnded):
+        exchange_id = cm.call_manager.teams_meet_exchange_id
+        if exchange_id != UNASSIGNED and cm.call_manager.room_name:
+            cm.transcript_manager.update_exchange_metadata(
+                exchange_id,
+                {"room_name": cm.call_manager.room_name},
+            )
+            cm._recording_exchange_ids[cm.call_manager.room_name] = exchange_id
     else:
         exchange_id = cm.call_manager.unify_meet_exchange_id
         if exchange_id != UNASSIGNED and cm.call_manager.room_name:
@@ -1009,7 +1184,7 @@ async def _(
     cm.mode = Mode.TEXT
     cm.call_manager.call_contact = None
 
-    if isinstance(event, (UnifyMeetEnded, GoogleMeetEnded)):
+    if isinstance(event, (UnifyMeetEnded, GoogleMeetEnded, TeamsMeetEnded)):
         contact_id = event.contact.get("contact_id")
         contact = cm.contact_index.get_contact(contact_id=contact_id)
     elif isinstance(event, WhatsAppCallEnded):
@@ -1033,6 +1208,8 @@ async def _(
 
     if isinstance(event, GoogleMeetEnded):
         await cm.call_manager.cleanup_google_meet()
+    elif isinstance(event, TeamsMeetEnded):
+        await cm.call_manager.cleanup_teams_meet()
     else:
         await cm.call_manager.cleanup_call_proc()
     await cm.cancel_proactive_speech()
@@ -1044,13 +1221,17 @@ async def _(
     cm.call_manager.call_start_timestamp = None
     cm.call_manager.unify_meet_start_timestamp = None
     cm.call_manager.google_meet_start_timestamp = None
+    cm.call_manager.teams_meet_start_timestamp = None
     cm.call_manager.call_exchange_id = UNASSIGNED
     cm.call_manager.unify_meet_exchange_id = UNASSIGNED
     cm.call_manager.google_meet_exchange_id = UNASSIGNED
+    cm.call_manager.teams_meet_exchange_id = UNASSIGNED
 
     sender_name = _get_sender_name(contact)
     if isinstance(event, GoogleMeetEnded):
         label = "Google Meet"
+    elif isinstance(event, TeamsMeetEnded):
+        label = "Teams meeting"
     elif isinstance(event, UnifyMeetEnded):
         label = "Unify Meet"
     elif isinstance(event, WhatsAppCallEnded):
@@ -1282,6 +1463,10 @@ def _push_email_to_all_contacts(
         DiscordMessageSent,
         DiscordChannelMessageReceived,
         DiscordChannelMessageSent,
+        TeamsMessageReceived,
+        TeamsMessageSent,
+        TeamsChannelMessageReceived,
+        TeamsChannelMessageSent,
     ),
 )
 async def _(event, cm: "ConversationManager", *args, **kwargs):
@@ -1291,6 +1476,11 @@ async def _(event, cm: "ConversationManager", *args, **kwargs):
     attachments = None
     tags = None
     notif_content = None
+    chat_id = None
+    channel_id = None
+    team_id = None
+    thread_id = None
+    message_id = None
 
     # Get contact info from ContactManager, fallback to event.contact
     # Note: event.contact may be empty dict for emails to external addresses
@@ -1464,6 +1654,12 @@ async def _(event, cm: "ConversationManager", *args, **kwargs):
                 "unify_message_received",
                 f"Message from {sender_name}: {event.content}",
             )
+            log_startup_timing(
+                LOGGER,
+                "⏱️ [StartupTiming] first_reply.message_received medium=unify_message contact_id=%s sender=%s",
+                contact_id,
+                sender_name,
+            )
         case ApiMessageSent():
             medium = Medium.API_MESSAGE
             message_content = event.content
@@ -1533,6 +1729,59 @@ async def _(event, cm: "ConversationManager", *args, **kwargs):
                 "discord_channel_message_received",
                 f"Discord channel from {sender_name}: {event.content}",
             )
+        case TeamsMessageSent():
+            medium = Medium.TEAMS_MESSAGE
+            message_content = event.content
+            attachments = event.attachments
+            chat_id = getattr(event, "chat_id", "") or None
+            notif_content = f"Teams message sent to {sender_name}"
+            role = "assistant"
+            event_trace = getattr(cm, "_current_event_trace", None) or {}
+            cm._session_logger.info(
+                "teams_message_sent",
+                f"Teams chat to {sender_name}: {event.content}",
+            )
+        case TeamsMessageReceived():
+            medium = Medium.TEAMS_MESSAGE
+            message_content = event.content
+            attachments = event.attachments
+            chat_id = getattr(event, "chat_id", "") or None
+            message_id = getattr(event, "message_id", "") or None
+            notif_content = f"Teams message from {sender_name}"
+            role = "user"
+            event_trace = getattr(cm, "_current_event_trace", None) or {}
+            cm._session_logger.info(
+                "teams_message_received",
+                f"Teams chat from {sender_name}: {event.content}",
+            )
+        case TeamsChannelMessageSent():
+            medium = Medium.TEAMS_CHANNEL_MESSAGE
+            message_content = event.content
+            attachments = event.attachments
+            team_id = getattr(event, "team_id", "") or None
+            channel_id = getattr(event, "channel_id", "") or None
+            notif_content = "Teams channel message sent"
+            role = "assistant"
+            event_trace = getattr(cm, "_current_event_trace", None) or {}
+            cm._session_logger.info(
+                "teams_channel_message_sent",
+                f"Teams channel message: {event.content}",
+            )
+        case TeamsChannelMessageReceived():
+            medium = Medium.TEAMS_CHANNEL_MESSAGE
+            message_content = event.content
+            attachments = event.attachments
+            team_id = getattr(event, "team_id", "") or None
+            channel_id = getattr(event, "channel_id", "") or None
+            thread_id = getattr(event, "thread_id", "") or None
+            message_id = getattr(event, "message_id", "") or None
+            notif_content = f"Teams channel message from {sender_name}"
+            role = "user"
+            event_trace = getattr(cm, "_current_event_trace", None) or {}
+            cm._session_logger.info(
+                "teams_channel_message_received",
+                f"Teams channel from {sender_name}: {event.content}",
+            )
 
     # Non-email messages: push to single contact only
     if contact_id is not None:
@@ -1545,9 +1794,15 @@ async def _(event, cm: "ConversationManager", *args, **kwargs):
             timestamp=event.timestamp,
             role=role,
             tags=tags,
+            chat_id=chat_id,
+            channel_id=channel_id,
+            team_id=team_id,
+            thread_id=thread_id,
+            message_id=message_id,
         )
     cm.notifications_bar.push_notif("comms", notif_content, event.timestamp)
     if role == "user":
+        _t0 = time.perf_counter()
         await _surface_trigger_task_candidates(
             cm=cm,
             event=event,
@@ -1556,13 +1811,35 @@ async def _(event, cm: "ConversationManager", *args, **kwargs):
             sender_name=sender_name,
             timestamp=event.timestamp,
         )
+        log_startup_timing(
+            LOGGER,
+            "⏱️ [StartupTiming] first_reply.surface_trigger_candidates duration=%.2fs medium=%s contact_id=%s",
+            time.perf_counter() - _t0,
+            medium.value,
+            contact_id,
+        )
 
     if role == "user":
+        _t0 = time.perf_counter()
         await cm.cancel_proactive_speech()
+        log_startup_timing(
+            LOGGER,
+            "⏱️ [StartupTiming] first_reply.cancel_proactive_speech duration=%.2fs medium=%s",
+            time.perf_counter() - _t0,
+            medium.value,
+        )
 
     if role == "user" or cm._outbound_suppress_gen != cm._llm_gen:
+        _t0 = time.perf_counter()
         await cm.request_llm_run(
             triggering_contact_id=contact_id,
+        )
+        log_startup_timing(
+            LOGGER,
+            "⏱️ [StartupTiming] first_reply.request_llm_run_call duration=%.2fs medium=%s role=%s",
+            time.perf_counter() - _t0,
+            medium.value,
+            role,
         )
 
 
@@ -1819,6 +2096,17 @@ async def _(
         await cm.request_llm_run(delay=0)
 
 
+@EventHandler.register(InactivityFollowup)
+async def _(
+    event: InactivityFollowup,
+    cm: "ConversationManager",
+    *args,
+    **kwargs,
+):
+    if await _handle_inactivity_followup_event(event, cm):
+        await cm.request_llm_run(delay=0)
+
+
 @EventHandler.register(NotificationUnpinnedEvent)
 async def _(
     event: NotificationUnpinnedEvent,
@@ -1936,7 +2224,7 @@ async def _(
 
     async def _sync_contacts():
         try:
-            await asyncio.to_thread(cm.contact_manager._sync_required_contacts)
+            await asyncio.to_thread(cm.contact_manager._provision_system_overlays)
             cm._session_logger.info("state_update", "Contacts synced successfully")
         except Exception as e:
             cm._session_logger.error("state_update", f"Error syncing contacts: {e}")
@@ -2066,16 +2354,28 @@ async def _(
         "desktop_ready",
         f"VM ready: {event.vm_type} at {desktop_url}",
     )
+    log_startup_timing(
+        LOGGER,
+        "⏱️ [StartupTiming] desktop_ready.received vm_type=%s desktop_url_present=%s",
+        event.vm_type,
+        bool(desktop_url),
+    )
 
     if desktop_url:
         SESSION_DETAILS.assistant.desktop_url = desktop_url
 
     liveview_url = f"{desktop_url.rstrip('/')}/desktop/custom.html"
+    _t0 = time.perf_counter()
     await asyncio.to_thread(
         assistant_jobs.update_liveview_url,
         cm.assistant_id,
         cm.user_id,
         liveview_url,
+    )
+    log_startup_timing(
+        LOGGER,
+        "⏱️ [StartupTiming] desktop_ready.update_liveview_url duration=%.2fs",
+        time.perf_counter() - _t0,
     )
 
     _vm_ready.set()
@@ -2087,9 +2387,15 @@ async def _(
 
         cp = ManagerRegistry.get_instance(ComputerPrimitives)
         if cp is not None and cp._backend is not None:
+            _t0 = time.perf_counter()
             parsed = urlparse(desktop_url)
             cp._backend.update_container_url(
                 f"{parsed.scheme}://{parsed.netloc}/api",
+            )
+            log_startup_timing(
+                LOGGER,
+                "⏱️ [StartupTiming] desktop_ready.update_computer_backend_url duration=%.2fs",
+                time.perf_counter() - _t0,
             )
 
     cm.vm_ready = True
@@ -2100,21 +2406,45 @@ async def _(
     )
 
     asyncio.ensure_future(_ensure_desktop_session(cm))
+    _t0 = time.perf_counter()
     await managers_utils._start_file_sync()
+    log_startup_timing(
+        LOGGER,
+        "⏱️ [StartupTiming] desktop_ready.start_file_sync duration=%.2fs",
+        time.perf_counter() - _t0,
+    )
 
+    _t0 = time.perf_counter()
     await cm.event_broker.publish(
         FileSyncComplete.topic,
         FileSyncComplete().to_json(),
     )
+    log_startup_timing(
+        LOGGER,
+        "⏱️ [StartupTiming] desktop_ready.publish_file_sync_complete duration=%.2fs",
+        time.perf_counter() - _t0,
+    )
 
+    _t0 = time.perf_counter()
     await comms_utils.publish_assistant_desktop_ready(
         resolved_binding_id,
         desktop_url,
         liveview_url,
         event.vm_type,
     )
+    log_startup_timing(
+        LOGGER,
+        "⏱️ [StartupTiming] desktop_ready.publish_assistant_ready duration=%.2fs",
+        time.perf_counter() - _t0,
+    )
 
+    _t0 = time.perf_counter()
     await cm.request_llm_run(delay=0)
+    log_startup_timing(
+        LOGGER,
+        "⏱️ [StartupTiming] desktop_ready.request_llm_run duration=%.2fs",
+        time.perf_counter() - _t0,
+    )
 
 
 @EventHandler.register((FileSyncComplete,))
@@ -2389,6 +2719,11 @@ async def _(event: LogMessageResponse, cm: "ConversationManager", *args, **kwarg
         and cm.call_manager.google_meet_exchange_id == UNASSIGNED
     ):
         cm.call_manager.google_meet_exchange_id = event.exchange_id
+    if (
+        event.medium == Medium.TEAMS_MEET
+        and cm.call_manager.teams_meet_exchange_id == UNASSIGNED
+    ):
+        cm.call_manager.teams_meet_exchange_id = event.exchange_id
 
 
 @EventHandler.register(PreHireMessage)
@@ -2414,7 +2749,9 @@ async def _(event: DirectMessageEvent, cm: "ConversationManager", *args, **kwarg
         )
 
     contact = cm.get_active_contact()
-    contact_id = contact.get("contact_id") if contact else 1
+    contact_id = (
+        contact.get("contact_id") if contact else SESSION_DETAILS.user.contact_id
+    )
     sender_name = _get_sender_name(contact)
 
     cm.contact_index.push_message(

@@ -14,17 +14,19 @@ from __future__ import annotations
 
 import logging
 import time
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import Future, ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from typing import (
     Any,
     Callable,
     Dict,
     Literal,
+    Optional,
 )
 
 from .instrumentation import PipelineInstrumentation
 from .retry_policy import ResilientRequestPolicy
+from .work_queue import CancellationCheck, PipelineCancelled
 
 logger = logging.getLogger(__name__)
 
@@ -165,12 +167,17 @@ def ingest_artifacts(
     source_path: str,
     max_workers: int = 8,
     retry_config: Any | None = None,
+    is_cancelled: Optional[CancellationCheck] = None,
 ) -> list[ArtifactWorkResult]:
     """Dispatch artifact ingestion with retry, instrumentation, and optional parallelism.
 
     Handles both content and table artifacts uniformly. Each ``ArtifactWorkItem``
     is passed to *ingest_fn*, wrapped in retry logic, and its outcome is recorded
     as a stage manifest via *instrumentation*.
+
+    When *is_cancelled* is supplied, each work item is checked before
+    dispatch. In threaded mode, remaining futures are cancelled when
+    cancellation is detected.
     """
     if not work_items:
         return []
@@ -178,6 +185,9 @@ def ingest_artifacts(
     results: list[ArtifactWorkResult] = []
 
     def _process_item(item: ArtifactWorkItem) -> ArtifactWorkResult:
+        if is_cancelled and is_cancelled():
+            raise PipelineCancelled(f"Cancelled before {item.kind}({item.label})")
+
         outcome = run_with_retry(
             lambda **_kw: ingest_fn(item),
             {},
@@ -230,15 +240,39 @@ def ingest_artifacts(
 
     if len(work_items) <= 1:
         for item in work_items:
-            results.append(_process_item(item))
+            try:
+                results.append(_process_item(item))
+            except PipelineCancelled:
+                results.append(
+                    ArtifactWorkResult(
+                        kind=item.kind,
+                        label=item.label,
+                        success=False,
+                        error="cancelled",
+                    ),
+                )
     else:
         effective_workers = min(len(work_items), max_workers)
         with ThreadPoolExecutor(max_workers=effective_workers) as pool:
-            futures = {pool.submit(_process_item, item): item for item in work_items}
+            futures: dict[Future, ArtifactWorkItem] = {
+                pool.submit(_process_item, item): item for item in work_items
+            }
             for future in as_completed(futures):
                 item = futures[future]
                 try:
                     results.append(future.result())
+                except PipelineCancelled:
+                    results.append(
+                        ArtifactWorkResult(
+                            kind=item.kind,
+                            label=item.label,
+                            success=False,
+                            error="cancelled",
+                        ),
+                    )
+                    for pending in futures:
+                        pending.cancel()
+                    break
                 except Exception as exc:
                     results.append(
                         ArtifactWorkResult(

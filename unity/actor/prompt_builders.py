@@ -325,6 +325,43 @@ _EXECUTION_RULES = textwrap.dedent("""
          side of asking.
 """).strip()
 
+_SEMANTIC_REASONING_SELECTION = textwrap.dedent("""
+    ### Deterministic Code With Semantic Reasoning
+
+    The execution sandbox includes a `reason(...)` helper for focused,
+    billable UniLLM reasoning calls inside generated Python. Do not treat it
+    as a separate execution mode that competes with primitives or stored
+    functions. A good `execute_code` block may fetch data through several
+    primitives/functions, reshape it deterministically, call `reason(...)` for
+    the meaning-based judgment, and then continue with normal Python control
+    flow.
+
+    **Deterministic substeps stay deterministic:** Exact lookups, primitive
+    calls, API calls, deterministic filters, arithmetic, date comparisons,
+    dedupe, schema reshaping, and format conversion do not need semantic
+    reasoning. Keep those parts as ordinary Python or direct primitive/function
+    calls, even inside a larger workflow that uses `reason(...)` elsewhere.
+
+    **Semantic substeps use `reason(...)`:** Sprinkle focused reasoning calls
+    into the generated Python when a decision depends on meaning rather than
+    exact values. This is the right shape for judgment-heavy loops: inbox
+    triage, broad categorization, relevance judgment, priority, whether
+    something needs a reply, document/ticket routing, or ambiguous
+    user-preference inference.
+
+    Ask yourself at each decision point: is this substep exact data
+    manipulation, or interpreting meaning? If exact manipulation is enough,
+    keep it deterministic. If interpreting meaning is central, do not replace
+    semantic judgment with brittle substring checks. Lexical signals can
+    cheaply pre-filter or support a decision, but they should not be the whole
+    classifier for semantic work.
+
+    A comment that says "using reasoning" above keyword conditions is not
+    semantic reasoning. When the generated code reaches a meaning-based
+    classification or judgment substep, it should actually call `reason(...)`
+    for that substep and then branch on the returned judgment.
+""").strip()
+
 _INCREMENTAL_EXECUTION = textwrap.dedent("""
     ### Incremental Execution
 
@@ -463,26 +500,44 @@ _EXTERNAL_APP_INTEGRATION = textwrap.dedent("""
 
     #### Checking OAuth Scope Before API Calls
 
-    Before making Google or Microsoft API calls using platform-managed
-    OAuth tokens, check `GOOGLE_GRANTED_SCOPES` or
-    `MICROSOFT_GRANTED_SCOPES` to verify the needed feature is
-    authorized.  These secrets contain space-separated feature names:
+    Before making Google or Microsoft API calls that rely on
+    platform-managed OAuth tokens, check whether the scope you need
+    has been granted.  `GOOGLE_GRANTED_SCOPES` and
+    `MICROSOFT_GRANTED_SCOPES` hold space-separated raw OAuth scope
+    strings — not feature names.  Examples of what you will see:
 
-    | Feature      | Covers                                              |
-    |--------------|-----------------------------------------------------|
-    | `email`      | Gmail / Outlook Mail                                |
-    | `calendar`   | Google Calendar / Outlook Calendar                  |
-    | `drive`      | Google Drive / OneDrive                             |
-    | `contacts`   | Google People / Outlook Contacts                    |
-    | `tasks`      | Google Tasks / Microsoft To Do                      |
-    | `teams`      | Microsoft Teams (Microsoft only)                    |
-    | `sharepoint` | SharePoint (Microsoft only)                         |
+    - Google: full URLs such as
+      `https://www.googleapis.com/auth/drive` and
+      `https://www.googleapis.com/auth/gmail.send`.
+    - Microsoft: Graph URLs such as
+      `https://graph.microsoft.com/Sites.Read.All`, plus the bare base
+      scope `offline_access`.
 
-    If the granted-scopes secret is not found at all, proceed normally
-    with the API call.  If it is present but the needed feature is
-    absent, do not attempt the API call.  Instead, tell the user that
-    access to that service is not currently enabled and they can add it
-    by editing their connected account in the console.
+    **Workflow.** Look up the scope(s) the specific API call requires
+    from the provider's official docs or SDK at call time, then check
+    membership against the granted-scopes secret.  Do not rely on a
+    per-feature catalog in this prompt — there isn't one.
+
+    **Microsoft normalization.** Provider docs list Microsoft scopes
+    as short names (e.g. `Sites.Read.All`); the stored secret holds
+    them URL-prefixed.  Prefix the short name with
+    `https://graph.microsoft.com/` before searching.  The only
+    exception is `offline_access`, which is stored bare.  Example:
+    SharePoint reads need `Sites.Read.All` per Graph docs, so search
+    `MICROSOFT_GRANTED_SCOPES` for
+    `https://graph.microsoft.com/Sites.Read.All` (or
+    `.../Sites.ReadWrite.All` for writes).
+
+    **Decision rules.**
+
+    - Secret missing entirely → proceed normally.  This is expected
+      for Microsoft enterprise (admin-consented) tenants and for
+      self-managed (BYO) tokens not registered through the Console.
+    - Secret present, required scope present → proceed.
+    - Secret present, required scope absent → do not attempt the
+      call.  Tell the user that access to that service is not
+      currently enabled and they can add it by editing their connected
+      account in the console.
 """).strip()
 
 
@@ -776,6 +831,10 @@ def build_code_act_prompt(
         parts.append(tools_section)
 
         parts.append(_EXECUTION_RULES)
+        parts.append(_SEMANTIC_REASONING_SELECTION)
+        from unity.common.reasoning import get_reasoning_prompt_context
+
+        parts.append(get_reasoning_prompt_context())
         parts.append(_INCREMENTAL_EXECUTION)
         parts.append(_EXTERNAL_APP_INTEGRATION)
 

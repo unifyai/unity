@@ -11,14 +11,34 @@ from pydantic import BaseModel, Field
 from ._utils import utc_now, utc_now_iso
 
 __all__ = [
+    "CancellationCheck",
     "DeadLetterWorkItem",
     "InMemoryWorkQueue",
     "LocalQueueWorker",
+    "PipelineCancelled",
     "ReceivedWorkItem",
     "RetryWorkItem",
     "WorkQueue",
     "WorkQueueMessage",
 ]
+
+CancellationCheck = Callable[[], bool]
+"""Sync callback that returns ``True`` when the current job has been cancelled.
+
+Workers build a closure over the run-id and a cached GCS read, then
+thread it through long-running loops (``ingest_artifacts``,
+``_make_checkpoint_callback``, ``fm_process_plan``) so cancellation is
+detected within ~60 s rather than only at the top of the handler.
+"""
+
+
+class PipelineCancelled(Exception):
+    """Raised when a cancellation poll detects the job has been cancelled.
+
+    Handlers catch this at the message boundary, record the cancellation
+    status, and ack the message so it is not retried.
+    """
+
 
 QueueMessageState = Literal["queued", "leased", "dead_lettered"]
 

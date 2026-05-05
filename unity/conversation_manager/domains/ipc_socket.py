@@ -28,6 +28,7 @@ Architecture:
 from __future__ import annotations
 
 import asyncio
+import concurrent.futures
 import json
 import logging
 import os
@@ -92,6 +93,8 @@ class CallEventSocketServer:
 
         # Main event loop (captured in start())
         self._main_loop: asyncio.AbstractEventLoop | None = None
+        self._main_loop_future_lock = threading.Lock()
+        self._main_loop_dispatch_futures: set[concurrent.futures.Future] = set()
 
         # Managed exclusively from the I/O loop (no locks needed)
         self._client_tasks: list[asyncio.Task] = []
@@ -391,6 +394,9 @@ class CallEventSocketServer:
                 and self._main_loop.is_running()
             ):
                 try:
+                    await self._wait_for_main_loop_dispatches()
+                    if self._connected_clients:
+                        return
                     asyncio.run_coroutine_threadsafe(
                         self.on_client_disconnected(),
                         self._main_loop,
@@ -404,10 +410,35 @@ class CallEventSocketServer:
     def _dispatch_to_main_loop(self, message: str) -> None:
         """Schedule message processing on the main event loop (thread-safe)."""
         if self._main_loop and self._main_loop.is_running():
-            asyncio.run_coroutine_threadsafe(
+            future = asyncio.run_coroutine_threadsafe(
                 self._process_message(message),
                 self._main_loop,
             )
+            with self._main_loop_future_lock:
+                self._main_loop_dispatch_futures.add(future)
+
+            def _forget_done(done_future: concurrent.futures.Future) -> None:
+                with self._main_loop_future_lock:
+                    self._main_loop_dispatch_futures.discard(done_future)
+
+            future.add_done_callback(_forget_done)
+
+    async def _wait_for_main_loop_dispatches(self) -> None:
+        """Wait for already-scheduled child→parent deliveries to finish.
+
+        A client may disconnect immediately after sending its final lifecycle
+        event. The disconnect fallback must not run until those already-read
+        messages have been processed on the main loop, otherwise the parent can
+        observe an ``Ended`` event before an earlier ``Started`` event.
+        """
+        with self._main_loop_future_lock:
+            pending = [f for f in self._main_loop_dispatch_futures if not f.done()]
+        if not pending:
+            return
+        await asyncio.gather(
+            *(asyncio.wrap_future(fut) for fut in pending),
+            return_exceptions=True,
+        )
 
     async def _send_to_all_clients(self, channel: str, event_json: str) -> None:
         """Runs in I/O loop. Sends an event to all connected clients.

@@ -91,7 +91,8 @@ def publish_parse_request(
     source_gs_uri: Optional[str] = None,
     blob_key: Optional[str] = None,
     attachment_callback: Optional[AttachmentCallback] = None,
-    deployment_id: str = "",
+    dispatch_id: str = "",
+    table_config: Optional[dict] = None,
     job_id: Optional[str] = None,
     pubsub_attributes: Optional[dict[str, str]] = None,
     storage_client: Any | None = None,
@@ -134,12 +135,13 @@ def publish_parse_request(
 
     parse_msg = ParseRequested(
         job_id=resolved_job_id,
-        deployment_id=deployment_id,
+        dispatch_id=dispatch_id,
         file_paths=[gs_uri],
         attachment_callback=attachment_callback,
         ingestion_mode=ingestion_mode,
         fm_binding=fm_binding,
         dm_binding=dm_binding,
+        table_config=table_config,
     )
 
     topic_path, message_id = _publish(
@@ -247,14 +249,36 @@ def _ensure_in_gcs(
     bucket = client.bucket(target.bucket_name)
     blob = bucket.blob(resolved_blob_key)
 
+    import os
+    import time as _time
+
+    upload_size = 0
+    if source_bytes is not None:
+        upload_size = len(source_bytes)
+    elif source_local_path is not None:
+        try:
+            upload_size = os.path.getsize(source_local_path)
+        except OSError:
+            pass
+
+    t0 = _time.perf_counter()
     if source_bytes is not None:
         blob.upload_from_string(source_bytes)
     else:
         assert source_local_path is not None  # narrowed by _validate_inputs
         blob.upload_from_filename(source_local_path)
+    elapsed = _time.perf_counter() - t0
 
     gs_uri = f"gs://{target.bucket_name}/{resolved_blob_key}"
-    logger.debug("Uploaded source to %s", gs_uri)
+    mb = upload_size / (1024 * 1024)
+    rate = mb / elapsed if elapsed > 0 else 0
+    logger.info(
+        "Uploaded %.1f MB to %s in %.1fs (%.1f MB/s)",
+        mb,
+        gs_uri,
+        elapsed,
+        rate,
+    )
     return gs_uri
 
 

@@ -140,6 +140,50 @@ def get_result(out: Any) -> Any:
 
 
 @pytest.mark.asyncio
+@pytest.mark.timeout(30)
+async def test_execute_code_can_branch_on_reason_structured_output(
+    execute_code_tool,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """execute_code can use typed semantic judgments in symbolic control flow."""
+    execute_code, _primitives = execute_code_tool
+
+    async def fake_reason(prompt: str, *, response_format=None, **kwargs):
+        assert "Classify" in prompt
+        return response_format(category="billing", needs_reply=True)
+
+    import unity.common.reasoning as reasoning_module
+
+    monkeypatch.setattr(reasoning_module, "reason", fake_reason)
+
+    code = """
+from pydantic import BaseModel
+
+class Decision(BaseModel):
+    category: str
+    needs_reply: bool
+
+Decision.model_rebuild()
+
+decision = await reason(
+    "Classify this email: Please approve the renewal quote.",
+    response_format=Decision,
+)
+"queue_reply" if decision.category == "billing" and decision.needs_reply else "archive"
+"""
+
+    out = await execute_code(
+        "test reason structured output",
+        code,
+        language="python",
+        state_mode="stateless",
+    )
+
+    assert get_error(out) is None
+    assert get_result(out) == "queue_reply"
+
+
+@pytest.mark.asyncio
 @pytest.mark.llm_call
 @pytest.mark.timeout(120)
 async def test_execute_code_captures_stdout_from_primitive_result(

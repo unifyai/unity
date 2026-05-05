@@ -3,15 +3,17 @@
 from __future__ import annotations
 
 import json
+import time
 from pathlib import Path
-
 
 from unity.common.pipeline import (
     ArtifactWorkItem,
+    PipelineCancelled,
     PipelineInstrumentation,
     ingest_artifacts,
     run_with_retry,
 )
+from unity.common.pipeline.work_queue import CancellationCheck
 
 # ---------------------------------------------------------------------------
 # PipelineInstrumentation lifecycle
@@ -377,3 +379,114 @@ class TestRunWithRetry:
         result = run_with_retry(fatal, {}, retry_config=cfg, label="fatal")
         assert not result.success
         assert result.failure_kind == "non_retryable"
+
+
+# ---------------------------------------------------------------------------
+# Cancellation integration with ingest_artifacts
+# ---------------------------------------------------------------------------
+
+
+class TestIngestArtifactsCancellation:
+    """Verify cancellation callback is respected by ingest_artifacts."""
+
+    def test_cancellation_before_first_item_marks_cancelled(self):
+        instr = PipelineInstrumentation(run_id="cancel-test")
+        items = [
+            ArtifactWorkItem(
+                kind="table",
+                label="Sheet1",
+                stage_name="ingest_table",
+                meta={},
+            ),
+        ]
+
+        results = ingest_artifacts(
+            work_items=items,
+            ingest_fn=lambda item: {"rows": 0},
+            instrumentation=instr,
+            source_path="test.csv",
+            is_cancelled=lambda: True,
+        )
+
+        assert len(results) == 1
+        assert not results[0].success
+        assert results[0].error == "cancelled"
+
+    def test_cancellation_mid_flight_cancels_remaining(self):
+        call_count = {"n": 0}
+
+        def slow_ingest(item: ArtifactWorkItem):
+            call_count["n"] += 1
+            time.sleep(0.01)
+            return {"rows": 1}
+
+        cancel_after = {"n": 0}
+
+        def check_cancelled() -> bool:
+            cancel_after["n"] += 1
+            return cancel_after["n"] > 1
+
+        instr = PipelineInstrumentation(run_id="cancel-mid-test")
+        items = [
+            ArtifactWorkItem(
+                kind="table",
+                label=f"t{i}",
+                stage_name="ingest_table",
+                meta={},
+            )
+            for i in range(5)
+        ]
+
+        results = ingest_artifacts(
+            work_items=items,
+            ingest_fn=slow_ingest,
+            instrumentation=instr,
+            source_path="test.xlsx",
+            max_workers=1,
+            is_cancelled=check_cancelled,
+        )
+
+        cancelled_results = [r for r in results if r.error == "cancelled"]
+        assert len(cancelled_results) >= 1
+
+    def test_no_cancellation_all_succeed(self):
+        instr = PipelineInstrumentation(run_id="no-cancel-test")
+        items = [
+            ArtifactWorkItem(
+                kind="table",
+                label=f"t{i}",
+                stage_name="ingest_table",
+                meta={},
+            )
+            for i in range(3)
+        ]
+
+        results = ingest_artifacts(
+            work_items=items,
+            ingest_fn=lambda item: {"rows": 10},
+            instrumentation=instr,
+            source_path="test.csv",
+            is_cancelled=lambda: False,
+        )
+
+        assert len(results) == 3
+        assert all(r.success for r in results)
+
+
+# ---------------------------------------------------------------------------
+# PipelineCancelled and CancellationCheck types
+# ---------------------------------------------------------------------------
+
+
+class TestPipelineCancelledTypes:
+    def test_pipeline_cancelled_is_exception(self):
+        exc = PipelineCancelled("job X cancelled")
+        assert isinstance(exc, Exception)
+        assert str(exc) == "job X cancelled"
+
+    def test_cancellation_check_type_alias(self):
+        def checker() -> bool:
+            return True
+
+        fn: CancellationCheck = checker
+        assert fn() is True

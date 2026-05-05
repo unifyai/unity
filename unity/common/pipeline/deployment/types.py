@@ -25,6 +25,7 @@ __all__ = [
     "DeploymentObservabilityRefs",
     "DeploymentQueuePayload",
     "DeploymentRunMode",
+    "DispatchManifest",
     "StageReporter",
 ]
 
@@ -43,7 +44,14 @@ DeploymentExecutorBackend = Literal["local", "cloud_tasks"]
 DeploymentQueueBackend = Literal["in_memory", "pubsub", "cloud_tasks"]
 DeploymentRunMode = Literal["file_manager", "data_manager", "hybrid"]
 DeploymentExecutionTarget = Literal["local", "local_with_gcp", "staging", "production"]
-DeploymentJobState = Literal["queued", "running", "success", "error", "cancelled"]
+DeploymentJobState = Literal[
+    "queued",
+    "running",
+    "success",
+    "error",
+    "cancelled",
+    "paused",
+]
 
 
 class DeploymentBundleArtifact(BaseModel):
@@ -129,6 +137,7 @@ class DeploymentIngestionJob(BaseModel):
     """Tracked execution record for one deployment bundle ingest."""
 
     job_id: str = Field(default_factory=lambda: uuid4().hex)
+    dispatch_id: str = ""
     bundle_ref: DeploymentBundleRef
     run_mode: DeploymentRunMode
     execution_target: DeploymentExecutionTarget = "local"
@@ -142,10 +151,34 @@ class DeploymentIngestionJob(BaseModel):
     error: str | None = None
     cancelled_at: str | None = None
     cancel_reason: str | None = None
+    paused_at: str | None = None
+    pause_reason: str | None = None
+    parked_manifest_keys: list[str] = Field(default_factory=list)
     cost_ledger_path: str | None = None
     observability_refs: DeploymentObservabilityRefs = Field(
         default_factory=DeploymentObservabilityRefs,
     )
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class DispatchManifest(BaseModel):
+    """Batch-level index linking all jobs spawned by a single dispatch invocation.
+
+    Written to ``dispatches/<dispatch_id>/manifest.json`` in GCS by
+    both ``dispatch_pipeline.py`` and ``pipeline_control submit``.
+    The ``list`` CLI scans these manifests to enumerate recent dispatches.
+    """
+
+    dispatch_id: str
+    created_at: str = Field(default_factory=utc_now_iso)
+    source: Literal["dispatch_pipeline", "pipeline_control"] = "dispatch_pipeline"
+    mode: str = ""
+    config_path: str = ""
+    job_ids: list[str] = Field(default_factory=list)
+    total_files: int = 0
+    status_override: Literal["active", "paused"] = "active"
+    paused_at: str | None = None
+    pause_reason: str | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 

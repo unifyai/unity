@@ -20,6 +20,8 @@ import re
 import typing
 from typing import Any, Dict
 
+import unillm
+
 try:
     import pydantic
     from pydantic import BaseModel, Field
@@ -36,6 +38,7 @@ ENVIRONMENT_MODULES: frozenset[str] = frozenset(
     {
         "primitives",
         "pydantic",
+        "unillm",
         "unity",
     },
 )
@@ -209,7 +212,9 @@ def create_execution_globals() -> Dict[str, Any]:
       (state managers, computer use, etc.)
     - Steerable handle infrastructure for creating functions that return
       steerable handles (SteerableToolHandle, start_async_tool_loop,
-      new_llm_client)
+      new_llm_client, reason)
+    - The `unillm` module for advanced direct LLM usage
+    - The `reason` helper for focused one-shot semantic reasoning steps
 
     All primitive imports and instantiations are lazy - only the primitives
     actually used by a function are loaded. This means functions that don't
@@ -253,10 +258,13 @@ def create_execution_globals() -> Dict[str, Any]:
         start_async_tool_loop,
     )
     from unity.common.llm_client import new_llm_client
+    from unity.common.reasoning import reason
 
     globals_dict["SteerableToolHandle"] = SteerableToolHandle
     globals_dict["start_async_tool_loop"] = start_async_tool_loop
     globals_dict["new_llm_client"] = new_llm_client
+    globals_dict["reason"] = reason
+    globals_dict["unillm"] = unillm
 
     return globals_dict
 

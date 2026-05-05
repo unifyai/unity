@@ -559,6 +559,325 @@ async def send_discord_message(
             return result
 
 
+async def send_teams_message(
+    chat_id: str | None = None,
+    team_id: str | None = None,
+    channel_id: str | None = None,
+    body: str = "",
+    content_type: str = "text",
+    attachments: list[dict] | None = None,
+) -> dict:
+    """Send a Microsoft Teams message via the Communication service.
+
+    Routes to the appropriate endpoint based on the parameters:
+    - Chat (1:1, group, meeting): pass ``chat_id`` → POST /teams/send
+    - Channel: pass ``team_id`` and ``channel_id`` → POST /teams/channel/{team_id}/{channel_id}/send
+
+    Args:
+        chat_id: Teams chat ID (for chat messages).
+        team_id: Teams team ID (for channel messages).
+        channel_id: Teams channel ID (for channel messages).
+        body: The text content to send.
+        content_type: "text" (default) or "html".
+        attachments: Optional list of attachment dicts, each with
+            ``filename`` and ``content_base64`` keys. Communication
+            handles the OneDrive upload.
+
+    Returns:
+        dict with 'success' key and optionally 'message_id'.
+    """
+    from_email = SESSION_DETAILS.assistant.email
+    if not from_email:
+        return {"success": False, "error": "No sender email configured"}
+
+    payload: dict = {
+        "from": from_email,
+        "body": body,
+        "content_type": content_type,
+    }
+    if attachments:
+        payload["attachments"] = attachments
+
+    is_channel = bool(team_id and channel_id)
+    if is_channel:
+        url = f"{SETTINGS.conversation.COMMS_URL}/teams/channel/{team_id}/{channel_id}/send"
+    else:
+        payload["chat_id"] = chat_id
+        url = f"{SETTINGS.conversation.COMMS_URL}/teams/send"
+
+    target = "channel" if is_channel else "chat"
+    LOGGER.info(
+        f"{ICONS['comms_outbound']} Teams {target} send → POST {url} "
+        f"from={from_email} chat_id={chat_id or ''} "
+        f"team_id={team_id or ''} channel_id={channel_id or ''} "
+        f"body_len={len(body or '')} attachments={len(attachments or [])}",
+    )
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.post(url, headers=headers, json=payload) as response:
+                try:
+                    response.raise_for_status()
+                except Exception as e:
+                    body_text = ""
+                    try:
+                        body_text = (await response.text())[:500]
+                    except Exception:
+                        pass
+                    error_msg = (
+                        f"HTTP {response.status}: {body_text}"
+                        if body_text
+                        else f"HTTP {response.status}: {e}"
+                    )
+                    LOGGER.error(
+                        f"{ICONS['comms_outbound']} Teams {target} send failed: {error_msg}",
+                    )
+                    return {"success": False, "error": error_msg}
+                result = await response.json()
+                result["success"] = True
+                return result
+    except Exception as e:
+        error_msg = f"{type(e).__name__}: {e}"
+        LOGGER.error(
+            f"{ICONS['comms_outbound']} Teams {target} request failed before response: {error_msg}",
+        )
+        return {"success": False, "error": error_msg}
+
+
+async def create_teams_chat(
+    chat_type: str,
+    member_emails: list[str],
+    topic: str | None = None,
+) -> dict:
+    """Create (or return the existing dedup'd) Microsoft Teams chat.
+
+    POSTs to the Communication ``/teams/chats`` endpoint which wraps Graph
+    ``POST /chats``. Graph dedupes ``oneOnOne`` chats with the same member
+    pair, so repeat calls return the same ``chat_id``.
+
+    Args:
+        chat_type: ``"oneOnOne"`` for a 1:1 DM or ``"group"`` for a group chat.
+        member_emails: Participant UPNs (emails) excluding the assistant
+            sender — the server adds the sender implicitly.
+        topic: Optional topic for ``"group"`` chats; rejected server-side
+            for ``"oneOnOne"``.
+
+    Returns:
+        dict with ``success`` bool and, on success, ``chat_id`` / ``chat_type``.
+    """
+    from_email = SESSION_DETAILS.assistant.email
+    if not from_email:
+        return {"success": False, "error": "No sender email configured"}
+
+    payload: dict = {
+        "from": from_email,
+        "chat_type": chat_type,
+        "members": list(member_emails),
+    }
+    if topic:
+        payload["topic"] = topic
+
+    url = f"{SETTINGS.conversation.COMMS_URL}/teams/chats"
+    LOGGER.info(
+        f"{ICONS['comms_outbound']} Teams chat create → POST {url} "
+        f"from={from_email} chat_type={chat_type} members={len(member_emails)} "
+        f"topic={'yes' if topic else 'no'}",
+    )
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.post(url, headers=headers, json=payload) as response:
+                try:
+                    response.raise_for_status()
+                except Exception as e:
+                    body_text = ""
+                    try:
+                        body_text = (await response.text())[:500]
+                    except Exception:
+                        pass
+                    error_msg = (
+                        f"HTTP {response.status}: {body_text}"
+                        if body_text
+                        else f"HTTP {response.status}: {e}"
+                    )
+                    LOGGER.error(
+                        f"{ICONS['comms_outbound']} Teams chat create failed: {error_msg}",
+                    )
+                    return {"success": False, "error": error_msg}
+                result = await response.json()
+                result["success"] = True
+                return result
+    except Exception as e:
+        error_msg = f"{type(e).__name__}: {e}"
+        LOGGER.error(
+            f"{ICONS['comms_outbound']} Teams chat create request failed before response: {error_msg}",
+        )
+        return {"success": False, "error": error_msg}
+
+
+async def create_teams_channel(
+    team_id: str,
+    display_name: str,
+    description: str | None = None,
+    membership_type: str = "standard",
+    owner_emails: list[str] | None = None,
+) -> dict:
+    """Create a new channel inside an existing Microsoft Teams team.
+
+    POSTs to the Communication ``/teams/channels`` endpoint which wraps Graph
+    ``POST /teams/{team-id}/channels``. The communication service rebuilds
+    the assistant's Teams watch subscriptions on success so new-channel
+    notifications flow immediately.
+
+    Args:
+        team_id: ID of the existing team to create the channel within.
+        display_name: Channel display name.
+        description: Optional channel description.
+        membership_type: ``"standard"``, ``"private"``, or ``"shared"``.
+            ``"private"`` and ``"shared"`` require at least one owner.
+        owner_emails: Required iff ``membership_type != "standard"``. Owner
+            UPNs (emails) for the channel.
+
+    Returns:
+        dict with ``success`` bool and, on success, ``channel_id`` /
+        ``team_id`` / ``membership_type``.
+    """
+    from_email = SESSION_DETAILS.assistant.email
+    if not from_email:
+        return {"success": False, "error": "No sender email configured"}
+
+    payload: dict = {
+        "from": from_email,
+        "team_id": team_id,
+        "display_name": display_name,
+        "membership_type": membership_type,
+    }
+    if description:
+        payload["description"] = description
+    if owner_emails:
+        payload["owners"] = list(owner_emails)
+
+    url = f"{SETTINGS.conversation.COMMS_URL}/teams/channels"
+    LOGGER.info(
+        f"{ICONS['comms_outbound']} Teams channel create → POST {url} "
+        f"from={from_email} team_id={team_id} display_name={display_name!r} "
+        f"membership_type={membership_type} owners={len(owner_emails or [])}",
+    )
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.post(url, headers=headers, json=payload) as response:
+                try:
+                    response.raise_for_status()
+                except Exception as e:
+                    body_text = ""
+                    try:
+                        body_text = (await response.text())[:500]
+                    except Exception:
+                        pass
+                    error_msg = (
+                        f"HTTP {response.status}: {body_text}"
+                        if body_text
+                        else f"HTTP {response.status}: {e}"
+                    )
+                    LOGGER.error(
+                        f"{ICONS['comms_outbound']} Teams channel create failed: {error_msg}",
+                    )
+                    return {"success": False, "error": error_msg}
+                result = await response.json()
+                result["success"] = True
+                return result
+    except Exception as e:
+        error_msg = f"{type(e).__name__}: {e}"
+        LOGGER.error(
+            f"{ICONS['comms_outbound']} Teams channel create request failed before response: {error_msg}",
+        )
+        return {"success": False, "error": error_msg}
+
+
+async def create_teams_meet(
+    *,
+    mode: str,
+    subject: str | None = None,
+    start: str | None = None,
+    end: str | None = None,
+    timezone: str = "UTC",
+    attendees: list[str] | None = None,
+    body_html: str | None = None,
+    location: str | None = None,
+) -> dict:
+    """Create a Microsoft Teams meeting via the communication service.
+
+    Mirrors the shipped ``POST /teams/create_meeting`` contract. ``mode`` is
+    ``"instant"`` for a reusable ad-hoc meeting (no calendar entry) or
+    ``"scheduled"`` for a calendar event with an attached Teams meeting
+    (``subject``, ``start``, ``end`` required downstream).
+
+    ``body_html`` is forwarded verbatim and the comms side sends it with
+    ``contentType=HTML`` to Graph. ``attendees`` is a list of UPNs — the
+    caller resolves contact ids to emails before calling this helper.
+
+    Returns ``{success, join_web_url, meeting_id, event_id, subject, start,
+    end, web_link}`` on success (fields are "" when not applicable to
+    ``mode``), or ``{success: False, error: ...}`` on failure.
+    """
+    from_email = SESSION_DETAILS.assistant.email
+    if not from_email:
+        return {"success": False, "error": "No sender email configured"}
+
+    payload: dict = {
+        "assistant_email": from_email,
+        "mode": mode,
+        "timezone": timezone,
+    }
+    if subject is not None:
+        payload["subject"] = subject
+    if start is not None:
+        payload["start"] = start
+    if end is not None:
+        payload["end"] = end
+    if attendees:
+        payload["attendees"] = list(attendees)
+    if body_html is not None:
+        payload["body"] = body_html
+    if location is not None:
+        payload["location"] = location
+
+    url = f"{SETTINGS.conversation.COMMS_URL}/teams/create_meeting"
+    LOGGER.info(
+        f"{ICONS['comms_outbound']} Teams meeting create → POST {url} "
+        f"from={from_email} mode={mode} subject={(subject or '')[:40]!r} "
+        f"attendees={len(attendees or [])} "
+        f"has_body={'yes' if body_html else 'no'}",
+    )
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.post(url, headers=headers, json=payload) as response:
+                try:
+                    response.raise_for_status()
+                except Exception as e:
+                    body_text = ""
+                    try:
+                        body_text = (await response.text())[:500]
+                    except Exception:
+                        pass
+                    error_msg = (
+                        f"HTTP {response.status}: {body_text}"
+                        if body_text
+                        else f"HTTP {response.status}: {e}"
+                    )
+                    LOGGER.error(
+                        f"{ICONS['comms_outbound']} Teams meeting create failed: {error_msg}",
+                    )
+                    return {"success": False, "error": error_msg}
+                result = await response.json()
+                result["success"] = True
+                return result
+    except Exception as e:
+        error_msg = f"{type(e).__name__}: {e}"
+        LOGGER.error(
+            f"{ICONS['comms_outbound']} Teams meeting create request failed before response: {error_msg}",
+        )
+        return {"success": False, "error": error_msg}
+
+
 async def send_email_via_address(
     to: list[str],
     subject: str,

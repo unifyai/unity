@@ -8,6 +8,9 @@ from pydantic import BaseModel, Field, create_model
 
 from unity.common.prompt_helpers import PromptParts
 from unity.conversation_manager.prompt_builders import build_system_prompt
+from unity.conversation_manager.runtime_status import (
+    deployment_runtime_reconcile_prompt_note,
+)
 from unity.conversation_manager.cm_types import Mode, ScreenshotEntry
 
 if TYPE_CHECKING:
@@ -104,6 +107,13 @@ class BrainSpec:
                 "call, showing the meeting view as you see it. They are paired "
                 "with what was said at each moment and are in chronological order."
             )
+        elif "teams_meet" in sources:
+            header = (
+                "The following screenshots were captured from the Microsoft "
+                "Teams meeting, showing the meeting view as you see it. They "
+                "are paired with what was said at each moment and are in "
+                "chronological order."
+            )
         elif "user" in sources:
             header = (
                 "The following screenshots were captured from the user's screen "
@@ -138,6 +148,7 @@ class BrainSpec:
             "user": "User's Screen",
             "webcam": "User's Webcam",
             "google_meet": "Google Meet",
+            "teams_meet": "Microsoft Teams",
         }
         for i, entry in enumerate(self.screenshots, 1):
             label = source_labels.get(entry.source, "Screenshot")
@@ -227,7 +238,9 @@ def build_brain_spec(
         assistant_has_email=bool(cm.assistant_email),
         assistant_has_whatsapp=bool(cm.assistant_whatsapp_number),
         assistant_has_discord=bool(cm.assistant_discord_bot_id),
+        assistant_has_teams=bool(cm.assistant_has_teams),
         user_desktop_control=SETTINGS.conversation.USER_DESKTOP_CONTROL_ENABLED,
+        runtime_setup_note=deployment_runtime_reconcile_prompt_note(cm),
     )
 
     response_model = _RESPONSE_MODELS[cm.mode]

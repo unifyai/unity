@@ -309,6 +309,81 @@ class GoogleMeetParticipantLeft(Event):
 
 
 @dataclass
+class TeamsMeetReceived(Event):
+    """A request to join a Microsoft Teams meeting via browser."""
+
+    topic: ClassVar[str | None] = "app:comms:teamsmeet_received"
+    prominent: ClassVar[bool] = True
+
+    contact: dict
+    meet_url: str
+
+
+@dataclass
+class TeamsMeetStarted(Event):
+    """The Teams meeting browser session is active and audio bridge is running."""
+
+    topic: ClassVar[str | None] = "app:comms:teamsmeet_started"
+    prominent: ClassVar[bool] = True
+
+    contact: dict
+
+
+@dataclass
+class TeamsMeetEnded(Event):
+    """The Teams meeting browser session has ended."""
+
+    topic: ClassVar[str | None] = "app:comms:teamsmeet_ended"
+    prominent: ClassVar[bool] = True
+
+    contact: dict
+
+
+@dataclass
+class InboundTeamsMeetUtterance(Event):
+    """Utterance received from a participant during a Teams meeting."""
+
+    topic: ClassVar[str | None] = "app:comms:teamsmeet_utterance"
+
+    contact: dict
+    content: str
+    speaker_label: str | None = None
+    participant_names: list[str] | None = None
+    diarization_speaker_id: str | None = None
+
+
+@dataclass
+class OutboundTeamsMeetUtterance(Event):
+    """Utterance sent by the assistant during a Teams meeting."""
+
+    topic: ClassVar[str | None] = "app:comms:teamsmeet_utterance"
+
+    contact: dict
+    content: str
+    participant_names: list[str] | None = None
+
+
+@dataclass
+class TeamsMeetParticipantJoined(Event):
+    """A participant joined the Teams meeting session."""
+
+    topic: ClassVar[str | None] = "app:comms:teamsmeet_participant"
+
+    contact: dict
+    participant_name: str
+
+
+@dataclass
+class TeamsMeetParticipantLeft(Event):
+    """A participant left the Teams meeting session."""
+
+    topic: ClassVar[str | None] = "app:comms:teamsmeet_participant"
+
+    contact: dict
+    participant_name: str
+
+
+@dataclass
 class RecordingReady(Event):
     """A call/meet recording has been processed and is available in GCS."""
 
@@ -469,6 +544,113 @@ class DiscordChannelMessageSent(Event):
     content: str
     channel_id: str = ""
     guild_id: str = ""
+
+
+@dataclass
+class TeamsMessageReceived(Event):
+    """A message received in a Microsoft Teams chat (1:1, group, or meeting)."""
+
+    topic: ClassVar[str | None] = "app:comms:teams_message"
+    content_logged: ClassVar[bool] = True
+
+    contact: dict
+    content: str
+    chat_id: str = ""
+    message_id: str = ""
+    chat_type: str | None = None
+    chat_topic: str | None = None
+    attachments: list[dict] = field(default_factory=list)
+    participants: list[int] = field(default_factory=list)
+
+
+@dataclass
+class TeamsChannelMessageReceived(Event):
+    """A message received in a Microsoft Teams channel."""
+
+    topic: ClassVar[str | None] = "app:comms:teams_channel_message"
+    content_logged: ClassVar[bool] = True
+
+    contact: dict
+    content: str
+    channel_id: str = ""
+    team_id: str = ""
+    message_id: str = ""
+    is_reply: bool = False
+    parent_message_id: str | None = None
+    thread_id: str = ""
+    post_subject: str | None = None
+    attachments: list[dict] = field(default_factory=list)
+    participants: list[int] = field(default_factory=list)
+
+
+@dataclass
+class TeamsMessageSent(Event):
+    """A message sent in a Microsoft Teams chat."""
+
+    topic: ClassVar[str | None] = "app:comms:teams_message_sent"
+    content_logged: ClassVar[bool] = True
+
+    contact: dict
+    content: str
+    chat_id: str = ""
+    attachments: list[dict] | None = None
+    participants: list[int] = field(default_factory=list)
+
+
+@dataclass
+class TeamsChannelMessageSent(Event):
+    """A message sent in a Microsoft Teams channel."""
+
+    topic: ClassVar[str | None] = "app:comms:teams_channel_message_sent"
+    content_logged: ClassVar[bool] = True
+
+    contact: dict
+    content: str
+    channel_id: str = ""
+    team_id: str = ""
+    attachments: list[dict] | None = None
+    participants: list[int] = field(default_factory=list)
+
+
+@dataclass
+class TeamsChannelCreated(Event):
+    """A new Microsoft Teams channel was created by the assistant."""
+
+    topic: ClassVar[str | None] = "app:comms:teams_channel_created"
+    content_logged: ClassVar[bool] = True
+
+    contact: dict
+    team_id: str = ""
+    channel_id: str = ""
+    display_name: str = ""
+    description: str = ""
+    membership_type: str = "standard"
+
+
+@dataclass
+class TeamsMeetCreated(Event):
+    """A Microsoft Teams meeting was created by the assistant via Graph.
+
+    ``mode`` is ``"instant"`` (reusable ad-hoc meeting — ``meeting_id``
+    populated, ``event_id``/``web_link`` empty) or ``"scheduled"`` (calendar
+    event with attached Teams meeting — ``event_id``/``web_link`` populated,
+    ``meeting_id`` empty). ``attendees`` lists the UPNs Graph was asked to
+    invite (scheduled mode only).
+    """
+
+    topic: ClassVar[str | None] = "app:comms:teams_meet_created"
+    content_logged: ClassVar[bool] = True
+
+    contact: dict
+    mode: str = "scheduled"
+    subject: str = ""
+    join_web_url: str = ""
+    meeting_id: str = ""
+    event_id: str = ""
+    start: str = ""
+    end: str = ""
+    attendees: list[str] = field(default_factory=list)
+    web_link: str = ""
 
 
 @dataclass
@@ -1038,6 +1220,24 @@ class TaskDue(Event):
     task_summary: str = ""
     visibility_policy: str = "silent_by_default"
     recurrence_hint: str = "one_off"
+    reason: str = ""
+
+
+@dataclass
+class InactivityFollowup(Event):
+    """Orchestra signalled that the assistant has been silent across all
+    contacts for ``settings.inactivity_followup_days`` and should compose
+    a re-engagement message to the boss.
+
+    Communication publishes this either as a ``unity_system_event`` to a
+    hot pod's Pub/Sub topic or, on a cold start, as an entry in
+    ``StartupEvent.wake_reasons``. The event itself carries no extra
+    fields — the brain decides the variant (never-spoke vs spoke-before)
+    by inspecting transcript history when the handler runs.
+    """
+
+    topic: ClassVar[str | None] = "app:comms:inactivity_followup"
+
     reason: str = ""
 
 

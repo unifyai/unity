@@ -2,13 +2,16 @@
 
 import asyncio
 import hashlib
+from time import perf_counter
 import uuid
 from typing import TYPE_CHECKING, Any
 
 import requests
 
+from unity.common.startup_timing import log_startup_timing
 from unity.conversation_manager.cm_types import Medium
 from unity.conversation_manager.events import FastBrainNotification, TaskDue
+from unity.logger import LOGGER
 from unity.session_details import SESSION_DETAILS
 from unity.task_scheduler.machine_state import (
     TaskActivationSnapshot,
@@ -212,8 +215,9 @@ def _voice_fast_brain_available(cm: "ConversationManager") -> bool:
         getattr(cm.mode, "is_voice", False)
         or getattr(call_manager, "has_active_call", False)
         or getattr(call_manager, "has_active_google_meet", False)
+        or getattr(call_manager, "has_active_teams_meet", False)
         or getattr(call_manager, "_whatsapp_call_joining", False)
-        or getattr(call_manager, "_gmeet_joining", False)
+        or getattr(call_manager, "_meet_joining", False)
         or getattr(call_manager, "_socket_server", None) is not None,
     )
 
@@ -352,6 +356,11 @@ async def _handle_task_due_event(event: TaskDue, cm: "ConversationManager") -> b
 async def _consume_startup_wake_reasons(cm: "ConversationManager") -> None:
     """Replay startup wake reasons once managers are initialized."""
 
+    from unity.conversation_manager.domains.inactivity import (
+        _handle_inactivity_followup_event,
+        _inactivity_followup_event_from_wake_reason,
+    )
+
     wake_reasons = list(getattr(cm, "_startup_wake_reasons", []) or [])
     cm._startup_wake_reasons = []
     if not wake_reasons:
@@ -362,13 +371,19 @@ async def _consume_startup_wake_reasons(cm: "ConversationManager") -> None:
     )
     for wake_reason in wake_reasons:
         task_due_event = _task_due_event_from_wake_reason(wake_reason)
-        if task_due_event is None:
-            cm._session_logger.info(
-                "task_due",
-                f"Ignoring unparseable startup wake reason: {wake_reason!r}",
-            )
+        if task_due_event is not None:
+            await _handle_task_due_event(task_due_event, cm)
             continue
-        await _handle_task_due_event(task_due_event, cm)
+
+        inactivity_event = _inactivity_followup_event_from_wake_reason(wake_reason)
+        if inactivity_event is not None:
+            await _handle_inactivity_followup_event(inactivity_event, cm)
+            continue
+
+        cm._session_logger.info(
+            "task_due",
+            f"Ignoring unparseable startup wake reason: {wake_reason!r}",
+        )
 
 
 def _filter_trigger_candidates(
@@ -523,11 +538,23 @@ async def _surface_trigger_task_candidates(
 ) -> bool:
     """Push one trigger-candidate notification when any live candidates match."""
 
+    _total_t0 = perf_counter()
+    _filter_t0 = perf_counter()
     live_candidates, offline_candidates = _filter_trigger_candidates(
         medium=medium,
         contact_id=contact_id,
     )
+    log_startup_timing(
+        LOGGER,
+        "⏱️ [StartupTiming] task_activation.filter_trigger_candidates duration=%.2fs medium=%s contact_id=%s live=%d offline=%d",
+        perf_counter() - _filter_t0,
+        medium.value,
+        contact_id,
+        len(live_candidates),
+        len(offline_candidates),
+    )
     if offline_candidates:
+        _offline_t0 = perf_counter()
         offline_statuses: list[str] = []
         for candidate in offline_candidates:
             try:
@@ -559,7 +586,18 @@ async def _surface_trigger_task_candidates(
                     f"contact_id={contact_id}: {', '.join(offline_statuses)}"
                 ),
             )
+        log_startup_timing(
+            LOGGER,
+            "⏱️ [StartupTiming] task_activation.dispatch_offline_candidates duration=%.2fs count=%d",
+            perf_counter() - _offline_t0,
+            len(offline_candidates),
+        )
     if not live_candidates:
+        log_startup_timing(
+            LOGGER,
+            "⏱️ [StartupTiming] task_activation.surface_trigger_candidates total=%.2fs result=no_live_candidates",
+            perf_counter() - _total_t0,
+        )
         return False
     source_ref = _build_trigger_source_ref(
         event=event,
@@ -594,6 +632,11 @@ async def _surface_trigger_task_candidates(
         )
         live_candidates_with_tokens.append((candidate, attempt_token))
     if not live_candidates_with_tokens:
+        log_startup_timing(
+            LOGGER,
+            "⏱️ [StartupTiming] task_activation.surface_trigger_candidates total=%.2fs result=no_tokenized_candidates",
+            perf_counter() - _total_t0,
+        )
         return False
     candidate_ids = [
         candidate.task_id for candidate, _attempt_token in live_candidates_with_tokens
@@ -614,6 +657,7 @@ async def _surface_trigger_task_candidates(
             f"contact_id={contact_id}"
         ),
     )
+    _queue_t0 = perf_counter()
     await _queue_fast_brain_task_context(
         cm,
         content=_trigger_candidate_fast_brain_context(
@@ -625,5 +669,16 @@ async def _surface_trigger_task_candidates(
         ),
         source="task_trigger",
         contact=getattr(event, "contact", None),
+    )
+    log_startup_timing(
+        LOGGER,
+        "⏱️ [StartupTiming] task_activation.queue_fast_brain_context duration=%.2fs candidates=%d",
+        perf_counter() - _queue_t0,
+        len(live_candidates_with_tokens),
+    )
+    log_startup_timing(
+        LOGGER,
+        "⏱️ [StartupTiming] task_activation.surface_trigger_candidates total=%.2fs result=matched",
+        perf_counter() - _total_t0,
     )
     return True

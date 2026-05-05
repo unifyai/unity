@@ -103,6 +103,10 @@ def mock_call_manager():
     manager.cleanup_call_proc = AsyncMock()
     manager.has_active_call = False
     manager.has_active_google_meet = False
+    manager.has_active_teams_meet = False
+    manager.has_gmeet_presenting = False
+    manager.has_teams_presenting = False
+    manager._meet_joining = False
     manager._whatsapp_call_joining = False
     manager._gmeet_joining = False
     manager._socket_server = None
@@ -2560,22 +2564,27 @@ class TestAssistantUpdateEventHandler:
             mock_utils.queue_operation = AsyncMock()
             await EventHandler.handle_event(event, mock_cm)
 
-            # Verify queue_operation was called with update_session_contacts
-            mock_utils.queue_operation.assert_called_once()
-            call_args = mock_utils.queue_operation.call_args
+            # Handler queues two operations: sync_assistant_secrets (to refresh
+            # any rotated OAuth tokens) followed by update_session_contacts.
+            assert mock_utils.queue_operation.call_count == 2
+
+            secrets_call = mock_utils.queue_operation.call_args_list[0]
+            assert secrets_call[0][0] == mock_utils.sync_assistant_secrets
+
+            contacts_call = mock_utils.queue_operation.call_args_list[1]
             # First arg is the function (update_session_contacts)
-            assert call_args[0][0] == mock_utils.update_session_contacts
+            assert contacts_call[0][0] == mock_utils.update_session_contacts
             # Remaining args are: cm, assistant_first_name, assistant_surname,
             # assistant_number, assistant_email, user_first_name, user_surname, user_number, user_email
-            assert call_args[0][1] == mock_cm
-            assert call_args[0][2] == "New Assistant"
-            assert call_args[0][3] == "Name"
-            assert call_args[0][4] == "+15555559999"
-            assert call_args[0][5] == "new_assistant@test.com"
-            assert call_args[0][6] == "New Boss"
-            assert call_args[0][7] == "Name"
-            assert call_args[0][8] == "+15555558888"
-            assert call_args[0][9] == "new_boss@test.com"
+            assert contacts_call[0][1] == mock_cm
+            assert contacts_call[0][2] == "New Assistant"
+            assert contacts_call[0][3] == "Name"
+            assert contacts_call[0][4] == "+15555559999"
+            assert contacts_call[0][5] == "new_assistant@test.com"
+            assert contacts_call[0][6] == "New Boss"
+            assert contacts_call[0][7] == "Name"
+            assert contacts_call[0][8] == "+15555558888"
+            assert contacts_call[0][9] == "new_boss@test.com"
 
     @pytest.mark.asyncio
     async def test_assistant_update_handles_no_contact_manager(self, mock_cm):

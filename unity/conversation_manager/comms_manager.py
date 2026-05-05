@@ -25,7 +25,9 @@ from __future__ import annotations
 
 import asyncio
 from functools import partial
+import html
 import json
+import re
 import threading
 import time
 from typing import TYPE_CHECKING, Any
@@ -51,6 +53,9 @@ from unity.conversation_manager.domains.comms_utils import (
     add_email_attachments,
     add_unify_message_attachments,
     publish_system_error,
+)
+from unity.conversation_manager.domains.inactivity import (
+    _inactivity_followup_event_from_payload,
 )
 from unity.conversation_manager.events import *
 from unity.conversation_manager.metrics import pubsub_e2e_latency
@@ -79,6 +84,26 @@ def _already_seen_discord(message_id: str) -> bool:
     if message_id in _seen_discord_ids:
         return True
     _seen_discord_ids[message_id] = now
+    return False
+
+
+# In-memory dedup for Microsoft Graph Teams message IDs.
+# Graph change-notification subscriptions can redeliver when acks fall behind,
+# so we guard against duplicate ingestion the same way Discord does.
+_seen_teams_ids: dict[str, float] = {}
+_TEAMS_DEDUP_TTL = 300.0
+
+
+def _already_seen_teams(message_id: str) -> bool:
+    """Return True if this Teams message_id was already processed recently."""
+    now = time.time()
+    cutoff = now - _TEAMS_DEDUP_TTL
+    expired = [k for k, t in _seen_teams_ids.items() if t < cutoff]
+    for k in expired:
+        del _seen_teams_ids[k]
+    if message_id in _seen_teams_ids:
+        return True
+    _seen_teams_ids[message_id] = now
     return False
 
 
@@ -116,6 +141,42 @@ def _coerce_int(value: Any) -> int | None:
         return int(value)
     except (TypeError, ValueError):
         return None
+
+
+_TEAMS_BR_RE = re.compile(r"<br\s*/?>", re.IGNORECASE)
+_TEAMS_BLOCK_END_RE = re.compile(r"</(p|div|li|h[1-6]|tr)>", re.IGNORECASE)
+_TEAMS_TAG_RE = re.compile(r"<[^>]+>")
+_TEAMS_INLINE_WS_RE = re.compile(r"[ \t]+")
+_TEAMS_BLANK_RUN_RE = re.compile(r"\n{3,}")
+
+
+def _teams_html_to_text(raw: str) -> str:
+    """Convert a Teams HTML message body into plain text.
+
+    Microsoft Graph returns Teams chat and channel message bodies as HTML
+    whenever the user authored them in the Teams UI (e.g. ``<p>hi</p>``).
+    Storing the raw markup in transcripts is noisy and bloats downstream
+    LLM prompts, so we normalize to plain text at ingress:
+
+    - ``<br>`` and block-closing tags (``</p>``, ``</div>`` etc.) become newlines
+    - all remaining tags are dropped
+    - HTML entities (``&amp;``, ``&nbsp;`` etc.) are unescaped
+    - inline whitespace is collapsed; leading/trailing empty lines stripped
+    """
+    if not raw:
+        return ""
+    s = _TEAMS_BR_RE.sub("\n", raw)
+    s = _TEAMS_BLOCK_END_RE.sub("\n", s)
+    s = _TEAMS_TAG_RE.sub("", s)
+    s = html.unescape(s)
+    lines = [_TEAMS_INLINE_WS_RE.sub(" ", line).strip() for line in s.splitlines()]
+    joined = "\n".join(line for line in lines).strip()
+    # An empty paragraph (e.g. ``<p><br></p>``) emits both a ``<br>`` newline and
+    # a closing-tag newline on top of the surrounding paragraphs' own breaks,
+    # which adds up to 3+ consecutive newlines. Collapse runs to a single blank
+    # line so empty paragraphs render as one visual gap, matching how Teams
+    # itself displays them.
+    return _TEAMS_BLANK_RUN_RE.sub("\n\n", joined)
 
 
 def _task_due_event_from_payload(
@@ -162,6 +223,8 @@ events_map: dict[str, Event] = {
     "unify_message": UnifyMessageReceived,
     "api_message": ApiMessageReceived,
     "discord": DiscordMessageReceived,
+    "teams_chat": TeamsMessageReceived,
+    "teams_channel": TeamsChannelMessageReceived,
 }
 
 
@@ -249,6 +312,8 @@ def _get_or_create_unknown_contact(
                 field_name = "email_address"
             elif medium in ("discord_message", "discord_channel_message"):
                 field_name = "discord_id"
+            elif medium in ("teams_message", "teams_channel_message"):
+                field_name = "email_address"
             else:
                 # For unify_message, we don't have external contact details
                 return None
@@ -282,6 +347,52 @@ def _get_or_create_unknown_contact(
         except Exception as e:
             LOGGER.error(f"{DEFAULT_ICON} Error in _get_or_create_unknown_contact: {e}")
             return None
+
+
+def _resolve_teams_participants(
+    *,
+    raw_participants: list[dict],
+    sender_email: str,
+    sender_contact_id: int | None,
+    medium: str,
+    unknown_contact_resolver,
+) -> list[int]:
+    """Collapse the adapter-supplied participants payload into contact IDs.
+
+    Each entry is shaped as ``{"contact_id": int | None, "email": str | None,
+    "display_name": str, "aad_user_id": str | None}``. Pre-resolved entries
+    (``contact_id`` set) are used directly. Unresolved entries with a real
+    email are finished via ``unknown_contact_resolver`` — the single
+    canonical path for minting external contacts (gated by
+    ``BLACKLIST_CHECKS_ENABLED``). Entries without a usable email (or with
+    a synthetic ``@teams`` placeholder) are dropped rather than pollute the
+    contact store.
+
+    The sender's contact_id is seeded into the set because the ingress
+    caller has already resolved them via the sender-specific branch;
+    entries matching ``sender_email`` are skipped to avoid a redundant
+    resolver call.
+    """
+    participant_contact_ids: set[int] = set()
+    if sender_contact_id is not None:
+        participant_contact_ids.add(sender_contact_id)
+
+    for entry in raw_participants:
+        entry_email = (entry.get("email") or "").strip()
+        if entry_email and sender_email and entry_email == sender_email:
+            continue
+        entry_cid = entry.get("contact_id")
+        if entry_cid is not None:
+            participant_contact_ids.add(entry_cid)
+            continue
+        if not entry_email or entry_email.endswith("@teams"):
+            continue
+        resolved = unknown_contact_resolver(medium, entry_email)
+        resolved_cid = (resolved or {}).get("contact_id")
+        if resolved_cid is not None:
+            participant_contact_ids.add(resolved_cid)
+
+    return sorted(participant_contact_ids)
 
 
 class CommsManager:
@@ -518,6 +629,10 @@ class CommsManager:
                         event,
                         reason=r,
                     ),
+                    "inactivity_followup": lambda r: _inactivity_followup_event_from_payload(
+                        event,
+                        reason=r,
+                    ),
                     "assistant_screen_share_started": lambda r: AssistantScreenShareStarted(
                         reason=r or "User enabled assistant screen sharing.",
                     ),
@@ -568,6 +683,12 @@ class CommsManager:
                 )
 
                 content = event["body"]
+
+                if (
+                    thread in ("teams_chat", "teams_channel")
+                    and event.get("content_type") == "html"
+                ):
+                    content = _teams_html_to_text(content)
 
                 if thread == "email":
                     content = "Subject: " + event["subject"] + "\n\n" + event["body"]
@@ -899,6 +1020,114 @@ class CommsManager:
                                 bot_id=bot_id,
                                 message_id=message_id,
                                 attachments=attachments,
+                            ).to_json(),
+                        )
+
+                    if attachments:
+                        schedule(add_unify_message_attachments(attachments))
+
+                    if is_new_unknown:
+                        await publish(
+                            "app:comms:unknown_contact_created",
+                            UnknownContactCreated(
+                                contact=contact,
+                                medium=medium_for_blacklist,
+                                message_preview=content[:100] if content else "",
+                            ).to_json(),
+                        )
+
+                    ack_now()
+                    return
+
+                if thread in ("teams_chat", "teams_channel"):
+                    sender_email = event.get("sender", "")
+                    message_id = event.get("message_id", "")
+                    is_channel = thread == "teams_channel"
+                    attachments = event.get("attachments") or []
+
+                    if message_id and _already_seen_teams(message_id):
+                        LOGGER.debug(
+                            f"{DEFAULT_ICON} Skipping duplicate Teams message {message_id}",
+                        )
+                        ack_now()
+                        return
+
+                    medium_for_blacklist = (
+                        Medium.TEAMS_CHANNEL_MESSAGE
+                        if is_channel
+                        else Medium.TEAMS_MESSAGE
+                    )
+
+                    if _is_blacklisted(medium_for_blacklist, sender_email):
+                        LOGGER.debug(
+                            f"{DEFAULT_ICON} Ignoring blacklisted Teams from: {sender_email}",
+                        )
+                        ack_now()
+                        return
+
+                    contact = next(
+                        (c for c in contacts if c.get("email_address") == sender_email),
+                        None,
+                    )
+                    is_new_unknown = False
+                    if contact is None:
+                        contact = _get_or_create_unknown_contact(
+                            medium_for_blacklist,
+                            sender_email,
+                        )
+                        is_new_unknown = contact is not None
+
+                    if contact is None:
+                        LOGGER.error(
+                            f"{DEFAULT_ICON} Failed to resolve contact for Teams from: {sender_email}",
+                        )
+                        ack_now()
+                        return
+
+                    if event.get("participants_incomplete"):
+                        LOGGER.warning(
+                            f"{DEFAULT_ICON} Teams participants incomplete "
+                            f"(reason={event.get('participants_reason', 'ok')}, "
+                            f"thread={thread})",
+                        )
+
+                    participants_list = _resolve_teams_participants(
+                        raw_participants=event.get("participants") or [],
+                        sender_email=sender_email,
+                        sender_contact_id=contact.get("contact_id"),
+                        medium=medium_for_blacklist,
+                        unknown_contact_resolver=_get_or_create_unknown_contact,
+                    )
+
+                    if is_channel:
+                        await publish(
+                            "app:comms:teams_channel_message",
+                            events_map[thread](
+                                contact=contact,
+                                content=content,
+                                channel_id=event.get("channel_id", ""),
+                                team_id=event.get("team_id", ""),
+                                message_id=message_id,
+                                is_reply=event.get("is_reply", False),
+                                parent_message_id=event.get("parent_message_id"),
+                                thread_id=event.get("thread_id", ""),
+                                post_subject=event.get("post_subject"),
+                                attachments=attachments,
+                                participants=participants_list,
+                            ).to_json(),
+                        )
+                    else:
+                        await publish(
+                            "app:comms:teams_message",
+                            events_map[thread](
+                                contact=contact,
+                                content=content,
+                                chat_id=event.get("chat_id", ""),
+                                message_id=message_id,
+                                chat_type=event.get("chat_type"),
+                                chat_topic=event.get("chat_topic"),
+                                attachments=attachments,
+                                participants=participants_list,
                             ).to_json(),
                         )
 

@@ -587,6 +587,30 @@ class TranscriptManager(BaseTranscriptManager):
             # Non-fatal: do not break message logging if exchanges upsert fails
             pass
 
+        # ── 6. Inactivity-followup activity sync (best-effort, async) ──────
+        # Tell orchestra that the assistant just exchanged a message so its
+        # inactivity-followup routine sees fresh ``last_correspondence_at``
+        # and clears any pending ``last_followup_sent_at``. Skipped for
+        # internal/system-bus-only writes. Dispatched to a daemon thread so
+        # the network round-trip never blocks message logging; failures are
+        # swallowed inside ``touch_assistant_activity``.
+        if not _skip_event_bus and created_messages:
+            try:
+                import threading
+
+                from .activity_sync import touch_assistant_activity
+
+                agent_id = getattr(SESSION_DETAILS.assistant, "agent_id", None)
+                if agent_id is not None:
+                    threading.Thread(
+                        target=touch_assistant_activity,
+                        args=(agent_id,),
+                        daemon=True,
+                        name="touch_assistant_activity",
+                    ).start()
+            except Exception:
+                pass
+
         return created_messages
 
     def join_published(self):
@@ -1253,6 +1277,29 @@ class TranscriptManager(BaseTranscriptManager):
         )
 
         tm_message_id = int(log.entries.get("message_id", -1))
+
+        # ── Inactivity-followup activity sync (best-effort, async) ─────────
+        # Mirrors the hook at the end of log_messages so first-message writes
+        # — which use unity_log directly and bypass log_messages — also bump
+        # last_correspondence_at on the assistant row. Dispatched to a daemon
+        # thread so the network round-trip never blocks the caller; failures
+        # are swallowed inside ``touch_assistant_activity``.
+        try:
+            import threading
+
+            from .activity_sync import touch_assistant_activity
+
+            agent_id = getattr(SESSION_DETAILS.assistant, "agent_id", None)
+            if agent_id is not None:
+                threading.Thread(
+                    target=touch_assistant_activity,
+                    args=(agent_id,),
+                    daemon=True,
+                    name="touch_assistant_activity",
+                ).start()
+        except Exception:
+            pass
+
         return exid, tm_message_id
 
     # Formatting helper: single contacts table + messages

@@ -25,6 +25,7 @@ from .types import (
     DeploymentObservabilityRefs,
     DeploymentQueuePayload,
     DeploymentRunMode,
+    DispatchManifest,
     StageReporter,
 )
 
@@ -45,6 +46,7 @@ __all__ = [
     "DeploymentObservabilityRefs",
     "DeploymentQueuePayload",
     "DeploymentRunMode",
+    "DispatchManifest",
     "LocalDeploymentBundleStore",
     "LocalDeploymentIngestionRunner",
     "LocalDeploymentJobStore",

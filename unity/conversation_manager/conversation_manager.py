@@ -4,6 +4,7 @@ import contextlib
 
 from unity.logger import LOGGER
 from unity.common.hierarchical_logger import DEFAULT_ICON
+from unity.common.startup_timing import log_startup_timing
 from unity.session_details import SESSION_DETAILS
 from unity.settings import SETTINGS
 from unity.manager_registry import SingletonABCMeta
@@ -108,6 +109,7 @@ class ConversationManager(metaclass=SingletonABCMeta):
         assistant_timezone: str = "",
         assistant_whatsapp_number: str = "",
         assistant_discord_bot_id: str = "",
+        assistant_email_provider: str = "",
         assistant_job_title: str = "",
         past_events: list | None = None,
         conv_context_length: int = 50,
@@ -133,6 +135,7 @@ class ConversationManager(metaclass=SingletonABCMeta):
         self.assistant_email = assistant_email
         self.assistant_whatsapp_number = assistant_whatsapp_number
         self.assistant_discord_bot_id = assistant_discord_bot_id
+        self.assistant_email_provider = assistant_email_provider
         self.user_first_name = user_first_name
         self.user_surname = user_surname
         self.user_number = user_number
@@ -143,6 +146,7 @@ class ConversationManager(metaclass=SingletonABCMeta):
         self.ready_for_brain: bool = True
         self.vm_ready: bool = False
         self.file_sync_complete: bool = False
+        self.deployment_runtime_reconcile_status: Any | None = None
         # logging
         self.loop = asyncio.get_event_loop()
         self.project_name = project_name
@@ -180,12 +184,16 @@ class ConversationManager(metaclass=SingletonABCMeta):
         self.chat_history = []
         self.contact_index = ContactIndex()
         self.notifications_bar = NotificationBar()
-        self.in_flight_actions: dict[int, dict] = (
+        self.in_flight_actions: dict[
+            int,
+            dict,
+        ] = (
             {}
         )  # dict[int, {"handle": "SteerableTool", "query": "str", "handle_actions": []}]
-        self.completed_actions: dict[int, dict] = (
-            {}
-        )  # Finished actions, kept for post-completion ask() queries
+        self.completed_actions: dict[
+            int,
+            dict,
+        ] = {}  # Finished actions, kept for post-completion ask() queries
         self._pending_steering_tasks: set[asyncio.Task] = (
             set()
         )  # Background tasks from async steering ops (e.g., ask_*)
@@ -277,6 +285,19 @@ class ConversationManager(metaclass=SingletonABCMeta):
         self.notifications_bar.notifications = [
             n for i, n in enumerate(notifs) if n.pinned or i >= snap_n
         ]
+
+    @property
+    def assistant_has_teams(self) -> bool:
+        """True when Microsoft Teams capabilities are available to this assistant.
+
+        Derived from the email provider rather than a dedicated flag because
+        Teams access is gated by the same MS365 OAuth grant that backs the
+        assistant's email — provisioning the Teams scopes without an MS365
+        mailbox is not a supported configuration. Update both `assistant_has_teams`
+        and `_assistant_has_teams` in `unity.comms.primitives` together if a
+        first-class Teams flag is ever introduced.
+        """
+        return self.assistant_email_provider == "microsoft_365"
 
     @property
     def session_logger(self) -> SessionLogger:
@@ -579,6 +600,8 @@ class ConversationManager(metaclass=SingletonABCMeta):
 
         if self.call_manager.has_active_google_meet:
             voice_medium = Medium.GOOGLE_MEET
+        elif self.call_manager.has_active_teams_meet:
+            voice_medium = Medium.TEAMS_MEET
         elif self.mode == Mode.MEET:
             voice_medium = Medium.UNIFY_MEET
         elif self.call_manager._call_channel == "whatsapp_call":
@@ -972,6 +995,21 @@ class ConversationManager(metaclass=SingletonABCMeta):
         }
         self._pending_llm_requests.append((delay, cancel_running, is_user_origin))
         self._pending_llm_request_meta.append(request_meta)
+        log_startup_timing(
+            LOGGER,
+            (
+                "⏱️ [StartupTiming] first_reply.request_llm_run queued "
+                "request_id=%s origin_event=%s delay=%s cancel_running=%s "
+                "is_user_origin=%s pending=%d ready_for_brain=%s"
+            ),
+            request_id,
+            request_meta["origin_event_name"] or "-",
+            delay,
+            cancel_running,
+            is_user_origin,
+            len(self._pending_llm_requests),
+            self.ready_for_brain,
+        )
         self._session_logger.debug(
             "llm_queue",
             (
@@ -1011,6 +1049,21 @@ class ConversationManager(metaclass=SingletonABCMeta):
         run_id = f"llmrun-{self._llm_run_seq:06d}"
         selected_meta["run_id"] = run_id
         selected_meta["dropped_requests"] = str(dropped_requests)
+        log_startup_timing(
+            LOGGER,
+            (
+                "⏱️ [StartupTiming] first_reply.flush_llm_requests dispatch "
+                "run_id=%s request_id=%s origin_event=%s dropped=%d delay=%s "
+                "cancel_running=%s is_user_origin=%s"
+            ),
+            run_id,
+            selected_meta.get("request_id", "-"),
+            selected_meta.get("origin_event_name", "-") or "-",
+            dropped_requests,
+            delay,
+            cancel_running,
+            is_user_origin,
+        )
 
         self._session_logger.debug(
             "llm_thinking",
@@ -1022,6 +1075,18 @@ class ConversationManager(metaclass=SingletonABCMeta):
                 f"dropped_requests={dropped_requests} delay={delay} "
                 f"cancel_running={cancel_running} is_user_origin={is_user_origin}"
             ),
+        )
+        log_startup_timing(
+            LOGGER,
+            (
+                "⏱️ [StartupTiming] first_reply.run_llm_submitted "
+                "run_id=%s request_id=%s origin_event=%s was_queued=%s mode=%s"
+            ),
+            run_id,
+            selected_meta.get("request_id", "-") or "-",
+            selected_meta.get("origin_event_name", "-") or "-",
+            self.debouncer.was_queued,
+            self.mode,
         )
         await self.run_llm(
             delay=delay,
@@ -1141,6 +1206,7 @@ class ConversationManager(metaclass=SingletonABCMeta):
             user_webcam_active=self.user_webcam_active,
             user_remote_control_active=self.user_remote_control_active,
             google_meet_active=self.call_manager.has_active_google_meet,
+            teams_meet_active=self.call_manager.has_active_teams_meet,
             active_web_sessions=web_sessions,
             managers_initialized=self.initialized,
             vm_ready=self.vm_ready,
@@ -1228,6 +1294,22 @@ class ConversationManager(metaclass=SingletonABCMeta):
                 f"calling single_shot_tool_decision ({len(tools)} tools, {len(messages)} msgs)"
             ),
         )
+        log_startup_timing(
+            LOGGER,
+            (
+                "⏱️ [StartupTiming] first_reply.llm_preamble "
+                "run_id=%s duration=%s render_state=%.0fms brain_spec=%.0fms "
+                "tools=%.0fms client=%.0fms tool_count=%d message_count=%d"
+            ),
+            run_id,
+            _ms_since_start(),
+            _render_ms,
+            _brain_spec_ms,
+            _tools_ms,
+            _client_ms,
+            len(tools),
+            len(messages),
+        )
         try:
             result = await single_shot_tool_decision(
                 client,
@@ -1235,7 +1317,12 @@ class ConversationManager(metaclass=SingletonABCMeta):
                 tools,
                 tool_choice="required" if tools else "auto",
                 response_format=response_model,
-                exclusive_tools={"make_call", "make_whatsapp_call", "join_google_meet"},
+                exclusive_tools={
+                    "make_call",
+                    "make_whatsapp_call",
+                    "join_google_meet",
+                    "join_teams_meet",
+                },
             )
         finally:
             if hasattr(client, "_pending_thinking_log"):
@@ -1245,6 +1332,13 @@ class ConversationManager(metaclass=SingletonABCMeta):
         self._session_logger.debug(
             "perf",
             f"[_run_llm +{_rl_ms()}] single_shot returned tools={tool_names}",
+        )
+        log_startup_timing(
+            LOGGER,
+            "⏱️ [StartupTiming] first_reply.single_shot duration=%s run_id=%s tools=%s",
+            _rl_ms(),
+            run_id,
+            tool_names,
         )
 
         # Extract structured output (thoughts)
@@ -1313,6 +1407,12 @@ class ConversationManager(metaclass=SingletonABCMeta):
             f"[_run_llm +{_rl_ms()}] voice notification done, committing",
         )
         self.commit()
+        log_startup_timing(
+            LOGGER,
+            "⏱️ [StartupTiming] first_reply.commit completed run_id=%s elapsed=%s",
+            run_id,
+            _rl_ms(),
+        )
         self._session_logger.debug("state_update", "Committing state")
 
         # Clear the temporary state snapshots now that tools have executed
@@ -1356,6 +1456,12 @@ class ConversationManager(metaclass=SingletonABCMeta):
         self._session_logger.debug(
             "perf",
             f"[_run_llm +{_rl_ms()}] post-processing done",
+        )
+        log_startup_timing(
+            LOGGER,
+            "⏱️ [StartupTiming] first_reply.post_processing completed run_id=%s elapsed=%s",
+            run_id,
+            _rl_ms(),
         )
         self._session_logger.debug(
             "llm_response",
@@ -1406,11 +1512,28 @@ class ConversationManager(metaclass=SingletonABCMeta):
                         ),
                     )
                 try:
+                    _event_t0 = self.loop.time()
                     await EventHandler.handle_event(
                         event,
                         self,
                     )
+                    log_startup_timing(
+                        LOGGER,
+                        "⏱️ [StartupTiming] event.handle_event duration=%.2fs event_id=%s event=%s channel=%s",
+                        self.loop.time() - _event_t0,
+                        event_id,
+                        event_name,
+                        channel or "-",
+                    )
+                    _flush_t0 = self.loop.time()
                     await self.flush_llm_requests()
+                    log_startup_timing(
+                        LOGGER,
+                        "⏱️ [StartupTiming] event.flush_llm_requests duration=%.2fs event_id=%s event=%s",
+                        self.loop.time() - _flush_t0,
+                        event_id,
+                        event_name,
+                    )
                 except Exception as exc:
                     LOGGER.error(
                         f"⚠️ [EventLoop] Unhandled error processing "
@@ -1607,6 +1730,8 @@ class ConversationManager(metaclass=SingletonABCMeta):
             await local_ingress.stop()
         if self.call_manager.has_active_google_meet:
             await self.call_manager.cleanup_google_meet()
+        elif self.call_manager.has_active_teams_meet:
+            await self.call_manager.cleanup_teams_meet()
         else:
             await self.call_manager.cleanup_call_proc()
         await self.call_manager.cleanup_persistent_worker()
@@ -1798,6 +1923,7 @@ class ConversationManager(metaclass=SingletonABCMeta):
                 user_webcam_active=self.user_webcam_active,
                 user_remote_control_active=self.user_remote_control_active,
                 google_meet_active=self.call_manager.has_active_google_meet,
+                teams_meet_active=self.call_manager.has_active_teams_meet,
                 vm_ready=self.vm_ready,
                 file_sync_complete=self.file_sync_complete,
                 has_desktop=_has_desktop,
@@ -1843,6 +1969,8 @@ class ConversationManager(metaclass=SingletonABCMeta):
                 contact_id = contact.get("contact_id")
                 if self.call_manager.has_active_google_meet:
                     voice_medium = Medium.GOOGLE_MEET
+                elif self.call_manager.has_active_teams_meet:
+                    voice_medium = Medium.TEAMS_MEET
                 elif self.mode == Mode.MEET:
                     voice_medium = Medium.UNIFY_MEET
                 elif self.call_manager._call_channel == "whatsapp_call":

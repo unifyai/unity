@@ -87,11 +87,6 @@ spec:
         ports:
         - containerPort: 8080
           name: health
-        envFrom:
-        - configMapRef:
-            name: unity-config
-        - secretRef:
-            name: unity-secrets
         env:
         - name: WATCH_NAMESPACE
           value: production
@@ -101,6 +96,11 @@ spec:
           value: "https://unity-comms-app-262420637606.us-central1.run.app"
         - name: ORCHESTRA_URL
           value: "https://api.unify.ai/v0"
+        - name: ORCHESTRA_ADMIN_KEY
+          valueFrom:
+            secretKeyRef:
+              name: unity-secrets
+              key: ORCHESTRA_ADMIN_KEY
         resources:
           requests:
             cpu: 50m

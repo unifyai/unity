@@ -185,7 +185,7 @@ def _build_phone_scenarios(phone_number: str | None) -> str:
         return ""
     return """- If my boss asks me to call someone while I am on a call with them, I should make the call AFTER the call ends — attempting to make a call while on a call will result in an error.
 - If my boss asks me to call someone, I must inform them that I am about to call the person before actually calling them, something like "Sure, will call them now!".
-- Calls and Google Meet sessions are mutually exclusive — I cannot join a Google Meet while on a call, or make a call while in a Google Meet. If asked, I should let my boss know I will do it after the current session ends."""
+- Calls and browser meetings (Google Meet or Microsoft Teams) are mutually exclusive — I cannot join a Google Meet or Teams meeting while on a call, or make a call while in a Google Meet or Teams meeting. If asked, I should let my boss know I will do it after the current session ends."""
 
 
 def _build_missing_phone_notice(assistant_has_phone: bool) -> str:
@@ -214,6 +214,7 @@ def _build_comms_tool_listing(
     assistant_has_email: bool,
     assistant_has_whatsapp: bool = False,
     assistant_has_discord: bool = False,
+    assistant_has_teams: bool = False,
 ) -> str:
     """Build the communication tools block for the output format section."""
     lines: list[str] = []
@@ -228,6 +229,46 @@ def _build_comms_tool_listing(
         lines.append(
             "- `send_discord_message`: Send a Discord message to a contact (use when the inbound thread is `discord_message`)",
         )
+    if assistant_has_teams:
+        lines.append(
+            "- `send_teams_message`: Send a Teams message. Three mutually "
+            "exclusive modes: "
+            "(1) reply in an existing 1:1/group chat — pass the `chat_id` "
+            "shown on the most recent inbound Teams message in that thread "
+            '(rendered as `[chat_id="…"]` on the message line); '
+            "(2) post in a channel — pass `team_id` and `channel_id` (and "
+            "`thread_id` when replying in an existing thread) from the "
+            "inbound channel message's annotation; "
+            "(3) start a new chat — omit chat_id/team_id/channel_id and pass "
+            "one or more recipients via `contact_id` (list form). One "
+            "recipient creates a 1:1 DM (dedupes to the same chat on repeat); "
+            "two or more recipients create a group chat and accept an "
+            "optional `chat_topic`.",
+        )
+        lines.append(
+            "- `create_teams_channel`: Create a new channel inside an "
+            "existing Teams team. Use this when the user wants a dedicated "
+            "channel (not just a chat). After creation, use "
+            "`send_teams_message` with the returned `team_id`/`channel_id` "
+            "to post into it. `private` and `shared` channels require "
+            "`owner_contact_ids`.",
+        )
+        lines.append(
+            "- `create_teams_meet`: Create a Microsoft Teams meeting via "
+            "Graph. Default mode is `scheduled` — supply `subject` "
+            "(required), and optionally `start` (ISO-8601; defaults to ~5min "
+            "from now), `duration_minutes` (default 30), "
+            "`attendee_contact_ids` to invite people (Outlook invites go out "
+            "automatically), `body_html` (sent verbatim as HTML), and "
+            "`location`. The meeting appears on calendars and generates "
+            'invites. Pass `mode="instant"` instead for a reusable ad-hoc '
+            "link with no calendar entry and no invites "
+            "(`start`/`duration_minutes`/`attendee_contact_ids` are ignored "
+            "in that mode). In both modes the returned `join_web_url` can "
+            "be passed straight to `join_teams_meet` to join the meeting "
+            "myself, or shared via `send_teams_message` / `send_email` / "
+            "`send_sms`.",
+        )
     lines.append(
         "- `send_api_response`: Reply to a programmatic API message (use when the inbound medium is `api_message`). Supports optional `attachment_filepaths` and `tags`.",
     )
@@ -241,6 +282,9 @@ def _build_comms_tool_listing(
         )
     lines.append(
         "- `join_google_meet`: Join a Google Meet call via browser automation (provide the Meet URL)",
+    )
+    lines.append(
+        "- `join_teams_meet`: Join a Microsoft Teams meeting via browser automation (provide the Teams meeting URL)",
     )
     return "\n".join(lines)
 
@@ -293,7 +337,9 @@ def build_system_prompt(
     assistant_has_email: bool = True,
     assistant_has_whatsapp: bool = False,
     assistant_has_discord: bool = False,
+    assistant_has_teams: bool = False,
     user_desktop_control: bool = False,
+    runtime_setup_note: str | None = None,
 ) -> PromptParts:
     """Build the system prompt for the ConversationManager LLM.
 
@@ -324,6 +370,8 @@ def build_system_prompt(
     assistant_has_email : bool
         Whether the assistant has an email address configured (gates email
         tool listing and adds a missing-capability notice when False).
+    runtime_setup_note : str | None
+        Optional guidance about background setup/readiness.
 
     Returns
     -------
@@ -352,12 +400,13 @@ def build_system_prompt(
         assistant_has_email,
         assistant_has_whatsapp,
         assistant_has_discord,
+        assistant_has_teams,
     )
     sms_call_note = (
         " I can send SMS while on a call, but I cannot make a new call"
-        " or join a Google Meet while already on one (and vice versa)."
+        " or join a Google Meet / Microsoft Teams meeting while already on one (and vice versa)."
         if assistant_has_phone
-        else " I cannot make a call and join a Google Meet at the same time."
+        else " I cannot make a call and join a Google Meet or Microsoft Teams meeting at the same time."
     )
     input_format_example = _build_input_format_example()
 
@@ -379,6 +428,13 @@ I am a fully remote virtual employee. I am not a chatbot or an AI assistant — 
 
 I communicate with my boss and their contacts directly through different mediums. I can communicate with several people at the same time — more details in the Input format and Output format sections.{voice_note}""",
     )
+
+    if runtime_setup_note:
+        parts.add(
+            f"""Setup readiness
+---------------
+{runtime_setup_note}""",
+        )
 
     # Bio
     parts.add(
@@ -689,6 +745,11 @@ I do NOT need to poll or check on actions - the system will wake me when somethi
             available_tool_names.index("send_unify_message"),
             "send_discord_message",
         )
+    if assistant_has_teams:
+        idx = available_tool_names.index("send_unify_message")
+        available_tool_names.insert(idx, "send_teams_message")
+        available_tool_names.insert(idx + 1, "create_teams_channel")
+        available_tool_names.insert(idx + 2, "create_teams_meet")
     comms_tool_names = ", ".join(available_tool_names)
 
     inline_detail_examples: list[str] = []
@@ -708,6 +769,17 @@ I do NOT need to poll or check on actions - the system will wake me when somethi
         inline_detail_examples.append(
             '`send_discord_message(contact_id=5, content="Hi", discord_id="123456789")`',
         )
+    if assistant_has_teams:
+        inline_detail_examples.append(
+            '`send_teams_message(contact_id=[{{"contact_id": 5, "email_address": "alice@example.com"}}], content="Hi")`',
+        )
+    # Note: send_teams_message's `chat_id` / `team_id` / `channel_id` / `thread_id`
+    # are NOT contact-level details — they are per-thread identifiers surfaced on
+    # each inbound Teams message (see the tool description). They must not be
+    # listed here under the inline-contact-detail guidance. The inline-email
+    # example above applies only when starting a **new** Teams chat (find-or-
+    # create mode), which uses the same `{{contact_id, email_address}}` shape
+    # as `send_email`.
     inline_detail_line = ""
     if inline_detail_examples:
         examples_str = " or ".join(inline_detail_examples)
@@ -730,6 +802,11 @@ I do NOT need to poll or check on actions - the system will wake me when somethi
         available_channels.insert(
             available_channels.index("unify messages"),
             "Discord",
+        )
+    if assistant_has_teams:
+        available_channels.insert(
+            available_channels.index("unify messages"),
+            "Teams",
         )
     channels_str = ", ".join(available_channels)
 
@@ -1110,7 +1187,8 @@ NOT: first the action, then in a separate response {ack_tool}. That's inefficien
         f"""Scenarios
 ---------
 - If my boss gives a wrong contact address, I will receive an error after the communication attempt, or worse, it might be a completely different person. Simply inform my boss about the error and ask them if there could be something wrong with the contact detail. On the following communication attempt, just change the wrong contact details (phone number or email), and the detail will be implicitly updated.{phone_scenarios_section}
-- To join a Google Meet, I must always use the `join_google_meet` tool — never navigate to a Meet URL via `act`. The `join_google_meet` tool configures audio devices and establishes the voice pipeline; using `act` to visit the URL would join silently with no ability to hear or speak.""",
+- To join a Google Meet, I must always use the `join_google_meet` tool — never navigate to a Meet URL via `act`. The `join_google_meet` tool configures audio devices and establishes the voice pipeline; using `act` to visit the URL would join silently with no ability to hear or speak.
+- To join a Microsoft Teams meeting, I must always use the `join_teams_meet` tool — never navigate to a Teams meeting URL via `act`. Like `join_google_meet`, this tool configures the audio pipeline; using `act` to visit the URL would join silently with no ability to hear or speak.""",
     )
 
     # Add time footer (dynamic content - changes per call)
@@ -1240,7 +1318,8 @@ def build_voice_agent_prompt(
     channel : str
         Voice session medium: ``"phone"`` for a regular phone call,
         ``"unify_meet"`` for a Unify Meet video call,
-        ``"google_meet"`` for a Google Meet call joined via browser.
+        ``"google_meet"`` for a Google Meet call joined via browser,
+        ``"teams_meet"`` for a Microsoft Teams meeting joined via browser.
 
     Returns
     -------
@@ -1283,6 +1362,7 @@ def build_voice_agent_prompt(
     call_description = {
         "unify_meet": "a Unify Meet video call",
         "google_meet": "a Google Meet call (joined via browser — participants may include people I don't know)",
+        "teams_meet": "a Microsoft Teams meeting (joined via browser — participants may include people I don't know)",
     }.get(channel, "a phone call")
     parts.add(
         f"""{name_intro} {call_description} with {caller_description}. The call is live — anything I say is heard by the caller immediately.
@@ -1607,6 +1687,26 @@ screenshots of the meeting tab, labeled:
 - `=== GOOGLE MEET (live view of the meeting) ===` — what the meeting looks
   like right now: participant video tiles, any content being presented, chat
   messages visible in the Meet UI, and meeting controls.
+
+I **can** see the meeting. When someone asks "can you see my screen?" or
+"can you see the meeting?", I confirm that I can — because the screenshot
+in my context IS the live meeting view. I use it to observe who is present,
+what is being presented or shared, and any visual cues from participants.
+
+Screenshots update every few seconds. They are background context — I do not
+narrate what I see unless asked or unless it is directly relevant to the
+conversation.""",
+        )
+
+    if channel == "teams_meet":
+        parts.add(
+            """Microsoft Teams visual context
+-----------------------------
+I am in a Microsoft Teams meeting joined via an automated browser. I receive
+periodic screenshots of the meeting tab, labeled:
+- `=== TEAMS MEETING (live view of the meeting) ===` — what the meeting looks
+  like right now: participant video tiles, any content being presented, chat
+  messages visible in the Teams UI, and meeting controls.
 
 I **can** see the meeting. When someone asks "can you see my screen?" or
 "can you see the meeting?", I confirm that I can — because the screenshot

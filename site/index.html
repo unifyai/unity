@@ -29,6 +29,9 @@
           <a href="#context">In context</a>
           <a href="#what">Features</a>
           <a href="#install">Install</a>
+          <a href="https://console.unify.ai/" target="_blank" rel="noreferrer"
+            >Hosted deployment ↗</a
+          >
           <a href="#architecture">Architecture</a>
           <a href="https://github.com/unifyai/unity" target="_blank" rel="noreferrer"
             >GitHub ↗</a
@@ -69,9 +72,9 @@
               <a class="btn ghost" href="#install">Quick install</a>
             </div>
             <p class="hero-quote">
-              Every operation returns a live handle — ask, interject, pause, or
-              stop it mid-run.
-              <span class="quote-attr">SteerableToolHandle</span>
+              Shared state is opt-in per manager — contacts, tasks,
+              transcripts, knowledge.
+              <span class="quote-attr">Typed state managers</span>
             </p>
           </div>
 
@@ -81,24 +84,26 @@
                 <span class="panel-dot red"></span>
                 <span class="panel-dot amber"></span>
                 <span class="panel-dot green"></span>
-                <span class="panel-title">unity://session</span>
+                <span class="panel-title">unity://team</span>
               </div>
-              <pre class="panel-body"><code><span class="c-dim">$</span> <span class="c-fn">assistant</span>.act(<span class="c-str">"catch Sarah up on the Q3 launch"</span>)
+              <pre class="panel-body"><code><span class="c-dim">$</span> <span class="c-fn">analyst</span>.act(<span class="c-str">"summarize Q3 launch risks"</span>)
+<span class="c-dim">$</span> <span class="c-fn">ops</span>.act(<span class="c-str">"review rollout checklist"</span>)
+<span class="c-dim">$</span> <span class="c-fn">comms</span>.act(<span class="c-str">"draft stakeholder update"</span>)
 
-<span class="c-ok">◎</span> conversation_manager <span class="c-dim">// steering</span>
- └─ <span class="c-ok">◎</span> actor.act
-     ├─ <span class="c-accent">contacts</span>.ask(<span class="c-str">"who is Sarah?"</span>)
-     ├─ <span class="c-accent">knowledge</span>.ask(<span class="c-str">"Q3 launch notes"</span>)
-     ├─ <span class="c-accent">transcripts</span>.ask(<span class="c-str">"recent threads"</span>)
-     └─ <span class="c-accent">comms</span>.send(<span class="c-str">"draft catch-up email"</span>)
+<span class="c-ok">◎</span> shared_state
+ ├─ <span class="c-accent">contacts</span>      Sarah, Finance, Launch Team
+ ├─ <span class="c-accent">tasks</span>         budget_followup, q3_update
+ ├─ <span class="c-accent">transcripts</span>   launch_sync, finance_thread
+ └─ <span class="c-accent">knowledge</span>     rollout_notes, Q3_risks
 
-<span class="c-dim">&gt;</span> user: <span class="c-user">"also mention the budget thing"</span>
-<span class="c-ok">◎</span> interject <span class="c-dim">// no restart required</span></code></pre>
+<span class="c-dim">&gt;</span> user: <span class="c-user">"have ops take the budget issue"</span>
+<span class="c-ok">◎</span> shared_state.tasks.update(<span class="c-str">"q3_update"</span>, <span class="c-str">"budget"</span>)
+<span class="c-ok">◎</span> ops sees the change immediately</code></pre>
               <div class="panel-foot">
-                <span class="foot-pill">pause</span>
-                <span class="foot-pill">resume</span>
+                <span class="foot-pill">handoff</span>
+                <span class="foot-pill">share</span>
                 <span class="foot-pill">interject</span>
-                <span class="foot-pill">ask</span>
+                <span class="foot-pill">inspect</span>
                 <span class="foot-pill">stop</span>
               </div>
             </div>
@@ -319,6 +324,13 @@ unity --project_name Sandbox --overwrite</code></pre>
             Orchestra anytime; <code>unity stop</code> / <code>unity
             status</code> control it.
           </p>
+          <p class="install-note install-note-secondary">
+            Prefer not to run the local stack yourself? Hosted deployment is
+            also available through
+            <a href="https://console.unify.ai/" target="_blank" rel="noreferrer"
+              >Unify Console ↗</a
+            >.
+          </p>
         </section>
 
         <!-- ARCHITECTURE -->
@@ -427,20 +439,17 @@ unity --project_name Sandbox --overwrite</code></pre>
             <div class="signal-card">
               <div class="signal-head">
                 <span class="signal-dot"></span>
-                <span>four repos</span>
+                <span>two paths</span>
               </div>
               <p class="signal-quote">
-                <em>All MIT-licensed.</em>
+                <em>Local or hosted.</em>
               </p>
               <p class="signal-note">
-                <strong>unity-agent</strong> is the code you run — the
-                assistants and their managers.
-                <strong>orchestra</strong> is the persistence backend
-                (FastAPI + Postgres + pgvector) that the installer spins
-                up locally in Docker. <strong>unify</strong> is the
-                Python SDK that talks to Orchestra; <strong>unillm</strong>
-                is the provider-agnostic LLM client. The installer wires
-                all four together.
+                Run <strong>unity-agent</strong> locally from this repo, or use
+                <a href="https://console.unify.ai/" target="_blank" rel="noreferrer"
+                  >hosted deployment via Unify Console ↗</a
+                >. The local installer sets up the full open-source stack on
+                your machine.
               </p>
             </div>
           </div>
@@ -454,9 +463,6 @@ unity --project_name Sandbox --overwrite</code></pre>
         </div>
         <div class="footer-right">
           <a href="https://github.com/unifyai/unity" target="_blank" rel="noreferrer">GitHub</a>
-          <a href="https://github.com/unifyai/unify" target="_blank" rel="noreferrer">unify</a>
-          <a href="https://github.com/unifyai/unillm" target="_blank" rel="noreferrer">unillm</a>
-          <a href="https://github.com/unifyai/orchestra" target="_blank" rel="noreferrer">orchestra</a>
           <a href="https://discord.com/invite/sXyFF8tDtm" target="_blank" rel="noreferrer">Discord</a>
         </div>
       </footer>

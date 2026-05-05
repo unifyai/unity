@@ -32,7 +32,6 @@ from unity.conversation_manager.events import (
     ActorHandleStarted,
     ActorHandleResponse,
     FastBrainNotification,
-    Error,
 )
 from unity.common._async_tool.dynamic_tools_factory import DynamicToolFactory
 from unity.common._async_tool.utils import get_handle_paused_state
@@ -121,47 +120,7 @@ def schema_dict_to_pydantic(
     return _create_model(model_name, **fields)
 
 
-def _coerce_contact_id(v: Any) -> int:
-    """Coerce a contact_id value to int, handling string-encoded integers."""
-    if isinstance(v, int):
-        return v
-    if isinstance(v, str):
-        try:
-            return int(v)
-        except (ValueError, TypeError):
-            pass
-    raise TypeError(f"contact_id must be an integer, got {type(v).__name__}: {v!r}")
-
-
-# Global handle ID counter for action tracking
 _next_handle_id = 0
-
-
-def _get_contact_display_name(contact: dict | None) -> str:
-    """Get a display name for a contact for error messages."""
-    if not contact:
-        return "unknown contact"
-    first = contact.get("first_name") or ""
-    last = contact.get("surname") or ""
-    name = f"{first} {last}".strip()
-    if not name:
-        name = f"contact_id={contact.get('contact_id', 'unknown')}"
-    return name
-
-
-def _check_outbound_allowed(contact: dict | None) -> str | None:
-    """Check if outbound communication is allowed for a contact."""
-    if not contact:
-        return "Contact not found"
-    should_respond = contact.get("should_respond", False)
-    if not should_respond:
-        contact_name = _get_contact_display_name(contact)
-        return (
-            f"Cannot send outbound communication to {contact_name}: "
-            f"should_respond is False for this contact. "
-            f"Check the contact's response_policy for details or ask your boss for guidance."
-        )
-    return None
 
 
 # Pattern matching <in_flight_actions>...</in_flight_actions> sections.
@@ -281,44 +240,6 @@ class ConversationManagerBrainActionTools:
             event_broker=self._event_broker,
         )
 
-    async def _surface_comms_error(
-        self,
-        error_msg: str,
-        topic: str,
-        *,
-        contact_id: int | None = None,
-        medium: str | None = None,
-    ) -> dict[str, Any]:
-        """Push a comms error into the conversation thread and publish the Error event.
-
-        Ensures the brain sees the failure in ``active_conversations`` on the
-        next turn and can reason about recovery (retry with missing info,
-        fall back to a different channel, etc.).
-
-        Args:
-            error_msg: Human-readable error description.
-            topic: Event broker topic (e.g. ``"app:comms:sms_sent"``).
-            contact_id: Target contact (when known) — the error is pushed into
-                their conversation thread.
-            medium: Communication medium for the thread entry (e.g.
-                ``Medium.SMS_MESSAGE``).
-
-        Returns:
-            ``{"status": "error", "error": <error_msg>}`` for the tool return.
-        """
-        if contact_id is not None and medium is not None:
-            self._cm.contact_index.push_message(
-                contact_id=contact_id,
-                sender_name="System",
-                thread_name=medium,
-                message_content=f"[Send Failed] {error_msg}",
-                role="system",
-                timestamp=prompt_now(as_string=False),
-            )
-        event = Error(error_msg)
-        await self._event_broker.publish(topic, event.to_json())
-        return {"status": "error", "error": error_msg}
-
     @wraps(CommsPrimitives.send_sms)
     async def send_sms(
         self,
@@ -377,6 +298,70 @@ class ConversationManagerBrainActionTools:
             content=content,
             guild_id=guild_id,
             contact_id=contact_id,
+        )
+
+    @wraps(CommsPrimitives.send_teams_message)
+    async def send_teams_message(
+        self,
+        *,
+        contact_id: int | str | list[int | str | dict],
+        content: str,
+        chat_id: str | None = None,
+        channel_id: str | None = None,
+        team_id: str | None = None,
+        chat_topic: str | None = None,
+        attachment_filepath: str | None = None,
+    ) -> dict[str, Any]:
+        return await self._comms.send_teams_message(
+            contact_id=contact_id,
+            content=content,
+            chat_id=chat_id,
+            channel_id=channel_id,
+            team_id=team_id,
+            chat_topic=chat_topic,
+            attachment_filepath=attachment_filepath,
+        )
+
+    @wraps(CommsPrimitives.create_teams_channel)
+    async def create_teams_channel(
+        self,
+        *,
+        team_id: str,
+        display_name: str,
+        description: str | None = None,
+        membership_type: str = "standard",
+        owner_contact_ids: list[int | str | dict] | None = None,
+    ) -> dict[str, Any]:
+        return await self._comms.create_teams_channel(
+            team_id=team_id,
+            display_name=display_name,
+            description=description,
+            membership_type=membership_type,
+            owner_contact_ids=owner_contact_ids,
+        )
+
+    @wraps(CommsPrimitives.create_teams_meet)
+    async def create_teams_meet(
+        self,
+        *,
+        mode: str = "scheduled",
+        subject: str | None = None,
+        start: str | None = None,
+        duration_minutes: int = 30,
+        timezone: str = "UTC",
+        attendee_contact_ids: list[int | str | dict] | None = None,
+        body_html: str | None = None,
+        location: str | None = None,
+    ) -> dict[str, Any]:
+        return await self._comms.create_teams_meet(
+            mode=mode,
+            subject=subject,
+            start=start,
+            duration_minutes=duration_minutes,
+            timezone=timezone,
+            attendee_contact_ids=attendee_contact_ids,
+            body_html=body_html,
+            location=location,
         )
 
     @wraps(CommsPrimitives.send_unify_message)
@@ -482,6 +467,7 @@ class ConversationManagerBrainActionTools:
         if (
             self._cm.call_manager.has_active_call
             or self._cm.call_manager.has_active_google_meet
+            or self._cm.call_manager.has_active_teams_meet
         ):
             return {
                 "status": "error",
@@ -512,24 +498,7 @@ class ConversationManagerBrainActionTools:
 
         # Stop the browser agent immediately so the assistant disappears
         # from the Meet before the event handler's full cleanup pipeline.
-        session_id = self._cm.call_manager._gmeet_session_id
-        if session_id:
-            import aiohttp
-
-            from unity.session_details import SESSION_DETAILS
-
-            try:
-                async with aiohttp.ClientSession() as session:
-                    await session.post(
-                        "http://localhost:3000/googlemeet/leave",
-                        json={"sessionId": session_id},
-                        headers={
-                            "authorization": f"Bearer {SESSION_DETAILS.unify_key}",
-                        },
-                        timeout=aiohttp.ClientTimeout(total=30),
-                    )
-            except Exception:
-                pass
+        await self._notify_browser_meet_leave("googlemeet")
 
         from unity.conversation_manager.events import GoogleMeetEnded
 
@@ -573,6 +542,130 @@ class ConversationManagerBrainActionTools:
             "message": "Failed to stop screen sharing.",
         }
 
+    async def join_teams_meet(
+        self,
+        meet_url: str,
+        context: str = "",
+    ) -> dict[str, Any]:
+        """Join a Microsoft Teams meeting.
+
+        This is the **only** way to join a Teams meeting — it configures audio
+        devices, establishes the voice pipeline, and dispatches the voice
+        agent so the assistant can hear and speak in the meeting.  Never
+        attempt to join a Teams meeting URL via ``act``.
+
+        Args:
+            meet_url: The full Teams meeting URL (e.g.
+                https://teams.microsoft.com/l/meetup-join/... or
+                https://teams.live.com/meet/...).
+            context: Briefing for the voice agent about the meeting purpose,
+                expected participants, topics to cover, and how to behave.
+                Same guidance principles as make_call's context parameter.
+        """
+        if (
+            self._cm.call_manager.has_active_call
+            or self._cm.call_manager.has_active_google_meet
+            or self._cm.call_manager.has_active_teams_meet
+        ):
+            return {
+                "status": "error",
+                "message": "A call or meeting is already active.",
+            }
+
+        if context:
+            self._cm.call_manager.initial_notification = context
+
+        from unity.conversation_manager.events import TeamsMeetReceived
+
+        boss = self._cm.contact_index.get_contact(contact_id=1) or {}
+        event = TeamsMeetReceived(contact=boss, meet_url=meet_url)
+        await self._event_broker.publish(event.topic, event.to_json())
+        return {"status": "ok", "message": f"Joining Teams meeting at {meet_url}"}
+
+    async def leave_teams_meet(self) -> dict[str, Any]:
+        """Leave the current Microsoft Teams meeting.
+
+        Disconnects the assistant from the active Teams meeting session,
+        closing the browser and tearing down the audio bridge.
+        """
+        if not self._cm.call_manager.has_active_teams_meet:
+            return {
+                "status": "error",
+                "message": "No active Teams meeting session to leave.",
+            }
+
+        await self._notify_browser_meet_leave("teamsmeet")
+
+        from unity.conversation_manager.events import TeamsMeetEnded
+
+        contact = self._cm.call_manager._disconnect_contact or {}
+        event = TeamsMeetEnded(contact=contact)
+        await self._event_broker.publish(event.topic, event.to_json())
+        return {"status": "ok", "message": "Leaving Teams meeting"}
+
+    async def start_teams_meet_screenshare(self) -> dict[str, Any]:
+        """Share the assistant's desktop screen in the active Teams meeting.
+
+        Opens a live view of the assistant's desktop and presents it to all
+        meeting participants. Use this when participants need to see what the
+        assistant is doing on its computer.
+        """
+        result = await self._cm.call_manager.start_teams_meet_screenshare()
+        if result:
+            return {
+                "status": "ok",
+                "message": "Now presenting desktop in Teams meeting.",
+            }
+        return {
+            "status": "error",
+            "message": "Failed to start screen sharing.",
+        }
+
+    async def stop_teams_meet_screenshare(self) -> dict[str, Any]:
+        """Stop sharing the assistant's desktop screen in Teams meeting.
+
+        Ends the current screen presentation. Meeting participants will no
+        longer see the assistant's desktop.
+        """
+        result = await self._cm.call_manager.stop_teams_meet_screenshare()
+        if result:
+            return {
+                "status": "ok",
+                "message": "Stopped presenting in Teams meeting.",
+            }
+        return {
+            "status": "error",
+            "message": "Failed to stop screen sharing.",
+        }
+
+    async def _notify_browser_meet_leave(self, path_prefix: str) -> None:
+        """Best-effort notify the agent-service to leave the active browser meet.
+
+        ``path_prefix`` is the agent-service URL prefix (``"googlemeet"`` or
+        ``"teamsmeet"``).  Failures are silently ignored — the event handler's
+        cleanup pipeline still tears down the session even if this call fails.
+        """
+        session_id = self._cm.call_manager._meet_session_id
+        if not session_id:
+            return
+
+        import aiohttp
+
+        from unity.session_details import SESSION_DETAILS
+
+        try:
+            async with aiohttp.ClientSession() as session:
+                await session.post(
+                    f"http://localhost:3000/{path_prefix}/leave",
+                    json={"sessionId": session_id},
+                    headers={
+                        "authorization": f"Bearer {SESSION_DETAILS.unify_key}",
+                    },
+                    timeout=aiohttp.ClientTimeout(total=30),
+                )
+        except Exception:
+            pass
+
     async def act(
         self,
         *,
@@ -597,11 +690,14 @@ class ConversationManagerBrainActionTools:
           schedule tasks, create reminders
         - **Combined**: Find information and act on it (e.g., "find David's email")
 
-        **Excluded:** Do not use ``act`` for Google Meet operations — use the
-        dedicated tools instead: ``join_google_meet`` to join,
-        ``leave_google_meet`` to leave, ``start_google_meet_screenshare`` to
-        present the assistant's desktop, and ``stop_google_meet_screenshare``
-        to stop presenting.
+        **Excluded:** Do not use ``act`` for Google Meet or Microsoft Teams
+        meeting operations — use the dedicated tools instead:
+        ``join_google_meet`` / ``join_teams_meet`` to join,
+        ``leave_google_meet`` / ``leave_teams_meet`` to leave,
+        ``start_google_meet_screenshare`` / ``start_teams_meet_screenshare`` to
+        present the assistant's desktop, and
+        ``stop_google_meet_screenshare`` / ``stop_teams_meet_screenshare`` to
+        stop presenting.
 
         **When uncertain, call ``act``**: If you need information you don't have (like
         a contact's email address), call ``act`` to search for it. If ``act`` can't find
@@ -1378,10 +1474,12 @@ class ConversationManagerBrainActionTools:
             self._cm.mode.is_voice
             or self._cm.call_manager.has_active_call
             or self._cm.call_manager.has_active_google_meet
+            or self._cm.call_manager.has_active_teams_meet
             or self._cm.call_manager._whatsapp_call_joining
         )
         if not call_or_meet_in_progress:
             tools["join_google_meet"] = self.join_google_meet
+            tools["join_teams_meet"] = self.join_teams_meet
         if self._cm.call_manager.has_active_google_meet:
             tools["leave_google_meet"] = self.leave_google_meet
             from unity.session_details import SESSION_DETAILS
@@ -1394,6 +1492,19 @@ class ConversationManagerBrainActionTools:
                 else:
                     tools["stop_google_meet_screenshare"] = (
                         self.stop_google_meet_screenshare
+                    )
+        if self._cm.call_manager.has_active_teams_meet:
+            tools["leave_teams_meet"] = self.leave_teams_meet
+            from unity.session_details import SESSION_DETAILS
+
+            if SESSION_DETAILS.assistant.desktop_url:
+                if not self._cm.call_manager.has_teams_presenting:
+                    tools["start_teams_meet_screenshare"] = (
+                        self.start_teams_meet_screenshare
+                    )
+                else:
+                    tools["stop_teams_meet_screenshare"] = (
+                        self.stop_teams_meet_screenshare
                     )
         if self._cm.assistant_number:
             tools["send_sms"] = self.send_sms
@@ -1408,6 +1519,10 @@ class ConversationManagerBrainActionTools:
         if self._cm.assistant_discord_bot_id:
             tools["send_discord_message"] = self.send_discord_message
             tools["send_discord_channel_message"] = self.send_discord_channel_message
+        if self._cm.assistant_has_teams:
+            tools["send_teams_message"] = self.send_teams_message
+            tools["create_teams_channel"] = self.create_teams_channel
+            tools["create_teams_meet"] = self.create_teams_meet
         if getattr(self._cm.mode, "is_voice", False):
             tools["guide_voice_agent"] = self.guide_voice_agent
         if SETTINGS.DEMO_MODE:

@@ -53,6 +53,7 @@ from ..common.filter_utils import normalize_filter_expr
 from ..common.context_registry import ContextRegistry, TableContext
 from unity.function_manager.primitives.scope import PrimitiveScope
 from unity.function_manager.primitives.registry import get_registry
+from unity.common.startup_timing import log_startup_timing
 from .custom_functions import (
     compute_custom_functions_hash,
     compute_custom_venvs_hash,
@@ -495,6 +496,17 @@ class _VenvConnection:
             parts = path.split(".")
             if len(parts) == 2:
                 namespace, method = parts
+                if namespace == "runtime" and method == "reason":
+                    from unity.common.reasoning import reason
+
+                    result = await reason(**kwargs)
+                    return {
+                        "type": "rpc_result",
+                        "id": request_id,
+                        "result": self._function_manager._make_json_serializable(
+                            result,
+                        ),
+                    }
                 if namespace == "computer" and computer_primitives is not None:
                     fn = getattr(computer_primitives, method, None)
                 elif primitives is not None:
@@ -1668,14 +1680,17 @@ class FunctionManager(BaseFunctionManager):
 
     @staticmethod
     def _build_id_exclusion(ids: Optional[FrozenSet[int]]) -> Optional[str]:
-        """Build a ``function_id != X and ...`` filter clause from a set of IDs.
+        """Build a filter clause excluding a set of function IDs.
 
         Returns ``None`` when *ids* is empty or ``None``.
         """
         if not ids:
             return None
-        clauses = [f"function_id != {fid}" for fid in sorted(ids)]
-        return " and ".join(clauses)
+        sorted_ids = sorted(ids)
+        if len(sorted_ids) == 1:
+            return f"function_id != {sorted_ids[0]}"
+        joined_ids = ", ".join(str(fid) for fid in sorted_ids)
+        return f"function_id not in [{joined_ids}]"
 
     def _scoped_filter(self, caller_filter: Optional[str]) -> Optional[str]:
         """Compose *caller_filter* with ``_filter_scope`` and compositional exclusions.
@@ -2103,13 +2118,26 @@ class FunctionManager(BaseFunctionManager):
             return False
 
         target_managers = sorted(self._primitive_scope.scoped_managers)
+        log_startup_timing(
+            logger,
+            "⏱️ [StartupTiming] function_manager.sync_primitives target_managers=%d",
+            len(target_managers),
+        )
 
         # Step 1: Read current hashes (one backend call)
         logger.debug(f"⏱️ [FM.sync_primitives +{_sp_ms()}] reading stored hashes")
+        _step_t0 = _sp_time.perf_counter()
         current_hashes = self._get_stored_primitives_hash_by_manager()
+        log_startup_timing(
+            logger,
+            "⏱️ [StartupTiming] function_manager.sync_primitives.read_hashes duration=%.2fs hashes=%d",
+            _sp_time.perf_counter() - _step_t0,
+            len(current_hashes),
+        )
         logger.debug(f"⏱️ [FM.sync_primitives +{_sp_ms()}] hashes read")
 
         # Step 2: Compute expected hashes and collect pending updates if they differ
+        _step_t0 = _sp_time.perf_counter()
         pending_updates: List[Tuple[str, List[Dict[str, Any]], str]] = []
         for manager_alias in target_managers:
             expected_hash = self._registry.compute_hash_for_manager(manager_alias)
@@ -2121,6 +2149,14 @@ class FunctionManager(BaseFunctionManager):
             primitives_dict = self._registry.collect_primitives(single_scope)
             expected_rows = list(primitives_dict.values())
             pending_updates.append((manager_alias, expected_rows, expected_hash))
+        pending_rows = sum(len(rows) for _, rows, _ in pending_updates)
+        log_startup_timing(
+            logger,
+            "⏱️ [StartupTiming] function_manager.sync_primitives.compute_pending duration=%.2fs changed_managers=%s pending_rows=%d",
+            _sp_time.perf_counter() - _step_t0,
+            [alias for alias, _, _ in pending_updates],
+            pending_rows,
+        )
 
         # Step 3: If nothing changed, mark synced and return
         if not pending_updates:
@@ -2136,23 +2172,44 @@ class FunctionManager(BaseFunctionManager):
         )
 
         # Step 4: Batched delete for all changed managers (one backend call)
+        _step_t0 = _sp_time.perf_counter()
         self._delete_primitives_for_managers(changed_managers)
+        log_startup_timing(
+            logger,
+            "⏱️ [StartupTiming] function_manager.sync_primitives.delete duration=%.2fs changed_managers=%d",
+            _sp_time.perf_counter() - _step_t0,
+            len(changed_managers),
+        )
         logger.debug(f"⏱️ [FM.sync_primitives +{_sp_ms()}] delete done")
 
         # Step 5: Batched insert all new primitives (one backend call)
         all_rows = []
         for _, rows, _ in pending_updates:
             all_rows.extend(rows)
+        _step_t0 = _sp_time.perf_counter()
         self._insert_primitives(all_rows)
+        log_startup_timing(
+            logger,
+            "⏱️ [StartupTiming] function_manager.sync_primitives.insert duration=%.2fs rows=%d",
+            _sp_time.perf_counter() - _step_t0,
+            len(all_rows),
+        )
         logger.debug(
             f"⏱️ [FM.sync_primitives +{_sp_ms()}] insert done ({len(all_rows)} rows)",
         )
 
         # Step 6: Update Meta with new hashes (one backend call)
+        _step_t0 = _sp_time.perf_counter()
         new_hashes = dict(current_hashes)
         for alias, _, hash_val in pending_updates:
             new_hashes[alias] = hash_val
         self._store_primitives_hash_by_manager(new_hashes)
+        log_startup_timing(
+            logger,
+            "⏱️ [StartupTiming] function_manager.sync_primitives.store_hashes duration=%.2fs hashes=%d",
+            _sp_time.perf_counter() - _step_t0,
+            len(new_hashes),
+        )
         logger.debug(f"⏱️ [FM.sync_primitives +{_sp_ms()}] hashes stored, done")
 
         self._primitives_synced = True
@@ -4544,6 +4601,11 @@ class FunctionManager(BaseFunctionManager):
             raise ValueError(f"Invalid RPC path: {path}")
 
         manager_name, method_name = parts
+
+        if manager_name == "runtime" and method_name == "reason":
+            from unity.common.reasoning import reason
+
+            return self._make_json_serializable(await reason(**kwargs))
 
         # Handle computer primitives
         if manager_name == "computer":

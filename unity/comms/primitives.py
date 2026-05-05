@@ -34,6 +34,10 @@ from unity.conversation_manager.events import (
     Error,
     PhoneCallSent,
     SMSSent,
+    TeamsChannelCreated,
+    TeamsChannelMessageSent,
+    TeamsMeetCreated,
+    TeamsMessageSent,
     UnifyMessageSent,
     WhatsAppCallInviteSent,
     WhatsAppCallSent,
@@ -101,6 +105,11 @@ class CommsPrimitives:
         "send_api_response",
         "send_discord_message",
         "send_discord_channel_message",
+        "send_teams_message",
+        "create_teams_channel",
+        "create_teams_meet",
+        "terminate_self",
+        "cancel_self_termination",
     )
 
     def __init__(
@@ -131,6 +140,13 @@ class CommsPrimitives:
         if self._cm is not None:
             return getattr(self._cm, "assistant_discord_bot_id", "") or ""
         return SESSION_DETAILS.assistant.discord_bot_id or ""
+
+    def _assistant_has_teams(self) -> bool:
+        if self._cm is not None:
+            return bool(getattr(self._cm, "assistant_has_teams", False))
+        return (
+            getattr(SESSION_DETAILS.assistant, "email_provider", "") == "microsoft_365"
+        )
 
     def _contact_manager(self):
         if (
@@ -1292,6 +1308,888 @@ class CommsPrimitives:
             },
         )
 
+    async def send_teams_message(
+        self,
+        *,
+        contact_id: int | str | list[int | str | dict],
+        content: str,
+        chat_id: str | None = None,
+        channel_id: str | None = None,
+        team_id: str | None = None,
+        chat_topic: str | None = None,
+        attachment_filepath: str | None = None,
+    ) -> dict[str, Any]:
+        """Send an assistant-owned Microsoft Teams message.
+
+        Teams runs in three mutually-exclusive modes; exactly one applies per
+        call:
+
+        - **Chat reply** (existing 1:1, group, or meeting chat): pass
+          ``chat_id``. ``contact_id`` must be a single value identifying the
+          recipient for response-policy checks and transcript ownership.
+        - **Channel post**: pass both ``team_id`` and ``channel_id``.
+          ``contact_id`` must be a single value that anchors the post to a
+          contact thread for response-policy checks and transcript
+          attribution; it does not change where the message is delivered.
+        - **New chat (find-or-create)**: omit ``chat_id``, ``team_id``, and
+          ``channel_id``. Pass one or more ``contact_id`` recipients; a 1:1
+          DM is created when exactly one recipient is supplied, and a group
+          chat when two or more are supplied. Microsoft Graph dedupes 1:1
+          chats, so repeat calls with the same single recipient reuse the
+          same ``chat_id``. ``chat_topic`` is only valid when creating a
+          group chat. Each recipient may be provided as a bare
+          ``contact_id`` when the contact already has an ``email_address``
+          on file, or as ``{"contact_id": ..., "email_address": ...}`` when
+          the address needs to be attached during the send (same shape as
+          ``send_email``). The first recipient anchors the transcript.
+
+        Teams accepts one attachment per outbound message. Supply a workspace
+        file path via ``attachment_filepath`` and Communication will upload
+        it through OneDrive before posting.
+
+        Parameters
+        ----------
+        contact_id : int | str | list[int | str | dict]
+            Contact anchor(s) for the send. Accepts a single value for chat
+            replies and channel posts, or a list for the find-or-create
+            chat mode.
+        content : str
+            Message body to send.
+        chat_id : str | None, optional
+            Teams chat ID for replying into an existing chat.
+        channel_id : str | None, optional
+            Teams channel ID. Required together with ``team_id`` for channel
+            posts.
+        team_id : str | None, optional
+            Teams team ID. Required together with ``channel_id`` for channel
+            posts.
+        chat_topic : str | None, optional
+            Topic for a newly created group chat. Only valid in find-or-
+            create mode with two or more recipients.
+        attachment_filepath : str | None, optional
+            Workspace-relative file path for one attachment to include with
+            the message.
+
+        Returns
+        -------
+        dict[str, Any]
+            ``{"status": "ok"}`` on success, or an error payload describing
+            why the send could not complete.
+        """
+        offline_reservation = None
+        is_channel = bool(channel_id and team_id)
+        is_chat_reply = bool(chat_id) and not is_channel
+        is_find_or_create = not is_channel and not is_chat_reply
+
+        medium = Medium.TEAMS_CHANNEL_MESSAGE if is_channel else Medium.TEAMS_MESSAGE
+        topic = (
+            "app:comms:teams_channel_message_sent"
+            if is_channel
+            else "app:comms:teams_message_sent"
+        )
+        target_kind = "teams_channel" if is_channel else "contact"
+
+        raw_contact_id = contact_id
+        recipients_raw: list[int | str | dict] = (
+            list(raw_contact_id)
+            if isinstance(raw_contact_id, list)
+            else [raw_contact_id]
+        )
+        if not recipients_raw:
+            return await self._surface_comms_error(
+                "At least one contact_id is required for Teams sends",
+                topic,
+                medium=medium,
+                attempted_content=content,
+                target_metadata={
+                    "chat_id": chat_id or "",
+                    "team_id": team_id or "",
+                    "channel_id": channel_id or "",
+                    "attachment_filepath": attachment_filepath or "",
+                },
+            )
+
+        try:
+            parsed_recipients: list[tuple[int, str | None]] = []
+            for item in recipients_raw:
+                if isinstance(item, dict):
+                    raw = item.get("contact_id")
+                    if raw is None:
+                        raise TypeError(
+                            "Teams recipient dict must include 'contact_id', "
+                            f"got: {item!r}",
+                        )
+                    parsed_recipients.append(
+                        (_coerce_contact_id(raw), item.get("email_address")),
+                    )
+                else:
+                    parsed_recipients.append((_coerce_contact_id(item), None))
+        except TypeError as exc:
+            return await self._surface_comms_error(
+                str(exc),
+                topic,
+                medium=medium,
+                attempted_content=content,
+                target_metadata={
+                    "chat_id": chat_id or "",
+                    "team_id": team_id or "",
+                    "channel_id": channel_id or "",
+                    "attachment_filepath": attachment_filepath or "",
+                },
+            )
+
+        anchor_contact_id = parsed_recipients[0][0]
+        contact = self._get_contact(contact_id=anchor_contact_id)
+
+        def _target_metadata() -> dict[str, Any]:
+            base: dict[str, Any] = {
+                "contact_id": (contact or {}).get("contact_id") or anchor_contact_id,
+                "attachment_filepath": attachment_filepath or "",
+            }
+            if is_channel:
+                base["team_id"] = team_id or ""
+                base["channel_id"] = channel_id or ""
+            else:
+                base["chat_id"] = chat_id or ""
+            return base
+
+        def _history_metadata() -> dict[str, Any]:
+            return {
+                "contact_display_name": _get_contact_display_name(contact),
+            }
+
+        if not self._assistant_has_teams():
+            return await self._surface_comms_error(
+                "Microsoft Teams is not enabled for this assistant.",
+                topic,
+                contact_id=anchor_contact_id,
+                medium=medium,
+                attempted_content=content,
+                receiver_ids=[anchor_contact_id],
+                target_metadata=_target_metadata(),
+                history_metadata=_history_metadata(),
+            )
+
+        if not is_find_or_create and len(parsed_recipients) > 1:
+            return await self._surface_comms_error(
+                "Multiple contact_ids are only supported when creating a new "
+                "Teams chat. For a chat reply or channel post, pass a single "
+                "contact_id.",
+                topic,
+                contact_id=anchor_contact_id,
+                medium=medium,
+                attempted_content=content,
+                receiver_ids=[anchor_contact_id],
+                target_metadata=_target_metadata(),
+                history_metadata=_history_metadata(),
+            )
+
+        if chat_topic and not is_find_or_create:
+            return await self._surface_comms_error(
+                "chat_topic is only valid when creating a new group chat "
+                "(omit chat_id and team_id/channel_id, pass 2+ contact_ids).",
+                topic,
+                contact_id=anchor_contact_id,
+                medium=medium,
+                attempted_content=content,
+                receiver_ids=[anchor_contact_id],
+                target_metadata=_target_metadata(),
+                history_metadata=_history_metadata(),
+            )
+
+        if chat_topic and is_find_or_create and len(parsed_recipients) < 2:
+            return await self._surface_comms_error(
+                "chat_topic is only valid for group chats (2+ recipients).",
+                topic,
+                contact_id=anchor_contact_id,
+                medium=medium,
+                attempted_content=content,
+                receiver_ids=[anchor_contact_id],
+                target_metadata=_target_metadata(),
+                history_metadata=_history_metadata(),
+            )
+
+        outbound_error = self._check_outbound_allowed(contact)
+        if outbound_error:
+            return await self._surface_comms_error(
+                outbound_error,
+                topic,
+                contact_id=anchor_contact_id,
+                medium=medium,
+                offline_reservation=offline_reservation,
+                attempted_content=content,
+                receiver_ids=[anchor_contact_id],
+                target_metadata=_target_metadata(),
+                history_metadata=_history_metadata(),
+            )
+
+        resolved_recipient_ids: list[int] = [anchor_contact_id]
+
+        if is_find_or_create:
+            member_emails: list[str] = []
+            seen_emails: set[str] = set()
+            resolved_recipient_ids = []
+            for recipient_id, inline_email in parsed_recipients:
+                recipient_contact = self._get_contact(contact_id=recipient_id)
+                error, resolved_contact = self._resolve_or_attach_detail(
+                    contact=recipient_contact,
+                    contact_id=recipient_id,
+                    field_name="email_address",
+                    inline_value=inline_email,
+                    medium_label="Teams",
+                )
+                if error:
+                    return await self._surface_comms_error(
+                        error,
+                        topic,
+                        contact_id=recipient_id,
+                        medium=medium,
+                        attempted_content=content,
+                        receiver_ids=[anchor_contact_id],
+                        target_metadata=_target_metadata(),
+                        history_metadata=_history_metadata(),
+                    )
+                email_address = (resolved_contact or {}).get("email_address")
+                if not email_address:
+                    return await self._surface_comms_error(
+                        f"Could not resolve email address for contact_id={recipient_id}",
+                        topic,
+                        contact_id=recipient_id,
+                        medium=medium,
+                        attempted_content=content,
+                        receiver_ids=[anchor_contact_id],
+                        target_metadata=_target_metadata(),
+                        history_metadata=_history_metadata(),
+                    )
+                key = email_address.lower()
+                if key in seen_emails:
+                    continue
+                seen_emails.add(key)
+                member_emails.append(email_address)
+                resolved_recipient_ids.append(
+                    (resolved_contact or {}).get("contact_id") or recipient_id,
+                )
+
+            chat_type = "oneOnOne" if len(member_emails) == 1 else "group"
+            create_response = await comms_utils.create_teams_chat(
+                chat_type=chat_type,
+                member_emails=member_emails,
+                topic=chat_topic if chat_type == "group" else None,
+            )
+            if not create_response.get("success"):
+                return await self._surface_comms_error(
+                    create_response.get("error") or "Failed to create Teams chat",
+                    topic,
+                    contact_id=anchor_contact_id,
+                    medium=medium,
+                    attempted_content=content,
+                    receiver_ids=[anchor_contact_id],
+                    target_metadata=_target_metadata(),
+                    history_metadata=_history_metadata(),
+                )
+            chat_id = create_response.get("chat_id")
+            if not chat_id:
+                return await self._surface_comms_error(
+                    "Teams chat create returned no chat_id",
+                    topic,
+                    contact_id=anchor_contact_id,
+                    medium=medium,
+                    attempted_content=content,
+                    receiver_ids=[anchor_contact_id],
+                    target_metadata=_target_metadata(),
+                    history_metadata=_history_metadata(),
+                )
+            contact = self._get_contact(contact_id=anchor_contact_id) or contact
+
+        offline_reservation, offline_response = self._reserve_offline_operation(
+            method_name="send_teams_message",
+            medium=medium,
+            target_kind=target_kind,
+            target_metadata=_target_metadata(),
+            contact_id=(contact or {}).get("contact_id") or anchor_contact_id,
+        )
+        if offline_response is not None:
+            return offline_response
+
+        outbound_attachments: list[dict] | None = None
+        attachment_meta: dict[str, Any] | None = None
+        if attachment_filepath:
+            from unity.file_manager.filesystem_adapters.local_adapter import (
+                LocalFileSystemAdapter,
+            )
+
+            adapter = LocalFileSystemAdapter()
+            try:
+                abs_path = adapter._abspath(attachment_filepath)
+                with open(abs_path, "rb") as file_handle:
+                    file_contents = file_handle.read()
+            except FileNotFoundError:
+                return await self._surface_comms_error(
+                    f"File not found: {attachment_filepath}",
+                    topic,
+                    contact_id=anchor_contact_id,
+                    medium=medium,
+                    offline_reservation=offline_reservation,
+                    attempted_content=content,
+                    receiver_ids=[anchor_contact_id],
+                    target_metadata=_target_metadata(),
+                    history_metadata=_history_metadata(),
+                )
+            except Exception as exc:
+                return await self._surface_comms_error(
+                    f"Failed to read file: {exc}",
+                    topic,
+                    contact_id=anchor_contact_id,
+                    medium=medium,
+                    offline_reservation=offline_reservation,
+                    attempted_content=content,
+                    receiver_ids=[anchor_contact_id],
+                    target_metadata=_target_metadata(),
+                    history_metadata=_history_metadata(),
+                )
+
+            filename = os.path.basename(attachment_filepath)
+            outbound_attachments = [
+                {
+                    "filename": filename,
+                    "content_base64": base64.b64encode(file_contents).decode("ascii"),
+                },
+            ]
+            attachment_meta = {"filename": filename, "filepath": attachment_filepath}
+
+        response = await comms_utils.send_teams_message(
+            chat_id=chat_id,
+            team_id=team_id,
+            channel_id=channel_id,
+            body=content,
+            attachments=outbound_attachments,
+        )
+
+        if response.get("success"):
+            fresh_contact = (
+                self._get_contact(
+                    contact_id=(contact or {}).get("contact_id") or anchor_contact_id,
+                )
+                or contact
+                or {}
+            )
+            attachments_for_event = [attachment_meta] if attachment_meta else None
+            if is_channel:
+                # Channel sends: unity has no local roster; let the downstream
+                # receiver_ids derivation fall back to its default using the
+                # message's target contact_id.
+                event = TeamsChannelMessageSent(
+                    contact=fresh_contact,
+                    content=content,
+                    channel_id=channel_id or "",
+                    team_id=team_id or "",
+                    attachments=attachments_for_event,
+                    participants=[],
+                )
+            else:
+                participants_list: list[int] = [0]
+                for rid in resolved_recipient_ids:
+                    if rid is not None and rid != 0:
+                        participants_list.append(rid)
+                event = TeamsMessageSent(
+                    contact=fresh_contact,
+                    content=content,
+                    chat_id=chat_id or "",
+                    attachments=attachments_for_event,
+                    participants=sorted(set(participants_list)),
+                )
+            await self._event_broker.publish(topic, event.to_json())
+            self._record_offline_success(
+                offline_reservation,
+                attempted_content=content,
+                receiver_ids=[fresh_contact.get("contact_id") or anchor_contact_id],
+                target_metadata=_target_metadata(),
+                history_metadata={
+                    "contact_display_name": _get_contact_display_name(fresh_contact),
+                },
+                provider_response=response,
+                attachments=[attachment_meta] if attachment_meta else None,
+            )
+            return {"status": "ok"}
+
+        return await self._surface_comms_error(
+            response.get("error") or "Failed to send Teams message",
+            topic,
+            contact_id=anchor_contact_id,
+            medium=medium,
+            offline_reservation=offline_reservation,
+            attempted_content=content,
+            receiver_ids=[anchor_contact_id],
+            target_metadata=_target_metadata(),
+            history_metadata=_history_metadata(),
+            attachments=[attachment_meta] if attachment_meta else None,
+        )
+
+    async def create_teams_channel(
+        self,
+        *,
+        team_id: str,
+        display_name: str,
+        description: str | None = None,
+        membership_type: str = "standard",
+        owner_contact_ids: list[int | str | dict] | None = None,
+    ) -> dict[str, Any]:
+        """Create a new channel inside an existing Microsoft Teams team.
+
+        This is a structural operation separate from sending a message. After
+        the channel is created, use ``send_teams_message`` with the returned
+        ``team_id`` and ``channel_id`` to post into it.
+
+        Membership modes:
+
+        - ``"standard"``: open to all team members; no explicit owners.
+        - ``"private"``: restricted to listed owners. ``owner_contact_ids``
+          is required.
+        - ``"shared"``: shareable with other teams/tenants. ``owner_contact_ids``
+          is required.
+
+        Each ``owner_contact_ids`` entry may be a bare ``contact_id`` when the
+        contact has an ``email_address`` on file, or ``{"contact_id": ...,
+        "email_address": ...}`` to attach the address during the call.
+
+        Parameters
+        ----------
+        team_id : str
+            ID of the existing team to create the channel within.
+        display_name : str
+            Display name for the new channel.
+        description : str | None, optional
+            Channel description.
+        membership_type : str, optional
+            ``"standard"`` (default), ``"private"``, or ``"shared"``.
+        owner_contact_ids : list[int | str | dict] | None, optional
+            Channel owners. Required for ``"private"`` and ``"shared"``;
+            ignored for ``"standard"``.
+
+        Returns
+        -------
+        dict[str, Any]
+            ``{"status": "ok", "team_id": ..., "channel_id": ...}`` on
+            success, or an error payload describing why the create failed.
+        """
+        topic = "app:comms:teams_channel_created"
+        medium = Medium.TEAMS_CHANNEL_MESSAGE
+        anchor_contact = self._assistant_anchor_contact()
+        anchor_contact_id = anchor_contact.get("contact_id")
+
+        def _target_metadata() -> dict[str, Any]:
+            return {
+                "team_id": team_id,
+                "display_name": display_name,
+                "description": description or "",
+                "membership_type": membership_type,
+            }
+
+        def _history_metadata() -> dict[str, Any]:
+            return {
+                "contact_display_name": _get_contact_display_name(anchor_contact),
+            }
+
+        if not self._assistant_has_teams():
+            return await self._surface_comms_error(
+                "Microsoft Teams is not enabled for this assistant.",
+                topic,
+                contact_id=anchor_contact_id,
+                medium=medium,
+                attempted_content=f"create channel {display_name} in team {team_id}",
+                target_metadata=_target_metadata(),
+                history_metadata=_history_metadata(),
+            )
+
+        if membership_type not in ("standard", "private", "shared"):
+            return await self._surface_comms_error(
+                "membership_type must be 'standard', 'private', or 'shared'",
+                topic,
+                contact_id=anchor_contact_id,
+                medium=medium,
+                attempted_content=f"create channel {display_name} in team {team_id}",
+                target_metadata=_target_metadata(),
+                history_metadata=_history_metadata(),
+            )
+
+        requires_owners = membership_type != "standard"
+        if requires_owners and not owner_contact_ids:
+            return await self._surface_comms_error(
+                f"{membership_type} channels require at least one owner "
+                "(pass owner_contact_ids).",
+                topic,
+                contact_id=anchor_contact_id,
+                medium=medium,
+                attempted_content=f"create channel {display_name} in team {team_id}",
+                target_metadata=_target_metadata(),
+                history_metadata=_history_metadata(),
+            )
+
+        owner_emails: list[str] = []
+        if owner_contact_ids:
+            try:
+                parsed_owners: list[tuple[int, str | None]] = []
+                for item in owner_contact_ids:
+                    if isinstance(item, dict):
+                        raw = item.get("contact_id")
+                        if raw is None:
+                            raise TypeError(
+                                "Owner dict must include 'contact_id', "
+                                f"got: {item!r}",
+                            )
+                        parsed_owners.append(
+                            (_coerce_contact_id(raw), item.get("email_address")),
+                        )
+                    else:
+                        parsed_owners.append((_coerce_contact_id(item), None))
+            except TypeError as exc:
+                return await self._surface_comms_error(
+                    str(exc),
+                    topic,
+                    contact_id=anchor_contact_id,
+                    medium=medium,
+                    attempted_content=(
+                        f"create channel {display_name} in team {team_id}"
+                    ),
+                    target_metadata=_target_metadata(),
+                    history_metadata=_history_metadata(),
+                )
+
+            seen_emails: set[str] = set()
+            for owner_id, inline_email in parsed_owners:
+                owner_contact = self._get_contact(contact_id=owner_id)
+                error, resolved_owner = self._resolve_or_attach_detail(
+                    contact=owner_contact,
+                    contact_id=owner_id,
+                    field_name="email_address",
+                    inline_value=inline_email,
+                    medium_label="Teams",
+                )
+                if error:
+                    return await self._surface_comms_error(
+                        error,
+                        topic,
+                        contact_id=owner_id,
+                        medium=medium,
+                        attempted_content=(
+                            f"create channel {display_name} in team {team_id}"
+                        ),
+                        target_metadata=_target_metadata(),
+                        history_metadata=_history_metadata(),
+                    )
+                email_address = (resolved_owner or {}).get("email_address")
+                if not email_address:
+                    return await self._surface_comms_error(
+                        f"Could not resolve email address for owner contact_id={owner_id}",
+                        topic,
+                        contact_id=owner_id,
+                        medium=medium,
+                        attempted_content=(
+                            f"create channel {display_name} in team {team_id}"
+                        ),
+                        target_metadata=_target_metadata(),
+                        history_metadata=_history_metadata(),
+                    )
+                key = email_address.lower()
+                if key in seen_emails:
+                    continue
+                seen_emails.add(key)
+                owner_emails.append(email_address)
+
+        response = await comms_utils.create_teams_channel(
+            team_id=team_id,
+            display_name=display_name,
+            description=description,
+            membership_type=membership_type,
+            owner_emails=owner_emails if owner_emails else None,
+        )
+
+        if response.get("success"):
+            channel_id = response.get("channel_id") or ""
+            event = TeamsChannelCreated(
+                contact=anchor_contact,
+                team_id=team_id,
+                channel_id=channel_id,
+                display_name=display_name,
+                description=description or "",
+                membership_type=membership_type,
+            )
+            await self._event_broker.publish(topic, event.to_json())
+            return {
+                "status": "ok",
+                "team_id": team_id,
+                "channel_id": channel_id,
+            }
+
+        return await self._surface_comms_error(
+            response.get("error") or "Failed to create Teams channel",
+            topic,
+            contact_id=anchor_contact_id,
+            medium=medium,
+            attempted_content=f"create channel {display_name} in team {team_id}",
+            target_metadata=_target_metadata(),
+            history_metadata=_history_metadata(),
+        )
+
+    async def create_teams_meet(
+        self,
+        *,
+        mode: str = "scheduled",
+        subject: str | None = None,
+        start: str | None = None,
+        duration_minutes: int = 30,
+        timezone: str = "UTC",
+        attendee_contact_ids: list[int | str | dict] | None = None,
+        body_html: str | None = None,
+        location: str | None = None,
+    ) -> dict[str, Any]:
+        """Create a Microsoft Teams meeting via Graph and return the join URL.
+
+        Two explicit modes:
+
+        - ``"scheduled"`` (default): creates a calendar event with an attached
+          Teams meeting. ``subject`` is required. ``start`` defaults to five
+          minutes from now (Graph requires a future start). ``end`` is computed
+          as ``start + duration_minutes``. ``attendee_contact_ids`` are
+          resolved to email addresses; Outlook invites are sent automatically.
+          The meeting appears on calendars and generates invites.
+        - ``"instant"``: creates a reusable Teams meeting with no calendar
+          entry and no invites. ``subject`` is optional;
+          ``start``/``duration_minutes``/``attendee_contact_ids`` are ignored
+          (attendees are not contact-resolved in this mode). The returned
+          ``join_web_url`` can be shared or passed to ``join_teams_meet``.
+
+        ``body_html`` is forwarded verbatim — the communication service sends
+        it to Graph with ``contentType=HTML``. Pass pre-rendered HTML or plain
+        text (Graph will render plain text literally).
+
+        Each ``attendee_contact_ids`` entry may be a bare ``contact_id`` when
+        the contact has an ``email_address`` on file, or
+        ``{"contact_id": ..., "email_address": ...}`` to attach the address
+        during the call.
+
+        Parameters
+        ----------
+        mode : str, optional
+            ``"scheduled"`` (default) or ``"instant"``.
+        subject : str | None, optional
+            Meeting subject. Required for ``"scheduled"`` mode.
+        start : str | None, optional
+            ISO-8601 start timestamp. Defaults to ``now + 5min`` for
+            ``"scheduled"`` mode; ignored for ``"instant"``.
+        duration_minutes : int, optional
+            Meeting duration in minutes; used to compute ``end`` for
+            ``"scheduled"`` mode. Default 30.
+        timezone : str, optional
+            Timezone name forwarded to Graph. Default ``"UTC"``.
+        attendee_contact_ids : list[int | str | dict] | None, optional
+            Attendees for ``"scheduled"`` mode; ignored for ``"instant"``.
+        body_html : str | None, optional
+            Meeting body, sent to Graph as HTML.
+        location : str | None, optional
+            Display-name location for the calendar event (scheduled mode).
+
+        Returns
+        -------
+        dict[str, Any]
+            ``{"status": "ok", "mode", "join_web_url", "meeting_id",
+            "event_id", "subject", "start", "end", "web_link"}`` on success,
+            or an error payload describing why the create failed.
+        """
+        topic = "app:comms:teams_meet_created"
+        medium = Medium.TEAMS_MEET
+        anchor_contact = self._assistant_anchor_contact()
+        anchor_contact_id = anchor_contact.get("contact_id")
+
+        def _target_metadata() -> dict[str, Any]:
+            return {
+                "mode": mode,
+                "subject": subject or "",
+                "start": start or "",
+                "duration_minutes": duration_minutes,
+                "timezone": timezone,
+            }
+
+        def _history_metadata() -> dict[str, Any]:
+            return {
+                "contact_display_name": _get_contact_display_name(anchor_contact),
+            }
+
+        if not self._assistant_has_teams():
+            return await self._surface_comms_error(
+                "Microsoft Teams is not enabled for this assistant.",
+                topic,
+                contact_id=anchor_contact_id,
+                medium=medium,
+                attempted_content=f"create teams meeting '{subject or ''}'",
+                target_metadata=_target_metadata(),
+                history_metadata=_history_metadata(),
+            )
+
+        if mode not in ("instant", "scheduled"):
+            return await self._surface_comms_error(
+                "mode must be 'instant' or 'scheduled'",
+                topic,
+                contact_id=anchor_contact_id,
+                medium=medium,
+                attempted_content=f"create teams meeting '{subject or ''}'",
+                target_metadata=_target_metadata(),
+                history_metadata=_history_metadata(),
+            )
+
+        resolved_start: str | None = None
+        resolved_end: str | None = None
+        if mode == "scheduled":
+            if not subject:
+                return await self._surface_comms_error(
+                    "scheduled mode requires a subject",
+                    topic,
+                    contact_id=anchor_contact_id,
+                    medium=medium,
+                    attempted_content="create teams meeting (missing subject)",
+                    target_metadata=_target_metadata(),
+                    history_metadata=_history_metadata(),
+                )
+            from datetime import datetime, timedelta, timezone as _tz
+
+            if start:
+                resolved_start = start
+                try:
+                    base = datetime.fromisoformat(start.replace("Z", "+00:00"))
+                except ValueError:
+                    return await self._surface_comms_error(
+                        f"start is not a valid ISO-8601 timestamp: {start!r}",
+                        topic,
+                        contact_id=anchor_contact_id,
+                        medium=medium,
+                        attempted_content=f"create teams meeting '{subject}'",
+                        target_metadata=_target_metadata(),
+                        history_metadata=_history_metadata(),
+                    )
+            else:
+                base = datetime.now(_tz.utc) + timedelta(minutes=5)
+                resolved_start = base.isoformat()
+            resolved_end = (base + timedelta(minutes=duration_minutes)).isoformat()
+
+        attendee_emails: list[str] = []
+        if mode == "scheduled" and attendee_contact_ids:
+            try:
+                parsed_attendees: list[tuple[int, str | None]] = []
+                for item in attendee_contact_ids:
+                    if isinstance(item, dict):
+                        raw = item.get("contact_id")
+                        if raw is None:
+                            raise TypeError(
+                                "Attendee dict must include 'contact_id', "
+                                f"got: {item!r}",
+                            )
+                        parsed_attendees.append(
+                            (_coerce_contact_id(raw), item.get("email_address")),
+                        )
+                    else:
+                        parsed_attendees.append((_coerce_contact_id(item), None))
+            except TypeError as exc:
+                return await self._surface_comms_error(
+                    str(exc),
+                    topic,
+                    contact_id=anchor_contact_id,
+                    medium=medium,
+                    attempted_content=f"create teams meeting '{subject}'",
+                    target_metadata=_target_metadata(),
+                    history_metadata=_history_metadata(),
+                )
+
+            seen_emails: set[str] = set()
+            for attendee_id, inline_email in parsed_attendees:
+                attendee_contact = self._get_contact(contact_id=attendee_id)
+                error, resolved_attendee = self._resolve_or_attach_detail(
+                    contact=attendee_contact,
+                    contact_id=attendee_id,
+                    field_name="email_address",
+                    inline_value=inline_email,
+                    medium_label="Teams",
+                )
+                if error:
+                    return await self._surface_comms_error(
+                        error,
+                        topic,
+                        contact_id=attendee_id,
+                        medium=medium,
+                        attempted_content=(f"create teams meeting '{subject}'"),
+                        target_metadata=_target_metadata(),
+                        history_metadata=_history_metadata(),
+                    )
+                email_address = (resolved_attendee or {}).get("email_address")
+                if not email_address:
+                    return await self._surface_comms_error(
+                        f"Could not resolve email address for attendee contact_id={attendee_id}",
+                        topic,
+                        contact_id=attendee_id,
+                        medium=medium,
+                        attempted_content=(f"create teams meeting '{subject}'"),
+                        target_metadata=_target_metadata(),
+                        history_metadata=_history_metadata(),
+                    )
+                key = email_address.lower()
+                if key in seen_emails:
+                    continue
+                seen_emails.add(key)
+                attendee_emails.append(email_address)
+
+        response = await comms_utils.create_teams_meet(
+            mode=mode,
+            subject=subject,
+            start=resolved_start if mode == "scheduled" else start,
+            end=resolved_end,
+            timezone=timezone,
+            attendees=attendee_emails if attendee_emails else None,
+            body_html=body_html,
+            location=location,
+        )
+
+        if response.get("success"):
+            join_web_url = response.get("join_web_url") or ""
+            meeting_id = response.get("meeting_id") or ""
+            event_id = response.get("event_id") or ""
+            resp_subject = response.get("subject") or (subject or "")
+            resp_start = response.get("start") or (resolved_start or start or "")
+            resp_end = response.get("end") or (resolved_end or "")
+            web_link = response.get("web_link") or ""
+            event = TeamsMeetCreated(
+                contact=anchor_contact,
+                mode=mode,
+                subject=resp_subject,
+                join_web_url=join_web_url,
+                meeting_id=meeting_id,
+                event_id=event_id,
+                start=resp_start,
+                end=resp_end,
+                attendees=list(attendee_emails),
+                web_link=web_link,
+            )
+            await self._event_broker.publish(topic, event.to_json())
+            return {
+                "status": "ok",
+                "mode": mode,
+                "join_web_url": join_web_url,
+                "meeting_id": meeting_id,
+                "event_id": event_id,
+                "subject": resp_subject,
+                "start": resp_start,
+                "end": resp_end,
+                "web_link": web_link,
+            }
+
+        return await self._surface_comms_error(
+            response.get("error") or "Failed to create Teams meeting",
+            topic,
+            contact_id=anchor_contact_id,
+            medium=medium,
+            attempted_content=f"create teams meeting '{subject or ''}'",
+            target_metadata=_target_metadata(),
+            history_metadata=_history_metadata(),
+        )
+
     async def send_unify_message(
         self,
         *,
@@ -2345,6 +3243,7 @@ class CommsPrimitives:
         if self._cm is not None and (
             self._cm.call_manager.has_active_call
             or self._cm.call_manager.has_active_google_meet
+            or self._cm.call_manager.has_active_teams_meet
             or self._cm.call_manager._whatsapp_call_joining
         ):
             return {
@@ -2534,6 +3433,7 @@ class CommsPrimitives:
         if self._cm is not None and (
             self._cm.call_manager.has_active_call
             or self._cm.call_manager.has_active_google_meet
+            or self._cm.call_manager.has_active_teams_meet
             or self._cm.call_manager._whatsapp_call_joining
         ):
             return {
@@ -2741,4 +3641,62 @@ class CommsPrimitives:
                 "Because this send ran without a live assistant session, the callback "
                 "was not queued with your briefing context."
             ),
+        }
+
+    # ------------------------------------------------------------------
+    # Inactivity-followup lifecycle primitives
+    # ------------------------------------------------------------------
+
+    async def terminate_self(self) -> dict:
+        """Mark this assistant for auto-cleanup after orchestra's grace period.
+
+        Call this when the boss explicitly declines further engagement
+        (e.g. "no longer interested", "take me off your list", "stop
+        contacting me"). Orchestra stamps ``termination_initiated_at``
+        and the daily inactivity-followup cron deprovisions contacts
+        and hard-deletes the assistant once the grace period elapses
+        (see ``settings.inactivity_auto_cleanup_days`` in orchestra).
+
+        Sticky: subsequent casual chatter does NOT cancel termination.
+        Use :meth:`cancel_self_termination` if the boss later
+        contradicts the rejection.
+
+        Returns:
+            ``{"success": bool, "assistant_id": int | None}``
+        """
+        from unity.transcript_manager.activity_sync import (
+            terminate_assistant_via_orchestra,
+        )
+
+        agent_id = getattr(SESSION_DETAILS.assistant, "agent_id", None)
+        success = terminate_assistant_via_orchestra(agent_id)
+        return {
+            "success": bool(success),
+            "assistant_id": int(agent_id) if agent_id is not None else None,
+        }
+
+    async def cancel_self_termination(self) -> dict:
+        """Cancel an in-flight termination because the boss re-engaged.
+
+        Call this only when termination was previously initiated (via
+        :meth:`terminate_self`) and the boss has now contradicted that
+        rejection in conversation (e.g. "actually wait, let's keep
+        going"). Orchestra clears ``termination_initiated_at`` and the
+        assistant is no longer on the auto-cleanup path.
+
+        Safe to call when no termination is in flight — orchestra
+        treats the clear as a no-op.
+
+        Returns:
+            ``{"success": bool, "assistant_id": int | None}``
+        """
+        from unity.transcript_manager.activity_sync import (
+            cancel_assistant_termination_via_orchestra,
+        )
+
+        agent_id = getattr(SESSION_DETAILS.assistant, "agent_id", None)
+        success = cancel_assistant_termination_via_orchestra(agent_id)
+        return {
+            "success": bool(success),
+            "assistant_id": int(agent_id) if agent_id is not None else None,
         }

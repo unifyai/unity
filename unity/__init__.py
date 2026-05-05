@@ -56,6 +56,8 @@ except Exception:  # ImportError or others
 # Logging is configured entirely in unity.logger — import it so that
 # the module-level setup (handler, formatter, library muting) runs once.
 import unity.logger  # noqa: F401
+from unity.common.startup_timing import startup_timing
+from unity.logger import LOGGER
 
 # ---------------------------------------------------------------------------
 # Lazy runtime initialisation
@@ -84,46 +86,56 @@ def init(
 
     from unity.settings import SETTINGS as _SETTINGS
 
-    _SETTINGS.validate_llm_providers()
+    with startup_timing(LOGGER, "unity.init.validate_llm_providers"):
+        _SETTINGS.validate_llm_providers()
 
-    if not unify.active_project():
-        unify.activate(project_name, overwrite)
+    with startup_timing(LOGGER, "unity.init.active_project"):
+        active_project = unify.active_project()
+    if not active_project:
+        with startup_timing(LOGGER, "unity.init.activate", f"project={project_name}"):
+            unify.activate(project_name, overwrite)
 
     # Set the Unify context using user_id/assistant_id (e.g., "42/7")
     full_ctx = f"{SESSION_DETAILS.user_context}/{SESSION_DETAILS.assistant_context}"
 
     # Idempotent context setup: tolerate concurrent creation from parallel processes
-    try:
-        unify.set_context(full_ctx)
-    except Exception as e:
-        if "already exists" in str(e).lower():
-            unify.set_context(full_ctx, skip_create=True)
-        else:
-            raise
+    with startup_timing(LOGGER, "unity.init.set_context", f"context={full_ctx}"):
+        try:
+            unify.set_context(full_ctx)
+        except Exception as e:
+            if "already exists" in str(e).lower():
+                unify.set_context(full_ctx, skip_create=True)
+            else:
+                raise
 
-    ContextRegistry.setup()
+    with startup_timing(LOGGER, "unity.init.context_registry_setup"):
+        ContextRegistry.setup()
 
     from .events import event_bus as _event_bus_mod
 
-    _event_bus_mod._initialize_event_bus()
+    with startup_timing(LOGGER, "unity.init.event_bus_init"):
+        _event_bus_mod._initialize_event_bus()
 
     from .events.llm_event_hook import install_llm_event_hook
 
-    install_llm_event_hook()
+    with startup_timing(LOGGER, "unity.init.install_llm_event_hook"):
+        install_llm_event_hook()
 
     from .spending_limits import install_limit_check_hook
 
-    install_limit_check_hook()
+    with startup_timing(LOGGER, "unity.init.install_limit_check_hook"):
+        install_limit_check_hook()
 
     # Set billing context so UniLLM credit deductions include attribution
     try:
         import unillm
 
-        unillm.set_billing_context(
-            assistant_id=SESSION_DETAILS.assistant.agent_id,
-            user_id=SESSION_DETAILS.user.id,
-            organization_id=SESSION_DETAILS.org_id,
-        )
+        with startup_timing(LOGGER, "unity.init.set_billing_context"):
+            unillm.set_billing_context(
+                assistant_id=SESSION_DETAILS.assistant.agent_id,
+                user_id=SESSION_DETAILS.user.id,
+                organization_id=SESSION_DETAILS.org_id,
+            )
     except (ImportError, Exception):
         pass
 

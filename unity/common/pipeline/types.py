@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Dict, Literal, Optional, TypeAlias
+from typing import Any, Dict, Literal, Optional, TypeAlias
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -119,6 +119,12 @@ class TableMeta(BaseModel):
     ``IngestPlan.table_inputs[table_id]``.  ``TableMeta`` is only the
     structural + contextual info the ingest worker needs to provision the
     destination context and resolve embed columns / descriptions.
+
+    The optional config fields (``description`` through ``post_ingest``)
+    are populated at dispatch time from ``PipelineConfig`` and threaded
+    through the ``ParseRequested.table_config`` dict.  When absent the
+    ingest worker falls back to bare-minimum behavior (no embeddings,
+    no descriptions, no post-ingest transforms).
     """
 
     model_config = ConfigDict(frozen=True)
@@ -129,6 +135,14 @@ class TableMeta(BaseModel):
     row_count: Optional[int] = None
     sheet_name: Optional[str] = None
     table_summary: Optional[str] = None
+
+    context: Optional[str] = None
+    description: Optional[str] = None
+    column_descriptions: Optional[Dict[str, str]] = None
+    embed_columns: Optional[list[str]] = None
+    embed_strategy: str = "off"
+    chunk_size: int = 500
+    post_ingest: Optional[Dict[str, Any]] = None
 
 
 class IngestPlan(BaseModel):
@@ -233,6 +247,33 @@ class DmBinding(IngestBinding):
     create_table_prefix: str = ""
 
 
+# ---------------------------------------------------------------------------
+# Ingest checkpoint (crash-recovery progress marker)
+# ---------------------------------------------------------------------------
+
+
+class IngestCheckpoint(BaseModel):
+    """Durable per-artifact progress marker for crash recovery.
+
+    Written to GCS after each successful chunk commit so a retried
+    worker can skip already-committed rows via ``skip_rows``.
+
+    The ``artifact_id`` is ``table_id`` for table artifacts and
+    ``"__content__"`` for content-row artifacts.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    job_id: str
+    artifact_id: str
+    chunks_committed: int = 0
+    rows_committed: int = 0
+    last_updated: str = ""
+
+
+CONTENT_CHECKPOINT_ID = "__content__"
+
+
 class ParseRequested(BaseModel):
     """Message placed on the parse queue by the coordinator.
 
@@ -250,7 +291,7 @@ class ParseRequested(BaseModel):
 
     kind: Literal["parse_requested"] = "parse_requested"
     job_id: str
-    deployment_id: str = ""
+    dispatch_id: str = ""
     file_paths: list[str] = Field(default_factory=list)
     manifest_key: str = ""
     transport_mode: str = "source_reference"
@@ -259,6 +300,7 @@ class ParseRequested(BaseModel):
     ingestion_mode: Literal["dm", "fm"] = "dm"
     fm_binding: Optional[FmBinding] = None
     dm_binding: Optional[DmBinding] = None
+    table_config: Optional[Dict[str, Any]] = None
 
 
 class IngestRequested(BaseModel):
@@ -274,7 +316,7 @@ class IngestRequested(BaseModel):
 
     kind: Literal["ingest_requested"] = "ingest_requested"
     job_id: str
-    deployment_id: str = ""
+    dispatch_id: str = ""
     manifest_key: str = ""
     target_context: str = ""
     batch_size: int = 500

@@ -288,21 +288,27 @@ class ContextRegistry:
         return ret
 
     @classmethod
-    def setup(cls):
-        """Setup the context handler by creating the contexts for all managers."""
-        if cls._setup_complete:
-            return
+    def _provision_managers(
+        cls,
+        managers: List[Union[Type[BaseStateManager], BaseStateManager]],
+        base: str,
+    ) -> None:
+        """Provision contexts for the given managers against *base*.
 
-        current_context = cls._get_active_context()
-        cls._base_context = current_context
+        Shared implementation behind :meth:`setup` and
+        :meth:`setup_for_managers`.  Sets ``_base_context`` and
+        concurrently creates every required context (+ aggregation
+        contexts) via :meth:`_create_context_wrapper`.
+        """
+        cls._base_context = base
 
         with ThreadPoolExecutor() as executor:
             futures = []
-            for manager in cls._get_managers():
+            for manager in managers:
                 manager_name = cls._get_manager_name(manager)
                 for _, entry in cls._get_contexts_for_manager(
                     manager,
-                    current_context,
+                    base,
                 ).items():
                     futures.append(
                         executor.submit(
@@ -318,7 +324,45 @@ class ContextRegistry:
                 except Exception as e:
                     _log.warning("Context creation failed (will retry lazily): %s", e)
 
+    @classmethod
+    def setup(cls):
+        """Setup the context handler by creating the contexts for all managers."""
+        if cls._setup_complete:
+            return
+
+        cls._provision_managers(cls._get_managers(), cls._get_active_context())
         cls._setup_complete = True
+
+    @classmethod
+    def setup_for_managers(
+        cls,
+        managers: List[Union[Type[BaseStateManager], BaseStateManager]],
+        *,
+        base_context: Optional[str] = None,
+    ) -> None:
+        """Provision contexts for a specific subset of managers.
+
+        Unlike :meth:`setup` which provisions **all** registered managers
+        and sets ``_setup_complete``, this is designed for worker processes
+        that only need a few managers (e.g. ``FileManager`` +
+        ``DataManager`` for the ingest worker).
+
+        It does **not** set ``_setup_complete`` so that a later full
+        ``setup()`` call (if ever needed) still runs normally.
+
+        Parameters
+        ----------
+        managers :
+            Manager classes whose ``Config.required_contexts`` should be
+            provisioned.
+        base_context :
+            Explicit base context string.  When *None* (the default),
+            reads the current Unify active context via the SDK.
+        """
+        cls._provision_managers(
+            managers,
+            base_context or cls._get_active_context(),
+        )
 
     @classmethod
     def get_known_base_contexts(cls) -> List[str]:

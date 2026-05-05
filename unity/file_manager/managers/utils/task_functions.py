@@ -198,13 +198,32 @@ def execute_create_file_record(
         document_summary=document_summary,
     )
 
+    pre_insert_file_id = getattr(entry, "file_id", None)
+
     created_file_record = _ops_create_file_record(file_manager, entry=entry)
-    logger.debug(f"[TaskFn] Created file record: {created_file_record}")
+
+    post_insert_file_id = getattr(entry, "file_id", None)
+
+    logger.info(
+        "[TaskFn] create_file_record result for %s: "
+        "pre_insert_file_id=%s, post_insert_file_id=%s, ops_result=%s",
+        file_path,
+        pre_insert_file_id,
+        post_insert_file_id,
+        created_file_record,
+    )
 
     file_id = get_file_id_from_path(
         data_manager=dm,
         index_context=file_manager._ctx,
         file_path=file_path,
+    )
+
+    logger.info(
+        "[TaskFn] get_file_id_from_path(%s, ctx=%s) -> %s",
+        file_path,
+        file_manager._ctx,
+        file_id,
     )
 
     if file_id is None:
@@ -222,8 +241,11 @@ def execute_create_file_record(
             filter=f"file_id == {file_id}",
         )
 
-    logger.debug(
-        f"[TaskFn] File record created: file_id={file_id}, storage_id={storage_id}",
+    logger.info(
+        "[TaskFn] File record finalised: file_path=%s file_id=%s storage_id=%s",
+        file_path,
+        file_id,
+        storage_id,
     )
 
     return {
@@ -246,6 +268,9 @@ def execute_ingest_content(
     content_rows: Optional[List[FileContentRow]] = None,
     content_rows_handle: Optional[TableInputHandle] = None,
     config: FilePipelineConfig,
+    on_task_complete=None,
+    storage_client=None,
+    skip_rows: int = 0,
 ) -> Dict[str, Any]:
     """Ingest ALL content rows for a file via ``dm.ingest()``.
 
@@ -304,6 +329,8 @@ def execute_ingest_content(
         for batch in iter_table_input_row_batches(
             content_rows_handle,
             batch_size=max(int(config.ingest.content_rows_batch_size or 1000), 1),
+            storage_client=storage_client,
+            skip_rows=skip_rows,
         ):
             for row in batch:
                 streamed.append(FileContentRow.model_validate(row))
@@ -383,6 +410,7 @@ def execute_ingest_content(
         infer_untyped_fields=config.ingest.infer_untyped_fields,
         add_to_all_context=file_manager.include_in_multi_assistant_table,
         execution=execution,
+        on_task_complete=on_task_complete,
     )
 
     logger.debug(
@@ -411,6 +439,9 @@ def execute_ingest_table(
     table_input: Optional[TableInputHandle] = None,
     columns: List[str],
     config: FilePipelineConfig,
+    on_task_complete=None,
+    storage_client=None,
+    skip_rows: int = 0,
 ) -> Dict[str, Any]:
     """Ingest ALL rows for one table via ``dm.ingest()``.
 
@@ -521,6 +552,9 @@ def execute_ingest_table(
         infer_untyped_fields=config.ingest.infer_untyped_fields,
         add_to_all_context=file_manager.include_in_multi_assistant_table,
         execution=execution,
+        on_task_complete=on_task_complete,
+        storage_client=storage_client,
+        skip_rows=skip_rows,
     )
 
     logger.debug(

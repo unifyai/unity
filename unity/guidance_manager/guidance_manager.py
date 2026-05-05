@@ -104,11 +104,14 @@ class GuidanceManager(BaseGuidanceManager):
 
     @staticmethod
     def _build_id_exclusion(ids: Optional[FrozenSet[int]]) -> Optional[str]:
-        """Build a ``guidance_id != X and ...`` filter clause from a set of IDs."""
+        """Build a filter clause excluding a set of guidance IDs."""
         if not ids:
             return None
-        clauses = [f"guidance_id != {gid}" for gid in sorted(ids)]
-        return " and ".join(clauses)
+        sorted_ids = sorted(ids)
+        if len(sorted_ids) == 1:
+            return f"guidance_id != {sorted_ids[0]}"
+        joined_ids = ", ".join(str(gid) for gid in sorted_ids)
+        return f"guidance_id not in [{joined_ids}]"
 
     def _scoped_filter(self, caller_filter: Optional[str]) -> Optional[str]:
         """Compose *caller_filter* with ``_filter_scope`` and id exclusions.
