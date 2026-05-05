@@ -2698,8 +2698,6 @@ class TestAssistantUpdateEventHandler:
                 assert SESSION_DETAILS.space_ids == [7, 11]
                 assert SESSION_DETAILS.self_contact_id == 42
                 assert SESSION_DETAILS.boss_contact_id == 43
-                assert SESSION_DETAILS.assistant.contact_id == 42
-                assert SESSION_DETAILS.user.contact_id == 43
                 assert os.environ["SELF_CONTACT_ID"] == "42"
                 assert os.environ["BOSS_CONTACT_ID"] == "43"
                 assert (

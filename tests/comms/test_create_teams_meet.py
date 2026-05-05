@@ -28,7 +28,7 @@ from unity.conversation_manager.domains import comms_utils
 def _make_comms_with_teams(monkeypatch) -> CommsPrimitives:
     """Build a CommsPrimitives instance wired up with Teams enabled."""
     monkeypatch.setattr(
-        "unity.comms.primitives.SESSION_DETAILS.assistant.contact_id",
+        "unity.comms.primitives.SESSION_DETAILS.self_contact_id",
         0,
     )
     comms = CommsPrimitives()

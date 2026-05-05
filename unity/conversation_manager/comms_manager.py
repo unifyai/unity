@@ -74,6 +74,15 @@ _seen_discord_ids: dict[str, float] = {}
 _DISCORD_DEDUP_TTL = 300.0
 
 
+def _required_contact_id(event: dict, field_name: str) -> int:
+    """Return a resolved contact id required by startup/update events."""
+    value = event.get(field_name)
+    if value is None:
+        assistant_id = event.get("assistant_id")
+        raise ValueError(f"Assistant {assistant_id} is missing required {field_name}")
+    return int(value)
+
+
 def _already_seen_discord(message_id: str) -> bool:
     """Return True if this Discord message_id was already processed recently."""
     now = time.time()
@@ -556,8 +565,14 @@ class CommsManager:
                         "assistant_email_provider",
                         "google_workspace",
                     ),
-                    "self_contact_id": event.get("self_contact_id", 0),
-                    "boss_contact_id": event.get("boss_contact_id", 1),
+                    "self_contact_id": _required_contact_id(
+                        event,
+                        "self_contact_id",
+                    ),
+                    "boss_contact_id": _required_contact_id(
+                        event,
+                        "boss_contact_id",
+                    ),
                     "assistant_whatsapp_number": event.get(
                         "assistant_whatsapp_number",
                         "",
@@ -1703,8 +1718,14 @@ class CommsManager:
                         "assistant_email_provider",
                         "google_workspace",
                     ),
-                    "self_contact_id": event.get("self_contact_id", 0),
-                    "boss_contact_id": event.get("boss_contact_id", 1),
+                    "self_contact_id": _required_contact_id(
+                        event,
+                        "self_contact_id",
+                    ),
+                    "boss_contact_id": _required_contact_id(
+                        event,
+                        "boss_contact_id",
+                    ),
                     "assistant_whatsapp_number": event.get(
                         "assistant_whatsapp_number",
                         "",

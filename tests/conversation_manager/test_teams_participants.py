@@ -12,6 +12,8 @@ from unity.conversation_manager.events import (
     TeamsMessageSent,
 )
 
+TEST_SELF_CONTACT_ID = 337
+
 
 def _fake_resolver_factory(mapping: dict[str, int]):
     """Build a resolver that returns a contact dict for mapped emails, None otherwise.
@@ -35,7 +37,7 @@ def test_participants_all_pre_resolved() -> None:
     resolver = _fake_resolver_factory({})
     result = _resolve_teams_participants(
         raw_participants=[
-            {"contact_id": 0, "email": "assistant@acme.com"},
+            {"contact_id": TEST_SELF_CONTACT_ID, "email": "assistant@acme.com"},
             {"contact_id": 7, "email": "alice@acme.com"},
             {"contact_id": 12, "email": "carol@acme.com"},
         ],
@@ -44,7 +46,7 @@ def test_participants_all_pre_resolved() -> None:
         medium="teams_message",
         unknown_contact_resolver=resolver,
     )
-    assert result == [0, 7, 12]
+    assert result == sorted([TEST_SELF_CONTACT_ID, 7, 12])
     assert resolver.calls == []
 
 
@@ -52,7 +54,7 @@ def test_unresolved_entry_routed_through_resolver() -> None:
     resolver = _fake_resolver_factory({"bob@ext.com": 42})
     result = _resolve_teams_participants(
         raw_participants=[
-            {"contact_id": 0, "email": "assistant@acme.com"},
+            {"contact_id": TEST_SELF_CONTACT_ID, "email": "assistant@acme.com"},
             {"contact_id": 7, "email": "alice@acme.com"},
             {"contact_id": None, "email": "bob@ext.com"},
         ],
@@ -61,7 +63,7 @@ def test_unresolved_entry_routed_through_resolver() -> None:
         medium="teams_channel_message",
         unknown_contact_resolver=resolver,
     )
-    assert result == [0, 7, 42]
+    assert result == sorted([TEST_SELF_CONTACT_ID, 7, 42])
     assert resolver.calls == [("teams_channel_message", "bob@ext.com")]
 
 
@@ -69,7 +71,7 @@ def test_synthetic_teams_email_is_dropped() -> None:
     resolver = _fake_resolver_factory({})
     result = _resolve_teams_participants(
         raw_participants=[
-            {"contact_id": 0, "email": "assistant@acme.com"},
+            {"contact_id": TEST_SELF_CONTACT_ID, "email": "assistant@acme.com"},
             {"contact_id": None, "email": "abc-123@teams"},
             {"contact_id": None, "email": None},
         ],
@@ -78,7 +80,7 @@ def test_synthetic_teams_email_is_dropped() -> None:
         medium="teams_message",
         unknown_contact_resolver=resolver,
     )
-    assert result == [0, 7]
+    assert result == sorted([TEST_SELF_CONTACT_ID, 7])
     assert resolver.calls == []
 
 
@@ -102,7 +104,7 @@ def test_resolver_returning_none_entry_dropped() -> None:
     resolver = _fake_resolver_factory({})  # always returns None
     result = _resolve_teams_participants(
         raw_participants=[
-            {"contact_id": 0, "email": "assistant@acme.com"},
+            {"contact_id": TEST_SELF_CONTACT_ID, "email": "assistant@acme.com"},
             {"contact_id": None, "email": "stranger@ext.com"},
         ],
         sender_email="alice@acme.com",
@@ -110,7 +112,7 @@ def test_resolver_returning_none_entry_dropped() -> None:
         medium="teams_message",
         unknown_contact_resolver=resolver,
     )
-    assert result == [0, 7]
+    assert result == sorted([TEST_SELF_CONTACT_ID, 7])
     assert resolver.calls == [("teams_message", "stranger@ext.com")]
 
 
@@ -118,7 +120,7 @@ def test_sender_with_no_contact_id_still_resolves_others() -> None:
     resolver = _fake_resolver_factory({})
     result = _resolve_teams_participants(
         raw_participants=[
-            {"contact_id": 0, "email": "assistant@acme.com"},
+            {"contact_id": TEST_SELF_CONTACT_ID, "email": "assistant@acme.com"},
             {"contact_id": 12, "email": "carol@acme.com"},
         ],
         sender_email="",
@@ -126,7 +128,7 @@ def test_sender_with_no_contact_id_still_resolves_others() -> None:
         medium="teams_message",
         unknown_contact_resolver=resolver,
     )
-    assert result == [0, 12]
+    assert result == sorted([TEST_SELF_CONTACT_ID, 12])
 
 
 def test_empty_participants_returns_only_sender() -> None:
@@ -168,11 +170,15 @@ def test_teams_event_participants_field_defaults_empty(cls, extra) -> None:
     ],
 )
 def test_teams_event_participants_roundtrips_through_to_dict(cls, extra) -> None:
-    event = cls(contact={"contact_id": 7}, participants=[0, 7, 12], **extra)
+    event = cls(
+        contact={"contact_id": 7},
+        participants=[TEST_SELF_CONTACT_ID, 7, 12],
+        **extra,
+    )
     payload = event.to_dict()["payload"]
-    assert payload["participants"] == [0, 7, 12]
+    assert payload["participants"] == [TEST_SELF_CONTACT_ID, 7, 12]
     restored = cls.from_dict({"event_name": cls.__name__, "payload": payload})
-    assert restored.participants == [0, 7, 12]
+    assert restored.participants == [TEST_SELF_CONTACT_ID, 7, 12]
 
 
 def test_teams_event_deserializes_legacy_payload_without_participants() -> None:

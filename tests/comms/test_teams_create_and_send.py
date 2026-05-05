@@ -12,6 +12,7 @@ primitive-side dispatch and validation logic:
 No LLM calls are involved — these tests lock in the symbolic contract.
 """
 
+import json
 from unittest.mock import AsyncMock
 
 import pytest
@@ -20,12 +21,14 @@ from unity.comms import offline_support
 from unity.comms.primitives import CommsPrimitives
 from unity.conversation_manager.domains import comms_utils
 
+TEST_SELF_CONTACT_ID = 337
+
 
 def _make_comms_with_teams(monkeypatch) -> CommsPrimitives:
     """Build a CommsPrimitives instance wired up with Teams enabled."""
     monkeypatch.setattr(
-        "unity.comms.primitives.SESSION_DETAILS.assistant.contact_id",
-        0,
+        "unity.comms.primitives.SESSION_DETAILS.self_contact_id",
+        TEST_SELF_CONTACT_ID,
     )
     comms = CommsPrimitives()
     monkeypatch.setattr(comms, "_assistant_has_teams", lambda: True)
@@ -86,6 +89,8 @@ async def test_send_teams_message_find_or_create_dm(monkeypatch):
     ]
     assert send_calls[0]["chat_id"] == "19:chat-dm"
     assert send_calls[0]["body"] == "Hi there"
+    published = json.loads(comms._event_broker.publish.await_args.args[1])
+    assert sorted(published["payload"]["participants"]) == [5, TEST_SELF_CONTACT_ID]
 
 
 @pytest.mark.anyio

@@ -317,7 +317,7 @@ class CommsPrimitives:
 
     def _assistant_anchor_contact(self) -> dict:
         """Return the assistant contact as a synthetic anchor for channel-only sends."""
-        assistant_contact_id = SESSION_DETAILS.assistant.contact_id or 0
+        assistant_contact_id = SESSION_DETAILS.self_contact_id
         return self._get_contact(contact_id=assistant_contact_id) or {
             "contact_id": assistant_contact_id,
             "first_name": SESSION_DETAILS.assistant.first_name,
@@ -1687,9 +1687,9 @@ class CommsPrimitives:
                     participants=[],
                 )
             else:
-                participants_list: list[int] = [0]
+                participants_list: list[int] = [SESSION_DETAILS.self_contact_id]
                 for rid in resolved_recipient_ids:
-                    if rid is not None and rid != 0:
+                    if rid is not None and rid != SESSION_DETAILS.self_contact_id:
                         participants_list.append(rid)
                 event = TeamsMessageSent(
                     contact=fresh_contact,

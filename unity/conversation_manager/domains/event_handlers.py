@@ -334,7 +334,7 @@ async def _(event: CallInitEvents, cm: "ConversationManager", *args, **kwargs):
     if cm.mode.is_voice:
         return
 
-    boss_contact_id = SESSION_DETAILS.user.contact_id
+    boss_contact_id = SESSION_DETAILS.boss_contact_id
     boss = (
         cm.contact_index.get_contact(contact_id=int(boss_contact_id))
         if boss_contact_id is not None
@@ -453,7 +453,7 @@ async def _(
     ):
         return
 
-    boss_contact_id = SESSION_DETAILS.user.contact_id
+    boss_contact_id = SESSION_DETAILS.boss_contact_id
     boss = (
         cm.contact_index.get_contact(contact_id=int(boss_contact_id)) or {}
         if boss_contact_id is not None
@@ -533,7 +533,7 @@ async def _(
     ):
         return
 
-    boss_contact_id = SESSION_DETAILS.user.contact_id
+    boss_contact_id = SESSION_DETAILS.boss_contact_id
     boss = (
         cm.contact_index.get_contact(contact_id=int(boss_contact_id)) or {}
         if boss_contact_id is not None
@@ -639,7 +639,7 @@ async def _(
         contact = event.contact
 
     contact_id = (
-        contact.get("contact_id") if contact else SESSION_DETAILS.user.contact_id
+        contact.get("contact_id") if contact else SESSION_DETAILS.boss_contact_id
     )
     sender_name = _get_sender_name(contact)
 
@@ -781,7 +781,7 @@ async def _(
         contact = event.contact
 
     contact_id = (
-        contact.get("contact_id") if contact else SESSION_DETAILS.user.contact_id
+        contact.get("contact_id") if contact else SESSION_DETAILS.boss_contact_id
     )
     sender_name = _get_sender_name(contact)
     reason = event.reason or "no-answer"
@@ -850,7 +850,7 @@ async def _(
         contact = event.contact
 
     contact_id = (
-        contact.get("contact_id") if contact else SESSION_DETAILS.user.contact_id
+        contact.get("contact_id") if contact else SESSION_DETAILS.boss_contact_id
     )
     sender_name = _get_sender_name(contact)
     reason = event.reason or "no-answer"
@@ -904,7 +904,7 @@ async def _(
     """Handle call permission grant/rejection from a WhatsApp contact."""
     contact = event.contact
     contact_id = (
-        contact.get("contact_id") if contact else SESSION_DETAILS.user.contact_id
+        contact.get("contact_id") if contact else SESSION_DETAILS.boss_contact_id
     )
     sender_name = _get_sender_name(contact)
 
@@ -983,7 +983,7 @@ async def _(
     """Log the invite template send in the conversation thread."""
     contact = event.contact
     contact_id = (
-        contact.get("contact_id") if contact else SESSION_DETAILS.user.contact_id
+        contact.get("contact_id") if contact else SESSION_DETAILS.boss_contact_id
     )
     sender_name = _get_sender_name(contact)
 
@@ -2771,7 +2771,7 @@ async def _(event: DirectMessageEvent, cm: "ConversationManager", *args, **kwarg
 
     contact = cm.get_active_contact()
     contact_id = (
-        contact.get("contact_id") if contact else SESSION_DETAILS.user.contact_id
+        contact.get("contact_id") if contact else SESSION_DETAILS.boss_contact_id
     )
     sender_name = _get_sender_name(contact)
 

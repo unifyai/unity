@@ -40,7 +40,7 @@ from unity.conversation_manager.task_actions import (
     safe_call_id_suffix,
 )
 from unity.logger import LOGGER
-from unity.session_details import SESSION_DETAILS
+from unity.session_details import SESSION_DETAILS, is_boss_contact
 
 if TYPE_CHECKING:
     pass
@@ -1160,7 +1160,7 @@ class Renderer:
         rolling_summary = contact_info.get("rolling_summary") or ""
         response_policy = contact_info.get("response_policy") or ""
         should_respond = contact_info.get("should_respond", True)
-        is_boss = contact_id == 1
+        is_boss = is_boss_contact(contact_id)
 
         # Compute contact name for timezone display
         contact_name = f"{first_name} {surname}".strip() or f"Contact #{contact_id}"

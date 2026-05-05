@@ -903,7 +903,7 @@ async def log_message(
     contact_id = None
     if isinstance(event, (PreHireMessage,)):
         # PreHireMessage is always boss context
-        contact_id = 1
+        contact_id = SESSION_DETAILS.boss_contact_id
     elif isinstance(
         event,
         (
@@ -932,9 +932,9 @@ async def log_message(
     elif cm.contact_index.get_contact(contact_id=event.contact["contact_id"]):
         contact_id = event.contact["contact_id"]
     if role == "Assistant":
-        sender_id, receiver_ids = 0, [contact_id]
+        sender_id, receiver_ids = SESSION_DETAILS.self_contact_id, [contact_id]
     else:
-        sender_id, receiver_ids = contact_id, [0]
+        sender_id, receiver_ids = contact_id, [SESSION_DETAILS.self_contact_id]
 
     # For browser-meet utterances (Google Meet / Teams Meet), resolve
     # participant names to contact IDs so receiver_ids reflects all known
@@ -966,7 +966,7 @@ async def log_message(
                 if resolved_ids:
                     receiver_ids = sorted(resolved_ids)
             else:
-                resolved_ids.add(0)
+                resolved_ids.add(SESSION_DETAILS.self_contact_id)
                 resolved_ids.discard(sender_id)
                 if resolved_ids:
                     receiver_ids = sorted(resolved_ids)
@@ -983,8 +983,7 @@ async def log_message(
             if role == "Assistant":
                 receiver_ids = sorted(resolved_ids)
             else:
-                # Keep assistant (0) plus all resolved recipients
-                resolved_ids.add(0)
+                resolved_ids.add(SESSION_DETAILS.self_contact_id)
                 receiver_ids = sorted(resolved_ids)
 
     # For Teams, use the conversation roster (already resolved to contact
@@ -1002,11 +1001,11 @@ async def log_message(
         resolved_ids: set[int] = set(getattr(event, "participants", []) or [])
         if resolved_ids:
             if role == "Assistant":
-                resolved_ids.discard(0)
+                resolved_ids.discard(SESSION_DETAILS.self_contact_id)
                 if resolved_ids:
                     receiver_ids = sorted(resolved_ids)
             else:
-                resolved_ids.add(0)
+                resolved_ids.add(SESSION_DETAILS.self_contact_id)
                 resolved_ids.discard(sender_id)
                 if resolved_ids:
                     receiver_ids = sorted(resolved_ids)
@@ -1232,12 +1231,12 @@ async def update_session_contacts(
     assistant_job_title: str | None = None,
 ) -> None:
     """
-    Update the assistant (contact_id=0) and boss (contact_id=1) contacts
-    in the ContactManager when session details change.
+    Update the resolved assistant and boss contacts in the ContactManager when
+    session details change.
 
     Called when an AssistantUpdateEvent is received.
 
-    Note: In demo mode, we skip updating the boss contact (contact_id=1) because
+    Note: In demo mode, we skip updating the boss contact because
     the user_* fields contain the demoer's details, not the prospect's. The
     prospect's details are either:
     - Set during initialization from demo metadata (prospect_* fields), or
@@ -1268,7 +1267,7 @@ async def update_session_contacts(
             )
             if whatsapp_number is not None:
                 kwargs["whatsapp_number"] = whatsapp_number
-            if job_title is not None and contact_id == 0:
+            if job_title is not None and contact_id == SESSION_DETAILS.self_contact_id:
                 kwargs["job_title"] = job_title
             await asyncio.to_thread(
                 cm.contact_manager.update_contact,
@@ -1283,7 +1282,7 @@ async def update_session_contacts(
             )
 
     await _update_contact(
-        0,
+        SESSION_DETAILS.self_contact_id,
         assistant_first_name,
         assistant_surname,
         assistant_number,
@@ -1296,11 +1295,11 @@ async def update_session_contacts(
     )
 
     # In demo mode:
-    # - Skip updating boss contact (contact_id=1) - prospect details come from Orchestra meta
+    # - Skip updating boss contact - prospect details come from Orchestra meta
     # - Update demoer contact (contact_id=2) with user_* fields (initially created in _init_managers)
     if SETTINGS.DEMO_MODE:
         LOGGER.info(
-            f"{ICONS['managers_worker']} [ManagersWorker] Demo mode: skipping boss contact (contact_id=1), "
+            f"{ICONS['managers_worker']} [ManagersWorker] Demo mode: skipping boss contact, "
             "updating demoer contact (contact_id=2)",
         )
         await _update_contact(
@@ -1314,7 +1313,7 @@ async def update_session_contacts(
         return
 
     await _update_contact(
-        1,
+        SESSION_DETAILS.boss_contact_id,
         user_first_name,
         user_surname,
         user_number,
@@ -1456,17 +1455,15 @@ def _init_managers(
     )
     # Wire up ContactManager to ContactIndex for always-fresh contact data
     cm.contact_index.set_contact_manager(cm.contact_manager)
-    # In demo mode, ensure the boss contact (contact_id==1) is always visible
+    # In demo mode, ensure the boss contact is always visible
     # in active_conversations so the slow brain can use inline details on
-    # communication tools (e.g., make_call(contact_id=1, phone_number=...))
-    # and set_boss_details to update their record.
+    # communication tools and set_boss_details can use inline details.
     if SETTINGS.DEMO_MODE:
-        # Ensure boss (contact_id=1) is visible in active conversations for the brain
-        cm.contact_index.get_or_create_conversation(1)
+        cm.contact_index.get_or_create_conversation(SESSION_DETAILS.boss_contact_id)
         # Start the boss contact sparse in demo mode; details can be provided
         # later via set_boss_details or demo prospect metadata.
         cm.contact_manager.update_contact(
-            contact_id=1,
+            contact_id=SESSION_DETAILS.boss_contact_id,
             first_name="",
             surname="",
             email_address="",
@@ -1474,7 +1471,7 @@ def _init_managers(
             should_respond=True,
         )
         # If we have a demo_id, fetch prospect details from Orchestra and apply
-        # them to the boss contact (contact_id=1)
+        # them to the boss contact.
         if SETTINGS.DEMO_ID is not None:
             try:
                 from unity.demo_meta import (
@@ -1599,7 +1596,7 @@ def _init_managers(
             ManagerRegistry.get_conversation_manager_handle(
                 description="production deployment",
                 assistant_id=SESSION_DETAILS.assistant.agent_id,
-                contact_id="1",
+                contact_id=str(SESSION_DETAILS.boss_contact_id),
             )
         )
     else:
@@ -1607,7 +1604,7 @@ def _init_managers(
             ManagerRegistry.get_conversation_manager_handle(
                 event_broker=cm.event_broker,
                 conversation_id=SESSION_DETAILS.assistant.agent_id,
-                contact_id="1",
+                contact_id=str(SESSION_DETAILS.boss_contact_id),
                 transcript_manager=cm.transcript_manager,
                 conversation_manager=cm,
             )

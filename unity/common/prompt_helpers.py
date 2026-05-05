@@ -169,6 +169,7 @@ def _lookup_assistant_timezone() -> _AssistantTimezoneLookup:
             )
 
     import unify as _unify
+    from unity.session_details import SESSION_DETAILS
 
     result: str | None = None
     rows_count = 0
@@ -177,7 +178,7 @@ def _lookup_assistant_timezone() -> _AssistantTimezoneLookup:
     try:
         rows = _unify.get_logs(
             context=contacts_ctx,
-            filter="contact_id == 0",
+            filter=f"contact_id == {SESSION_DETAILS.self_contact_id}",
             limit=1,
             from_fields=["timezone"],
         )
@@ -245,8 +246,8 @@ def _utc_now() -> datetime:
 def now(time_only: bool = False, as_string: bool = True) -> "str | datetime":
     """Return the current timestamp in the assistant's timezone.
 
-    The assistant is the system contact with ``contact_id == 0`` in the
-    Contacts table. We read its ``timezone`` field (an IANA timezone
+    The assistant's resolved self contact row stores its ``timezone`` field
+    (an IANA timezone
     identifier like "America/New_York") and convert UTC to local time.
 
     Args:
@@ -275,7 +276,7 @@ def now(time_only: bool = False, as_string: bool = True) -> "str | datetime":
     # Default to UTC if assistant row/field is unavailable
     lookup = _lookup_assistant_timezone()
     _mark_step()
-    tz_name = lookup.timezone or "UTC"
+    tz_name = lookup.timezone or "UTC
 
     # Convert UTC now to the target timezone
     utc_now = _utc_now()
@@ -738,13 +739,16 @@ def clarification_else_policy() -> str:
 
 
 def special_contacts_block() -> str:
-    """Standard block describing special contact ids 0 and 1."""
+    """Standard block describing resolved special contact ids."""
+
+    from unity.session_details import SESSION_DETAILS
+
     return "\n".join(
         [
             "Special contacts",
             "----------------",
-            "• contact_id==0 is the assistant (this agent). Do not include the assistant in suggestions, rankings, or comparisons unless it makes sense from the broader context.",
-            "• contact_id==1 is the central user (the assistant's supervisor). Many requests originate from this user; do not propose the central user as a candidate unless it makes sense from the broader context.",
+            f"• contact_id=={SESSION_DETAILS.self_contact_id} is the assistant (this agent). Do not include the assistant in suggestions, rankings, or comparisons unless it makes sense from the broader context.",
+            f"• contact_id=={SESSION_DETAILS.boss_contact_id} is the central user (the assistant's supervisor). Many requests originate from this user; do not propose the central user as a candidate unless it makes sense from the broader context.",
         ],
     )
 

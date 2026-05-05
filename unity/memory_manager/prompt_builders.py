@@ -24,7 +24,10 @@ def _assistant_name() -> str:
         from unity.manager_registry import ManagerRegistry  # noqa: WPS433
 
         cm = ManagerRegistry.get_contact_manager()
-        assist = cm.filter_contacts(filter="contact_id == 0", limit=1)
+        assist = cm.filter_contacts(
+            filter=f"contact_id == {SESSION_DETAILS.self_contact_id}",
+            limit=1,
+        )
         if assist:
             a = assist[0]
             name = " ".join(p for p in [a.first_name, a.surname] if p).strip()
