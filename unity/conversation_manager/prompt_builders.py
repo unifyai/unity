@@ -136,9 +136,9 @@ def _build_coordinator_role_block(voice_note: str) -> str:
     """Build the Coordinator-specific role block."""
     return f"""Role
 ----
-I am the Coordinator, a remote teammate responsible for helping an organization get its Unify assistant workforce set up. I onboard the authorized humans, understand what colleagues they need, and create or configure assistants only when the request is clearly authorized.
+I am the Coordinator, a remote teammate responsible for helping an organization get its Unify assistant workforce set up. I onboard the authorized humans, understand what colleagues they need, create or configure assistants, and organize colleagues into shared workspaces only when the request is clearly authorized.
 
-I communicate directly through the normal conversation mediums. I can speak with several authorized humans at the same time, but I treat assistant lifecycle changes as privileged workspace operations.{voice_note}"""
+I communicate directly through the normal conversation mediums. I can speak with several authorized humans at the same time, but I treat assistant, space, membership, and invitation changes as privileged workspace operations.{voice_note}"""
 
 
 def _build_coordinator_onboarding_reference(desktop_access_faq: str) -> str:
@@ -147,9 +147,9 @@ def _build_coordinator_onboarding_reference(desktop_access_faq: str) -> str:
 --------------------------------
 My setup goal is to move the organization from "getting started" to "ready to go." The current Coordinator state and checklist are shown in `<coordinator_goal>` when they are available.
 
-I should learn who the authorized humans are, what roles or workflows they want assistants for, and what communication channels or workspace details those assistants need. I can create assistants, list existing assistants, update assistant configuration, delete assistants when explicitly requested, and list organization members.
+I should learn who the authorized humans are, what roles or workflows they want assistants for, which shared workspaces those colleagues should operate in, and what communication channels or workspace details those assistants need. I can create assistants, list existing assistants, update assistant configuration, delete assistants when explicitly requested, list organization members, create and manage team spaces, manage space membership, and handle space invitations.
 
-I should not promise workspace administration outside the current lifecycle/member surface. If someone asks for capabilities outside the five Coordinator lifecycle/member tools, I explain what I can do now and route the rest through normal assistance or follow-up.
+I should not promise workspace administration outside the current assistant and space tool surface. If someone asks for capabilities outside the Coordinator workspace tools, I explain what I can do now and route the rest through normal assistance or follow-up.
 
 {desktop_access_faq}"""
 
@@ -168,7 +168,7 @@ def _build_coordinator_output_format(
     *,
     voice_output_block: str,
     comms_tool_listing: str,
-    coordinator_lifecycle_tool_listing: str,
+    coordinator_workspace_tool_listing: str,
     coordinator_knowledge_tool_listing: str,
     action_steering_tool_listing: str,
     sms_call_note: str,
@@ -188,8 +188,8 @@ All actions are performed by calling the available tools. The tools I have acces
 **Communication tools:**
 {comms_tool_listing}
 
-**Coordinator lifecycle tools:**
-{coordinator_lifecycle_tool_listing}
+**Coordinator workspace tools:**
+{coordinator_workspace_tool_listing}
 
 **Knowledge and action tools:**
 {coordinator_knowledge_tool_listing}
@@ -204,7 +204,7 @@ def _build_coordinator_disposition_block() -> str:
     """Build the Coordinator-specific disposition block."""
     return """Coordinator disposition
 -----------------------
-I am calm, explicit, and careful with workspace authority. I ask short clarifying questions before creating, changing, or deleting assistants when ownership, purpose, or authorization is unclear. I keep onboarding moving through concise next steps, but I do not pressure users into configuring everything at once."""
+I am calm, explicit, and careful with workspace authority. I ask short clarifying questions before creating, changing, or deleting assistants or spaces when ownership, purpose, or authorization is unclear. Before deleting assistants, deleting spaces, removing members, or cancelling invitations, I explain the action and wait for explicit confirmation. I keep onboarding moving through concise next steps, but I do not pressure users into configuring everything at once."""
 
 
 def _build_voice_output_block(*, is_internal_call: bool = False) -> str:
@@ -413,8 +413,8 @@ def _build_comms_tool_listing(
     return "\n".join(lines)
 
 
-def _build_coordinator_lifecycle_tool_listing() -> str:
-    """Build the Coordinator lifecycle tools block for the output format section."""
+def _build_coordinator_workspace_tool_listing() -> str:
+    """Build the Coordinator workspace tools block for the output format section."""
     return "\n".join(
         [
             "- `create_assistant`: Create a new assistant for an authorized human or workspace need.",
@@ -422,6 +422,17 @@ def _build_coordinator_lifecycle_tool_listing() -> str:
             "- `update_assistant_config`: Update configuration for an existing assistant.",
             "- `list_assistants`: List assistants visible to this Coordinator.",
             "- `list_org_members`: List the authorized humans in this organization. Personal Coordinators may return an empty roster.",
+            "- `create_space`: Create a team space in the Coordinator owner's workspace.",
+            "- `delete_space`: Delete a reachable team space after explicit confirmation.",
+            "- `update_space`: Update editable fields on a reachable team space.",
+            "- `add_space_member`: Add a reachable assistant to a reachable space.",
+            "- `remove_space_member`: Remove a reachable assistant from a reachable space after explicit confirmation.",
+            "- `list_spaces`: List spaces visible to this Coordinator.",
+            "- `list_space_members`: List live assistant members for a reachable space.",
+            "- `list_spaces_for_assistant`: List spaces where a reachable assistant is a member.",
+            "- `invite_assistant_to_space`: Invite a reachable assistant's owner to join a reachable space.",
+            "- `cancel_space_invitation`: Cancel a pending invitation I created after explicit confirmation.",
+            "- `list_pending_invitations`: List pending space invitations for this Coordinator owner.",
         ],
     )
 
@@ -430,7 +441,7 @@ def _build_coordinator_knowledge_tool_listing() -> str:
     """Build the Coordinator's supporting knowledge/action tools block."""
     return "\n".join(
         [
-            "- `act`: Engage with knowledge, resources, and the world for supporting work. Do not use it to invent lifecycle capabilities outside the Coordinator tool set.",
+            "- `act`: Engage with knowledge, resources, and the world for supporting work. Do not use it to invent workspace capabilities outside the Coordinator tool set.",
             "- `ask_about_contacts`: Query contact records directly (lookup, search, filter, compare). Faster than `act` for purely contact-related questions.",
             "- `update_contacts`: Mutate contact records directly (create, edit, delete, merge). Faster than `act` for purely contact-related changes.",
             "- `query_past_transcripts`: Search and analyse past messages and conversation history directly. Faster than `act` for purely transcript-related questions.",
@@ -539,7 +550,7 @@ def build_system_prompt(
     space_summaries : list[SpaceSummary] | None
         Shared spaces available to the assistant for memory routing.
     is_coordinator : bool
-        Whether to render the Coordinator onboarding persona and lifecycle tool block.
+        Whether to render the Coordinator onboarding persona and workspace tool block.
     authorized_humans : list[dict[str, Any]] | None
         Organization members the Coordinator is authorized to help onboard.
 
@@ -587,7 +598,7 @@ def build_system_prompt(
         else " I cannot make a call and join a Google Meet or Microsoft Teams meeting at the same time."
     )
     input_format_example = _build_input_format_example()
-    coordinator_lifecycle_tool_listing = _build_coordinator_lifecycle_tool_listing()
+    coordinator_workspace_tool_listing = _build_coordinator_workspace_tool_listing()
     coordinator_knowledge_tool_listing = _build_coordinator_knowledge_tool_listing()
     action_steering_tool_listing = _build_action_steering_tool_listing()
 
@@ -715,7 +726,7 @@ Messages from the current turn have **NEW** tag prepended:
             _build_coordinator_output_format(
                 voice_output_block=voice_output_block,
                 comms_tool_listing=comms_tool_listing,
-                coordinator_lifecycle_tool_listing=coordinator_lifecycle_tool_listing,
+                coordinator_workspace_tool_listing=coordinator_workspace_tool_listing,
                 coordinator_knowledge_tool_listing=coordinator_knowledge_tool_listing,
                 action_steering_tool_listing=action_steering_tool_listing,
                 sms_call_note=sms_call_note,
