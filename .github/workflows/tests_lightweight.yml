@@ -1,0 +1,425 @@
+# Lightweight test suite: runs all tests with -m "not llm_call" across 8 fixed per-test shards.
+# For the full test suite (with LLM calls, matrix parallelism, cache consolidation),
+# use tests.yml via workflow_dispatch.
+name: Tests (lightweight)
+run-name: >-
+  ${{
+    github.event.head_commit.message ||
+    github.event.pull_request.title
+  }}
+
+on:
+  pull_request:
+    branches:
+    - main
+    - staging
+
+jobs:
+  pytest:
+    name: pytest (lightweight shard ${{ matrix.shard }}/8)
+    runs-on: ubuntu-latest-8-cores
+    environment: unity-testing
+    timeout-minutes: 130
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4, 5, 6, 7, 8]
+    env:
+      LIGHTWEIGHT_SHARD_COUNT: "8"
+      UNIFY_TESTS_RAND_PROJ: "false"
+      UNIFY_TESTS_DELETE_PROJ_ON_START: "false"
+      UNIFY_TESTS_DELETE_PROJ_ON_EXIT: "false"
+      UNILLM_CACHE: "true"
+      ORCHESTRA_REPO_PATH: ${{ github.workspace }}/orchestra
+      ORCHESTRA_URL: ${{ vars.ORCHESTRA_URL }}
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      UNITY_COMMS_URL: ${{ vars.UNITY_COMMS_URL }}
+      GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
+      GCP_LOCATION: ${{ vars.GCP_LOCATION }}
+      ORCHESTRA_GCP_BUCKET_NAME: ${{ vars.GCP_BUCKET_LOGS }}
+      ORCHESTRA_GCP_ASSISTANT_MEDIA_BUCKET_NAME: ${{ vars.GCP_BUCKET_ASSISTANT_IMAGES }}
+      ORCHESTRA_GCP_ASSISTANT_CALL_RECORDINGS_BUCKET_NAME: ${{ vars.GCP_BUCKET_RECORDINGS }}
+      TAVILY_API_KEY: ${{ secrets.TAVILY_API_KEY }}
+      UNIFY_KEY: ${{ secrets.UNIFY_KEY }}
+      PYTHONPATH: ${{ github.workspace }}/unillm:${{ github.workspace }}/unify
+    steps:
+    - uses: actions/checkout@v6
+      with:
+        fetch-depth: 1
+
+    - name: Clone orchestra repo for local deployment
+      uses: actions/checkout@v6
+      with:
+        repository: unifyai/orchestra
+        ref: ${{ vars.LOCAL_ORCHESTRA_BRANCH || (github.ref_name == 'main' && 'main' || 'staging') }}
+        path: orchestra
+        token: ${{ secrets.CLONE_TOKEN }}
+        fetch-depth: 1
+
+    - name: Clone unify repo
+      uses: actions/checkout@v6
+      with:
+        repository: unifyai/unify
+        ref: ${{ github.ref_name == 'main' && 'main' || 'staging' }}
+        path: unify
+        token: ${{ secrets.CLONE_TOKEN }}
+        fetch-depth: 1
+
+    - name: Clone unillm repo
+      uses: actions/checkout@v6
+      with:
+        repository: unifyai/unillm
+        ref: ${{ github.ref_name == 'main' && 'main' || 'staging' }}
+        path: unillm
+        token: ${{ secrets.CLONE_TOKEN }}
+        fetch-depth: 1
+
+    - name: Authenticate to Google Cloud
+      uses: google-github-actions/auth@v2
+      with:
+        credentials_json: ${{ secrets.GCP_SERVICE_ACCOUNT_JSON }}
+
+    - name: Get orchestra commit SHA
+      id: orchestra-sha
+      run: echo "sha=$(git -C orchestra rev-parse HEAD)" >> $GITHUB_OUTPUT
+
+    - name: Set up Python
+      uses: actions/setup-python@v6
+      with:
+        python-version: '3.12'
+
+    - name: Cache apt packages
+      uses: awalsh128/cache-apt-pkgs-action@latest
+      with:
+        packages: >-
+          tmux zsh portaudio19-dev libnss3-dev libatk-bridge2.0-dev libdrm2
+          libxkbcommon0 libgtk-3-dev libgbm-dev libgirepository1.0-dev
+          libasound2t64 libatspi2.0-0 libgtk-3-0 libnspr4 libwayland-client0
+          libxcomposite1 libxdamage1 libxrandr2 xvfb
+        version: 1.1
+
+    - name: Install uv and poetry
+      run: |
+        pip install uv
+        pip install poetry
+
+    - name: Cache uv dependencies
+      uses: actions/cache@v5
+      with:
+        path: |
+          ~/.cache/uv
+          .venv
+        key: uv-${{ runner.os }}-${{ hashFiles('pyproject.toml', 'uv.lock', 'unillm/pyproject.toml', 'unify/pyproject.toml') }}
+        restore-keys: |
+          uv-${{ runner.os }}-
+
+    - name: Configure unify/unillm paths for CI
+      run: |
+        sed -i 's|path = "../unify"|path = "./unify"|g' pyproject.toml
+        sed -i 's|path = "../unillm"|path = "./unillm"|g' pyproject.toml
+
+    - name: Sync dependencies with uv
+      run: |
+        uv sync --all-groups
+
+    - name: Verify local packages installed correctly
+      run: |
+        uv run python -c "
+        import sys
+        print('Python path (first 5):')
+        for p in sys.path[:5]:
+            print(f'  {p}')
+
+        from unillm import AsyncUnify, Unify
+        import unify
+
+        print(f'✓ unillm: {AsyncUnify.__module__}')
+        print(f'✓ unify: {unify.__file__}')
+        assert hasattr(unify, 'create_project'), f'Wrong unify package!'
+        print('✓ Local packages verified successfully')
+        "
+
+    - name: Cache Playwright assets
+      uses: actions/cache@v5
+      id: playwright-cache
+      with:
+        path: ~/.cache/ms-playwright
+        key: playwright-${{ runner.os }}-${{ hashFiles('pyproject.toml') }}
+        restore-keys: |
+          playwright-${{ runner.os }}-
+
+    - name: Install Playwright assets
+      if: steps.playwright-cache.outputs.cache-hit != 'true'
+      run: |
+        uv run playwright install --with-deps
+
+    - name: Cache orchestra poetry dependencies
+      uses: actions/cache@v4
+      with:
+        path: ~/.cache/pypoetry
+        key: poetry-orchestra-${{ runner.os }}-${{ steps.orchestra-sha.outputs.sha }}
+        restore-keys: |
+          poetry-orchestra-${{ runner.os }}-
+
+    - name: Install orchestra dependencies
+      run: |
+        cd "$ORCHESTRA_REPO_PATH"
+        poetry install --no-interaction
+
+    - name: Collect test nodes for this shard
+      id: collect-nodes
+      env:
+        LIGHTWEIGHT_SHARD: ${{ matrix.shard }}
+        SKIP_UNITY_TEST_INIT: "1"
+      run: |
+        SHARD_NODES_FILE="$(mktemp)"
+        echo "shard_nodes_file=$SHARD_NODES_FILE" >> "$GITHUB_OUTPUT"
+        export SHARD_NODES_FILE
+
+        uv run python - <<'PY'
+        import os
+        import subprocess
+        import sys
+        from pathlib import Path
+
+        cmd = [
+            sys.executable,
+            "-m",
+            "pytest",
+            "--collect-only",
+            "-q",
+            "-m",
+            "not llm_call",
+            "tests/",
+            "--ignore=tests/actor",
+            "--ignore=tests/conversation_manager",
+            "--ignore=tests/async_tool_loop",
+            "--ignore=tests/agent_service",
+            "--ignore=tests/demo_url_mapping",
+        ]
+        result = subprocess.run(cmd, text=True, capture_output=True)
+        if result.returncode != 0:
+            print(result.stdout)
+            print(result.stderr, file=sys.stderr)
+            raise SystemExit(result.returncode)
+
+        nodes = [line.strip() for line in result.stdout.splitlines() if "::" in line]
+        shard = int(os.environ["LIGHTWEIGHT_SHARD"])
+        shard_count = int(os.environ["LIGHTWEIGHT_SHARD_COUNT"])
+        shard_nodes = [node for index, node in enumerate(nodes) if index % shard_count == shard - 1]
+        Path(os.environ["SHARD_NODES_FILE"]).write_text("".join(f"{node}\n" for node in shard_nodes))
+
+        print(f"Collected {len(nodes)} lightweight nodes")
+        print(f"Shard {shard}/{shard_count}: {len(shard_nodes)} nodes")
+
+        if not shard_nodes:
+            raise SystemExit(f"Shard {shard}/{shard_count} has no collected tests")
+        PY
+
+    - name: Run tests
+      id: run-tests
+      run: |
+        set +e
+        SHARD_NODES_FILE='${{ steps.collect-nodes.outputs.shard_nodes_file }}'
+        SHARD_NODE_COUNT=$(wc -l < "$SHARD_NODES_FILE" | tr -d ' ')
+
+        Xvfb :99 -screen 0 1920x1080x24 &
+        XVFB_PID=$!
+        export DISPLAY=:99
+        trap "kill $XVFB_PID 2>/dev/null" EXIT
+
+        echo "Running shard ${{ matrix.shard }}/8 with $SHARD_NODE_COUNT explicit test nodes from $SHARD_NODES_FILE"
+        tests/parallel_run.sh --timeout 7200 --skip-collection --from-file "$SHARD_NODES_FILE"
+        TEST_EXIT_CODE=$?
+        echo "exit_code=$TEST_EXIT_CODE" >> "$GITHUB_OUTPUT"
+        exit $TEST_EXIT_CODE
+
+    - name: Dump orchestra logs on failure
+      if: failure()
+      run: |
+        echo "=== Orchestra Server Logs ==="
+        if [ -f /tmp/orchestra-local-server.log ]; then
+          cat /tmp/orchestra-local-server.log
+          mkdir -p logs/orchestra
+          cp /tmp/orchestra-local-server.log logs/orchestra/server.log
+          echo "(Copied to logs/orchestra/server.log for artifact upload)"
+        else
+          echo "No orchestra log file found at /tmp/orchestra-local-server.log"
+        fi
+        echo ""
+        echo "=== Orchestra Server Process Status ==="
+        if [ -f /tmp/orchestra-local-server.pid ]; then
+          PID=$(cat /tmp/orchestra-local-server.pid)
+          echo "Expected PID: $PID"
+          if ps -p "$PID" > /dev/null 2>&1; then
+            echo "Process is still running"
+          else
+            echo "Process is NOT running"
+          fi
+        else
+          echo "No PID file found"
+        fi
+        echo ""
+        echo "=== Any orchestra-related processes ==="
+        ps aux | grep -E "(orchestra|uvicorn)" | grep -v grep || echo "None found"
+
+    - name: Generate failure summary
+      if: failure()
+      run: |
+        ARTIFACTS_URL="https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}#artifacts"
+
+        TOTAL_COUNT=0
+        if [ -d "logs/pytest" ]; then
+          TOTAL_COUNT=$(find logs/pytest -name "*.txt" -type f 2>/dev/null | wc -l | tr -d ' ')
+        fi
+
+        FAILED_SESSIONS=""
+        FAIL_COUNT=0
+        for sock in /tmp/tmux-$(id -u)/unity*; do
+          if [ -S "$sock" ]; then
+            socket_name=$(basename "$sock")
+            FAILED_SESSIONS=$(tmux -L "$socket_name" ls 2>/dev/null | sed 's/: .*//' | grep '^f ' || true)
+            FAIL_COUNT=$(echo "$FAILED_SESSIONS" | grep -c '^f ' || echo 0)
+            break
+          fi
+        done
+
+        PASS_COUNT=$((TOTAL_COUNT - FAIL_COUNT))
+
+        echo "=== Test Results ==="
+        echo "✅ $PASS_COUNT passed, ❌ $FAIL_COUNT failed"
+        echo ""
+        echo "Failed tests:"
+        echo "$FAILED_SESSIONS"
+        echo ""
+        echo "Download logs: $ARTIFACTS_URL"
+
+        echo "## ❌ Test Failures (lightweight shard ${{ matrix.shard }}/8)" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "**✅ $PASS_COUNT** passed, **❌ $FAIL_COUNT** failed — [view logs]($ARTIFACTS_URL)" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "### Failed tests:" >> $GITHUB_STEP_SUMMARY
+        echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+        echo "$FAILED_SESSIONS" >> $GITHUB_STEP_SUMMARY
+        echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+
+        DURATION_FILE=$(find logs/pytest -name "duration_summary.txt" 2>/dev/null | head -1)
+        if [ -n "$DURATION_FILE" ] && [ -f "$DURATION_FILE" ]; then
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "<details>" >> $GITHUB_STEP_SUMMARY
+          echo "<summary>📊 Test Stats: Duration & Cache (fastest → slowest)</summary>" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+          cat "$DURATION_FILE" >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+          echo "</details>" >> $GITHUB_STEP_SUMMARY
+        fi
+
+    - name: Generate success summary
+      if: success()
+      run: |
+        ARTIFACTS_URL="https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}#artifacts"
+
+        log_count=0
+        if [ -d "logs/pytest" ]; then
+          log_count=$(find logs/pytest -name "*.txt" -type f 2>/dev/null | wc -l | tr -d ' ')
+        fi
+
+        if [ "$log_count" -eq 0 ]; then
+          echo "## ⚠️ No Tests Ran (lightweight shard ${{ matrix.shard }}/8)" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**0 tests executed** — this likely indicates a problem with test discovery." >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Check the 'Run tests' step logs for details." >> $GITHUB_STEP_SUMMARY
+          echo ""
+          echo "Error: No tests were executed. This indicates a problem with test discovery." >&2
+          echo "Check the 'Run tests' step output for pytest collection errors." >&2
+          exit 1
+        fi
+
+        echo "=== All tests passed ==="
+        echo "✅ $log_count passed"
+        echo ""
+        echo "View logs: $ARTIFACTS_URL"
+
+        echo "## ✅ All Tests Passed (lightweight shard ${{ matrix.shard }}/8)" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "**✅ $log_count** passed — [view logs]($ARTIFACTS_URL)" >> $GITHUB_STEP_SUMMARY
+
+        DURATION_FILE=$(find logs/pytest -name "duration_summary.txt" 2>/dev/null | head -1)
+        if [ -n "$DURATION_FILE" ] && [ -f "$DURATION_FILE" ]; then
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "<details>" >> $GITHUB_STEP_SUMMARY
+          echo "<summary>📊 Test Stats: Duration & Cache (fastest → slowest)</summary>" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+          cat "$DURATION_FILE" >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+          echo "</details>" >> $GITHUB_STEP_SUMMARY
+        fi
+
+    - name: Stop local orchestra (before log upload)
+      if: always()
+      continue-on-error: true
+      run: |
+        trap 'echo "Received SIGTERM, exiting gracefully"; exit 0' TERM
+        orchestra/scripts/local.sh stop || true
+
+    - name: Prepare logs for upload
+      if: always()
+      run: |
+        echo "=== Preparing logs for upload ==="
+        mkdir -p logs
+
+        if [ -d logs/pytest ]; then
+          file_count=$(find logs/pytest -type f 2>/dev/null | wc -l | tr -d ' ')
+          echo "✓ pytest logs: $file_count files"
+        else
+          echo "○ pytest logs: directory not found (skipping)"
+        fi
+
+        if [ -d logs/unillm ]; then
+          file_count=$(find logs/unillm -type f 2>/dev/null | wc -l | tr -d ' ')
+          echo "✓ unillm logs: $file_count files"
+        else
+          echo "○ unillm logs: directory not found (skipping)"
+        fi
+
+        if [ -d logs/orchestra ]; then
+          sanitized=0
+          while IFS= read -r -d '' file; do
+            newname=$(echo "$file" | tr ':' '_')
+            if mv "$file" "$newname" 2>/dev/null; then
+              ((sanitized++)) || true
+            fi
+          done < <(find logs/orchestra -type f -name '*:*' -print0 2>/dev/null || true)
+
+          file_count=$(find logs/orchestra -type f 2>/dev/null | wc -l | tr -d ' ')
+          if [ "$sanitized" -gt 0 ]; then
+            echo "✓ orchestra logs: $file_count files ($sanitized filenames sanitized)"
+          else
+            echo "✓ orchestra logs: $file_count files"
+          fi
+        else
+          echo "○ orchestra logs: directory not found (skipping)"
+        fi
+
+        echo "=== Log preparation complete ==="
+
+    - name: Upload logs
+      if: always()
+      uses: actions/upload-artifact@v7
+      with:
+        name: logs-lightweight-shard-${{ matrix.shard }}
+        path: logs/
+        if-no-files-found: ignore
+        retention-days: 90
+
+    - name: Cleanup on cancellation
+      if: cancelled()
+      run: |
+        echo "Workflow cancelled - cleaning up tmux sessions and orphaned processes..."
+        tests/kill_server.sh --all || true
+        orchestra/scripts/local.sh stop || true
+        echo "Cleanup complete."
