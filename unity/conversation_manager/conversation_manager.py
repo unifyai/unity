@@ -1104,9 +1104,17 @@ class ConversationManager(metaclass=SingletonABCMeta):
         from ..events.cost_attribution import COST_ATTRIBUTION
 
         _preamble_t0 = _rl_time.perf_counter()
+        _last_preamble_step = _preamble_t0
 
         def _ms_since_start() -> str:
             return f"{(_rl_time.perf_counter() - _preamble_t0) * 1000:.0f}ms"
+
+        def _mark_preamble_step() -> float:
+            nonlocal _last_preamble_step
+            now = _rl_time.perf_counter()
+            elapsed_ms = (now - _last_preamble_step) * 1000
+            _last_preamble_step = now
+            return elapsed_ms
 
         trace_meta = trace_meta or {}
 
@@ -1135,6 +1143,7 @@ class ConversationManager(metaclass=SingletonABCMeta):
                 )
             except (ImportError, Exception):
                 pass
+        _cost_attribution_ms = _mark_preamble_step()
 
         self._llm_gen += 1
         run_id = trace_meta.get("run_id", "llmrun-unknown")
@@ -1151,14 +1160,17 @@ class ConversationManager(metaclass=SingletonABCMeta):
                 f"was_queued={self.debouncer.was_queued} mode={self.mode}"
             ),
         )
+        _run_metadata_ms = _mark_preamble_step()
 
         slow_brain_start_time = datetime.now(timezone.utc)
 
         screenshots = self.peek_screenshot_buffer()
+        _screenshot_peek_ms = _mark_preamble_step()
 
         screenshot_paths = [
             s.filepath or generate_screenshot_path(s) for s in screenshots
         ]
+        _screenshot_paths_ms = _mark_preamble_step()
 
         if screenshots:
             msg_to_paths: dict[int, list[str]] = {}
@@ -1175,8 +1187,10 @@ class ConversationManager(metaclass=SingletonABCMeta):
                         msg.screenshots = msg_to_paths.pop(msg.local_message_id)
                     if not msg_to_paths:
                         break
+        _screenshot_attach_ms = _mark_preamble_step()
 
         self.snapshot()
+        _snapshot_ms = _mark_preamble_step()
 
         web_sessions = None
         if self.assistant_screen_share_active:
@@ -1192,6 +1206,32 @@ class ConversationManager(metaclass=SingletonABCMeta):
                         visible_only=True,
                         active_only=True,
                     )
+        _web_sessions_ms = _mark_preamble_step()
+
+        log_startup_timing(
+            LOGGER,
+            (
+                "⏱️ [StartupTiming] llm_preamble.setup.detail "
+                "run_id=%s total=%.0fms cost_attribution=%.0fms metadata=%.0fms "
+                "screenshot_peek=%.0fms screenshot_paths=%.0fms "
+                "screenshot_attach=%.0fms snapshot=%.0fms web_sessions=%.0fms "
+                "screenshots=%d global_thread=%d chat_history=%d "
+                "screen_share_active=%s"
+            ),
+            run_id,
+            (_rl_time.perf_counter() - _preamble_t0) * 1000,
+            _cost_attribution_ms,
+            _run_metadata_ms,
+            _screenshot_peek_ms,
+            _screenshot_paths_ms,
+            _screenshot_attach_ms,
+            _snapshot_ms,
+            _web_sessions_ms,
+            len(screenshots),
+            len(self.contact_index.global_thread),
+            len(self.chat_history),
+            self.assistant_screen_share_active,
+        )
 
         _t0 = _rl_time.perf_counter()
         _has_desktop = SESSION_DETAILS.assistant.desktop_mode in ("ubuntu", "windows")
@@ -1229,8 +1269,12 @@ class ConversationManager(metaclass=SingletonABCMeta):
                 "screen_share",
                 f"Attaching {len(screenshots)} screenshot(s) to slow brain turn",
             )
+        _t0 = _rl_time.perf_counter()
         input_message = brain_spec.state_message()
+        _state_message_ms = (_rl_time.perf_counter() - _t0) * 1000
+        _t0 = _rl_time.perf_counter()
         system_prompt = brain_spec.system_prompt
+        _system_prompt_ref_ms = (_rl_time.perf_counter() - _t0) * 1000
 
         self._current_state_snapshot = input_message
 
@@ -1245,26 +1289,75 @@ class ConversationManager(metaclass=SingletonABCMeta):
         response_model = brain_spec.response_model
 
         _t0 = _rl_time.perf_counter()
+        _tools_step_t0 = _t0
         brain_tools = ConversationManagerBrainTools(self)
+        _brain_tools_init_ms = (_rl_time.perf_counter() - _tools_step_t0) * 1000
+        _tools_step_t0 = _rl_time.perf_counter()
         action_tools = ConversationManagerBrainActionTools(self)
+        _action_tools_init_ms = (_rl_time.perf_counter() - _tools_step_t0) * 1000
+        _tools_step_t0 = _rl_time.perf_counter()
+        brain_tool_dict = brain_tools.as_tools()
+        _brain_tools_ms = (_rl_time.perf_counter() - _tools_step_t0) * 1000
+        _tools_step_t0 = _rl_time.perf_counter()
+        action_tool_dict = action_tools.as_tools()
+        _action_tools_ms = (_rl_time.perf_counter() - _tools_step_t0) * 1000
+        _tools_step_t0 = _rl_time.perf_counter()
+        steering_tool_dict = action_tools.build_action_steering_tools()
+        _steering_tools_ms = (_rl_time.perf_counter() - _tools_step_t0) * 1000
+        _tools_step_t0 = _rl_time.perf_counter()
+        completed_tool_dict = action_tools.build_completed_action_tools()
+        _completed_tools_ms = (_rl_time.perf_counter() - _tools_step_t0) * 1000
+        _tools_step_t0 = _rl_time.perf_counter()
         tools = {
-            **brain_tools.as_tools(),
-            **action_tools.as_tools(),
-            **action_tools.build_action_steering_tools(),
-            **action_tools.build_completed_action_tools(),
+            **brain_tool_dict,
+            **action_tool_dict,
+            **steering_tool_dict,
+            **completed_tool_dict,
         }
+        _tools_merge_ms = (_rl_time.perf_counter() - _tools_step_t0) * 1000
 
+        _tools_step_t0 = _rl_time.perf_counter()
         if self.computer_fast_path_eligible:
             tools["desktop_act"] = action_tools.desktop_act
             tools["web_act"] = action_tools.web_act
             tools["close_web_session"] = action_tools.close_web_session
+        _fast_path_tools_ms = (_rl_time.perf_counter() - _tools_step_t0) * 1000
         _tools_ms = (_rl_time.perf_counter() - _t0) * 1000
+        log_startup_timing(
+            LOGGER,
+            (
+                "⏱️ [StartupTiming] llm_preamble.tools.detail "
+                "run_id=%s total=%.0fms brain_init=%.0fms action_init=%.0fms "
+                "brain_tools=%.0fms action_tools=%.0fms steering=%.0fms "
+                "completed=%.0fms merge=%.0fms fast_path=%.0fms "
+                "brain_tool_count=%d action_tool_count=%d steering_tool_count=%d "
+                "completed_tool_count=%d total_tool_count=%d"
+            ),
+            run_id,
+            _tools_ms,
+            _brain_tools_init_ms,
+            _action_tools_init_ms,
+            _brain_tools_ms,
+            _action_tools_ms,
+            _steering_tools_ms,
+            _completed_tools_ms,
+            _tools_merge_ms,
+            _fast_path_tools_ms,
+            len(brain_tool_dict),
+            len(action_tool_dict),
+            len(steering_tool_dict),
+            len(completed_tool_dict),
+            len(tools),
+        )
 
         _t0 = _rl_time.perf_counter()
+        _client_step_t0 = _t0
         client = new_llm_client(
             SETTINGS.UNIFY_MODEL,
             origin="ConversationManager",
         )
+        _new_client_ms = (_rl_time.perf_counter() - _client_step_t0) * 1000
+        _client_step_t0 = _rl_time.perf_counter()
         if hasattr(client, "_pending_thinking_log"):
             parts = [
                 p
@@ -1273,10 +1366,40 @@ class ConversationManager(metaclass=SingletonABCMeta):
             ]
             suffix = f" ({', '.join(parts)})" if parts else ""
             client._pending_thinking_log.set_thinking_context(suffix)
+        _thinking_context_ms = (_rl_time.perf_counter() - _client_step_t0) * 1000
+        _client_step_t0 = _rl_time.perf_counter()
         client.set_system_message(system_prompt.to_list())
+        _set_system_ms = (_rl_time.perf_counter() - _client_step_t0) * 1000
+        _client_step_t0 = _rl_time.perf_counter()
         client.set_prompt_caching(["system"])
+        _prompt_caching_ms = (_rl_time.perf_counter() - _client_step_t0) * 1000
+        _client_step_t0 = _rl_time.perf_counter()
         messages = self._preprocess_messages(self.chat_history + [input_message])
+        _preprocess_messages_ms = (_rl_time.perf_counter() - _client_step_t0) * 1000
         _client_ms = (_rl_time.perf_counter() - _t0) * 1000
+        log_startup_timing(
+            LOGGER,
+            (
+                "⏱️ [StartupTiming] llm_preamble.client.detail "
+                "run_id=%s total=%.0fms new_client=%.0fms thinking_context=%.0fms "
+                "set_system=%.0fms prompt_caching=%.0fms preprocess_messages=%.0fms "
+                "state_message=%.0fms system_prompt_ref=%.0fms chat_history=%d "
+                "message_count=%d system_parts=%d state_chars=%d"
+            ),
+            run_id,
+            _client_ms,
+            _new_client_ms,
+            _thinking_context_ms,
+            _set_system_ms,
+            _prompt_caching_ms,
+            _preprocess_messages_ms,
+            _state_message_ms,
+            _system_prompt_ref_ms,
+            len(self.chat_history),
+            len(messages),
+            len(system_prompt.to_list()),
+            len(brain_spec.state_prompt),
+        )
 
         _source_token = _EVENT_SOURCE.set("ConversationManager")
 

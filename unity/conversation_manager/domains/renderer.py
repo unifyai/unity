@@ -12,9 +12,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime
+from time import perf_counter
 from typing import TYPE_CHECKING
 
 from unity.common._async_tool.utils import get_handle_paused_state
+from unity.common.startup_timing import log_startup_timing
 from unity.conversation_manager.domains.contact_index import (
     ApiMessage,
     Message,
@@ -36,6 +38,7 @@ from unity.conversation_manager.task_actions import (
     build_action_name,
     safe_call_id_suffix,
 )
+from unity.logger import LOGGER
 from unity.session_details import SESSION_DETAILS
 
 if TYPE_CHECKING:
@@ -496,6 +499,16 @@ class Renderer:
         """
         from unity.common.prompt_helpers import now as prompt_now
 
+        _render_t0 = perf_counter()
+        _last_step = _render_t0
+
+        def _mark_step() -> float:
+            nonlocal _last_step
+            now = perf_counter()
+            elapsed_ms = (now - _last_step) * 1000
+            _last_step = now
+            return elapsed_ms
+
         message_elements: list[MessageElement] = []
         notification_elements: list[NotificationElement] = []
         action_elements: list[ActionElement] = []
@@ -506,6 +519,7 @@ class Renderer:
             file_sync_complete=file_sync_complete,
             has_desktop=has_desktop,
         )
+        _infra_ms = _mark_step()
 
         meet_render = self.render_meet_interaction_state(
             assistant_screen_share_active=assistant_screen_share_active,
@@ -515,10 +529,12 @@ class Renderer:
             google_meet_active=google_meet_active,
             teams_meet_active=teams_meet_active,
         )
+        _meet_ms = _mark_step()
 
         web_sessions_render = self.render_active_web_sessions(
             active_web_sessions or [],
         )
+        _web_sessions_ms = _mark_step()
 
         notif_render = self.render_notification_bar(
             notification_bar,
@@ -526,22 +542,26 @@ class Renderer:
             max_pinned=max_pinned_notifications,
             elements_out=notification_elements,
         )
+        _notifications_ms = _mark_step()
         actions_render = self.render_in_flight_actions(
             in_flight_actions,
             max_history=max_action_history_events,
             elements_out=action_elements,
         )
+        _in_flight_ms = _mark_step()
         completed_render = self.render_completed_actions(
             completed_actions,
             max_completed=max_completed_actions,
             max_history=max_completed_action_history_events,
         )
+        _completed_ms = _mark_step()
         convs_render = self.render_active_conversations(
             contact_index,
             last_snapshot=last_snapshot,
             max_contact_medium_messages=max_contact_medium_messages,
             elements_out=message_elements,
         )
+        _conversations_ms = _mark_step()
 
         sections = [
             s
@@ -557,14 +577,44 @@ class Renderer:
             if s
         ]
         full_render = "\n\n".join(sections)
+        _join_ms = _mark_step()
 
-        return SnapshotState(
+        snapshot_state = SnapshotState(
             full_render=full_render,
             messages=message_elements,
             notifications=notification_elements,
             actions=action_elements,
             snapshot_time=prompt_now(as_string=False),
         )
+        _snapshot_ms = _mark_step()
+
+        log_startup_timing(
+            LOGGER,
+            (
+                "⏱️ [StartupTiming] llm_preamble.render_state.detail "
+                "total=%.0fms infra=%.0fms meet=%.0fms web_sessions=%.0fms "
+                "notifications=%.0fms in_flight=%.0fms completed=%.0fms "
+                "conversations=%.0fms join=%.0fms snapshot=%.0fms "
+                "chars=%d messages=%d notifications_count=%d actions=%d sections=%d"
+            ),
+            (perf_counter() - _render_t0) * 1000,
+            _infra_ms,
+            _meet_ms,
+            _web_sessions_ms,
+            _notifications_ms,
+            _in_flight_ms,
+            _completed_ms,
+            _conversations_ms,
+            _join_ms,
+            _snapshot_ms,
+            len(full_render),
+            len(message_elements),
+            len(notification_elements),
+            len(action_elements),
+            len(sections),
+        )
+
+        return snapshot_state
 
     @staticmethod
     def render_infrastructure_state(
@@ -920,13 +970,18 @@ class Renderer:
         Only contacts with messages in the global thread are rendered. Per-contact
         and per-medium views are derived from the shared deque at render time.
         """
+        _render_t0 = perf_counter()
         # Fetch assistant's timezone once for all contacts
         assistant_timezone = _get_assistant_timezone()
+        _timezone_ms = (perf_counter() - _render_t0) * 1000
 
         # Group global thread entries by contact_id
+        _group_t0 = perf_counter()
         grouped = contact_index.get_messages_grouped_by_contact()
+        _group_ms = (perf_counter() - _group_t0) * 1000
 
         contacts = []
+        _contacts_t0 = perf_counter()
         for contact_id, entries in grouped.items():
             contact_info = contact_index.get_contact(contact_id) or {}
             conv_state = contact_index.get_or_create_conversation(contact_id)
@@ -941,9 +996,33 @@ class Renderer:
                 assistant_timezone=assistant_timezone,
             )
             contacts.append(rendered)
+        _contacts_ms = (perf_counter() - _contacts_t0) * 1000
 
+        _join_t0 = perf_counter()
         contacts_str = "\n\n".join(contacts)
-        return f"<active_conversations>\n{contacts_str}\n</active_conversations>"
+        rendered = f"<active_conversations>\n{contacts_str}\n</active_conversations>"
+        _join_ms = (perf_counter() - _join_t0) * 1000
+
+        log_startup_timing(
+            LOGGER,
+            (
+                "⏱️ [StartupTiming] llm_preamble.render_state.conversations "
+                "total=%.0fms timezone=%.0fms group=%.0fms contacts=%.0fms "
+                "join=%.0fms contact_count=%d entry_count=%d chars=%d "
+                "assistant_timezone_cached=%s"
+            ),
+            (perf_counter() - _render_t0) * 1000,
+            _timezone_ms,
+            _group_ms,
+            _contacts_ms,
+            _join_ms,
+            len(grouped),
+            sum(len(entries) for entries in grouped.values()),
+            len(rendered),
+            assistant_timezone is not None,
+        )
+
+        return rendered
 
     def render_contact(
         self,
@@ -961,6 +1040,7 @@ class Renderer:
         The global thread view is the full list of entries. Per-medium views
         are derived by grouping entries by medium and capping each.
         """
+        _contact_t0 = perf_counter()
         contact_id = conv_state.contact_id
         first_name = contact_info.get("first_name") or ""
         surname = contact_info.get("surname") or ""
@@ -980,8 +1060,10 @@ class Renderer:
 
         if entries is None:
             entries = []
+        _metadata_ms = (perf_counter() - _contact_t0) * 1000
 
         # Global thread: all messages for this contact (already capped by deque size)
+        _global_t0 = perf_counter()
         all_messages = [e.message for e in entries]
         global_thread = ""
         if all_messages:
@@ -997,15 +1079,19 @@ class Renderer:
                 contact_timezone=contact_timezone,
                 assistant_timezone=assistant_timezone,
             )
+        _global_ms = (perf_counter() - _global_t0) * 1000
 
         # Per-medium threads: group entries by medium, cap each
+        _medium_group_t0 = perf_counter()
         medium_messages: dict[str, list] = {}
         for entry in entries:
             medium_key = str(entry.medium)
             if medium_key not in medium_messages:
                 medium_messages[medium_key] = []
             medium_messages[medium_key].append(entry.message)
+        _medium_group_ms = (perf_counter() - _medium_group_t0) * 1000
 
+        _medium_render_t0 = perf_counter()
         per_medium_threads = "\n\n".join(
             self.render_thread(
                 medium_name,
@@ -1022,13 +1108,14 @@ class Renderer:
             for medium_name, msgs in medium_messages.items()
             if msgs
         )
+        _medium_render_ms = (perf_counter() - _medium_render_t0) * 1000
+        _join_t0 = perf_counter()
         threads_content = (
             f"{global_thread}\n\n{per_medium_threads}"
             if global_thread
             else per_medium_threads
         )
-
-        return (
+        rendered = (
             f'<contact contact_id="{contact_id}" first_name="{first_name}" surname="{surname}" '
             f'is_boss="{is_boss}" phone_number="{phone_number}" email_address="{email_address}" '
             f'discord_id="{discord_id}" '
@@ -1039,6 +1126,30 @@ class Renderer:
             f"<threads>\n{threads_content}\n</threads>\n"
             f"</contact>"
         )
+        _format_ms = (perf_counter() - _join_t0) * 1000
+
+        log_startup_timing(
+            LOGGER,
+            (
+                "⏱️ [StartupTiming] llm_preamble.render_state.contact "
+                "contact_id=%s total=%.0fms metadata=%.0fms global=%.0fms "
+                "medium_group=%.0fms medium_render=%.0fms format=%.0fms "
+                "entries=%d global_messages=%d mediums=%d chars=%d"
+            ),
+            contact_id,
+            (perf_counter() - _contact_t0) * 1000,
+            _metadata_ms,
+            _global_ms,
+            _medium_group_ms,
+            _medium_render_ms,
+            _format_ms,
+            len(entries),
+            len(all_messages),
+            len(medium_messages),
+            len(rendered),
+        )
+
+        return rendered
 
     def render_thread(
         self,
