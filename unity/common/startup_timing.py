@@ -13,6 +13,8 @@ _TRUE_VALUES = {"1", "true", "yes", "on", "debug"}
 def startup_timing_enabled() -> bool:
     """Return True when detailed startup timing logs should be emitted."""
 
+    if os.environ.get("DEPLOY_ENV", "").strip().lower() != "staging":
+        return False
     return os.environ.get("UNITY_STARTUP_TIMING", "").strip().lower() in _TRUE_VALUES
 
 
