@@ -164,12 +164,13 @@ class TestCoordinatorPrompt:
         assert "Capability boundary" in prompt
         assert "I never read or accept secret values in chat" in prompt
         assert "Where available tools expose it" in prompt
+        assert "pre_seed_colleague" in prompt
+        assert "target colleague's own root" in prompt
+        assert 'destination="space:<id>"' in prompt
         assert "remove_space_member" in prompt
         assert "cancel_space_invitation" in prompt
 
-        assert "pre_seed_colleague" not in prompt
         assert "per-body authoring" not in prompt
-        assert "pre-seed task" not in prompt
         assert "I will pull" not in prompt
         assert "I'll pull" not in prompt
         assert "I will sync" not in prompt

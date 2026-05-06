@@ -4,7 +4,11 @@ import requests
 
 from unify.utils.http import RequestError
 
-from unity.conversation_manager.domains.coordinator_tools import CoordinatorTools
+from unity.conversation_manager.domains.coordinator_tools import (
+    CoordinatorPreseedWrite,
+    CoordinatorTools,
+    _preseed_write_payload,
+)
 from unity.session_details import SESSION_DETAILS
 
 
@@ -26,6 +30,7 @@ class TestCoordinatorTools:
             "update_assistant_config",
             "list_assistants",
             "list_org_members",
+            "pre_seed_colleague",
             "create_space",
             "delete_space",
             "update_space",
@@ -135,6 +140,77 @@ class TestCoordinatorTools:
         assert result["error_kind"] == "permission_denied"
         assert result["details"]["status_code"] == 403
 
+    def test_pre_seed_colleague_forwards_confirmed_writes_after_reachability(
+        self,
+        monkeypatch,
+    ):
+        calls = []
+        writes = [
+            {
+                "context": "Tasks",
+                "entries": [{"task_id": 77, "status": "scheduled"}],
+            },
+        ]
+
+        monkeypatch.setattr(
+            "unity.conversation_manager.domains.coordinator_tools.unify.list_assistants",
+            lambda **_: [{"agent_id": 42}],
+        )
+        monkeypatch.setattr(
+            "unity.conversation_manager.domains.coordinator_tools.unify.pre_seed_colleague",
+            lambda *args, **kwargs: calls.append((args, kwargs))
+            or {"target_assistant_id": 42},
+        )
+
+        result = CoordinatorTools(cm=object()).pre_seed_colleague(
+            target_assistant_id=42,
+            writes=writes,
+        )
+
+        assert result == {"target_assistant_id": 42}
+        assert calls == [((42, writes), {"api_key": "owner-key"})]
+
+    def test_pre_seed_colleague_rejects_fabricated_assistant_without_sdk_call(
+        self,
+        monkeypatch,
+    ):
+        calls = []
+
+        monkeypatch.setattr(
+            "unity.conversation_manager.domains.coordinator_tools.unify.list_assistants",
+            lambda **_: [{"agent_id": 42}],
+        )
+        monkeypatch.setattr(
+            "unity.conversation_manager.domains.coordinator_tools.unify.pre_seed_colleague",
+            lambda *args, **kwargs: calls.append((args, kwargs)),
+        )
+
+        result = CoordinatorTools(cm=object()).pre_seed_colleague(
+            target_assistant_id=99,
+            writes=[{"context": "Knowledge", "entries": [{"content": "nope"}]}],
+        )
+
+        assert result["error_kind"] == "not_found"
+        assert result["details"] == {"agent_id": 99}
+        assert calls == []
+
+    def test_preseed_write_payload_accepts_schema_and_mapping_inputs(self):
+        writes = [
+            CoordinatorPreseedWrite(
+                context="Tasks",
+                entries=[{"task_id": 77, "status": "scheduled"}],
+            ),
+            {"context": "Guidance", "entries": [{"content": "Check billing holds"}]},
+        ]
+
+        assert _preseed_write_payload(writes) == [
+            {
+                "context": "Tasks",
+                "entries": [{"task_id": 77, "status": "scheduled"}],
+            },
+            {"context": "Guidance", "entries": [{"content": "Check billing holds"}]},
+        ]
+
     def test_personal_coordinator_returns_empty_org_members(self, monkeypatch):
         SESSION_DETAILS.org_id = None
         called = False
@@ -171,6 +247,7 @@ class TestCoordinatorTools:
 
         result = CoordinatorTools(cm=object()).create_space(
             name="Ops",
+            description="Operations shared workspace.",
             organization_id=999,
             owner_user_id="other-user",
         )
@@ -179,6 +256,7 @@ class TestCoordinatorTools:
         assert calls == [
             {
                 "name": "Ops",
+                "description": "Operations shared workspace.",
                 "organization_id": 7,
                 "api_key": "owner-key",
             },
