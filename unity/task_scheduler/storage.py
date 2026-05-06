@@ -20,6 +20,7 @@ import unify
 from unity.common.context_registry import SPACE_CONTEXT_PREFIX
 from unity.settings import SETTINGS
 from unify.utils.http import RequestError as _UnifyRequestError
+from unity.common.authorship import strip_authoring_assistant_id
 from unity.common.context_store import _PRIVATE_FIELDS
 from unity.common.log_utils import log as unity_log, create_logs as unity_create_logs
 from unity.task_scheduler.types.queue_summary import QueueSummary
@@ -411,8 +412,10 @@ class TasksStore:
                 ]
             return value
 
-        norm_entries = TasksStore._with_explicit_task_types(
-            _strip_nones(TasksStore._norm(entries), top_level=True),
+        norm_entries = strip_authoring_assistant_id(
+            TasksStore._with_explicit_task_types(
+                _strip_nones(TasksStore._norm(entries), top_level=True),
+            ),
         )
         return unify.update_logs(
             logs=logs,
@@ -428,6 +431,7 @@ class TasksStore:
             project=self._project,
             context=self._ctx,
             new=new,
+            stamp_authoring=True,
             add_to_all_context=self._add_to_all_context,
             **norm_entries,
         )
@@ -450,6 +454,7 @@ class TasksStore:
                 project=self._project,
                 context=self._ctx,
                 entries=normalised,
+                stamp_authoring=True,
                 add_to_all_context=self._add_to_all_context,
             )
         except Exception:
@@ -460,6 +465,7 @@ class TasksStore:
                     project=self._project,
                     context=self._ctx,
                     new=True,
+                    stamp_authoring=True,
                     add_to_all_context=self._add_to_all_context,
                     **e,
                 )

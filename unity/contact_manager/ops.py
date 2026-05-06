@@ -5,6 +5,7 @@ from typing import Any, Dict, Optional
 import unify
 from pydantic import ValidationError
 
+from ..common.authorship import strip_authoring_assistant_id
 from ..common.log_utils import log as unity_log
 from ..common.tool_outcome import ToolOutcome
 from .types.contact import Contact
@@ -194,6 +195,7 @@ def create_contact(
                         self._known_custom_fields.add(k)  # type: ignore[attr-defined]
         except Exception:
             pass
+    contact_details = strip_authoring_assistant_id(contact_details)
 
     if not any(v is not None for v in contact_details.values()):
         raise AssertionError("At least one contact detail must be provided.")
@@ -219,6 +221,7 @@ def create_contact(
         **contact_details,
         new=True,
         mutable=True,
+        stamp_authoring=True,
         add_to_all_context=(
             self.include_in_multi_assistant_table
             and not context_name.startswith("Spaces/")
@@ -283,7 +286,9 @@ def update_contact(
         except Exception:
             pass
 
-    updates_dict = {k: v for k, v in contact_details.items() if v is not None}
+    updates_dict = strip_authoring_assistant_id(
+        {k: v for k, v in contact_details.items() if v is not None},
+    )
     if not updates_dict:
         raise ValueError("At least one contact detail must be provided for an update.")
 

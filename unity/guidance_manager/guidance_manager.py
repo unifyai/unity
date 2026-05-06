@@ -625,6 +625,7 @@ class GuidanceManager(BaseGuidanceManager):
             **payload,
             new=True,
             mutable=True,
+            stamp_authoring=True,
             add_to_all_context=self.include_in_multi_assistant_table,
         )
         return {

@@ -14,6 +14,10 @@ import unify
 from unify.utils.http import RequestError
 
 from unity.common.filter_utils import normalize_filter_expr
+from unity.common.authorship import (
+    is_shared_authored_context,
+    strip_authoring_assistant_id,
+)
 from unity.common.log_utils import log as unify_log, create_logs as unify_create_logs
 
 logger = logging.getLogger(__name__)
@@ -64,6 +68,7 @@ def insert_rows_impl(
         result = unify_create_logs(
             context=context,
             entries=rows,
+            stamp_authoring=is_shared_authored_context(context),
             add_to_all_context=add_to_all_context,
             batched=batched,
         )
@@ -128,6 +133,11 @@ def update_rows_impl(
     # Update each matching row (delete + insert pattern)
     # Note: This is the current pattern used elsewhere in the codebase
     updated = 0
+    cleaned_updates = (
+        strip_authoring_assistant_id(updates)
+        if is_shared_authored_context(context)
+        else dict(updates)
+    )
     for log in logs:
         # Get existing entries
         if hasattr(log, "entries") and isinstance(log.entries, dict):
@@ -143,7 +153,7 @@ def update_rows_impl(
             unify.delete_logs(context=context, logs=[log_id])
 
         # Merge updates
-        new_entries = {**existing, **updates}
+        new_entries = {**existing, **cleaned_updates}
 
         # Insert updated row
         unify_log(context=context, **new_entries)

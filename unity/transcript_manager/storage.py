@@ -138,6 +138,7 @@ def ensure_exchanges_records(
                     medium=(eid_to_medium or {}).get(int(eid), ""),
                     new=True,
                     mutable=True,
+                    stamp_authoring=True,
                     add_to_all_context=self._should_add_to_all_context(
                         exchanges_context,
                     ),
