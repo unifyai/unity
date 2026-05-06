@@ -34,6 +34,7 @@ from ..common.async_tool_loop import (
     TOOL_LOOP_LINEAGE,
 )
 from ..common.tool_outcome import ToolOutcome
+from ..common.task_execution_context import current_task_execution_delegate
 from .types.status import Status, to_status
 from .types.priority import Priority
 from .types.schedule import Schedule
@@ -300,6 +301,13 @@ class TaskScheduler(BaseTaskScheduler):
         if self.__actor is None:
             self.__actor = SimulatedActor(duration=SETTINGS.task.SIM_ACTOR_DURATION)
         return self.__actor
+
+    def _actor_for_task_run(self) -> BaseActor | None:
+        """Return the fallback actor only when task execution is not delegated."""
+
+        if current_task_execution_delegate.get() is not None:
+            return None
+        return self._actor
 
     # ------------------------------ Provisioning ----------------------------- #
     def warm_embeddings(self) -> None:
@@ -766,7 +774,7 @@ class TaskScheduler(BaseTaskScheduler):
         # and wrap the resulting handle for Tasks-table synchronization.
 
         handle = await ActiveTask.create(
-            self._actor,
+            self._actor_for_task_run(),
             task_description=task.description or task.name,
             _parent_chat_context=parent_chat_context,
             _clarification_up_q=clarification_up_q,
