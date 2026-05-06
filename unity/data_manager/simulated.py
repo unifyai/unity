@@ -990,6 +990,10 @@ class SimulatedDataManager(BaseDataManager):
         coerce_types: bool = True,
         storage_client=None,
         skip_rows: int = 0,
+        expected_total_rows: int | None = None,
+        private_ingest_key_column: str = "",
+        private_ingest_key_prefix: str = "",
+        before_insert_chunk=None,
     ) -> IngestResult:
         if table_input_handle is not None:
             from unity.common.pipeline.row_streaming import (
@@ -1003,8 +1007,20 @@ class SimulatedDataManager(BaseDataManager):
                     skip_rows=skip_rows,
                 ),
             )
-        elif rows is None:
+        if rows is None:
             rows = []
+        if (
+            expected_total_rows is not None
+            and skip_rows + len(rows) != expected_total_rows
+        ):
+            raise ValueError(
+                f"Streaming handle produced {skip_rows + len(rows)} rows for "
+                f"{context}, expected {expected_total_rows}",
+            )
+        if private_ingest_key_column:
+            prefix = private_ingest_key_prefix or context
+            for offset, row in enumerate(rows):
+                row[private_ingest_key_column] = f"{prefix}:{skip_rows + offset}"
 
         start = time.perf_counter()
         resolved = self._resolve_context(context)
@@ -1018,8 +1034,19 @@ class SimulatedDataManager(BaseDataManager):
             auto_counting=auto_counting,
         )
 
-        # Step 2: insert rows
-        log_ids = self.insert_rows(resolved, rows)
+        # Step 2: insert rows. Mirror the real ingest path by invoking the
+        # pre-insert hook immediately before each chunk is written.
+        log_ids: List[int] = []
+        size = max(int(chunk_size or 0), 1)
+        for index, start in enumerate(range(0, len(rows), size)):
+            chunk = rows[start : start + size]
+            if before_insert_chunk is not None:
+                before_insert_chunk(
+                    task_id=f"insert_chunk_{index}",
+                    context=resolved,
+                    chunk=chunk,
+                )
+            log_ids.extend(self.insert_rows(resolved, chunk))
 
         # Step 3: optional embedding
         rows_embedded = 0

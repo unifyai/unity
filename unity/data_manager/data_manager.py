@@ -642,6 +642,10 @@ class DataManager(BaseDataManager):
         coerce_types: bool = True,
         storage_client=None,
         skip_rows: int = 0,
+        expected_total_rows: int | None = None,
+        private_ingest_key_column: str = "",
+        private_ingest_key_prefix: str = "",
+        before_insert_chunk=None,
     ) -> "IngestResult":
         resolved = self._resolve_context(context)
         unique_keys, auto_counting = self._resolve_unique_keys_and_auto_counting(
@@ -669,6 +673,10 @@ class DataManager(BaseDataManager):
             coerce_types=coerce_types,
             storage_client=storage_client,
             skip_rows=skip_rows,
+            expected_total_rows=expected_total_rows,
+            private_ingest_key_column=private_ingest_key_column,
+            private_ingest_key_prefix=private_ingest_key_prefix,
+            before_insert_chunk=before_insert_chunk,
         )
 
     # ──────────────────────────────────────────────────────────────────────────

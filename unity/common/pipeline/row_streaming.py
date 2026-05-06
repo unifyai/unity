@@ -180,6 +180,7 @@ def _iter_object_store_rows(
     fh = _open_jsonl_handle(handle, storage_client=storage_client)
     try:
         skipped = 0
+        emitted = 0
         for line in fh:
             text = line.strip()
             if not text:
@@ -189,11 +190,17 @@ def _iter_object_store_rows(
                 continue
             loaded = json.loads(text)
             if isinstance(loaded, dict):
+                emitted += 1
                 yield {str(key): value for key, value in loaded.items()}
         if skipped:
             logger.info(
                 "[row_streaming] Skipped %d JSONL rows (checkpoint resume)",
                 skipped,
+            )
+        if handle.row_count is not None and skipped + emitted != handle.row_count:
+            raise ValueError(
+                f"JSONL artifact row count mismatch for {handle.storage_uri}: "
+                f"read={skipped + emitted} expected={handle.row_count}",
             )
     finally:
         if hasattr(fh, "close"):

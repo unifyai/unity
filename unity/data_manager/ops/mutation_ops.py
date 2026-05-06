@@ -11,6 +11,7 @@ import logging
 from typing import Any, Dict, List, Optional
 
 import unify
+from unify.utils.http import RequestError
 
 from unity.common.filter_utils import normalize_filter_expr
 from unity.common.log_utils import log as unify_log, create_logs as unify_create_logs
@@ -24,13 +25,14 @@ def insert_rows_impl(
     *,
     add_to_all_context: bool = False,
     batched: bool = True,
+    ignore_duplicate_composite_key_errors: bool = False,
 ) -> List[int]:
     """Insert rows into a context via bulk creation.
 
     Uniqueness enforcement belongs at the **schema level** (``unique_keys``
     on the context), not at insert time.  Use ``create_table(unique_keys=…)``
     or ``ingest(unique_keys=…)`` to declare which columns form the natural
-    key; the backend will reject or upsert duplicates server-side.
+    key; the backend rejects duplicate keys server-side.
 
     Parameters
     ----------
@@ -42,6 +44,11 @@ def insert_rows_impl(
         Whether to also add to aggregation contexts.
     batched : bool, default True
         When True, uses batched log creation for better performance.
+    ignore_duplicate_composite_key_errors : bool, default False
+        Treat backend duplicate-key rejections as already-committed rows.
+        This is reserved for deployment ingest paths that populate a
+        deterministic private idempotency key and must tolerate replay after
+        a crash.
 
     Returns
     -------
@@ -53,12 +60,26 @@ def insert_rows_impl(
 
     logger.debug("Inserting %d rows into %s (batched=%s)", len(rows), context, batched)
 
-    result = unify_create_logs(
-        context=context,
-        entries=rows,
-        add_to_all_context=add_to_all_context,
-        batched=batched,
-    )
+    try:
+        result = unify_create_logs(
+            context=context,
+            entries=rows,
+            add_to_all_context=add_to_all_context,
+            batched=batched,
+        )
+    except RequestError as exc:
+        if (
+            ignore_duplicate_composite_key_errors
+            and "Duplicate composite key already exists" in str(exc)
+        ):
+            logger.info(
+                "Treating duplicate composite key response as idempotent replay "
+                "for %d rows in %s",
+                len(rows),
+                context,
+            )
+            return []
+        raise
     if isinstance(result, list):
         return [lg.id for lg in result if hasattr(lg, "id")]
     return []

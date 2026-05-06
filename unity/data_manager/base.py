@@ -2046,9 +2046,10 @@ class BaseDataManager(BaseStateManager):
         :meth:`ingest` which provides chunking, parallelism, retry, and
         integrated embedding.
 
-        Uniqueness / upsert semantics are handled at the **schema level**
+        Uniqueness semantics are handled at the **schema level**
         through ``unique_keys`` (set via :meth:`create_table` or
-        :meth:`ingest`).  The backend enforces constraints server-side.
+        :meth:`ingest`).  The backend enforces constraints server-side by
+        rejecting duplicate key rows.
 
         Parameters
         ----------
@@ -2088,7 +2089,7 @@ class BaseDataManager(BaseStateManager):
         count = dm.insert_rows("Data/MH/arrears", transformed)
         print(f"Inserted {count} rows")
 
-        # For upsert semantics, declare unique_keys at table creation:
+        # For uniqueness enforcement, declare unique_keys at table creation:
         dm.create_table("Data/products", unique_keys={"sku": "str"})
         dm.insert_rows("Data/products", [{"sku": "ABC", "price": 29.99}])
 
@@ -2101,7 +2102,7 @@ class BaseDataManager(BaseStateManager):
         -----
         - Empty rows list returns 0 without error
         - If table doesn't exist, it's created with inferred schema
-        - For upsert behaviour, set ``unique_keys`` on the table schema
+        - For duplicate rejection, set ``unique_keys`` on the table schema
         """
 
     @abstractmethod
@@ -2270,6 +2271,10 @@ class BaseDataManager(BaseStateManager):
         coerce_types: bool = True,
         storage_client: Optional[Any] = None,
         skip_rows: int = 0,
+        expected_total_rows: Optional[int] = None,
+        private_ingest_key_column: str = "",
+        private_ingest_key_prefix: str = "",
+        before_insert_chunk: Optional[Callable] = None,
     ) -> "IngestResult":
         """
         Create a table, insert rows, and optionally embed -- in one call.
@@ -2324,8 +2329,7 @@ class BaseDataManager(BaseStateManager):
 
         unique_keys : dict[str, str] | None, default ``None``
             Columns that should enforce uniqueness in Unify.  The backend
-            enforces upsert semantics server-side for rows whose key columns
-            match an existing row.
+            rejects rows whose key columns match an existing row.
 
         embed_columns : list[str] | None, default ``None``
             Text columns to create vector embeddings for.  When ``None``
@@ -2391,6 +2395,43 @@ class BaseDataManager(BaseStateManager):
             coercion is applied; no type inference or type-mismatch
             coercion occurs, and Orchestra's default inference is used.
 
+        storage_client : Any | None, default ``None``
+            Optional storage adapter used by streaming handles that reference
+            remote objects.  The deployment pipeline supplies this for
+            ``gs://`` artifacts so rows can be streamed without first
+            materialising the entire table in memory.
+
+        skip_rows : int, default ``0``
+            Number of leading rows to discard from a streaming handle before
+            ingestion starts.  This is intended for checkpoint-based recovery;
+            ordinary callers should leave it at ``0``.
+
+        expected_total_rows : int | None, default ``None``
+            When set, validate that ``skip_rows`` plus the streamed row count
+            exactly matches the parser-declared total.  A mismatch raises
+            before a successful result is returned, which prevents a parser /
+            iterator disagreement from silently over- or under-ingesting.
+
+        private_ingest_key_column : str, default ``""``
+            Optional internal column name for deterministic per-source-row
+            idempotency keys.  When provided, each row is populated with a
+            stable key derived from *private_ingest_key_prefix* and its source
+            row index before insertion.  Deployment workers use this with
+            *unique_keys* as a duplicate-delivery backstop; application code
+            usually should not set it.
+
+        private_ingest_key_prefix : str, default ``""``
+            Prefix used when constructing values for
+            *private_ingest_key_column*.  If omitted, the resolved context is
+            used as the prefix.
+
+        before_insert_chunk : callable | None, default ``None``
+            Optional callback invoked immediately before each insert chunk is
+            written.  It receives keyword arguments ``task_id``, ``context``,
+            and ``chunk``.  Raising from this callback aborts the chunk before
+            any rows are inserted; deployment workers use it to renew and
+            verify external lease ownership.
+
         Returns
         -------
         IngestResult
@@ -2417,7 +2458,7 @@ class BaseDataManager(BaseStateManager):
             chunk_size=500,
         )
 
-        # Ingest with upsert via unique_keys (backend-enforced)
+        # Ingest with backend-enforced uniqueness
         result = dm.ingest(
             "Data/Devices/telemetry",
             rows=telemetry_rows,
