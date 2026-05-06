@@ -141,13 +141,17 @@ class TestPersistentWorkerStartup:
 
 
 class TestJobDispatch:
+    @pytest.mark.parametrize("is_coordinator", [False, True])
     @pytest.mark.asyncio
     async def test_dispatch_job_creates_agent_dispatch(
         self,
-        call_manager,
+        config,
+        is_coordinator,
         sample_contact,
         boss_contact,
     ):
+        config.is_coordinator = is_coordinator
+        call_manager = LivekitCallManager(config)
         mock_dispatch = MagicMock()
         mock_dispatch.id = "dispatch_123"
 
@@ -187,6 +191,7 @@ class TestJobDispatch:
         assert meta["outbound"] is False
         assert meta["contact"] == sample_contact
         assert meta["boss"] == boss_contact
+        assert meta["is_coordinator"] is is_coordinator
         assert meta["ipc_socket_path"] == "/tmp/test.sock"
         assert call_manager._active_job is True
 
@@ -380,6 +385,7 @@ class TestEntrypointMetadata:
                 "contact": {"first_name": "Alice"},
                 "boss": {"first_name": "Boss"},
                 "assistant_bio": "A helpful assistant",
+                "is_coordinator": True,
                 "ipc_socket_path": "/tmp/sock.sock",
             },
         )
@@ -387,6 +393,7 @@ class TestEntrypointMetadata:
         assert result is not None
         assert result["voice_provider"] == "elevenlabs"
         assert result["contact"]["first_name"] == "Alice"
+        assert result["is_coordinator"] is True
         assert result["ipc_socket_path"] == "/tmp/sock.sock"
 
     def test_load_config_from_metadata_empty(self):
@@ -406,6 +413,32 @@ class TestEntrypointMetadata:
         ctx = MagicMock()
         ctx.job.metadata = "not json"
         assert _load_config_from_metadata(ctx) is None
+
+    def test_hydrate_session_details_from_metadata_sets_coordinator_flag(self):
+        from unity.conversation_manager.medium_scripts.call import (
+            _hydrate_session_details_from_metadata,
+        )
+        from unity.session_details import SESSION_DETAILS
+
+        SESSION_DETAILS.reset()
+        try:
+            _hydrate_session_details_from_metadata(
+                {
+                    "assistant_bio": "Coordinator bio",
+                    "assistant_id": "42",
+                    "user_id": "user_abc",
+                    "assistant_name": "Avery Coordinator",
+                    "is_coordinator": True,
+                },
+            )
+
+            assert SESSION_DETAILS.assistant.about == "Coordinator bio"
+            assert SESSION_DETAILS.assistant.agent_id == 42
+            assert SESSION_DETAILS.user.id == "user_abc"
+            assert SESSION_DETAILS.assistant.name == "Avery Coordinator"
+            assert SESSION_DETAILS.is_coordinator is True
+        finally:
+            SESSION_DETAILS.reset()
 
 
 # ---------------------------------------------------------------------------

@@ -9,8 +9,11 @@ capability-gated sections (assistant phone / email).
 from __future__ import annotations
 
 
+from unity.conversation_manager.prompt_builders import (
+    build_system_prompt,
+    build_voice_agent_prompt,
+)
 from unity.conversation_manager.domains.coordinator_tools import CoordinatorTools
-from unity.conversation_manager.prompt_builders import build_system_prompt
 from unity.session_details import SpaceSummary
 
 # ---------------------------------------------------------------------------
@@ -29,6 +32,18 @@ def _build(**overrides: object) -> str:
     """Build a system prompt with sensible defaults, returning flat text."""
     kwargs = {**_BASE_KWARGS, **overrides}
     return build_system_prompt(**kwargs).flatten()
+
+
+def _build_voice(**overrides: object) -> str:
+    """Build a voice-agent prompt with stable defaults."""
+    kwargs = {
+        "bio": "I help Acme configure its Unify team.",
+        "assistant_name": "Avery",
+        "boss_first_name": "Dana",
+        "boss_surname": "Owner",
+        **overrides,
+    }
+    return build_voice_agent_prompt(**kwargs).flatten()
 
 
 # ---------------------------------------------------------------------------
@@ -214,6 +229,43 @@ class TestCoordinatorPrompt:
         assert "I cannot forward it automatically" not in personal_prompt
         assert "Team Coordinator" not in coordinator_prompt
         assert "I cannot forward it automatically" not in coordinator_prompt
+
+
+class TestCoordinatorVoicePrompt:
+    """Coordinator voice calls get compact role guidance, not slow-brain literacy."""
+
+    def test_regular_voice_prompt_unchanged_when_flag_is_false(self):
+        omitted = _build_voice()
+        explicit_false = _build_voice(is_coordinator=False)
+
+        assert omitted == explicit_false
+        assert "Coordinator voice role" not in omitted
+
+    def test_coordinator_voice_prompt_adds_compact_role_section_after_bio(self):
+        prompt = _build_voice(is_coordinator=True)
+
+        assert "Bio\n---\nI help Acme configure its Unify team." in prompt
+        assert "Coordinator voice role" in prompt
+        assert "this organization's Coordinator" in prompt
+        assert "assistant workforce" in prompt
+        assert "colleague should own a workflow" in prompt
+        assert "I do not personally run colleagues' recurring day-to-day work" in prompt
+        assert "Console Secrets" in prompt
+        assert "screen share" in prompt
+        assert prompt.index("Bio\n---") < prompt.index("Coordinator voice role")
+        assert prompt.index("Coordinator voice role") < prompt.index("Brevity\n-------")
+
+    def test_coordinator_voice_prompt_excludes_slow_brain_literacy(self):
+        prompt = _build_voice(is_coordinator=True)
+
+        assert "Coordinator workspace tools" not in prompt
+        assert "Unify system literacy" not in prompt
+        assert "Requirements discovery workflow" not in prompt
+        assert "Tasks/Activations" not in prompt
+        assert "Context taxonomy" not in prompt
+        assert "`create_assistant`" not in prompt
+        assert "`delete_space`" not in prompt
+        assert "`remove_space_member`" not in prompt
 
 
 # ---------------------------------------------------------------------------
