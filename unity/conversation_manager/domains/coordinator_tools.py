@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from typing import TYPE_CHECKING, Any
 
 import unify
+from pydantic import BaseModel, ConfigDict, Field
 from unify.utils.http import RequestError
 
 from unity.common.tool_outcome import ToolError
@@ -14,6 +16,39 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
     from unity.conversation_manager.conversation_manager import ConversationManager
+
+
+class CoordinatorPreseedWrite(BaseModel):
+    """One colleague-owned context batch that the Coordinator can pre-seed."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    context: str = Field(
+        ...,
+        min_length=1,
+        description=(
+            "Relative colleague-owned context name, such as Tasks, Knowledge, "
+            "Guidance, Functions/..., Data, or Dashboards/...."
+        ),
+    )
+    entries: list[dict[str, Any]] = Field(
+        ...,
+        min_length=1,
+        description="Rows to write into that context.",
+    )
+
+
+def _preseed_write_payload(
+    writes: Sequence[CoordinatorPreseedWrite | dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Return SDK-ready preseed writes from model or mapping inputs."""
+    payload: list[dict[str, Any]] = []
+    for write in writes:
+        if isinstance(write, CoordinatorPreseedWrite):
+            payload.append(write.model_dump())
+        else:
+            payload.append(dict(write))
+    return payload
 
 
 class CoordinatorTools:
@@ -133,10 +168,41 @@ class CoordinatorTools:
         except RequestError as exc:
             return _request_error_to_tool_error(exc)
 
+    def pre_seed_colleague(
+        self,
+        *,
+        target_assistant_id: int,
+        writes: list[CoordinatorPreseedWrite],
+    ) -> dict[str, Any] | ToolError:
+        """Seed confirmed rows into a reachable colleague's own contexts.
+
+        Args:
+            target_assistant_id: The colleague assistant that should own the rows.
+            writes: Required context batches shaped as
+                ``{"context": "Tasks", "entries": [{...}]}``. Use relative context
+                names only, such as ``Tasks``, ``Knowledge``, or ``Guidance``. Do
+                not use ``Spaces/...`` paths or shared-space destinations here.
+        """
+
+        reachable = self._assistant_is_reachable(target_assistant_id)
+        if isinstance(reachable, dict):
+            return reachable
+        if not reachable:
+            return _assistant_not_found(target_assistant_id)
+        try:
+            return unify.pre_seed_colleague(
+                target_assistant_id,
+                _preseed_write_payload(writes),
+                api_key=SESSION_DETAILS.unify_key,
+            )
+        except RequestError as exc:
+            return _request_error_to_tool_error(exc)
+
     def create_space(
         self,
         *,
         name: str,
+        description: str,
         organization_id: int | None = None,
         owner_user_id: str | None = None,
     ) -> dict[str, Any] | ToolError:
@@ -146,6 +212,7 @@ class CoordinatorTools:
         try:
             result = unify.create_space(
                 name=name,
+                description=description,
                 organization_id=SESSION_DETAILS.org_id,
                 api_key=SESSION_DETAILS.unify_key,
             )
@@ -354,6 +421,7 @@ class CoordinatorTools:
             "update_assistant_config": self.update_assistant_config,
             "list_assistants": self.list_assistants,
             "list_org_members": self.list_org_members,
+            "pre_seed_colleague": self.pre_seed_colleague,
             "create_space": self.create_space,
             "delete_space": self.delete_space,
             "update_space": self.update_space,
