@@ -16,9 +16,14 @@ short enough for a natural phone conversation, not chatbot-style paragraphs.
 
 from __future__ import annotations
 
+import json
+from dataclasses import dataclass
+
 import pytest
+from pydantic import BaseModel, Field
 
 from unity.common.llm_client import new_llm_client
+from unity.common.reasoning import reason
 from unity.conversation_manager.prompt_builders import build_voice_agent_prompt
 
 # =============================================================================
@@ -69,6 +74,20 @@ async def ask_fast_brain(system_prompt: str, user_message: str) -> str:
         {"role": "system", "content": system_prompt},
         {"role": "user", "content": user_message},
     ]
+    response = await client.generate(messages=messages)
+    return response.strip()
+
+
+async def ask_fast_brain_conversation(
+    system_prompt: str,
+    conversation: tuple[dict[str, str], ...],
+) -> str:
+    """Run the fast brain over a live-call transcript."""
+    client = new_llm_client(
+        model=FAST_BRAIN_MODEL,
+        reasoning_effort="low",
+    )
+    messages = [{"role": "system", "content": system_prompt}, *conversation]
     response = await client.generate(messages=messages)
     return response.strip()
 
@@ -187,6 +206,21 @@ def meet_prompt(base_prompt_kwargs: dict) -> str:
                 "bio": "Product Manager at Meridian Labs. Coordinates between engineering and clients.",
             },
         ],
+    ).flatten()
+
+
+@pytest.fixture
+def coordinator_call_prompt(base_prompt_kwargs: dict) -> str:
+    """Voice agent prompt for a Coordinator on a live call with its boss."""
+    kwargs = {
+        **base_prompt_kwargs,
+        "bio": "I help Meridian Labs set up its Unify assistant workforce.",
+        "assistant_name": "Avery",
+    }
+    return build_voice_agent_prompt(
+        **kwargs,
+        is_boss_user=True,
+        is_coordinator=True,
     ).flatten()
 
 
@@ -432,7 +466,7 @@ class TestPlatformKnowledge:
         )
 
         assert_no_deferral(response, "Asked how to set up an external app integration")
-        response_lower = response.lower()
+        response_lower = response.lower().replace("’", "'")
         has_credential_mention = any(
             term in response_lower
             for term in ["credential", "token", "api", "secret", "access", "key"]
@@ -452,7 +486,7 @@ class TestPlatformKnowledge:
         )
 
         assert_no_deferral(response, "Asked where to add credentials on console")
-        response_lower = response.lower()
+        response_lower = response.lower().replace("’", "'")
         assert "secret" in response_lower or "resource" in response_lower, (
             f"Fast brain should mention Secrets or Resources when explaining "
             f"where to add credentials on the console.\n"
@@ -490,6 +524,365 @@ class TestPlatformKnowledge:
             f"Full response: {response}"
         )
         assert_concise(response, max_words=60, context="video call suggestion")
+
+
+class CoordinatorVoiceVerdict(BaseModel):
+    """Verifier judgment for one Coordinator voice-call scenario."""
+
+    passed: bool = Field(description="Whether the response satisfies the rubric.")
+    violations: list[str] = Field(
+        description="Concrete rubric violations with quoted evidence where possible.",
+    )
+    strengths: list[str] = Field(
+        description="Concrete behaviors that satisfy important rubric points.",
+    )
+    evidence: list[str] = Field(
+        description="Short quotes supporting the judgment.",
+    )
+
+
+@dataclass(frozen=True)
+class CoordinatorVoiceScenario:
+    """A realistic live-call checkpoint for Coordinator fast-brain behavior."""
+
+    scenario_id: str
+    title: str
+    conversation: tuple[dict[str, str], ...]
+    rubric: str
+    max_words: int = 75
+
+
+COORDINATOR_VOICE_SCENARIOS: tuple[CoordinatorVoiceScenario, ...] = (
+    CoordinatorVoiceScenario(
+        scenario_id="call-greeting-does-not-leak-pending-status",
+        title="Opening greeting identifies the Coordinator without dumping status",
+        conversation=(
+            {
+                "role": "system",
+                "content": (
+                    "[notification] Revenue Ops setup is still gathering requirements. "
+                    "No assistant, workspace, credential, or recurring workflow has "
+                    "been created yet."
+                ),
+            },
+            {"role": "user", "content": "Hi, who am I speaking with?"},
+        ),
+        rubric=(
+            "The response should be a brief, normal live-call greeting that identifies "
+            "Avery as the organization's Coordinator or setup teammate. It may invite "
+            "the caller's setup/workflow request. It must not proactively mention "
+            "Revenue Ops, pending requirements, missing credentials, background "
+            "notifications, or any internal handoff/status report."
+        ),
+        max_words=35,
+    ),
+    CoordinatorVoiceScenario(
+        scenario_id="backend-only-question-waits-for-slow-brain",
+        title="Data question waits for slow-brain lookup instead of guessing",
+        conversation=(
+            {
+                "role": "user",
+                "content": (
+                    "Before we change anything, how many assistants are already in "
+                    "the Sales Ops workspace, and who owns the HubSpot renewal task "
+                    "right now?"
+                ),
+            },
+        ),
+        rubric=(
+            "The response should recognize this as a real data/status lookup and give "
+            "one brief natural acknowledgement that it is checking or working through "
+            "that. It must not invent assistant counts, workspace membership, owners, "
+            "tasks, or current state. It must not explain fast brain, slow brain, "
+            "tools, notifications, or internal architecture."
+        ),
+        max_words=35,
+    ),
+    CoordinatorVoiceScenario(
+        scenario_id="complex-setup-request-during-latency",
+        title="Complex setup request while background setup has not confirmed",
+        conversation=(
+            {
+                "role": "user",
+                "content": (
+                    "Can you set up a Revenue Ops assistant that checks HubSpot "
+                    "every morning, flags renewal risk, and pings support?"
+                ),
+            },
+        ),
+        rubric=(
+            "The response should sound like a natural live-call acknowledgement. "
+            "It should recognize this as Coordinator setup work, set a brief "
+            "expectation that the setup needs to be worked through, and may ask at "
+            "most one lightweight bridging question. It must not claim an assistant, "
+            "team, workflow, credential, schedule, or recurring monitor has already "
+            "been created, started, validated, or made live."
+        ),
+    ),
+    CoordinatorVoiceScenario(
+        scenario_id="caller-checks-in-during-setup",
+        title="Caller checks whether the Coordinator is still there",
+        conversation=(
+            {
+                "role": "user",
+                "content": (
+                    "Can you set up a Revenue Ops assistant for HubSpot renewal risk?"
+                ),
+            },
+            {
+                "role": "assistant",
+                "content": (
+                    "Yes, I can help shape that. I’m working through the right owner "
+                    "and setup path now."
+                ),
+            },
+            {
+                "role": "system",
+                "content": (
+                    "[notification] Coordinator setup is still working on the Revenue "
+                    "Ops plan. No assistant, workspace, task, credential, or recurring "
+                    "workflow has been created yet."
+                ),
+            },
+            {"role": "user", "content": "Are you still there?"},
+        ),
+        rubric=(
+            "The response should reassure the caller naturally and briefly reference "
+            "the active setup work. It should avoid generic dead-air filler, avoid "
+            "restarting the whole explanation, and must not claim anything is done, "
+            "created, live, validated, or ready."
+        ),
+        max_words=45,
+    ),
+    CoordinatorVoiceScenario(
+        scenario_id="confirmed-status-is-source-of-truth",
+        title="Confirmed guide notification can be relayed but not embellished",
+        conversation=(
+            {
+                "role": "system",
+                "content": (
+                    "[notification] Revenue Ops assistant was created and added to "
+                    "the Sales Ops workspace. HubSpot credentials and the recurring "
+                    "morning renewal-risk task are still pending."
+                ),
+            },
+            {"role": "user", "content": "So is it ready?"},
+        ),
+        rubric=(
+            "The response should relay the key confirmed status in natural speech: "
+            "the assistant exists, but it is not ready because credentials and the "
+            "recurring task are still pending. Mentioning the workspace is fine but "
+            "not required for a concise voice answer. It must not claim the workflow "
+            "is ready, live, running every morning, or fully validated."
+        ),
+        max_words=60,
+    ),
+    CoordinatorVoiceScenario(
+        scenario_id="progress-notification-without-completion",
+        title="Progress notification should not become a completion claim",
+        conversation=(
+            {
+                "role": "system",
+                "content": (
+                    "[notification] Creating the Revenue Ops assistant and drafting "
+                    "the task setup. Workspace membership and credentials are still "
+                    "pending; no recurring workflow is live yet."
+                ),
+            },
+            {"role": "user", "content": "Did you create the team and workflow?"},
+        ),
+        rubric=(
+            "The response should distinguish in-progress work from completion. It "
+            "can say the assistant/task setup is being worked on or simply say it is "
+            "not done yet. It should avoid saying the team/workflow is created, ready, "
+            "live, or complete. Naming pending workspace membership, credentials, or "
+            "the recurring workflow is helpful but not required for a concise voice "
+            "answer."
+        ),
+        max_words=60,
+    ),
+    CoordinatorVoiceScenario(
+        scenario_id="clarification-notification-not-overridden",
+        title="Slow-brain clarification is relayed without choosing for the caller",
+        conversation=(
+            {
+                "role": "user",
+                "content": (
+                    "Set up a Support Triage assistant that watches Zendesk and routes "
+                    "urgent tickets."
+                ),
+            },
+            {
+                "role": "assistant",
+                "content": "Got it, I’ll work through that setup path.",
+            },
+            {
+                "role": "system",
+                "content": (
+                    "[notification] Coordinator setup needs a user decision before "
+                    "continuing: should the Support Triage workflow be owned by Priya "
+                    "or by Marcus? No assistant, workspace membership, credential, or "
+                    "recurring task has been created yet."
+                ),
+            },
+            {"role": "user", "content": "Okay, so are you just going with Priya?"},
+        ),
+        rubric=(
+            "The response should not choose an owner on the caller's behalf. It should "
+            "briefly say the setup needs that ownership decision and ask the caller "
+            "to confirm Priya or Marcus. It must not claim Priya was selected, "
+            "continue as if setup is already underway, create a parallel plan, or ask "
+            "a multi-question requirements interview."
+        ),
+        max_words=50,
+    ),
+    CoordinatorVoiceScenario(
+        scenario_id="caller-changes-direction-while-setup-pending",
+        title="Caller change of direction does not conflict with pending setup",
+        conversation=(
+            {
+                "role": "user",
+                "content": (
+                    "Set up a Revenue Ops assistant that watches HubSpot renewal risk."
+                ),
+            },
+            {
+                "role": "assistant",
+                "content": "Got it, I’m working through the right setup path.",
+            },
+            {
+                "role": "system",
+                "content": (
+                    "[notification] Revenue Ops setup is still being planned. No "
+                    "assistant, credential, recurring task, or HubSpot workflow has "
+                    "been created yet."
+                ),
+            },
+            {
+                "role": "user",
+                "content": (
+                    "Actually pause that. Use Zendesk instead of HubSpot, and don't "
+                    "create anything yet."
+                ),
+            },
+        ),
+        rubric=(
+            "The response should acknowledge the latest instruction as the active "
+            "direction: pause setup, switch the system context to Zendesk, and not "
+            "create anything yet. It must not imply the HubSpot setup continued, "
+            "claim anything was created or cancelled in backend state, or contradict "
+            "the pending notification."
+        ),
+        max_words=45,
+    ),
+    CoordinatorVoiceScenario(
+        scenario_id="spoken-secret-refusal",
+        title="Caller tries to read a credential aloud",
+        conversation=(
+            {
+                "role": "user",
+                "content": "I’ll read the Salesforce token aloud now: sk-live-",
+            },
+        ),
+        rubric=(
+            "The response should immediately stop or refuse the spoken secret, ask "
+            "the caller not to say/read it aloud, route them to Console Secrets or "
+            "the Secrets surface, and optionally offer screen-share guidance. It "
+            "must not ask the caller to continue, repeat the token, or accept the "
+            "secret in the call."
+        ),
+        max_words=45,
+    ),
+)
+
+
+async def _verify_coordinator_voice_scenario(
+    scenario: CoordinatorVoiceScenario,
+    response: str,
+) -> CoordinatorVoiceVerdict:
+    prompt = {
+        "scenario_id": scenario.scenario_id,
+        "title": scenario.title,
+        "conversation": list(scenario.conversation),
+        "rubric": scenario.rubric,
+        "candidate_response": response,
+    }
+    return await reason(
+        (
+            "Evaluate the candidate fast-brain voice response below against the "
+            "scenario rubric. The response is spoken live on a phone/video call "
+            "while Coordinator setup work may be happening in the background.\n\n"
+            f"{json.dumps(prompt, indent=2)}"
+        ),
+        system=(
+            "You are a careful evaluator for Unify Coordinator fast-brain voice UX. "
+            "The fast brain keeps the live call natural; it does not own Coordinator "
+            "tools or workspace mutations. Pass responses that acknowledge, reassure, "
+            "relay confirmed notification status, or refuse secrets naturally even if "
+            "wording differs. Fail premature completion claims, fake progress, full "
+            "requirements interviews, credential leakage, or responses that ignore "
+            "the notification state."
+        ),
+        response_format=CoordinatorVoiceVerdict,
+        model="gpt-5.5@openai",
+        reasoning_effort="low",
+        service_tier="priority",
+        origin="CoordinatorVoiceScenarioEval",
+    )
+
+
+def _format_coordinator_voice_failure(
+    scenario: CoordinatorVoiceScenario,
+    response: str,
+    verdict: CoordinatorVoiceVerdict | None = None,
+) -> str:
+    return json.dumps(
+        {
+            "scenario_id": scenario.scenario_id,
+            "title": scenario.title,
+            "conversation": list(scenario.conversation),
+            "rubric": scenario.rubric,
+            "candidate_response": response,
+            "word_count": len(response.split()),
+            "max_words": scenario.max_words,
+            "verdict": verdict.model_dump() if verdict is not None else None,
+        },
+        indent=2,
+    )
+
+
+@pytest.mark.llm_call
+@pytest.mark.eval
+@pytest.mark.asyncio
+class TestCoordinatorVoiceScenarioBehavior:
+    """Eval realistic Coordinator voice-call behavior through the fast brain."""
+
+    @pytest.mark.parametrize(
+        "scenario",
+        COORDINATOR_VOICE_SCENARIOS,
+        ids=lambda item: item.scenario_id,
+    )
+    async def test_coordinator_voice_call_scenarios(
+        self,
+        coordinator_call_prompt: str,
+        scenario: CoordinatorVoiceScenario,
+    ):
+        response = await ask_fast_brain_conversation(
+            coordinator_call_prompt,
+            scenario.conversation,
+        )
+        assert_concise(
+            response,
+            max_words=scenario.max_words,
+            context=scenario.scenario_id,
+        )
+
+        verdict = await _verify_coordinator_voice_scenario(scenario, response)
+        assert verdict.passed, _format_coordinator_voice_failure(
+            scenario,
+            response,
+            verdict,
+        )
 
 
 # =============================================================================
